@@ -1396,6 +1396,17 @@ def test_a_whitespace_only_patch_that_changed_nothing_is_exit_4(adopted):
     assert res.returncode == 4 and summary(res)["readback"] == "differs", res.stderr
 
 
+def test_a_failed_patch_and_a_failed_re_read_is_written_unknown(adopted):
+    """CR 319: fetch, compare-and-swap re-fetch, failed PATCH, failed re-read."""
+    adopted.set_flag("fail_paths", {"PATCH": "HTTP 502: Bad Gateway"})
+    adopted.fail_on_get(EPIC, 3)
+    res = adopted.edit(REPO, EPIC, [{"op": "tick", "ref": "#11"}])
+    assert res.returncode == 4, res.stderr
+    s = summary(res)
+    assert s["written"] == "unknown" and "readback" not in s
+    assert "failed too" in res.stderr
+
+
 def test_a_gh_failure_is_exit_2_and_shows_ghs_own_stderr(adopted):
     adopted.set_flag("fail_all", "HTTP 401: Bad credentials")
     res = adopted.edit(REPO, EPIC, [{"op": "tick", "ref": "#11"}])
