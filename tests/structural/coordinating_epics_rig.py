@@ -47,6 +47,9 @@ def fail(msg="HTTP 404: Not Found"):
 
 if st.get("fail_all"):
     fail(st["fail_all"])
+for frag, msg in st.get("fail_paths", {}).items():  # {"issues/99": "HTTP 502: …"}
+    if frag in " ".join(args):
+        fail(msg)
 
 def find(repo):  # GitHub's names are case-insensitive
     return next((v for k, v in st["repos"].items() if k.lower() == repo.lower()), None)

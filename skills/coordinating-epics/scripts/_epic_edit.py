@@ -757,6 +757,15 @@ def introduced(old: list[str], new: list[str]) -> tuple[list[str], list[bool]]:
     return out, code
 
 
+def absent(e: Infra) -> bool:
+    """Whether gh's failure says the thing doesn't exist (404, or 410 deleted).
+
+    Only that is a lint finding. A rate limit, an auth failure or a network
+    error is infrastructure, exit 2, not a refusal of the line (CR 304).
+    """
+    return bool(re.search(r"\bHTTP 4(?:04|10)\b", str(e)))
+
+
 def rendered_refs(line: str) -> str:
     """ref_text, with code spans read as a neutral mark: GitHub links no ref in one."""
     return CODE_SPAN_RE.sub(LINK_MARK, ref_text(line))
@@ -821,8 +830,9 @@ def lint(
             try:
                 gh_json(["api", f"repos/{host}/issues/{n}"], f"checking #{n}")
                 continue
-            except Infra:
-                pass
+            except Infra as e:
+                if not absent(e):
+                    raise
             problems.append(
                 f"#{n} is above {host}'s highest number (#{top}); a ref from another repo?"
             )
@@ -838,6 +848,8 @@ def lint(
                         "resolving a comment link",
                     )
                 except Infra as e:
+                    if not absent(e):
+                        raise
                     problems.append(f"comment link doesn't resolve: {m.group(0)} ({e})")
                     continue
                 if not str(data.get("issue_url", "")).endswith(

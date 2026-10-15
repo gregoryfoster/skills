@@ -1095,6 +1095,26 @@ def test_a_baseline_that_cant_be_saved_is_exit_4_not_2(adopted):
     assert s["written"] and s["readback"] == "matches" and s["baseline"] == "not saved"
 
 
+@pytest.mark.parametrize(
+    "line, path",
+    [
+        ("- [ ] #99 x", "issues/99"),
+        (
+            f"- [ ] #14 see https://github.com/{REPO}/issues/11#issuecomment-555",
+            "issues/comments/555",
+        ),
+    ],
+    ids=["existence-check", "comment-link"],
+)
+def test_a_gh_outage_during_lint_is_exit_2_not_a_refusal(adopted, line, path):
+    """CR 304: only a 404 says the ref is wrong; a 502 says nothing about it."""
+    adopted.set_flag("fail_paths", {path: "HTTP 502: Bad Gateway"})
+    ops = [{"op": "add-line", "section": "Tier 1", "line": line}]
+    res = adopted.edit(REPO, EPIC, ops)
+    assert res.returncode == 2 and "502" in res.stderr, res.stderr
+    assert "patches" not in adopted.load()
+
+
 def test_a_gh_failure_is_exit_2_and_shows_ghs_own_stderr(adopted):
     adopted.set_flag("fail_all", "HTTP 401: Bad credentials")
     res = adopted.edit(REPO, EPIC, [{"op": "tick", "ref": "#11"}])
