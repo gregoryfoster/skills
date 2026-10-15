@@ -150,6 +150,29 @@ def test_cursors_come_from_the_epic_header(rig):
     assert r["max_number"] == 16
 
 
+def test_the_first_header_line_wins_over_a_later_one(rig):
+    """CR 295: a log line quoting an old cursor isn't the cursor."""
+    body = rig.body(REPO, EPIC) + "\n## Log\n\n- **Last check-in:** 2026-09-01T00:00Z\n"
+    rig.issue(REPO, EPIC, body=body)
+    assert scan(rig)["cursors"]["since"] == "2026-10-01T09:00:00Z"
+
+
+def test_a_bots_commit_is_attributed_to_the_bot(rig):
+    """CR 295."""
+    (rig.checkout / "bot").write_text("b")
+    git(rig.checkout, "add", ".")
+    git(
+        rig.checkout,
+        "-c",
+        "user.name=dependabot[bot]",
+        "commit",
+        "-q",
+        "-m",
+        "chore: bump a dependency",
+    )
+    assert scan(rig)["commits"][0]["attribution"] == "bot"
+
+
 def test_numbers_above_the_watermark_include_unlinked_issues_and_prs(rig):
     rows = {x["number"]: x for x in scan(rig)["new_numbers"]}
     assert sorted(rows) == [15, 16]
@@ -416,6 +439,16 @@ def test_a_pr_closing_another_repos_issue_isnt_this_repos_child(rig):
     rig.pr(REPO, 16, ["other/repo#12"])
     rows = scan(rig)["commits"]
     assert rows[0]["attribution"] == "unattributed" and rows[0]["children"] == []
+
+
+def test_another_repos_number_is_never_read_as_this_repos_pr(rig):
+    """CR 295 (for 257): gadgets#16 is not widgets' PR #16, which closes #12."""
+    (rig.checkout / "sync").write_text("s")
+    git(rig.checkout, "add", ".")
+    git(rig.checkout, "commit", "-q", "-m", "chore: sync with acme/gadgets#16")
+    last = scan(rig)["commits"][0]
+    assert last["attribution"] == "unattributed", last
+    assert last["via_pr"] == [] and last["children"] == []
 
 
 def test_a_pr_lookup_failure_is_a_warning(rig):

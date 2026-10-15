@@ -186,6 +186,27 @@ def test_an_uppercase_foreign_tick_is_still_a_tick(adopted):
     assert summary(res)["foreign_ticks"] == ["acme/widgets#12"]
 
 
+def test_accepting_a_tick_with_nothing_to_write_still_moves_the_baseline(adopted):
+    """CR 295: or the same tick is a foreign claim again on every later run."""
+    adopted.issue(REPO, EPIC, body=BODY.replace("- [ ] #12", "- [x] #12"))
+    res = adopted.edit(REPO, EPIC, [], "--accept-ticks", "#12")
+    assert res.returncode == 0 and summary(res).get("unchanged"), res.stderr
+    res = adopted.edit(REPO, EPIC, [{"op": "tick", "ref": "#11"}])
+    assert res.returncode == 0, res.stderr
+
+
+def test_a_foreign_tick_with_a_reworded_line_is_an_edit_not_a_tick(adopted):
+    """CR 295 (for 254): only a flip on an otherwise unchanged line is a tick."""
+    adopted.issue(
+        REPO, EPIC, body=BODY.replace("- [ ] #12 second thing", "- [x] #12 reworded")
+    )
+    res = adopted.edit(
+        REPO, EPIC, [{"op": "tick", "ref": "#11"}], "--accept-ticks", "#12"
+    )
+    assert res.returncode == 3 and "beyond box ticks" in res.stderr
+    assert "+ - [x] #12 reworded" in res.stderr
+
+
 def test_a_foreign_edit_beyond_ticks_is_refused_with_the_diff(adopted):
     adopted.issue(
         REPO, EPIC, body=BODY.replace("second thing", "second thing, rescoped")
@@ -336,6 +357,16 @@ def test_an_issue_only_updated_since_shows_still_needs_accounting(adopted):
     ops = [{"op": "header", "field": "Last issue seen", "value": "{last_seen}"}]
     res = adopted.edit(REPO, EPIC, ops, "--scan", report)
     assert res.returncode == 3 and "doesn't mention: #14" in res.stderr
+    # #5, below the watermark and nowhere in the body, needs no mention (CR 295).
+    report = _report(
+        adopted,
+        cursors={"watermark": 13},
+        new_numbers=[],
+        updated_since=[{"number": 5, "kind": "issue"}, {"number": 14, "kind": "issue"}],
+    )
+    ops.append({"op": "log", "text": "{today}: #14 out of epic."})
+    res = adopted.edit(REPO, EPIC, ops, "--scan", report)
+    assert res.returncode == 0, res.stderr
 
 
 def test_with_no_watermark_an_old_issues_update_needs_no_mention(adopted):
@@ -475,7 +506,10 @@ def test_add_line_lands_in_its_section_and_refuses_a_duplicate_ref(adopted):
     )
     assert res.returncode == 0, res.stderr
     body = adopted.body(REPO, EPIC)
-    assert body.index("#14 a follow-up") < body.index("## Parked")
+    # After the section's last line, before its trailing blank (CR 295).
+    assert (
+        "- [ ] acme/gadgets#3 upstream fix\n- [ ] #14 a follow-up\n\n## Parked" in body
+    )
     assert summary(res)["counts_after"]["open"] == 4
     res = adopted.edit(
         REPO, EPIC, [{"op": "add-line", "section": "Tier 1", "line": "- [ ] #14 again"}]
@@ -700,9 +734,7 @@ def test_replace_section_at_the_end_of_the_body(adopted):
     ]
     res = adopted.edit(REPO, EPIC, ops)
     assert res.returncode == 0, res.stderr
-    assert (
-        adopted.body(REPO, EPIC).rstrip().endswith("## Log\n\n- 2026-10-14: rewritten.")
-    )
+    assert adopted.body(REPO, EPIC).endswith("## Log\n\n- 2026-10-14: rewritten.\n")
     res = adopted.edit(REPO, EPIC, ops)
     assert res.returncode == 0 and summary(res).get("unchanged")
 
@@ -778,6 +810,13 @@ def test_a_code_span_hides_no_leftover(adopted, line):
     """CR 290: a SUBn is a leftover anywhere, and \\` is what makes the span."""
     ops = [{"op": "add-line", "section": "Parked", "line": line}]
     assert adopted.edit(REPO, EPIC, ops).returncode == 3
+
+
+def test_a_bare_ref_after_this_repos_own_qualified_ref_is_fine(adopted):
+    """CR 295: "acme/widgets#11, #12" is this repo's #12 either way."""
+    line = "- [ ] #14 after acme/widgets#11, #12"
+    ops = [{"op": "add-line", "section": "Tier 1", "line": line}]
+    assert adopted.edit(REPO, EPIC, ops).returncode == 0
 
 
 def test_a_transferred_issue_above_the_newest_created_is_not_refused(adopted):
@@ -1091,6 +1130,13 @@ def test_fences_follow_commonmark(body):
         ee.find_ref_line(lines, ee.key(None, 1, REPO), REPO, want_item=True)
         == len(lines) - 1
     )
+
+
+def test_a_backtick_fence_with_a_backtick_in_its_info_opens_nothing():
+    """CR 295 (for 246): "```a`b" is an inline code span's text, not a fence."""
+    lines = ee.normalize("```a`b\n- [ ] #1 a\n```\n- [ ] #2 b\n")
+    assert ee.fenced(lines) == [False, False, True, True]
+    assert ee.counts(lines) == {"open": 1, "done": 0}
 
 
 @pytest.mark.parametrize(
