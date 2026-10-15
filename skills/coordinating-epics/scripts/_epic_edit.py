@@ -88,13 +88,17 @@ exit codes:
   0  written and read back, or nothing to write (every operation already held)
   1  usage error: a bad flag, or a malformed ops or --scan file. Nothing was
      fetched or written.
-  2  infrastructure failure (gh or python3 failed; gh's own stderr is shown)
+  2  infrastructure failure (gh or python3 failed; gh's own stderr is shown).
+     Nothing was written, including a PATCH gh reported failed when the body
+     read afterwards is unchanged.
   3  refused: a foreign edit, a missing anchor, a count or lint failure, an
      open issue the epic doesn't list (--account [FROM]), or a new issue in the
      --scan report that the body doesn't mention. Nothing was written.
-  4  written, but not confirmed: the body read back differs from the body sent,
-     the read-back failed, or the baseline couldn't be saved. The summary says
-     which. Read the epic, then take it with --adopt-live before the next edit.
+  4  not confirmed. Either written (summary "written": true) but the body read
+     back differs from the body sent, the read-back failed, or the baseline
+     couldn't be saved; or the PATCH failed and whether it landed is unknown
+     ("written": "unknown"). The summary says which. Read the epic, then take
+     it with --adopt-live before the next edit.
 """
 
 BOX_RE = re.compile(r"^(?P<indent>\s*)(?P<bullet>[-*+]) \[(?P<mark>[ xX])\] ")
