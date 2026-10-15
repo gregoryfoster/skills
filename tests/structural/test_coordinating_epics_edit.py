@@ -1021,6 +1021,9 @@ def test_counts_catch_a_transform_that_drops_a_line(adopted, monkeypatch, capsys
         ("not json", []),
         ('[{"op": "header", "field": "Next", "value": "{checked}"}]', []),
         ('[{"op": ["tick"]}]', []),
+        ('[{"op": "tick", "ref": "twelve"}]', []),
+        ('[{"op": "add-line", "line": "- x", "after_ref": "12"}]', []),
+        ("[]", ["--repo", REPO, "--accept-ticks", "twelve"]),
     ],
     ids=[
         "bad-repo",
@@ -1031,6 +1034,9 @@ def test_counts_catch_a_transform_that_drops_a_line(adopted, monkeypatch, capsys
         "bad-json",
         "scan-placeholder-without-scan",
         "op-name-not-a-string",
+        "ref-not-a-ref",
+        "after-ref-not-a-ref",
+        "accept-ticks-not-a-ref",
     ],
 )
 def test_usage_errors_exit_1_before_any_fetch(adopted, ops, args):

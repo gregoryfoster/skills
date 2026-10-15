@@ -220,6 +220,9 @@ def check_ops(ops) -> None:
                 raise Usage(f"op {n} ({kind}): missing field {f!r}")
         if kind == "add-line" and ("after_ref" in op) == ("section" in op):
             raise Usage(f"op {n} (add-line): give exactly one of after_ref or section")
+        for f in ("ref", "after_ref"):  # a typo is usage, not a refusal (CR 293)
+            if f in op and not re.fullmatch(r"\s*" + REF_PAT + r"\s*", op[f]):
+                raise Usage(f"op {n} ({kind}): {f} {op[f]!r} is not #N or owner/repo#N")
 
 
 # ---------------------------------------------------------------- body model
@@ -1055,6 +1058,12 @@ def run(argv: list[str]) -> int:
             )
             if needs:  # before the fetch: exit 1 means nothing was fetched (CR 269)
                 raise Usage(f"{', '.join(needs)} needs --scan with scan.sh's report")
+        try:  # before the fetch, like every usage check (CR 293)
+            accepted = {
+                parse_ref(r, host) for r in a.accept_ticks.split(",") if r.strip()
+            }
+        except Refused as e:
+            raise Usage(f"--accept-ticks: {e}") from None
         sd = state_dir(a.state_dir, host, a.epic)
         base_path = sd / "last-written.md"
 
@@ -1077,7 +1086,6 @@ def run(argv: list[str]) -> int:
         else:
             baseline = normalize(base_path.read_text())
         ticks, other = foreign_changes(baseline, live, host)
-        accepted = {parse_ref(r, host) for r in a.accept_ticks.split(",") if r.strip()}
         summary["foreign_ticks"] = ticks
         if other:
             raise Refused(
