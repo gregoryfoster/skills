@@ -375,6 +375,17 @@ def test_a_malformed_report_row_is_a_usage_error(adopted, rows):
 
 
 @pytest.mark.parametrize(
+    "cursors", [{"watermark": "13"}, {"watermark": True}, ["x"], "abc"]
+)
+def test_malformed_report_cursors_are_a_usage_error(adopted, cursors):
+    """CR 294."""
+    report = _report(adopted, cursors=cursors, new_numbers=[])
+    res = adopted.edit(REPO, EPIC, [], "--scan", report)
+    assert res.returncode == 1 and "cursors must be" in res.stderr, res.stderr
+    assert "Traceback" not in res.stderr
+
+
+@pytest.mark.parametrize(
     "row",
     [{"number": 14, "kind": "pr"}, {"number": EPIC, "kind": "issue"}],
     ids=["a-pr", "the-epic-itself"],

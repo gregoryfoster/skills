@@ -1014,7 +1014,13 @@ def run(argv: list[str]) -> int:
                     raise Usage(
                         f"--scan {a.scan}: {name} must be a list of rows with a number"
                     )
-            wm = (report.get("cursors") or {}).get("watermark")
+            cursors = report.get("cursors") or {}
+            wm = cursors.get("watermark") if isinstance(cursors, dict) else "?"
+            if wm is not None and type(wm) is not int:  # CR 294
+                raise Usage(
+                    f"--scan {a.scan}: cursors must be an object whose watermark is a"
+                    " number or null"
+                )
             scan = {
                 "checked": report["now"],
                 "last_seen": f"#{report['max_number']}",
