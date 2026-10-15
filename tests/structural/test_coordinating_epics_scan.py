@@ -319,7 +319,10 @@ def test_a_git_failure_costs_the_commit_cursor_only(rig, tmp_path):
     assert res.returncode == 0, res.stderr
     r = json.loads(res.stdout)
     assert r["commits"] is None
-    assert any(w.startswith("commit range not scanned") for w in r["warnings"])
+    lost = [w for w in r["warnings"] if w.startswith("commit range not scanned")]
+    # git's own stderr is in the warning, not just our prefix (#398): a
+    # report that names no cause is a producer swallowed.
+    assert lost and "fatal:" in lost[0], r["warnings"]
     assert [x["number"] for x in r["new_numbers"]] == [15, 16]
 
 

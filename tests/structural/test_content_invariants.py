@@ -1427,9 +1427,9 @@ def _unhardened_process_substitution_sites(content: str) -> list[tuple[int, str]
     return violations
 
 
-# Every `.sh` under these families is classified below, gate or not. The two
-# families are the ones docs/STYLE.md's discipline addresses; a script anywhere
-# else is out of its stated scope.
+# Every `.sh` under these families is classified below, gate or not. They are
+# the ones docs/STYLE.md's discipline addresses; a script anywhere else is out
+# of its stated scope.
 # Repo-root relative, not SKILLS_DIR relative, since
 # [#318](https://github.com/gregoryfoster/skills/issues/318): this repo's own
 # `scripts/pre-ship.sh` is a gate script by the discipline's own definition —
@@ -1438,10 +1438,16 @@ def _unhardened_process_substitution_sites(content: str) -> list[tuple[int, str]
 # which left the gate this repo RUNS held to a weaker standard than the ones it
 # PUBLISHES. That is the asymmetry #255 closed for doc-check.sh, arriving from
 # the other direction.
+# coordinating-epics since [#398](https://github.com/gregoryfoster/skills/issues/398):
+# its editor's exit code decides whether an epic body is written, and its
+# scanner's report decides what gets slotted. The `.sh` wrappers are the unit,
+# not the Python engines behind them: the detector below reads bash, and the
+# behavioural tests that hold the engines run through the wrappers.
 _REPO_ROOT = SKILLS_DIR.parent
 _GATE_FAMILY_GLOBS = (
     "skills/shipping-work*/scripts/*.sh",
     "skills/reviewing-code*/scripts/*.sh",
+    "skills/coordinating-epics/scripts/*.sh",
     "scripts/*.sh",
 )
 
@@ -1492,6 +1498,15 @@ GATE_SCRIPTS = {
         "while verifying nothing. A swallowed producer here is a false pass on "
         "the whole suite"
     ),
+    # coordinating-epics, in scope since #398.
+    "epic-edit.sh": (
+        "its exit code decides whether an epic body is written, and the engine "
+        "branches on what gh returns: the live body it compares, the read-back "
+        "it verifies. The wrapper `exec`s _epic_edit.py, so the property lives "
+        "there, held by behaviour through this wrapper: "
+        "test_a_gh_failure_is_exit_2_and_shows_ghs_own_stderr "
+        "(test_coordinating_epics_edit.py)"
+    ),
 }
 
 # Bucket 2: reporting-only, or an action whose own exit code is the verdict.
@@ -1512,6 +1527,15 @@ NON_GATE_SCRIPTS = {
         "that exit code is the verdict, and nothing parses its output. "
         "pre-ship.sh does not call it — the integration suite is billed and "
         "needs .env, so it is never wired to a gate (#318)"
+    ),
+    "scan.sh": (
+        "reporting: a JSON report a coordinator reads to decide what gets "
+        "slotted, so it must not hide a producer either way. A gh failure "
+        "exits 2 with gh's stderr shown (test_a_gh_failure_is_exit_2); a git "
+        "failure costs the commit cursor only, with git's stderr in the "
+        "report's warnings (test_a_git_failure_costs_the_commit_cursor_only, "
+        "both in test_coordinating_epics_scan.py). The wrapper `exec`s _scan.py "
+        "and those tests run through it"
     ),
 }
 
@@ -1544,8 +1568,9 @@ class TestGateScriptHardening:
     diagnosis of the wrong problem, at the same exit code as the real one.
 
     So the file list is derived from the discipline rather than from one
-    filename: every script in the `shipping-work*` / `reviewing-code*`
-    families is classified into GATE_SCRIPTS or NON_GATE_SCRIPTS above, and a
+    filename: every script in the `shipping-work*` / `reviewing-code*` /
+    `coordinating-epics` families, and this repo's own `scripts/`, is
+    classified into GATE_SCRIPTS or NON_GATE_SCRIPTS above, and a
     new one cannot ship unclassified — the same forcing function
     `test_pre_ship_env_override.py` applies to new variants.
 
@@ -1578,7 +1603,8 @@ class TestGateScriptHardening:
         )
         assert not unclassified, (
             "unclassified script(s) in the gate surface (shipping-work* / "
-            "reviewing-code* families, plus this repo's own scripts/):\n"
+            "reviewing-code* / coordinating-epics families, plus this repo's "
+            "own scripts/):\n"
             + "\n".join(f"  {p}" for p in unclassified)
             + "\n\nAdd each basename to GATE_SCRIPTS (its output drives a "
             "control-flow decision) or to NON_GATE_SCRIPTS (reporting-only, "
