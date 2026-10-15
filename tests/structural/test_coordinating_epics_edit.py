@@ -669,6 +669,40 @@ def test_lint_refuses_new_lines(adopted, line, why):
     assert "ghp_aaaa" not in res.stderr + res.stdout
 
 
+def test_a_fenced_block_is_linted_for_secrets_only(adopted):
+    """CR 290: a command in a fence renders as written."""
+    text = '```bash\nbash x.sh --files "$FILES" # skills#348 ${{ matrix.py }} #999\n```'
+    ops = [{"op": "replace-section", "heading": "Parked", "text": text}]
+    res = adopted.edit(REPO, EPIC, ops)
+    assert res.returncode == 0, res.stderr
+    secret = "```\nexport T=ghp_" + "a" * 36 + "\n```"
+    ops = [{"op": "replace-section", "heading": "Parked", "text": secret}]
+    res = adopted.edit(REPO, EPIC, ops)
+    assert res.returncode == 3 and "secret" in res.stderr
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "- CI runs `${{ matrix.python }}`",
+        "- the template's `{{ name }}` field",
+        "- see `#999`",
+    ],
+)
+def test_a_code_span_renders_as_written(adopted, line):
+    """CR 290: like the shell-variable check, these read outside code spans only."""
+    ops = [{"op": "add-line", "section": "Parked", "line": line}]
+    res = adopted.edit(REPO, EPIC, ops)
+    assert res.returncode == 0, res.stderr
+
+
+@pytest.mark.parametrize("line", ["- run \\`make\\` first", "- slot `SUB3` after #12"])
+def test_a_code_span_hides_no_leftover(adopted, line):
+    """CR 290: a SUBn is a leftover anywhere, and \\` is what makes the span."""
+    ops = [{"op": "add-line", "section": "Parked", "line": line}]
+    assert adopted.edit(REPO, EPIC, ops).returncode == 3
+
+
 def test_a_transferred_issue_above_the_newest_created_is_not_refused(adopted):
     """CR 260: #20 exists, though the newest-created issue is #14."""
     adopted.issue(REPO, 20, created_at="2025-01-01T00:00:00Z")

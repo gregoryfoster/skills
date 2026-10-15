@@ -72,7 +72,9 @@ lint:
   Every line the edit adds or changes is linted whole, so ticking a line that
   already holds a short ref or an unexpanded variable is refused with it. That
   is deliberate: legacy text is fixed the first time it is touched. Rewrite the
-  line with set-line, then tick.
+  line with set-line, then tick. A fenced code block renders as written, so its
+  lines are checked for secrets only; a code span skips every check but SUBn,
+  \\` and secrets.
 
 exit codes:
   0  written and read back, or nothing to write (every operation already held)
@@ -104,14 +106,19 @@ FIELD_RE = re.compile(
 
 SHELL_VAR_RE = re.compile(r"\$\{[A-Za-z_]\w*\}|\$[A-Z_][A-Z0-9_]+\b")
 CODE_SPAN_RE = re.compile(r"`[^`]*`")
+# (pattern, what, read inside code spans too). A code span shows `${{ x }}`
+# as written, so those two skip spans (CR 290). A SUBn in a span is still a
+# leftover, and stripping spans would hide the \` an unquoted heredoc leaves,
+# since the escaped backtick itself opens or closes the span.
 PLACEHOLDER_RES = [
-    (re.compile(r"\bSUB\d+\b"), "an unfilled SUBn placeholder"),
-    (re.compile(r"\{\{[^}]*\}\}"), "an unfilled {{...}} placeholder"),
+    (re.compile(r"\bSUB\d+\b"), "an unfilled SUBn placeholder", True),
+    (re.compile(r"\{\{[^}]*\}\}"), "an unfilled {{...}} placeholder", False),
     (
         re.compile(r"\{(?:now|today|checked|last_seen)\}"),
         "an uninjected {now}/{today}/{checked}/{last_seen}",
+        False,
     ),
-    (re.compile(r"\\`"), "an escaped backtick"),
+    (re.compile(r"\\`"), "an escaped backtick", True),
 ]
 SECRET_RES = [
     re.compile(r"\bgh[pousr]_[A-Za-z0-9]{30,}"),
@@ -668,32 +675,52 @@ def fetch_body(repo: str, num: int) -> str:
 # ---------------------------------------------------------------- lint
 
 
-def introduced(old: list[str], new: list[str]) -> list[str]:
+def introduced(old: list[str], new: list[str]) -> tuple[list[str], list[bool]]:
+    """The lines new adds or changes, and whether each sits in a fenced block."""
     sm = difflib.SequenceMatcher(a=old, b=new, autojunk=False)
-    out = []
+    fence = fenced(new)
+    out, code = [], []
     for tag, _i1, _i2, j1, j2 in sm.get_opcodes():
         if tag in ("replace", "insert"):
             out.extend(new[j1:j2])
-    return out
+            code.extend(fence[j1:j2])
+    return out, code
 
 
-def lint(new_lines: list[str], host: str, check_links: bool) -> list[str]:
+def rendered_refs(line: str) -> str:
+    """ref_text, with code spans read as a neutral mark: GitHub links no ref in one."""
+    return CODE_SPAN_RE.sub(LINK_MARK, ref_text(line))
+
+
+def lint(
+    new_lines: list[str],
+    host: str,
+    check_links: bool,
+    in_fence: list[bool] | None = None,
+) -> list[str]:
+    in_fence = in_fence or [False] * len(new_lines)
     problems = []
-    for raw in new_lines:
-        # Placeholders, variables and secrets are read in the whole line, link
-        # targets included; refs are read the way GitHub renders them.
-        for rx, what in PLACEHOLDER_RES:
+    prose = []
+    for raw, code in zip(new_lines, in_fence):
+        for rx in SECRET_RES:
             if rx.search(raw):
+                problems.append("what looks like a secret (line withheld)")
+        # A fenced block renders as written: a command's $VAR, a CI
+        # ${{ matrix.x }} or an example ref are its text (CR 290).
+        if code:
+            continue
+        prose.append(raw)
+        # Placeholders and variables are read in the whole line, link targets
+        # included; refs are read the way GitHub renders them.
+        for rx, what, in_spans in PLACEHOLDER_RES:
+            if rx.search(raw if in_spans else CODE_SPAN_RE.sub("", raw)):
                 problems.append(f"{what}: {raw.strip()[:120]}")
         if SHELL_VAR_RE.search(CODE_SPAN_RE.sub("", raw)):
             problems.append(
                 f"an unexpanded shell variable outside a code span: {raw.strip()[:120]}"
             )
-        for rx in SECRET_RES:
-            if rx.search(raw):
-                problems.append("what looks like a secret (line withheld)")
-        ln = ref_text(raw)
-        for m in SHORT_REF_RE.finditer(CODE_SPAN_RE.sub("", ln)):
+        ln = rendered_refs(raw)
+        for m in SHORT_REF_RE.finditer(ln):
             problems.append(
                 f"short ref {m.group('ref')} links nowhere; write owner/repo#N: {raw.strip()[:120]}"
             )
@@ -705,8 +732,8 @@ def lint(new_lines: list[str], host: str, check_links: bool) -> list[str]:
                 )
     bare = {
         int(m.group("num"))
-        for ln in new_lines
-        for m in REF_RE.finditer(ref_text(ln))
+        for ln in prose
+        for m in REF_RE.finditer(rendered_refs(ln))
         if not m.group("repo")
     }
     if bare:
@@ -730,7 +757,7 @@ def lint(new_lines: list[str], host: str, check_links: bool) -> list[str]:
                 f"#{n} is above {host}'s highest number (#{top}); a ref from another repo?"
             )
     if check_links:
-        for ln in new_lines:
+        for ln in prose:
             for m in COMMENT_LINK_RE.finditer(ln):
                 try:
                     data = gh_json(
@@ -1006,9 +1033,8 @@ def run(argv: list[str]) -> int:
                 f"checkbox counts {after} don't match the {want} the operations imply"
             )
 
-        problems = lint(
-            introduced(live_lines, new), host, check_links=not a.no_link_check
-        )
+        added, in_fence = introduced(live_lines, new)
+        problems = lint(added, host, not a.no_link_check, in_fence)
         if problems:
             raise Refused("lint:\n" + "\n".join(f"  {x}" for x in problems))
 
