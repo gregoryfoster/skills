@@ -202,14 +202,21 @@ GIT_LOCAL_FLOOR = {
 }
 
 
+# Listed by --local-env-vars, but they carry `git -c` and GIT_CONFIG_KEY_n
+# settings, which name no repository: an http.extraheader the fetch needs to
+# authenticate can arrive this way (CR 303).
+GIT_CONFIG_KEEP = {"GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT"}
+
+
 def git_env() -> dict:
     """The environment minus git's repository-local variables.
 
     An inherited GIT_DIR beats `git -C` (docs/STYLE.md, #189), and so do
     GIT_COMMON_DIR, GIT_OBJECT_DIRECTORY and the rest of what
-    `git rev-parse --local-env-vars` lists (CR 261). Auth and config variables
-    such as GIT_SSH_COMMAND and GIT_ASKPASS stay, or the fetch can't
-    authenticate. Prompts are off, so a fetch fails rather than hangs (CR 268).
+    `git rev-parse --local-env-vars` lists (CR 261), bar GIT_CONFIG_KEEP.
+    Auth variables such as GIT_SSH_COMMAND and GIT_ASKPASS stay too, or the
+    fetch can't authenticate. Prompts are off, so a fetch fails rather than
+    hangs (CR 268).
     """
     bare = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
     try:
@@ -222,7 +229,8 @@ def git_env() -> dict:
         local = set(r.stdout.split()) if r.returncode == 0 else set()
     except OSError:
         local = set()
-    env = {k: v for k, v in os.environ.items() if k not in local | GIT_LOCAL_FLOOR}
+    drop = (local - GIT_CONFIG_KEEP) | GIT_LOCAL_FLOOR
+    env = {k: v for k, v in os.environ.items() if k not in drop}
     env["GIT_TERMINAL_PROMPT"] = "0"
     return env
 

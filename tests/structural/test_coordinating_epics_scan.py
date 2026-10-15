@@ -437,7 +437,14 @@ def test_git_keeps_auth_variables_and_never_prompts(monkeypatch):
     )  # listed by git, not the floor
     monkeypatch.setenv("GIT_SSH_COMMAND", "ssh -i /k")
     monkeypatch.setenv("GIT_ASKPASS", "/bin/askpass")
+    # CR 303: `git -c` and GIT_CONFIG_KEY_n config can carry the fetch's auth.
+    monkeypatch.setenv("GIT_CONFIG_PARAMETERS", "'http.extraheader'='X: y'")
+    monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
+    monkeypatch.setenv("GIT_CONFIG_KEY_0", "http.extraheader")
+    monkeypatch.setenv("GIT_CONFIG_VALUE_0", "AUTHORIZATION: basic x")
     env = scan_mod.git_env()
+    assert env["GIT_CONFIG_PARAMETERS"] == "'http.extraheader'='X: y'"
+    assert env["GIT_CONFIG_COUNT"] == "1" and "GIT_CONFIG_KEY_0" in env
     assert "GIT_DIR" not in env and "GIT_OBJECT_DIRECTORY" not in env
     assert "GIT_SHALLOW_FILE" not in env  # CR 285: the --local-env-vars query is used
     assert (
