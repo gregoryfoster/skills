@@ -306,6 +306,7 @@ def test_a_gh_failure_is_exit_2(rig):
 
 def test_a_git_failure_costs_the_commit_cursor_only(rig, tmp_path):
     """CR 245: not a checkout, a missing ref or an unknown SHA keeps the rest."""
+    nowhere = str(tmp_path / "nowhere")
     res = rig.run(
         "scan.sh",
         "--repo",
@@ -313,7 +314,7 @@ def test_a_git_failure_costs_the_commit_cursor_only(rig, tmp_path):
         "--epic",
         str(EPIC),
         "--git-dir",
-        str(tmp_path / "nowhere"),
+        nowhere,
         "--no-fetch",
     )
     assert res.returncode == 0, res.stderr
@@ -321,8 +322,10 @@ def test_a_git_failure_costs_the_commit_cursor_only(rig, tmp_path):
     assert r["commits"] is None
     lost = [w for w in r["warnings"] if w.startswith("commit range not scanned")]
     # git's own stderr is in the warning, not just our prefix (#398): a
-    # report that names no cause is a producer swallowed.
-    assert lost and "fatal:" in lost[0], r["warnings"]
+    # report that names no cause is a producer swallowed. git's message names
+    # the directory and our prefix never does; "fatal:" would be no proof,
+    # since git translates it (CR 321).
+    assert lost and nowhere in lost[0], r["warnings"]
     assert [x["number"] for x in r["new_numbers"]] == [15, 16]
 
 
