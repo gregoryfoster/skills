@@ -154,7 +154,9 @@ GH_ISSUE_URL_RE = re.compile(_ISSUE_URL)
 # GitHub renders a bare or <angled> issue URL as its ref, and "Fixes <url>"
 # closes the issue (CR 288). A fragment (#issuecomment-…) stays a ref.
 ANGLED_ISSUE_URL_RE = re.compile(r"<" + _ISSUE_URL + r"[^<>\s]*>")
-BARE_ISSUE_URL_RE = re.compile(r"(?<![\w/<])" + _ISSUE_URL)
+# The fragment goes with it, as with the angled form, or "…#issuecomment-1, #6"
+# would hide the bare #6 from the lint (CR 311).
+BARE_ISSUE_URL_RE = re.compile(r"(?<![\w/<])" + _ISSUE_URL + r"(?:#[\w-]*)?")
 COMMENT_LINK_RE = re.compile(
     r"https://github\.com/(?P<repo>[\w.-]+/[\w.-]+)/(?:issues|pull)/(?P<num>\d+)#issuecomment-(?P<id>\d+)"
 )

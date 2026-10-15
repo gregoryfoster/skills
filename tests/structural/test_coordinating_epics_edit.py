@@ -1072,6 +1072,22 @@ def test_link_shapes_read_as_github_renders_them(text, refs):
 
 
 @pytest.mark.parametrize(
+    "url",
+    [
+        "https://github.com/a/b/issues/5#issuecomment-1",
+        "<https://github.com/a/b/issues/5#issuecomment-1>",
+    ],
+    ids=["bare", "angled"],
+)
+def test_a_url_with_a_fragment_still_qualifies_only_itself(adopted, url):
+    """CR 311: the bare #6 after it is this repo's, whichever form the URL takes."""
+    line = f"- [ ] #14 see {url}, #6"
+    ops = [{"op": "add-line", "section": "Tier 1", "line": line}]
+    res = adopted.edit(REPO, EPIC, ops, "--no-link-check")
+    assert res.returncode == 3 and "bare #6 after a/b#" in res.stderr, res.stderr
+
+
+@pytest.mark.parametrize(
     "line",
     [
         "- [ ] #14 upstream a/b#5 [design](docs/d.md), #12 next",
