@@ -105,7 +105,10 @@ exit codes:
 """
 
 BOX_RE = re.compile(r"^(?P<indent>\s*)(?P<bullet>[-*+]) \[(?P<mark>[ xX])\] ")
-REF_PAT = r"(?<![\w/.-])(?:(?P<repo>[\w.-]+/[\w.-]+))?#(?P<num>\d+)\b"
+# GitHub links "pre-#348" and "ver.#3" as this repo's #348 and #3, so a "-" or
+# "." before the "#" is prose (#401). A "/" isn't: ref_text turns only GitHub
+# issue URLs into refs, and "https://example.com/a/#7" renders as a plain link.
+REF_PAT = r"(?<![\w/])(?:(?P<repo>[\w.-]+/[\w.-]+))?#(?P<num>\d+)\b"
 REF_RE = re.compile(REF_PAT)
 LEAD = r"(?:~~|\*\*|\[|`)*"
 ITEM_RE = re.compile(r"^\s*[-*+] \[[ xX]\] " + LEAD + REF_PAT)
@@ -147,7 +150,11 @@ SECRET_RES = [
 BARE_AFTER_QUALIFIED_RE = re.compile(
     r"(?<![\w/.-])(?P<repo>[\w.-]+/[\w.-]+)#\d+(?:\s*(?:,|/|;|&|\band\b|\bor\b)\s*)(?P<bare>#\d+)\b"
 )
-SHORT_REF_RE = re.compile(r"(?<![\w/.#-])(?P<ref>[A-Za-z][\w.-]*#\d+)\b")
+# The name must end in a letter, digit or "_": GitHub reads a trailing "-" or
+# "." as prose and links the #N after it (#401).
+SHORT_REF_RE = re.compile(
+    r"(?<![\w/.#-])(?P<ref>[A-Za-z](?:[\w.-]*[A-Za-z0-9_])?#\d+)\b"
+)
 # Link text may hold one level of brackets; the target may be <angled> or hold
 # one level of parentheses; the title may be "…", '…' or (…) (CR 271).
 LINK_MARK = "\ufffc"  # what a non-issue link reads as: no ref, no separator

@@ -1048,6 +1048,45 @@ def test_a_bare_ref_after_this_repos_own_qualified_ref_is_fine(adopted):
     assert adopted.edit(REPO, EPIC, ops).returncode == 0
 
 
+@pytest.mark.parametrize(
+    "text, refs, short",
+    [
+        ("(M, pre-#12, x)", {"acme/widgets#12"}, False),
+        ("non-#13", {"acme/widgets#13"}, False),
+        ("ver.#11", {"acme/widgets#11"}, False),
+        ("widgets#12", set(), True),
+        ("x_#12", set(), True),
+        ("pre-other/repo#5", {"pre-other/repo#5"}, False),
+        ("see x/#12", set(), False),
+    ],
+    ids=["hyphen", "non-hyphen", "dot", "short", "underscore", "owner-hyphen", "slash"],
+)
+def test_a_ref_after_a_hyphen_or_dot_is_this_repos(text, refs, short):
+    """#401, each row measured with gh api markdown: GitHub links pre-#348 as
+    this repo's #348 and leaves widgets#348 plain. x/#12 links too; see REF_PAT."""
+    assert ee.refs_in([text], REPO) == refs
+    assert bool(ee.SHORT_REF_RE.search(ee.rendered_refs(text))) is short
+
+
+def test_a_line_holding_pre_n_can_be_ticked(adopted):
+    """#401: the ref is correct, so ticking the line needs no rewording."""
+    line = "- [ ] #14 last thing (M, pre-#12, non-#13)"
+    ops = [{"op": "add-line", "section": "Tier 1", "line": line}]
+    assert adopted.edit(REPO, EPIC, ops).returncode == 0
+    res = adopted.edit(REPO, EPIC, [{"op": "tick", "ref": "#14"}], "--lint-all")
+    assert res.returncode == 0, res.stderr
+    assert "- [x] #14 last thing (M, pre-#12, non-#13)" in adopted.body(REPO, EPIC)
+
+
+def test_a_ref_after_a_hyphen_is_checked_like_any_bare_ref(adopted):
+    """#401: passing the short-ref lint, pre-#400 reaches the existence check."""
+    line = "- [ ] #14 (M, pre-#400)"
+    ops = [{"op": "add-line", "section": "Tier 1", "line": line}]
+    res = adopted.edit(REPO, EPIC, ops)
+    assert res.returncode == 3 and "#400 is above" in res.stderr, res.stderr
+    assert "short ref" not in res.stderr
+
+
 def test_a_fenced_comment_link_and_a_spanned_short_ref_are_text(adopted):
     """CR 314 (for 290): neither is resolved nor refused."""
     text = "```\nhttps://github.com/acme/widgets/issues/11#issuecomment-404\n```\n\n- see `watcher#348`"
