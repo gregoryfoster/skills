@@ -325,7 +325,9 @@ def run(argv: list[str]) -> int:
             "keeps its old creation date, so the newest-created row isn't always the\n"
             "highest number, and the watermark walk can stop before reaching it. Its\n"
             "transfer updates it, so updated-since still lists it.\n\n"
-            "exit codes: 0 report written; 1 usage; 2 gh or git failed (their stderr shown)."
+            "exit codes: 0 report written; 1 usage; 2 gh failed (its stderr shown).\n"
+            "A git failure costs the commit cursor only: commits is null, the reason\n"
+            "(git's stderr included) is in warnings, and the exit is 0."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
