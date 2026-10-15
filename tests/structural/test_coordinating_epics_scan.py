@@ -324,7 +324,7 @@ def test_a_git_failure_costs_the_commit_cursor_only(rig, tmp_path):
     # git's own stderr is in the warning, not just our prefix (#398): a
     # report that names no cause is a producer swallowed. git's message names
     # the directory and our prefix never does; "fatal:" would be no proof,
-    # since git translates it (CR 321).
+    # since git can translate it (CR 321).
     assert lost and nowhere in lost[0], r["warnings"]
     assert [x["number"] for x in r["new_numbers"]] == [15, 16]
 
