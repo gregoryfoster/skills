@@ -568,6 +568,29 @@ def test_last_seen_needs_a_complete_report(adopted, fields, why):
     assert adopted.edit(REPO, EPIC, ops, "--scan", report).returncode == 0
 
 
+@pytest.mark.parametrize(
+    "capped, field, refused",
+    [
+        (["listing updates"], "Last check-in", True),
+        (["listing updates"], "Last issue seen", True),
+        (["reading new comments"], "Last check-in", True),
+        (["reading the epic's new comments"], "Last check-in", True),
+        (["reading new comments"], "Last issue seen", False),
+    ],
+)
+def test_a_capped_updates_or_comments_listing_holds_the_cursors(
+    adopted, capped, field, refused
+):
+    """CR 306: the cut-off rows are exactly the ones the next window would skip."""
+    report = _report(adopted, new_numbers=[], capped=capped)
+    value = "{checked}" if field == "Last check-in" else "{last_seen}"
+    ops = [{"op": "header", "field": field, "value": value}]
+    res = adopted.edit(REPO, EPIC, ops, "--scan", report)
+    assert res.returncode == (1 if refused else 0), res.stderr
+    if refused:
+        assert "page cap" in res.stderr
+
+
 def test_log_appends_at_the_end_of_its_section_once(adopted):
     ops = [{"op": "log", "text": "{today}: #11 closed. No new issues. Next: #12."}]
     assert adopted.edit(REPO, EPIC, ops).returncode == 0

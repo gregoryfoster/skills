@@ -1089,11 +1089,39 @@ def run(argv: list[str]) -> int:
             capped = report.get("capped") or []
             if not isinstance(capped, list):
                 raise Usage(f"--scan {a.scan}: capped must be a list")
-            if any(
-                isinstance(v, str) and "{last_seen}" in v
-                for op in ops
-                for v in op.values()
-            ):
+
+            def uses(name: str) -> bool:
+                return any(
+                    isinstance(v, str) and "{" + name + "}" in v
+                    for op in ops
+                    for v in op.values()
+                )
+
+            # A capped listing is cut at its oldest-created rows, where an
+            # issue transferred in sits, and {checked} would move since past
+            # every row it never listed (CR 306).
+            cut = [
+                w
+                for w in capped
+                if w
+                in (
+                    "listing updates",
+                    "reading new comments",
+                    "reading the epic's new comments",
+                )
+            ]
+            if uses("checked") and cut:
+                raise Usage(
+                    f"the report's {', '.join(cut)} hit its page cap, so {{checked}}"
+                    " would move the window past rows it never listed. Re-scan with a"
+                    " later --since, one you have read up to"
+                )
+            if uses("last_seen"):
+                if "listing updates" in capped:
+                    raise Usage(
+                        "the report's listing updates hit its page cap, so {last_seen}"
+                        " could skip an issue transferred in. Re-scan with a later --since"
+                    )
                 if not scan["numbers_scanned"]:
                     raise Usage(
                         "the report scanned no numbers (no watermark), so {last_seen}"
