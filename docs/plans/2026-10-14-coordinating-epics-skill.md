@@ -203,3 +203,27 @@ Answered by the operator on 2026-10-14:
 - **`TestGateScriptHardening`.** Agreed. `epic-edit.py` and `scan.sh` are
   held by hand to the rule that a gate script never hides its producer's
   stderr. Widening the test to bind them is a v1.1 issue, filed in step 8.
+
+## As built (2026-10-14)
+
+Small revisions made during the build and review rounds (CR 244–320). The
+approach and scope are unchanged.
+
+- **The editor is `epic-edit.sh`,** a wrapper over `_epic_edit.py`, as
+  `scan.sh` wraps `_scan.py`. That follows the house rule that a skill
+  resolves `.sh` scripts by name.
+- **Operations:** `tick`, `untick`, `note` (the plan's `annotate`),
+  `set-line`, `add-line`, `header`, `log`, `replace-section` and
+  `add-section`. `header` also adds a missing cursor line, so adopting a
+  legacy epic needs no hand edit.
+- **The baseline** lives at
+  `${XDG_STATE_HOME:-~/.local/state}/coordinating-epics/<owner>/<repo>/<n>/`,
+  lowercased, not `<owner>-<repo>-<n>`. The flat form let `a-b/c` and
+  `a/b-c` share one baseline (CR 299).
+- **Beyond the plan:**
+  - `--scan` takes `{checked}` and `{last_seen}` from the report the
+    coordinator read, and refuses one whose new issues the body doesn't
+    mention.
+  - `--lint-all` lints a created or adopted body whole.
+  - The report carries `epic_comments` and `capped`, and its `now` comes
+    from GitHub's clock.
