@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import re
 
 import pytest
@@ -1042,6 +1043,30 @@ def test_a_write_the_read_back_contradicts_is_exit_4(adopted):
     assert (
         adopted.state_dir / "acme" / "widgets" / "10" / "last-written.md"
     ).read_text() == base
+
+
+def test_a_failed_read_back_after_the_write_still_says_written(adopted):
+    """CR 300: fetch, compare-and-swap re-fetch, PATCH, then the read-back fails."""
+    adopted.fail_on_get(EPIC, 3)
+    res = adopted.edit(REPO, EPIC, [{"op": "tick", "ref": "#11"}])
+    assert res.returncode == 4, res.stderr
+    s = summary(res)
+    assert s["written"] and s["readback"] == "failed"
+    assert "the body was written" in res.stderr and "502" in res.stderr
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores directory permissions")
+def test_a_baseline_that_cant_be_saved_is_exit_4_not_2(adopted):
+    """CR 300."""
+    d = adopted.state_dir / "acme" / "widgets" / "10"
+    d.chmod(0o500)
+    try:
+        res = adopted.edit(REPO, EPIC, [{"op": "tick", "ref": "#11"}])
+    finally:
+        d.chmod(0o700)
+    assert res.returncode == 4, res.stderr
+    s = summary(res)
+    assert s["written"] and s["readback"] == "matches" and s["baseline"] == "not saved"
 
 
 def test_a_gh_failure_is_exit_2_and_shows_ghs_own_stderr(adopted):

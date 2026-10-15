@@ -113,6 +113,8 @@ if len(parts) == 5 and parts[3] == "issues":
         fail()
     gets = st.setdefault("gets", {})
     gets[parts[4]] = gets.get(parts[4], 0) + 1
+    if st.get("fail_on_get", {}).get(parts[4]) == gets[parts[4]]:
+        fail("HTTP 502: Bad Gateway")
     change = st.get("change_on_get", {}).get(parts[4])
     if change and gets[parts[4]] == change["at"]:
         it["body"] = change["body"]
@@ -189,6 +191,13 @@ class Rig:
         """
         self.load()
         self.state.setdefault("change_on_get", {})[str(num)] = {"at": at, "body": body}
+        self.state["gets"] = {}
+        self.save()
+
+    def fail_on_get(self, num: int, at: int) -> None:
+        """The at-th GET of issue num, counted from now, fails as a 502."""
+        self.load()
+        self.state.setdefault("fail_on_get", {})[str(num)] = at
         self.state["gets"] = {}
         self.save()
 

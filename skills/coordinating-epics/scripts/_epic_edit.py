@@ -92,8 +92,9 @@ exit codes:
   3  refused: a foreign edit, a missing anchor, a count or lint failure, an
      open issue the epic doesn't list (--account [FROM]), or a new issue in the
      --scan report that the body doesn't mention. Nothing was written.
-  4  written, but the body read back differs from the body sent. The baseline
-     was not updated; read the epic before the next edit.
+  4  written, but not confirmed: the body read back differs from the body sent,
+     the read-back failed, or the baseline couldn't be saved. The summary says
+     which. Read the epic, then take it with --adopt-live before the next edit.
 """
 
 BOX_RE = re.compile(r"^(?P<indent>\s*)(?P<bullet>[-*+]) \[(?P<mark>[ xX])\] ")
@@ -1225,7 +1226,23 @@ def run(argv: list[str]) -> int:
         finally:
             os.unlink(payload)
         summary["written"] = True
-        back = normalize(fetch_body(host, a.epic))
+
+        # The PATCH landed: from here a failure must still say "written", or
+        # the next run calls this tool's own edit foreign, unexplained (CR 300).
+        def unconfirmed(why: str) -> int:
+            print(json.dumps(summary, indent=2))
+            print(
+                f"ERROR the body was written, but {why}. The baseline was not"
+                " updated: read the epic, then re-run with --adopt-live",
+                file=sys.stderr,
+            )
+            return EXIT_READBACK
+
+        try:
+            back = normalize(fetch_body(host, a.epic))
+        except Infra as e:
+            summary["readback"] = "failed"
+            return unconfirmed(f"reading it back failed:\n{e}")
         if back != normalize(text):
             summary["readback"] = "differs"
             print(
@@ -1240,9 +1257,17 @@ def run(argv: list[str]) -> int:
                 file=sys.stderr,
             )
             return EXIT_READBACK
-        write_atomic(base_path, text)
-        write_atomic(sd / "history" / f"{now.strftime('%Y%m%dT%H%M%SZ')}.md", text)
         summary["readback"] = "matches"
+        try:
+            write_atomic(base_path, text)
+        except (OSError, Infra) as e:
+            summary["baseline"] = "not saved"
+            return unconfirmed(f"saving the baseline failed: {e}")
+        try:  # a convenience copy: its loss is a warning, not an unconfirmed write
+            write_atomic(sd / "history" / f"{now.strftime('%Y%m%dT%H%M%SZ')}.md", text)
+        except (OSError, Infra) as e:
+            summary["history"] = f"not saved: {e}"
+            print(f"WARNING history copy not saved: {e}", file=sys.stderr)
         print(json.dumps(summary, indent=2))
         return EXIT_OK
     except Usage as e:
