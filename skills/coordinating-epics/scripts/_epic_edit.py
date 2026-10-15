@@ -894,7 +894,10 @@ def state_dir(arg: str | None, repo: str, num: int) -> Path:
         else Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local/state")
         / "coordinating-epics"
     )
-    return base / f"{repo.replace('/', '-')}-{num}"
+    # Nested and lowercased: GitHub names are case-insensitive, and "a-b/c"
+    # and "a/b-c" must not share a baseline (CR 299).
+    owner, name = repo.lower().split("/")
+    return base / owner / name / str(num)
 
 
 def write_atomic(path: Path, text: str) -> None:
@@ -965,11 +968,14 @@ def run(argv: list[str]) -> int:
     )
     p.add_argument(
         "--state-dir",
-        help="baseline directory (default $XDG_STATE_HOME/coordinating-epics, else ~/.local/state/...)",
+        help="baseline directory, holding OWNER/REPO/N/ (default"
+        " $XDG_STATE_HOME/coordinating-epics, else ~/.local/state/coordinating-epics)",
     )
     a = p.parse_args(argv)
     host = a.repo
-    if not re.fullmatch(r"[\w.-]+/[\w.-]+", host):
+    if not re.fullmatch(r"[\w.-]+/[\w.-]+", host) or any(
+        part in (".", "..") for part in host.split("/")
+    ):  # it names a directory, so no ".." (CR 299)
         p.error("--repo must be owner/repo")
     now = dt.datetime.now(dt.timezone.utc)
     summary: dict = {

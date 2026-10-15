@@ -42,16 +42,19 @@ def fail(msg="HTTP 404: Not Found"):
 if st.get("fail_all"):
     fail(st["fail_all"])
 
+def find(repo):  # GitHub's names are case-insensitive
+    return next((v for k, v in st["repos"].items() if k.lower() == repo.lower()), None)
+
 if args[:2] == ["issue", "list"]:
     repo = args[args.index("-R") + 1]
-    issues = st["repos"].get(repo, {}).get("issues", {})
+    issues = (find(repo) or {}).get("issues", {})
     out([{"number": int(n)} for n, it in issues.items() if it.get("state") == "open" and not it.get("pull_request")])
 
 if args[:2] == ["pr", "view"]:
     num, repo = args[2], args[args.index("-R") + 1]
     if st.get("pr_error"):
         fail(st["pr_error"])
-    closes = st["repos"].get(repo, {}).get("prs", {}).get(num)
+    closes = (find(repo) or {}).get("prs", {}).get(num)
     if closes is None:
         fail(f"GraphQL: Could not resolve to a PullRequest with the number of {num}.")
     refs = []
@@ -78,11 +81,11 @@ if method == "PATCH":
     body = json.load(open(rest[rest.index("--input") + 1]))["body"]
     st.setdefault("patches", []).append(body)
     if not st.get("patch_noop"):
-        st["repos"][repo]["issues"][parts[4]]["body"] = body
+        find(repo)["issues"][parts[4]]["body"] = body
     out({"number": int(parts[4])})
 
 repo = f"{parts[1]}/{parts[2]}"
-r = st["repos"].get(repo)
+r = find(repo)
 if r is None:
     fail()
 issues = r.get("issues", {})

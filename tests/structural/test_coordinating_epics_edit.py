@@ -86,7 +86,7 @@ def test_no_baseline_is_refused_with_the_way_forward(rig):
 
 
 def test_adopting_saves_the_baseline_and_writes_nothing(adopted):
-    assert (adopted.state_dir / "acme-widgets-10" / "last-written.md").is_file()
+    assert (adopted.state_dir / "acme" / "widgets" / "10" / "last-written.md").is_file()
     assert "patches" not in adopted.load()
 
 
@@ -99,11 +99,26 @@ def test_lint_all_checks_a_created_body_an_empty_edit_never_touches(rig):
     res = rig.edit(REPO, EPIC, [], "--adopt-live", "--lint-all")
     assert res.returncode == 3, res.stderr
     assert "SUB2" in res.stderr and "watcher#348" in res.stderr
-    assert not (rig.state_dir / "acme-widgets-10" / "last-written.md").exists()
+    assert not (rig.state_dir / "acme" / "widgets" / "10" / "last-written.md").exists()
     fix = [{"op": "set-line", "ref": "#12", "line": "- [ ] #12 after #13"}]
     res = rig.edit(REPO, EPIC, fix, "--adopt-live", "--lint-all")
     assert res.returncode == 0, res.stderr
     assert "- [ ] #12 after #13" in rig.body(REPO, EPIC)
+
+
+def test_the_baseline_is_found_whatever_the_repos_casing(adopted):
+    """CR 299: GitHub names are case-insensitive; a casing slip isn't "no baseline"."""
+    res = adopted.edit("Acme/Widgets", EPIC, [{"op": "tick", "ref": "#11"}])
+    assert res.returncode == 0, res.stderr
+
+
+def test_repos_that_flatten_alike_keep_separate_baselines(rig):
+    """CR 299: "a-b/c" and "a/b-c" were one directory."""
+    for repo in ("a-b/c", "a/b-c"):
+        rig.issue(repo, 1, body=f"- [ ] #2 in {repo}")
+    assert rig.edit("a-b/c", 1, [], "--adopt-live").returncode == 0
+    res = rig.edit("a/b-c", 1, [])
+    assert res.returncode == 3 and "no baseline" in res.stderr
 
 
 def test_an_empty_live_body_is_refused(rig):
@@ -124,7 +139,9 @@ def test_tick_writes_reads_back_and_moves_the_baseline(adopted):
     assert s["counts_before"] == {"open": 3, "done": 0}
     assert s["counts_after"] == {"open": 2, "done": 1}
     assert "- [x] #11 first thing" in adopted.body(REPO, EPIC)
-    base = (adopted.state_dir / "acme-widgets-10" / "last-written.md").read_text()
+    base = (
+        adopted.state_dir / "acme" / "widgets" / "10" / "last-written.md"
+    ).read_text()
     assert "- [x] #11" in base
 
 
@@ -723,7 +740,7 @@ def test_adopt_live_with_ops_writes_on_the_adopted_body(rig):
     assert res.returncode == 0, res.stderr
     s = summary(res)
     assert s["adopted_live"] and s["written"] and s["readback"] == "matches"
-    base = (rig.state_dir / "acme-widgets-10" / "last-written.md").read_text()
+    base = (rig.state_dir / "acme" / "widgets" / "10" / "last-written.md").read_text()
     assert "- [x] #11" in base
 
 
@@ -742,7 +759,9 @@ def test_replace_section_at_the_end_of_the_body(adopted):
 def test_each_write_keeps_a_history_copy(adopted):
     """CR 264: the fallback when the baseline is lost is a local copy of each write."""
     adopted.edit(REPO, EPIC, [{"op": "tick", "ref": "#11"}])
-    history = list((adopted.state_dir / "acme-widgets-10" / "history").glob("*.md"))
+    history = list(
+        (adopted.state_dir / "acme" / "widgets" / "10" / "history").glob("*.md")
+    )
     assert len(history) == 1
     assert history[0].read_text() == adopted.body(REPO, EPIC)
 
@@ -1014,12 +1033,14 @@ def test_a_whitespace_only_edit_during_the_run_refuses_the_write(adopted):
 
 def test_a_write_the_read_back_contradicts_is_exit_4(adopted):
     adopted.set_flag("patch_noop", True)
-    base = (adopted.state_dir / "acme-widgets-10" / "last-written.md").read_text()
+    base = (
+        adopted.state_dir / "acme" / "widgets" / "10" / "last-written.md"
+    ).read_text()
     res = adopted.edit(REPO, EPIC, [{"op": "tick", "ref": "#11"}])
     assert res.returncode == 4
     assert "baseline not updated" in res.stderr
     assert (
-        adopted.state_dir / "acme-widgets-10" / "last-written.md"
+        adopted.state_dir / "acme" / "widgets" / "10" / "last-written.md"
     ).read_text() == base
 
 
@@ -1064,6 +1085,7 @@ def test_counts_catch_a_transform_that_drops_a_line(adopted, monkeypatch, capsys
     "ops, args",
     [
         (None, ["--repo", "not-a-repo"]),
+        (None, ["--repo", "../.."]),
         ('[{"op": "tick", "ref": 12}]', []),
         ('[{"op": "frobnicate"}]', []),
         ('[{"op": "add-line", "line": "- [ ] #14 x"}]', []),
@@ -1077,6 +1099,7 @@ def test_counts_catch_a_transform_that_drops_a_line(adopted, monkeypatch, capsys
     ],
     ids=[
         "bad-repo",
+        "dot-dot-repo",
         "ref-not-a-string",
         "unknown-op",
         "add-line-no-anchor",
