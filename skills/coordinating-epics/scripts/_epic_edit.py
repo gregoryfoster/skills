@@ -1334,6 +1334,7 @@ def run(argv: list[str]) -> int:
             )
         text = "\n".join(new) + "\n"
         fd, payload = tempfile.mkstemp(dir=None, prefix="epic-edit-", suffix=".json")
+        patch_error = None
         try:
             with os.fdopen(fd, "w") as f:
                 json.dump({"body": text}, f)
@@ -1348,26 +1349,52 @@ def run(argv: list[str]) -> int:
                 ],
                 "writing the epic",
             )
+        except Infra as e:
+            # A 502 or a timeout can come back after GitHub applied the
+            # PATCH. The body says which; the exit code doesn't (CR 309).
+            patch_error = e
         finally:
             os.unlink(payload)
-        summary["written"] = True
 
-        # The PATCH landed: from here a failure must still say "written", or
-        # the next run calls this tool's own edit foreign, unexplained (CR 300).
-        def unconfirmed(why: str) -> int:
+        # Once the PATCH may have landed, a failure must still say so, or the
+        # next run calls this tool's own edit foreign, unexplained (CR 300).
+        def unconfirmed(why: str, head: str = "the body was written, but") -> int:
             print(json.dumps(summary, indent=2))
             print(
-                f"ERROR the body was written, but {why}. The baseline was not"
-                " updated: read the epic, then re-run with --adopt-live",
+                f"ERROR {head} {why}. The baseline was not updated: read the epic,"
+                " then re-run with --adopt-live",
                 file=sys.stderr,
             )
             return EXIT_READBACK
 
         try:
-            back = normalize(fetch_body(host, a.epic))
+            back_raw = fetch_body(host, a.epic)
         except Infra as e:
+            if patch_error:
+                summary["written"] = "unknown"
+                return unconfirmed(
+                    f"reading the body to see whether it landed failed too:\n{e}",
+                    head=f"the PATCH failed ({str(patch_error).splitlines()[-1]}), and",
+                )
+            summary["written"] = True
             summary["readback"] = "failed"
             return unconfirmed(f"reading it back failed:\n{e}")
+        back = normalize(back_raw)
+        if patch_error:
+            if back == normalize(text):
+                print(
+                    f"WARNING gh reported the PATCH failed, but it landed: {patch_error}",
+                    file=sys.stderr,
+                )
+            elif split_raw(back_raw) == live_lines:
+                raise patch_error  # nothing written: exit 2
+            else:
+                summary["written"] = "unknown"
+                return unconfirmed(
+                    "the body now matches neither the one sent nor the one before",
+                    head=f"the PATCH failed ({str(patch_error).splitlines()[-1]}), and",
+                )
+        summary["written"] = True
         if back != normalize(text):
             summary["readback"] = "differs"
             print(

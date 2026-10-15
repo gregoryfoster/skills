@@ -91,6 +91,8 @@ if method == "PATCH":
     st.setdefault("patches", []).append(body)
     if not st.get("patch_noop"):
         find(repo)["issues"][parts[4]]["body"] = body
+    if st.get("patch_fails_after_apply"):  # GitHub applied it; gh saw a 502
+        fail("HTTP 502: Bad Gateway")
     out({"number": int(parts[4])})
 
 repo = f"{parts[1]}/{parts[2]}"

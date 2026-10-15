@@ -1239,6 +1239,34 @@ def test_a_gh_outage_during_lint_is_exit_2_not_a_refusal(adopted, line, path):
     assert "patches" not in adopted.load()
 
 
+def test_a_patch_that_lands_despite_a_502_is_a_write(adopted):
+    """CR 309: or the next run calls this tool's own tick a foreign one."""
+    adopted.set_flag("patch_fails_after_apply", True)
+    res = adopted.edit(REPO, EPIC, [{"op": "tick", "ref": "#11"}])
+    assert res.returncode == 0, res.stderr
+    assert summary(res)["written"] is True and "it landed" in res.stderr
+    adopted.set_flag("patch_fails_after_apply", False)
+    res = adopted.edit(REPO, EPIC, [{"op": "tick", "ref": "#12"}])
+    assert res.returncode == 0, res.stderr
+
+
+def test_a_patch_that_failed_and_didnt_land_is_exit_2(adopted):
+    """CR 309: the body is unchanged, so nothing was written."""
+    adopted.set_flag("fail_paths", {"PATCH": "HTTP 502: Bad Gateway"})
+    res = adopted.edit(REPO, EPIC, [{"op": "tick", "ref": "#11"}])
+    assert res.returncode == 2 and "502" in res.stderr
+    assert adopted.body(REPO, EPIC) == BODY
+
+
+def test_a_failed_patch_and_a_third_body_is_exit_4_written_unknown(adopted):
+    """CR 309: fetch, compare-and-swap re-fetch, failed PATCH, then a body nobody sent."""
+    adopted.set_flag("fail_paths", {"PATCH": "HTTP 502: Bad Gateway"})
+    adopted.change_on_get(EPIC, 3, BODY + "\n- someone else's line\n")
+    res = adopted.edit(REPO, EPIC, [{"op": "tick", "ref": "#11"}])
+    assert res.returncode == 4, res.stderr
+    assert summary(res)["written"] == "unknown" and "PATCH failed" in res.stderr
+
+
 def test_a_gh_failure_is_exit_2_and_shows_ghs_own_stderr(adopted):
     adopted.set_flag("fail_all", "HTTP 401: Bad credentials")
     res = adopted.edit(REPO, EPIC, [{"op": "tick", "ref": "#11"}])
