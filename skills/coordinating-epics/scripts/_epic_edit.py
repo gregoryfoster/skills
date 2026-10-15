@@ -60,13 +60,16 @@ operations (a JSON array, from --ops FILE or --ops - for stdin):
   {"op": "replace-section", "heading": "Measured state", "text": "..."}
                                               replace a section's body
   {"op": "add-section", "heading": "Log", "text": "...", "before": "Notes"}
-                                              add a "## heading" section, once:
-                                              before "before", else at the end
+                                              add a section, once: before
+                                              "before" at its level, else at
+                                              the end at the sections' level
 
   A header op on a cursor field the body lacks (Last check-in, Last probe,
-  Last issue seen, Last verified SHA, Next) adds its line after the header
-  block, or before the first heading. With add-section, that brings an
-  adopted epic onto the template without a hand edit.
+  Last issue seen, Last verified SHA, Next) adds its line to the top-level
+  "- **Field:**" list holding the cursor lines, else to the one above the
+  first section, else just before that section (a "#" title stays above).
+  With add-section, that brings an adopted epic onto the template without a
+  hand edit.
 
   A ref is "#N" for this repo or "owner/repo#N". A ref's line is the checklist
   item, bullet or table row whose first token is that ref. In any text,
@@ -1158,9 +1161,10 @@ def run(argv: list[str]) -> int:
                     for v in op.values()
                 )
 
-            # A capped listing is cut at its oldest-created rows, where an
-            # issue transferred in sits, and {checked} would move since past
-            # every row it never listed (CR 306).
+            # A capped listing left rows unlisted: the updates listing its
+            # oldest-created, where an issue transferred in sits, a comments
+            # listing its newest. {checked} would move since past them all
+            # (CR 306).
             cut = [
                 w
                 for w in capped
