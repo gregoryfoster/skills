@@ -400,20 +400,21 @@ def headings(lines: list[str]) -> list[tuple[int, int, str]]:
     return out
 
 
+def section_headings(lines: list[str]) -> list[tuple[int, int, str]]:
+    """headings() less a title: a first heading shallower than all the rest."""
+    hs = headings(lines)
+    if len(hs) > 1 and all(lvl > hs[0][1] for _, lvl, _ in hs[1:]):
+        return hs[1:]
+    return hs
+
+
 def section_level(lines: list[str]) -> int:
     """The level a new last section takes: the shallowest the sections use.
 
-    A first heading whose level appears nowhere else is the title, not a
-    section, so "# Burn-down" over "##" sections gives 2. No sections: 2.
+    A title isn't a section, so "# Burn-down" over "##" sections gives 2
+    (CR 305). No sections: 2.
     """
-    levels = [lvl for _, lvl, _ in headings(lines)]
-    if (
-        levels
-        and levels.count(levels[0]) == 1
-        and all(lv > levels[0] for lv in levels[1:])
-    ):
-        levels = levels[1:]
-    return min(levels, default=2)
+    return min((lvl for _, lvl, _ in section_headings(lines)), default=2)
 
 
 def section_span(lines: list[str], heading: str) -> tuple[int, int]:
@@ -465,18 +466,37 @@ def after_block(lines: list[str], i: int) -> int:
     return end
 
 
-def header_end(lines: list[str]) -> int:
-    """Where a new header line goes: after the field lines above the first
-    heading, else just before that heading (or the body's end)."""
-    hs = headings(lines)
-    first = hs[0][0] if hs else len(lines)
+def header_end(lines: list[str]) -> tuple[int, bool]:
+    """(where a new header line goes, whether it joins an existing field list).
+
+    After the run of "- **Field:**" items holding the cursor lines, else the
+    list-item fields above the first section, and after each one's
+    sub-bullets (as add-line, CR 250). A bold-led paragraph is no field list.
+    Else just before the first section heading, a title kept above (CR 308).
+    """
     fence = fenced(lines)
-    fields = [i for i in range(first) if not fence[i] and FIELD_RE.match(lines[i])]
-    if fields:
-        return fields[-1] + 1
+    secs = section_headings(lines)
+    first = secs[0][0] if secs else len(lines)
+
+    def list_field(i: int) -> bool:
+        return (
+            not fence[i]
+            and bool(LIST_MARK_RE.match(lines[i]))
+            and bool(FIELD_RE.match(lines[i]))
+        )
+
+    starts = [
+        i for i in range(len(lines)) if list_field(i) and is_cursor_line(lines[i])
+    ]
+    starts = starts or [i for i in range(first) if list_field(i)]
+    if starts:
+        end = after_block(lines, starts[0])
+        while end < len(lines) and list_field(end):
+            end = after_block(lines, end)
+        return end, True
     while first > 0 and not lines[first - 1].strip():
         first -= 1
-    return first
+    return first, False
 
 
 def section_tail(lines: list[str], start: int, end: int) -> int:
@@ -662,15 +682,11 @@ def apply_ops(
                     # An adopted epic gets its cursors through here, not a
                     # hand edit (CR 292). Other fields aren't added: a typo
                     # would make a line no script reads.
-                    pos = header_end(lines)
+                    pos, joins = header_end(lines)
                     new = [f"- **{CURSOR_FIELDS[field.lower()]}:** {value}".rstrip()]
                     if pos < len(lines) and lines[pos].strip():
                         new.append("")
-                    if (
-                        pos
-                        and lines[pos - 1].strip()
-                        and not FIELD_RE.match(lines[pos - 1])
-                    ):
+                    if not joins and pos and lines[pos - 1].strip():
                         new.insert(0, "")
                     lines[pos:pos] = new
                     continue

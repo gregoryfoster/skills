@@ -572,6 +572,42 @@ def test_moving_a_line_between_sections_in_one_call_is_fine(adopted):
     assert res.returncode == 0, res.stderr
 
 
+@pytest.mark.parametrize(
+    "body, want",
+    [
+        (
+            BODY,
+            "- **Next:** #12\n- **Last verified SHA:** abc1234\n\n## Tier 1",
+        ),
+        (
+            "- **Next:** #12\n  - brief posted\n\n## Tier 1\n\n- [ ] #12 b\n",
+            "- **Next:** #12\n  - brief posted\n- **Last verified SHA:** abc1234\n\n## Tier 1",
+        ),
+        (
+            "**Goal:** ship\nthe widgets.\n\n## Tier 1\n\n- [ ] #12 b\n",
+            "**Goal:** ship\nthe widgets.\n\n- **Last verified SHA:** abc1234\n\n## Tier 1",
+        ),
+        (
+            "# Burn-down\n\nIntro.\n\n## Tier 1\n\n- [ ] #12 b\n",
+            "# Burn-down\n\nIntro.\n\n- **Last verified SHA:** abc1234\n\n## Tier 1",
+        ),
+    ],
+    ids=[
+        "fields-under-a-title",
+        "field-with-sub-bullets",
+        "bold-led-paragraph",
+        "title-no-fields",
+    ],
+)
+def test_a_new_header_line_joins_the_header_block(rig, body, want):
+    """CR 308: never inside a paragraph, between a field and its sub-bullets, or above a title."""
+    rig.issue(REPO, EPIC, body=body)
+    ops = [{"op": "header", "field": "Last verified SHA", "value": "abc1234"}]
+    res = rig.edit(REPO, EPIC, ops, "--adopt-live")
+    assert res.returncode == 0, res.stderr
+    assert want in rig.body(REPO, EPIC), rig.body(REPO, EPIC)
+
+
 def test_header_adds_only_a_cursor_field(adopted):
     """CR 292: a typo'd field would make a line no script reads."""
     ops = [{"op": "header", "field": "Last chek-in", "value": "x"}]
