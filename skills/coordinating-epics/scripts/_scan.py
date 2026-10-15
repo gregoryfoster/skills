@@ -10,8 +10,9 @@ Each run that used one cursor alone missed something (gregoryfoster/skills#348):
 - **number watermark:** issues and PRs numbered above the last one seen,
   including follow-ups that never mention the epic (archiver#300 finding 10);
 - **updated since:** anything updated since the last check-in, with the new or
-  edited comments on the epic's own items. This catches a reply on a closed
-  child, or a gate flipped in another thread (seventh run 152, watcher F13);
+  edited comments on the epic's own items and on the epic itself. This catches
+  a reply on a closed child, a gate flipped in another thread, or a sibling
+  coordinator's note on the epic (seventh run 152, watcher F13, CR 289);
 - **commit range:** every commit from the last verified SHA to the tip, with
   or without an issue number, attributed (broker#80 128, watcher F39).
 
@@ -119,6 +120,20 @@ def pages(path: str, what: str, stop=None):
             return
     # A cap reached in silence reads as a complete answer (CR 259).
     CAPPED.append(f"{what}: stopped at {MAX_PAGES * 100} rows; the list is incomplete")
+
+
+def new_comments(host: str, num: int, since: str, what: str) -> list[dict]:
+    return [
+        {
+            "id": c["id"],
+            "author": (c.get("user") or {}).get("login"),
+            "created_at": c.get("created_at"),
+            "updated_at": c.get("updated_at"),
+            "edited": c.get("updated_at") != c.get("created_at"),
+            "url": c.get("html_url"),
+        }
+        for c in pages(f"repos/{host}/issues/{num}/comments?since={since}", what)
+    ]
 
 
 def issue_row(it: dict, host: str, epic: int, items: set[str]) -> dict:
@@ -392,6 +407,7 @@ def run(argv: list[str]) -> int:
         if cur["since"] is None:
             warnings.append("no since: updates and comments not scanned")
             report["updated_since"] = None
+            report["epic_comments"] = None
         else:
             since = cur["since"]
             rows = []
@@ -402,22 +418,16 @@ def run(argv: list[str]) -> int:
                     continue
                 row = issue_row(it, host, a.epic, items)
                 if row["in_epic"]:
-                    row["new_comments"] = [
-                        {
-                            "id": c["id"],
-                            "author": (c.get("user") or {}).get("login"),
-                            "created_at": c.get("created_at"),
-                            "updated_at": c.get("updated_at"),
-                            "edited": c.get("updated_at") != c.get("created_at"),
-                            "url": c.get("html_url"),
-                        }
-                        for c in pages(
-                            f"repos/{host}/issues/{it['number']}/comments?since={since}",
-                            "reading new comments",
-                        )
-                    ]
+                    row["new_comments"] = new_comments(
+                        host, it["number"], since, "reading new comments"
+                    )
                 rows.append(row)
             report["updated_since"] = sorted(rows, key=lambda r: r["number"])
+            # The epic is no row of its own, but a sibling coordinator or the
+            # operator writes to it by comment (siblings.md) (CR 289).
+            report["epic_comments"] = new_comments(
+                host, a.epic, since, "reading the epic's new comments"
+            )
             report["max_number"] = max(
                 [report["max_number"]] + [r["number"] for r in rows]
             )

@@ -214,6 +214,28 @@ def test_an_issue_url_is_a_ref_as_github_renders_it(rig):
     assert last["attribution"] == "child" and last["children"] == ["acme/widgets#12"]
 
 
+def test_new_comments_on_the_epic_itself_are_reported(rig):
+    """CR 289: siblings.md sends a sibling coordinator's note to the epic's comments."""
+    rig.comment(
+        REPO,
+        EPIC,
+        801,
+        created_at="2026-10-02T11:00:00Z",
+        updated_at="2026-10-02T11:00:00Z",
+    )
+    rig.comment(
+        REPO,
+        EPIC,
+        501,
+        created_at="2026-09-01T11:00:00Z",
+        updated_at="2026-09-01T11:00:00Z",
+    )
+    r = scan(rig)
+    assert [c["id"] for c in r["epic_comments"]] == [801]
+    assert 10 not in {x["number"] for x in r["updated_since"]}
+    assert scan(rig, "--since", "2099-01-01T00:00Z")["epic_comments"] == []
+
+
 def test_cross_repo_refs_carry_state_or_say_why_not(rig):
     r = scan(rig)
     cross = {x["ref"]: x for x in r["cross_repo"]}
@@ -232,6 +254,7 @@ def test_a_missing_cursor_is_skipped_loudly_not_guessed(rig):
     assert (
         r["new_numbers"] is None and r["updated_since"] is None and r["commits"] is None
     )
+    assert r["epic_comments"] is None
     assert len(r["warnings"]) == 3
 
 

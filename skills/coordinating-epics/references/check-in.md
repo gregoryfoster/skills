@@ -80,7 +80,7 @@ From the closing comment, the PR, and every comment since the hand-off:
 
 `scan.sh` reports three cursors, because each one alone missed something:
 - **Numbers above `Last issue seen`**, issues and PRs (they share a number space). This catches follow-ups that never mention the epic. A search by creation date returned nothing where the number watermark worked (archiver 10, 17).
-- **Updated since `Last check-in`**, with new and edited comments on the epic's items. This catches a reply on a closed child, a gate flipped in another thread, or a late approval (private-backlog 152, watcher F13, status 74).
+- **Updated since `Last check-in`**, with new and edited comments on the epic's items. This catches a reply on a closed child, a gate flipped in another thread, or a late approval (private-backlog 152, watcher F13, status 74). New comments on the epic itself come apart, as `epic_comments`: a sibling coordinator or the operator writes there, never in the body ([siblings.md](siblings.md)).
 - **The commit range**, from §1.
 
 Also re-read:

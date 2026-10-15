@@ -101,7 +101,7 @@ On "I finished #N", "next", or a report between threads:
    - corrections to any claim, searched everywhere it was made.
 
    Write them back as **comments**. A comment only appends, so it can't race.
-3. **Re-scan and slot** (§3). Each new item is a child, closed-in-fact, a split, out of epic, a duplicate, or parked. Measure before you slot.
+3. **Re-scan and slot** (§3), reading the epic's own new comments too. Each new item is a child, closed-in-fact, a split, out of epic, a duplicate, or parked. Measure before you slot.
 4. **Re-check blockers and gates** (§4). Probe each one's observable condition; don't wait to be told. Read the latest comment on each cross-repo ref, and the trigger of each parked item.
 5. **Choose the next child** (§5): the order rule, then the tiebreaks written on the epic. Say when the next child is the last unblocked one. When nothing is unblocked, the hand-off is the blockers instead: each with its owner, its evidence, and the options.
 6. **Hand off** ([hand-off.md](references/hand-off.md)). Post the brief on the issue, after a pre-flight against `origin/main`: what it renames or removes, and who uses that today. Reply with the next ID and a kickoff prompt of 2–6 lines that points to the brief.
