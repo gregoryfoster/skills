@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import email.utils
 import json
 import os
 import re
@@ -40,7 +41,7 @@ from _epic_edit import (  # noqa: E402
     Infra,
     Parser,
     fenced,
-    fetch_body,
+    gh,
     gh_json,
     key,
     line_ref,
@@ -66,6 +67,37 @@ def parse_ts(value: str) -> dt.datetime:
 def utc_z(value: str) -> str:
     """`…Z` in UTC. A `+02:00` offset would reach GitHub's query as a space (CR 256)."""
     return parse_ts(value).astimezone(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def fetch_epic(host: str, epic: int, warnings: list[str]) -> tuple[str, str]:
+    """(body, now): now is GitHub's own clock, from the response's Date header.
+
+    It becomes {checked} and the next window's since, which GitHub compares
+    with its own updated_at. A local clock running ahead would open a gap
+    between two windows that neither scan sees (CR 301).
+    """
+    out = gh(["api", "-i", f"repos/{host}/issues/{epic}"], "fetching the epic")
+    parts = re.split(r"\r?\n\r?\n", out, maxsplit=1)
+    head, body = (parts[0], parts[1]) if len(parts) == 2 else ("", out)
+    try:
+        data = json.loads(body)
+    except json.JSONDecodeError:
+        raise Infra(
+            f"fetching the epic: gh returned non-JSON: {body[:200]!r}"
+        ) from None
+    for ln in head.splitlines():
+        if ln.lower().startswith("date:"):
+            try:
+                when = email.utils.parsedate_to_datetime(ln[5:].strip())
+                return data.get("body") or "", when.astimezone(
+                    dt.timezone.utc
+                ).strftime("%Y-%m-%dT%H:%M:%SZ")
+            except (TypeError, ValueError):
+                break
+    warnings.append("GitHub sent no usable Date header: 'now' is this machine's clock")
+    return data.get("body") or "", dt.datetime.now(dt.timezone.utc).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
 
 
 def header_fields(lines: list[str]) -> dict[str, str]:
@@ -362,11 +394,11 @@ def run(argv: list[str]) -> int:
             a.since = utc_z(a.since)
         except ValueError as e:
             p.error(f"--since: {e}")
-    now = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     warnings: list[str] = []
     CAPPED.clear()
     try:
-        lines = normalize(fetch_body(host, a.epic))
+        raw_body, now = fetch_epic(host, a.epic, warnings)
+        lines = normalize(raw_body)
         cur = cursors_from_body(lines, warnings)
         if a.since:
             cur["since"] = a.since

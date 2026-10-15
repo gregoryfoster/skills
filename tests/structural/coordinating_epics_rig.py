@@ -29,8 +29,14 @@ st.setdefault("calls", []).append(args)
 def save():
     json.dump(st, open(state_path, "w"))
 
+INCLUDE = "-i" in args  # gh api -i: the status line and headers first
+
 def out(obj):
     save()
+    if INCLUDE:
+        date = st.get("server_date", "Wed, 14 Oct 2026 18:03:27 GMT")
+        print("HTTP/2.0 200 OK\nContent-Type: application/json\r")
+        print(f"Date: {date}\r\n\r")
     print(json.dumps(obj))
     sys.exit(0)
 
@@ -68,7 +74,7 @@ if args[0] != "api":
     fail("unsupported")
 
 method = "GET"
-rest = args[1:]
+rest = [x for x in args[1:] if x != "-i"]
 if rest[:2] == ["-X", "PATCH"]:
     method, rest = "PATCH", rest[2:]
 path = rest[0]

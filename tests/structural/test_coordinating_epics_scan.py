@@ -173,6 +173,17 @@ def test_a_bots_commit_is_attributed_to_the_bot(rig):
     assert scan(rig)["commits"][0]["attribution"] == "bot"
 
 
+def test_now_is_githubs_clock_not_this_machines(rig):
+    """CR 301: now becomes the next window's since, which GitHub compares with its own clock."""
+    rig.set_flag("server_date", "Tue, 13 Oct 2026 07:05:09 GMT")
+    r = scan(rig)
+    assert r["now"] == "2026-10-13T07:05:09Z"
+    assert not any("Date header" in w for w in r["warnings"])
+    rig.set_flag("server_date", "not a date")
+    r = scan(rig)
+    assert any("Date header" in w for w in r["warnings"]), r["warnings"]
+
+
 def test_numbers_above_the_watermark_include_unlinked_issues_and_prs(rig):
     rows = {x["number"]: x for x in scan(rig)["new_numbers"]}
     assert sorted(rows) == [15, 16]
