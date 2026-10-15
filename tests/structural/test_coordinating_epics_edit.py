@@ -113,6 +113,14 @@ def test_the_baseline_is_found_whatever_the_repos_casing(adopted):
     assert res.returncode == 0, res.stderr
 
 
+def test_the_baseline_directory_is_named_in_lowercase(rig):
+    """CR 314 (for 299): macOS ignores case, so only the name on disk shows it."""
+    rig.issue(REPO, EPIC, body=BODY)
+    assert rig.edit("Acme/Widgets", EPIC, [], "--adopt-live").returncode == 0
+    assert [p.name for p in rig.state_dir.iterdir()] == ["acme"]
+    assert [p.name for p in (rig.state_dir / "acme").iterdir()] == ["widgets"]
+
+
 def test_repos_that_flatten_alike_keep_separate_baselines(rig):
     """CR 299: "a-b/c" and "a/b-c" were one directory."""
     for repo in ("a-b/c", "a/b-c"):
@@ -429,6 +437,14 @@ def test_a_malformed_report_row_is_a_usage_error(adopted, rows):
     report = _report(adopted, new_numbers=rows)
     res = adopted.edit(REPO, EPIC, [], "--scan", report)
     assert res.returncode == 1 and "Traceback" not in res.stderr, res.stderr
+
+
+@pytest.mark.parametrize("capped", ["listing updates", {"x": 1}])
+def test_capped_must_be_a_list(adopted, capped):
+    """CR 314 (for 302)."""
+    report = _report(adopted, new_numbers=[], capped=capped)
+    res = adopted.edit(REPO, EPIC, [], "--scan", report)
+    assert res.returncode == 1 and "capped must be a list" in res.stderr, res.stderr
 
 
 @pytest.mark.parametrize(
@@ -860,6 +876,17 @@ def test_a_note_on_a_row_without_a_closing_pipe_ends_the_row(rig):
     assert "\n| #13 | sdk later\n" in rig.body(REPO, EPIC)
 
 
+def test_a_row_ending_in_an_escaped_pipe_has_no_closing_pipe(rig):
+    """CR 314 (for 286): "\\|" is cell text, so the note goes after it."""
+    rig.issue(
+        REPO, EPIC, body=BODY.replace("| #13 | when the SDK ships |", "| #13 | a \\|")
+    )
+    assert rig.edit(REPO, EPIC, [], "--adopt-live").returncode == 0
+    res = rig.edit(REPO, EPIC, [{"op": "note", "ref": "#13", "text": "later"}])
+    assert res.returncode == 0, res.stderr
+    assert "\n| #13 | a \\| later\n" in rig.body(REPO, EPIC)
+
+
 def test_a_note_on_a_row_refuses_a_bare_pipe(adopted):
     res = adopted.edit(REPO, EPIC, [{"op": "note", "ref": "#13", "text": "a | b"}])
     assert res.returncode == 3 and "\\|" in res.stderr
@@ -988,6 +1015,22 @@ def test_a_bare_ref_after_this_repos_own_qualified_ref_is_fine(adopted):
     line = "- [ ] #14 after acme/widgets#11, #12"
     ops = [{"op": "add-line", "section": "Tier 1", "line": line}]
     assert adopted.edit(REPO, EPIC, ops).returncode == 0
+
+
+def test_a_fenced_comment_link_and_a_spanned_short_ref_are_text(adopted):
+    """CR 314 (for 290): neither is resolved nor refused."""
+    text = "```\nhttps://github.com/acme/widgets/issues/11#issuecomment-404\n```\n\n- see `watcher#348`"
+    ops = [{"op": "replace-section", "heading": "Parked", "text": text}]
+    res = adopted.edit(REPO, EPIC, ops)
+    assert res.returncode == 0, res.stderr
+
+
+def test_a_410_on_an_existence_check_is_a_finding_not_an_outage(adopted):
+    """CR 314 (for 304): a deleted issue is gone, which is the lint's business."""
+    adopted.set_flag("fail_paths", {"issues/99": "HTTP 410: Gone"})
+    ops = [{"op": "add-line", "section": "Tier 1", "line": "- [ ] #99 x"}]
+    res = adopted.edit(REPO, EPIC, ops)
+    assert res.returncode == 3 and "#99" in res.stderr, res.stderr
 
 
 def test_a_transferred_issue_above_the_newest_created_is_not_refused(adopted):
@@ -1285,6 +1328,22 @@ def test_a_failed_patch_and_a_third_body_is_exit_4_written_unknown(adopted):
     res = adopted.edit(REPO, EPIC, [{"op": "tick", "ref": "#11"}])
     assert res.returncode == 4, res.stderr
     assert summary(res)["written"] == "unknown" and "PATCH failed" in res.stderr
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores directory permissions")
+def test_a_history_copy_that_cant_be_saved_is_a_warning(adopted):
+    """CR 314 (for 300): the baseline is what matters; the copy is a convenience."""
+    hist = adopted.state_dir / "acme" / "widgets" / "10" / "history"
+    hist.mkdir(parents=True, exist_ok=True)
+    hist.chmod(0o500)
+    try:
+        res = adopted.edit(REPO, EPIC, [{"op": "tick", "ref": "#11"}])
+    finally:
+        hist.chmod(0o700)
+    assert res.returncode == 0, res.stderr
+    s = summary(res)
+    assert s["readback"] == "matches" and s["history"].startswith("not saved")
+    assert "WARNING history copy not saved" in res.stderr
 
 
 def test_a_gh_failure_is_exit_2_and_shows_ghs_own_stderr(adopted):
