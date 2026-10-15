@@ -905,12 +905,15 @@ def run(argv: list[str]) -> int:
                     raise Usage(
                         f"--scan {a.scan}: {name} must be a list of rows with a number"
                     )
+            wm = (report.get("cursors") or {}).get("watermark")
             scan = {
                 "checked": report["now"],
                 "last_seen": f"#{report['max_number']}",
                 # Everything the report moves the watermark past: the number walk's
                 # finds, and any issue updated-since shows above the old watermark
-                # (a transfer keeps its old creation date) (CR 276).
+                # (a transfer keeps its old creation date) (CR 276). With no
+                # watermark, {last_seen} is refused below and nothing moves past
+                # anything, so an old issue's update needs no mention (CR 287).
                 "new_issues": sorted(
                     {
                         r["number"]
@@ -918,9 +921,7 @@ def run(argv: list[str]) -> int:
                         + [
                             u
                             for u in report.get("updated_since") or []
-                            if isinstance(u.get("number"), int)
-                            and u["number"]
-                            > ((report.get("cursors") or {}).get("watermark") or 0)
+                            if wm is not None and u["number"] > wm
                         ]
                         if r.get("kind") == "issue" and r.get("number") != a.epic
                     }

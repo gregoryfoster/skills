@@ -322,6 +322,19 @@ def test_an_issue_only_updated_since_shows_still_needs_accounting(adopted):
     assert res.returncode == 3 and "doesn't mention: #14" in res.stderr
 
 
+def test_with_no_watermark_an_old_issues_update_needs_no_mention(adopted):
+    """CR 287: {last_seen} is refused, so nothing moves past #5; {checked} alone is fine."""
+    report = _report(
+        adopted,
+        cursors={"watermark": None},
+        new_numbers=None,
+        updated_since=[{"number": 5, "kind": "issue"}],
+    )
+    ops = [{"op": "header", "field": "Last check-in", "value": "{checked}"}]
+    res = adopted.edit(REPO, EPIC, ops, "--scan", report)
+    assert res.returncode == 0, res.stderr
+
+
 @pytest.mark.parametrize(
     "op",
     [
