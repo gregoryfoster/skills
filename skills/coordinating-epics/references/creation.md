@@ -79,8 +79,8 @@ Walk proposed closures with the operator. Four parts each: what it asks, what ch
 - **Draft the body to a file first.** A refused create then costs one handed-over command, not a rewrite (power-map 60). Creation is the one body write that doesn't go through `epic-edit.sh`, so guard it by hand. Refuse an empty or whitespace-only file. Take the number from the URL `gh` prints, and stop if it isn't the one the body predicted, `$PREDICTED` (archiver 2, watcher F11). A mismatch means the body's own refs to it are wrong: fix them with `epic-edit.sh` before going on.
 
   ```bash
-  grep -q '[^[:space:]]' "$SCRATCH/epic.md" \
-    && URL=$(gh issue create -R OWNER/REPO --title "…" --body-file "$SCRATCH/epic.md") \
+  grep -q '[^[:space:]]' "${SCRATCH:?}/epic.md" \
+    && URL=$(gh issue create -R OWNER/REPO --title "…" --body-file "${SCRATCH:?}/epic.md") \
     && N=${URL##*/} && echo "created #$N" \
     && bash "<epic-edit.sh>" --repo OWNER/REPO --epic "$N" --adopt-live --lint-all --ops - <<<'[]' \
     && { [ "$N" = "$PREDICTED" ] || { echo "created #$N, but the body predicted #$PREDICTED" >&2; false; }; }

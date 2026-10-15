@@ -59,12 +59,14 @@ for S in epic-edit.sh scan.sh; do SD=
 done
 ```
 
+`$SCRATCH` is a directory outside the repo that lasts across calls: the harness's scratchpad, or one `mktemp -d` made once. Each Bash call is a fresh shell, so set `SCRATCH=<that path>` in every command that uses it; `${SCRATCH:?}` stops one that doesn't.
+
 ## Starting
 
 **Adopt an epic that exists.** Read it in full, with its comments. Take it as the baseline and bring it onto [the template](assets/epic-template.md) in the same call, never by hand: `header` ops add the missing cursor lines, `add-section` the order rule, the tiers and the log, and `set-line` or `add-line` the checklist. Dry-run it first:
 
 ```bash
-bash "<epic-edit.sh>" --repo OWNER/REPO --epic N --adopt-live --ops "$SCRATCH/adopt.json" --dry-run
+bash "<epic-edit.sh>" --repo OWNER/REPO --epic N --adopt-live --ops "${SCRATCH:?}/adopt.json" --dry-run
 ```
 
 **Create one.** There are six ways in: a design doc's Steps table, a backlog plus the operator's one-line rule, a number range, children that need scoping first, an upstream adoption checklist, and a whole-backlog audit. [creation.md](references/creation.md) has each. All of them produce the same things:
@@ -81,7 +83,7 @@ Show the operator the drafted body and the proposed closures before anything is 
 
 On "I finished #N", "next", or a report between threads:
 
-0. **Read the state.** Run `bash "<scan.sh>" --repo OWNER/REPO --epic N > "$SCRATCH/scan.json"` for what arrived, and `epic-edit.sh … --dry-run` for whether the body moved. A box the implementer ticked is a claim. An operator request to unblock someone outside waits on nothing: do it first.
+0. **Read the state.** Run `bash "<scan.sh>" --repo OWNER/REPO --epic N > "${SCRATCH:?}/scan.json"` for what arrived, and `epic-edit.sh … --dry-run` for whether the body moved. A box the implementer ticked is a claim. An operator request to unblock someone outside waits on nothing: do it first.
 1. **Verify from evidence** ([check-in.md](references/check-in.md) §1):
    - the whole commit range since the hand-off;
    - CI by job on the final SHA and on `main`'s tip;
@@ -105,7 +107,7 @@ On "I finished #N", "next", or a report between threads:
 4. **Re-check blockers and gates** (§4). Probe each one's observable condition; don't wait to be told. Read the latest comment on each cross-repo ref, and the trigger of each parked item.
 5. **Choose the next child** (§5): the order rule, then the tiebreaks written on the epic. Say when the next child is the last unblocked one. When nothing is unblocked, the hand-off is the blockers instead: each with its owner, its evidence, and the options.
 6. **Hand off** ([hand-off.md](references/hand-off.md)). Post the brief on the issue, after a pre-flight against `origin/main`: what it renames or removes, and who uses that today. Reply with the next ID and a kickoff prompt of 2–6 lines that points to the brief.
-7. **Write the epic in one call.** The ticks and notes, the header, and a log line, which is written even when nothing changed. With `--scan "$SCRATCH/scan.json"` (the report you read: step 0's, or a later re-scan you've acted on), `Last check-in` takes `{checked}`, the scan's own time, and `Last issue seen` takes `{last_seen}`. The next window then starts where that scan looked. Never type either value, and never pass a report you haven't read. The editor refuses one whose new issues the body doesn't mention.
+7. **Write the epic in one call.** The ticks and notes, the header, and a log line, which is written even when nothing changed. With `--scan "${SCRATCH:?}/scan.json"` (the report you read: step 0's, or a later re-scan you've acted on), `Last check-in` takes `{checked}`, the scan's own time, and `Last issue seen` takes `{last_seen}`. The next window then starts where that scan looked. Never type either value, and never pass a report you haven't read. The editor refuses one whose new issues the body doesn't mention.
 
 ## The implementer contract
 

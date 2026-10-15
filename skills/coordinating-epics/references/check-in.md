@@ -142,7 +142,7 @@ Use the order rule, then these tiebreaks, adding any new one to the epic's list:
 One `epic-edit.sh` call per check-in, with every change in its ops file. Write the file with a **quoted** heredoc, so backticks stay text (watcher F10). `{checked}` and `{last_seen}` come from the scan report you read and built the ops from, given with `--scan`. Anything that changed after that scan looked falls inside the next window, not between two (CR 248). Never pass a report you haven't read: it moves the window past whatever it found. The editor refuses a report whose new issues the body doesn't mention (CR 265):
 
 ```bash
-cat > "$SCRATCH/ops.json" <<'JSON'
+cat > "${SCRATCH:?}/ops.json" <<'JSON'
 [
   {"op": "tick", "ref": "#45"},
   {"op": "note", "ref": "#45", "text": "Shipped 1a2b3c4..5d6e7f8, live {today}."},
@@ -155,8 +155,8 @@ cat > "$SCRATCH/ops.json" <<'JSON'
   {"op": "log", "text": "{today}: #45 closed and live. 1 new (#58, slotted). Next: #46."}
 ]
 JSON
-bash "<epic-edit.sh>" --repo OWNER/REPO --epic N --scan "$SCRATCH/scan.json" --ops "$SCRATCH/ops.json" --dry-run \
-  && bash "<epic-edit.sh>" --repo OWNER/REPO --epic N --scan "$SCRATCH/scan.json" --ops "$SCRATCH/ops.json"
+bash "<epic-edit.sh>" --repo OWNER/REPO --epic N --scan "${SCRATCH:?}/scan.json" --ops "${SCRATCH:?}/ops.json" --dry-run \
+  && bash "<epic-edit.sh>" --repo OWNER/REPO --epic N --scan "${SCRATCH:?}/scan.json" --ops "${SCRATCH:?}/ops.json"
 ```
 
 - **A refusal (exit 3) wrote nothing.** Read the reason. A foreign tick is a claim: verify that child, then pass `--accept-ticks '#N'`. Any other foreign edit means merging by hand: read the diff, rebuild your ops on the live body, and re-run with `--adopt-live`.
