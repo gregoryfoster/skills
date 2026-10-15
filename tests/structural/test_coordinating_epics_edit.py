@@ -396,6 +396,56 @@ def test_last_seen_needs_a_report_that_scanned_numbers(adopted):
     assert res.returncode == 1 and "scanned no numbers" in res.stderr
 
 
+LEGACY = """\
+Burn down the widget backlog.
+
+## Tier 1
+
+- [ ] #11 first thing
+"""
+
+
+def test_an_adopted_epic_comes_onto_the_template_without_a_hand_edit(rig):
+    """CR 292: header adds a missing cursor line; add-section adds a section."""
+    rig.issue(REPO, EPIC, body=LEGACY)
+    ops = [
+        {"op": "header", "field": "last check-in", "value": "{now}"},
+        {"op": "header", "field": "Last issue seen", "value": "#14"},
+        {
+            "op": "add-section",
+            "heading": "Order",
+            "text": "Bugs first.",
+            "before": "Tier 1",
+        },
+        {"op": "add-section", "heading": "Log", "text": "- [ ] #12 adopted"},
+        {"op": "log", "text": "{today}: adopted."},
+    ]
+    res = rig.edit(REPO, EPIC, ops, "--adopt-live")
+    assert res.returncode == 0, res.stderr
+    assert summary(res)["counts_after"] == {"open": 2, "done": 0}
+    body = rig.body(REPO, EPIC)
+    assert re.fullmatch(
+        r"Burn down the widget backlog\.\n\n"
+        r"- \*\*Last check-in:\*\* \d{4}-\d\d-\d\dT\d\d:\d\dZ\n"
+        r"- \*\*Last issue seen:\*\* #14\n\n"
+        r"## Order\n\nBugs first\.\n\n## Tier 1\n\n- \[ \] #11 first thing\n\n"
+        r"## Log\n\n- \[ \] #12 adopted\n- \d{4}-\d\d-\d\d: adopted\.\n",
+        body,
+    ), body
+    again = [ops[1], ops[2]]
+    res = rig.edit(REPO, EPIC, again)
+    assert res.returncode == 0 and summary(res).get("unchanged"), res.stderr
+    clash = [{"op": "add-section", "heading": "Order", "text": "Size first."}]
+    assert rig.edit(REPO, EPIC, clash).returncode == 3
+
+
+def test_header_adds_only_a_cursor_field(adopted):
+    """CR 292: a typo'd field would make a line no script reads."""
+    ops = [{"op": "header", "field": "Last chek-in", "value": "x"}]
+    res = adopted.edit(REPO, EPIC, ops)
+    assert res.returncode == 3 and "want exactly one" in res.stderr
+
+
 def test_log_appends_at_the_end_of_its_section_once(adopted):
     ops = [{"op": "log", "text": "{today}: #11 closed. No new issues. Next: #12."}]
     assert adopted.edit(REPO, EPIC, ops).returncode == 0

@@ -59,6 +59,14 @@ operations (a JSON array, from --ops FILE or --ops - for stdin):
                                               append "- text" to the Log section
   {"op": "replace-section", "heading": "Measured state", "text": "..."}
                                               replace a section's body
+  {"op": "add-section", "heading": "Log", "text": "...", "before": "Notes"}
+                                              add a "## heading" section, once:
+                                              before "before", else at the end
+
+  A header op on a cursor field the body lacks (Last check-in, Last probe,
+  Last issue seen, Last verified SHA, Next) adds its line after the header
+  block, or before the first heading. With add-section, that brings an
+  adopted epic onto the template without a hand edit.
 
   A ref is "#N" for this repo or "owner/repo#N". A ref's line is the checklist
   item, bullet or table row whose first token is that ref. In any text,
@@ -187,8 +195,9 @@ OP_FIELDS = {
     "header": ("field", "value"),
     "log": ("text",),
     "replace-section": ("heading", "text"),
+    "add-section": ("heading", "text"),
 }
-OP_OPTIONAL = {"add-line": ("after_ref", "section")}
+OP_OPTIONAL = {"add-line": ("after_ref", "section"), "add-section": ("before",)}
 
 
 def check_ops(ops) -> None:
@@ -241,11 +250,14 @@ def split_raw(body: str) -> list[str]:
 
 
 CURSOR_FIELDS = {
-    "last check-in",
-    "last probe",
-    "last issue seen",
-    "last verified sha",
-    "next",
+    f.lower(): f
+    for f in (
+        "Last check-in",
+        "Last probe",
+        "Last issue seen",
+        "Last verified SHA",
+        "Next",
+    )
 }
 
 
@@ -420,6 +432,20 @@ def after_block(lines: list[str], i: int) -> int:
             break
         j += 1
     return end
+
+
+def header_end(lines: list[str]) -> int:
+    """Where a new header line goes: after the field lines above the first
+    heading, else just before that heading (or the body's end)."""
+    hs = headings(lines)
+    first = hs[0][0] if hs else len(lines)
+    fence = fenced(lines)
+    fields = [i for i in range(first) if not fence[i] and FIELD_RE.match(lines[i])]
+    if fields:
+        return fields[-1] + 1
+    while first > 0 and not lines[first - 1].strip():
+        first -= 1
+    return first
 
 
 def section_tail(lines: list[str], start: int, end: int) -> int:
@@ -601,6 +627,22 @@ def apply_ops(
                     and (m := FIELD_RE.match(ln))
                     and m.group("field").strip().lower() == field.lower()
                 ]
+                if not hits and field.lower() in CURSOR_FIELDS:
+                    # An adopted epic gets its cursors through here, not a
+                    # hand edit (CR 292). Other fields aren't added: a typo
+                    # would make a line no script reads.
+                    pos = header_end(lines)
+                    new = [f"- **{CURSOR_FIELDS[field.lower()]}:** {value}".rstrip()]
+                    if pos < len(lines) and lines[pos].strip():
+                        new.append("")
+                    if (
+                        pos
+                        and lines[pos - 1].strip()
+                        and not FIELD_RE.match(lines[pos - 1])
+                    ):
+                        new.insert(0, "")
+                    lines[pos:pos] = new
+                    continue
                 if len(hits) != 1:
                     raise Refused(f"{len(hits)} '**{field}:**' lines; want exactly one")
                 m = FIELD_RE.match(lines[hits[0]])
@@ -633,6 +675,30 @@ def apply_ops(
                 before, after = counts(old_body), counts(new_body)
                 _add(expect, {k: after[k] - before[k] for k in expect})
                 lines[start + 1 : end] = new_body
+            elif kind == "add-section":
+                heading = op["heading"].strip()
+                if not heading or "\n" in heading:
+                    raise Refused("add-section takes a one-line heading")
+                text = inject(op["text"], now, scan).strip("\n")
+                new_body = [ln.rstrip("\r") for ln in text.split("\n")] if text else []
+                if heading.lower() in (t.lower() for _, _, t in headings(lines)):
+                    start, end = section_span(lines, heading)
+                    old = normalize("\n".join(lines[start + 1 : end]).strip("\n"))
+                    if old == normalize("\n".join(new_body)):
+                        notes.append(f"{where}: section already present")
+                        continue
+                    raise Refused(
+                        f"a section headed {heading!r} exists; use replace-section"
+                    )
+                block = [f"## {heading}"] + ([""] + new_body if new_body else [])
+                if "before" in op:
+                    start, _ = section_span(lines, op["before"])
+                    lines[start:start] = block + [""]
+                else:
+                    while lines and not lines[-1].strip():
+                        lines.pop()
+                    lines += [""] + block
+                _add(expect, counts(new_body))
             else:
                 raise Usage(f"unknown op {kind!r}")
         except Usage as e:

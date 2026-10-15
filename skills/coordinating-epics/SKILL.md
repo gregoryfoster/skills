@@ -61,10 +61,10 @@ done
 
 ## Starting
 
-**Adopt an epic that exists.** Read it in full, with its comments. Bring its state onto [the template](assets/epic-template.md): the header block, the order rule, the checklist by tier, the log. Then take it as the baseline:
+**Adopt an epic that exists.** Read it in full, with its comments. Take it as the baseline and bring it onto [the template](assets/epic-template.md) in the same call, never by hand: `header` ops add the missing cursor lines, `add-section` the order rule, the tiers and the log, and `set-line` or `add-line` the checklist. Dry-run it first:
 
 ```bash
-bash "<epic-edit.sh>" --repo OWNER/REPO --epic N --adopt-live --ops - <<<'[]'
+bash "<epic-edit.sh>" --repo OWNER/REPO --epic N --adopt-live --ops "$SCRATCH/adopt.json" --dry-run
 ```
 
 **Create one.** There are six ways in: a design doc's Steps table, a backlog plus the operator's one-line rule, a number range, children that need scoping first, an upstream adoption checklist, and a whole-backlog audit. [creation.md](references/creation.md) has each. All of them produce the same things:
