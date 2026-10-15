@@ -377,6 +377,17 @@ def find_ref_line(
     raise NotFound(f"{ref_key}: no {what} leads with it")
 
 
+def lead_counts(lines: list[str], host: str) -> dict[tuple[str, str], int]:
+    """How many lines each ref leads, by kind (item, bullet, row), outside fences."""
+    fence = fenced(lines)
+    out: dict[tuple[str, str], int] = {}
+    for i, ln in enumerate(lines):
+        lr = None if fence[i] else line_ref(ln, host)
+        if lr:
+            out[lr] = out.get(lr, 0) + 1
+    return out
+
+
 def headings(lines: list[str]) -> list[tuple[int, int, str]]:
     fence = fenced(lines)
     out = []
@@ -735,6 +746,22 @@ def apply_ops(
             raise Usage(f"{where}: missing field {e}") from None
         except Refused as e:
             raise Refused(f"{where}: {e}") from None
+    # add-line refuses a second line for a ref (CR 252); a section written
+    # whole could still copy one in, and every later op on it is then
+    # ambiguous. Moving a line within one call keeps its count (CR 307).
+    before, after = lead_counts(body_lines, host), lead_counts(lines, host)
+    doubled = sorted(
+        f"{ref} ({after[k]} {kind} lines)"
+        for k in after
+        for kind, ref in [k]
+        if after[k] > max(before.get(k, 0), 1)
+    )
+    if doubled:
+        raise Refused(
+            "these refs would lead more than one line: "
+            + ", ".join(doubled)
+            + ". Keep one line per ref, and move it rather than copy it"
+        )
     return lines, expect, notes
 
 

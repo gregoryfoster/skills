@@ -543,6 +543,35 @@ def test_add_section_at_the_end_takes_the_sections_level(rig, body, heading):
     assert rig.body(REPO, EPIC).endswith(f"\n{heading}\n\n- 2026-10-14: adopted.\n")
 
 
+@pytest.mark.parametrize(
+    "op",
+    [
+        {"op": "add-section", "heading": "Tier 2", "text": "- [ ] #11 copied"},
+        {"op": "replace-section", "heading": "Log", "text": "- [ ] #11 copied"},
+    ],
+    ids=["add-section", "replace-section"],
+)
+def test_a_whole_section_cant_give_a_ref_a_second_line(adopted, op):
+    """CR 307: two item lines for #11 make every later op on it ambiguous."""
+    res = adopted.edit(REPO, EPIC, [op])
+    assert res.returncode == 3 and "more than one line" in res.stderr, res.stderr
+    assert "patches" not in adopted.load()
+
+
+def test_moving_a_line_between_sections_in_one_call_is_fine(adopted):
+    """CR 307: the count is compared, so a move keeps one line."""
+    ops = [
+        {
+            "op": "replace-section",
+            "heading": "Tier 1",
+            "text": "- [ ] #12 second thing",
+        },
+        {"op": "add-section", "heading": "Tier 2", "text": "- [ ] #11 first thing"},
+    ]
+    res = adopted.edit(REPO, EPIC, ops)
+    assert res.returncode == 0, res.stderr
+
+
 def test_header_adds_only_a_cursor_field(adopted):
     """CR 292: a typo'd field would make a line no script reads."""
     ops = [{"op": "header", "field": "Last chek-in", "value": "x"}]
