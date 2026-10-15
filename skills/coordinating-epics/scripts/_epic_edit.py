@@ -905,7 +905,8 @@ def lint(
             )
     if check_links:
         for ln in prose:
-            for m in COMMENT_LINK_RE.finditer(ln):
+            # A link quoted in a code span is an example, not a link (CR 310).
+            for m in COMMENT_LINK_RE.finditer(CODE_SPAN_RE.sub(LINK_MARK, ln)):
                 try:
                     data = gh_json(
                         [

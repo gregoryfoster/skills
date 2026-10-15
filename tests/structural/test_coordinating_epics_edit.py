@@ -966,6 +966,7 @@ def test_a_fenced_block_is_linted_for_secrets_only(adopted):
         "- CI runs `${{ matrix.python }}`",
         "- the template's `{{ name }}` field",
         "- see `#999`",
+        "- link form: `https://github.com/o/r/issues/5#issuecomment-123`",
     ],
 )
 def test_a_code_span_renders_as_written(adopted, line):
