@@ -1034,11 +1034,88 @@ def test_a_code_span_renders_as_written(adopted, line):
     assert res.returncode == 0, res.stderr
 
 
-@pytest.mark.parametrize("line", ["- run \\`make\\` first", "- slot `SUB3` after #12"])
+@pytest.mark.parametrize(
+    "line",
+    [
+        "- run \\`make\\` first",
+        "- slot `SUB3` after #12",
+        "- slot `` SUB3 ` `` after #12",
+        "- run \\\\\\`make\\` first",
+    ],
+)
 def test_a_code_span_hides_no_leftover(adopted, line):
-    """CR 290: a SUBn is a leftover anywhere, and \\` is what makes the span."""
+    """CR 290: a SUBn is a leftover anywhere. #402: \\` opens no span, so it is
+    read outside one, past an escaped backslash too."""
     ops = [{"op": "add-line", "section": "Parked", "line": line}]
     assert adopted.edit(REPO, EPIC, ops).returncode == 3
+
+
+# Each measured with gh api markdown (#402): what GitHub renders as code.
+SPAN_SHAPES = [
+    ("`App\\Tests\\`", ["`App\\Tests\\`"]),
+    ("\\`make\\`", []),
+    ("``a\\`b``", ["``a\\`b``"]),
+    ("\\``x``", []),
+    ("\\\\`x`", ["`x`"]),
+    ("`` #5 ` ``", ["`` #5 ` ``"]),
+    ("``x` #8", []),
+    ("``x` #9 ` y`` #10", ["``x` #9 ` y``"]),
+    ("`x``y` #11", ["`x``y`"]),
+    ("`x` #12 `y\\` #13 `", ["`x`", "`y\\`"]),
+    (
+        "[t `x](https://github.com/o/r/issues/5) y`",
+        ["`x](https://github.com/o/r/issues/5) y`"],
+    ),
+    ("```x`` #15 ```", ["```x`` #15 ```"]),
+]
+
+
+@pytest.mark.parametrize("text, spans", SPAN_SHAPES)
+def test_code_spans_follow_commonmark(text, spans):
+    """#402."""
+    assert [text[s:e] for s, e in ee.code_spans(text)] == spans
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "- [ ] #14 the namespace `App\\Tests\\`",
+        "- [ ] #14 quote ``a\\`b`` as is",
+        "- [ ] #14 a ref ``#400 ` x`` is code",
+        "- [ ] #14 a variable `` $NOW ` `` is code",
+        "- [ ] #14 a placeholder `` {{when}} ` `` is code",
+        "- [ ] #14 a link `` https://github.com/acme/widgets/issues/11#issuecomment-404 ` `` is code",
+    ],
+    ids=[
+        "namespace",
+        "escape-in-double",
+        "ref",
+        "variable",
+        "placeholder",
+        "comment-link",
+    ],
+)
+def test_a_span_github_renders_as_code_is_read_as_code(adopted, line):
+    """#402: one span model, at every check that skips spans."""
+    ops = [{"op": "add-line", "section": "Tier 1", "line": line}]
+    res = adopted.edit(REPO, EPIC, ops)
+    assert res.returncode == 0, res.stderr
+
+
+@pytest.mark.parametrize(
+    "line, why",
+    [
+        ("- [ ] #14 waits on \\`#400\\`", "#400 is above"),
+        ("- [ ] #14 at \\`$NOW\\`", "shell variable"),
+        ("- [ ] #14 waits on ``x` gadgets#3", "short ref"),
+    ],
+    ids=["escaped-ref", "escaped-variable", "unclosed-double"],
+)
+def test_backticks_that_open_no_span_hide_nothing(adopted, line, why):
+    """#402: GitHub renders these as text, so their contents are checked."""
+    ops = [{"op": "add-line", "section": "Tier 1", "line": line}]
+    res = adopted.edit(REPO, EPIC, ops)
+    assert res.returncode == 3 and why in res.stderr, res.stderr
 
 
 def test_a_bare_ref_after_this_repos_own_qualified_ref_is_fine(adopted):

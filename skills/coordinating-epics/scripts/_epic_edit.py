@@ -34,6 +34,7 @@ import difflib
 import json
 import os
 import re
+import string
 import subprocess
 import sys
 import tempfile
@@ -84,8 +85,10 @@ lint:
   already holds a short ref or an unexpanded variable is refused with it. That
   is deliberate: legacy text is fixed the first time it is touched. Rewrite the
   line with set-line, then tick. A fenced code block renders as written, so its
-  lines are checked for secrets only; a code span skips every check but SUBn,
-  \\` and secrets.
+  lines are checked for secrets only; a code span skips every check but SUBn
+  and secrets. Spans are found as CommonMark finds them, so \\`make\\` (the
+  escaped backticks an unquoted heredoc leaves) is refused and `App\\Tests\\`
+  is code.
 
 exit codes:
   0  written and read back, or nothing to write (every operation already held)
@@ -124,11 +127,10 @@ FIELD_RE = re.compile(
 )
 
 SHELL_VAR_RE = re.compile(r"\$\{[A-Za-z_]\w*\}|\$[A-Z_][A-Z0-9_]+\b")
-CODE_SPAN_RE = re.compile(r"`[^`]*`")
 # (pattern, what, read inside code spans too). A code span shows `${{ x }}`
 # as written, so those two skip spans (CR 290). A SUBn in a span is still a
-# leftover, and stripping spans would hide the \` an unquoted heredoc leaves,
-# since the escaped backtick itself opens or closes the span.
+# leftover. The \` an unquoted heredoc leaves opens no span, so it is read
+# outside them, where a backslash escapes (#402); `App\Tests\` is code.
 PLACEHOLDER_RES = [
     (re.compile(r"\bSUB\d+\b"), "an unfilled SUBn placeholder", True),
     (re.compile(r"\{\{[^}]*\}\}"), "an unfilled {{...}} placeholder", False),
@@ -137,7 +139,7 @@ PLACEHOLDER_RES = [
         "an uninjected {now}/{today}/{checked}/{last_seen}",
         False,
     ),
-    (re.compile(r"\\`"), "an escaped backtick", True),
+    (re.compile(r"(?<!\\)(?:\\\\)*\\`"), "an escaped backtick", False),
 ]
 SECRET_RES = [
     re.compile(r"\bgh[pousr]_[A-Za-z0-9]{30,}"),
@@ -860,9 +862,61 @@ def absent(e: Infra) -> bool:
     return bool(re.search(r"\bHTTP 4(?:04|10)\b", str(e)))
 
 
+ESCAPABLE = frozenset(string.punctuation)
+
+
+def code_spans(line: str) -> list[tuple[int, int]]:
+    """The line's code spans as (start, end), read the CommonMark way (#402).
+
+    A backtick string opens a span only when no backslash escapes it, and the
+    span closes on the next backtick string of the same length; one with no
+    closer is text. Inside a span a backslash is literal, so `App\\Tests\\` is
+    code, ``a\\`b`` is one span, and \\`make\\` holds none. The line is read on
+    its own, though a span may wrap within a paragraph.
+    """
+    spans, i, n = [], 0, len(line)
+    while i < n:
+        if line[i] == "\\" and i + 1 < n and line[i + 1] in ESCAPABLE:
+            i += 2
+            continue
+        if line[i] != "`":
+            i += 1
+            continue
+        j = i
+        while j < n and line[j] == "`":
+            j += 1
+        k, close = j, None
+        while k < n and close is None:
+            if line[k] != "`":
+                k += 1
+                continue
+            m = k
+            while m < n and line[m] == "`":
+                m += 1
+            close, k = (m if m - k == j - i else None), m
+        if close is None:
+            i = j
+        else:
+            spans.append((i, close))
+            i = close
+    return spans
+
+
+def outside_code(line: str) -> str:
+    """The line with each code span read as a neutral mark, so no text joins across it."""
+    out, last = [], 0
+    for start, end in code_spans(line):
+        out += [line[last:start], LINK_MARK]
+        last = end
+    return "".join(out) + line[last:]
+
+
 def rendered_refs(line: str) -> str:
-    """ref_text, with code spans read as a neutral mark: GitHub links no ref in one."""
-    return CODE_SPAN_RE.sub(LINK_MARK, ref_text(line))
+    """ref_text outside code spans: GitHub links no ref in one.
+
+    Spans are read first, as GitHub does: a span outranks a link (#402).
+    """
+    return ref_text(outside_code(line))
 
 
 def lint(
@@ -885,10 +939,11 @@ def lint(
         prose.append(raw)
         # Placeholders and variables are read in the whole line, link targets
         # included; refs are read the way GitHub renders them.
+        text = outside_code(raw)
         for rx, what, in_spans in PLACEHOLDER_RES:
-            if rx.search(raw if in_spans else CODE_SPAN_RE.sub("", raw)):
+            if rx.search(raw if in_spans else text):
                 problems.append(f"{what}: {raw.strip()[:120]}")
-        if SHELL_VAR_RE.search(CODE_SPAN_RE.sub("", raw)):
+        if SHELL_VAR_RE.search(text):
             problems.append(
                 f"an unexpanded shell variable outside a code span: {raw.strip()[:120]}"
             )
@@ -933,7 +988,7 @@ def lint(
     if check_links:
         for ln in prose:
             # A link quoted in a code span is an example, not a link (CR 310).
-            for m in COMMENT_LINK_RE.finditer(CODE_SPAN_RE.sub(LINK_MARK, ln)):
+            for m in COMMENT_LINK_RE.finditer(outside_code(ln)):
                 try:
                     data = gh_json(
                         [
