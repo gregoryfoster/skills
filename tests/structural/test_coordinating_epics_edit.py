@@ -1206,7 +1206,10 @@ def test_a_write_the_read_back_contradicts_is_exit_4(adopted):
     ).read_text()
     res = adopted.edit(REPO, EPIC, [{"op": "tick", "ref": "#11"}])
     assert res.returncode == 4
-    assert "baseline not updated" in res.stderr
+    assert (
+        "read back differs" in res.stderr and "baseline was not updated" in res.stderr
+    )
+    assert "--adopt-live" in res.stderr  # CR 313: every exit 4 gives the way forward
     assert (
         adopted.state_dir / "acme" / "widgets" / "10" / "last-written.md"
     ).read_text() == base

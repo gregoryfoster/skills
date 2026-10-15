@@ -1406,12 +1406,7 @@ def run(argv: list[str]) -> int:
                 ),
                 file=sys.stderr,
             )
-            print(json.dumps(summary, indent=2))
-            print(
-                "ERROR the body read back differs from the body sent; baseline not updated",
-                file=sys.stderr,
-            )
-            return EXIT_READBACK
+            return unconfirmed("the body read back differs from the body sent")
         summary["readback"] = "matches"
         try:
             write_atomic(base_path, text)
