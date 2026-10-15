@@ -138,7 +138,7 @@ def item_keys(lines: list[str], host: str) -> set[str]:
     return out
 
 
-CAPPED: list[str] = []  # what stopped at MAX_PAGES this run, for the warnings
+CAPPED: list[str] = []  # what stopped at MAX_PAGES this run: report["capped"]
 
 
 def pages(path: str, what: str, stop=None):
@@ -151,7 +151,7 @@ def pages(path: str, what: str, stop=None):
         if len(batch) < 100 or (stop and stop(batch[-1])):
             return
     # A cap reached in silence reads as a complete answer (CR 259).
-    CAPPED.append(f"{what}: stopped at {MAX_PAGES * 100} rows; the list is incomplete")
+    CAPPED.append(what)
 
 
 def new_comments(host: str, num: int, since: str, what: str) -> list[dict]:
@@ -509,7 +509,13 @@ def run(argv: list[str]) -> int:
                 )
             cross.append(row)
         report["cross_repo"] = cross
-        report["warnings"] = warnings + CAPPED
+        # epic-edit.sh reads "capped": a {last_seen} past a cut-off walk
+        # would skip what the walk never reached (CR 302).
+        report["capped"] = list(dict.fromkeys(CAPPED))
+        report["warnings"] = warnings + [
+            f"{w}: stopped at {MAX_PAGES * 100} rows; the list is incomplete"
+            for w in report["capped"]
+        ]
         print(json.dumps(report, indent=2))
         return EXIT_OK
     except Infra as e:

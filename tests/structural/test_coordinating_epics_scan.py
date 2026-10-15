@@ -367,6 +367,7 @@ def test_a_page_cap_is_a_warning_not_a_silent_cut(rig, monkeypatch, capsys):
     )
     r = json.loads(capsys.readouterr().out)
     assert any("listing updates: stopped at 100 rows" in w for w in r["warnings"])
+    assert r["capped"] == ["listing new numbers", "listing updates"]
 
 
 def test_max_number_is_the_highest_seen_not_the_newest_created(rig):

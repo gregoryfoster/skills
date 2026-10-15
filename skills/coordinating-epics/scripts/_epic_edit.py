@@ -1050,15 +1050,33 @@ def run(argv: list[str]) -> int:
                 ),
                 "numbers_scanned": report.get("new_numbers") is not None,
             }
-            if not scan["numbers_scanned"] and any(
+            capped = report.get("capped") or []
+            if not isinstance(capped, list):
+                raise Usage(f"--scan {a.scan}: capped must be a list")
+            if any(
                 isinstance(v, str) and "{last_seen}" in v
                 for op in ops
                 for v in op.values()
             ):
-                raise Usage(
-                    "the report scanned no numbers (no watermark), so {last_seen} would"
-                    " skip issues nobody saw. Give scan.sh --watermark N, then re-run"
-                )
+                if not scan["numbers_scanned"]:
+                    raise Usage(
+                        "the report scanned no numbers (no watermark), so {last_seen}"
+                        " would skip issues nobody saw. Give scan.sh --watermark N,"
+                        " then re-run"
+                    )
+                # The walk stopped short, or nothing caught what it can't see:
+                # an issue transferred in keeps its old creation date (CR 302).
+                if "listing new numbers" in capped:
+                    raise Usage(
+                        "the report's number walk hit its page cap, so {last_seen}"
+                        " would skip numbers it never reached. Re-scan from a closer"
+                        " --watermark"
+                    )
+                if report.get("updated_since") is None:
+                    raise Usage(
+                        "the report scanned no updates (no since), so {last_seen} would"
+                        " skip an issue transferred in. Give scan.sh --since, then re-run"
+                    )
         if scan is None:
             needs = sorted(
                 {

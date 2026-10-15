@@ -281,6 +281,7 @@ def test_the_header_takes_the_scans_time_and_watermark(adopted):
                 "now": "2026-10-14T18:03:27Z",
                 "max_number": 13,
                 "new_numbers": [],
+                "updated_since": [],
             }
         )
     )
@@ -341,6 +342,7 @@ def test_a_scans_new_issues_must_be_accounted_for_in_the_write(adopted):
                     {"number": 14, "kind": "issue"},
                     {"number": 13, "kind": "pr"},
                 ],
+                "updated_since": [],
             }
         )
     )
@@ -356,7 +358,13 @@ def test_a_scans_new_issues_must_be_accounted_for_in_the_write(adopted):
 
 def _report(adopted, **fields):
     report = adopted.tmp / "scan.json"
-    base = {"repo": REPO, "epic": EPIC, "now": "2026-10-14T18:03:27Z", "max_number": 14}
+    base = {
+        "repo": REPO,
+        "epic": EPIC,
+        "now": "2026-10-14T18:03:27Z",
+        "max_number": 14,
+        "updated_since": [],
+    }
     report.write_text(json.dumps({**base, **fields}))
     return str(report)
 
@@ -504,6 +512,24 @@ def test_header_adds_only_a_cursor_field(adopted):
     ops = [{"op": "header", "field": "Last chek-in", "value": "x"}]
     res = adopted.edit(REPO, EPIC, ops)
     assert res.returncode == 3 and "want exactly one" in res.stderr
+
+
+@pytest.mark.parametrize(
+    "fields, why",
+    [
+        ({"new_numbers": [], "capped": ["listing new numbers"]}, "page cap"),
+        ({"new_numbers": [], "updated_since": None}, "no since"),
+    ],
+    ids=["number-walk-capped", "no-updated-since"],
+)
+def test_last_seen_needs_a_complete_report(adopted, fields, why):
+    """CR 302: either gap lets the watermark move past an issue nobody saw."""
+    report = _report(adopted, **fields)
+    ops = [{"op": "header", "field": "Last issue seen", "value": "{last_seen}"}]
+    res = adopted.edit(REPO, EPIC, ops, "--scan", report)
+    assert res.returncode == 1 and why in res.stderr, res.stderr
+    ops = [{"op": "header", "field": "Last check-in", "value": "{checked}"}]
+    assert adopted.edit(REPO, EPIC, ops, "--scan", report).returncode == 0
 
 
 def test_log_appends_at_the_end_of_its_section_once(adopted):
