@@ -1441,7 +1441,7 @@ def _unhardened_process_substitution_sites(content: str) -> list[tuple[int, str]
 # coordinating-epics since [#398](https://github.com/gregoryfoster/skills/issues/398):
 # its editor's exit code decides whether an epic body is written, and its
 # scanner's report decides what gets slotted. The `.sh` wrappers are the unit,
-# not the Python engines behind them: the detector below reads bash, and the
+# not the Python engines behind them: the detector reads bash, and the
 # behavioural tests that hold the engines run through the wrappers.
 _REPO_ROOT = SKILLS_DIR.parent
 _GATE_FAMILY_GLOBS = (
