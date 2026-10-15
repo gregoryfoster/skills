@@ -626,6 +626,14 @@ def test_moving_a_line_between_sections_in_one_call_is_fine(adopted):
             "# Burn-down\n\nIntro.\n",
             "# Burn-down\n\nIntro.\n\n- **Last verified SHA:** abc1234\n",
         ),
+        (
+            "Intro.\n\n## Tier 1\n\n- [ ] #11 a\n  - **Next:** ask alice\n- [ ] #12 b\n",
+            "Intro.\n\n- **Last verified SHA:** abc1234\n\n## Tier 1",
+        ),
+        (
+            "- **#11:** first\n- **#12:** second\n\n## Log\n\n- x\n",
+            "- **#12:** second\n\n- **Last verified SHA:** abc1234\n\n## Log",
+        ),
     ],
     ids=[
         "fields-under-a-title",
@@ -634,6 +642,8 @@ def test_moving_a_line_between_sections_in_one_call_is_fine(adopted):
         "title-no-fields",
         "a-section-over-subsections",
         "a-lone-title",
+        "a-checklist-items-nested-field",
+        "tier-lines-are-no-header",
     ],
 )
 def test_a_new_header_line_joins_the_header_block(rig, body, want):

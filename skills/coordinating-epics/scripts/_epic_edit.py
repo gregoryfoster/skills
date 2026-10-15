@@ -486,10 +486,16 @@ def header_end(lines: list[str]) -> tuple[int, bool]:
     first = secs[0][0] if secs else len(lines)
 
     def list_field(i: int) -> bool:
+        # Top-level only: a "  - **Next:** ask alice" under a checklist item
+        # is that item's note, and a line after it would split the list. A
+        # tier line "- **#15:** …" is an item, not a header field (CR 316).
+        m = FIELD_RE.match(lines[i])
         return (
-            not fence[i]
+            bool(m)
+            and not fence[i]
+            and not lines[i][:1].isspace()
             and bool(LIST_MARK_RE.match(lines[i]))
-            and bool(FIELD_RE.match(lines[i]))
+            and not re.fullmatch(REF_PAT, m.group("field").strip())
         )
 
     starts = [
