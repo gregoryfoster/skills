@@ -389,6 +389,22 @@ def headings(lines: list[str]) -> list[tuple[int, int, str]]:
     return out
 
 
+def section_level(lines: list[str]) -> int:
+    """The level a new last section takes: the shallowest the sections use.
+
+    A first heading whose level appears nowhere else is the title, not a
+    section, so "# Burn-down" over "##" sections gives 2. No sections: 2.
+    """
+    levels = [lvl for _, lvl, _ in headings(lines)]
+    if (
+        levels
+        and levels.count(levels[0]) == 1
+        and all(lv > levels[0] for lv in levels[1:])
+    ):
+        levels = levels[1:]
+    return min(levels, default=2)
+
+
 def section_span(lines: list[str], heading: str) -> tuple[int, int]:
     """(index of the heading line, index one past the section's last line)."""
     hs = headings(lines)
@@ -694,11 +710,19 @@ def apply_ops(
                     raise Refused(
                         f"a section headed {heading!r} exists; use replace-section"
                     )
-                block = [f"## {heading}"] + ([""] + new_body if new_body else [])
+                # At its neighbours' level: a "##" before a "###" would end the
+                # parent section, and a "##" after "#" sections would sit inside
+                # the last one, where a replace-section deletes it (CR 305).
                 if "before" in op:
                     start, _ = section_span(lines, op["before"])
-                    lines[start:start] = block + [""]
+                    level = next(lvl for i, lvl, _ in headings(lines) if i == start)
+                    block = [f"{'#' * level} {heading}"]
+                    lines[start:start] = (
+                        block + ([""] + new_body if new_body else []) + [""]
+                    )
                 else:
+                    block = [f"{'#' * section_level(lines)} {heading}"]
+                    block += [""] + new_body if new_body else []
                     while lines and not lines[-1].strip():
                         lines.pop()
                     lines += [""] + block

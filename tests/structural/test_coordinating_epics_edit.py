@@ -507,6 +507,42 @@ def test_an_adopted_epic_comes_onto_the_template_without_a_hand_edit(rig):
     assert rig.edit(REPO, EPIC, clash).returncode == 3
 
 
+def test_add_section_before_a_subsection_takes_its_level(rig):
+    """CR 305: a "##" before "### Tier 2" would end "## Tiers" there."""
+    body = "## Tiers\n\n### Tier 1\n\n- [ ] #11 a\n\n### Tier 2\n\n- [ ] #12 b\n\n## Log\n\n- x\n"
+    rig.issue(REPO, EPIC, body=body)
+    ops = [
+        {
+            "op": "add-section",
+            "heading": "Tier 1b",
+            "text": "- [ ] #13 c",
+            "before": "Tier 2",
+        }
+    ]
+    res = rig.edit(REPO, EPIC, ops, "--adopt-live")
+    assert res.returncode == 0, res.stderr
+    assert "### Tier 1b\n\n- [ ] #13 c\n\n### Tier 2" in rig.body(REPO, EPIC)
+
+
+@pytest.mark.parametrize(
+    "body, heading",
+    [
+        ("# Tier 1\n\n- [ ] #11 a\n\n# Parked\n\n- #13 later\n", "# Log"),
+        (BODY, "## Notes"),
+        ("Intro only.\n", "## Notes"),
+    ],
+    ids=["top-level-sections", "title-over-sections", "no-headings"],
+)
+def test_add_section_at_the_end_takes_the_sections_level(rig, body, heading):
+    """CR 305: a "## Log" after "# Parked" would be Parked's, and replacing Parked deletes it."""
+    rig.issue(REPO, EPIC, body=body)
+    title = heading.lstrip("# ")
+    ops = [{"op": "add-section", "heading": title, "text": "- 2026-10-14: adopted."}]
+    res = rig.edit(REPO, EPIC, ops, "--adopt-live")
+    assert res.returncode == 0, res.stderr
+    assert rig.body(REPO, EPIC).endswith(f"\n{heading}\n\n- 2026-10-14: adopted.\n")
+
+
 def test_header_adds_only_a_cursor_field(adopted):
     """CR 292: a typo'd field would make a line no script reads."""
     ops = [{"op": "header", "field": "Last chek-in", "value": "x"}]
