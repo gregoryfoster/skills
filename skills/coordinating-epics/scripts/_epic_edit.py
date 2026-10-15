@@ -403,9 +403,14 @@ def headings(lines: list[str]) -> list[tuple[int, int, str]]:
 
 
 def section_headings(lines: list[str]) -> list[tuple[int, int, str]]:
-    """headings() less a title: a first heading shallower than all the rest."""
+    """headings() less a title: a first "#" heading with every other one deeper.
+
+    Only "#": a "## Children" over "### Tier" headings is a section, and a
+    new section beside it must be "##", not "###" inside it. A lone "#" is a
+    title too, so adoption under it adds "##" sections, not "#" (CR 315).
+    """
     hs = headings(lines)
-    if len(hs) > 1 and all(lvl > hs[0][1] for _, lvl, _ in hs[1:]):
+    if hs and hs[0][1] == 1 and all(lvl > 1 for _, lvl, _ in hs[1:]):
         return hs[1:]
     return hs
 

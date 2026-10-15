@@ -546,8 +546,19 @@ def test_add_section_before_a_subsection_takes_its_level(rig):
         ("# Tier 1\n\n- [ ] #11 a\n\n# Parked\n\n- #13 later\n", "# Log"),
         (BODY, "## Notes"),
         ("Intro only.\n", "## Notes"),
+        (
+            "Intro.\n\n## Children\n\n### Tier 1\n\n- [ ] #11 a\n\n### Tier 2\n\n- [ ] #12 b\n",
+            "## Notes",
+        ),
+        ("# Burn-down\n\nIntro.\n", "## Notes"),
     ],
-    ids=["top-level-sections", "title-over-sections", "no-headings"],
+    ids=[
+        "top-level-sections",
+        "title-over-sections",
+        "no-headings",
+        "a-section-over-subsections",
+        "a-lone-title",
+    ],
 )
 def test_add_section_at_the_end_takes_the_sections_level(rig, body, heading):
     """CR 305: a "## Log" after "# Parked" would be Parked's, and replacing Parked deletes it."""
@@ -607,12 +618,22 @@ def test_moving_a_line_between_sections_in_one_call_is_fine(adopted):
             "# Burn-down\n\nIntro.\n\n## Tier 1\n\n- [ ] #12 b\n",
             "# Burn-down\n\nIntro.\n\n- **Last verified SHA:** abc1234\n\n## Tier 1",
         ),
+        (
+            "Intro.\n\n## Children\n\n### Tier 1\n\n- [ ] #12 b\n",
+            "Intro.\n\n- **Last verified SHA:** abc1234\n\n## Children",
+        ),
+        (
+            "# Burn-down\n\nIntro.\n",
+            "# Burn-down\n\nIntro.\n\n- **Last verified SHA:** abc1234\n",
+        ),
     ],
     ids=[
         "fields-under-a-title",
         "field-with-sub-bullets",
         "bold-led-paragraph",
         "title-no-fields",
+        "a-section-over-subsections",
+        "a-lone-title",
     ],
 )
 def test_a_new_header_line_joins_the_header_block(rig, body, want):
