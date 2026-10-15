@@ -93,6 +93,7 @@ LEAD = r"(?:~~|\*\*|\[|`)*"
 ITEM_RE = re.compile(r"^\s*[-*+] \[[ xX]\] " + LEAD + REF_PAT)
 BULLET_RE = re.compile(r"^\s*[-*+] " + LEAD + REF_PAT)
 ROW_RE = re.compile(r"^\|\s*" + LEAD + REF_PAT)
+UNESCAPED_PIPE_RE = re.compile(r"(?<!\\)\|")
 # A closing #-sequence needs whitespace before it, as in CommonMark, so
 # "## Notes on C#" keeps its "#" (CR 255).
 HEADING_RE = re.compile(r"^(?P<hashes>#{1,6})[ \t]+(?P<text>.+?)(?:[ \t]+#+)?[ \t]*$")
@@ -511,13 +512,23 @@ def apply_ops(
                 text = inject(op["text"], now, scan).strip()
                 if not text or "\n" in text:
                     raise Refused("note text must be one non-empty line")
+                head, close = lines[i].rstrip(), ""
+                if ROW_RE.match(ref_text(head)):
+                    # Inside the last cell: GFM drops a cell past the header's
+                    # count, so text after the closing pipe never shows (CR 286).
+                    if UNESCAPED_PIPE_RE.search(text):
+                        raise Refused(
+                            "a note on a table row can't hold a bare |; write \\|"
+                        )
+                    if head.endswith("|") and not head.endswith("\\|"):
+                        head, close = head[:-1].rstrip(), " |"
                 # By the line's end, not a substring: a note "S" on "… · S"
                 # is a new note, not one already there (CR 253).
-                if lines[i].rstrip().endswith(" " + text):
+                if head.endswith(" " + text):
                     notes.append(f"{where}: note already on {op['ref']}'s line")
                     continue
                 # The note goes before the line's own trailing break (CR 274).
-                lines[i] = lines[i].rstrip() + " " + text + trailing(lines[i])
+                lines[i] = head + " " + text + close + trailing(lines[i])
             elif kind == "set-line":
                 ref_key = parse_ref(op["ref"], host)
                 i = find_ref_line(lines, ref_key, host)

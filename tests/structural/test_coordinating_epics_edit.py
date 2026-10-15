@@ -545,14 +545,34 @@ def test_a_note_that_is_a_substring_of_the_line_is_still_added(adopted):
     assert summary(res).get("unchanged")
 
 
-def test_note_works_on_a_table_row(adopted):
-    res = adopted.edit(
-        REPO, EPIC, [{"op": "note", "ref": "#13", "text": "(re-read {today})"}]
-    )
+def test_note_on_a_table_row_lands_inside_the_last_cell(adopted):
+    """CR 286: GFM drops a cell past the header's count, so the note would vanish."""
+    op = {"op": "note", "ref": "#13", "text": "(re-read {today})"}
+    res = adopted.edit(REPO, EPIC, [op])
     assert res.returncode == 0, res.stderr
     assert re.search(
-        r"\| #13 \| when the SDK ships \| \(re-read \d{4}-", adopted.body(REPO, EPIC)
+        r"^\| #13 \| when the SDK ships \(re-read \d{4}-\d\d-\d\d\) \|$",
+        adopted.body(REPO, EPIC),
+        re.M,
     )
+    assert summary(adopted.edit(REPO, EPIC, [op])).get("unchanged")
+
+
+def test_a_note_on_a_row_without_a_closing_pipe_ends_the_row(rig):
+    rig.issue(
+        REPO, EPIC, body=BODY.replace("| #13 | when the SDK ships |", "| #13 | sdk")
+    )
+    assert rig.edit(REPO, EPIC, [], "--adopt-live").returncode == 0
+    res = rig.edit(REPO, EPIC, [{"op": "note", "ref": "#13", "text": "later"}])
+    assert res.returncode == 0, res.stderr
+    assert "\n| #13 | sdk later\n" in rig.body(REPO, EPIC)
+
+
+def test_a_note_on_a_row_refuses_a_bare_pipe(adopted):
+    res = adopted.edit(REPO, EPIC, [{"op": "note", "ref": "#13", "text": "a | b"}])
+    assert res.returncode == 3 and "\\|" in res.stderr
+    res = adopted.edit(REPO, EPIC, [{"op": "note", "ref": "#13", "text": "a \\| b"}])
+    assert res.returncode == 0, res.stderr
 
 
 def test_replace_section_counts_its_boxes(adopted):
