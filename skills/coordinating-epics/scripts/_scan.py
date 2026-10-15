@@ -229,8 +229,9 @@ def git_env() -> dict:
         local = set(r.stdout.split()) if r.returncode == 0 else set()
     except OSError:
         local = set()
-    # Silent on purpose: on failure the scrub narrows to GIT_LOCAL_FLOOR, and
-    # the next git() call reports the failure, git's stderr included (#398).
+    # Silent on purpose: on failure the scrub narrows to GIT_LOCAL_FLOOR. The
+    # listing needs no repository, so it fails only when git can't run, and
+    # the next git() call reports that (#398).
     drop = (local - GIT_CONFIG_KEEP) | GIT_LOCAL_FLOOR
     env = {k: v for k, v in os.environ.items() if k not in drop}
     env["GIT_TERMINAL_PROMPT"] = "0"
