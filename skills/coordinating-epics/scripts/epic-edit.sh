@@ -9,8 +9,9 @@
 # saves the new baseline. All the logic is in _epic_edit.py beside this file.
 #
 # Usage: epic-edit.sh --repo OWNER/REPO --epic N [--ops FILE|-] [--dry-run]
-#                     [--accept-ticks REFS] [--adopt-live] [--account]
-#                     [--no-link-check] [--state-dir DIR]
+#                     [--scan FILE] [--accept-ticks REFS] [--adopt-live]
+#                     [--lint-all] [--account [FROM]] [--no-link-check]
+#                     [--state-dir DIR]
 #        epic-edit.sh --help    full usage, operations and exit codes
 #
 # Needs python3 (3.9+) and an authenticated gh. JSON summary on stdout;
