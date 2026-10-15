@@ -90,6 +90,22 @@ def test_adopting_saves_the_baseline_and_writes_nothing(adopted):
     assert "patches" not in adopted.load()
 
 
+def test_lint_all_checks_a_created_body_an_empty_edit_never_touches(rig):
+    """CR 291: the creation chain adopts with no ops, so only --lint-all reads the body."""
+    bad = BODY.replace(
+        "- [ ] #12 second thing", "- [ ] #12 after SUB2, see watcher#348"
+    )
+    rig.issue(REPO, EPIC, body=bad)
+    res = rig.edit(REPO, EPIC, [], "--adopt-live", "--lint-all")
+    assert res.returncode == 3, res.stderr
+    assert "SUB2" in res.stderr and "watcher#348" in res.stderr
+    assert not (rig.state_dir / "acme-widgets-10" / "last-written.md").exists()
+    fix = [{"op": "set-line", "ref": "#12", "line": "- [ ] #12 after #13"}]
+    res = rig.edit(REPO, EPIC, fix, "--adopt-live", "--lint-all")
+    assert res.returncode == 0, res.stderr
+    assert "- [ ] #12 after #13" in rig.body(REPO, EPIC)
+
+
 def test_an_empty_live_body_is_refused(rig):
     rig.issue(REPO, EPIC, body="")
     res = rig.edit(REPO, EPIC, [], "--adopt-live")

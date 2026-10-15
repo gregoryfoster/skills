@@ -886,6 +886,12 @@ def run(argv: list[str]) -> int:
         " Every new issue it found must be mentioned in the body (a tier line or the log)",
     )
     p.add_argument(
+        "--lint-all",
+        action="store_true",
+        help="lint the whole resulting body, not only the lines this edit changes."
+        " For a body written outside this tool: a created or adopted epic",
+    )
+    p.add_argument(
         "--no-link-check", action="store_true", help="skip resolving new comment links"
     )
     p.add_argument(
@@ -1033,7 +1039,9 @@ def run(argv: list[str]) -> int:
                 f"checkbox counts {after} don't match the {want} the operations imply"
             )
 
-        added, in_fence = introduced(live_lines, new)
+        # A created epic's body never passed through apply_ops, so an empty
+        # ops list would lint nothing of it (CR 291).
+        added, in_fence = introduced([] if a.lint_all else live_lines, new)
         problems = lint(added, host, not a.no_link_check, in_fence)
         if problems:
             raise Refused("lint:\n" + "\n".join(f"  {x}" for x in problems))

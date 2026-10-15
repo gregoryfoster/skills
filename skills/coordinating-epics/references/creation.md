@@ -82,10 +82,10 @@ Walk proposed closures with the operator. Four parts each: what it asks, what ch
   grep -q '[^[:space:]]' "$SCRATCH/epic.md" \
     && URL=$(gh issue create -R OWNER/REPO --title "…" --body-file "$SCRATCH/epic.md") \
     && N=${URL##*/} && echo "created #$N" \
-    && bash "<epic-edit.sh>" --repo OWNER/REPO --epic "$N" --adopt-live --ops - <<<'[]' \
+    && bash "<epic-edit.sh>" --repo OWNER/REPO --epic "$N" --adopt-live --lint-all --ops - <<<'[]' \
     && { [ "$N" = "$PREDICTED" ] || { echo "created #$N, but the body predicted #$PREDICTED" >&2; false; }; }
   ```
-- **Children not yet created** are drafted with `SUBn` placeholders, created in dependency order, and their real numbers substituted afterwards with Python `str.replace`, never `sed` (archiver 1, watcher F10). `epic-edit.sh` refuses a leftover `SUBn`.
+- **Children not yet created** are drafted with `SUBn` placeholders, created in dependency order, and their real numbers substituted afterwards with Python `str.replace`, never `sed` (archiver 1, watcher F10). `epic-edit.sh --lint-all` refuses a leftover `SUBn`, a short ref or a secret anywhere in the body. When it refuses the new epic, the baseline isn't taken: fix the lines in the same call, `--adopt-live --lint-all --ops fix.json`.
 - **Assert the epic's own number against the watermark the body predicted** (watcher F11). The epic takes a number too.
 - **Native sub-issues are optional.** A `#N` task list is enough for one repo and fewer than about ten children (status 22). Where used, verify links against the `/sub_issues` list, not `sub_issues_summary`, which lags (archiver 3). List queries also lag right after bulk label edits: verify per issue (private-launch 35).
 - **Read a label's description before applying it** (archiver 4).
