@@ -1377,6 +1377,25 @@ def test_a_history_copy_that_cant_be_saved_is_a_warning(adopted):
     assert "WARNING history copy not saved" in res.stderr
 
 
+WHITESPACE_ONLY = [{"op": "set-line", "ref": "#11", "line": "- [ ] #11 first thing  "}]
+
+
+def test_a_failed_whitespace_only_patch_is_not_taken_for_landed(adopted):
+    """CR 317: the unchanged body normalizes equal to the one sent."""
+    adopted.set_flag("fail_paths", {"PATCH": "HTTP 502: Bad Gateway"})
+    res = adopted.edit(REPO, EPIC, WHITESPACE_ONLY)
+    assert res.returncode == 2, res.stderr
+    base = adopted.state_dir / "acme" / "widgets" / "10" / "last-written.md"
+    assert "first thing  " not in base.read_text()
+
+
+def test_a_whitespace_only_patch_that_changed_nothing_is_exit_4(adopted):
+    """CR 317: an accepted PATCH whose body reads back unchanged."""
+    adopted.set_flag("patch_noop", True)
+    res = adopted.edit(REPO, EPIC, WHITESPACE_ONLY)
+    assert res.returncode == 4 and summary(res)["readback"] == "differs", res.stderr
+
+
 def test_a_gh_failure_is_exit_2_and_shows_ghs_own_stderr(adopted):
     adopted.set_flag("fail_all", "HTTP 401: Bad credentials")
     res = adopted.edit(REPO, EPIC, [{"op": "tick", "ref": "#11"}])

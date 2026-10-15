@@ -1394,13 +1394,23 @@ def run(argv: list[str]) -> int:
             summary["readback"] = "failed"
             return unconfirmed(f"reading it back failed:\n{e}")
         back = normalize(back_raw)
+        # Raw first: a whitespace-only edit normalizes equal to the body it
+        # changed, so only the raw lines say whether it landed (CR 274, 317).
+        # The normalized match is for GitHub's own rewrites of what was sent.
+        back_lines = split_raw(back_raw)
+        if back_lines == new:
+            landed = True
+        elif back_lines == live_lines:
+            landed = False
+        else:
+            landed = back == normalize(text)
         if patch_error:
-            if back == normalize(text):
+            if landed:
                 print(
                     f"WARNING gh reported the PATCH failed, but it landed: {patch_error}",
                     file=sys.stderr,
                 )
-            elif split_raw(back_raw) == live_lines:
+            elif back_lines == live_lines:
                 raise patch_error  # nothing written: exit 2
             else:
                 summary["written"] = "unknown"
@@ -1409,7 +1419,7 @@ def run(argv: list[str]) -> int:
                     head=f"the PATCH failed ({str(patch_error).splitlines()[-1]}), and",
                 )
         summary["written"] = True
-        if back != normalize(text):
+        if not landed:
             summary["readback"] = "differs"
             print(
                 "\n".join(
