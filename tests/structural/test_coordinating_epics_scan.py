@@ -254,11 +254,14 @@ def test_an_issue_url_is_a_ref_as_github_renders_it(rig):
         ("Waits on `#10`", False),
         ("```\nRefs #10\n```", False),
         ("Waits on `#9`, part of #10", True),
+        ("[see\n#10](docs/x.md)", False),
+        ("Waits on `#9,\n#10` too", False),
     ],
-    ids=["span", "fenced", "linked"],
+    ids=["span", "fenced", "linked", "link-text-wraps", "span-wraps"],
 )
 def test_an_issue_quoting_the_epic_only_in_code_doesnt_mention_it(rig, body, mentions):
-    """#415, measured: GitHub links no ref in a code span or a fenced block."""
+    """#415, measured: GitHub links no ref in a code span or a fenced block, nor
+    in a span or link text that wraps (CR 334)."""
     rig.issue(REPO, 17, updated_at="2026-10-02T14:00:00Z", body=body)
     rows = {x["number"]: x for x in scan(rig)["new_numbers"]}
     assert rows[17]["mentions_epic"] is mentions

@@ -1475,6 +1475,61 @@ def test_the_ref_reader_counts_only_what_github_links(lines, refs):
     assert ee.refs_in(lines, REPO) == refs
 
 
+W = {"acme/widgets#13"}
+
+
+@pytest.mark.parametrize(
+    "lines, refs",
+    [
+        (["para `x", "#13 y`"], set()),
+        (["[see", "#13](docs/x.md)"], set()),
+        (["- #12 waits `on", "  #13` x"], {"acme/widgets#12"}),
+        (["- #12 waits `on", "#13` x"], {"acme/widgets#12"}),
+        (["para `x", "    #13 y`"], set()),
+        (["> q `x", "> #13 y`"], set()),
+        (["> q `x", "#13 y`"], set()),
+        (["para `x", "2. #13 y`"], set()),
+        (["- a", "", "  b `x", "  #13 y`"], set()),
+        (["para `x", "", "#13 y`"], W),
+        (["- a `x", "- #13 y`"], W),
+        (["- a `x", "  - #13 y`"], W),
+        (["para `x", "- #13 y`"], W),
+        (["1. a `x", "2. #13 y`"], W),
+        (["para `x", "1. #13 y`"], W),
+        (["# head `x", "#13 y`"], W),
+        (["para `x", "> #13 y`"], W),
+        (["para `x", "---", "#13 y`"], W),
+        (["para `x", "===", "#13 y`"], W),
+    ],
+    ids=[
+        "span-wraps",
+        "link-text-wraps",
+        "span-wraps-into-an-items-continuation",
+        "span-wraps-into-a-lazy-line",
+        "span-wraps-into-an-indented-line",
+        "span-wraps-within-a-quote",
+        "span-wraps-into-a-quotes-lazy-line",
+        "an-ordinal-past-1-doesnt-break-a-paragraph",
+        "span-wraps-in-an-items-second-paragraph",
+        "blank-line",
+        "next-item",
+        "nested-item",
+        "item-after-a-paragraph",
+        "next-ordered-item",
+        "ordinal-1-after-a-paragraph",
+        "heading",
+        "quote-after-a-paragraph",
+        "thematic-break",
+        "setext-underline",
+    ],
+)
+def test_a_paragraph_is_read_whole_and_ends_where_github_ends_it(lines, refs):
+    """CR 334, each row measured with gh api markdown: a span or a link's text
+    wraps within a paragraph, so a ref there links nothing; past the paragraph's
+    end it is text again."""
+    assert ee.refs_in(lines, REPO) == refs
+
+
 @pytest.mark.parametrize(
     "text, rc", [("`#14`", 3), ("#14", 0)], ids=["in-a-span", "linked"]
 )

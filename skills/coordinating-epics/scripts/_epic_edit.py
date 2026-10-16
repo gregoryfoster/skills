@@ -624,19 +624,69 @@ def set_box(line: str, done: bool) -> str:
     return f"{m.group('indent')}{m.group('bullet')} [{mark}] " + line[m.end() :]
 
 
-def refs_in(lines: list[str], host: str) -> set[str]:
-    """Every ref GitHub links in the lines, read as the lint reads them.
+LIST_ITEM_RE = re.compile(r"^\s*(?:[-*+]|(?P<num>\d{1,9})[.)])(?:[ \t]|$)")
+QUOTE_RE = re.compile(r"^\s{0,3}>")
+# A heading, a thematic break or a setext underline is a block of one line.
+ONE_LINE_BLOCK_RE = re.compile(
+    r"^\s{0,3}(?:#{1,6}(?:[ \t]|$)|(?:[-*_][ \t]*){3,}$|=+[ \t]*$)"
+)
 
-    A ref only in a fenced block or a code span links nothing, so it doesn't
-    list the issue (#415, decided 2026-10-15). Spans outrank links, and a table
-    row's cells are read apart (CR 328).
+
+def paragraphs(lines: list[str]) -> list[tuple[str, bool]]:
+    """(text, is_row) for each paragraph and each table row outside a fenced block.
+
+    A code span or link text can wrap within a paragraph, never past it, so a
+    paragraph is read whole (CR 334). It ends at a blank line, a fence, a table,
+    a heading, a thematic break, a list item, or a quote's start. An ordered
+    item numbered other than 1 doesn't break a plain paragraph, but does end
+    an item; a ">" line continues a quote; any other line continues the
+    paragraph [each measured with gh api markdown].
     """
     fence, table = fenced(lines), tabled(lines)
-    out = set()
+    out: list[tuple[str, bool]] = []
+    run: list[str] = []
+    kind = ""
+
+    def flush() -> None:
+        if run:
+            out.append(("\n".join(run), False))
+            run.clear()
+
     for i, ln in enumerate(lines):
-        if fence[i]:
+        if fence[i] or table[i] or not ln.strip():
+            flush()
+            if table[i] and not fence[i]:
+                out.append((ln, True))
             continue
-        for m in REF_RE.finditer(ref_text(outside_code(ln, table[i]))):
+        item, quote = LIST_ITEM_RE.match(ln), QUOTE_RE.match(ln)
+        one_line = ONE_LINE_BLOCK_RE.match(ln)
+        starts = (
+            one_line
+            or (item and (not item.group("num") or int(item.group("num")) == 1))
+            or (item and kind == "item")
+            or (quote and kind != "quote")
+        )
+        if starts or not run:
+            flush()
+            kind = "item" if item else "quote" if quote else "para"
+        run.append(ln)
+        if one_line:
+            flush()
+    flush()
+    return out
+
+
+def refs_in(lines: list[str], host: str) -> set[str]:
+    """Every ref GitHub links in the lines.
+
+    A ref only in a fenced block or a code span links nothing, so it doesn't
+    list the issue (#415, decided 2026-10-15). Spans outrank links, a table
+    row's cells are read apart (CR 328), and a paragraph is read whole, as a
+    span or a link's text may wrap within it (CR 334).
+    """
+    out = set()
+    for text, row in paragraphs(lines):
+        for m in REF_RE.finditer(ref_text(outside_code(text, row))):
             out.add(key(m.group("repo"), m.group("num"), host))
     return out
 
@@ -944,8 +994,9 @@ def code_spans(line: str) -> list[tuple[int, int]]:
     A backtick string opens a span only when no backslash escapes it, and the
     span closes on the next backtick string of the same length; one with no
     closer is text. Inside a span a backslash is literal, so `App\\Tests\\` is
-    code, ``a\\`b`` is one span, and \\`make\\` holds none. The line is read on
-    its own, though a span may wrap within a paragraph.
+    code, ``a\\`b`` is one span, and \\`make\\` holds none. The lint passes one
+    line, though a span may wrap within a paragraph; refs_in passes the whole
+    paragraph (CR 334).
     """
     spans, i, n = [], 0, len(line)
     while i < n:
