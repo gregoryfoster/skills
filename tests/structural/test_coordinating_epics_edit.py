@@ -884,6 +884,18 @@ def test_a_note_that_is_a_substring_of_the_line_is_still_added(adopted):
     assert summary(res).get("unchanged")
 
 
+def test_a_note_equal_to_the_lines_last_word_is_still_added(adopted):
+    """CR 339 (for #405): the last word isn't the last field, so "thing" is new.
+
+    Before #405 the check was the line's end after a space, and read it as there.
+    """
+    op = {"op": "note", "ref": "#12", "text": "thing"}
+    res = adopted.edit(REPO, EPIC, [op])
+    assert res.returncode == 0 and summary(res)["written"], res.stderr
+    assert "- [ ] #12 second thing · thing\n" in adopted.body(REPO, EPIC)
+    assert summary(adopted.edit(REPO, EPIC, [op])).get("unchanged")
+
+
 def test_a_note_starts_its_own_field_on_an_item_and_a_bullet(rig):
     """#405: a bare-space join ran the note into the line's last field."""
     rig.issue(
