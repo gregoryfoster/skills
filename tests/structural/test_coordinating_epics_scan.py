@@ -148,6 +148,7 @@ def test_cursors_come_from_the_epic_header(rig):
     assert r["cursors"]["watermark"] == 14
     assert rig.base.startswith(r["cursors"]["from_sha"])
     assert r["max_number"] == 16
+    assert r["commits"] and r["commits_skipped"] is None
 
 
 def test_the_first_header_line_wins_over_a_later_one(rig):
@@ -371,6 +372,7 @@ def test_a_missing_cursor_is_skipped_loudly_not_guessed(rig):
         r["new_numbers"] is None and r["updated_since"] is None and r["commits"] is None
     )
     assert r["epic_comments"] is None
+    assert r["commits_skipped"] == "no from-sha"
     assert len(r["warnings"]) == 3
 
 
@@ -408,6 +410,7 @@ def test_a_git_failure_costs_the_commit_cursor_only(rig, tmp_path):
     # the directory and our prefix never does; "fatal:" would be no proof,
     # since git can translate it (CR 321).
     assert lost and nowhere in lost[0], r["warnings"]
+    assert nowhere in r["commits_skipped"]
     assert [x["number"] for x in r["new_numbers"]] == [15, 16]
 
 
@@ -632,3 +635,95 @@ def test_git_missing_costs_the_commit_cursor_only(rig):
     r = json.loads(res.stdout)
     assert r["commits"] is None and r["new_numbers"] is not None
     assert any("git could not run" in w for w in r["warnings"])
+
+
+# --ref's default (#411): a clone without origin/HEAD is common.
+
+
+def clone_of(rig, *, head: bool = True, fetched: bool = True):
+    """A clone of the checkout: with or without origin/HEAD, fetched or not."""
+    clone = rig.tmp / "clone"
+    if fetched:
+        git(rig.tmp, "clone", "-q", str(rig.checkout), str(clone))
+        if not head:
+            git(clone, "remote", "set-head", "origin", "-d")
+    else:  # address-validator#272's clone: git init + git remote add
+        clone.mkdir()
+        git(clone, "init", "-q")
+        git(clone, "remote", "add", "origin", str(rig.checkout))
+    return clone
+
+
+def scan_clone(rig, clone, *extra):
+    res = rig.run(
+        "scan.sh", "--repo", REPO, "--epic", str(EPIC), "--git-dir", str(clone), *extra
+    )
+    assert res.returncode == 0, res.stderr
+    return json.loads(res.stdout)
+
+
+def asked_github_for_the_repo(rig) -> bool:
+    return ["api", f"repos/{REPO}"] in rig.load()["calls"]
+
+
+def test_the_tip_is_origin_heads_branch_with_no_gh_call(rig):
+    r = scan_clone(rig, clone_of(rig))
+    assert r["cursors"]["ref"] == "origin/main"
+    assert len(r["commits"]) == 4 and r["commits_skipped"] is None
+    assert not asked_github_for_the_repo(rig)
+
+
+def test_with_no_origin_head_the_tip_is_githubs_default_branch(rig):
+    """#411: the range was skipped, at exit 0, in a clone with no origin/HEAD."""
+    r = scan_clone(rig, clone_of(rig, head=False), "--no-fetch")
+    assert r["cursors"]["ref"] == "origin/main"
+    assert len(r["commits"]) == 4 and r["commits_skipped"] is None
+    assert asked_github_for_the_repo(rig)
+
+
+def test_the_tip_resolves_after_the_fetch_in_an_init_and_remote_add_clone(rig):
+    """#411's own case: origin/main exists only once the fetch has run."""
+    r = scan_clone(rig, clone_of(rig, fetched=False))
+    assert r["cursors"]["ref"] == "origin/main"
+    assert len(r["commits"]) == 4 and r["commits_skipped"] is None
+
+
+def test_a_dangling_origin_head_falls_back_to_github(rig):
+    """origin/HEAD can name a branch since renamed: the symref alone isn't enough."""
+    clone = clone_of(rig)
+    git(clone, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/gone")
+    r = scan_clone(rig, clone, "--no-fetch")
+    assert r["cursors"]["ref"] == "origin/main" and len(r["commits"]) == 4
+
+
+def test_no_resolvable_tip_is_named_at_the_top_level_with_its_fixes(rig):
+    """#411: exit 0 (scan.sh is reporting, #398), commits null, and why."""
+    rig.load()
+    rig.state["repos"][REPO]["default_branch"] = "trunk"
+    rig.save()
+    r = scan_clone(rig, clone_of(rig, head=False), "--no-fetch")
+    assert r["commits"] is None and r["cursors"]["ref"] is None
+    why = r["commits_skipped"]
+    assert "origin/HEAD is unset" in why and "origin/trunk" in why, why
+    assert "--ref origin/<default>" in why and "git remote set-head origin -a" in why
+    assert f"commit range not scanned: {why}" in r["warnings"]
+    assert [x["number"] for x in r["new_numbers"]] == [15, 16]
+
+
+def test_a_failed_default_branch_read_keeps_ghs_whole_stderr(rig):
+    """#411 under #410's rule: the lookup's gh failure costs the fallback only."""
+    clone = clone_of(rig)
+    git(clone, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/gone")
+    rig.set_flag("repo_error", "HTTP 403: Resource not accessible\nhint: a scope")
+    r = scan_clone(rig, clone, "--no-fetch")
+    why = r["commits_skipped"]
+    assert "origin/HEAD names origin/gone, which doesn't resolve" in why, why
+    assert "unread: gh: HTTP 403: Resource not accessible\nhint: a scope" in why
+    assert r["new_numbers"] is not None
+
+
+def test_an_explicit_ref_is_used_as_given(rig):
+    clone = clone_of(rig, head=False)
+    r = scan_clone(rig, clone, "--no-fetch", "--ref", "origin/main")
+    assert r["cursors"]["ref"] == "origin/main" and len(r["commits"]) == 4
+    assert not asked_github_for_the_repo(rig)

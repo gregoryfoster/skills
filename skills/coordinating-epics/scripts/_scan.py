@@ -235,7 +235,8 @@ def git_env() -> dict:
     return env
 
 
-def git(args: list[str], git_dir: str, what: str) -> str:
+def git(args: list[str], git_dir: str, what: str, quiet_miss: bool = False):
+    """git's stdout. With quiet_miss, None for a silent exit 1 (`-q`'s "no such ref")."""
     env = git_env()
     try:
         r = subprocess.run(
@@ -243,11 +244,64 @@ def git(args: list[str], git_dir: str, what: str) -> str:
         )
     except OSError as e:  # git not installed: the commit cursor's loss only (CR 279)
         raise Infra(f"{what}: git could not run: {e}") from None
+    if quiet_miss and r.returncode == 1 and not r.stderr.strip():
+        return None
     if r.returncode != 0:
         raise Infra(
             f"{what}: git {' '.join(args)} exited {r.returncode}:\n{r.stderr.strip()}"
         )
     return r.stdout
+
+
+class NoTip(Exception):
+    """No --ref, and no default tip resolves in this clone (#411)."""
+
+
+def default_tip(git_dir: str, host: str) -> str:
+    """origin/HEAD's branch, else origin/<GitHub's default branch>: the first that resolves.
+
+    A clone made by `git init` + `git remote add` has no origin/HEAD, and one
+    can name a branch since renamed, so each candidate is checked (#411). Run
+    after the fetch, which can create origin/<default> in a fresh clone.
+    """
+
+    def resolves(ref: str) -> bool:
+        what = f"checking {ref}"
+        return (
+            git(["rev-parse", "--verify", "-q", ref + "^{commit}"], git_dir, what, True)
+            is not None
+        )
+
+    tried = []
+    head = git(
+        ["symbolic-ref", "-q", "refs/remotes/origin/HEAD"],
+        git_dir,
+        "reading origin/HEAD",
+        True,
+    )
+    if head is None:
+        tried.append("origin/HEAD is unset")
+    else:
+        ref = head.strip().removeprefix("refs/remotes/")
+        if resolves(ref):
+            return ref
+        tried.append(f"origin/HEAD names {ref}, which doesn't resolve")
+    try:
+        branch = gh_json(["api", f"repos/{host}"], "reading the default branch")
+        branch = branch.get("default_branch") if isinstance(branch, dict) else None
+    except Infra as e:
+        tried.append(f"GitHub's default branch unread: {gh_cause(e)}")
+    else:
+        if not branch:
+            tried.append("GitHub named no default branch")
+        elif resolves(f"origin/{branch}"):
+            return f"origin/{branch}"
+        else:
+            tried.append(f"origin/{branch}, GitHub's default branch, doesn't resolve")
+    raise NoTip(
+        f"no tip for the range ({'; '.join(tried)}): pass --ref origin/<default>,"
+        " or run `git remote set-head origin -a` once in this clone"
+    )
 
 
 def gh_cause(e: Infra) -> str:
@@ -379,7 +433,12 @@ def run(argv: list[str]) -> int:
             "transfer updates it, so updated-since still lists it.\n\n"
             "exit codes: 0 report written; 1 usage; 2 gh failed (its stderr shown).\n"
             "A git failure costs the commit cursor only: commits is null, the reason\n"
-            "(git's stderr included) is in warnings, and the exit is 0."
+            "(git's stderr included) is in commits_skipped and warnings, and the exit\n"
+            "is 0. commits_skipped is null when the range was read, so a skip never\n"
+            "reads as no commits.\n\n"
+            "No origin/HEAD in this clone? The tip falls back to origin/<the default\n"
+            "branch GitHub names>. To skip that lookup, pass --ref origin/<default>,\n"
+            "or run `git remote set-head origin -a` once."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -401,8 +460,10 @@ def run(argv: list[str]) -> int:
     )
     p.add_argument(
         "--ref",
-        default="origin/HEAD",
-        help="tip of the range (default: origin/HEAD, the remote's default branch)",
+        help=(
+            "tip of the range (default: origin/HEAD's branch, else origin/<GitHub's"
+            " default branch>, whichever resolves; with neither, the range is skipped)"
+        ),
     )
     p.add_argument("--no-fetch", action="store_true", help="don't run git fetch first")
     a = p.parse_args(argv)
@@ -494,20 +555,31 @@ def run(argv: list[str]) -> int:
                 [report["max_number"]] + [r["number"] for r in rows]
             )
 
+        # commits_skipped names why commits is null, at the top level, so a
+        # skipped cursor can't pass for an empty range (#411).
+        report["commits"] = report["commits_skipped"] = None
         if cur["from_sha"] is None:
             warnings.append("no from-sha: commit range not scanned")
-            report["commits"] = None
+            report["commits_skipped"] = "no from-sha"
         else:
             # A git failure costs this cursor only: the other two, and the
             # cross-repo states, are still worth having (CR 245).
             try:
                 if not a.no_fetch:
                     git(["fetch", "--quiet", "origin"], a.git_dir, "fetching origin")
+                if cur["ref"] is None:
+                    cur["ref"] = default_tip(a.git_dir, host)
                 report["commits"] = commits(
-                    a.git_dir, cur["from_sha"], a.ref, host, a.epic, items, warnings
+                    a.git_dir,
+                    cur["from_sha"],
+                    cur["ref"],
+                    host,
+                    a.epic,
+                    items,
+                    warnings,
                 )
-            except Infra as e:
-                report["commits"] = None
+            except (Infra, NoTip) as e:
+                report["commits_skipped"] = str(e)
                 warnings.append(f"commit range not scanned: {e}")
 
         cross = []

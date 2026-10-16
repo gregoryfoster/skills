@@ -102,6 +102,11 @@ if r is None:
     fail()
 issues = r.get("issues", {})
 
+if len(parts) == 3:  # repos/OWNER/REPO: the repo itself
+    if "repo_error" in st:
+        fail(st["repo_error"])
+    out({"default_branch": r.get("default_branch", "main")})
+
 if len(parts) == 6 and parts[3] == "issues" and parts[4] == "comments":
     cid = parts[5]
     if cid not in st.get("comment_index", {}):
