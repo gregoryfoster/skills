@@ -1102,6 +1102,65 @@ def test_a_span_github_renders_as_code_is_read_as_code(adopted, line):
     assert res.returncode == 0, res.stderr
 
 
+# Each measured with gh api markdown (CR 328): which lines GitHub makes a table.
+TABLE_SHAPES = [
+    (
+        [
+            "T1",
+            "| A | B |",
+            "|---|---|",
+            "| #5 `x | #6 y` |",
+            "lazy `x | #7 y`",
+            "- item `x | #8 y`",
+        ],
+        [False, True, True, True, True, False],
+    ),
+    (["A | B", "--- | ---", "#9 `x | #10 y`"], [True, True, True]),
+    (["| A | B | C |", "|---|---|", "| `x | #11 y` |"], [False, False, False]),
+    (["```", "| A | B |", "|---|---|", "```"], [False] * 4),
+    (["para `x | #14 y` |"], [False]),
+]
+
+
+@pytest.mark.parametrize(
+    "lines, rows",
+    TABLE_SHAPES,
+    ids=["rows-and-lazy", "no-outer-pipes", "cell-count", "fenced", "paragraph"],
+)
+def test_tables_follow_gfm(lines, rows):
+    """CR 328."""
+    assert ee.tabled(lines) == rows
+
+
+@pytest.mark.parametrize(
+    "line, ref, linked",
+    [
+        ("| #5 `x | #6 y` |", "#6", True),
+        ("| `x \\| #13 y` | z |", "#13", False),
+    ],
+    ids=["span-across-a-pipe", "escaped-pipe"],
+)
+def test_a_table_rows_cells_are_read_apart(line, ref, linked):
+    """CR 328: GFM splits cells before it finds spans; \\| stays in its cell."""
+    assert (ref in ee.outside_code(line, row=True)) is linked
+
+
+@pytest.mark.parametrize(
+    "line, rc",
+    [
+        ("| #14 `x | #400 y` |", 3),
+        ("| #14 `x \\| #400 y` |", 0),
+    ],
+    ids=["span-across-a-pipe", "escaped-pipe"],
+)
+def test_a_span_across_a_cells_pipe_hides_no_ref(adopted, line, rc):
+    """CR 328: a row added under the Parked table is a row; GitHub links that #400."""
+    ops = [{"op": "add-line", "section": "Parked", "line": line}]
+    res = adopted.edit(REPO, EPIC, ops)
+    assert res.returncode == rc, res.stderr
+    assert rc == 0 or "#400 is above" in res.stderr
+
+
 @pytest.mark.parametrize(
     "line, why",
     [
@@ -1142,7 +1201,7 @@ def test_a_ref_after_a_hyphen_or_dot_is_this_repos(text, refs, short):
     """#401, each row measured with gh api markdown: GitHub links pre-#348 as
     this repo's #348 and leaves widgets#348 plain. x/#12 links too; see REF_PAT."""
     assert ee.refs_in([text], REPO) == refs
-    assert bool(ee.SHORT_REF_RE.search(ee.rendered_refs(text))) is short
+    assert bool(ee.SHORT_REF_RE.search(ee.ref_text(ee.outside_code(text)))) is short
 
 
 def test_a_line_holding_pre_n_can_be_ticked(adopted):

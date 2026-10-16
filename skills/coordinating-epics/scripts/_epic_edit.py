@@ -86,9 +86,9 @@ lint:
   is deliberate: legacy text is fixed the first time it is touched. Rewrite the
   line with set-line, then tick. A fenced code block renders as written, so its
   lines are checked for secrets only; a code span skips every check but SUBn
-  and secrets. Spans are found as CommonMark finds them, so \\`make\\` (the
-  escaped backticks an unquoted heredoc leaves) is refused and `App\\Tests\\`
-  is code.
+  and secrets. Spans are found as CommonMark finds them, a table row cell by
+  cell, so \\`make\\` (the escaped backticks an unquoted heredoc leaves) is
+  refused and `App\\Tests\\` is code.
 
 exit codes:
   0  written and read back, or nothing to write (every operation already held)
@@ -325,6 +325,54 @@ def fenced(lines: list[str]) -> list[bool]:
             and not m.group("info").strip()
         ):
             opener = ""
+    return out
+
+
+DELIM_CELL_RE = re.compile(r"\s*:?-+:?\s*")
+# What ends a table besides a blank line: another block (measured: a list item).
+TABLE_BREAK_RE = re.compile(r"^\s*(?:>|#{1,6}(?:\s|$)|[-*+]\s|\d{1,9}[.)]\s)")
+
+
+def cells(line: str) -> list[str]:
+    """A table row's cells, split on unescaped pipes; its outer pipes are no cell."""
+    s = line.strip()
+    s = s[1:] if s.startswith("|") else s
+    s = s[:-1] if s.endswith("|") and not s.endswith("\\|") else s
+    return UNESCAPED_PIPE_RE.split(s)
+
+
+def tabled(lines: list[str]) -> list[bool]:
+    """True for each line of a GFM table, where pipes split cells before code spans.
+
+    A table is a header row, then a delimiter row with a pipe and as many cells,
+    then every line up to a blank one or another block, with or without a
+    leading pipe (CR 328). `x | #6 y` in a row is two cells, and #6 is linked.
+    """
+    fence = fenced(lines)
+    out = [False] * len(lines)
+    i = 0
+    while i + 1 < len(lines):
+        head, delim = lines[i], lines[i + 1]
+        if (
+            fence[i]
+            or fence[i + 1]
+            or "|" not in delim
+            or TABLE_BREAK_RE.match(head)
+            or not all(DELIM_CELL_RE.fullmatch(c) for c in cells(delim))
+            or len(cells(head)) != len(cells(delim))
+        ):
+            i += 1
+            continue
+        j = i + 2
+        while (
+            j < len(lines)
+            and lines[j].strip()
+            and not fence[j]
+            and not TABLE_BREAK_RE.match(lines[j])
+        ):
+            j += 1
+        out[i:j] = [True] * (j - i)
+        i = j
     return out
 
 
@@ -841,16 +889,19 @@ def fetch_body(repo: str, num: int) -> str:
 # ---------------------------------------------------------------- lint
 
 
-def introduced(old: list[str], new: list[str]) -> tuple[list[str], list[bool]]:
-    """The lines new adds or changes, and whether each sits in a fenced block."""
+def introduced(
+    old: list[str], new: list[str]
+) -> tuple[list[str], list[bool], list[bool]]:
+    """The lines new adds or changes, and whether each sits in a fenced block or a table."""
     sm = difflib.SequenceMatcher(a=old, b=new, autojunk=False)
-    fence = fenced(new)
-    out, code = [], []
+    fence, table = fenced(new), tabled(new)
+    out, code, row = [], [], []
     for tag, _i1, _i2, j1, j2 in sm.get_opcodes():
         if tag in ("replace", "insert"):
             out.extend(new[j1:j2])
             code.extend(fence[j1:j2])
-    return out, code
+            row.extend(table[j1:j2])
+    return out, code, row
 
 
 def absent(e: Infra) -> bool:
@@ -902,8 +953,13 @@ def code_spans(line: str) -> list[tuple[int, int]]:
     return spans
 
 
-def outside_code(line: str) -> str:
-    """The line with each code span read as a neutral mark, so no text joins across it."""
+def outside_code(line: str, row: bool = False) -> str:
+    """The line with each code span read as a neutral mark, so no text joins across it.
+
+    In a table row, each cell is read on its own: GFM splits cells first (CR 328).
+    """
+    if row:
+        return "|".join(outside_code(c) for c in UNESCAPED_PIPE_RE.split(line))
     out, last = [], 0
     for start, end in code_spans(line):
         out += [line[last:start], LINK_MARK]
@@ -911,24 +967,18 @@ def outside_code(line: str) -> str:
     return "".join(out) + line[last:]
 
 
-def rendered_refs(line: str) -> str:
-    """ref_text outside code spans: GitHub links no ref in one.
-
-    Spans are read first, as GitHub does: a span outranks a link (#402).
-    """
-    return ref_text(outside_code(line))
-
-
 def lint(
     new_lines: list[str],
     host: str,
     check_links: bool,
     in_fence: list[bool] | None = None,
+    in_table: list[bool] | None = None,
 ) -> list[str]:
     in_fence = in_fence or [False] * len(new_lines)
+    in_table = in_table or [False] * len(new_lines)
     problems = []
-    prose = []
-    for raw, code in zip(new_lines, in_fence):
+    prose = []  # each line outside its code spans
+    for raw, code, row in zip(new_lines, in_fence, in_table):
         for rx in SECRET_RES:
             if rx.search(raw):
                 problems.append("what looks like a secret (line withheld)")
@@ -936,10 +986,12 @@ def lint(
         # ${{ matrix.x }} or an example ref are its text (CR 290).
         if code:
             continue
-        prose.append(raw)
         # Placeholders and variables are read in the whole line, link targets
-        # included; refs are read the way GitHub renders them.
-        text = outside_code(raw)
+        # included; refs are read the way GitHub renders them. GitHub links no
+        # ref in a code span, and finds spans before links: a span outranks a
+        # link (#402).
+        text = outside_code(raw, row)
+        prose.append(text)
         for rx, what, in_spans in PLACEHOLDER_RES:
             if rx.search(raw if in_spans else text):
                 problems.append(f"{what}: {raw.strip()[:120]}")
@@ -947,7 +999,7 @@ def lint(
             problems.append(
                 f"an unexpanded shell variable outside a code span: {raw.strip()[:120]}"
             )
-        ln = rendered_refs(raw)
+        ln = ref_text(text)
         for m in SHORT_REF_RE.finditer(ln):
             problems.append(
                 f"short ref {m.group('ref')} links nowhere; write owner/repo#N: {raw.strip()[:120]}"
@@ -960,8 +1012,8 @@ def lint(
                 )
     bare = {
         int(m.group("num"))
-        for ln in prose
-        for m in REF_RE.finditer(rendered_refs(ln))
+        for text in prose
+        for m in REF_RE.finditer(ref_text(text))
         if not m.group("repo")
     }
     if bare:
@@ -986,9 +1038,9 @@ def lint(
                 f"#{n} is above {host}'s highest number (#{top}); a ref from another repo?"
             )
     if check_links:
-        for ln in prose:
+        for text in prose:
             # A link quoted in a code span is an example, not a link (CR 310).
-            for m in COMMENT_LINK_RE.finditer(outside_code(ln)):
+            for m in COMMENT_LINK_RE.finditer(text):
                 try:
                     data = gh_json(
                         [
@@ -1337,8 +1389,8 @@ def run(argv: list[str]) -> int:
 
         # A created epic's body never passed through apply_ops, so an empty
         # ops list would lint nothing of it (CR 291).
-        added, in_fence = introduced([] if a.lint_all else live_lines, new)
-        problems = lint(added, host, not a.no_link_check, in_fence)
+        added, in_fence, in_table = introduced([] if a.lint_all else live_lines, new)
+        problems = lint(added, host, not a.no_link_check, in_fence, in_table)
         if problems:
             raise Refused("lint:\n" + "\n".join(f"  {x}" for x in problems))
 
