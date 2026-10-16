@@ -252,12 +252,13 @@ def test_an_issue_url_is_a_ref_as_github_renders_it(rig):
     "body, mentions",
     [
         ("Waits on `#10`", False),
+        ("Waits on `` `#10` ``", False),
         ("```\nRefs #10\n```", False),
         ("Waits on `#9`, part of #10", True),
         ("[see\n#10](docs/x.md)", False),
         ("Waits on `#9,\n#10` too", False),
     ],
-    ids=["span", "fenced", "linked", "link-text-wraps", "span-wraps"],
+    ids=["span", "double-span", "fenced", "linked", "link-text-wraps", "span-wraps"],
 )
 def test_an_issue_quoting_the_epic_only_in_code_doesnt_mention_it(rig, body, mentions):
     """#415, measured: GitHub links no ref in a code span or a fenced block, nor
@@ -272,7 +273,8 @@ def test_a_cross_repo_ref_quoted_only_in_code_isnt_read(rig):
     rig.issue(
         REPO,
         EPIC,
-        body=BODY.format(sha=rig.base[:9]) + "- the old `acme/gadgets#4` form\n",
+        body=BODY.format(sha=rig.base[:9])
+        + "- the old `acme/gadgets#4` form, or `` `acme/gadgets#5` ``\n",
         updated_at="2026-10-02T00:00:00Z",
     )
     cross = {x["ref"] for x in scan(rig)["cross_repo"]}

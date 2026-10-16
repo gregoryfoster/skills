@@ -1540,7 +1540,9 @@ def test_a_paragraph_is_read_whole_and_ends_where_github_ends_it(lines, refs):
 
 
 @pytest.mark.parametrize(
-    "text, rc", [("`#14`", 3), ("#14", 0)], ids=["in-a-span", "linked"]
+    "text, rc",
+    [("`#14`", 3), ("`` `#14` ``", 3), ("#14", 0)],
+    ids=["in-a-span", "in-a-double-span", "linked"],
 )
 def test_account_doesnt_count_a_ref_quoted_only_in_code(adopted, text, rc):
     """#415: GitHub links no ref in a code span, so the epic doesn't list #14."""
@@ -1550,10 +1552,13 @@ def test_account_doesnt_count_a_ref_quoted_only_in_code(adopted, text, rc):
     assert rc == 0 or summary(res)["unlisted"] == [14]
 
 
-def test_a_scans_new_issue_quoted_only_in_code_isnt_mentioned(adopted):
+@pytest.mark.parametrize(
+    "quoted", ["`#14`", "`` `#14` ``"], ids=["span", "double-span"]
+)
+def test_a_scans_new_issue_quoted_only_in_code_isnt_mentioned(adopted, quoted):
     """#415: the mention check reads the body as GitHub links it."""
     report = _report(adopted, new_numbers=[{"number": 14, "kind": "issue"}])
-    ops = [{"op": "log", "text": "{today}: 1 new (`#14`, out of epic)."}]
+    ops = [{"op": "log", "text": f"{{today}}: 1 new ({quoted}, out of epic)."}]
     res = adopted.edit(REPO, EPIC, ops, "--scan", report)
     assert res.returncode == 3 and "doesn't mention: #14" in res.stderr
 
