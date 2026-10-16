@@ -879,9 +879,77 @@ def test_a_note_that_is_a_substring_of_the_line_is_still_added(adopted):
     """CR 253."""
     res = adopted.edit(REPO, EPIC, [{"op": "note", "ref": "#12", "text": "second"}])
     assert res.returncode == 0 and summary(res)["written"], res.stderr
-    assert "- [ ] #12 second thing second" in adopted.body(REPO, EPIC)
+    assert "- [ ] #12 second thing · second\n" in adopted.body(REPO, EPIC)
     res = adopted.edit(REPO, EPIC, [{"op": "note", "ref": "#12", "text": "second"}])
     assert summary(res).get("unchanged")
+
+
+def test_a_note_starts_its_own_field_on_an_item_and_a_bullet(rig):
+    """#405: a bare-space join ran the note into the line's last field."""
+    rig.issue(
+        REPO, EPIC, body=BODY.replace("- [ ] #12 second thing\n", "- #12 a bullet\n")
+    )
+    assert rig.edit(REPO, EPIC, [], "--adopt-live").returncode == 0
+    ops = [
+        {"op": "note", "ref": "#11", "text": "Shipped 1a2b3c4..5d6e7f8."},
+        {"op": "note", "ref": "#12", "text": "Decided: one PR."},
+    ]
+    res = rig.edit(REPO, EPIC, ops)
+    assert res.returncode == 0, res.stderr
+    out = rig.body(REPO, EPIC)
+    assert "- [ ] #11 first thing · Shipped 1a2b3c4..5d6e7f8.\n" in out
+    assert "- #12 a bullet · Decided: one PR.\n" in out
+    assert summary(rig.edit(REPO, EPIC, ops)).get("unchanged")
+
+
+def test_a_note_equal_to_the_lines_last_field_reads_as_present(rig):
+    """#405, for CR 253: the note is the last " · " field, so "S" on "· S" is there."""
+    rig.issue(
+        REPO, EPIC, body=BODY.replace("#12 second thing\n", "#12 second thing · S\n")
+    )
+    assert rig.edit(REPO, EPIC, [], "--adopt-live").returncode == 0
+    res = rig.edit(REPO, EPIC, [{"op": "note", "ref": "#12", "text": "S"}])
+    assert summary(res).get("unchanged"), res.stderr
+
+
+def test_a_note_led_by_a_separator_gets_no_second_one(adopted):
+    """#405: notes written before the editor added " · " led with it by hand."""
+    led = {"op": "note", "ref": "#12", "text": "· Brief posted."}
+    res = adopted.edit(REPO, EPIC, [led])
+    assert res.returncode == 0, res.stderr
+    assert "- [ ] #12 second thing · Brief posted.\n" in adopted.body(REPO, EPIC)
+    for text in ("· Brief posted.", "Brief posted.", "·Brief posted."):
+        op = {"op": "note", "ref": "#12", "text": text}
+        assert summary(adopted.edit(REPO, EPIC, [op])).get("unchanged"), text
+
+
+ITEM_12, ROW_13 = "- [ ] #12 second thing", "| #13 | when the SDK ships |"
+
+
+@pytest.mark.parametrize(
+    "ref, old, line, want",
+    [
+        ("#12", ITEM_12, "- [ ] #12 second thing ·", "- [ ] #12 second thing · later"),
+        ("#13", ROW_13, "| #13 | sdk · |", "| #13 | sdk · later |"),
+        ("#13", ROW_13, "| #13 | |", "| #13 | later |"),
+    ],
+)
+def test_a_note_where_a_field_already_starts_takes_no_separator(
+    rig, ref, old, line, want
+):
+    """#405: after a trailing separator, or in a row's empty last cell."""
+    rig.issue(REPO, EPIC, body=BODY.replace(old + "\n", line + "\n"))
+    assert rig.edit(REPO, EPIC, [], "--adopt-live").returncode == 0
+    op = {"op": "note", "ref": ref, "text": "later"}
+    res = rig.edit(REPO, EPIC, [op])
+    assert res.returncode == 0, res.stderr
+    assert "\n" + want + "\n" in rig.body(REPO, EPIC)
+    assert summary(rig.edit(REPO, EPIC, [op])).get("unchanged")
+
+
+def test_a_note_that_is_only_a_separator_is_refused(adopted):
+    res = adopted.edit(REPO, EPIC, [{"op": "note", "ref": "#12", "text": " · "}])
+    assert res.returncode == 3 and "non-empty" in res.stderr
 
 
 def test_note_on_a_table_row_lands_inside_the_last_cell(adopted):
@@ -890,7 +958,7 @@ def test_note_on_a_table_row_lands_inside_the_last_cell(adopted):
     res = adopted.edit(REPO, EPIC, [op])
     assert res.returncode == 0, res.stderr
     assert re.search(
-        r"^\| #13 \| when the SDK ships \(re-read \d{4}-\d\d-\d\d\) \|$",
+        r"^\| #13 \| when the SDK ships · \(re-read \d{4}-\d\d-\d\d\) \|$",
         adopted.body(REPO, EPIC),
         re.M,
     )
@@ -904,7 +972,7 @@ def test_a_note_on_a_row_without_a_closing_pipe_ends_the_row(rig):
     assert rig.edit(REPO, EPIC, [], "--adopt-live").returncode == 0
     res = rig.edit(REPO, EPIC, [{"op": "note", "ref": "#13", "text": "later"}])
     assert res.returncode == 0, res.stderr
-    assert "\n| #13 | sdk later\n" in rig.body(REPO, EPIC)
+    assert "\n| #13 | sdk · later\n" in rig.body(REPO, EPIC)
 
 
 def test_a_row_ending_in_an_escaped_pipe_has_no_closing_pipe(rig):
@@ -915,7 +983,7 @@ def test_a_row_ending_in_an_escaped_pipe_has_no_closing_pipe(rig):
     assert rig.edit(REPO, EPIC, [], "--adopt-live").returncode == 0
     res = rig.edit(REPO, EPIC, [{"op": "note", "ref": "#13", "text": "later"}])
     assert res.returncode == 0, res.stderr
-    assert "\n| #13 | a \\| later\n" in rig.body(REPO, EPIC)
+    assert "\n| #13 | a \\| · later\n" in rig.body(REPO, EPIC)
 
 
 def test_a_note_on_a_row_refuses_a_bare_pipe(adopted):
@@ -1635,7 +1703,7 @@ def test_touched_lines_keep_their_hard_break(rig):
     res = rig.edit(REPO, EPIC, ops)
     assert res.returncode == 0, res.stderr
     out = rig.body(REPO, EPIC)
-    assert "- [ ] #12 second thing (re-read)  \n" in out
+    assert "- [ ] #12 second thing · (re-read)  \n" in out
     assert "- **Next:** #11  \n" in out
     assert "- [ ] #14 two lines  \n" in out
 

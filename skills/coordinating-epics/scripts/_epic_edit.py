@@ -46,7 +46,8 @@ USAGE_EXTRA = """\
 operations (a JSON array, from --ops FILE or --ops - for stdin):
   {"op": "tick", "ref": "#12"}                set #12's box to [x]
   {"op": "untick", "ref": "#12"}              set #12's box to [ ]
-  {"op": "note", "ref": "#12", "text": "..."} append text to #12's line, once
+  {"op": "note", "ref": "#12", "text": "..."} append " · text" to #12's line,
+                                              once
   {"op": "set-line", "ref": "#12", "line": "- [x] #12 ..."}
                                               replace #12's line; the new line
                                               must lead with the same ref
@@ -314,6 +315,17 @@ def is_cursor_line(line: str) -> bool:
 def trailing(line: str) -> str:
     """A line's trailing whitespace: two spaces of it are a hard line break."""
     return line[len(line.rstrip()) :]
+
+
+def field_end(text: str, row: bool) -> bool:
+    """True where a note starts a field by itself, with no " · " before it.
+
+    That is after a separator, or at the start of a row's empty last cell.
+    """
+    text = text.rstrip()
+    return text.endswith("·") or (
+        row and text.endswith("|") and not text.endswith("\\|")
+    )
 
 
 def fenced(lines: list[str]) -> list[bool]:
@@ -751,11 +763,15 @@ def apply_ops(
                 _add(expect, _delta(before, box_state(lines[i])))
             elif kind == "note":
                 i = find_ref_line(lines, parse_ref(op["ref"], host), host)
+                # The editor writes the " · " itself, so a text led by one, as
+                # notes were before it did, doesn't get a second (#405).
                 text = inject(op["text"], now, scan).strip()
+                text = text.removeprefix("·").lstrip()
                 if not text or "\n" in text:
                     raise Refused("note text must be one non-empty line")
                 head, close = lines[i].rstrip(), ""
-                if ROW_RE.match(ref_text(head)):
+                row = bool(ROW_RE.match(ref_text(head)))
+                if row:
                     # Inside the last cell: GFM drops a cell past the header's
                     # count, so text after the closing pipe never shows (CR 286).
                     if UNESCAPED_PIPE_RE.search(text):
@@ -764,13 +780,15 @@ def apply_ops(
                         )
                     if head.endswith("|") and not head.endswith("\\|"):
                         head, close = head[:-1].rstrip(), " |"
-                # By the line's end, not a substring: a note "S" on "… · S"
-                # is a new note, not one already there (CR 253).
-                if head.endswith(" " + text):
+                # Already there when it is the line's last field. By the end,
+                # not a substring: "second" on "#12 second thing" is a new note
+                # (CR 253). A last " · " field that reads as the note is it.
+                if head.endswith(text) and field_end(head[: -len(text)], row):
                     notes.append(f"{where}: note already on {op['ref']}'s line")
                     continue
+                sep = " " if field_end(head, row) else " · "
                 # The note goes before the line's own trailing break (CR 274).
-                lines[i] = head + " " + text + close + trailing(lines[i])
+                lines[i] = head + sep + text + close + trailing(lines[i])
             elif kind == "set-line":
                 ref_key = parse_ref(op["ref"], host)
                 i = find_ref_line(lines, ref_key, host)
