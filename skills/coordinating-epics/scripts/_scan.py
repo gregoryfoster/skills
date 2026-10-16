@@ -16,8 +16,8 @@ Each run that used one cursor alone missed something (gregoryfoster/skills#348):
 - **commit range:** every commit from the last verified SHA to the tip, with
   or without an issue number, attributed (broker#80 128, watcher F39).
 
-Plus every cross-repo ref in the epic body, with its state and last activity
-(processor#24 F86/F133).
+Plus every cross-repo ref the epic body links, with its state and last
+activity (processor#24 F86/F133). One quoted only in code isn't read (#415).
 """
 
 from __future__ import annotations

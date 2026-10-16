@@ -3,7 +3,7 @@
 # last check-in, by three cursors: numbers above the watermark, everything
 # updated since the last check-in (with new comments on the epic and its
 # items), and the commit range from the last verified SHA. Also lists every
-# cross-repo ref in the body with its state. Read-only on GitHub; the logic
+# cross-repo ref the body links, with its state. Read-only on GitHub; the logic
 # is in _scan.py beside this file (gregoryfoster/skills#348).
 #
 # Usage: scan.sh --repo OWNER/REPO --epic N [--since TS] [--watermark N]
