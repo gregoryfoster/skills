@@ -262,7 +262,7 @@ class NoTip(Exception):
     """No --ref, and no default tip resolves in this clone (#411)."""
 
 
-def default_tip(git_dir: str, host: str) -> tuple[str, str]:
+def default_tip(git_dir: str, host: str, fetched: bool) -> tuple[str, str]:
     """origin/HEAD's branch, else origin/<GitHub's default branch>: the first that resolves.
 
     A clone made by `git init` + `git remote add` has no origin/HEAD, and one
@@ -273,6 +273,8 @@ def default_tip(git_dir: str, host: str) -> tuple[str, str]:
     report). The range takes the full one: a local branch named origin/main
     would win git's lookup of the short name, and -q hides the ambiguity
     (CR 345).
+
+    With no tip, NoTip names the fix that fits the cause (CR 344).
     """
 
     def resolves(ref: str) -> bool:
@@ -313,6 +315,19 @@ def default_tip(git_dir: str, host: str) -> tuple[str, str]:
             return f"refs/remotes/origin/{branch}", f"origin/{branch}"
         else:
             tried.append(f"origin/{branch}, GitHub's default branch, doesn't resolve")
+            # This clone lacks the branch itself, so --ref origin/<branch>
+            # fails the same way, and set-head -a would point at a missing
+            # ref: what's missing is the fetch.
+            fix = (
+                "fetch it (this run used --no-fetch)"
+                if not fetched
+                else f"check that --git-dir is a clone of {host} whose fetch"
+                f" refspec covers {branch}"
+            )
+            raise NoTip(
+                f"no tip for the range ({'; '.join(tried)}): {fix}, or pass"
+                " --ref with a tip this clone has"
+            )
     raise NoTip(
         f"no tip for the range ({'; '.join(tried)}): pass --ref origin/<default>,"
         " or run `git remote set-head origin -a` once in this clone"
@@ -585,7 +600,7 @@ def run(argv: list[str]) -> int:
                     git(["fetch", "--quiet", "origin"], a.git_dir, "fetching origin")
                 tip = cur["ref"]  # an explicit --ref is used as given
                 if tip is None:
-                    tip, cur["ref"] = default_tip(a.git_dir, host)
+                    tip, cur["ref"] = default_tip(a.git_dir, host, not a.no_fetch)
                 report["commits"] = commits(
                     a.git_dir,
                     cur["from_sha"],

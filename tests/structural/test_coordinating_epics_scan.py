@@ -698,16 +698,34 @@ def test_a_dangling_origin_head_falls_back_to_github(rig):
 
 def test_no_resolvable_tip_is_named_at_the_top_level_with_its_fixes(rig):
     """#411: exit 0 (scan.sh is reporting, #398), commits null, and why."""
-    rig.load()
-    rig.state["repos"][REPO]["default_branch"] = "trunk"
-    rig.save()
+    rig.set_flag("repo_error", "HTTP 401: Bad credentials")
     r = scan_clone(rig, clone_of(rig, head=False), "--no-fetch")
     assert r["commits"] is None and r["cursors"]["ref"] is None
     why = r["commits_skipped"]
-    assert "origin/HEAD is unset" in why and "origin/trunk" in why, why
+    assert "origin/HEAD is unset" in why and "Bad credentials" in why, why
     assert "--ref origin/<default>" in why and "git remote set-head origin -a" in why
     assert f"commit range not scanned: {why}" in r["warnings"]
     assert [x["number"] for x in r["new_numbers"]] == [15, 16]
+
+
+@pytest.mark.parametrize("fetch", [False, True], ids=["no-fetch", "fetched"])
+def test_a_default_branch_this_clone_lacks_names_the_fetch_as_the_fix(rig, fetch):
+    """CR 344: --ref origin/trunk fails the same way, and set-head -a would
+    point at a missing ref; what's missing is the branch itself."""
+    rig.load()
+    rig.state["repos"][REPO]["default_branch"] = "trunk"
+    rig.save()
+    flags = () if fetch else ("--no-fetch",)
+    r = scan_clone(rig, clone_of(rig, head=False), *flags)
+    why = r["commits_skipped"]
+    assert "origin/trunk, GitHub's default branch, doesn't resolve" in why, why
+    hint = (
+        f"a clone of {REPO} whose fetch refspec covers trunk"
+        if fetch
+        else "fetch it (this run used --no-fetch)"
+    )
+    assert hint in why and "--ref with a tip this clone has" in why, why
+    assert "--ref origin/<default>" not in why and "set-head" not in why
 
 
 def test_a_failed_default_branch_read_keeps_ghs_whole_stderr(rig):

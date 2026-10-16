@@ -19,7 +19,7 @@ The detail behind SKILL.md's check-in steps 1–5 and 7. A citation such as "bro
 - `bot`: a bot authored it;
 - `unattributed`: outside work. Outside work can close epic items too (private-backlog 140).
 
-A null `commits` means the range was skipped, not that it was empty: `commits_skipped` says why. In a clone with no `origin/HEAD`, the tip falls back to GitHub's default branch. If that doesn't resolve either, pass `--ref origin/<default>`, or run `git remote set-head origin -a` once in that clone.
+A null `commits` means the range was skipped, not that it was empty: `commits_skipped` says why, and names the fix that fits. In a clone with no `origin/HEAD`, the tip falls back to GitHub's default branch. If neither resolves, the fix is `--ref`, `git remote set-head origin -a` once in that clone, or, when the clone lacks the default branch itself, a fetch of it.
 
 Read every comment on the child from the hand-off onward, and read edited comments as they now stand. Review rounds land after the close, sometimes a dozen (broker 102, private-backlog 100).
 
