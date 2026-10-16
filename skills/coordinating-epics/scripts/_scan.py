@@ -290,6 +290,10 @@ def default_tip(git_dir: str, host: str) -> tuple[str, str]:
         True,
     )
     if head is None:
+        # Not a symref, but a plain origin/HEAD is still the tip the old
+        # default read, with no gh call (CR 343).
+        if resolves("refs/remotes/origin/HEAD"):
+            return "refs/remotes/origin/HEAD", "origin/HEAD"
         tried.append("origin/HEAD is unset")
     else:
         full = head.strip()

@@ -748,6 +748,16 @@ def test_a_local_branch_named_like_the_tip_cant_shadow_it(rig):
     assert r["cursors"]["ref"] == "origin/main" and len(r["commits"]) == 4
 
 
+def test_a_plain_origin_head_is_the_tip_with_no_gh_call(rig):
+    """CR 343: a ref, not a symref: symbolic-ref misses it, but it resolves."""
+    clone = clone_of(rig, head=False)
+    git(clone, "update-ref", "--no-deref", "refs/remotes/origin/HEAD", "origin/main")
+    rig.set_flag("repo_error", "HTTP 401: Bad credentials")
+    r = scan_clone(rig, clone, "--no-fetch")
+    assert r["cursors"]["ref"] == "origin/HEAD" and len(r["commits"]) == 4
+    assert not asked_github_for_the_repo(rig)
+
+
 def test_an_explicit_ref_is_used_as_given(rig):
     clone = clone_of(rig, head=False)
     r = scan_clone(rig, clone, "--no-fetch", "--ref", "origin/main")
