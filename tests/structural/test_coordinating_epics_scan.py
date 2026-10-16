@@ -527,6 +527,43 @@ def test_a_pr_lookup_failure_is_a_warning(rig):
     assert any("rate limit" in w for w in r["warnings"])
 
 
+# gh 2.45's answer to --json closingIssuesReferences (#412, measured): the
+# cause is on the first line, and the last line is a field name.
+UNKNOWN_FIELD = (
+    'Unknown JSON field: "closingIssuesReferences"\n'
+    "Available fields:\n  additions\n  assignees\n  url"
+)
+
+
+def test_a_multi_line_pr_lookup_error_is_kept_whole(rig):
+    """#410: the last line alone was `url`, which names no cause."""
+    rig.set_flag("pr_error", UNKNOWN_FIELD)
+    lost = [w for w in scan(rig)["warnings"] if "closing issues unread" in w]
+    assert len(lost) == 1, lost
+    assert lost[0] == f"#16's closing issues unread: gh: {UNKNOWN_FIELD}"
+
+
+def test_a_multi_line_cross_repo_error_is_kept_whole(rig):
+    """#410: the cause is on the first line, a hint on the last."""
+    err = "HTTP 404: Not Found (https://api.github.com/repos/acme/private/issues/9)\nhint: try gh auth refresh"
+    rig.set_flag("fail_paths", {"repos/acme/private/issues/9": err})
+    r = scan(rig)
+    row = next(x for x in r["cross_repo"] if x["ref"] == "acme/private#9")
+    assert row["error"] == f"gh: {err}"
+    assert any(w.endswith(f"gh: {err}") for w in r["warnings"]), r["warnings"]
+
+
+def test_a_gh_failure_with_no_stderr_says_so_not_our_header(rig):
+    """#410: with nothing from gh, the last line was our own `… exited 1:`."""
+    rig.set_flag("pr_error", "")
+    rig.set_flag("fail_paths", {"repos/acme/private/issues/9": ""})
+    r = scan(rig)
+    row = next(x for x in r["cross_repo"] if x["ref"] == "acme/private#9")
+    assert row["error"] == "gh exited 1 with no stderr"
+    assert "#16's closing issues unread: gh exited 1 with no stderr" in r["warnings"]
+    assert not any(w.endswith("exited 1:") for w in r["warnings"]), r["warnings"]
+
+
 def test_git_missing_costs_the_commit_cursor_only(rig):
     """CR 279: no traceback, and the other cursors still report."""
     import shutil

@@ -40,9 +40,10 @@ def out(obj):
     print(json.dumps(obj))
     sys.exit(0)
 
-def fail(msg="HTTP 404: Not Found"):
+def fail(msg="HTTP 404: Not Found"):  # an empty msg: gh exits 1 and says nothing
     save()
-    print(f"gh: {msg}", file=sys.stderr)
+    if msg:
+        print(f"gh: {msg}", file=sys.stderr)
     sys.exit(1)
 
 if st.get("fail_all"):
@@ -61,7 +62,7 @@ if args[:2] == ["issue", "list"]:
 
 if args[:2] == ["pr", "view"]:
     num, repo = args[2], args[args.index("-R") + 1]
-    if st.get("pr_error"):
+    if "pr_error" in st:
         fail(st["pr_error"])
     closes = (find(repo) or {}).get("prs", {}).get(num)
     if closes is None:

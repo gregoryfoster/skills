@@ -207,7 +207,16 @@ class NotFound(Refused):
 
 
 class Infra(Exception):
-    """A tool the check depends on failed."""
+    """A tool the check depends on failed.
+
+    One raised by gh() also carries gh's own stderr and exit code, so a
+    reader can quote the cause without parsing our header off the message,
+    which can itself span lines (#410).
+    """
+
+    def __init__(self, msg: str, *, stderr: str | None = None, code: int | None = None):
+        super().__init__(msg)
+        self.stderr, self.code = stderr, code
 
 
 class Usage(Exception):
@@ -963,7 +972,9 @@ def gh(args: list[str], what: str) -> str:
         raise Infra("gh is not on PATH") from None
     if r.returncode != 0:
         raise Infra(
-            f"{what}: gh {' '.join(args)} exited {r.returncode}:\n{r.stderr.strip()}"
+            f"{what}: gh {' '.join(args)} exited {r.returncode}:\n{r.stderr.strip()}",
+            stderr=r.stderr.strip(),
+            code=r.returncode,
         )
     return r.stdout
 

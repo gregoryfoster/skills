@@ -250,6 +250,18 @@ def git(args: list[str], git_dir: str, what: str) -> str:
     return r.stdout
 
 
+def gh_cause(e: Infra) -> str:
+    """gh's whole stderr, without our "<what>: gh <args> exited N:" header (#410).
+
+    The header is skipped by the attributes gh() sets, not by its text. An
+    Infra gh() didn't raise from a non-zero exit (gh not on PATH, non-JSON
+    output) has no stderr of its own, and its message is the cause.
+    """
+    if e.code is None:
+        return str(e)
+    return e.stderr or f"gh exited {e.code} with no stderr"
+
+
 def pr_closes(num: str, host: str, cache: dict, warnings: list[str]) -> list[str]:
     """The issues a PR closes, as keys; [] when num is an issue, not a PR.
 
@@ -264,9 +276,7 @@ def pr_closes(num: str, host: str, cache: dict, warnings: list[str]) -> list[str
             )
         except Infra as e:
             if "Could not resolve to a PullRequest" not in str(e):
-                warnings.append(
-                    f"#{num}'s closing issues unread: {str(e).splitlines()[-1]}"
-                )
+                warnings.append(f"#{num}'s closing issues unread: {gh_cause(e)}")
             cache[num] = []
         else:
             keys = []
@@ -501,7 +511,7 @@ def run(argv: list[str]) -> int:
             try:
                 it = gh_json(["api", f"repos/{repo}/issues/{num}"], f"reading {ref}")
             except Infra as e:
-                row["error"] = str(e).splitlines()[-1]
+                row["error"] = gh_cause(e)
                 warnings.append(
                     f"{ref} unreadable; check which token reaches {repo}: {row['error']}"
                 )
