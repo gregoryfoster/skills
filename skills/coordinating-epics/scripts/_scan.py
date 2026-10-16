@@ -262,12 +262,17 @@ class NoTip(Exception):
     """No --ref, and no default tip resolves in this clone (#411)."""
 
 
-def default_tip(git_dir: str, host: str) -> str:
+def default_tip(git_dir: str, host: str) -> tuple[str, str]:
     """origin/HEAD's branch, else origin/<GitHub's default branch>: the first that resolves.
 
     A clone made by `git init` + `git remote add` has no origin/HEAD, and one
     can name a branch since renamed, so each candidate is checked (#411). Run
     after the fetch, which can create origin/<default> in a fresh clone.
+
+    Returns (the full refname the range reads to, its short name for the
+    report). The range takes the full one: a local branch named origin/main
+    would win git's lookup of the short name, and -q hides the ambiguity
+    (CR 345).
     """
 
     def resolves(ref: str) -> bool:
@@ -287,10 +292,11 @@ def default_tip(git_dir: str, host: str) -> str:
     if head is None:
         tried.append("origin/HEAD is unset")
     else:
-        ref = head.strip().removeprefix("refs/remotes/")
-        if resolves(ref):
-            return ref
-        tried.append(f"origin/HEAD names {ref}, which doesn't resolve")
+        full = head.strip()
+        short = full.removeprefix("refs/remotes/")
+        if resolves(full):
+            return full, short
+        tried.append(f"origin/HEAD names {short}, which doesn't resolve")
     try:
         branch = gh_json(["api", f"repos/{host}"], "reading the default branch")
         branch = branch.get("default_branch") if isinstance(branch, dict) else None
@@ -299,8 +305,8 @@ def default_tip(git_dir: str, host: str) -> str:
     else:
         if not branch:
             tried.append("GitHub named no default branch")
-        elif resolves(f"origin/{branch}"):
-            return f"origin/{branch}"
+        elif resolves(f"refs/remotes/origin/{branch}"):
+            return f"refs/remotes/origin/{branch}", f"origin/{branch}"
         else:
             tried.append(f"origin/{branch}, GitHub's default branch, doesn't resolve")
     raise NoTip(
@@ -573,12 +579,13 @@ def run(argv: list[str]) -> int:
             try:
                 if not a.no_fetch:
                     git(["fetch", "--quiet", "origin"], a.git_dir, "fetching origin")
-                if cur["ref"] is None:
-                    cur["ref"] = default_tip(a.git_dir, host)
+                tip = cur["ref"]  # an explicit --ref is used as given
+                if tip is None:
+                    tip, cur["ref"] = default_tip(a.git_dir, host)
                 report["commits"] = commits(
                     a.git_dir,
                     cur["from_sha"],
-                    cur["ref"],
+                    tip,
                     host,
                     a.epic,
                     items,

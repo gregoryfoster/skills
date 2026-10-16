@@ -740,6 +740,14 @@ def test_a_miss_is_its_exit_code_not_a_silent_stderr(rig):
     assert r["cursors"]["ref"] == "origin/main" and len(r["commits"]) == 4
 
 
+def test_a_local_branch_named_like_the_tip_cant_shadow_it(rig):
+    """CR 345: refs/heads/origin/main wins git's lookup of `origin/main`."""
+    clone = clone_of(rig)
+    git(clone, "branch", "origin/main", rig.base)
+    r = scan_clone(rig, clone, "--no-fetch")
+    assert r["cursors"]["ref"] == "origin/main" and len(r["commits"]) == 4
+
+
 def test_an_explicit_ref_is_used_as_given(rig):
     clone = clone_of(rig, head=False)
     r = scan_clone(rig, clone, "--no-fetch", "--ref", "origin/main")
