@@ -12,7 +12,9 @@
 #
 # Needs python3 (3.9+), git and an authenticated gh. JSON report on stdout,
 # with warnings inside it: a git failure, git's stderr included, costs the
-# commit cursor only. A gh failure exits 2, with gh's own stderr on stderr.
+# commit cursor only, and commits_skipped names it. With no --ref the tip is
+# origin/HEAD's branch, else origin/<GitHub's default branch> (#411). A gh
+# failure exits 2, with gh's own stderr on stderr.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
