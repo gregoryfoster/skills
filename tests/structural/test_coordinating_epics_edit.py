@@ -939,20 +939,22 @@ ITEM_12, ROW_13 = "- [ ] #12 second thing", "| #13 | when the SDK ships |"
 
 
 @pytest.mark.parametrize(
-    "ref, old, line, want",
+    "ref, old, line, text, want",
     [
-        ("#12", ITEM_12, "- [ ] #12 second thing ·", "- [ ] #12 second thing · later"),
-        ("#13", ROW_13, "| #13 | sdk · |", "| #13 | sdk · later |"),
-        ("#13", ROW_13, "| #13 | |", "| #13 | later |"),
+        ("#12", ITEM_12, "- [ ] #12 a ·", "later", "- [ ] #12 a · later"),
+        # CR 340: both rules at once, where a doubled "· ·" would come from.
+        ("#12", ITEM_12, "- [ ] #12 a ·", "· later", "- [ ] #12 a · later"),
+        ("#13", ROW_13, "| #13 | sdk · |", "later", "| #13 | sdk · later |"),
+        ("#13", ROW_13, "| #13 | |", "later", "| #13 | later |"),
     ],
 )
 def test_a_note_where_a_field_already_starts_takes_no_separator(
-    rig, ref, old, line, want
+    rig, ref, old, line, text, want
 ):
     """#405: after a trailing separator, or in a row's empty last cell."""
     rig.issue(REPO, EPIC, body=BODY.replace(old + "\n", line + "\n"))
     assert rig.edit(REPO, EPIC, [], "--adopt-live").returncode == 0
-    op = {"op": "note", "ref": ref, "text": "later"}
+    op = {"op": "note", "ref": ref, "text": text}
     res = rig.edit(REPO, EPIC, [op])
     assert res.returncode == 0, res.stderr
     assert "\n" + want + "\n" in rig.body(REPO, EPIC)
