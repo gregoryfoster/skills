@@ -191,6 +191,45 @@ def test_numbers_above_the_watermark_include_unlinked_issues_and_prs(rig):
     assert rows[16]["kind"] == "pr" and rows[16]["mentions_epic"]
 
 
+def test_the_epic_above_the_watermark_is_no_new_number(rig):
+    """#406: an epic drafted at #403 and filed as #404 isn't its own follow-up."""
+    r = scan(rig, "--watermark", "9")
+    assert [x["number"] for x in r["new_numbers"]] == [11, 12, 14, 15, 16]
+
+
+def test_the_epic_still_counts_toward_max_number(rig):
+    """#406: {last_seen} must move past the epic, or every walk stops on it.
+
+    Transferred in, the epic keeps an old creation date (CR 260), so the
+    newest-created read doesn't reach it: only the number walk does.
+    """
+    for n in (10, 11, 12, 14, 15, 16):
+        rig.issue(REPO, n, created_at=f"2026-10-0{n % 9 + 1}T00:00:00Z")
+    rig.issue(
+        REPO,
+        20,
+        body=rig.body(REPO, EPIC),
+        created_at="2025-01-01T00:00:00Z",
+        updated_at="2026-09-01T00:00:00Z",
+    )
+    res = rig.run(
+        "scan.sh",
+        "--repo",
+        REPO,
+        "--epic",
+        "20",
+        "--git-dir",
+        str(rig.checkout),
+        "--ref",
+        "main",
+        "--no-fetch",
+    )
+    assert res.returncode == 0, res.stderr
+    r = json.loads(res.stdout)
+    assert [x["number"] for x in r["new_numbers"]] == [15, 16]
+    assert r["max_number"] == 20
+
+
 def test_updates_since_carry_new_and_edited_comments_on_epic_items(rig):
     rows = {x["number"]: x for x in scan(rig)["updated_since"]}
     assert 10 not in rows and 12 not in rows

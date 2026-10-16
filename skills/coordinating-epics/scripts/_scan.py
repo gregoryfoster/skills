@@ -444,8 +444,8 @@ def run(argv: list[str]) -> int:
             report["new_numbers"] = None
         else:
             wm = cur["watermark"]
-            rows = [
-                issue_row(it, host, a.epic, items)
+            above = [
+                it
                 for it in pages(
                     f"repos/{host}/issues?state=all&sort=created&direction=desc",
                     "listing new numbers",
@@ -453,9 +453,17 @@ def run(argv: list[str]) -> int:
                 )
                 if it["number"] > wm
             ]
+            # The epic is no row of its own, as in updated-since: a body
+            # drafted before it was filed can't name it as seen (#406). It
+            # still counts toward max_number, so {last_seen} moves past it.
+            rows = [
+                issue_row(it, host, a.epic, items)
+                for it in above
+                if it["number"] != a.epic
+            ]
             report["new_numbers"] = sorted(rows, key=lambda r: r["number"])
             report["max_number"] = max(
-                [report["max_number"]] + [r["number"] for r in rows]
+                [report["max_number"]] + [it["number"] for it in above]
             )
 
         if cur["since"] is None:
