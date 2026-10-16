@@ -239,8 +239,10 @@ def git(args: list[str], git_dir: str, what: str, quiet_miss: bool = False):
     """git's stdout. With quiet_miss, None for exit 1: `-q`'s "no such ref".
 
     The exit code alone decides, not an empty stderr: GIT_TRACE and its kin
-    write there on a miss too, and git's own errors (not a repository, a
-    malformed name) exit 128 (CR 347).
+    write there on a miss too. git's own errors exit 128: not a repository,
+    a directory it can't enter, a malformed name given to symbolic-ref.
+    rev-parse --verify -q reads a malformed name as a miss (CR 347, 352;
+    measured on git 2.39).
     """
     env = git_env()
     try:
