@@ -414,6 +414,30 @@ def test_a_git_failure_costs_the_commit_cursor_only(rig, tmp_path):
     assert [x["number"] for x in r["new_numbers"]] == [15, 16]
 
 
+@pytest.mark.parametrize(
+    "flags, named",
+    [
+        (("--ref", "no-such-branch"), "no-such-branch"),
+        (("--from-sha", "deadbeef"), "deadbeef"),
+    ],
+    ids=["missing-ref", "unknown-sha"],
+)
+def test_a_failed_git_log_costs_the_commit_cursor_only(rig, flags, named):
+    """CR 346: the range read itself failing, git's stderr kept (CR 245, #398).
+
+    The not-a-checkout test fails earlier, in the tip lookup, so this is the
+    one that reaches `git log`. An explicit --ref asks GitHub for nothing.
+    """
+    r = scan(rig, *flags)  # scan() passes --ref main; a later --ref wins
+    why = r["commits"] is None and r["commits_skipped"]
+    assert why and why.startswith("reading the commit range: git log"), why
+    # git's message names the revision; our header names it too, so check
+    # git's own part, after the header line.
+    assert named in why.split("\n", 1)[1], why
+    assert f"commit range not scanned: {why}" in r["warnings"]
+    assert not asked_github_for_the_repo(rig)
+
+
 def test_a_usage_error_exits_1(rig):
     res = rig.run("scan.sh", "--repo", "not-a-repo", "--epic", str(EPIC))
     assert res.returncode == 1 and "owner/repo" in res.stderr
