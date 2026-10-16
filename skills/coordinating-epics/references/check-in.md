@@ -159,6 +159,8 @@ bash "<epic-edit.sh>" --repo OWNER/REPO --epic N --scan "${SCRATCH:?}/scan.json"
   && bash "<epic-edit.sh>" --repo OWNER/REPO --epic N --scan "${SCRATCH:?}/scan.json" --ops "${SCRATCH:?}/ops.json"
 ```
 
+The `note` op writes the separator itself, so #45's line comes out as `- [x] #45 … · Shipped 1a2b3c4..5d6e7f8, live 2026-10-16.` Leave the `·` out of a note's text. A text that starts with one still gets only one.
+
 - **A refusal (exit 3) wrote nothing.** Read the reason. A foreign tick is a claim: verify that child, then pass `--accept-ticks '#N'`. Any other foreign edit means merging by hand: read the diff, rebuild your ops on the live body, and re-run with `--adopt-live`.
 - **A lint refusal on a line you only ticked** means the line already held something the lint refuses, such as a short ref. Every changed line is linted whole (a fenced line for secrets only), so legacy text is fixed the first time it's touched: rewrite the line with `set-line`, then tick.
 - **Exit 4: not confirmed.** Either written (`"written": true`) but the read-back differed or failed, or the baseline couldn't be saved; or the PATCH failed and whether it landed is unknown (`"written": "unknown"`). Read the epic before anything else, then take it with `--adopt-live`. A PATCH gh reported failed with the body unchanged is exit 2: nothing was written.

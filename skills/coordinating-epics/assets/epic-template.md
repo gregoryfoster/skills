@@ -6,7 +6,7 @@ Copy the block below into the epic and fill it in. The **core** sections are in 
 
 - **Header lines** use the `- **Field:** value` form. `scan.sh` reads `Last check-in`, `Last issue seen` and `Last verified SHA` from them, and `epic-edit.sh`'s `header` op writes them.
 - **Checklist items** lead with their ref: `- [ ] #12 …`, or `- [ ] owner/repo#3 …` for another repo's issue.
-- **Notes on a line** are appended, dated and short: `Decided 2026-10-14: one PR.` · `Still open: census on the next export.` · `Deploy no earlier than 2026-10-15T18:00Z.`
+- **Notes on a line** are appended, dated and short, each its own field after a middle dot (`·`): `- [ ] #12 … · S · Decided 2026-10-14: one PR.` The `note` op writes the dot, so its text is the note alone: `Still open: census on the next export.` or `Deploy no earlier than 2026-10-15T18:00Z.`
 
 ````markdown
 <one paragraph: what this epic delivers, and the exit criterion in one sentence>
