@@ -111,7 +111,13 @@ BOX_RE = re.compile(r"^(?P<indent>\s*)(?P<bullet>[-*+]) \[(?P<mark>[ xX])\] ")
 # GitHub links "pre-#348" and "ver.#3" as this repo's #348 and #3, so a "-" or
 # "." before the "#" is prose (#401). A "/" isn't: ref_text turns only GitHub
 # issue URLs into refs, and "https://example.com/a/#7" renders as a plain link.
-REF_PAT = r"(?<![\w/])(?:(?P<repo>[\w.-]+/[\w.-]+))?#(?P<num>\d+)\b"
+# GitHub's classes are ASCII (#417): an owner is letters, digits and inner
+# hyphens, so "v.o/r#5" and "-o/r#5" link o/r#5; a name stops at "é", so
+# "o/ré#5" links this repo's #5, as "é#5" does; "#٥" links nothing. The
+# closing \b stays Unicode: "#5é" links nothing either.
+NOT_IN_WORD = r"(?<![A-Za-z0-9_/])"
+OWNER_REPO = r"[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9_.-]+"
+REF_PAT = NOT_IN_WORD + r"(?:(?P<repo>" + OWNER_REPO + r"))?#(?P<num>[0-9]+)\b"
 REF_RE = re.compile(REF_PAT)
 LEAD = r"(?:~~|\*\*|\[|`)*"
 ITEM_RE = re.compile(r"^\s*[-*+] \[[ xX]\] " + LEAD + REF_PAT)
@@ -149,13 +155,18 @@ SECRET_RES = [
     re.compile(r"\bxox[abprs]-[A-Za-z0-9-]{10,}"),
     re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----"),
 ]
+# Its start is REF_PAT's: GitHub links "v.o/r#5, #6" as o/r#5 and this repo's
+# #6 (#417).
 BARE_AFTER_QUALIFIED_RE = re.compile(
-    r"(?<![\w/.-])(?P<repo>[\w.-]+/[\w.-]+)#\d+(?:\s*(?:,|/|;|&|\band\b|\bor\b)\s*)(?P<bare>#\d+)\b"
+    NOT_IN_WORD
+    + r"(?P<repo>"
+    + OWNER_REPO
+    + r")#[0-9]+(?:\s*(?:,|/|;|&|\band\b|\bor\b)\s*)(?P<bare>#[0-9]+)\b"
 )
 # The name must end in a letter, digit or "_": GitHub reads a trailing "-" or
-# "." as prose and links the #N after it (#401).
+# "." as prose and links the #N after it (#401). "ésk#5" links nothing (#417).
 SHORT_REF_RE = re.compile(
-    r"(?<![\w/.#-])(?P<ref>[A-Za-z](?:[\w.-]*[A-Za-z0-9_])?#\d+)\b"
+    r"(?<![A-Za-z0-9_/.#-])(?P<ref>[A-Za-z](?:[\w.-]*[A-Za-z0-9_])?#\d+)\b"
 )
 # Link text may hold one level of brackets; the target may be <angled> or hold
 # one level of parentheses; the title may be "…", '…' or (…) (CR 271).
@@ -165,7 +176,12 @@ MD_LINK_RE = re.compile(
     r"\((?P<target><[^>]*>|(?:[^()\s]|\([^()\s]*\))*)"
     r"(?:\s+(?:\"[^\"]*\"|'[^']*'|\([^()]*\)))?\s*\)"
 )
-_ISSUE_URL = r"https://github\.com/(?P<repo>[\w.-]+/[\w.-]+)/(?:issues|pull)/(?P<num>\d+)(?![\w/])"
+# "https://github.com/v.o/r/issues/5" renders as a plain link, not o/r#5 (#417).
+_ISSUE_URL = (
+    r"https://github\.com/(?P<repo>"
+    + OWNER_REPO
+    + r")/(?:issues|pull)/(?P<num>[0-9]+)(?![\w/])"
+)
 GH_ISSUE_URL_RE = re.compile(_ISSUE_URL)
 # GitHub renders a bare or <angled> issue URL as its ref, and "Fixes <url>"
 # closes the issue (CR 288). A fragment (#issuecomment-…) stays a ref.

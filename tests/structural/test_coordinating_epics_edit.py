@@ -1217,6 +1217,69 @@ def test_a_hyphen_in_an_owner_and_a_slash_stay_as_they_were(text, refs):
     assert ee.refs_in([text], REPO) == refs
 
 
+@pytest.mark.parametrize(
+    "text, refs, short",
+    [
+        ("v.other/repo#5", {"other/repo#5"}, False),
+        ("-other/repo#5", {"other/repo#5"}, False),
+        ("éother/repo#5", {"other/repo#5"}, False),
+        ("x_other/repo#5", set(), False),
+        ("other/repé#12", {"acme/widgets#12"}, False),
+        ("é#12", {"acme/widgets#12"}, False),
+        ("日本#12", {"acme/widgets#12"}, False),
+        ("widgeté#12", {"acme/widgets#12"}, False),
+        ("éwidgets#12", set(), True),
+        ("#12é", set(), False),
+        ("#٥", set(), False),
+        ("#1٥", set(), False),
+        ("other/next.js#5", {"other/next.js#5"}, False),
+        (
+            "CannObserv/cannabis.observer-wordpress#5",
+            {"cannobserv/cannabis.observer-wordpress#5"},
+            False,
+        ),
+        ("https://github.com/v.other/repo/issues/5", set(), False),
+        ("https://github.com/-other/repo/issues/5", set(), False),
+        ("https://github.com/other/next.js/issues/5", {"other/next.js#5"}, False),
+    ],
+    ids=[
+        "dot-before-owner",
+        "hyphen-before-owner",
+        "letter-before-owner",
+        "underscore-before-owner",
+        "letter-ends-name",
+        "letter-before-hash",
+        "cjk-before-hash",
+        "word-then-letter",
+        "letter-before-short",
+        "letter-after-number",
+        "arabic-indic-digit",
+        "arabic-indic-after-digit",
+        "dot-in-name",
+        "dot-and-hyphen-in-name",
+        "url-dot-owner",
+        "url-hyphen-led-owner",
+        "url-dot-in-name",
+    ],
+)
+def test_an_owner_a_name_and_a_number_are_read_as_github_reads_them(text, refs, short):
+    """#417, each row measured with gh api markdown against a real repo
+    (cli/cli, vercel/next.js): an owner is ASCII letters, digits and inner
+    hyphens, so v.o/r#5 and -o/r#5 link o/r#5; a name is ASCII, so o/ré#5
+    links this repo's #5; only an ASCII letter, digit or _ before a ref joins
+    it to a word, so é#5 links; #٥ links nothing, nor does #5é."""
+    assert ee.refs_in([text], REPO) == refs
+    assert bool(ee.SHORT_REF_RE.search(ee.ref_text(ee.outside_code(text)))) is short
+
+
+@pytest.mark.parametrize("lead", ["v.", "-"], ids=["dot", "hyphen"])
+def test_a_bare_ref_after_a_qualified_one_led_by_a_dot_or_hyphen_is_flagged(lead):
+    """#417, measured: GitHub links v.cli/cli#1, #6 as cli/cli#1 and this repo's
+    #6. The lint names the repo GitHub reads, not v.cli/cli."""
+    ms = list(ee.BARE_AFTER_QUALIFIED_RE.finditer(f"{lead}other/repo#5, #12"))
+    assert [(m.group("repo"), m.group("bare")) for m in ms] == [("other/repo", "#12")]
+
+
 def test_a_line_holding_pre_n_can_be_ticked(adopted):
     """#401: the ref is correct, so ticking the line needs no rewording."""
     line = "- [ ] #14 last thing (M, pre-#12, non-#13)"
