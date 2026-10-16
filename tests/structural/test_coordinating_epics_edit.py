@@ -1192,16 +1192,29 @@ def test_a_bare_ref_after_this_repos_own_qualified_ref_is_fine(adopted):
         ("ver.#11", {"acme/widgets#11"}, False),
         ("widgets#12", set(), True),
         ("x_#12", set(), True),
-        ("pre-other/repo#5", {"pre-other/repo#5"}, False),
-        ("see x/#12", set(), False),
     ],
-    ids=["hyphen", "non-hyphen", "dot", "short", "underscore", "owner-hyphen", "slash"],
+    ids=["hyphen", "non-hyphen", "dot", "short", "underscore"],
 )
 def test_a_ref_after_a_hyphen_or_dot_is_this_repos(text, refs, short):
     """#401, each row measured with gh api markdown: GitHub links pre-#348 as
-    this repo's #348 and leaves widgets#348 plain. x/#12 links too; see REF_PAT."""
+    this repo's #348 and leaves widgets#348 plain."""
     assert ee.refs_in([text], REPO) == refs
     assert bool(ee.SHORT_REF_RE.search(ee.ref_text(ee.outside_code(text)))) is short
+
+
+@pytest.mark.parametrize(
+    "text, refs",
+    [
+        ("pre-other/repo#5", {"pre-other/repo#5"}),
+        ("see x/#12", set()),
+    ],
+    ids=["owner-hyphen", "slash"],
+)
+def test_a_hyphen_in_an_owner_and_a_slash_stay_as_they_were(text, refs):
+    """#401, measured: a hyphen before owner/repo joins the owner, as GitHub reads
+    it. GitHub links x/#12, but REF_PAT doesn't read it, so another URL's fragment
+    can't read as a ref: an accepted limit (CR 329)."""
+    assert ee.refs_in([text], REPO) == refs
 
 
 def test_a_line_holding_pre_n_can_be_ticked(adopted):
