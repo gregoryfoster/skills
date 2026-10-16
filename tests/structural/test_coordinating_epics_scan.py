@@ -665,7 +665,13 @@ def test_git_missing_costs_the_commit_cursor_only(rig):
 
 
 def clone_of(rig, *, head: bool = True, fetched: bool = True):
-    """A clone of the checkout: with or without origin/HEAD, fetched or not."""
+    """A clone of the checkout: with or without origin/HEAD, fetched or not.
+
+    From git 2.48, a fetch creates a missing origin/HEAD itself
+    (remote.<name>.followRemoteHEAD, default `create`), so a scan that
+    fetches would never meet the clone the test built. `never` holds it on
+    every git; an older one ignores the key (CR 351, measured on 2.54).
+    """
     clone = rig.tmp / "clone"
     if fetched:
         git(rig.tmp, "clone", "-q", str(rig.checkout), str(clone))
@@ -675,6 +681,7 @@ def clone_of(rig, *, head: bool = True, fetched: bool = True):
         clone.mkdir()
         git(clone, "init", "-q")
         git(clone, "remote", "add", "origin", str(rig.checkout))
+    git(clone, "config", "remote.origin.followRemoteHEAD", "never")
     return clone
 
 
