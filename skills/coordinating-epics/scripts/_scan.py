@@ -170,11 +170,8 @@ def new_comments(host: str, num: int, since: str, what: str) -> list[dict]:
 
 def issue_row(it: dict, host: str, epic: int, items: set[str]) -> dict:
     body = it.get("body") or ""
-    epic_key = key(None, epic, host)
-    mentions = any(
-        key(m.group("repo"), m.group("num"), host) == epic_key
-        for m in REF_RE.finditer(ref_text(body))
-    )
+    # As GitHub renders the body: no ref in a fenced block or code span (#415).
+    mentions = key(None, epic, host) in refs_in(body.splitlines(), host)
     return {
         "number": it["number"],
         "kind": "pr" if it.get("pull_request") else "issue",
@@ -313,6 +310,8 @@ def commits(
         if not rec:
             continue
         sha, author, subject, body = (rec.split("\x1f") + ["", "", ""])[:4]
+        # Code spans are read too: GitHub cross-references a #N between
+        # backticks in a commit message (96d6183 on gregoryfoster/skills#41, #415).
         refs = sorted(
             {
                 key(m.group("repo"), m.group("num"), host)

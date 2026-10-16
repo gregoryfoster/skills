@@ -248,6 +248,44 @@ def test_an_issue_url_is_a_ref_as_github_renders_it(rig):
     assert last["attribution"] == "child" and last["children"] == ["acme/widgets#12"]
 
 
+@pytest.mark.parametrize(
+    "body, mentions",
+    [
+        ("Waits on `#10`", False),
+        ("```\nRefs #10\n```", False),
+        ("Waits on `#9`, part of #10", True),
+    ],
+    ids=["span", "fenced", "linked"],
+)
+def test_an_issue_quoting_the_epic_only_in_code_doesnt_mention_it(rig, body, mentions):
+    """#415, measured: GitHub links no ref in a code span or a fenced block."""
+    rig.issue(REPO, 17, updated_at="2026-10-02T14:00:00Z", body=body)
+    rows = {x["number"]: x for x in scan(rig)["new_numbers"]}
+    assert rows[17]["mentions_epic"] is mentions
+
+
+def test_a_cross_repo_ref_quoted_only_in_code_isnt_read(rig):
+    """#415: the epic doesn't link acme/gadgets#4, so its state isn't asked for."""
+    rig.issue(
+        REPO,
+        EPIC,
+        body=BODY.format(sha=rig.base[:9]) + "- the old `acme/gadgets#4` form\n",
+        updated_at="2026-10-02T00:00:00Z",
+    )
+    cross = {x["ref"] for x in scan(rig)["cross_repo"]}
+    assert cross == {"acme/gadgets#3", "acme/private#9"}
+
+
+def test_a_commit_citing_a_child_in_a_code_span_is_still_attributed(rig):
+    """#415, measured: GitHub cross-references a #N between backticks in a commit
+    message (96d6183 on gregoryfoster/skills#41), so the commit read keeps it."""
+    (rig.checkout / "span").write_text("s")
+    git(rig.checkout, "add", ".")
+    git(rig.checkout, "commit", "-q", "-m", "fix: the `#12` guard")
+    last = scan(rig)["commits"][0]
+    assert last["attribution"] == "child" and last["children"] == ["acme/widgets#12"]
+
+
 def test_new_comments_on_the_epic_itself_are_reported(rig):
     """CR 289: siblings.md sends a sibling coordinator's note to the epic's comments."""
     rig.comment(

@@ -625,12 +625,18 @@ def set_box(line: str, done: bool) -> str:
 
 
 def refs_in(lines: list[str], host: str) -> set[str]:
-    fence = fenced(lines)
+    """Every ref GitHub links in the lines, read as the lint reads them.
+
+    A ref only in a fenced block or a code span links nothing, so it doesn't
+    list the issue (#415, decided 2026-10-15). Spans outrank links, and a table
+    row's cells are read apart (CR 328).
+    """
+    fence, table = fenced(lines), tabled(lines)
     out = set()
     for i, ln in enumerate(lines):
         if fence[i]:
             continue
-        for m in REF_RE.finditer(ref_text(ln)):
+        for m in REF_RE.finditer(ref_text(outside_code(ln, table[i]))):
             out.add(key(m.group("repo"), m.group("num"), host))
     return out
 
@@ -1180,13 +1186,15 @@ def run(argv: list[str]) -> int:
         type=int,
         metavar="FROM",
         help="refuse unless every open issue (numbered FROM or above, if given) is referenced"
-        " in the body. For a whole-backlog or number-range epic, not a chosen subset",
+        " in the body; a ref only in code doesn't count. For a whole-backlog or number-range"
+        " epic, not a chosen subset",
     )
     p.add_argument(
         "--scan",
         metavar="FILE",
         help="scan.sh's JSON report, the one you read, for {checked} and {last_seen}."
-        " Every new issue it found must be mentioned in the body (a tier line or the log)",
+        " Every new issue it found must be mentioned in the body (a tier line or the log),"
+        " outside code",
     )
     p.add_argument(
         "--lint-all",

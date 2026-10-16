@@ -1440,6 +1440,60 @@ def test_a_comment_link_must_resolve_to_its_issue(adopted):
         assert (res.returncode == 0) is ok, (url, res.stderr)
 
 
+@pytest.mark.parametrize(
+    "lines, refs",
+    [
+        (["- #12 waits on `#13`"], {"acme/widgets#12"}),
+        (["- #12 waits on `` `#13` ``"], {"acme/widgets#12"}),
+        (["- [`#13`](https://github.com/other/repo/issues/5)"], {"other/repo#5"}),
+        (["- [t `x](https://github.com/other/repo/issues/5) y`"], set()),
+        (["- `[x](https://github.com/other/repo/issues/5)`"], set()),
+        (["- see `https://github.com/other/repo/issues/5`"], set()),
+        (["- \\`#13\\`"], {"acme/widgets#13"}),
+        (
+            ["| A | B |", "|---|---|", "| #12 `x | #13 y` |"],
+            {"acme/widgets#12", "acme/widgets#13"},
+        ),
+        (["```", "#13", "```"], set()),
+    ],
+    ids=[
+        "span",
+        "double-span",
+        "span-in-link-text",
+        "span-outranks-a-link",
+        "link-in-span",
+        "url-in-span",
+        "escaped-backticks",
+        "span-across-a-cells-pipe",
+        "fenced",
+    ],
+)
+def test_the_ref_reader_counts_only_what_github_links(lines, refs):
+    """#415, each row measured with gh api markdown: GitHub links no ref in a
+    code span, so one quoted only in code doesn't list the issue (decided
+    2026-10-15). Spans outrank links, and a table row's cells are read apart."""
+    assert ee.refs_in(lines, REPO) == refs
+
+
+@pytest.mark.parametrize(
+    "text, rc", [("`#14`", 3), ("#14", 0)], ids=["in-a-span", "linked"]
+)
+def test_account_doesnt_count_a_ref_quoted_only_in_code(adopted, text, rc):
+    """#415: GitHub links no ref in a code span, so the epic doesn't list #14."""
+    ops = [{"op": "log", "text": f"{{today}}: {text} out of epic."}]
+    res = adopted.edit(REPO, EPIC, ops, "--account")
+    assert res.returncode == rc, res.stderr
+    assert rc == 0 or summary(res)["unlisted"] == [14]
+
+
+def test_a_scans_new_issue_quoted_only_in_code_isnt_mentioned(adopted):
+    """#415: the mention check reads the body as GitHub links it."""
+    report = _report(adopted, new_numbers=[{"number": 14, "kind": "issue"}])
+    ops = [{"op": "log", "text": "{today}: 1 new (`#14`, out of epic)."}]
+    res = adopted.edit(REPO, EPIC, ops, "--scan", report)
+    assert res.returncode == 3 and "doesn't mention: #14" in res.stderr
+
+
 # ---------------------------------------------------------------- accounting, readback, infra
 
 
