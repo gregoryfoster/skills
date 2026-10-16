@@ -1280,6 +1280,15 @@ def test_a_bare_ref_after_a_qualified_one_led_by_a_dot_or_hyphen_is_flagged(lead
     assert [(m.group("repo"), m.group("bare")) for m in ms] == [("other/repo", "#12")]
 
 
+def test_a_comment_link_is_resolved_whatever_its_owner_reads_as():
+    """CR 335: GitHub renders .../v.cli/cli/issues/1 as a plain link, so it is
+    no ref (#417), but a comment link there still goes to the resolver, which
+    reports it as not resolving."""
+    url = "https://github.com/v.other/repo/issues/5#issuecomment-1"
+    assert ee.refs_in([url], REPO) == set()
+    assert ee.COMMENT_LINK_RE.search(url).group("repo") == "v.other/repo"
+
+
 def test_a_line_holding_pre_n_can_be_ticked(adopted):
     """#401: the ref is correct, so ticking the line needs no rewording."""
     line = "- [ ] #14 last thing (M, pre-#12, non-#13)"

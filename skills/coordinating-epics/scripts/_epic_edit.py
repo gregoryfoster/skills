@@ -189,6 +189,8 @@ ANGLED_ISSUE_URL_RE = re.compile(r"<" + _ISSUE_URL + r"[^<>\s]*>")
 # The fragment goes with it, as with the angled form, or "…#issuecomment-1, #6"
 # would hide the bare #6 from the lint (CR 311).
 BARE_ISSUE_URL_RE = re.compile(r"(?<![\w/<])" + _ISSUE_URL + r"(?:#[\w-]*)?")
+# Wider than OWNER_REPO on purpose: it picks the links to resolve, and a
+# ".../v.o/r/issues/5#issuecomment-N" that 404s is a finding (CR 335).
 COMMENT_LINK_RE = re.compile(
     r"https://github\.com/(?P<repo>[\w.-]+/[\w.-]+)/(?:issues|pull)/(?P<num>\d+)#issuecomment-(?P<id>\d+)"
 )
