@@ -784,6 +784,8 @@ def apply_ops(
                 # Already there when it is the line's last field. By the end,
                 # not a substring: "second" on "#12 second thing" is a new note
                 # (CR 253). A last " · " field that reads as the note is it.
+                # A note joined by a bare space before #405 isn't a field, so
+                # re-applied it goes on again (CR 342, an accepted limit).
                 if head.endswith(text) and field_end(head[: -len(text)], row):
                     notes.append(f"{where}: note already on {op['ref']}'s line")
                     continue
