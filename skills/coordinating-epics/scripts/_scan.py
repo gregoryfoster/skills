@@ -236,7 +236,12 @@ def git_env() -> dict:
 
 
 def git(args: list[str], git_dir: str, what: str, quiet_miss: bool = False):
-    """git's stdout. With quiet_miss, None for a silent exit 1 (`-q`'s "no such ref")."""
+    """git's stdout. With quiet_miss, None for exit 1: `-q`'s "no such ref".
+
+    The exit code alone decides, not an empty stderr: GIT_TRACE and its kin
+    write there on a miss too, and git's own errors (not a repository, a
+    malformed name) exit 128 (CR 347).
+    """
     env = git_env()
     try:
         r = subprocess.run(
@@ -244,7 +249,7 @@ def git(args: list[str], git_dir: str, what: str, quiet_miss: bool = False):
         )
     except OSError as e:  # git not installed: the commit cursor's loss only (CR 279)
         raise Infra(f"{what}: git could not run: {e}") from None
-    if quiet_miss and r.returncode == 1 and not r.stderr.strip():
+    if quiet_miss and r.returncode == 1:
         return None
     if r.returncode != 0:
         raise Infra(

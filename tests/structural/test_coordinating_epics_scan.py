@@ -722,6 +722,24 @@ def test_a_failed_default_branch_read_keeps_ghs_whole_stderr(rig):
     assert r["new_numbers"] is not None
 
 
+def test_a_miss_is_its_exit_code_not_a_silent_stderr(rig):
+    """CR 347: GIT_TRACE writes to stderr on a miss; the fallback still runs."""
+    res = rig.run(
+        "scan.sh",
+        "--repo",
+        REPO,
+        "--epic",
+        str(EPIC),
+        "--git-dir",
+        str(clone_of(rig, head=False)),
+        "--no-fetch",
+        extra_env={"GIT_TRACE": "1"},
+    )
+    assert res.returncode == 0, res.stderr
+    r = json.loads(res.stdout)
+    assert r["cursors"]["ref"] == "origin/main" and len(r["commits"]) == 4
+
+
 def test_an_explicit_ref_is_used_as_given(rig):
     clone = clone_of(rig, head=False)
     r = scan_clone(rig, clone, "--no-fetch", "--ref", "origin/main")
