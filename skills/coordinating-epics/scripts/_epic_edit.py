@@ -46,8 +46,9 @@ USAGE_EXTRA = """\
 operations (a JSON array, from --ops FILE or --ops - for stdin):
   {"op": "tick", "ref": "#12"}                set #12's box to [x]
   {"op": "untick", "ref": "#12"}              set #12's box to [ ]
-  {"op": "note", "ref": "#12", "text": "..."} append " · text" to #12's line,
-                                              once
+  {"op": "note", "ref": "#12", "text": "..."} add text as #12's last " · "
+                                              field, once; a table row's goes
+                                              inside its last cell
   {"op": "set-line", "ref": "#12", "line": "- [x] #12 ..."}
                                               replace #12's line; the new line
                                               must lead with the same ref
