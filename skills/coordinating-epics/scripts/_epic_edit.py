@@ -1674,7 +1674,13 @@ def run(argv: list[str]) -> int:
                     file=sys.stderr,
                 )
             elif back_lines == live_lines:
-                raise patch_error  # nothing written: exit 2
+                # Nothing written: exit 2. gh's words, not our header, whose
+                # --input names the temp file unlinked above (CR 358).
+                raise Infra(
+                    f"writing the epic: {gh_cause(patch_error)}",
+                    stderr=patch_error.stderr,
+                    code=patch_error.code,
+                ) from None
             else:
                 summary["written"] = "unknown"
                 return unconfirmed(

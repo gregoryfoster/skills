@@ -1824,7 +1824,9 @@ def test_a_patch_that_failed_and_didnt_land_is_exit_2(adopted):
     """CR 309: the body is unchanged, so nothing was written."""
     adopted.set_flag("fail_paths", {"PATCH": "HTTP 502: Bad Gateway"})
     res = adopted.edit(REPO, EPIC, [{"op": "tick", "ref": "#11"}])
-    assert res.returncode == 2 and "502" in res.stderr
+    assert res.returncode == 2, res.stderr
+    assert "ERROR writing the epic: gh: HTTP 502: Bad Gateway" in res.stderr
+    assert "epic-edit-" not in res.stderr  # CR 358: the temp file is gone
     assert adopted.body(REPO, EPIC) == BODY
 
 
