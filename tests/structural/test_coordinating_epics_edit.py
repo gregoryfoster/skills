@@ -1752,7 +1752,12 @@ def test_a_failed_read_back_after_the_write_still_says_written(adopted):
     assert res.returncode == 4, res.stderr
     s = summary(res)
     assert s["written"] and s["readback"] == "failed"
-    assert "the body was written" in res.stderr and "502" in res.stderr
+    assert "the body was written" in res.stderr
+    # #426: the cause after the line that ends on the action, not inside it.
+    err = res.stderr.splitlines()
+    at = next(i for i, ln in enumerate(err) if ln.startswith("ERROR "))
+    assert err[at].endswith("re-run with --adopt-live"), err[at]
+    assert err[at + 1] == "  the read-back's error: gh: HTTP 502: Bad Gateway"
 
 
 @pytest.mark.skipif(os.geteuid() == 0, reason="root ignores directory permissions")
@@ -1808,13 +1813,44 @@ def test_a_patch_that_failed_and_didnt_land_is_exit_2(adopted):
     assert adopted.body(REPO, EPIC) == BODY
 
 
-def test_a_failed_patch_and_a_third_body_is_exit_4_written_unknown(adopted):
+# A failed PATCH's error, as the rig's gh prints it, and the lines exit 4 must
+# show for it. The two-line one has its cause first and a hint last, the shape
+# #410 measured; with no stderr, the last line was our own `… exited 1:` (#426).
+PATCH_ERRORS = [
+    ("HTTP 502: Bad Gateway", ["  the PATCH's error: gh: HTTP 502: Bad Gateway"]),
+    (
+        "HTTP 403: Resource not accessible by integration\nhint: try gh auth refresh",
+        [
+            "  the PATCH's error: gh: HTTP 403: Resource not accessible by integration",
+            "    hint: try gh auth refresh",
+        ],
+    ),
+    ("", ["  the PATCH's error: gh exited 1 with no stderr"]),
+]
+PATCH_ERROR_IDS = ["one-line", "cause-on-the-first-line", "no-stderr"]
+
+
+def assert_exit_4_shows_the_whole_cause(res, lines):
+    """The ERROR line ends on the action, and the cause follows it whole."""
+    assert res.returncode == 4, res.stderr
+    assert summary(res)["written"] == "unknown"
+    err = res.stderr.splitlines()
+    at = next(i for i, ln in enumerate(err) if ln.startswith("ERROR the PATCH failed"))
+    assert err[at].endswith("re-run with --adopt-live"), err[at]
+    assert err[at + 1 : at + 1 + len(lines)] == lines, res.stderr
+    # Our header, and the temp file it names, which is gone by then.
+    assert "exited 1:" not in res.stderr and "epic-edit-" not in res.stderr
+
+
+@pytest.mark.parametrize("error, lines", PATCH_ERRORS, ids=PATCH_ERROR_IDS)
+def test_a_failed_patch_and_a_third_body_is_exit_4_written_unknown(
+    adopted, error, lines
+):
     """CR 309: fetch, compare-and-swap re-fetch, failed PATCH, then a body nobody sent."""
-    adopted.set_flag("fail_paths", {"PATCH": "HTTP 502: Bad Gateway"})
+    adopted.set_flag("fail_paths", {"PATCH": error})
     adopted.change_on_get(EPIC, 3, BODY + "\n- someone else's line\n")
     res = adopted.edit(REPO, EPIC, [{"op": "tick", "ref": "#11"}])
-    assert res.returncode == 4, res.stderr
-    assert summary(res)["written"] == "unknown" and "PATCH failed" in res.stderr
+    assert_exit_4_shows_the_whole_cause(res, lines)
 
 
 @pytest.mark.skipif(os.geteuid() == 0, reason="root ignores directory permissions")
@@ -1852,15 +1888,16 @@ def test_a_whitespace_only_patch_that_changed_nothing_is_exit_4(adopted):
     assert res.returncode == 4 and summary(res)["readback"] == "differs", res.stderr
 
 
-def test_a_failed_patch_and_a_failed_re_read_is_written_unknown(adopted):
+@pytest.mark.parametrize("error, lines", PATCH_ERRORS, ids=PATCH_ERROR_IDS)
+def test_a_failed_patch_and_a_failed_re_read_is_written_unknown(adopted, error, lines):
     """CR 319: fetch, compare-and-swap re-fetch, failed PATCH, failed re-read."""
-    adopted.set_flag("fail_paths", {"PATCH": "HTTP 502: Bad Gateway"})
+    adopted.set_flag("fail_paths", {"PATCH": error})
     adopted.fail_on_get(EPIC, 3)
     res = adopted.edit(REPO, EPIC, [{"op": "tick", "ref": "#11"}])
-    assert res.returncode == 4, res.stderr
-    s = summary(res)
-    assert s["written"] == "unknown" and "readback" not in s
-    assert "failed too" in res.stderr
+    assert_exit_4_shows_the_whole_cause(
+        res, [*lines, "  the read-back's error: gh: HTTP 502: Bad Gateway"]
+    )
+    assert "readback" not in summary(res) and "failed too" in res.stderr
 
 
 def test_a_gh_failure_is_exit_2_and_shows_ghs_own_stderr(adopted):

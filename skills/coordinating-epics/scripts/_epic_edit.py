@@ -1615,13 +1615,22 @@ def run(argv: list[str]) -> int:
 
         # Once the PATCH may have landed, a failure must still say so, or the
         # next run calls this tool's own edit foreign, unexplained (CR 300).
-        def unconfirmed(why: str, head: str = "the body was written, but") -> int:
+        # The ERROR line ends on the action; each cause follows on lines of
+        # its own, whole, since gh's stderr can span lines (#426).
+        def unconfirmed(
+            why: str,
+            head: str = "the body was written, but",
+            causes: tuple[tuple[str, Infra], ...] = (),
+        ) -> int:
             print(json.dumps(summary, indent=2))
             print(
                 f"ERROR {head} {why}. The baseline was not updated: read the epic,"
                 " then re-run with --adopt-live",
                 file=sys.stderr,
             )
+            for label, err in causes:
+                cause = "\n    ".join(gh_cause(err).splitlines())
+                print(f"  {label}: {cause}", file=sys.stderr)
             return EXIT_READBACK
 
         try:
@@ -1630,12 +1639,18 @@ def run(argv: list[str]) -> int:
             if patch_error:
                 summary["written"] = "unknown"
                 return unconfirmed(
-                    f"reading the body to see whether it landed failed too:\n{e}",
-                    head=f"the PATCH failed ({str(patch_error).splitlines()[-1]}), and",
+                    "reading the body to see whether it landed failed too",
+                    head="the PATCH failed, and",
+                    causes=(
+                        ("the PATCH's error", patch_error),
+                        ("the read-back's error", e),
+                    ),
                 )
             summary["written"] = True
             summary["readback"] = "failed"
-            return unconfirmed(f"reading it back failed:\n{e}")
+            return unconfirmed(
+                "reading it back failed", causes=(("the read-back's error", e),)
+            )
         back = normalize(back_raw)
         # Raw first: a whitespace-only edit normalizes equal to the body it
         # changed, so only the raw lines say whether it landed (CR 274, 317).
@@ -1659,7 +1674,8 @@ def run(argv: list[str]) -> int:
                 summary["written"] = "unknown"
                 return unconfirmed(
                     "the body now matches neither the one sent nor the one before",
-                    head=f"the PATCH failed ({str(patch_error).splitlines()[-1]}), and",
+                    head="the PATCH failed, and",
+                    causes=(("the PATCH's error", patch_error),),
                 )
         summary["written"] = True
         if not landed:
