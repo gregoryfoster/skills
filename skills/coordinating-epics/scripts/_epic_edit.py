@@ -219,6 +219,18 @@ class Infra(Exception):
         self.stderr, self.code = stderr, code
 
 
+def gh_cause(e: Infra) -> str:
+    """gh's whole stderr, without our "<what>: gh <args> exited N:" header (#410).
+
+    The header is skipped by the attributes gh() sets, not by its text. An
+    Infra gh() didn't raise from a non-zero exit (gh not on PATH, non-JSON
+    output) has no stderr of its own, and its message is the cause.
+    """
+    if e.code is None:
+        return str(e)
+    return e.stderr or f"gh exited {e.code} with no stderr"
+
+
 class Usage(Exception):
     """The invocation or the ops file is malformed; exit 1, nothing fetched or written."""
 

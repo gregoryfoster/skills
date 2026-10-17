@@ -42,6 +42,7 @@ from _epic_edit import (  # noqa: E402
     Parser,
     fenced,
     gh,
+    gh_cause,
     gh_json,
     key,
     line_ref,
@@ -337,18 +338,6 @@ def default_tip(git_dir: str, host: str, fetched: bool) -> tuple[str, str]:
         f"no tip for the range ({'; '.join(tried)}): pass --ref origin/<default>,"
         " or run `git remote set-head origin -a` once in this clone"
     )
-
-
-def gh_cause(e: Infra) -> str:
-    """gh's whole stderr, without our "<what>: gh <args> exited N:" header (#410).
-
-    The header is skipped by the attributes gh() sets, not by its text. An
-    Infra gh() didn't raise from a non-zero exit (gh not on PATH, non-JSON
-    output) has no stderr of its own, and its message is the cause.
-    """
-    if e.code is None:
-        return str(e)
-    return e.stderr or f"gh exited {e.code} with no stderr"
 
 
 def pr_closes(num: str, host: str, cache: dict, warnings: list[str]) -> list[str]:
