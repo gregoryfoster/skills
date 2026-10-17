@@ -1665,7 +1665,7 @@ def run(argv: list[str]) -> int:
         if patch_error:
             if landed:
                 print(
-                    f"WARNING gh reported the PATCH failed, but it landed: {patch_error}",
+                    f"WARNING gh reported the PATCH failed, but it landed: {gh_cause(patch_error)}",
                     file=sys.stderr,
                 )
             elif back_lines == live_lines:

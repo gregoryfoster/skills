@@ -1799,7 +1799,10 @@ def test_a_patch_that_lands_despite_a_502_is_a_write(adopted):
     adopted.set_flag("patch_fails_after_apply", True)
     res = adopted.edit(REPO, EPIC, [{"op": "tick", "ref": "#11"}])
     assert res.returncode == 0, res.stderr
-    assert summary(res)["written"] is True and "it landed" in res.stderr
+    assert summary(res)["written"] is True
+    # CR 355: gh's own words, not our header naming the deleted temp file.
+    assert "it landed: gh: HTTP 502: Bad Gateway" in res.stderr, res.stderr
+    assert "exited 1:" not in res.stderr and "epic-edit-" not in res.stderr
     adopted.set_flag("patch_fails_after_apply", False)
     res = adopted.edit(REPO, EPIC, [{"op": "tick", "ref": "#12"}])
     assert res.returncode == 0, res.stderr
