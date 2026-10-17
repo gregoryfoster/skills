@@ -1755,7 +1755,8 @@ def test_a_failed_read_back_after_the_write_still_says_written(adopted):
     assert "the body was written" in res.stderr
     # #426: the cause after the line that ends on the action, not inside it.
     err = res.stderr.splitlines()
-    at = next(i for i, ln in enumerate(err) if ln.startswith("ERROR "))
+    at = next((i for i, ln in enumerate(err) if ln.startswith("ERROR ")), None)
+    assert at is not None, res.stderr  # CR 359: show stderr, not StopIteration
     assert err[at].endswith("re-run with --adopt-live"), err[at]
     assert err[at + 1] == "  the read-back's error: gh: HTTP 502: Bad Gateway"
 
@@ -1852,7 +1853,11 @@ def assert_exit_4_shows_the_whole_cause(res, lines):
     assert res.returncode == 4, res.stderr
     assert summary(res)["written"] == "unknown"
     err = res.stderr.splitlines()
-    at = next(i for i, ln in enumerate(err) if ln.startswith("ERROR the PATCH failed"))
+    at = next(
+        (i for i, ln in enumerate(err) if ln.startswith("ERROR the PATCH failed")),
+        None,
+    )
+    assert at is not None, res.stderr  # CR 359: show stderr, not StopIteration
     assert err[at].endswith("re-run with --adopt-live"), err[at]
     assert err[at + 1 : at + 1 + len(lines)] == lines, res.stderr
     # Our header, and the temp file it names, which is gone by then.
