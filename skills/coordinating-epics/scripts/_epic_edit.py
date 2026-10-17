@@ -231,6 +231,11 @@ def gh_cause(e: Infra) -> str:
     return e.stderr or f"gh exited {e.code} with no stderr"
 
 
+def indented(text: str, by: str = "    ") -> str:
+    """text with its continuation lines indented, so a multi-line cause reads as one."""
+    return f"\n{by}".join(text.splitlines())
+
+
 class Usage(Exception):
     """The invocation or the ops file is malformed; exit 1, nothing fetched or written."""
 
@@ -1629,8 +1634,7 @@ def run(argv: list[str]) -> int:
                 file=sys.stderr,
             )
             for label, err in causes:
-                cause = "\n    ".join(gh_cause(err).splitlines())
-                print(f"  {label}: {cause}", file=sys.stderr)
+                print(f"  {label}: {indented(gh_cause(err))}", file=sys.stderr)
             return EXIT_READBACK
 
         try:
@@ -1665,7 +1669,8 @@ def run(argv: list[str]) -> int:
         if patch_error:
             if landed:
                 print(
-                    f"WARNING gh reported the PATCH failed, but it landed: {gh_cause(patch_error)}",
+                    "WARNING gh reported the PATCH failed, but it landed: "
+                    + indented(gh_cause(patch_error)),
                     file=sys.stderr,
                 )
             elif back_lines == live_lines:

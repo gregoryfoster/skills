@@ -1808,6 +1808,18 @@ def test_a_patch_that_lands_despite_a_502_is_a_write(adopted):
     assert res.returncode == 0, res.stderr
 
 
+def test_a_landed_patchs_multi_line_error_reads_as_one_warning(adopted):
+    """CR 357: its continuation lines indented, as exit 4's causes are."""
+    adopted.set_flag("patch_fails_after_apply", "HTTP 502: Bad Gateway\nhint: retry")
+    res = adopted.edit(REPO, EPIC, [{"op": "tick", "ref": "#11"}])
+    assert res.returncode == 0, res.stderr
+    err = res.stderr.splitlines()
+    at = next((i for i, ln in enumerate(err) if ln.startswith("WARNING gh")), None)
+    assert at is not None, res.stderr
+    assert err[at].endswith("it landed: gh: HTTP 502: Bad Gateway"), err[at]
+    assert err[at + 1] == "    hint: retry", res.stderr
+
+
 def test_a_patch_that_failed_and_didnt_land_is_exit_2(adopted):
     """CR 309: the body is unchanged, so nothing was written."""
     adopted.set_flag("fail_paths", {"PATCH": "HTTP 502: Bad Gateway"})
