@@ -265,7 +265,10 @@ class NoTip(Exception):
 
 
 def default_tip(git_dir: str, host: str, fetched: bool) -> tuple[str, str]:
-    """origin/HEAD's branch, else origin/<GitHub's default branch>: the first that resolves.
+    """origin/HEAD, else origin/<GitHub's default branch>: the first that resolves.
+
+    origin/HEAD is read as its branch when it's a symref, and as itself when
+    it's a plain ref (CR 343, 353).
 
     A clone made by `git init` + `git remote add` has no origin/HEAD, and one
     can name a branch since renamed, so each candidate is checked (#411). Run
@@ -499,8 +502,8 @@ def run(argv: list[str]) -> int:
     p.add_argument(
         "--ref",
         help=(
-            "tip of the range (default: origin/HEAD's branch, else origin/<GitHub's"
-            " default branch>, whichever resolves; with neither, the range is skipped)"
+            "tip of the range (default: origin/HEAD, else origin/<GitHub's default"
+            " branch>, whichever resolves; with neither, the range is skipped)"
         ),
     )
     p.add_argument("--no-fetch", action="store_true", help="don't run git fetch first")
