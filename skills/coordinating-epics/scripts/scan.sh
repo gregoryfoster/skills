@@ -13,8 +13,10 @@
 # Needs python3 (3.9+), git and an authenticated gh. JSON report on stdout,
 # with warnings inside it: a git failure, git's stderr included, costs the
 # commit cursor only, and commits_skipped names it. With no --ref the tip is
-# origin/HEAD, else origin/<GitHub's default branch> (#411). A gh failure
-# exits 2, with gh's own stderr on stderr.
+# origin/HEAD, else origin/<GitHub's default branch> (#411). gh failing on
+# the epic, a listing or a comment read exits 2, with gh's own stderr on
+# stderr; on one cross-repo ref, one PR's closing issues or the default
+# branch, it is a warning with gh's whole stderr, and the exit is 0.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
