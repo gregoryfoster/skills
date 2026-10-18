@@ -1677,7 +1677,7 @@ def run(argv: list[str]) -> int:
                 # Nothing written: exit 2. gh's words, not our header, whose
                 # --input names the temp file unlinked above (CR 358).
                 raise Infra(
-                    f"writing the epic: {gh_cause(patch_error)}",
+                    f"writing the epic: {indented(gh_cause(patch_error))}",
                     stderr=patch_error.stderr,
                     code=patch_error.code,
                 ) from None

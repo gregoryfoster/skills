@@ -1821,13 +1821,35 @@ def test_a_landed_patchs_multi_line_error_reads_as_one_warning(adopted):
     assert err[at + 1] == "    hint: retry", res.stderr
 
 
-def test_a_patch_that_failed_and_didnt_land_is_exit_2(adopted):
+@pytest.mark.parametrize(
+    "error, lines",
+    [
+        (
+            "HTTP 502: Bad Gateway",
+            ["ERROR writing the epic: gh: HTTP 502: Bad Gateway"],
+        ),
+        (
+            "HTTP 403: Resource not accessible by integration\nhint: try gh auth refresh",
+            [
+                "ERROR writing the epic: gh: HTTP 403: Resource not accessible by integration",
+                "    hint: try gh auth refresh",
+            ],
+        ),
+        ("", ["ERROR writing the epic: gh exited 1 with no stderr"]),
+    ],
+    ids=["one-line", "cause-on-the-first-line", "no-stderr"],
+)
+def test_a_patch_that_failed_and_didnt_land_is_exit_2(adopted, error, lines):
     """CR 309: the body is unchanged, so nothing was written."""
-    adopted.set_flag("fail_paths", {"PATCH": "HTTP 502: Bad Gateway"})
+    adopted.set_flag("fail_paths", {"PATCH": error})
     res = adopted.edit(REPO, EPIC, [{"op": "tick", "ref": "#11"}])
     assert res.returncode == 2, res.stderr
-    assert "ERROR writing the epic: gh: HTTP 502: Bad Gateway" in res.stderr
-    assert "epic-edit-" not in res.stderr  # CR 358: the temp file is gone
+    err = res.stderr.splitlines()
+    at = next((i for i, ln in enumerate(err) if ln.startswith("ERROR ")), None)
+    assert at is not None, res.stderr
+    # CR 358, 360: gh's words, indented as exit 4's are; the temp file is gone.
+    assert err[at : at + len(lines)] == lines, res.stderr
+    assert "epic-edit-" not in res.stderr and "exited 1:" not in res.stderr
     assert adopted.body(REPO, EPIC) == BODY
 
 
