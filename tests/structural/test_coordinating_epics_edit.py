@@ -1809,7 +1809,7 @@ def test_a_patch_that_lands_despite_a_502_is_a_write(adopted):
     assert res.returncode == 0, res.stderr
 
 
-def test_a_landed_patchs_multi_line_error_reads_as_one_warning(adopted):
+def test_a_multi_line_error_on_a_patch_that_landed_reads_as_one_warning(adopted):
     """CR 357: its continuation lines indented, as exit 4's causes are."""
     adopted.set_flag("patch_fails_after_apply", "HTTP 502: Bad Gateway\nhint: retry")
     res = adopted.edit(REPO, EPIC, [{"op": "tick", "ref": "#11"}])
