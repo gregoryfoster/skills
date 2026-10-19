@@ -101,6 +101,10 @@ pins the two against a shared table so a drift fails a test.
   that ends a span. So is a link in a table row's excess cell, which GitHub
   drops: a row may hold more cells than its header, and only the header's
   count render. Each is a false red to judge, never a link left unchecked.
+- Inline raw HTML is not modelled, and that gap is a hole. GitHub reads a
+  backtick inside an inline tag or comment as part of the HTML, so it opens no
+  span: `` a <span title="`">[l](gone.md) y` `` renders its link, and the gate
+  pairs the two backticks and masks it.
 - Indented (four-space) code blocks are not masked. Distinguishing one from a
   continuation paragraph inside a list is unreliable, no carve-out needs it, and
   `EXEMPT_LINKS` is the escape hatch if one ever does.
