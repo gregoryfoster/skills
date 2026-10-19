@@ -1024,10 +1024,10 @@ class TestSpanBlockBoundaries:
         (tmp_path / "a.md").write_text(f"- a `x\n- {_AFTER}\n")
         assert dead_links(tmp_path) == [("a.md", 2, "gone.md")]
 
-    def test_a_cell_pipe_ends_the_span_but_keeps_offsets(self) -> None:
+    def test_a_cell_pipe_stops_a_span_opened_before_it(self) -> None:
         text = "| h | i |\n|---|---|\n| `a | b` |\n"
+        assert text.index("| b`") in _block_stops(text)
         assert _code_spans(text) == []
-        assert _mask_code(text) == text
 
 
 class TestExemptionRegistry:
