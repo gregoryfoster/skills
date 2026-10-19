@@ -353,7 +353,10 @@ def _block_stops(text: str) -> list[int]:
     Not modelled: a tab that a `>` or a list marker splits, which CommonMark
     counts as part spaces, since each line's tabs are expanded to four-column
     stops up front; an indented code block's extent; and a type 6 or 7 HTML
-    block's extent. A fenced line arrives blank.
+    block's extent. A top-level fence's lines arrive blank, from
+    `_blank_fenced_lines`. A fence that function never sees, inside a
+    blockquote or indented past three columns in a list item, stops a span at
+    each of its fence lines, but its contents are read as a paragraph.
     """
     lines = text.split("\n")
     wide = [line.expandtabs(4) for line in lines]
@@ -1031,6 +1034,12 @@ BLOCK_SHAPES = [
     (f"a `x\n<!DOCTYPE html>\n{_AFTER}", True),
     (f"a `x\n<div>{_AFTER}", False),
     (f"a `x\n<span>{_AFTER}", False),
+    # A fence `_blank_fenced_lines` never sees, in a blockquote or deep in a
+    # list, stops a span too. A backtick in its info string makes it text.
+    (f"> a `x\n> ```\n> z\n> ```\n> {_AFTER}", True),
+    (f"> a `x\n> ~~~\n> z\n> ~~~\n> {_AFTER}", True),
+    (f"1. a\n   - b `x\n     ```\n     z\n     ```\n     {_AFTER}", True),
+    (f"> a `x\n> ```a`b\n> {_AFTER}", True),
     # No span crosses a type 1-5 block, blank lines and all. Its start line can
     # hold its end, and a span after it is read in the next paragraph.
     (f"<!--\n`x\n-->\n{_AFTER}", True),
