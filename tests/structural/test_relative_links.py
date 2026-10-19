@@ -242,6 +242,7 @@ def _blank_fenced_lines(lines: list[str]) -> None:
 
 
 def _indent(text: str) -> int:
+    """Leading spaces only: `_block_stops` expands each line's tabs first."""
     return len(text) - len(text.lstrip(" "))
 
 
