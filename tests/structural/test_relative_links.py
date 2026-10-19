@@ -86,10 +86,17 @@ pins the two against a shared table so a drift fails a test.
   target is not checked: `script.sh#L10` is GitHub's line anchor, not a heading.
 - Inline links `[label](target)` and images `![alt](target)`. No reference-style
   definitions (`[ref]: target`) — none exist in `skills/` outside code fences.
-- Code spans are read the CommonMark way: equal-length backtick runs, wrapping
-  within a paragraph but not across a blank line, and an escaped backtick
-  (`` \\` ``) opens none (#416). A dead link between escaped backticks renders
-  as a link, so it is checked.
+- Code spans are read the CommonMark way: equal-length backtick runs, and an
+  escaped backtick (`` \\` ``) opens none (#416). A dead link between escaped
+  backticks renders as a link, so it is checked.
+- A span wraps within its paragraph but never leaves its block (#434). A blank
+  line ends it, and so does a line opening a list item, a heading, a
+  blockquote, a thematic break, a setext underline or a table, and a table
+  row's cell pipe. `BLOCK_SHAPES` holds each rule as GitHub renders it.
+- HTML blocks are not modelled. A link inside one is checked though GitHub
+  shows it as text: after `<HARD-GATE>` in `init-socraticode/SKILL.md`, or on
+  the line of a `<!-- -->` that ends a span (#434). Each is a false red to
+  judge, never a link left unchecked.
 - Indented (four-space) code blocks are not masked. Distinguishing one from a
   continuation paragraph inside a list is unreliable, no carve-out needs it, and
   `EXEMPT_LINKS` is the escape hatch if one ever does.
@@ -105,6 +112,7 @@ import os
 import re
 import string
 import subprocess
+from bisect import bisect_left
 from pathlib import Path
 from urllib.parse import unquote
 
@@ -131,8 +139,43 @@ _FENCE_RE = re.compile(r"^ {0,3}(?P<fence>`{3,}|~{3,})(?P<info>.*)$")
 # included. An escaped backtick is literal text and opens no code span.
 _ESCAPABLE = frozenset(string.punctuation)
 
-# A blank line, which ends a paragraph and so any code span still open in it.
-_BLANK_LINE_RE = re.compile(r"\n[ \t]*\n")
+# The block grammar `_block_stops` reads, each matched after a line's container
+# markers and its indent. A blockquote marker: up to three spaces, `>`, and one
+# optional space.
+_QUOTE_RE = re.compile(r" {0,3}> ?")
+
+# A list item's marker, then a space or the end of the line. `start` is the
+# number CommonMark's paragraph-interrupt rule reads.
+_LIST_MARKER_RE = re.compile(r"(?P<marker>[-*+]|(?P<start>\d{1,9})[.)])(?= |$)")
+
+# `***`, `- - -`, `___`: three or more of one character, spaces allowed.
+_THEMATIC_RE = re.compile(r"([-*_])(?:[ \t]*\1){2,}[ \t]*$")
+
+# A setext underline. It ends the paragraph above it, which becomes a heading.
+_SETEXT_RE = re.compile(r"(?:=+|-+)[ \t]*$")
+
+# An ATX heading's opening run. An empty `#` is a heading too.
+_ATX_START_RE = re.compile(r"#{1,6}(?:[ \t]|$)")
+
+# The HTML blocks that interrupt a paragraph and end on their own terminator,
+# CommonMark's types 1 to 5, so the line after one renders as Markdown. Type 6
+# (`<div>`, `<table>`, …) runs to a blank line, which ends the search anyway,
+# so a stop there could only unmask raw HTML. Type 7 (`<span>`) interrupts no
+# paragraph.
+_HTML_START_RE = re.compile(
+    r"<(?:(?:script|pre|style|textarea)(?:[ \t>]|$)|!--|\?|![A-Za-z]|!\[CDATA\[)",
+    re.IGNORECASE,
+)
+
+# A table's delimiter row, `|---|:--:|`. `_opens_table` also wants a pipe in
+# it: `---` alone under a line is a setext underline.
+_DELIMITER_ROW_RE = re.compile(
+    r"\|?[ \t]*:?-+:?[ \t]*(?:\|[ \t]*:?-+:?[ \t]*)*\|?[ \t]*$"
+)
+
+# A pipe that splits a table row into cells. Only a backslash right before it
+# keeps it in the cell, so `\\|` does not split either.
+_CELL_PIPE_RE = re.compile(r"(?<!\\)\|")
 
 # An ATX heading: up to three spaces of indent, one to six hashes, then a space.
 # The space is required — `#!/bin/sh` and `#nohash` are not headings.
@@ -188,6 +231,157 @@ def _blank_fenced_lines(lines: list[str]) -> None:
                 open_fence = None
 
 
+def _indent(text: str) -> int:
+    return len(text) - len(text.lstrip(" "))
+
+
+def _continued(line: str, stack: list[int | None]) -> tuple[int, str]:
+    """How many of the open containers `line` continues, and the text after them.
+
+    `stack` holds one entry per open container, outermost first: `None` for a
+    blockquote, which a line continues with its own `>`, and an int for a list
+    item, the column its content starts at relative to its parent's. A line
+    indented that far continues the item, and so does a blank line.
+    """
+    pos = 0
+    for depth, width in enumerate(stack):
+        rest = line[pos:]
+        if width is None:
+            quote = _QUOTE_RE.match(rest)
+            if quote is None:
+                return depth, rest
+            pos += quote.end()
+        elif rest.strip() and _indent(rest) < width:
+            return depth, rest
+        else:
+            pos += width
+    return len(stack), line[pos:]
+
+
+def _starts_block(rest: str, interrupting: bool) -> bool:
+    """Whether `rest` opens a block, which ends a paragraph still open above it.
+
+    `interrupting` says every open container continued on this line, so the
+    paragraph itself is what the block would interrupt. CommonMark lets only a
+    bulleted item with content, or an ordered one numbered 1, do that. On a
+    lazy line, where a container did not continue, any list marker opens a new
+    item. Every rule here was measured with `gh api markdown` (#434).
+    """
+    indent = _indent(rest)
+    if indent > 3:
+        return False
+    text = rest[indent:]
+    fence = _FENCE_RE.match(text)
+    if (
+        text.startswith(">")
+        or _ATX_START_RE.match(text)
+        or _THEMATIC_RE.match(text)
+        or _HTML_START_RE.match(text)
+        or (fence and not (fence["fence"][0] == "`" and "`" in fence["info"]))
+    ):
+        return True
+    marker = _LIST_MARKER_RE.match(text)
+    if marker is None:
+        return False
+    if not interrupting:
+        return True
+    numbered_one = marker["start"] is None or int(marker["start"]) == 1
+    return bool(text[marker.end() :].strip()) and numbered_one
+
+
+def _cell_count(row: str) -> int:
+    """How many cells a table row splits into, outer pipes dropped."""
+    row = row.strip()
+    row = row[1:] if row.startswith("|") else row
+    row = row[:-1] if row.endswith("|") and not row.endswith("\\|") else row
+    return len(_CELL_PIPE_RE.split(row))
+
+
+def _opens_table(rest: str, below: str | None, stack: list[int | None]) -> bool:
+    """Whether `rest` is a table's header row: a delimiter row with as many
+    cells, in the same containers, is the next line. A table can interrupt a
+    paragraph, and its header row is then the paragraph's last line."""
+    if below is None or _indent(rest) > 3:
+        return False
+    matched, under = _continued(below, stack)
+    under = under.strip()
+    return (
+        matched == len(stack)
+        and "|" in under
+        and _DELIMITER_ROW_RE.match(under) is not None
+        and _cell_count(under) == _cell_count(rest)
+    )
+
+
+def _block_stops(text: str) -> list[int]:
+    """Each offset a code span's closer search cannot pass, in order.
+
+    A code span lives inside one paragraph, heading or table cell, so its
+    closer search stops at the start of each line that is not a paragraph
+    continuation and at each table row's cell pipes. That is a blank line, and
+    since #434 also a line that opens a block: a list item, a heading, a
+    blockquote, a thematic break, a fence, a setext underline, a table's header
+    row, or an HTML block start. Whether a line opens one depends on which
+    containers it continues: `- a` then `- b` is two items, `- a` then `b` is
+    one lazy paragraph, and `- > a` then `  > b` one quoted paragraph. So this
+    tracks the open blockquotes and list items, which is CommonMark's own
+    method, rather than reading each line alone.
+
+    Not modelled: tab stops beyond four columns, an indented code block's
+    extent, and an HTML block's extent. A fenced line arrives blank.
+    """
+    lines = text.split("\n")
+    wide = [line.expandtabs(4) for line in lines]
+    stops: list[int] = []
+    stack: list[int | None] = []
+    leaf: str | None = None
+    start = 0
+    for index, line in enumerate(wide):
+        here, start = start, start + len(lines[index]) + 1
+        below = wide[index + 1] if index + 1 < len(wide) else None
+        matched, rest = _continued(line, stack)
+        blank = not rest.strip()
+        whole = matched == len(stack)
+        if leaf == "paragraph" and not blank:
+            if whole and _indent(rest) <= 3 and _SETEXT_RE.match(rest.lstrip(" ")):
+                stops.append(here)
+                leaf = None
+                continue
+            if not _starts_block(rest, whole) and not (
+                whole and _opens_table(rest, below, stack)
+            ):
+                continue
+        stops.append(here)
+        if leaf == "table" and not blank and whole and not _starts_block(rest, False):
+            stops.extend(here + m.start() for m in _CELL_PIPE_RE.finditer(lines[index]))
+            continue
+        del stack[matched:]
+        leaf = None
+        while not blank and _indent(rest) <= 3:
+            body = rest[_indent(rest) :]
+            if body.startswith(">"):
+                stack.append(None)
+                rest = rest[_QUOTE_RE.match(rest).end() :]
+                continue
+            marker = _LIST_MARKER_RE.match(body)
+            if marker is None or _THEMATIC_RE.match(body):
+                break
+            after = body[marker.end() :]
+            gap = _indent(after) if after.strip() and _indent(after) <= 4 else 1
+            width = _indent(rest) + len(marker["marker"]) + gap
+            stack.append(width)
+            rest = rest[width:]
+        body = rest.strip()
+        if not body or _indent(rest) > 3 or _starts_block(rest, False):
+            continue
+        if _opens_table(rest, below, stack):
+            leaf = "table"
+            stops.extend(here + m.start() for m in _CELL_PIPE_RE.finditer(lines[index]))
+        else:
+            leaf = "paragraph"
+    return stops
+
+
 def _code_spans(text: str) -> list[tuple[int, int]]:
     """Each code span's *contents* as `(start, end)`, read the CommonMark way.
 
@@ -200,12 +394,14 @@ def _code_spans(text: str) -> list[tuple[int, int]]:
     Before #416 a regex ignored escapes, so `` \\`[x](gone.md)\\` `` masked a
     link that GitHub renders.
 
-    A span may wrap onto the next line but not cross a blank one, since a code
-    span lives inside a paragraph. That stop is load-bearing: without it, one
-    unpaired backtick pairs with the next one hundreds of lines away and masks
-    every link in between. That turns the gate off in exactly the files most
-    likely to have drifted.
+    A span may wrap onto the next line of its paragraph but not leave its
+    block, which `_block_stops` reads: not across a blank line, and since #434
+    not into a list item, heading, blockquote or table cell either. That stop
+    is load-bearing: without it, one unpaired backtick pairs with the next one
+    hundreds of lines away and masks every link in between. That turns the
+    gate off in exactly the files most likely to have drifted.
     """
+    stops = _block_stops(text)
     spans: list[tuple[int, int]] = []
     i, n = 0, len(text)
     while i < n:
@@ -218,8 +414,8 @@ def _code_spans(text: str) -> list[tuple[int, int]]:
         j = i
         while j < n and text[j] == "`":
             j += 1
-        blank = _BLANK_LINE_RE.search(text, j)
-        limit = blank.start() if blank else n
+        stop = bisect_left(stops, j)
+        limit = stops[stop] if stop < len(stops) else n
         k, close = j, None
         while k < limit and close is None:
             if text[k] != "`":
@@ -700,6 +896,130 @@ class TestCodeSpans:
     def test_masking_keeps_offsets_and_delimiters(self) -> None:
         text = "a `x\ny` \\`b\\` ``c``\n"
         assert _mask_code(text) == "a `x\nx` \\`b\\` ``x``\n"
+
+
+# A dead link after an unpaired backtick, so the link renders only when a block
+# boundary stops the backtick's closer search before it.
+_AFTER = "[l](gone.md) y`"
+
+# Each row is a text and whether GitHub renders its link (#434). Every row was
+# rendered with `gh api markdown` on 2026-10-19, and each rule sits beside the
+# shape that looks like it and does not stop a span.
+BLOCK_SHAPES = [
+    # The issue's rows: four boundaries, the control, and a lazy line.
+    (f"- a `x\n- {_AFTER}", True),
+    (f"a `x\n# {_AFTER}", True),
+    (f"a `x\n> {_AFTER}", True),
+    (f"| h | i |\n|---|---|\n| a `x | {_AFTER} |", True),
+    (f"a `x\n{_AFTER}", False),
+    (f"- a `x\n{_AFTER}", False),
+    # A list item interrupts a paragraph when it has content, and is numbered
+    # 1 if ordered. Four spaces of indent make it continuation text.
+    (f"a `x\n* {_AFTER}", True),
+    (f"a `x\n1) {_AFTER}", True),
+    (f"a `x\n01. {_AFTER}", True),
+    (f"a `x\n2. {_AFTER}", False),
+    (f"a `x\n1.\n{_AFTER}", False),
+    (f"a `x\n*\n{_AFTER}", False),
+    (f"a `x\n1.{_AFTER}", False),
+    (f"a `x\n1234567890. {_AFTER}", False),
+    (f"a `x\n   - {_AFTER}", True),
+    (f"a `x\n    - {_AFTER}", False),
+    # Inside a list. A line that leaves the item may open any item; one that
+    # stays in it follows the paragraph rule. Indent counts from the item's
+    # content, even after a blank line.
+    (f"1. a `x\n2. {_AFTER}", True),
+    (f"- a `x\n3. {_AFTER}", True),
+    (f"- a `x\n*\n{_AFTER}", True),
+    (f"- a `x\n  1. {_AFTER}", True),
+    (f"- a `x\n  2. {_AFTER}", False),
+    (f"- a `x\n  *\n{_AFTER}", False),
+    (f"1. a `x\n    - {_AFTER}", True),
+    (f"- a `x\n  {_AFTER}", False),
+    (f"- a `x\n    {_AFTER}", False),
+    (f"- a `x\n    # {_AFTER}", True),
+    (f"- a `x\nb\n- {_AFTER}", True),
+    (f"1. p\n\n   a `x\n    - {_AFTER}", True),
+    (f"- p\n\n  a `x\n      - {_AFTER}", False),
+    (f"- p\n\nb `x\n  - {_AFTER}", True),
+    # An ATX heading needs one to six hashes and a space, and holds one line.
+    (f"a `x\n###### {_AFTER}", True),
+    (f"a `x\n#\n{_AFTER}", True),
+    (f"a `x\n####### {_AFTER}", False),
+    (f"a `x\n#{_AFTER}", False),
+    (f"a `x\n    # {_AFTER}", False),
+    (f"# a `x\n{_AFTER}", True),
+    # A thematic break, or a setext underline. A lazy line cannot underline.
+    (f"a `x\n***\n{_AFTER}", True),
+    (f"a `x\n- - -\n{_AFTER}", True),
+    (f"a `x\nb\n---\n{_AFTER}", True),
+    (f"a `x\n===\n{_AFTER}", True),
+    (f"a `x\n-\n{_AFTER}", True),
+    (f"- a `x\n  ===\n{_AFTER}", True),
+    (f"- a `x\n---\n{_AFTER}", True),
+    (f"- a `x\n===\n{_AFTER}", False),
+    (f"> a `x\n===\n{_AFTER}", False),
+    (f"a `x\n    ===\n{_AFTER}", False),
+    # A blockquote. Its own `>` lines, and lazy lines, continue its paragraph.
+    (f"> a `x\n> {_AFTER}", False),
+    (f"> a `x\n{_AFTER}", False),
+    (f"> p\na `x\n> {_AFTER}", False),
+    (f"> > a `x\n> {_AFTER}", False),
+    (f"- > a `x\n  > {_AFTER}", False),
+    (f"> a `x\n> > {_AFTER}", True),
+    (f"> a `x\n>\n> {_AFTER}", True),
+    (f"> a `x\n2. {_AFTER}", True),
+    (f"- a `x\n  > {_AFTER}", True),
+    # A table needs a delimiter row with as many cells as its header. Every
+    # pipe splits a cell, inside backticks too, unless a backslash precedes it.
+    (f"| h | i |\n|---|---|\n| a `x |\n| {_AFTER} |", True),
+    (f"| h | i |\n|---|---|\n| a `x |\n{_AFTER}", True),
+    (f"| a `x | i |\n|---|---|\n| {_AFTER} | j |", True),
+    (f"h | i\n--|--\na `x | {_AFTER}", True),
+    (f"| h | i |\n| :-- | --: |\n| a `x | {_AFTER} |", True),
+    (f"p `x\n| {_AFTER} | h |\n|---|---|", True),
+    (f"- | h | i |\n  |---|---|\n  | a `x | {_AFTER} |", True),
+    (f"> | h | i |\n> |---|---|\n> | a `x | {_AFTER} |", True),
+    (f"| h \\| x | i |\n|---|---|\n| a `x | {_AFTER} |", True),
+    (f"| a `x | {_AFTER} |", False),
+    (f"| h |\n|---|---|\n| a `x | {_AFTER} |", False),
+    (f"| h \\| x |\n|---|---|\n| a `x | {_AFTER} |", False),
+    (f"h | i\n---\na `x | {_AFTER}", False),
+    (f"| h | i |\n|---|---|\n| a `x \\| {_AFTER} | z |", False),
+    (f"| h | i |\n|---|---|\n| a `x \\\\| {_AFTER} | z |", False),
+    (f"| h |\n|---|\n| a `x {_AFTER} |", False),
+    # An HTML block of types 1 to 5 ends on its terminator, and the next line
+    # is Markdown. Type 6 runs to a blank line; type 7 interrupts nothing.
+    (f"a `x\n<!-- c\n-->\n{_AFTER}", True),
+    (f"a `x\n   <!-- c -->\n{_AFTER}", True),
+    (f"a `x\n<PRE>z</PRE>\n{_AFTER}", True),
+    (f"a `x\n<!DOCTYPE html>\n{_AFTER}", True),
+    (f"a `x\n<div>{_AFTER}", False),
+    (f"a `x\n<span>{_AFTER}", False),
+]
+
+
+class TestSpanBlockBoundaries:
+    """A code span stops where GitHub starts a new block (#434)."""
+
+    @pytest.mark.parametrize("text, renders", BLOCK_SHAPES)
+    def test_a_link_is_checked_where_github_renders_it(
+        self, tmp_path: Path, text: str, renders: bool
+    ) -> None:
+        (tmp_path / "a.md").write_text(text + "\n")
+        found = [t for _, _, t in dead_links(tmp_path)]
+        assert found == (["gone.md"] if renders else [])
+
+    def test_the_finding_names_the_line_after_the_boundary(
+        self, tmp_path: Path
+    ) -> None:
+        (tmp_path / "a.md").write_text(f"- a `x\n- {_AFTER}\n")
+        assert dead_links(tmp_path) == [("a.md", 2, "gone.md")]
+
+    def test_a_cell_pipe_ends_the_span_but_keeps_offsets(self) -> None:
+        text = "| h | i |\n|---|---|\n| `a | b` |\n"
+        assert _code_spans(text) == []
+        assert _mask_code(text) == text
 
 
 class TestExemptionRegistry:
