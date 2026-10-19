@@ -597,6 +597,11 @@ class TestGateBehaviour:
         (tmp_path / "a.md").write_text("a \\`x\n[l](gone.md) y` b\n")
         assert dead_links(tmp_path) == [("a.md", 2, "gone.md")]
 
+    def test_a_span_opened_in_a_label_swallows_the_link(self, tmp_path: Path) -> None:
+        """Spans outrank links: GitHub renders `[t ` then code, and no link."""
+        (tmp_path / "a.md").write_text("[t `x](gone.md) y`\n")
+        assert dead_links(tmp_path) == []
+
     def test_code_span_in_a_label_still_checks_the_target(self, tmp_path: Path) -> None:
         """Masking span *contents* must not hide the link the span sits inside."""
         (tmp_path / "a.md").write_text("See [`docs/GONE.md`](docs/GONE.md).\n")
@@ -661,6 +666,11 @@ SPAN_SHAPES = [
     ("``x` #9 ` y`` #10", ["x` #9 ` y"]),
     ("`x``y` #11", ["x``y"]),
     ("`x` #12 `y\\` #13 `", ["x", "y\\"]),
+    (
+        "[t `x](https://github.com/o/r/issues/5) y`",
+        ["x](https://github.com/o/r/issues/5) y"],
+    ),
+    ("```x`` #15 ```", ["x`` #15 "]),
     # #416's rows.
     ("see \\`[x](missing.md)\\` here", []),
     ("and \\\\`[y](also-missing.md)` stays code", ["[y](also-missing.md)"]),
