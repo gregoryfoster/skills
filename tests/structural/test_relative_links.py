@@ -91,8 +91,9 @@ pins the two against a shared table so a drift fails a test.
   backticks renders as a link, so it is checked.
 - A span wraps within its paragraph but never leaves its block (#434). A blank
   line ends it, and so does a line opening a list item, a heading, a
-  blockquote, a thematic break, a setext underline or a table, and a table
-  row's cell pipe. `BLOCK_SHAPES` holds each rule as GitHub renders it.
+  blockquote, a thematic break, a fence, a setext underline, a table or an
+  HTML block, and a table row's cell pipe. `BLOCK_SHAPES` holds each rule as
+  GitHub renders it.
 - An HTML block of types 1 to 5 (`<!--`, `<pre>`, …) is tracked to its end,
   so no span crosses it, but no HTML block's contents are masked (#434). A
   link inside one is checked though GitHub shows it as text: after
