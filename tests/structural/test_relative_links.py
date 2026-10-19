@@ -174,7 +174,8 @@ _HTML_BLOCKS = [
     ),
     (re.compile(r"<!--"), re.compile(r"-->")),
     (re.compile(r"<\?"), re.compile(r"\?>")),
-    (re.compile(r"<![A-Za-z]"), re.compile(r">")),
+    # Uppercase only, as GitHub reads it: `<!doctype html>` stays paragraph text.
+    (re.compile(r"<![A-Z]"), re.compile(r">")),
     (re.compile(r"<!\[CDATA\["), re.compile(r"\]\]>")),
 ]
 
@@ -1045,6 +1046,8 @@ BLOCK_SHAPES = [
     (f"a `x\n   <!-- c -->\n{_AFTER}", True),
     (f"a `x\n<PRE>z</PRE>\n{_AFTER}", True),
     (f"a `x\n<!DOCTYPE html>\n{_AFTER}", True),
+    (f"a `x\n<!doctype html>\n{_AFTER}", False),
+    (f"a `x\n<!element x>\n{_AFTER}", False),
     (f"a `x\n<div>{_AFTER}", False),
     (f"a `x\n<span>{_AFTER}", False),
     # A fence `_blank_fenced_lines` never sees, in a blockquote or deep in a
