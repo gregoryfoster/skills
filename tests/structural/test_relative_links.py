@@ -1028,6 +1028,7 @@ BLOCK_SHAPES = [
     (f"> a `x\n>\n> {_AFTER}", True),
     (f"> a `x\n2. {_AFTER}", True),
     (f"- a `x\n  > {_AFTER}", True),
+    (f"> q\n\nb `x\n2. {_AFTER}", False),
     # A table needs a delimiter row with as many cells as its header. Every
     # pipe splits a cell, inside backticks too, unless a backslash precedes it.
     (f"| h | i |\n|---|---|\n| a `x |\n| {_AFTER} |", True),
