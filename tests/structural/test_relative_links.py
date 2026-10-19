@@ -212,6 +212,20 @@ _NOT_IN_SLUG_RE = re.compile(r"[^a-z0-9 _-]")
 EXEMPT_LINKS: dict[tuple[str, str], str] = {}
 
 
+def _opens_fence(line: str) -> re.Match[str] | None:
+    """The fence `line` opens, if it opens one.
+
+    An opening backtick fence's info string may not contain a backtick; that is
+    what separates ```` ```python ```` from a code span like `` `a` `` sitting
+    alone on a line. Shared by `_blank_fenced_lines` and `_starts_block`, so the
+    module keeps one rule for what opens a fence.
+    """
+    match = _FENCE_RE.match(line)
+    if match and match["fence"][0] == "`" and "`" in match["info"]:
+        return None
+    return match
+
+
 def _blank_fenced_lines(lines: list[str]) -> None:
     """Blank every line of every fenced block, in place, keeping line offsets.
 
@@ -222,16 +236,14 @@ def _blank_fenced_lines(lines: list[str]) -> None:
     """
     open_fence: str | None = None
     for index, line in enumerate(lines):
-        match = _FENCE_RE.match(line)
         if open_fence is None:
-            # An opening backtick fence's info string may not contain a
-            # backtick; that is what separates ```` ```python ```` from a code
-            # span like `` `a` `` sitting alone on a line.
-            if match and not (match["fence"][0] == "`" and "`" in match["info"]):
-                open_fence = match["fence"]
+            opened = _opens_fence(line)
+            if opened:
+                open_fence = opened["fence"]
                 lines[index] = ""
         else:
             lines[index] = ""
+            match = _FENCE_RE.match(line)
             closes = (
                 match is not None
                 and match["fence"][0] == open_fence[0]
@@ -283,13 +295,12 @@ def _starts_block(rest: str, interrupting: bool) -> bool:
     if indent > 3:
         return False
     text = rest[indent:]
-    fence = _FENCE_RE.match(text)
     if (
         text.startswith(">")
         or _ATX_START_RE.match(text)
         or _THEMATIC_RE.match(text)
         or any(start.match(text) for start, _ in _HTML_BLOCKS)
-        or (fence and not (fence["fence"][0] == "`" and "`" in fence["info"]))
+        or _opens_fence(text)
     ):
         return True
     marker = _LIST_MARKER_RE.match(text)
