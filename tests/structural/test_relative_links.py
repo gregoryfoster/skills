@@ -93,10 +93,13 @@ pins the two against a shared table so a drift fails a test.
   line ends it, and so does a line opening a list item, a heading, a
   blockquote, a thematic break, a setext underline or a table, and a table
   row's cell pipe. `BLOCK_SHAPES` holds each rule as GitHub renders it.
-- HTML blocks are not modelled. A link inside one is checked though GitHub
-  shows it as text: after `<HARD-GATE>` in `init-socraticode/SKILL.md`, or on
-  the line of a `<!-- -->` that ends a span (#434). Each is a false red to
-  judge, never a link left unchecked.
+- An HTML block's start stops a span, but its extent is not modelled, and a
+  link inside one is checked though GitHub shows it as text: after
+  `<HARD-GATE>` in `init-socraticode/SKILL.md`, or on the line of a `<!-- -->`
+  that ends a span (#434). So is a link in a table row's excess cell, which
+  GitHub drops: a row may hold more cells than its header, and only the
+  header's count render. Each is a false red to judge, never a link left
+  unchecked.
 - Indented (four-space) code blocks are not masked. Distinguishing one from a
   continuation paragraph inside a list is unreliable, no carve-out needs it, and
   `EXEMPT_LINKS` is the escape hatch if one ever does.
