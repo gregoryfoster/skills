@@ -93,13 +93,13 @@ pins the two against a shared table so a drift fails a test.
   line ends it, and so does a line opening a list item, a heading, a
   blockquote, a thematic break, a setext underline or a table, and a table
   row's cell pipe. `BLOCK_SHAPES` holds each rule as GitHub renders it.
-- An HTML block's start stops a span, but its extent is not modelled, and a
+- An HTML block of types 1 to 5 (`<!--`, `<pre>`, …) is tracked to its end,
+  so no span crosses it, but no HTML block's contents are masked (#434). A
   link inside one is checked though GitHub shows it as text: after
   `<HARD-GATE>` in `init-socraticode/SKILL.md`, or on the line of a `<!-- -->`
-  that ends a span (#434). So is a link in a table row's excess cell, which
-  GitHub drops: a row may hold more cells than its header, and only the
-  header's count render. Each is a false red to judge, never a link left
-  unchecked.
+  that ends a span. So is a link in a table row's excess cell, which GitHub
+  drops: a row may hold more cells than its header, and only the header's
+  count render. Each is a false red to judge, never a link left unchecked.
 - Indented (four-space) code blocks are not masked. Distinguishing one from a
   continuation paragraph inside a list is unreliable, no carve-out needs it, and
   `EXEMPT_LINKS` is the escape hatch if one ever does.
@@ -161,14 +161,21 @@ _SETEXT_RE = re.compile(r"(?:=+|-+)[ \t]*$")
 _ATX_START_RE = re.compile(r"#{1,6}(?:[ \t]|$)")
 
 # The HTML blocks that interrupt a paragraph and end on their own terminator,
-# CommonMark's types 1 to 5, so the line after one renders as Markdown. Type 6
-# (`<div>`, `<table>`, …) runs to a blank line, which ends the search anyway,
-# so a stop there could only unmask raw HTML. Type 7 (`<span>`) interrupts no
-# paragraph.
-_HTML_START_RE = re.compile(
-    r"<(?:(?:script|pre|style|textarea)(?:[ \t>]|$)|!--|\?|![A-Za-z]|!\[CDATA\[)",
-    re.IGNORECASE,
-)
+# CommonMark's types 1 to 5, as (start, end) pairs. The block runs to the first
+# line holding its end, its start line included, and the line after that
+# renders as Markdown. Type 6 (`<div>`, `<table>`, …) runs to a blank line,
+# which ends the search anyway, so a stop there could only unmask raw HTML.
+# Type 7 (`<span>`) interrupts no paragraph.
+_HTML_BLOCKS = [
+    (
+        re.compile(r"<(?:script|pre|style|textarea)(?:[ \t>]|$)", re.IGNORECASE),
+        re.compile(r"</(?:script|pre|style|textarea)>", re.IGNORECASE),
+    ),
+    (re.compile(r"<!--"), re.compile(r"-->")),
+    (re.compile(r"<\?"), re.compile(r"\?>")),
+    (re.compile(r"<![A-Za-z]"), re.compile(r">")),
+    (re.compile(r"<!\[CDATA\["), re.compile(r"\]\]>")),
+]
 
 # A table's delimiter row, `|---|:--:|`. `_opens_table` also wants a pipe in
 # it: `---` alone under a line is a setext underline.
@@ -279,7 +286,7 @@ def _starts_block(rest: str, interrupting: bool) -> bool:
         text.startswith(">")
         or _ATX_START_RE.match(text)
         or _THEMATIC_RE.match(text)
-        or _HTML_START_RE.match(text)
+        or any(start.match(text) for start, _ in _HTML_BLOCKS)
         or (fence and not (fence["fence"][0] == "`" and "`" in fence["info"]))
     ):
         return True
@@ -290,6 +297,14 @@ def _starts_block(rest: str, interrupting: bool) -> bool:
         return True
     numbered_one = marker["start"] is None or int(marker["start"]) == 1
     return bool(text[marker.end() :].strip()) and numbered_one
+
+
+def _unclosed_html(text: str) -> re.Pattern[str] | None:
+    """The end a type 1-5 HTML block opened by `text` still waits for, if any."""
+    for start, end in _HTML_BLOCKS:
+        if start.match(text):
+            return None if end.search(text) else end
+    return None
 
 
 def _cell_count(row: str) -> int:
@@ -331,18 +346,21 @@ def _block_stops(text: str) -> list[int]:
     containers it continues: `- a` then `- b` is two items, `- a` then `b` is
     one lazy paragraph, and `- > a` then `  > b` one quoted paragraph. So this
     tracks the open blockquotes and list items, which is CommonMark's own
-    method, rather than reading each line alone.
+    method, rather than reading each line alone. An HTML block of types 1 to 5
+    is tracked to the line holding its end, blank lines included, and each of
+    its lines is a stop: none of it is Markdown, so no span crosses it.
 
     Not modelled: a tab that a `>` or a list marker splits, which CommonMark
     counts as part spaces, since each line's tabs are expanded to four-column
-    stops up front; an indented code block's extent; and an HTML block's
-    extent. A fenced line arrives blank.
+    stops up front; an indented code block's extent; and a type 6 or 7 HTML
+    block's extent. A fenced line arrives blank.
     """
     lines = text.split("\n")
     wide = [line.expandtabs(4) for line in lines]
     stops: list[int] = []
     stack: list[int | None] = []
     leaf: str | None = None
+    html_end: re.Pattern[str] | None = None
     start = 0
     for index, line in enumerate(wide):
         here, start = start, start + len(lines[index]) + 1
@@ -350,6 +368,12 @@ def _block_stops(text: str) -> list[int]:
         matched, rest = _continued(line, stack)
         blank = not rest.strip()
         whole = matched == len(stack)
+        if html_end is not None and whole:
+            stops.append(here)
+            if html_end.search(rest):
+                html_end = None
+            continue
+        html_end = None
         if leaf == "paragraph" and not blank:
             if whole and _indent(rest) <= 3 and _SETEXT_RE.match(rest.lstrip(" ")):
                 stops.append(here)
@@ -380,7 +404,10 @@ def _block_stops(text: str) -> list[int]:
             stack.append(width)
             rest = rest[width:]
         body = rest.strip()
-        if not body or _indent(rest) > 3 or _starts_block(rest, False):
+        if not body or _indent(rest) > 3:
+            continue
+        if _starts_block(rest, False):
+            html_end = _unclosed_html(body)
             continue
         if _opens_table(rest, below, stack):
             leaf = "table"
@@ -1004,6 +1031,16 @@ BLOCK_SHAPES = [
     (f"a `x\n<!DOCTYPE html>\n{_AFTER}", True),
     (f"a `x\n<div>{_AFTER}", False),
     (f"a `x\n<span>{_AFTER}", False),
+    # No span crosses a type 1-5 block, blank lines and all. Its start line can
+    # hold its end, and a span after it is read in the next paragraph.
+    (f"<!--\n`x\n-->\n{_AFTER}", True),
+    (f"<!--\n`x\n\n-->\n{_AFTER}", True),
+    (f"<pre>\n`x\n</pre>\n{_AFTER}", True),
+    (f"<?php\n`x\n?>\n{_AFTER}", True),
+    (f"<![CDATA[\n`x\n]]>\n{_AFTER}", True),
+    (f"a `x\n<!-->\n{_AFTER}", True),
+    (f"a `x\n<!-- c --> d\n{_AFTER}", True),
+    (f"<!-- c -->\na `x\n{_AFTER}", False),
 ]
 
 
