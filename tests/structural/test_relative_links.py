@@ -981,6 +981,7 @@ BLOCK_SHAPES = [
     (f"a `x\n1234567890. {_AFTER}", False),
     (f"a `x\n   - {_AFTER}", True),
     (f"a `x\n    - {_AFTER}", False),
+    (f"a `x\n-\t{_AFTER}", True),
     # Inside a list. A line that leaves the item may open any item; one that
     # stays in it follows the paragraph rule. Indent counts from the item's
     # content, even after a blank line.
