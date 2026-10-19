@@ -994,6 +994,7 @@ BLOCK_SHAPES = [
     (f"1. a `x\n    - {_AFTER}", True),
     (f"- a `x\n  {_AFTER}", False),
     (f"- a `x\n    {_AFTER}", False),
+    (f"-     a `x\n  {_AFTER}", True),
     (f"- a `x\n    # {_AFTER}", True),
     (f"- a `x\nb\n- {_AFTER}", True),
     (f"1. p\n\n   a `x\n    - {_AFTER}", True),
