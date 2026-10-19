@@ -588,7 +588,10 @@ class TestGateBehaviour:
     def test_an_odd_run_of_backslashes_escapes_the_backtick(
         self, tmp_path: Path
     ) -> None:
-        (tmp_path / "a.md").write_text("and \\\\\\`[z](third-missing.md)\\` here\n")
+        """Three backslashes: an escaped backslash, then an escaped backtick."""
+        (tmp_path / "a.md").write_text(
+            "and \\\\\\`[z](third-missing.md)\\` is a link again\n"
+        )
         assert [t for _, _, t in dead_links(tmp_path)] == ["third-missing.md"]
 
     def test_an_escaped_opener_on_a_wrapped_line_masks_nothing(
