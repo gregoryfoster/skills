@@ -86,6 +86,10 @@ pins the two against a shared table so a drift fails a test.
   target is not checked: `script.sh#L10` is GitHub's line anchor, not a heading.
 - Inline links `[label](target)` and images `![alt](target)`. No reference-style
   definitions (`[ref]: target`) — none exist in `skills/` outside code fences.
+- Code spans are read the CommonMark way: equal-length backtick runs, wrapping
+  within a paragraph but not across a blank line, and an escaped backtick
+  (`` \\` ``) opens none (#416). A dead link between escaped backticks renders
+  as a link, so it is checked.
 - Indented (four-space) code blocks are not masked. Distinguishing one from a
   continuation paragraph inside a list is unreliable, no carve-out needs it, and
   `EXEMPT_LINKS` is the escape hatch if one ever does.
@@ -99,6 +103,7 @@ and `test_context_anchors.py` use.
 import json
 import os
 import re
+import string
 import subprocess
 from pathlib import Path
 from urllib.parse import unquote
@@ -122,15 +127,12 @@ _ABSOLUTE_RE = re.compile(r"^(?:[A-Za-z][A-Za-z0-9+.\-]*:|//)")
 # indent, then at least three backticks or tildes.
 _FENCE_RE = re.compile(r"^ {0,3}(?P<fence>`{3,}|~{3,})(?P<info>.*)$")
 
-# A backtick code span. The opening and closing runs must be the same length,
-# hence the backreference and the lookarounds. A span may wrap onto the next
-# line but not cross a blank one — a code span lives inside a paragraph — and
-# that guard is load-bearing: without it a single unpaired backtick pairs with
-# the next one hundreds of lines away and masks every link in between, turning
-# the gate off in exactly the files most likely to have drifted.
-_CODE_SPAN_RE = re.compile(
-    r"(?<!`)(`+)(?!`)((?:(?!\n[ \t]*\n).)+?)(?<!`)\1(?!`)", re.DOTALL
-)
+# What a backslash escapes: any ASCII punctuation character, a backtick
+# included. An escaped backtick is literal text and opens no code span.
+_ESCAPABLE = frozenset(string.punctuation)
+
+# A blank line, which ends a paragraph and so any code span still open in it.
+_BLANK_LINE_RE = re.compile(r"\n[ \t]*\n")
 
 # An ATX heading: up to three spaces of indent, one to six hashes, then a space.
 # The space is required — `#!/bin/sh` and `#nohash` are not headings.
@@ -186,6 +188,54 @@ def _blank_fenced_lines(lines: list[str]) -> None:
                 open_fence = None
 
 
+def _code_spans(text: str) -> list[tuple[int, int]]:
+    """Each code span's *contents* as `(start, end)`, read the CommonMark way.
+
+    A backtick run opens a span only when no backslash escapes it, and the span
+    closes on the next run of the same length. Inside a span a backslash is
+    literal, so `` `a\\` `` closes on its second backtick. A run with no closer
+    is text. That is the rule `code_spans` in
+    `skills/coordinating-epics/scripts/_epic_edit.py` reads (#402), re-stated
+    here so a repo-wide doc gate doesn't import one skill's engine (#416). Before #416 a regex ignored escapes, so
+    `` \\`[x](gone.md)\\` `` masked a link that GitHub renders.
+
+    A span may wrap onto the next line but not cross a blank one, since a code
+    span lives inside a paragraph. That stop is load-bearing: without it, one
+    unpaired backtick pairs with the next one hundreds of lines away and masks
+    every link in between. That turns the gate off in exactly the files most
+    likely to have drifted.
+    """
+    spans: list[tuple[int, int]] = []
+    i, n = 0, len(text)
+    while i < n:
+        if text[i] == "\\" and i + 1 < n and text[i + 1] in _ESCAPABLE:
+            i += 2
+            continue
+        if text[i] != "`":
+            i += 1
+            continue
+        j = i
+        while j < n and text[j] == "`":
+            j += 1
+        blank = _BLANK_LINE_RE.search(text, j)
+        limit = blank.start() if blank else n
+        k, close = j, None
+        while k < limit and close is None:
+            if text[k] != "`":
+                k += 1
+                continue
+            m = k
+            while m < n and text[m] == "`":
+                m += 1
+            close, k = (k if m - k == j - i else None), m
+        if close is None:
+            i = j
+        else:
+            spans.append((j, close))
+            i = close + (j - i)
+    return spans
+
+
 def _mask_code(text: str) -> str:
     """Blank out fenced blocks and inline code spans, preserving line offsets.
 
@@ -199,14 +249,12 @@ def _mask_code(text: str) -> str:
     lines = text.split("\n")
     _blank_fenced_lines(lines)
     masked = "\n".join(lines)
-    return _CODE_SPAN_RE.sub(
-        lambda m: (
-            m.group(1)
-            + "".join("\n" if c == "\n" else "x" for c in m.group(2))
-            + m.group(1)
-        ),
-        masked,
-    )
+    out, last = [], 0
+    for start, end in _code_spans(masked):
+        out.append(masked[last:start])
+        out.append("".join("\n" if c == "\n" else "x" for c in masked[start:end]))
+        last = end
+    return "".join(out) + masked[last:]
 
 
 def unexempted(findings: list[tuple[str, int, str]]) -> list[tuple[str, int, str]]:
@@ -522,6 +570,33 @@ class TestGateBehaviour:
         )
         assert dead_links(tmp_path) == []
 
+    def test_a_dead_link_between_escaped_backticks_is_caught(
+        self, tmp_path: Path
+    ) -> None:
+        """#416: an escaped backtick opens no span, so GitHub renders the link."""
+        (tmp_path / "a.md").write_text("see \\`[x](missing.md)\\` here\n")
+        assert [t for _, _, t in dead_links(tmp_path)] == ["missing.md"]
+
+    def test_an_escaped_backslash_leaves_the_span_masking_its_link(
+        self, tmp_path: Path
+    ) -> None:
+        """`\\\\` escapes the backslash, not the backtick: the span still opens."""
+        (tmp_path / "a.md").write_text("and \\\\`[y](also-missing.md)` stays code\n")
+        assert dead_links(tmp_path) == []
+
+    def test_an_odd_run_of_backslashes_escapes_the_backtick(
+        self, tmp_path: Path
+    ) -> None:
+        (tmp_path / "a.md").write_text("and \\\\\\`[z](third-missing.md)\\` here\n")
+        assert [t for _, _, t in dead_links(tmp_path)] == ["third-missing.md"]
+
+    def test_an_escaped_opener_on_a_wrapped_line_masks_nothing(
+        self, tmp_path: Path
+    ) -> None:
+        """The paragraph wrap still holds once the opener is escaped (#416)."""
+        (tmp_path / "a.md").write_text("a \\`x\n[l](gone.md) y` b\n")
+        assert dead_links(tmp_path) == [("a.md", 2, "gone.md")]
+
     def test_code_span_in_a_label_still_checks_the_target(self, tmp_path: Path) -> None:
         """Masking span *contents* must not hide the link the span sits inside."""
         (tmp_path / "a.md").write_text("See [`docs/GONE.md`](docs/GONE.md).\n")
@@ -570,6 +645,47 @@ class TestGateBehaviour:
         (tmp_path / "sub").mkdir()
         (tmp_path / "a.md").write_text("[sub](sub/)\n")
         assert dead_links(tmp_path) == []
+
+
+# Each row is a text and what GitHub renders as code in it: each span's
+# contents, delimiters stripped. Every row was rendered with `gh api markdown`.
+SPAN_SHAPES = [
+    # #402's texts, verbatim from test_coordinating_epics_edit.py's SPAN_SHAPES.
+    ("`App\\Tests\\`", ["App\\Tests\\"]),
+    ("\\`make\\`", []),
+    ("``a\\`b``", ["a\\`b"]),
+    ("\\``x``", []),
+    ("\\\\`x`", ["x"]),
+    ("`` #5 ` ``", [" #5 ` "]),
+    ("``x` #8", []),
+    ("``x` #9 ` y`` #10", ["x` #9 ` y"]),
+    ("`x``y` #11", ["x``y"]),
+    ("`x` #12 `y\\` #13 `", ["x", "y\\"]),
+    # #416's rows.
+    ("see \\`[x](missing.md)\\` here", []),
+    ("and \\\\`[y](also-missing.md)` stays code", ["[y](also-missing.md)"]),
+    ("and \\\\\\`[z](third-missing.md)\\` is a link again", []),
+    ("`a\\` [l](gone.md) `", ["a\\"]),
+    ("\\` [l](gone.md) `x` `", ["x"]),
+    ("a \\`x\n[l](gone.md) y` b", []),
+    ("a `x\n[l](gone.md) y` b", ["x\n[l](gone.md) y"]),
+    ("a `x\n\n[l](gone.md) y` b", []),
+]
+
+
+class TestCodeSpans:
+    """`_code_spans` reads spans as GitHub renders them (#416)."""
+
+    @pytest.mark.parametrize("text, contents", SPAN_SHAPES)
+    def test_spans_follow_commonmark(self, text: str, contents: list[str]) -> None:
+        assert [text[s:e] for s, e in _code_spans(text)] == contents
+
+    def test_a_blank_line_with_spaces_still_ends_the_span(self) -> None:
+        assert _code_spans("a `x\n  \t\ny` b") == []
+
+    def test_masking_keeps_offsets_and_delimiters(self) -> None:
+        text = "a `x\ny` \\`b\\` ``c``\n"
+        assert _mask_code(text) == "a `x\nx` \\`b\\` ``x``\n"
 
 
 class TestExemptionRegistry:
