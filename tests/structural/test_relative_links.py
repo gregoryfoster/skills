@@ -330,8 +330,10 @@ def _block_stops(text: str) -> list[int]:
     tracks the open blockquotes and list items, which is CommonMark's own
     method, rather than reading each line alone.
 
-    Not modelled: tab stops beyond four columns, an indented code block's
-    extent, and an HTML block's extent. A fenced line arrives blank.
+    Not modelled: a tab that a `>` or a list marker splits, which CommonMark
+    counts as part spaces, since each line's tabs are expanded to four-column
+    stops up front; an indented code block's extent; and an HTML block's
+    extent. A fenced line arrives blank.
     """
     lines = text.split("\n")
     wide = [line.expandtabs(4) for line in lines]
