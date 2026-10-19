@@ -1044,6 +1044,7 @@ BLOCK_SHAPES = [
     (f"| h |\n|---|---|\n| a `x | {_AFTER} |", False),
     (f"| h \\| x |\n|---|---|\n| a `x | {_AFTER} |", False),
     (f"h | i\n---\na `x | {_AFTER}", False),
+    (f"a `x\nh {_AFTER}\n---", False),
     (f"| h | i |\n|---|---|\n| a `x \\| {_AFTER} | z |", False),
     (f"| h | i |\n|---|---|\n| a `x \\\\| {_AFTER} | z |", False),
     (f"| h |\n|---|\n| a `x {_AFTER} |", False),
