@@ -301,9 +301,12 @@ def _cell_count(row: str) -> int:
 
 
 def _opens_table(rest: str, below: str | None, stack: list[int | None]) -> bool:
-    """Whether `rest` is a table's header row: a delimiter row with as many
-    cells, in the same containers, is the next line. A table can interrupt a
-    paragraph, and its header row is then the paragraph's last line."""
+    """Whether `rest` is a table's header row.
+
+    It is when the next line, in the same containers, is a delimiter row with
+    as many cells. A table can interrupt a paragraph, and its header row is
+    then the line after the paragraph's last.
+    """
     if below is None or _indent(rest) > 3:
         return False
     matched, under = _continued(below, stack)
