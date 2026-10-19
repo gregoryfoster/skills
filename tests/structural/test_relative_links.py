@@ -196,8 +196,9 @@ def _code_spans(text: str) -> list[tuple[int, int]]:
     literal, so `` `a\\` `` closes on its second backtick. A run with no closer
     is text. That is the rule `code_spans` in
     `skills/coordinating-epics/scripts/_epic_edit.py` reads (#402), re-stated
-    here so a repo-wide doc gate doesn't import one skill's engine (#416). Before #416 a regex ignored escapes, so
-    `` \\`[x](gone.md)\\` `` masked a link that GitHub renders.
+    here so a repo-wide doc gate doesn't import one skill's engine (#416).
+    Before #416 a regex ignored escapes, so `` \\`[x](gone.md)\\` `` masked a
+    link that GitHub renders.
 
     A span may wrap onto the next line but not cross a blank one, since a code
     span lives inside a paragraph. That stop is load-bearing: without it, one
