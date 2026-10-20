@@ -710,6 +710,7 @@ def main(
             return EXIT_SKIPPED
         except _typesafe.TypeSafeError as e:
             print(e, file=stderr)
+            say(f"case {row['id']} failed, so no later case was asked (CR 409)")
             if args.cache and any(live):
                 say(f"{sum(live)} answer(s) are in {args.cache}; a re-run resumes")
             return EXIT_FAILED

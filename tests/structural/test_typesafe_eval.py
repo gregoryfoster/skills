@@ -399,6 +399,7 @@ def test_a_failure_part_way_is_exit_2_and_the_rerun_resumes(tmp_path, dataset):
     code, out, err = _run([dataset, "--cache", cache], transport=t)
     assert code == 2 and out == ""
     assert "authentication_error" in err and "2 answer(s) are in" in err
+    assert "case c failed" in err  # CR 409
     t2 = FakeTransport()
     code, out, _ = _run([dataset, "--cache", cache], transport=t2)
     assert code == 0 and len(t2.calls) == 2
