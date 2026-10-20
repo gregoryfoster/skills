@@ -66,6 +66,7 @@ only. Each answer echoes the model that actually answered on stderr.
 from __future__ import annotations
 
 import email.utils
+import http.client
 import json
 import math
 import os
@@ -238,17 +239,26 @@ def connect(
 
 
 def urllib_transport(url: str, data: bytes, headers: dict, timeout: float):
-    """POST once. Returns (status, headers, body) for any HTTP answer; raises OSError for none."""
+    """POST once. Returns (status, headers, body) for any HTTP answer; raises OSError for none.
+
+    A broken answer (a truncated body, a garbled status line) is an
+    `http.client.HTTPException`, which isn't an OSError. It's re-raised as one,
+    so it reaches the retry loop and never escapes a caller catching
+    `TypeSafeError` (CR 385).
+    """
     req = urllib.request.Request(url, data=data, headers=headers, method="POST")
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return resp.status, resp.headers, resp.read()
-    except urllib.error.HTTPError as e:
         try:
-            body = e.read()
-        except OSError:
-            body = b""
-        return e.code, e.headers, body
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return resp.status, resp.headers, resp.read()
+        except urllib.error.HTTPError as e:
+            try:
+                body = e.read()
+            except (OSError, http.client.HTTPException):
+                body = b""
+            return e.code, e.headers, body
+    except http.client.HTTPException as e:
+        raise OSError(f"{e.__class__.__name__}: {e}") from e
 
 
 def _encode(value) -> bytes:

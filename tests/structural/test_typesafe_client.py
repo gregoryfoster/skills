@@ -521,6 +521,22 @@ def loopback():
     server.shutdown()
 
 
+class _Truncating(http.server.BaseHTTPRequestHandler):
+    """Promises 100 bytes and sends 5: `resp.read()` raises http.client.IncompleteRead."""
+
+    def do_POST(self):
+        self.rfile.read(int(self.headers["Content-Length"]))
+        self.send_response(200)
+        self.send_header("Content-Length", "100")
+        self.end_headers()
+        self.wfile.write(b'{"a":')
+        self.wfile.flush()
+        self.close_connection = True
+
+    def log_message(self, *args):
+        pass
+
+
 class TestUrllibTransport:
     def test_an_http_error_returns_status_headers_and_body_instead_of_raising(
         self, loopback
@@ -559,6 +575,25 @@ class TestUrllibTransport:
     def test_an_unreachable_host_raises_oserror_for_the_retry_loop(self):
         with pytest.raises(OSError):
             ts.urllib_transport("http://127.0.0.1:9/v1/systemone", b"{}", {}, 2)
+
+    def test_a_truncated_body_is_an_oserror_and_the_client_retries_it_as_a_typesafe_error(
+        self, monkeypatch
+    ):
+        """IncompleteRead isn't an OSError; escaping raw, it would crash a host script (CR 385)."""
+        server = http.server.HTTPServer(("127.0.0.1", 0), _Truncating)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        url = f"http://127.0.0.1:{server.server_port}/v1/systemone"
+        try:
+            with pytest.raises(OSError, match="IncompleteRead"):
+                ts.urllib_transport(url, b"{}", {}, 5)
+            monkeypatch.setattr(ts, "ENDPOINT", url)
+            sleeps = []
+            client = ts.Client(KEY, sleep=sleeps.append, stderr=io.StringIO())
+            with pytest.raises(ts.TypeSafeError) as e:
+                client.ask("x", QUESTIONS)
+            assert e.value.status is None and len(sleeps) == ts.MAX_ATTEMPTS - 1
+        finally:
+            server.shutdown()
 
     def test_the_whole_client_through_loopback_names_the_server_message_and_not_the_key(
         self, loopback, monkeypatch
