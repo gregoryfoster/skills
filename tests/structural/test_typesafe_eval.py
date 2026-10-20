@@ -335,6 +335,33 @@ def test_a_malformed_cache_line_is_exit_1(tmp_path, dataset):
     assert code == 1 and "cache line 1" in err
 
 
+@pytest.mark.parametrize(
+    "line",
+    [
+        '{"key": "k"}',
+        '{"key": "k", "reply": {"model": "m"}}',
+        '{"key": "k", "reply": {"answers": []}}',
+    ],
+)
+def test_a_cached_reply_without_answers_is_exit_1_not_a_crash(tmp_path, dataset, line):
+    """CR 406: a cached reply skips the client's checks, so the cache reader makes them."""
+    cache = tmp_path / "cache.jsonl"
+    cache.write_text(line + "\n")
+    code, _, err = _run([dataset, "--cache", cache, "--offline"])
+    assert code == 1 and "cache line 1" in err
+
+
+def test_a_cached_reply_missing_one_answer_is_exit_2_not_a_crash(tmp_path):
+    rows = [_row("a", "thanks, all good", billing=False)]
+    path = _write(tmp_path / "s.jsonl", rows)
+    key = ev.request_key(PIN, rows[0]["state"], rows[0]["questions"])
+    cache = tmp_path / "cache.jsonl"
+    reply = {"model": PIN, "answers": {"other": {"type": "noul", "noul": 0.1}}}
+    cache.write_text(json.dumps({"id": "a", "key": key, "reply": reply}) + "\n")
+    code, _, err = _run([path, "--cache", cache, "--offline"])
+    assert code == 2 and "expected a noul answer, got None" in err
+
+
 def test_markdown_renders_every_table(tmp_path, dataset):
     code, out, _ = _run([dataset, "--format", "markdown"], transport=FakeTransport())
     assert code == 0

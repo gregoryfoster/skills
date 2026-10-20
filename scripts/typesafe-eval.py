@@ -235,8 +235,13 @@ def load_cache(lines) -> dict[str, dict]:
             not isinstance(entry, dict)
             or not isinstance(entry.get("key"), str)
             or not isinstance(entry.get("reply"), dict)
+            or not isinstance(entry["reply"].get("answers"), dict)
         ):
-            raise UsageError(f"cache line {n}: needs a string key and a reply object")
+            # The client checks a live reply's answers; a cached one is checked
+            # here, or a hand-edited line crashes the scoring (CR 406).
+            raise UsageError(
+                f"cache line {n}: needs a string key and a reply with an answers object"
+            )
         cache[entry["key"]] = entry["reply"]
     return cache
 
@@ -416,7 +421,7 @@ def question_metrics(rows: list[dict], replies: list[dict], thresholds, bins) ->
             g = grouped.setdefault(
                 name, {"type": q["type"], "records": [], "labels": []}
             )
-            got = read_answer(q, reply["answers"][name])
+            got = read_answer(q, reply["answers"].get(name))
             got["expected"] = row["expected"][name]
             g["records"].append(got)
             if q["type"] == "choice":
