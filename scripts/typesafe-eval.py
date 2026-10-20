@@ -61,8 +61,9 @@ applies: TYPESAFE_OPT_IN=on, or else `.skills/typesafe` in the git checkout
 holding the current directory, not this script's. Run from inside the source
 repo, that is the source repo's own opt-in. Run from anywhere else (this repo
 has no knob), TYPESAFE_OPT_IN=on is the operator's consent for the set's text.
-The key comes from TYPESAFE_API_KEY. About 273 input tokens of overhead per
-call [#448].
+The key comes from TYPESAFE_API_KEY, or else from that checkout's primary
+`.env` (the client's --help has the rules). About 273 input tokens of overhead
+per call [#448].
 
 exit codes:
   0  a valid report

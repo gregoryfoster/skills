@@ -34,9 +34,21 @@ checkout, as the other `.skills/` resolvers read it (#180, #188, #202), so an
 untracked opt-in is seen from a linked worktree too. Any other value reads as
 off, and the skip line names the value.
 
-**The key** comes from `TYPESAFE_API_KEY` in the environment only. It's never
-logged, never put in an argument, and never in an error message: every message
-this module builds is redacted against it.
+**The key** comes from `TYPESAFE_API_KEY` in the environment. Set but empty, it
+counts as unset, and the key is then read from the primary checkout's `.env`,
+then the legacy bare `env` (#438). The root is the same one the knob is read
+from, so a linked worktree finds the key its primary checkout keeps.
+`measure-context.sh` instead joins its names to the current checkout. The file
+is parsed, never sourced, by the rules `ctx_api_key_from_env_file` uses: only
+`TYPESAFE_API_KEY=` lines, at the start of the line, an `export ` prefix
+allowed. One trailing CR is stripped, then one layer of matching quotes. A
+value that is empty or holds whitespace, `$` or a backtick is a placeholder and
+is passed over, and the search goes on to the next line and the next file. A
+key found there doesn't opt a repo in: the opt-in alone decides what is sent.
+The file is read even when the repo isn't opted in, so a key that lives only
+there is still redacted from the skip line, though nothing is sent. The key is
+never logged, never put in an argument, and never in an error message: every
+message this module builds is redacted against it.
 
 **Skips go through the API, never an exit code.** `connect()` raises `Skipped`
 with `reason` set to `not-opted-in` or `no-key`, and `.line` holds the single
@@ -95,6 +107,7 @@ MODEL = "jev-1.13.0"
 OPT_IN_ENV = "TYPESAFE_OPT_IN"
 KNOB = ".skills/typesafe"
 KEY_ENV = "TYPESAFE_API_KEY"
+ENV_FILES = (".env", "env")  # the cohort's secrets file, then its pre-2026-08-05 name
 
 TIMEOUT = 30.0  # seconds per attempt
 MAX_ATTEMPTS = 3
@@ -251,6 +264,50 @@ def opted_in(environ=None, cwd: str | None = None) -> tuple[bool, str]:
     return False, f"{where} holds {word!r}, not on or off, so it reads as off"
 
 
+# --- the key -----------------------------------------------------------------
+
+
+def _placeholder(value: str) -> bool:
+    # The shell's `''|*[[:space:]]*|*'$'*|*'`'*`: not a usable key, and far
+    # more likely a template line or a mangled one.
+    return not value or any(c in " \t\n\v\f\r$`" for c in value)
+
+
+def key_from_env_file(root: Path | None, names=ENV_FILES) -> str | None:
+    """`TYPESAFE_API_KEY` from the first usable line of `root/<name>`, or None.
+
+    A rule-for-rule port of `ctx_api_key_from_env_file` in curating-context's
+    `_context-lib.sh`, which `test_typesafe_client.py` runs side by side with
+    this. Parsed, never sourced: sourcing a secrets file runs whatever it holds.
+    """
+    if root is None:
+        return None
+    prefix = f"{KEY_ENV}="
+    for name in names:
+        path = root / name
+        if not path.is_file():
+            continue
+        try:
+            text = path.read_bytes().decode("utf-8", errors="replace")
+        except OSError:  # the shell's failed redirect: on to the next file
+            continue
+        # `read -r` splits on LF only, so a CR stays inside a line.
+        for line in text.split("\n"):
+            if line.startswith("export "):
+                line = line[len("export ") :]
+            if not line.startswith(prefix):
+                continue
+            value = line[len(prefix) :]
+            if value.endswith("\r"):
+                value = value[:-1]
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+                value = value[1:-1]
+            if _placeholder(value):
+                continue
+            return value
+    return None
+
+
 def connect(
     *,
     model: str = MODEL,
@@ -260,9 +317,13 @@ def connect(
     sleep=time.sleep,
     stderr=None,
 ) -> Client:
-    """A client, or `Skipped`. The opt-in is checked first: no key is asked for until a repo opts in."""
+    """A client, or `Skipped`. The opt-in is reported first: a repo that never opted in hears nothing about a key."""
     environ = os.environ if environ is None else environ
     key = (environ.get(KEY_ENV) or "").strip()
+    if not key:
+        # Read before the opt-in is decided, so a key kept only in the file is
+        # redacted from a malformed opt-in's echo too (CR 404). Nothing is sent.
+        key = key_from_env_file(project_root(cwd)) or ""
     on, why = opted_in(environ, cwd)
     if key:
         # A malformed opt-in is echoed, so a key pasted into the wrong place
@@ -279,7 +340,12 @@ def connect(
             "not-opted-in", f"{why}; set {where} to on to send text to api.typesafe.ai"
         )
     if not key:
-        raise Skipped("no-key", f"opted in ({why}), but {KEY_ENV} is unset or empty")
+        raise Skipped(
+            "no-key",
+            f"opted in ({why}), but {KEY_ENV} is unset or empty, and no "
+            f"{' or '.join(ENV_FILES)} in the primary checkout holds a usable "
+            f"{KEY_ENV}= line",
+        )
     return Client(key, model=model, transport=transport, sleep=sleep, stderr=stderr)
 
 

@@ -658,6 +658,125 @@ class TestKeyHygiene:
         assert KEY not in e.value.line
 
 
+# --- the key from .env (#438) ------------------------------------------------
+
+LIB = REPO_ROOT / "skills" / "curating-context" / "scripts" / "_context-lib.sh"
+
+# (name, .env text, env text): every rule ctx_api_key_from_env_file applies.
+ENV_FILE_CASES = [
+    ("plain", "NAME=k1\n", None),
+    ("export prefix", "export NAME=k1\n", None),
+    ("two spaces after export", "export  NAME=k1\n", None),
+    ("crlf", "NAME=k1\r\n", None),
+    ("double quotes", 'NAME="k1"\n', None),
+    ("single quotes", "NAME='k1'\n", None),
+    ("quotes after the cr", 'NAME="k1"\r\n', None),
+    ("mismatched quotes", "NAME=\"k1'\n", None),
+    ("a lone quote", 'NAME="\n', None),
+    ("empty quotes", 'NAME=""\nNAME=k2\n', None),
+    ("two layers of quotes", "NAME=\"'k1'\"\n", None),
+    ("leading whitespace", "  NAME=k1\n", None),
+    ("space before =", "NAME =k1\n", None),
+    ("commented out", "# NAME=k1\n", None),
+    ("a longer name", "NAME_2=k1\nXNAME=k2\n", None),
+    ("placeholder then real", "NAME=<your key>\nNAME=k2\n", None),
+    ("a dollar", "NAME=$OTHER\n", None),
+    ("a backtick", "NAME=`cmd`\n", None),
+    ("a tab", "NAME=k\t1\n", None),
+    ("empty", "NAME=\n", None),
+    ("first usable wins", "NAME=k1\nNAME=k2\n", None),
+    ("no trailing newline", "OTHER=x\nNAME=k1", None),
+    ("falls through to env", "OTHER=x\n", "NAME=k2\n"),
+    (".env wins over env", "NAME=k1\n", "NAME=k2\n"),
+    ("only env", None, "NAME=k2\n"),
+    ("neither", None, None),
+]
+
+
+def _env_files(root: Path, name: str, dot: str | None, bare: str | None) -> None:
+    for fname, text in ((".env", dot), ("env", bare)):
+        if text is not None:
+            (root / fname).write_bytes(text.replace("NAME", name).encode())
+
+
+class TestKeyFromEnvFile:
+    @pytest.mark.parametrize(
+        "dot,bare", [c[1:] for c in ENV_FILE_CASES], ids=[c[0] for c in ENV_FILE_CASES]
+    )
+    def test_the_parser_agrees_with_ctx_api_key_from_env_file(
+        self, tmp_path, dot, bare
+    ):
+        """The shell reader is the precedent the operator chose; the port must not drift from it."""
+        shell_root, py_root = tmp_path / "sh", tmp_path / "py"
+        shell_root.mkdir()
+        py_root.mkdir()
+        _env_files(shell_root, "ANTHROPIC_API_KEY", dot, bare)
+        _env_files(py_root, ts.KEY_ENV, dot, bare)
+        shell = subprocess.run(
+            [
+                "bash",
+                "-c",
+                '. "$1" && ctx_api_key_from_env_file "$2"',
+                "_",
+                LIB,
+                shell_root,
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+        assert (ts.key_from_env_file(py_root) or "") == shell
+
+    def test_outside_a_checkout_there_is_no_file_to_read(self):
+        assert ts.key_from_env_file(None) is None
+
+    def test_an_unreadable_file_is_passed_over_for_the_next(self, tmp_path):
+        (tmp_path / ".env").mkdir()  # not a file: the shell's `[ -f ]` skips it
+        (tmp_path / "env").write_text(f"{ts.KEY_ENV}=k2\n")
+        assert ts.key_from_env_file(tmp_path) == "k2"
+
+    def test_connect_finds_the_key_in_the_primary_checkouts_env(self, repo, tmp_path):
+        """From a linked worktree too: the root is the knob's, not --show-toplevel's."""
+        (repo / ".env").write_text(f"{ts.KEY_ENV}={KEY}\n")
+        wt = tmp_path / "wt"
+        _git(repo, "worktree", "add", "-q", "-b", "side", str(wt))
+        for where in (repo, wt):
+            client = ts.connect(environ={ts.OPT_IN_ENV: "on"}, cwd=str(where))
+            assert client._key == KEY
+
+    @pytest.mark.parametrize("blank", ["", "  "])
+    def test_an_empty_env_var_falls_back_to_the_file(self, repo, blank):
+        (repo / ".env").write_text(f"{ts.KEY_ENV}={KEY}\n")
+        env = {ts.OPT_IN_ENV: "on", ts.KEY_ENV: blank}
+        assert ts.connect(environ=env, cwd=str(repo))._key == KEY
+
+    def test_the_environment_wins_over_the_file(self, repo):
+        (repo / ".env").write_text(f"{ts.KEY_ENV}=from-file\n")
+        env = {ts.OPT_IN_ENV: "on", ts.KEY_ENV: KEY}
+        assert ts.connect(environ=env, cwd=str(repo))._key == KEY
+
+    def test_a_key_in_the_file_does_not_opt_the_repo_in(self, repo):
+        (repo / ".env").write_text(f"{ts.KEY_ENV}={KEY}\n")
+        with pytest.raises(ts.Skipped) as e:
+            ts.connect(environ={}, cwd=str(repo))
+        assert e.value.reason == "not-opted-in"
+
+    def test_a_key_from_the_file_is_redacted_from_the_knob_echo(self, repo):
+        """CR 404, for a key that was never in the environment."""
+        (repo / ".env").write_text(f"{ts.KEY_ENV}={KEY}\n")
+        _knob(repo, f"{KEY}\n")
+        with pytest.raises(ts.Skipped) as e:
+            ts.connect(environ={}, cwd=str(repo))
+        assert KEY not in e.value.line and "[redacted]" in e.value.line
+
+    def test_the_no_key_line_names_the_files_it_read(self, repo):
+        (repo / ".env").write_text(f"{ts.KEY_ENV}=your key here\n")
+        with pytest.raises(ts.Skipped) as e:
+            ts.connect(environ={ts.OPT_IN_ENV: "on"}, cwd=str(repo))
+        assert e.value.reason == "no-key"
+        assert ".env or env" in e.value.line and "your key" not in e.value.line
+
+
 # --- the size guard ----------------------------------------------------------
 
 

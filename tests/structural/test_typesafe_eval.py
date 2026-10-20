@@ -389,7 +389,12 @@ def test_not_opted_in_is_exit_4_and_nothing_is_sent(tmp_path, dataset):
     assert code == 4 and "typesafe: skipped (not-opted-in)" in err and t.calls == []
 
 
-def test_no_key_is_exit_4(tmp_path, dataset):
+def test_no_key_is_exit_4(tmp_path, dataset, monkeypatch):
+    # The client also reads the key from the primary checkout's .env (#438). A
+    # hook exports GIT_DIR, which would make tmp_path answer as this repo, whose
+    # .env may hold a real key (#189).
+    for k in [k for k in os.environ if k.startswith("GIT_")]:
+        monkeypatch.delenv(k)
     code, _, err = _run([dataset], environ={"TYPESAFE_OPT_IN": "on"}, cwd=tmp_path)
     assert code == 4 and "skipped (no-key)" in err
 
