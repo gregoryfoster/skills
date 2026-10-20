@@ -4,15 +4,20 @@
 Import it; don't run it (`--help` prints this text). Stdlib only, Python 3.9+.
 gregoryfoster/skills#448 is the spec, and the epic it serves is #451.
 
+    sys.path.insert(0, str(Path(__file__).resolve().parent))  # `python3 -I` drops it
     import _typesafe
+
     try:
         client = _typesafe.connect()
     except _typesafe.Skipped as s:
-        print(s.line, file=sys.stderr)  # one line, naming which skip
-        ...                             # the step did not run; say so, don't pass
+        print(s.line, file=sys.stderr)  # one line naming which skip; the step didn't run
     else:
-        reply = client.ask(state, {"stale": {"type": "noul", "instructions": "..."}})
-        reply["answers"]["stale"]["noul"]
+        try:
+            reply = client.ask(state, {"stale": {"type": "noul", "instructions": "..."}})
+        except _typesafe.TypeSafeError as e:
+            print(e, file=sys.stderr)  # advisory: the host's exit code is untouched
+        else:
+            print(reply["answers"]["stale"]["noul"])
 
 **The canonical copy is `scripts/_typesafe.py` at the skills repo root.** A
 skill that uses it carries its own byte-equal copy in its `scripts/`, because a

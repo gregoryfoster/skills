@@ -28,6 +28,7 @@ import os
 import socket
 import subprocess
 import sys
+import textwrap
 import threading
 from pathlib import Path
 
@@ -755,6 +756,38 @@ class TestCli:
         assert out.returncode == 0
         assert "Skips go through the API, never an exit code" in out.stdout
         assert "TYPESAFE_OPT_IN" in out.stdout and ".skills/typesafe" in out.stdout
+
+    def test_the_usage_example_runs_as_written_from_a_skill_under_python_I(
+        self, tmp_path
+    ):
+        """The docstring's example is what consumers copy, so it must run (CR 396).
+
+        Run from a skill's scripts/ beside its own copy, under -I, which drops
+        the script's directory from sys.path, and with no opt-in: the example
+        must import the client, print the one skip line, and exit 0.
+        """
+        doc = ts.__doc__
+        start = doc.index("    sys.path.insert")
+        example = textwrap.dedent(doc[start : doc.index("\n\n**", start)])
+        scripts = tmp_path / "skill" / "scripts"
+        scripts.mkdir(parents=True)
+        (scripts / "_typesafe.py").write_bytes(CLIENT.read_bytes())
+        consumer = scripts / "consumer.py"
+        consumer.write_text(
+            "import sys\nfrom pathlib import Path\n\nstate = 'x'\n" + example
+        )
+        env = {k: v for k, v in _clean_env().items() if not k.startswith("TYPESAFE_")}
+        env["GIT_CEILING_DIRECTORIES"] = str(tmp_path)
+        out = subprocess.run(
+            [sys.executable, "-I", str(consumer)],
+            cwd=tmp_path,
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+        assert out.returncode == 0, out.stderr
+        assert out.stderr.startswith("typesafe: skipped (not-opted-in): ")
+        assert out.stderr.count("\n") == 1
 
     @pytest.mark.parametrize("argv", [[], ["--check"]])
     def test_anything_else_is_a_usage_error_and_sends_nothing(self, argv):
