@@ -615,6 +615,14 @@ def test_bands_close_the_last_one_at_1(value, want):
     assert ev.band_of(value, 10) == want
 
 
+def test_a_value_on_a_band_edge_lands_in_that_band():
+    """CR 414: 0.57 * 100 is 56.99999999999999."""
+    for bins in (10, 20, 100):
+        for i in range(bins):
+            assert ev.band_of(i / bins, bins) == i
+    assert [ev.band_of(v, 100) for v in (0.29, 0.57, 0.58)] == [29, 57, 58]
+
+
 def test_precision_with_no_predicted_yes_is_none_not_zero():
     m = ev.noul_metrics([{"p": 0.2, "expected": True}], (0.5,), 10)
     assert m["sweep"][0]["precision"] is None and m["sweep"][0]["recall"] == 0.0

@@ -342,7 +342,8 @@ def read_answer(question: dict, answer) -> dict:
 
 
 def band_of(value: float, bins: int) -> int:
-    return min(bins - 1, max(0, int(value * bins)))
+    # 0.57 * 100 is 56.99999999999999; round off the float error first (CR 414).
+    return min(bins - 1, max(0, int(round(value * bins, 9))))
 
 
 def _ratio(num: int, den: int) -> float | None:
