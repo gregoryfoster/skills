@@ -478,9 +478,14 @@ def validity(model_asked: str, replies: list[dict]) -> tuple[bool, str | None, l
     return True, None, models
 
 
-def usage_totals(replies: list[dict], live: list[bool]) -> dict:
+def usage_totals(replies: list[dict], live: list[bool], keys: list[str]) -> dict:
+    """Token usage, each request once: a case repeated in the set is billed once (CR 417)."""
     totals = {"input": 0, "output": 0, "live_input": 0, "live_output": 0, "missing": 0}
-    for reply, was_live in zip(replies, live):
+    seen = set()
+    for reply, was_live, key in zip(replies, live, keys):
+        if key in seen:
+            continue
+        seen.add(key)
         usage = reply.get("usage") if isinstance(reply.get("usage"), dict) else {}
         for field, key in (("input_tokens", "input"), ("output_tokens", "output")):
             v = usage.get(field)
@@ -770,7 +775,7 @@ def main(
         "cases": len(rows),
         "set_sha256": hashlib.sha256(raw).hexdigest(),
         "calls": {"live": sum(live), "replayed": len(live) - sum(live)},
-        "tokens": usage_totals(replies, live),
+        "tokens": usage_totals(replies, live, keys),
         "thresholds": list(args.thresholds),
         "bins": args.bins,
         "questions": questions,

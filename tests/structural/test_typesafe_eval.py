@@ -666,6 +666,17 @@ def test_the_opt_in_is_the_current_directorys_checkout(tmp_path, dataset, monkey
     assert len(t.calls) == 4
 
 
+def test_a_repeated_request_counts_its_tokens_once(tmp_path):
+    """CR 417: one call, so 300 tokens, not 300 per row."""
+    rows = [_row(rid, "thanks, all good", billing=False) for rid in ("x", "y", "z")]
+    t = FakeTransport()
+    code, out, _ = _run([_write(tmp_path / "s.jsonl", rows)], transport=t)
+    report = json.loads(out)
+    assert code == 0 and len(t.calls) == 1
+    assert report["calls"] == {"live": 1, "replayed": 2}
+    assert report["tokens"]["input"] == 300 and report["tokens"]["live_input"] == 300
+
+
 # --- pure helpers --------------------------------------------------------------
 
 
