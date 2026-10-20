@@ -262,7 +262,12 @@ def connect(
 ) -> Client:
     """A client, or `Skipped`. The opt-in is checked first: no key is asked for until a repo opts in."""
     environ = os.environ if environ is None else environ
+    key = (environ.get(KEY_ENV) or "").strip()
     on, why = opted_in(environ, cwd)
+    if key:
+        # A malformed opt-in is echoed, so a key pasted into the wrong place
+        # (the env var or the knob file) would be printed (CR 404).
+        why = why.replace(key, "[redacted]")
     if not on:
         # A set env var outranks the file, so only it can turn this on (CR 390).
         where = (
@@ -273,7 +278,6 @@ def connect(
         raise Skipped(
             "not-opted-in", f"{why}; set {where} to on to send text to api.typesafe.ai"
         )
-    key = (environ.get(KEY_ENV) or "").strip()
     if not key:
         raise Skipped("no-key", f"opted in ({why}), but {KEY_ENV} is unset or empty")
     return Client(key, model=model, transport=transport, sleep=sleep, stderr=stderr)

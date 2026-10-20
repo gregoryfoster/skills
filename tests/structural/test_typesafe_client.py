@@ -640,6 +640,18 @@ class TestKeyHygiene:
         client.ask("x", QUESTIONS)
         assert KEY not in repr(client) and KEY not in err.getvalue()
 
+    def test_a_key_pasted_into_the_opt_in_env_var_is_not_echoed(self, repo):
+        """A malformed opt-in is echoed; the key in its place must not be (CR 404)."""
+        with pytest.raises(ts.Skipped) as e:
+            ts.connect(environ={ts.KEY_ENV: KEY, ts.OPT_IN_ENV: KEY}, cwd=str(repo))
+        assert KEY not in e.value.line and "[redacted]" in e.value.line
+
+    def test_a_key_written_into_the_knob_file_is_not_echoed(self, repo):
+        _knob(repo, f"{KEY}\n")
+        with pytest.raises(ts.Skipped) as e:
+            ts.connect(environ={ts.KEY_ENV: KEY}, cwd=str(repo))
+        assert KEY not in e.value.line and "[redacted]" in e.value.line
+
     def test_the_key_is_never_in_the_skip_line(self, repo):
         with pytest.raises(ts.Skipped) as e:
             ts.connect(environ={ts.KEY_ENV: KEY, ts.OPT_IN_ENV: "nope"}, cwd=str(repo))
