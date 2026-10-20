@@ -558,6 +558,18 @@ def test_a_ceiling_directory_does_not_hide_the_checkout(work_tree, monkeypatch):
     assert code == 1 and "inside a git work tree" in err
 
 
+def test_an_overflowing_number_is_refused_before_anything_is_sent(tmp_path):
+    """CR 412: 1e400 is inf, which the client refuses only at send time."""
+    rows = [_row("a", "thanks, all good", billing=False), _row("b", "s", billing=True)]
+    path = tmp_path / "s.jsonl"
+    path.write_text(
+        json.dumps(rows[0]) + "\n" + json.dumps(rows[1]).replace('"s"', "1e400") + "\n"
+    )
+    t = FakeTransport()
+    code, _, err = _run([path], transport=t)
+    assert code == 1 and "overflows" in err and t.calls == []
+
+
 # --- pure helpers --------------------------------------------------------------
 
 

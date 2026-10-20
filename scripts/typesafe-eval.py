@@ -117,6 +117,13 @@ def _refuse_constant(name: str):
     raise ValueError(f"{name} isn't valid JSON")
 
 
+def _finite_float(text: str) -> float:
+    value = float(text)
+    if not math.isfinite(value):  # 1e400 parses to inf (CR 412)
+        raise ValueError(f"{text} overflows to infinity, which isn't valid JSON")
+    return value
+
+
 def _check_question(name: str, q, label) -> str | None:
     """Why this question or its label is unusable, or None."""
     if not isinstance(q, dict):
@@ -153,7 +160,9 @@ def load_set(lines) -> list[dict]:
         if not line.strip():
             continue
         try:
-            row = json.loads(line, parse_constant=_refuse_constant)
+            row = json.loads(
+                line, parse_constant=_refuse_constant, parse_float=_finite_float
+            )
         except ValueError as e:
             errors.append(f"line {n}: not JSON: {e}")
             continue
