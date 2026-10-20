@@ -692,6 +692,28 @@ def test_an_invalid_run_says_so_even_when_its_report_write_fails(tmp_path, datas
     assert json.loads(out)["valid"] is False
 
 
+def test_the_hand_written_usage_line_names_every_flag():
+    """CR 420: argparse's usage is suppressed, so the docstring's must keep up."""
+    usage = ev.__doc__.split("\n\n")[1]
+    assert usage.startswith("usage:")
+    flags = set()
+    real_parse = ev._Parser.parse_args
+
+    def capture(self, argv=None, namespace=None):
+        flags.update(s for a in self._actions for s in a.option_strings)
+        return real_parse(self, argv, namespace)
+
+    ev._Parser.parse_args = capture
+    try:
+        ev.parse_args(["x.jsonl"])
+    finally:
+        ev._Parser.parse_args = real_parse
+    long_flags = {f for f in flags if f.startswith("--")} - {"--help"}
+    assert len(long_flags) == 8, long_flags  # the test sees the parser
+    missing = sorted(f for f in long_flags if f not in usage)
+    assert not missing, f"not in the docstring's usage line: {missing}"
+
+
 # --- pure helpers --------------------------------------------------------------
 
 
