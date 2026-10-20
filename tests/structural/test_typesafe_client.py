@@ -43,6 +43,17 @@ _spec.loader.exec_module(ts)
 KEY = "ts-test-key-0123456789"
 QUESTIONS = {"stale": {"type": "noul", "instructions": "Is this sentence stale?"}}
 
+# Error bodies as the live API sent them, measured 2026-10-19 (CR 394): an
+# over-length request, an unknown model, and a bad key.
+TOO_LONG = b'{"detail":{"error_type":"max_tokens_exceeded"}}'
+BAD_MODEL = (
+    b'{"detail":{"error_type":"api_usage_error","message":"Unknown model: jev-9.9.9"}}'
+)
+BAD_KEY = (
+    b'{"detail":{"error_type":"authentication_error","message":"Cannot authenticate '
+    b'with the server. Please check your API key and try again."}}'
+)
+
 
 def _ok(model=ts.MODEL, answers=None):
     body = {
@@ -384,11 +395,48 @@ class TestFailures:
 
     @pytest.mark.parametrize("status", [400, 401, 403, 404, 413, 415, 422])
     def test_a_request_or_key_error_is_never_retried(self, status):
-        client, fake, sleeps, _ = _client((status, {}, b'{"detail": "no"}'))
+        client, fake, sleeps, _ = _client((status, {}, BAD_MODEL))
         with pytest.raises(ts.TypeSafeError) as e:
             client.ask("x", QUESTIONS)
         assert e.value.status == status
         assert len(fake.calls) == 1 and not sleeps
+
+    @pytest.mark.parametrize(
+        "status, body, error_type, text",
+        [
+            (400, TOO_LONG, "max_tokens_exceeded", "max_tokens_exceeded"),
+            (
+                400,
+                BAD_MODEL,
+                "api_usage_error",
+                "Unknown model: jev-9.9.9 (api_usage_error)",
+            ),
+            (401, BAD_KEY, "authentication_error", "check your API key"),
+        ],
+    )
+    def test_the_apis_measured_error_shape_gives_its_message_and_error_type(
+        self, status, body, error_type, text
+    ):
+        """`{"detail": {"error_type", "message"}}` is what the API sends (CR 394)."""
+        client, fake, _, _ = _client((status, {}, body))
+        with pytest.raises(ts.TypeSafeError) as e:
+            client.ask("x", QUESTIONS)
+        assert e.value.status == status and e.value.error_type == error_type
+        assert text in str(e.value) and "{" not in str(e.value)
+        assert len(fake.calls) == 1
+
+    def test_a_string_detail_is_kept_and_has_no_error_type(self):
+        client, _, _, _ = _client((403, {}, b'{"detail": "Forbidden"}'))
+        with pytest.raises(ts.TypeSafeError) as e:
+            client.ask("x", QUESTIONS)
+        assert "Forbidden" in str(e.value) and e.value.error_type is None
+
+    def test_the_error_type_survives_giving_up(self):
+        body = b'{"detail":{"error_type":"overloaded","message":"Overloaded"}}'
+        client, _, _, _ = _client(*[(529, {}, body)] * 3)
+        with pytest.raises(ts.TypeSafeError) as e:
+            client.ask("x", QUESTIONS)
+        assert e.value.error_type == "overloaded" and "gave up" in str(e.value)
 
     def test_a_non_json_error_body_is_kept_verbatim(self):
         client, _, _, _ = _client((401, {}, b"Unauthorized: bad token"))
@@ -486,7 +534,8 @@ class TestFailures:
 
 class TestKeyHygiene:
     def test_a_server_echoing_the_key_is_redacted_in_the_error(self):
-        client, _, _, _ = _client((401, {}, f'{{"detail": "bad key {KEY}"}}'.encode()))
+        echo = f'{{"detail":{{"error_type":"authentication_error","message":"bad key {KEY}"}}}}'
+        client, _, _, _ = _client((401, {}, echo.encode()))
         with pytest.raises(ts.TypeSafeError) as e:
             client.ask("x", QUESTIONS)
         assert KEY not in str(e.value) and "[redacted]" in str(e.value)
@@ -685,14 +734,14 @@ class TestUrllibTransport:
         server.reply = (
             401,
             {"Content-Type": "application/json"},
-            b'{"detail": "Invalid API key"}',
+            BAD_KEY,
         )
         monkeypatch.setattr(ts, "ENDPOINT", url)
         client = ts.Client(KEY, stderr=io.StringIO())
         with pytest.raises(ts.TypeSafeError) as e:
             client.ask("x", QUESTIONS)
-        assert e.value.status == 401
-        assert "Invalid API key" in str(e.value) and KEY not in str(e.value)
+        assert e.value.status == 401 and e.value.error_type == "authentication_error"
+        assert "check your API key" in str(e.value) and KEY not in str(e.value)
 
 
 # --- the module as a script --------------------------------------------------

@@ -116,11 +116,17 @@ class Skipped(Exception):
 
 
 class TypeSafeError(Exception):
-    """The call failed: unreachable, or the API said no. `.status` is None when nothing came back."""
+    """The call failed: unreachable, or the API said no.
 
-    def __init__(self, status: int | None, message: str):
+    `.status` is None when nothing came back. `.error_type` is the API's own
+    code when it sent one (`max_tokens_exceeded`, `api_usage_error`,
+    `authentication_error`), so a caller can branch on it without parsing text.
+    """
+
+    def __init__(self, status: int | None, message: str, error_type: str | None = None):
         self.status = status
         self.message = message
+        self.error_type = error_type
         where = f"HTTP {status}" if status is not None else "no response"
         super().__init__(f"typesafe: {where}: {message}")
 
@@ -331,9 +337,16 @@ def _check_size(state, questions: dict) -> None:
         )
 
 
-def _server_message(body: bytes) -> str:
-    """What the server said, from the body. A 422's `detail` is rendered as `loc: msg`."""
+def _server_message(body: bytes) -> tuple[str, str | None]:
+    """(what the server said, its error_type or None), from the body.
+
+    The API answers `{"detail": {"error_type": ..., "message": ...}}` for a 400
+    or 401 [measured 2026-10-19], and FastAPI's list of `{loc, msg}` for a 422,
+    rendered as `loc: msg`. A string `detail` or a non-JSON body is kept as is
+    (CR 394).
+    """
     text = body.decode("utf-8", errors="replace").strip()
+    error_type = None
     try:
         parsed = json.loads(text)
     except ValueError:
@@ -345,15 +358,19 @@ def _server_message(body: bytes) -> str:
                 f"{'.'.join(str(p) for p in d.get('loc', []))}: {d.get('msg', '')}"
                 for d in detail
             )
+        elif isinstance(detail, dict) and isinstance(detail.get("error_type"), str):
+            error_type = detail["error_type"]
+            message = detail.get("message")
+            text = f"{message} ({error_type})" if message else error_type
         elif isinstance(detail, str):
             text = detail
         else:
             text = json.dumps(detail)
     if not text:
-        return "(empty body)"
+        text = "(empty body)"
     if len(text) > ERROR_BODY_CHARS:
         text = f"{text[:ERROR_BODY_CHARS]}... ({len(text) - ERROR_BODY_CHARS} more characters)"
-    return text
+    return text, error_type
 
 
 def _retry_after(headers) -> float | None:
@@ -408,9 +425,11 @@ class Client:
     def _redact(self, text: str) -> str:
         return text.replace(self._key, "[redacted]") if self._key else text
 
-    def _error(self, status: int | None, message: str) -> TypeSafeError:
+    def _error(
+        self, status: int | None, message: str, error_type: str | None = None
+    ) -> TypeSafeError:
         # Redacted here because the server can echo anything back, the key included.
-        return TypeSafeError(status, self._redact(message))
+        return TypeSafeError(status, self._redact(message), error_type)
 
     def ask(self, state, questions: dict) -> dict:
         """POST state and named questions. Returns the response object, with `answers` keyed by name."""
@@ -448,12 +467,14 @@ class Client:
             else:
                 if status == 200:
                     return self._parse(body, questions)
-                err = self._error(status, _server_message(body))
+                err = self._error(status, *_server_message(body))
             if status is not None and status not in RETRYABLE:
                 raise err
             if attempt == MAX_ATTEMPTS:
                 raise TypeSafeError(
-                    err.status, f"{err.message} (gave up after {attempt} attempts)"
+                    err.status,
+                    f"{err.message} (gave up after {attempt} attempts)",
+                    err.error_type,
                 )
             delay = _retry_after(resp_headers)
             if delay is None:
@@ -463,6 +484,7 @@ class Client:
                     err.status,
                     f"{err.message} (not retried: waiting {delay:g} s more would pass "
                     f"the {MAX_WAIT:g} s retry budget)",
+                    err.error_type,
                 )
             what = f"HTTP {status}" if status is not None else "no response"
             self._say(
@@ -479,7 +501,7 @@ class Client:
             raise self._error(200, f"response isn't JSON: {e}") from None
         if not isinstance(reply, dict) or not isinstance(reply.get("answers"), dict):
             raise self._error(
-                200, f"response has no answers object: {_server_message(body)}"
+                200, f"response has no answers object: {_server_message(body)[0]}"
             )
         missing = sorted(set(questions) - set(reply["answers"]))
         if missing:
