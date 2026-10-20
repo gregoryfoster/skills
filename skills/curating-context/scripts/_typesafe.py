@@ -231,8 +231,15 @@ def _knob_word(path: Path) -> str | None:
     return ""
 
 
-def opted_in(environ=None, cwd: str | None = None) -> tuple[bool, str]:
-    """(on, where the answer came from). Anything but `on` is off, and says why."""
+_UNSET = object()
+
+
+def opted_in(environ=None, cwd: str | None = None, *, root=_UNSET) -> tuple[bool, str]:
+    """(on, where the answer came from). Anything but `on` is off, and says why.
+
+    `root` is `project_root(cwd)` when the caller already has it, so
+    `connect()` resolves the checkout once (CR 430).
+    """
     environ = os.environ if environ is None else environ
     value = environ.get(OPT_IN_ENV)
     # Empty is unset, as `[[ -n "${PLANS_DIR:-}" ]]` reads it in the shell
@@ -244,7 +251,8 @@ def opted_in(environ=None, cwd: str | None = None) -> tuple[bool, str]:
         if word == "off":
             return False, f"{OPT_IN_ENV}=off"
         return False, f"{OPT_IN_ENV}={value!r} is not on or off, so it reads as off"
-    root = project_root(cwd)
+    if root is _UNSET:
+        root = project_root(cwd)
     if root is None:
         return (
             False,
@@ -320,11 +328,13 @@ def connect(
     """A client, or `Skipped`. The opt-in is reported first: a repo that never opted in hears nothing about a key."""
     environ = os.environ if environ is None else environ
     key = (environ.get(KEY_ENV) or "").strip()
+    root = _UNSET
     if not key:
         # Read before the opt-in is decided, so a key kept only in the file is
         # redacted from a malformed opt-in's echo too (CR 404). Nothing is sent.
-        key = key_from_env_file(project_root(cwd)) or ""
-    on, why = opted_in(environ, cwd)
+        root = project_root(cwd)
+        key = key_from_env_file(root) or ""
+    on, why = opted_in(environ, cwd, root=root)
     if key:
         # A malformed opt-in is echoed, so a key pasted into the wrong place
         # (the env var or the knob file) would be printed (CR 404).

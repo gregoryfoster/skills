@@ -769,6 +769,18 @@ class TestKeyFromEnvFile:
             ts.connect(environ={}, cwd=str(repo))
         assert KEY not in e.value.line and "[redacted]" in e.value.line
 
+    def test_the_checkout_is_resolved_once_per_connect(self, repo, monkeypatch):
+        """Three git calls per resolution; the key and the opt-in share one (CR 430)."""
+        calls = []
+        real = ts.project_root
+        monkeypatch.setattr(
+            ts, "project_root", lambda cwd=None: calls.append(cwd) or real(cwd)
+        )
+        _knob(repo, "on\n")
+        (repo / ".env").write_text(f"{ts.KEY_ENV}={KEY}\n")
+        ts.connect(environ={}, cwd=str(repo))
+        assert len(calls) == 1
+
     def test_the_no_key_line_names_the_files_it_read(self, repo):
         (repo / ".env").write_text(f"{ts.KEY_ENV}=your key here\n")
         with pytest.raises(ts.Skipped) as e:
