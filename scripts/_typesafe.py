@@ -189,7 +189,9 @@ def opted_in(environ=None, cwd: str | None = None) -> tuple[bool, str]:
     """(on, where the answer came from). Anything but `on` is off, and says why."""
     environ = os.environ if environ is None else environ
     value = environ.get(OPT_IN_ENV)
-    if value is not None:
+    # Empty is unset, as `[[ -n "${PLANS_DIR:-}" ]]` reads it in the shell
+    # resolvers, so a template exporting the name blank can't veto the file (CR 387).
+    if value is not None and value.strip():
         word = value.strip()
         if word == "on":
             return True, f"{OPT_IN_ENV}=on"

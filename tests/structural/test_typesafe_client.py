@@ -164,6 +164,12 @@ class TestOptIn:
         assert not on
         assert "'yes'" in why
 
+    @pytest.mark.parametrize("blank", ["", "  "])
+    def test_an_empty_env_value_is_unset_and_the_file_decides(self, repo, blank):
+        """The shell resolvers read an empty override as unset (CR 387)."""
+        _knob(repo, "on\n")
+        assert ts.opted_in({ts.OPT_IN_ENV: blank}, str(repo))[0]
+
     def test_outside_a_git_checkout_only_the_env_can_opt_in(
         self, tmp_path, monkeypatch
     ):
