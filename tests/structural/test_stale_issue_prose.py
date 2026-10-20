@@ -326,6 +326,21 @@ def test_a_not_found_alias_keeps_the_others_data():
     assert got == {1: CLOSED, 2: None}
 
 
+def test_an_error_other_than_not_found_is_a_gh_failure():
+    """An SSO refusal nulls the repository beside its data; it isn't 'unresolved' (CR 433)."""
+
+    def run(argv):
+        body = {
+            "data": {"repository": None},
+            "errors": [{"type": "FORBIDDEN", "message": "Resource protected by SAML"}],
+        }
+        return subprocess.CompletedProcess(argv, 1, json.dumps(body), "")
+
+    with pytest.raises(sip.GhError) as e:
+        sip.fetch_meta("me/skills", [1], run)
+    assert "SAML" in str(e.value)
+
+
 def test_no_data_at_all_is_a_gh_failure():
     with pytest.raises(sip.GhError) as e:
         sip.fetch_meta("me/skills", [1], Gh({}, fail=True))

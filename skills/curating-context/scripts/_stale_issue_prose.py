@@ -237,6 +237,19 @@ def fetch_meta(slug: str, numbers, run=_run) -> dict[int, dict | None]:
             raise GhError(
                 f"gh api graphql for {slug}: {msg[-1] if msg else f'exit {r.returncode}'}"
             )
+        # NOT_FOUND is a ref that isn't an issue or PR. Anything else (SSO,
+        # FORBIDDEN, a timeout) can null every alias, and reading that as
+        # "unresolved" would be exit 0 over nothing judged (CR 433).
+        errors = reply.get("errors") if isinstance(reply.get("errors"), list) else []
+        other = [
+            e
+            for e in errors
+            if not (isinstance(e, dict) and e.get("type") == "NOT_FOUND")
+        ]
+        if other:
+            first = other[0]
+            msg = first.get("message", first) if isinstance(first, dict) else first
+            raise GhError(f"gh api graphql for {slug}: {msg}")
         repo = data.get("repository")
         if not isinstance(repo, dict):
             for n in chunk:
