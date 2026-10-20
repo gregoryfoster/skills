@@ -170,6 +170,12 @@ A skill script that asks TypeSafe for a judgment uses the standard-library clien
   `TypeSafeError` and leave the exit code alone, as for a skip: no TypeSafe step
   changes a verdict (epic #451). Only a new standalone script maps it to exit 2.
 
+Measure a judgment before anything gates on it.
+[`scripts/typesafe-eval.py`](../scripts/typesafe-eval.py) ([#449](https://github.com/gregoryfoster/skills/issues/449))
+takes a labelled JSONL set and reports agreement and calibration. It is repo
+tooling, so it imports the root client and is never copied. Its `--help` is the
+schema.
+
 ## Variant selection surface
 
 A variant is created by copying its baseline, so it inherits that baseline's
