@@ -579,7 +579,38 @@ def test_the_wrapper_writes_no_bytecode_into_the_skill(tmp_path):
     assert r.returncode == 0 and not (skill / "__pycache__").exists()
 
 
-def test_the_module_is_python39_compatible():
-    """The client's floor; `X | None` in annotations needs the __future__ import."""
-    for path in (SCRIPTS / "_sentences.py", SCRIPTS / "_stale_issue_prose.py"):
-        assert "from __future__ import annotations" in path.read_text(), path.name
+_PY39_MISSING = (
+    "python3.9 is not on PATH, so the pass was NOT run on the client's 3.9 floor. "
+    "Install it to get that coverage; set PY39_REQUIRED=1 to make its absence a "
+    "failure instead of a skip."
+)
+
+
+def test_the_pass_runs_on_python39(tmp_path):
+    """The client's floor (#448). A source check can't see a 3.10+ construct; a run can (CR 427)."""
+    py39 = shutil.which("python3.9")
+    if not py39:
+        if os.environ.get("PY39_REQUIRED", "") not in ("", "0"):
+            pytest.fail(_PY39_MISSING)
+        pytest.skip(_PY39_MISSING)
+    (tmp_path / "a.md").write_text("## Known\n\n- Blocked on #1\n  until spring.\n")
+    code = (
+        "import sys; sys.path.insert(0, sys.argv[1]); import pathlib, _stale_issue_prose as s; "
+        "(r,) = s.locate([('TRUE','issue','a.md','#1','closed')], pathlib.Path(sys.argv[2]), 'o/r'); "
+        "print(r.sentence, '|', r.heading)"
+    )
+    r = subprocess.run(
+        [py39, "-I", "-B", "-c", code, str(SCRIPTS), str(tmp_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.strip() == "Blocked on #1 until spring. | Known"
+    h = subprocess.run(
+        [py39, "-I", "-B", str(SCRIPTS / "_stale_issue_prose.py"), "--help"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert h.returncode == 0 and "exit codes" in h.stdout, h.stderr
