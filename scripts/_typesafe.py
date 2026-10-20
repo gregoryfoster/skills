@@ -65,6 +65,7 @@ only. Each answer echoes the model that actually answered on stderr.
 
 from __future__ import annotations
 
+import datetime
 import email.utils
 import http.client
 import json
@@ -356,6 +357,8 @@ def _retry_after(headers) -> float | None:
         when = email.utils.parsedate_to_datetime(value)
     except (TypeError, ValueError):
         return None
+    if when.tzinfo is None:  # a `-0000` zone parses naive; HTTP dates are UTC (CR 388)
+        when = when.replace(tzinfo=datetime.timezone.utc)
     return max(0.0, when.timestamp() - time.time())
 
 

@@ -394,6 +394,23 @@ class TestFailures:
         client.ask("x", QUESTIONS)
         assert sleeps == [0.0], "a date in the past means retry now"
 
+    @pytest.mark.parametrize("zone", ["GMT", "-0000", "+0000"])
+    def test_an_http_date_is_read_as_utc_whatever_the_local_zone(
+        self, monkeypatch, zone
+    ):
+        """A `-0000` date parses naive, and `.timestamp()` would read it as local time (CR 388)."""
+        import email.utils as eu
+
+        when = eu.formatdate(1_900_000_000 + 10, usegmt=False)[:-5] + zone
+        monkeypatch.setattr(ts.time, "time", lambda: 1_900_000_000.0)
+        monkeypatch.setenv("TZ", "America/Los_Angeles")
+        ts.time.tzset()
+        try:
+            assert ts._retry_after({"Retry-After": when}) == pytest.approx(10.0)
+        finally:
+            monkeypatch.undo()
+            ts.time.tzset()
+
     def test_a_garbled_retry_after_falls_back_to_backoff(self):
         client, _, sleeps, _ = _client((429, {"Retry-After": "soon"}, b"{}"), _ok())
         client.ask("x", QUESTIONS)
