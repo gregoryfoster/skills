@@ -47,11 +47,13 @@ back) and the server's own message from the response body, which
 `RequestTooLarge` is the size guard's refusal, raised before anything is sent.
 
 **Retries.** `408`, `429`, any 5xx (`529 Overloaded` among them), and failures
-to connect are retried. There are at most `MAX_ATTEMPTS` attempts, waiting
-`retry-after-ms` or `retry-after` when the response sends one and doubling
-backoff otherwise, and never more than `MAX_WAIT` seconds of waiting in total.
-Nothing else is retried. `400`, `401`, `413`, `415` and `422` mean the request,
-or its key, is wrong.
+to connect or read are retried. There are at most `MAX_ATTEMPTS` attempts,
+waiting `retry-after-ms` or `retry-after` when the response sends one and
+doubling backoff otherwise, and never more than `MAX_WAIT` seconds of waiting
+in total. Nothing else is retried. `400`, `401`, `413`, `415` and `422` mean the
+request, or its key, is wrong, and a redirect is refused, never followed. A
+timeout or a dropped connection can come after the server has the request, so
+a retry can bill one judgment twice. The SDK accepts the same cost.
 
 **Size guard.** Jev takes 64k tokens per request (state plus every question)
 and 32k per question (state plus any one question). The client sees bytes, not
