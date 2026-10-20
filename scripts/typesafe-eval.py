@@ -55,10 +55,12 @@ run refuses before reading anything. --public lifts that, for a set built from
 public material. Stdout isn't guarded: don't redirect it into a checkout.
 
 SENDING. Nothing is sent until the first cache miss. Then the client's opt-in
-applies: TYPESAFE_OPT_IN=on, or `.skills/typesafe` in the checkout this runs
-from (this repo has none). That is the operator's consent for the set's text,
-because the source repo's own opt-in can't be read from here. The key comes
-from TYPESAFE_API_KEY. About 273 input tokens of overhead per call [#448].
+applies: TYPESAFE_OPT_IN=on, or else `.skills/typesafe` in the git checkout
+holding the current directory, not this script's. Run from inside the source
+repo, that is the source repo's own opt-in. Run from anywhere else (this repo
+has no knob), TYPESAFE_OPT_IN=on is the operator's consent for the set's text.
+The key comes from TYPESAFE_API_KEY. About 273 input tokens of overhead per
+call [#448].
 
 exit codes:
   0  a valid report

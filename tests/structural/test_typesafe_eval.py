@@ -648,6 +648,24 @@ def test_an_invalid_run_says_so_in_markdown_and_writes_its_report(tmp_path, data
     assert "**INVALID RUN:** more than one model answered" in report.read_text()
 
 
+def test_the_opt_in_is_the_current_directorys_checkout(tmp_path, dataset, monkeypatch):
+    """CR 416: run from inside a repo whose knob is on, that repo opts the run in."""
+    # The client's knob lookup inherits the environment, and a pre-commit hook
+    # exports GIT_DIR, which would answer for this repo instead (#189).
+    for k in [k for k in os.environ if k.startswith("GIT_")]:
+        monkeypatch.delenv(k)
+    repo = tmp_path / "source"
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    (repo / ".skills").mkdir()
+    (repo / ".skills" / "typesafe").write_text("on\n")
+    t = FakeTransport()
+    code, _, err = _run(
+        [dataset], environ={"TYPESAFE_API_KEY": "sk-test-key"}, transport=t, cwd=repo
+    )
+    assert code == 0, err
+    assert len(t.calls) == 4
+
+
 # --- pure helpers --------------------------------------------------------------
 
 
