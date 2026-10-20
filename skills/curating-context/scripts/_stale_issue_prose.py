@@ -66,8 +66,9 @@ from one `gh api graphql` call per repo per 50 references.
 
 SENDING follows the TypeSafe client beside this file (`python3 _typesafe.py
 --help`): nothing leaves the machine until the repo opts in, with
-TYPESAFE_OPT_IN=on or `.skills/typesafe`. The sentence, its heading, and the
-issue's title and state are sent.
+TYPESAFE_OPT_IN=on or `.skills/typesafe`. Each request carries exactly: the
+sentence, its heading, the reference as written, and the item's kind, title,
+state, close reason and close date. Nothing else from the file or the repo.
 
 exit codes:
   0  every occurrence that could be judged was judged

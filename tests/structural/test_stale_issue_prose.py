@@ -357,6 +357,26 @@ def test_describe_reads_a_merged_pr_as_closed_on_its_merge_date():
     assert sip.describe(OPEN) == {"kind": "issue", "title": "Do it", "state": "open"}
 
 
+def test_the_help_names_every_field_that_is_sent():
+    """The data-leaves-the-machine line must match build_case, field for field (CR 431)."""
+    state, _ = sip.build_case("s", "H", "#1", sip.describe(CLOSED))
+    assert set(state) == {"sentence", "reference", "issue", "section"}
+    assert set(state["issue"]) == {"kind", "title", "state", "closed_as", "closed_on"}
+    sending = " ".join(
+        sip.__doc__.split("SENDING", 1)[1].split("exit codes")[0].split()
+    )
+    for words in (
+        "sentence",
+        "heading",
+        "reference",
+        "kind, title",
+        "state",
+        "close reason",
+        "close date",
+    ):
+        assert words in sending, words
+
+
 def test_the_question_follows_the_state():
     _, q = sip.build_case("s", None, "#1", sip.describe(CLOSED))
     assert list(q) == ["still_open"] and q["still_open"]["type"] == "noul"
