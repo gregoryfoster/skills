@@ -677,6 +677,20 @@ def test_a_repeated_request_counts_its_tokens_once(tmp_path):
     assert report["tokens"]["input"] == 300 and report["tokens"]["live_input"] == 300
 
 
+@pytest.mark.skipif(os.geteuid() == 0, reason="root writes through file modes")
+def test_an_invalid_run_says_so_even_when_its_report_write_fails(tmp_path, dataset):
+    """CR 418."""
+    report = tmp_path / "r.json"
+    report.write_text("")
+    report.chmod(0o444)
+    t = FakeTransport(models={"thanks, all good": "jev-1.14.0"})
+    code, out, err = _run(
+        [dataset, "--model", "jev-latest", "--report", report], transport=t
+    )
+    assert code == 2 and "invalid run: more than one model answered" in err
+    assert json.loads(out)["valid"] is False
+
+
 # --- pure helpers --------------------------------------------------------------
 
 

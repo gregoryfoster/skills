@@ -785,6 +785,9 @@ def main(
         if args.format == "markdown"
         else json.dumps(report, indent=2)
     )
+    if not valid:
+        # Said before the write, so a failed write's exit 2 can't hide it (CR 418).
+        say(f"invalid run: {reason}")
     if args.report:
         try:
             args.report.write_text(text + "\n", encoding="utf-8")
@@ -794,10 +797,7 @@ def main(
             return EXIT_FAILED
     else:
         print(text, file=stdout)
-    if not valid:
-        say(f"invalid run: {reason}")
-        return EXIT_INVALID
-    return 0
+    return 0 if valid else EXIT_INVALID
 
 
 if __name__ == "__main__":
