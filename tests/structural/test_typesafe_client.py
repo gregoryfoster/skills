@@ -25,6 +25,7 @@ import importlib.util
 import io
 import json
 import os
+import socket
 import subprocess
 import sys
 import threading
@@ -622,8 +623,13 @@ class TestUrllibTransport:
         )
 
     def test_an_unreachable_host_raises_oserror_for_the_retry_loop(self):
+        # A port bound and released just now, not a well-known one something
+        # might listen on (CR 392).
+        with socket.socket() as probe:
+            probe.bind(("127.0.0.1", 0))
+            port = probe.getsockname()[1]
         with pytest.raises(OSError):
-            ts.urllib_transport("http://127.0.0.1:9/v1/systemone", b"{}", {}, 2)
+            ts.urllib_transport(f"http://127.0.0.1:{port}/v1/systemone", b"{}", {}, 2)
 
     def test_a_truncated_body_is_an_oserror_and_the_client_retries_it_as_a_typesafe_error(
         self, monkeypatch
