@@ -291,7 +291,10 @@ def locate(rows, root: Path, default_slug: str | None) -> list[Row]:
         if fname not in texts:
             path = Path(fname) if Path(fname).is_absolute() else root / fname
             try:
-                texts[fname] = _sentences.occurrences(path.read_text(errors="replace"))
+                # UTF-8, not the locale's encoding, or a non-UTF-8 locale
+                # would send mojibake (CR 423).
+                text = path.read_text(encoding="utf-8", errors="replace")
+                texts[fname] = _sentences.occurrences(text)
             except OSError:
                 texts[fname] = None
         found = [o for o in (texts[fname] or []) if o.ref == ref]

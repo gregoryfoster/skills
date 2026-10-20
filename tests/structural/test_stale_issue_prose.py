@@ -226,6 +226,31 @@ def test_locate_reports_why_an_occurrence_isnt_judged(tmp_path):
     ]
 
 
+def test_the_policy_file_is_read_as_utf8_whatever_the_locale(tmp_path):
+    """Under a Latin-1 locale, read_text() alone turned an em dash into mojibake (CR 423)."""
+    (tmp_path / "a.md").write_text("Pending — still #1.\n", encoding="utf-8")
+    code = (
+        "import sys; sys.dont_write_bytecode = True; sys.path.insert(0, sys.argv[1]); "
+        "import locale, pathlib, _stale_issue_prose as s; "
+        "print(locale.getpreferredencoding(False)); "
+        "(r,) = s.locate([('TRUE','issue','a.md','#1','closed')], pathlib.Path(sys.argv[2]), 'o/r'); "
+        "print(ascii(r.sentence))"
+    )
+    env = {**os.environ, "LC_ALL": "en_US.ISO8859-1", "LANG": "en_US.ISO8859-1"}
+    r = subprocess.run(
+        [sys.executable, "-I", "-c", code, str(SCRIPTS), str(tmp_path)],
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+    )
+    assert r.returncode == 0, r.stderr
+    encoding, sentence = r.stdout.splitlines()
+    if "8859" not in encoding:
+        pytest.skip(f"no Latin-1 locale here ({encoding}), so the case can't arise")
+    assert sentence == ascii("Pending — still #1.")
+
+
 def test_a_bare_ref_with_no_repo_is_unresolved(tmp_path):
     (tmp_path / "a.md").write_text("Pending #1.\n")
     (row,) = sip.locate([("TRUE", "issue", "a.md", "#1", "closed")], tmp_path, None)
