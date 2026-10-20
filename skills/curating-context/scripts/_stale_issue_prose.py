@@ -457,12 +457,15 @@ def main(
 
     needs_default = any(r[0] == "TRUE" and not r[3].rpartition("#")[0] for r in tsv)
     slug = opts["repo"] or (default_repo(run) if needs_default else None)
+    exit_code = 0
     if needs_default and slug is None:
         say(
             "stale-issue-prose: no --repo, and gh can't infer one: bare #N references go unjudged"
         )
+        # A gh failure, so exit 2: exit 0 would call a ranking complete that
+        # left most of a typical file's references out (CR 432).
+        exit_code = EXIT_FAILED
     rows = locate(tsv, _root(), slug)
-    exit_code = 0
 
     # Metadata, one query per repo per BATCH references.
     wanted: dict[str, set] = {}

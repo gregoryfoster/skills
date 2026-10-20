@@ -534,6 +534,28 @@ def test_without_repo_it_asks_gh_like_the_verifier(checkout):
     assert code == 0 and gh.calls[0][:3] == ["gh", "repo", "view"]
 
 
+def test_gh_unable_to_infer_the_repo_is_exit_2(checkout):
+    """Every bare ref goes unjudged; exit 0 would call that a complete ranking (CR 432)."""
+
+    class NoRepo(Gh):
+        def __call__(self, argv):
+            if argv[:3] == ["gh", "repo", "view"]:
+                self.calls.append(argv)
+                return subprocess.CompletedProcess(
+                    argv, 1, "", "no git remotes found\n"
+                )
+            return super().__call__(argv)
+
+    code, rows, err = _main([checkout], lambda **kw: FakeClient([]), NoRepo({}))
+    assert code == 2 and "gh can't infer one" in err
+    assert sorted(r[11] for r in rows) == [
+        "code",
+        "unresolved",
+        "unresolved",
+        "unresolved",
+    ]
+
+
 def test_dry_run_sends_nothing_and_emits_cases_the_evaluator_loads(checkout):
     def connect(**kw):
         raise AssertionError("--dry-run must not connect")
