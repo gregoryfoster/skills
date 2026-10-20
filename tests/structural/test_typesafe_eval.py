@@ -597,6 +597,57 @@ def test_a_cache_append_that_fails_is_exit_2(tmp_path, dataset):
     assert code == 2 and "case a was answered" in err
 
 
+def test_the_report_holds_no_case_id(tmp_path):
+    """CR 415: aggregates only. The fixture's one-letter ids can't be searched for."""
+    rows = [{**r, "id": f"private-case-{r['id']}-7f3a"} for r in ROWS]
+    path = _write(tmp_path / "s.jsonl", rows)
+    for fmt in ("json", "markdown"):
+        code, out, _ = _run([path, "--format", fmt], transport=FakeTransport())
+        assert code == 0 and "private-case" not in out
+
+
+def test_thresholds_and_bins_take_effect(tmp_path, dataset):
+    code, out, _ = _run(
+        [dataset, "--thresholds", "0.25,0.75", "--bins", "4"], transport=FakeTransport()
+    )
+    report = json.loads(out)
+    assert code == 0 and report["thresholds"] == [0.25, 0.75] and report["bins"] == 4
+    assert [s["threshold"] for s in report["questions"]["billing"]["sweep"]] == [
+        0.25,
+        0.75,
+    ]
+    assert len(report["questions"]["tone"]["by_confidence"]) == 4
+
+
+@pytest.mark.parametrize(
+    "flag, value",
+    [
+        ("--thresholds", "0.5,x"),
+        ("--thresholds", "1.5"),
+        ("--bins", "0"),
+        ("--bins", "x"),
+    ],
+)
+def test_a_bad_threshold_or_bin_count_is_exit_1(dataset, flag, value):
+    out = subprocess.run(
+        [sys.executable, str(SCRIPT), str(dataset), flag, value],
+        capture_output=True,
+        text=True,
+    )
+    assert out.returncode == 1 and flag in out.stderr
+
+
+def test_an_invalid_run_says_so_in_markdown_and_writes_its_report(tmp_path, dataset):
+    t = FakeTransport(models={"thanks, all good": "jev-1.14.0"})
+    report = tmp_path / "r.md"
+    code, out, _ = _run(
+        [dataset, "--model", "jev-latest", "--format", "markdown", "--report", report],
+        transport=t,
+    )
+    assert code == 5 and out == ""
+    assert "**INVALID RUN:** more than one model answered" in report.read_text()
+
+
 # --- pure helpers --------------------------------------------------------------
 
 
