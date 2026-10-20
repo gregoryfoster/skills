@@ -25,7 +25,8 @@ A blockquote's leading `>` markers are dropped before a line is classified.
 
 **The reference grammar is `verify-facts.sh`'s,** `REF` below, so the two can't
 disagree about what a reference is. A bare match directly after a word
-(`watcher#278`) is a short cross-repo reference. The verifier resolves it
+(`watcher#278`) is a short cross-repo reference; `PR#12`, `GH#12` and an
+emphasised `_#12_` are not. The verifier resolves it
 against the current repo, so `short_repo` names the word for the caller to
 judge.
 """
@@ -217,6 +218,22 @@ def _clip(s: str, pos: int) -> str:
     )
 
 
+# Words that name this repo's own item rather than another repo (CR 434).
+_SELF_PREFIXES = frozenset({"pr", "gh", "issue", "issues", "bug", "pull"})
+
+
+def _short_repo(word: str) -> str | None:
+    """The repo a `word#N` names, or None when the word is emphasis or a self-prefix.
+
+    `PR#12` and `GH#12` are this repo's #12, and in `_#12_` the underscore is
+    emphasis, so none of them is a cross-repo reference (CR 434).
+    """
+    word = word.strip("_.-")
+    if not any(c.isalpha() for c in word) or word.lower() in _SELF_PREFIXES:
+        return None
+    return word
+
+
 def occurrences(text: str) -> list[Occurrence]:
     """Every reference in `text`, in order, each with its sentence."""
     lines = text.split("\n")
@@ -241,7 +258,7 @@ def occurrences(text: str) -> list[Occurrence]:
                 and m.start() > 0
                 and _WORD_CHAR.match(unit.text[m.start() - 1])
             ):
-                short = _SHORT_REPO.search(unit.text[: m.start()]).group()
+                short = _short_repo(_SHORT_REPO.search(unit.text[: m.start()]).group())
             in_code = _in(spans, m.start())
             found.append(
                 Occurrence(

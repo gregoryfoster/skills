@@ -124,6 +124,21 @@ def test_a_short_cross_repo_form_names_its_repo():
     assert found["#12"] is None and found["owner/repo#3"] is None
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Blocked on PR#12 still.",
+        "See GH#12.",
+        "Waiting on _#12_ to land.",
+        "issue#12 open.",
+    ],
+)
+def test_a_self_prefix_or_emphasis_is_not_a_cross_repo_ref(text):
+    """`PR#12` is this repo's #12; judging it is right, dropping it as short-repo was not (CR 434)."""
+    (o,) = sent.occurrences(text + "\n")
+    assert o.ref == "#12" and o.short_repo is None
+
+
 def test_a_soft_wrapped_sentence_comes_back_whole():
     text = "Intro sentence. The fix is\npending in #42 until\nthe release. Next one.\n"
     (o,) = sent.occurrences(text)
