@@ -431,7 +431,29 @@ def main(
         return EXIT_USAGE
 
     threshold = opts["threshold"]
-    needs_default = any(not r[3].rpartition("#")[0] for r in tsv)
+    if not tsv:
+        say(
+            "stale-issue-prose: the TSV has no issue rows; run verify-facts.sh "
+            "with --issues to resolve references"
+        )
+
+    # Connect before asking gh anything: a run that will skip has no use for
+    # the default repo or the metadata (CR 424).
+    client = None
+    if not opts["dry_run"]:
+        try:
+            client = connect()
+        except _typesafe.Skipped as s:
+            say(s.line)
+            rows = locate(tsv, _root(), opts["repo"])
+            for r in rows:
+                if r.status in ("", "unresolved"):
+                    r.status = "skipped"
+            stdout.write(render(rows, threshold))
+            say(summary(rows, threshold))
+            return EXIT_SKIPPED
+
+    needs_default = any(r[0] == "TRUE" and not r[3].rpartition("#")[0] for r in tsv)
     slug = opts["repo"] or (default_repo(run) if needs_default else None)
     if needs_default and slug is None:
         say(
@@ -439,19 +461,6 @@ def main(
         )
     rows = locate(tsv, _root(), slug)
     exit_code = 0
-
-    client = None
-    if not opts["dry_run"]:
-        try:
-            client = connect()
-        except _typesafe.Skipped as s:
-            say(s.line)
-            for r in rows:
-                if not r.status:
-                    r.status = "skipped"
-            stdout.write(render(rows, threshold))
-            say(summary(rows, threshold))
-            return EXIT_SKIPPED
 
     # Metadata, one query per repo per BATCH references.
     wanted: dict[str, set] = {}

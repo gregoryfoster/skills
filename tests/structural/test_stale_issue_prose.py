@@ -435,6 +435,24 @@ def test_a_skip_is_exit_4_and_still_prints_every_row(checkout, reason):
     assert not gh.calls, "a skipped run has no reason to ask gh anything"
 
 
+def test_a_skip_without_repo_asks_gh_nothing(checkout):
+    """Connect comes first, so a skipped run never reaches `gh repo view` (CR 424)."""
+
+    def connect():
+        raise ts.Skipped("not-opted-in", "test")
+
+    gh = Gh({})
+    code, rows, _ = _main([checkout], connect, gh)
+    assert code == 4 and not gh.calls
+    assert [r[11] for r in rows] == ["skipped", "skipped", "code", "skipped"]
+
+
+def test_a_tsv_without_issue_rows_says_how_to_get_them(checkout):
+    checkout.write_text("TRUE\tpath\tAGENTS.md\tsrc/\texists\n")
+    code, rows, err = _main([checkout, "--repo", "me/skills"], lambda: FakeClient([]))
+    assert code == 0 and rows == [] and "--issues" in err
+
+
 def test_a_failure_is_exit_2_and_the_rest_are_not_asked(checkout):
     client = FakeClient([0.9, 0.1, 0.3], fail_at=2)
     code, rows, err = _main([checkout, "--repo", "me/skills"], lambda: client)
