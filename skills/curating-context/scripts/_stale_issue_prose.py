@@ -149,14 +149,23 @@ class Row:
 
 
 def read_tsv(lines) -> list[tuple[str, ...]]:
-    """The verifier's issue rows. Raises UsageError on a line that isn't five columns."""
+    """The verifier's issue rows. Raises UsageError on a line that isn't the verifier's.
+
+    Only an issue row must be exactly five columns. A backticked path holding
+    a tab comes out as a six-column path row, which is still the verifier's
+    output and isn't read here, so it mustn't refuse the run (CR 422).
+    """
     rows = []
     for n, line in enumerate(lines, 1):
         line = line.rstrip("\n")
         if not line:
             continue
         cols = line.split("\t")
-        if len(cols) != 5 or cols[0] not in ("TRUE", "FALSE", "UNVERIFIABLE"):
+        if (
+            cols[0] not in ("TRUE", "FALSE", "UNVERIFIABLE")
+            or len(cols) < 5
+            or (cols[1] == "issue" and len(cols) != 5)
+        ):
             raise UsageError(
                 f"line {n} isn't a verify-facts.sh row (verdict, class, file, "
                 f"claim, evidence): {line[:80]!r}"

@@ -178,8 +178,26 @@ def test_only_issue_rows_are_read():
     assert rows == [("TRUE", "issue", "AGENTS.md", "#1", "closed — check")]
 
 
+def test_a_six_column_row_of_another_class_is_passed_over():
+    """verify-facts.sh splits a backticked path holding a tab into six fields (CR 422)."""
+    rows = sip.read_tsv(
+        [
+            "UNVERIFIABLE\tpath\tTABDOC.md\tsrc/a\tb.py\tabsent here\n",
+            "TRUE\tissue\tTABDOC.md\t#1\tclosed — check\n",
+        ]
+    )
+    assert rows == [("TRUE", "issue", "TABDOC.md", "#1", "closed — check")]
+
+
 @pytest.mark.parametrize(
-    "line", ["not a row\n", "MAYBE\tissue\ta\t#1\tx\n", "TRUE\tissue\ta\t#1\n"]
+    "line",
+    [
+        "not a row\n",
+        "MAYBE\tissue\ta\t#1\tx\n",
+        "TRUE\tissue\ta\t#1\n",
+        "TRUE\tissue\ta\t#1\tx\ty\n",
+        "TRUE\tpath\ta\n",
+    ],
 )
 def test_a_line_that_isnt_the_verifiers_is_a_usage_error(line):
     with pytest.raises(sip.UsageError):
