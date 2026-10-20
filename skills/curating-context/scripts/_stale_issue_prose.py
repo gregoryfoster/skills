@@ -442,7 +442,8 @@ def main(
     client = None
     if not opts["dry_run"]:
         try:
-            client = connect()
+            # The client's per-call lines go where this run's own do (CR 425).
+            client = connect(stderr=stderr)
         except _typesafe.Skipped as s:
             say(s.line)
             rows = locate(tsv, _root(), opts["repo"])

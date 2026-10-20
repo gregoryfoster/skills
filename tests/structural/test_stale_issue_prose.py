@@ -398,7 +398,7 @@ def _main(argv, connect, gh=None):
 
 def test_a_judged_run_ranks_flags_and_keeps_the_verdicts(checkout):
     client = FakeClient([0.9, 0.1, 0.3])
-    code, rows, err = _main([checkout, "--repo", "me/skills"], lambda: client)
+    code, rows, err = _main([checkout, "--repo", "me/skills"], lambda **kw: client)
     assert code == 0
     assert [(r[3], r[5], r[9], r[10], r[11]) for r in rows] == [
         ("#1", "1", "0.900", "stale?", "judged"),
@@ -414,10 +414,21 @@ def test_a_judged_run_ranks_flags_and_keeps_the_verdicts(checkout):
     ) == 4  # input untouched
 
 
+def test_the_clients_lines_go_to_the_runs_own_stderr(checkout):
+    seen = {}
+
+    def connect(**kw):
+        seen.update(kw)
+        return FakeClient([0.5, 0.5, 0.5])
+
+    code, _, _ = _main([checkout, "--repo", "me/skills"], connect)
+    assert code == 0 and isinstance(seen.get("stderr"), io.StringIO)
+
+
 def test_the_threshold_moves_the_flag_only(checkout):
     code, rows, _ = _main(
         [checkout, "--repo", "me/skills", "--threshold", "0.95"],
-        lambda: FakeClient([0.9, 0.1, 0.3]),
+        lambda **kw: FakeClient([0.9, 0.1, 0.3]),
     )
     assert code == 0 and [r[10] for r in rows] == ["", "", "", ""]
     assert [r[9] for r in rows][:3] == ["0.900", "0.300", "0.100"]
@@ -425,7 +436,7 @@ def test_the_threshold_moves_the_flag_only(checkout):
 
 @pytest.mark.parametrize("reason", ["not-opted-in", "no-key"])
 def test_a_skip_is_exit_4_and_still_prints_every_row(checkout, reason):
-    def connect():
+    def connect(**kw):
         raise ts.Skipped(reason, "test")
 
     gh = Gh({})
@@ -438,7 +449,7 @@ def test_a_skip_is_exit_4_and_still_prints_every_row(checkout, reason):
 def test_a_skip_without_repo_asks_gh_nothing(checkout):
     """Connect comes first, so a skipped run never reaches `gh repo view` (CR 424)."""
 
-    def connect():
+    def connect(**kw):
         raise ts.Skipped("not-opted-in", "test")
 
     gh = Gh({})
@@ -449,20 +460,24 @@ def test_a_skip_without_repo_asks_gh_nothing(checkout):
 
 def test_a_tsv_without_issue_rows_says_how_to_get_them(checkout):
     checkout.write_text("TRUE\tpath\tAGENTS.md\tsrc/\texists\n")
-    code, rows, err = _main([checkout, "--repo", "me/skills"], lambda: FakeClient([]))
+    code, rows, err = _main(
+        [checkout, "--repo", "me/skills"], lambda **kw: FakeClient([])
+    )
     assert code == 0 and rows == [] and "--issues" in err
 
 
 def test_a_failure_is_exit_2_and_the_rest_are_not_asked(checkout):
     client = FakeClient([0.9, 0.1, 0.3], fail_at=2)
-    code, rows, err = _main([checkout, "--repo", "me/skills"], lambda: client)
+    code, rows, err = _main([checkout, "--repo", "me/skills"], lambda **kw: client)
     assert code == 2 and "boom" in err and len(client.asked) == 2
     assert sorted(r[11] for r in rows) == ["code", "failed", "judged", "not-asked"]
 
 
 def test_a_gh_failure_is_exit_2_and_the_rows_are_unresolved(checkout):
     code, rows, err = _main(
-        [checkout, "--repo", "me/skills"], lambda: FakeClient([]), Gh({}, fail=True)
+        [checkout, "--repo", "me/skills"],
+        lambda **kw: FakeClient([]),
+        Gh({}, fail=True),
     )
     assert code == 2 and "Bad credentials" in err
     assert sorted(r[11] for r in rows) == [
@@ -478,18 +493,18 @@ def test_an_answer_without_a_probability_is_a_failure(checkout):
         def ask(self, state, questions):
             return {"answers": {next(iter(questions)): {"type": "noul"}}}
 
-    code, rows, err = _main([checkout, "--repo", "me/skills"], lambda: Bad([]))
+    code, rows, err = _main([checkout, "--repo", "me/skills"], lambda **kw: Bad([]))
     assert code == 2 and "no noul probability" in err
 
 
 def test_without_repo_it_asks_gh_like_the_verifier(checkout):
     gh = Gh({1: CLOSED, 2: CLOSED, 3: OPEN})
-    code, _, _ = _main([checkout], lambda: FakeClient([0.5, 0.5, 0.5]), gh)
+    code, _, _ = _main([checkout], lambda **kw: FakeClient([0.5, 0.5, 0.5]), gh)
     assert code == 0 and gh.calls[0][:3] == ["gh", "repo", "view"]
 
 
 def test_dry_run_sends_nothing_and_emits_cases_the_evaluator_loads(checkout):
-    def connect():
+    def connect(**kw):
         raise AssertionError("--dry-run must not connect")
 
     out, err = io.StringIO(), io.StringIO()
@@ -524,7 +539,7 @@ def test_dry_run_sends_nothing_and_emits_cases_the_evaluator_loads(checkout):
     ],
 )
 def test_usage_errors_are_exit_1(argv, needle, checkout):
-    code, rows, err = _main(argv, lambda: FakeClient([]))
+    code, rows, err = _main(argv, lambda **kw: FakeClient([]))
     assert code == 1 and needle in err and rows == []
 
 
