@@ -171,14 +171,22 @@ def project_root(cwd: str | None = None) -> Path | None:
     return Path(top)
 
 
+class _Unreadable(Exception):
+    pass
+
+
 def _knob_word(path: Path) -> str | None:
-    """The first non-blank, non-comment line of the knob file, or None if there's none."""
+    """The first non-blank, non-comment line of the knob file, or None if it's absent.
+
+    Read as utf-8-sig, so an editor's byte-order mark doesn't turn `on` into a
+    word that reads as off (CR 391). Raises `_Unreadable` naming the cause.
+    """
     try:
-        text = path.read_text(encoding="utf-8")
+        text = path.read_text(encoding="utf-8-sig")
     except FileNotFoundError:
         return None
     except (OSError, UnicodeDecodeError) as e:
-        return f"<unreadable: {e.__class__.__name__}>"
+        raise _Unreadable(e.__class__.__name__) from None
     for line in text.splitlines():
         word = line.strip()
         if word and not word.startswith("#"):
@@ -205,8 +213,11 @@ def opted_in(environ=None, cwd: str | None = None) -> tuple[bool, str]:
             False,
             f"{OPT_IN_ENV} is unset and there's no git checkout to hold {KNOB}",
         )
-    word = _knob_word(root / KNOB)
     where = root / KNOB
+    try:
+        word = _knob_word(where)
+    except _Unreadable as e:
+        return False, f"{where} can't be read ({e}), so it reads as off"
     if word is None:
         return False, f"{OPT_IN_ENV} is unset and {where} is absent"
     if word == "on":

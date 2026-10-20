@@ -143,6 +143,23 @@ class TestOptIn:
         assert not on
         assert repr(word) in why, "the skip line must name the value it refused"
 
+    def test_a_byte_order_mark_does_not_turn_on_into_off(self, repo):
+        (repo / ".skills").mkdir()
+        (repo / ".skills" / "typesafe").write_bytes(b"\xef\xbb\xbfon\n")
+        assert ts.opted_in({}, str(repo))[0]
+
+    @pytest.mark.parametrize("make", ["directory", "bad-utf8"])
+    def test_an_unreadable_file_is_off_and_says_why(self, repo, make):
+        (repo / ".skills").mkdir()
+        knob = repo / ".skills" / "typesafe"
+        if make == "directory":
+            knob.mkdir()
+        else:
+            knob.write_bytes(b"\xff\xfeon\n")
+        on, why = ts.opted_in({}, str(repo))
+        assert not on
+        assert "can't be read (" in why and "<unreadable" not in why
+
     def test_an_empty_or_comment_only_file_is_off(self, repo):
         _knob(repo, "# nothing yet\n\n")
         assert not ts.opted_in({}, str(repo))[0]
