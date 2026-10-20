@@ -2,8 +2,9 @@
 
 Detail behind the conventions whose binding rules are stated inline in
 [AGENTS.md](../AGENTS.md). Read this when authoring a project-level override,
-when adding a `references/*.md` file that gates content on a parameter, or when
-repointing one of the three `.skills/` resolution knobs.
+when adding a `references/*.md` file that gates content on a parameter, when
+repointing one of the three `.skills/` resolution knobs, or when writing a skill
+script that calls TypeSafe.
 
 ## Project overrides
 
