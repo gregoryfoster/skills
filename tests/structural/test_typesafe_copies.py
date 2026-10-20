@@ -33,7 +33,9 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CANONICAL = REPO_ROOT / "scripts" / "_typesafe.py"
-COPIES = sorted(REPO_ROOT.glob("skills/*/scripts/_typesafe.py"))
+# `**` so a copy or importer in a subdirectory of scripts/ is held too (CR 405).
+SCRIPTS_GLOB = "skills/*/scripts/**/*.py"
+COPIES = sorted(REPO_ROOT.glob("skills/*/scripts/**/_typesafe.py"))
 
 
 def _imports(path: Path) -> set[str]:
@@ -51,7 +53,9 @@ def test_the_canonical_client_exists():
     assert CANONICAL.is_file() and not CANONICAL.is_symlink()
 
 
-@pytest.mark.parametrize("copy", COPIES, ids=lambda p: p.parts[-3])
+@pytest.mark.parametrize(
+    "copy", COPIES, ids=lambda p: p.relative_to(REPO_ROOT / "skills").as_posix()
+)
 def test_every_skill_copy_is_a_byte_equal_real_file(copy):
     assert not copy.is_symlink(), (
         f"{copy.relative_to(REPO_ROOT)} is a symlink. A skill is vendored on its "
@@ -65,7 +69,7 @@ def test_every_skill_copy_is_a_byte_equal_real_file(copy):
 
 def test_the_glob_reaches_where_copies_live():
     """The glob is the whole rule; if skills stopped living at skills/*/scripts it would match nothing."""
-    assert any(REPO_ROOT.glob("skills/*/scripts/*.py")), (
+    assert any(REPO_ROOT.glob(SCRIPTS_GLOB)), (
         "no Python under skills/*/scripts/, so the copy glob can no longer see a copy"
     )
 
@@ -73,7 +77,7 @@ def test_the_glob_reaches_where_copies_live():
 def test_every_importer_has_a_sibling_copy():
     missing = [
         script.relative_to(REPO_ROOT).as_posix()
-        for script in sorted(REPO_ROOT.glob("skills/*/scripts/*.py"))
+        for script in sorted(REPO_ROOT.glob(SCRIPTS_GLOB))
         if script.name != "_typesafe.py"
         and "_typesafe" in _imports(script)
         and not (script.parent / "_typesafe.py").is_file()
