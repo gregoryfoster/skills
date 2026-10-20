@@ -659,6 +659,12 @@ def main(
         if args.report:
             paths["report"] = args.report
         guard(paths, args.public)
+        resolved = {}
+        for what, path in paths.items():
+            # A report over the set destroys hand labels nothing can restore (CR 410).
+            other = resolved.setdefault(path.resolve(), what)
+            if other != what:
+                raise UsageError(f"the {what} and the {other} are both {path}")
         for what in ("cache", "report"):
             path = paths.get(what)
             if path is not None and not path.resolve().parent.is_dir():

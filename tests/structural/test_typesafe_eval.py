@@ -529,6 +529,26 @@ def test_a_pipe_in_a_choice_name_is_escaped_in_markdown(tmp_path):
     assert "| refund\\|credit | 1 | 0 |" in out
 
 
+@pytest.mark.parametrize(
+    "extra",
+    [
+        ["--report", "set.jsonl"],
+        ["--cache", "set.jsonl"],
+        ["--cache", "c.jsonl", "--report", "c.jsonl"],
+    ],
+)
+def test_one_file_cannot_be_two_of_set_cache_and_report(tmp_path, dataset, extra):
+    """CR 410: the report written over the set destroyed the labels."""
+    before = dataset.read_bytes()
+    t = FakeTransport()
+    code, _, err = _run(
+        [dataset, *[tmp_path / a if a.endswith(".jsonl") else a for a in extra]],
+        transport=t,
+    )
+    assert code == 1 and "are both" in err and t.calls == []
+    assert dataset.read_bytes() == before
+
+
 # --- pure helpers --------------------------------------------------------------
 
 
