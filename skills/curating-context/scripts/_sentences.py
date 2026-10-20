@@ -21,6 +21,7 @@ inside backticks hold no claims, so a match there is marked `in_code` and the
 caller counts it rather than judging it. Indented code blocks aren't detected:
 in a policy file an indented line is far more often a list item's
 continuation. HTML comments are prose, since an agent reads the raw file.
+A blockquote's leading `>` markers are dropped before a line is classified.
 
 **The reference grammar is `verify-facts.sh`'s,** `REF` below, so the two can't
 disagree about what a reference is. A bare match directly after a word
@@ -49,6 +50,7 @@ _LIST_ITEM = re.compile(r"^(\s*)(?:[-*+]|\d{1,9}[.)])[ \t]+")
 _TABLE_ROW = re.compile(r"^\s*\|")
 _BOUNDARY = re.compile(r"[.!?][\"')\]*_]*\s+(?=[A-Z0-9(\[*_`\"'#])")
 _TICKS = re.compile(r"`+")
+_QUOTE = re.compile(r"^[ \t]*(?:>[ \t]?)+")
 _ABBREV = frozenset(
     "e.g i.e etc vs cf approx no nos fig al viz resp esp incl ca".split()
 )
@@ -106,6 +108,9 @@ def _units(lines: list[str]):
 
     out = []
     for n, raw in enumerate(lines, 1):
+        # A blockquote's `>` markers aren't prose; left in, they land mid-
+        # sentence once its lines are joined (CR 428).
+        raw = _QUOTE.sub("", raw)
         m = _FENCE.match(raw)
         if fence is not None:
             if m and m.group(1)[0] == fence[0] and len(m.group(1)) >= fence[1]:

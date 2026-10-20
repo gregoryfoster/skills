@@ -153,6 +153,16 @@ def test_a_list_item_is_its_own_unit_and_a_heading_is_carried():
     assert o.heading == "Known issues" and o.line == 4
 
 
+def test_blockquote_markers_stay_out_of_the_sentence():
+    """Joined, `>` markers landed mid-sentence: "held until > broker#4 gives…" (CR 428)."""
+    text = "> Held until\n> broker#4 gives it a backup.\n>\n> > - nested #5 item\n"
+    got = [(o.ref, o.line, o.sentence) for o in sent.occurrences(text)]
+    assert got == [
+        ("#4", 2, "Held until broker#4 gives it a backup."),
+        ("#5", 4, "nested #5 item"),
+    ]
+
+
 def test_a_table_row_gives_its_name_cell_and_the_refs_cell():
     text = "| `stream.x` | live | consumer pending (#9) |\n"
     (o,) = sent.occurrences(text)
