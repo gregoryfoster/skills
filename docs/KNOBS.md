@@ -46,6 +46,7 @@ forking a skill.
 | `context-proximity-pct` | a single number, 1-100 | `curating-context`, the context-budget hook | env `CONTEXT_PROXIMITY_PCT` wins, then this file | 90 — a file is reported as approaching its budget from 90% of it |
 | `context-docs-dir` | single-line path | `curating-context` | replaces the default | `docs` |
 | `cohort` | one repo per line, `#`-comment header carrying `wave:` / `pair:` | `curating-context`'s cohort scoring | no default — the file *is* the cohort | scoring has nothing to score |
+| `typesafe` | single word: `on` or `off`, `#`-comments | the TypeSafe client `scripts/_typesafe.py`, copied into each skill whose advisory pass calls TypeSafe ([#448](https://github.com/gregoryfoster/skills/issues/448)) | env `TYPESAFE_OPT_IN` wins, then this file, read from the primary checkout | off: no text is sent, and each TypeSafe step prints one skip line naming why. Any other word also reads as off |
 | `patching-hosts` | one directive per line, `#`-comments, optional `[host <glob>]` sections — [grammar](../skills/patching-hosts/references/knob.md) | `patching-hosts`' `read-knob.sh` and `probe.sh`, over one library | declares rather than configures: a section overrides the global lines for the hosts it matches, and a `hold` line naming a default step replaces that default | every host is `production`, compared against the reference `automatic` posture; deviations are reported and nothing is applied |
 
 ### Acknowledgement files

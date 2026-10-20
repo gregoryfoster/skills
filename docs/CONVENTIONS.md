@@ -148,6 +148,24 @@ The auto-refresh hook — and the doctor, when an override is ahead of a pinned 
 
 A pinned submodule is excluded from both the update and the auto-commit, and each honoured pin is logged by name. Use it to hold one vendored repo at a known-good commit — an experiment control arm, say — while the rest keep refreshing; before this the only remedy was deleting the hook's `SessionStart` entry, which also stopped the sibling refreshes and the `.skills/doctor.sh` self-heal ([#100](https://github.com/gregoryfoster/skills/issues/100)).
 
+## TypeSafe client convention
+
+A skill script that asks TypeSafe for a judgment uses the standard-library client
+[`scripts/_typesafe.py`](../scripts/_typesafe.py) ([#448](https://github.com/gregoryfoster/skills/issues/448)). Its `--help` is the contract. Three rules bind a consumer:
+
+- **Copy, don't import across skills.** The skill carries its own copy in its
+  `scripts/`. [tests/structural/test_typesafe_copies.py](../tests/structural/test_typesafe_copies.py)
+  holds every copy byte-equal to the root one, and fails a script that imports
+  the client with no copy beside it. Edit the root copy, then re-copy.
+- **Off until the repo opts in.** The opt-in resolves through the same three-step
+  lookup as the knobs above: `TYPESAFE_OPT_IN`, then `.skills/typesafe` (`on` or
+  `off`), then off. Judged text leaves the machine, so the default is the safe
+  one, and a malformed value reads as off.
+- **A skip is not a result, and not an exit code.** `connect()` raises `Skipped`.
+  Print its one `.line` to stderr, and leave the host script's exit code alone,
+  because exit 3 already means a finding or a loss in several scripts. A new
+  standalone script documents its own skip code. A `TypeSafeError` maps to exit 2.
+
 ## Variant selection surface
 
 A variant is created by copying its baseline, so it inherits that baseline's

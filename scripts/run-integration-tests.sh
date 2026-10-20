@@ -11,8 +11,10 @@ usage() {
   echo "Usage: bash \"$0\" [--help] [pytest args...]"
   echo ""
   echo "Runs tests/integration/ with -m integration. BILLED (~\$0.16 for a full"
-  echo "run) and needs ANTHROPIC_API_KEY, which it loads from .env at the repo"
-  echo "root (or a legacy bare 'env' file) by parsing it line by line."
+  echo "run). It exports every NAME=VALUE in .env at the repo root (or a legacy"
+  echo "bare 'env' file), parsed line by line. Each test skips without its own"
+  echo "key: ANTHROPIC_API_KEY for the skill-routing tests, TYPESAFE_API_KEY for"
+  echo "the TypeSafe client's one live call. Neither key is needed by the other."
   echo ""
   echo "Options:"
   echo "  --help   Show this text and exit 0, spending nothing."
@@ -46,7 +48,7 @@ REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || {
 }
 cd "$REPO_ROOT"
 
-# Export vars from the secrets file if present (provides ANTHROPIC_API_KEY etc.).
+# Export vars from the secrets file if present (ANTHROPIC_API_KEY, TYPESAFE_API_KEY, ...).
 # `.env` is the cohort-wide name; bare `env` is the name this repo used before
 # 2026-08-05 and is accepted so an older checkout still runs.
 #

@@ -2,7 +2,7 @@
 testpaths = ["tests"]
 pythonpath = ["."]
 markers = [
-    "integration: requires ANTHROPIC_API_KEY, skipped by default",
+    "integration: live, billed API calls; each test skips without its own key (ANTHROPIC_API_KEY or TYPESAFE_API_KEY); skipped by default",
     "benchmark: expensive LLM-as-judge tests, run on-demand only",
 ]
 addopts = "-m 'not integration and not benchmark'"

@@ -1,0 +1,459 @@
+#!/usr/bin/env python3
+"""A standard-library client for TypeSafe's System One endpoint, shared by skill scripts.
+
+Import it; don't run it (`--help` prints this text). Stdlib only, Python 3.9+.
+gregoryfoster/skills#448 is the spec, and the epic it serves is #451.
+
+    import _typesafe
+    try:
+        client = _typesafe.connect()
+    except _typesafe.Skipped as s:
+        print(s.line, file=sys.stderr)  # one line, naming which skip
+        ...                             # the step did not run; say so, don't pass
+    else:
+        reply = client.ask(state, {"stale": {"type": "noul", "instructions": "..."}})
+        reply["answers"]["stale"]["noul"]
+
+**The canonical copy is `scripts/_typesafe.py` at the skills repo root.** A
+skill that uses it carries its own byte-equal copy in its `scripts/`, because a
+skill is vendored on its own and can't import another's.
+`tests/structural/test_typesafe_copies.py` holds every copy to the canonical
+one. Edit the root copy and re-copy. Never edit a copy in place.
+
+**Opt-in, per repo, default off.** Judged text leaves the machine, so nothing is
+sent until a repo opts in. The env var `TYPESAFE_OPT_IN` (`on` or `off`) wins.
+Otherwise `.skills/typesafe` is read: one word, `on` or `off`, `#` comments
+allowed. Absent means off. The file is read from the *primary* checkout, as the
+other `.skills/` resolvers read it (#180, #188, #202), so an untracked opt-in
+is seen from a linked worktree too. Any other value reads as off, and the skip
+line names the value.
+
+**The key** comes from `TYPESAFE_API_KEY` in the environment only. It's never
+logged, never put in an argument, and never in an error message: every message
+this module builds is redacted against it.
+
+**Skips go through the API, never an exit code.** `connect()` raises `Skipped`
+with `reason` set to `not-opted-in` or `no-key`, and `.line` holds the single
+line to print. Exit 3 already means a finding or a loss in several scripts, and
+`prove-no-loss.sh` is among them, so a skip that exited 3 would read as content
+loss. A pass inside an existing script prints `.line` to stderr and leaves that
+script's exit code alone (the epic's boundary rule: every TypeSafe step is
+advisory). A new standalone script documents its own skip code, distinct from
+its other codes.
+
+**Failures** raise `TypeSafeError`, carrying `.status` (None when nothing came
+back) and the server's own message from the response body, which
+`str(HTTPError)` alone would drop. A standalone script maps it to exit 2.
+`RequestTooLarge` is the size guard's refusal, raised before anything is sent.
+
+**Retries.** `408`, `429`, any 5xx (`529 Overloaded` among them), and failures
+to connect are retried. There are at most `MAX_ATTEMPTS` attempts, waiting
+`retry-after-ms` or `retry-after` when the response sends one and doubling
+backoff otherwise, and never more than `MAX_WAIT` seconds of waiting in total.
+Nothing else is retried. `400`, `401`, `413`, `415` and `422` mean the request,
+or its key, is wrong.
+
+**Size guard.** Jev takes 64k tokens per request (state plus every question)
+and 32k per question (state plus any one question). The client sees bytes, not
+tokens, so it estimates conservatively at `BYTES_PER_TOKEN`, plus a fixed
+`OVERHEAD_TOKENS`, and refuses an oversize request before sending it. It never
+sends the long-context header.
+
+**The model is pinned** to `MODEL`. `model=` overrides it, for evaluation runs
+only. Each answer echoes the model that actually answered on stderr.
+"""
+
+from __future__ import annotations
+
+import email.utils
+import json
+import math
+import os
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+ENDPOINT = "https://api.typesafe.ai/v1/systemone"
+MODEL = "jev-1.13.0"
+OPT_IN_ENV = "TYPESAFE_OPT_IN"
+KNOB = ".skills/typesafe"
+KEY_ENV = "TYPESAFE_API_KEY"
+
+TIMEOUT = 30.0  # seconds per attempt
+MAX_ATTEMPTS = 3
+BACKOFF_INITIAL = 0.5
+BACKOFF_MAX = 5.0
+MAX_WAIT = 30.0  # seconds of waiting between attempts, all retries together
+RETRYABLE = frozenset({408, 429, *range(500, 600)})
+
+PER_REQUEST_TOKENS = 64_000
+PER_QUESTION_TOKENS = 32_000
+# Measured 2026-10-19 against jev-1.13.0, as an input-token delta over a
+# one-character state: 3.7-4.0 bytes per token for prose, Python and bash, and
+# 273 tokens for the smallest request. 3 bytes per token overestimates by about
+# a quarter, so the guard refuses early rather than paying for a server 400.
+BYTES_PER_TOKEN = 3.0
+OVERHEAD_TOKENS = 300
+ERROR_BODY_CHARS = 2000
+
+USER_AGENT = "gregoryfoster-skills-typesafe/1"
+
+
+class Skipped(Exception):
+    """The step did not run: not opted in, or no key. Not a result, not a failure."""
+
+    def __init__(self, reason: str, detail: str):
+        self.reason = reason  # "not-opted-in" | "no-key"
+        self.line = f"typesafe: skipped ({reason}): {detail}"
+        super().__init__(self.line)
+
+
+class TypeSafeError(Exception):
+    """The call failed: unreachable, or the API said no. `.status` is None when nothing came back."""
+
+    def __init__(self, status: int | None, message: str):
+        self.status = status
+        self.message = message
+        where = f"HTTP {status}" if status is not None else "no response"
+        super().__init__(f"typesafe: {where}: {message}")
+
+
+class RequestTooLarge(TypeSafeError):
+    """The size guard's refusal. Nothing was sent."""
+
+    def __init__(self, message: str):
+        super().__init__(None, message)
+
+
+# --- opt-in ------------------------------------------------------------------
+
+
+def _git(args: list[str], cwd: str) -> str | None:
+    try:
+        out = subprocess.run(
+            ["git", *args], cwd=cwd, capture_output=True, text=True, check=True
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    return out.stdout.strip() or None
+
+
+def project_root(cwd: str | None = None) -> Path | None:
+    """The primary checkout holding `cwd`, or None outside a git work tree.
+
+    `--show-toplevel` names the current checkout, which from a linked worktree
+    is the worktree, where an untracked knob doesn't exist. The parent of
+    `--git-common-dir` is the primary checkout, except inside a submodule,
+    where it's `<super>/.git/modules`, so the candidate is kept only if it's a
+    checkout sharing that common dir. This is the same guard as
+    `resolve-plans-dir.sh`, and it shares that script's one unhandled shape
+    (#203): a linked worktree of a submodule falls back to the worktree.
+    """
+    cwd = cwd or os.getcwd()
+    top = _git(["rev-parse", "--show-toplevel"], cwd)
+    if top is None:
+        return None
+    common = _git(["rev-parse", "--git-common-dir"], cwd)
+    if common is not None:
+        common_abs = os.path.realpath(os.path.join(cwd, common))
+        candidate = os.path.dirname(common_abs)
+        cand_common = _git(["rev-parse", "--git-common-dir"], candidate)
+        if (
+            cand_common is not None
+            and os.path.realpath(os.path.join(candidate, cand_common)) == common_abs
+        ):
+            return Path(candidate)
+    return Path(top)
+
+
+def _knob_word(path: Path) -> str | None:
+    """The first non-blank, non-comment line of the knob file, or None if there's none."""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return None
+    except (OSError, UnicodeDecodeError) as e:
+        return f"<unreadable: {e.__class__.__name__}>"
+    for line in text.splitlines():
+        word = line.strip()
+        if word and not word.startswith("#"):
+            return word
+    return ""
+
+
+def opted_in(environ=None, cwd: str | None = None) -> tuple[bool, str]:
+    """(on, where the answer came from). Anything but `on` is off, and says why."""
+    environ = os.environ if environ is None else environ
+    value = environ.get(OPT_IN_ENV)
+    if value is not None:
+        word = value.strip()
+        if word == "on":
+            return True, f"{OPT_IN_ENV}=on"
+        if word == "off":
+            return False, f"{OPT_IN_ENV}=off"
+        return False, f"{OPT_IN_ENV}={value!r} is not on or off, so it reads as off"
+    root = project_root(cwd)
+    if root is None:
+        return (
+            False,
+            f"{OPT_IN_ENV} is unset and there's no git checkout to hold {KNOB}",
+        )
+    word = _knob_word(root / KNOB)
+    where = root / KNOB
+    if word is None:
+        return False, f"{OPT_IN_ENV} is unset and {where} is absent"
+    if word == "on":
+        return True, f"{where} says on"
+    if word == "off":
+        return False, f"{where} says off"
+    return False, f"{where} holds {word!r}, not on or off, so it reads as off"
+
+
+def connect(
+    *,
+    model: str = MODEL,
+    environ=None,
+    cwd: str | None = None,
+    transport=None,
+    sleep=time.sleep,
+    stderr=None,
+) -> Client:
+    """A client, or `Skipped`. The opt-in is checked first: no key is asked for until a repo opts in."""
+    environ = os.environ if environ is None else environ
+    on, why = opted_in(environ, cwd)
+    if not on:
+        raise Skipped(
+            "not-opted-in", f"{why}; set it to on to send text to api.typesafe.ai"
+        )
+    key = (environ.get(KEY_ENV) or "").strip()
+    if not key:
+        raise Skipped("no-key", f"opted in ({why}), but {KEY_ENV} is unset or empty")
+    return Client(key, model=model, transport=transport, sleep=sleep, stderr=stderr)
+
+
+# --- the call ----------------------------------------------------------------
+
+
+def urllib_transport(url: str, data: bytes, headers: dict, timeout: float):
+    """POST once. Returns (status, headers, body) for any HTTP answer; raises OSError for none."""
+    req = urllib.request.Request(url, data=data, headers=headers, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return resp.status, resp.headers, resp.read()
+    except urllib.error.HTTPError as e:
+        try:
+            body = e.read()
+        except OSError:
+            body = b""
+        return e.code, e.headers, body
+
+
+def _encode(value) -> bytes:
+    return json.dumps(value, ensure_ascii=False, allow_nan=False).encode("utf-8")
+
+
+def estimate_tokens(n_bytes: int) -> int:
+    return math.ceil(n_bytes / BYTES_PER_TOKEN)
+
+
+def _check_size(state, questions: dict) -> None:
+    state_tokens = estimate_tokens(len(_encode(state)))
+    per_q = {
+        name: estimate_tokens(len(_encode({name: q}))) for name, q in questions.items()
+    }
+    total = OVERHEAD_TOKENS + state_tokens + sum(per_q.values())
+    if total > PER_REQUEST_TOKENS:
+        raise RequestTooLarge(
+            f"request estimated at {total:,} tokens, over the {PER_REQUEST_TOKENS:,} "
+            f"per-request limit (state {state_tokens:,}, {len(per_q)} questions "
+            f"{sum(per_q.values()):,}). The estimate counts {BYTES_PER_TOKEN:g} bytes "
+            "per token, which overestimates on purpose. Split the questions or the state"
+        )
+    name, biggest = max(per_q.items(), key=lambda kv: kv[1])
+    one = OVERHEAD_TOKENS + state_tokens + biggest
+    if one > PER_QUESTION_TOKENS:
+        raise RequestTooLarge(
+            f"question {name!r} estimated at {one:,} tokens with the state, over the "
+            f"{PER_QUESTION_TOKENS:,} per-question limit (state {state_tokens:,}). "
+            f"The estimate counts {BYTES_PER_TOKEN:g} bytes per token, which "
+            "overestimates on purpose. Shorten the state"
+        )
+
+
+def _server_message(body: bytes) -> str:
+    """What the server said, from the body. A 422's `detail` is rendered as `loc: msg`."""
+    text = body.decode("utf-8", errors="replace").strip()
+    try:
+        parsed = json.loads(text)
+    except ValueError:
+        parsed = None
+    if isinstance(parsed, dict) and "detail" in parsed:
+        detail = parsed["detail"]
+        if isinstance(detail, list) and all(isinstance(d, dict) for d in detail):
+            text = "; ".join(
+                f"{'.'.join(str(p) for p in d.get('loc', []))}: {d.get('msg', '')}"
+                for d in detail
+            )
+        elif isinstance(detail, str):
+            text = detail
+        else:
+            text = json.dumps(detail)
+    if not text:
+        return "(empty body)"
+    if len(text) > ERROR_BODY_CHARS:
+        text = f"{text[:ERROR_BODY_CHARS]}... ({len(text) - ERROR_BODY_CHARS} more characters)"
+    return text
+
+
+def _retry_after(headers) -> float | None:
+    """Seconds the server asked us to wait, from `retry-after-ms` or `retry-after`, else None."""
+    lower = {str(k).lower(): str(v) for k, v in (headers or {}).items()}
+    ms = lower.get("retry-after-ms")
+    if ms is not None:
+        try:
+            return max(0.0, float(ms) / 1000)
+        except ValueError:
+            pass
+    value = lower.get("retry-after")
+    if value is None:
+        return None
+    try:
+        return max(0.0, float(value))
+    except ValueError:
+        pass
+    try:
+        when = email.utils.parsedate_to_datetime(value)
+    except (TypeError, ValueError):
+        return None
+    return max(0.0, when.timestamp() - time.time())
+
+
+class Client:
+    """One key, one model. `ask()` is the only call."""
+
+    def __init__(
+        self,
+        key: str,
+        *,
+        model: str = MODEL,
+        transport=None,
+        sleep=time.sleep,
+        stderr=None,
+    ):
+        self._key = key
+        self.model = model
+        self._transport = transport or urllib_transport
+        self._sleep = sleep
+        self._stderr = stderr
+
+    def __repr__(self) -> str:
+        return f"Client(model={self.model!r})"
+
+    def _say(self, line: str) -> None:
+        print(self._redact(line), file=self._stderr or sys.stderr)
+
+    def _redact(self, text: str) -> str:
+        return text.replace(self._key, "[redacted]") if self._key else text
+
+    def _error(self, status: int | None, message: str) -> TypeSafeError:
+        # Redacted here because the server can echo anything back, the key included.
+        return TypeSafeError(status, self._redact(message))
+
+    def ask(self, state, questions: dict) -> dict:
+        """POST state and named questions. Returns the response object, with `answers` keyed by name."""
+        if not isinstance(questions, dict) or not questions:
+            raise TypeSafeError(
+                None, "questions must be a non-empty object of named questions"
+            )
+        try:
+            data = _encode(
+                {"model": self.model, "state": state, "questions": questions}
+            )
+        except (
+            TypeError,
+            ValueError,
+        ) as e:  # NaN, Infinity, or a value JSON can't hold
+            raise TypeSafeError(
+                None, f"request isn't valid JSON for the API: {e}"
+            ) from None
+        _check_size(state, questions)
+        headers = {
+            "Authorization": f"Bearer {self._key}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "User-Agent": USER_AGENT,
+        }
+        waited = 0.0
+        for attempt in range(1, MAX_ATTEMPTS + 1):
+            try:
+                status, resp_headers, body = self._transport(
+                    ENDPOINT, data, headers, TIMEOUT
+                )
+            except OSError as e:
+                status, resp_headers = None, None
+                err = self._error(None, f"couldn't reach api.typesafe.ai: {e}")
+            else:
+                if status == 200:
+                    return self._parse(body, questions)
+                err = self._error(status, _server_message(body))
+            if status is not None and status not in RETRYABLE:
+                raise err
+            if attempt == MAX_ATTEMPTS:
+                raise TypeSafeError(
+                    err.status, f"{err.message} (gave up after {attempt} attempts)"
+                )
+            delay = _retry_after(resp_headers)
+            if delay is None:
+                delay = min(BACKOFF_MAX, BACKOFF_INITIAL * 2 ** (attempt - 1))
+            if waited + delay > MAX_WAIT:
+                raise TypeSafeError(
+                    err.status,
+                    f"{err.message} (not retried: waiting {delay:g} s more would pass "
+                    f"the {MAX_WAIT:g} s retry budget)",
+                )
+            what = f"HTTP {status}" if status is not None else "no response"
+            self._say(
+                f"typesafe: {what}, retrying in {delay:g} s (attempt {attempt + 1} of {MAX_ATTEMPTS})"
+            )
+            self._sleep(delay)
+            waited += delay
+        raise AssertionError("unreachable")  # pragma: no cover
+
+    def _parse(self, body: bytes, questions: dict) -> dict:
+        try:
+            reply = json.loads(body.decode("utf-8"))
+        except (UnicodeDecodeError, ValueError) as e:
+            raise self._error(200, f"response isn't JSON: {e}") from None
+        if not isinstance(reply, dict) or not isinstance(reply.get("answers"), dict):
+            raise self._error(
+                200, f"response has no answers object: {_server_message(body)}"
+            )
+        missing = sorted(set(questions) - set(reply["answers"]))
+        if missing:
+            raise self._error(200, f"response has no answer for {', '.join(missing)}")
+        usage = reply.get("usage") if isinstance(reply.get("usage"), dict) else {}
+        tokens = usage.get("input_tokens", "?")
+        self._say(
+            f"typesafe: answered by {reply.get('model', '<no model field>')} "
+            f"(asked for {self.model}), {tokens} input tokens"
+        )
+        return reply
+
+
+def main(argv: list[str]) -> int:
+    if argv in (["--help"], ["-h"]):
+        print(__doc__.strip())
+        return 0
+    print(
+        "usage: python3 _typesafe.py --help\n"
+        "This is a library. Import it from a skill script; see --help.",
+        file=sys.stderr,
+    )
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
