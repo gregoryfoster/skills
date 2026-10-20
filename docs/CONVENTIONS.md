@@ -152,7 +152,7 @@ A pinned submodule is excluded from both the update and the auto-commit, and eac
 ## TypeSafe client convention
 
 A skill script that asks TypeSafe for a judgment uses the standard-library client
-[`scripts/_typesafe.py`](../scripts/_typesafe.py) ([#448](https://github.com/gregoryfoster/skills/issues/448)). Its `--help` is the contract. Three rules bind a consumer:
+[`scripts/_typesafe.py`](../scripts/_typesafe.py) ([#448](https://github.com/gregoryfoster/skills/issues/448)). Its `--help` is the contract. Four rules bind a consumer:
 
 - **Copy, don't import across skills.** The skill carries its own copy in its
   `scripts/`. [tests/structural/test_typesafe_copies.py](../tests/structural/test_typesafe_copies.py)
@@ -165,7 +165,10 @@ A skill script that asks TypeSafe for a judgment uses the standard-library clien
 - **A skip is not a result, and not an exit code.** `connect()` raises `Skipped`.
   Print its one `.line` to stderr, and leave the host script's exit code alone,
   because exit 3 already means a finding or a loss in several scripts. A new
-  standalone script documents its own skip code. A `TypeSafeError` maps to exit 2.
+  standalone script documents its own skip code.
+- **A failure is advisory too.** Inside an existing script, print a
+  `TypeSafeError` and leave the exit code alone, as for a skip: no TypeSafe step
+  changes a verdict (epic #451). Only a new standalone script maps it to exit 2.
 
 ## Variant selection surface
 

@@ -42,9 +42,12 @@ advisory). A new standalone script documents its own skip code, distinct from
 its other codes.
 
 **Failures** raise `TypeSafeError`, carrying `.status` (None when nothing came
-back) and the server's own message from the response body, which
-`str(HTTPError)` alone would drop. A standalone script maps it to exit 2.
-`RequestTooLarge` is the size guard's refusal, raised before anything is sent.
+back), `.error_type` (the API's own code, when it sent one) and the server's own
+message from the response body, which `str(HTTPError)` alone would drop. A
+failure is advisory too: a pass inside an existing script prints it and leaves
+that script's exit code alone, exactly as for a skip. Only a new standalone
+script maps it to exit 2. `RequestTooLarge` is the size guard's refusal, raised
+before anything is sent.
 
 **Retries.** `408`, `429`, any 5xx (`529 Overloaded` among them), and failures
 to connect or read are retried. There are at most `MAX_ATTEMPTS` attempts,
