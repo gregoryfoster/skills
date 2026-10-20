@@ -81,6 +81,7 @@ import http.client
 import json
 import math
 import os
+import ssl
 import subprocess
 import sys
 import time
@@ -470,6 +471,15 @@ class Client:
                     ENDPOINT, data, headers, TIMEOUT
                 )
             except OSError as e:
+                if isinstance(getattr(e, "reason", e), ssl.SSLCertVerificationError):
+                    # Not transient, so not retried (CR 397). On macOS a
+                    # python.org build without its certificates is the usual cause.
+                    raise self._error(
+                        None,
+                        f"couldn't verify api.typesafe.ai's certificate: {e}. Check "
+                        "this Python's CA bundle (on macOS, a python.org build's "
+                        "'Install Certificates.command')",
+                    ) from None
                 status, resp_headers = None, None
                 err = self._error(None, f"couldn't reach api.typesafe.ai: {e}")
             else:

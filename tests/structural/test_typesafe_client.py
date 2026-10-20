@@ -525,6 +525,20 @@ class TestFailures:
         assert e.value.status is None and len(fake.calls) == 3
         assert "couldn't reach api.typesafe.ai" in str(e.value)
 
+    def test_a_certificate_failure_is_not_retried_and_names_the_ca_bundle(self):
+        """It can't fix itself between attempts (CR 397)."""
+        import ssl
+        import urllib.error
+
+        bad = urllib.error.URLError(
+            ssl.SSLCertVerificationError(1, "certificate verify failed")
+        )
+        client, fake, sleeps, _ = _client(bad, _ok())
+        with pytest.raises(ts.TypeSafeError) as e:
+            client.ask("x", QUESTIONS)
+        assert len(fake.calls) == 1 and not sleeps
+        assert e.value.status is None and "CA bundle" in str(e.value)
+
     def test_a_connection_failure_then_success_returns_the_answer(self):
         client, _, _, _ = _client(TimeoutError("timed out"), _ok())
         assert client.ask("x", QUESTIONS)["model"] == ts.MODEL
