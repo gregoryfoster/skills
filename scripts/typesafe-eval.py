@@ -37,7 +37,9 @@ aggregates only, never a case's state or id:
                  noul >= threshold), a calibration table binning the noul
                  value itself (a Noul has no confidence), and the Brier score
   every run      the model asked for, every model that answered, calls made
-                 and replayed, and token usage, live and in total
+                 and replayed, and token usage, live and in total, each
+                 request counted once; tokens.missing counts usage fields a
+                 reply didn't carry
 
   A run is valid only when one model answered every case, and, when the
   pinned model was asked for, that model is the pin. Otherwise the report is

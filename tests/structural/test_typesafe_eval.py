@@ -177,6 +177,7 @@ def test_help_documents_the_schema_and_exit_codes():
         "TYPESAFE_OPT_IN",
         "exit codes:",
         '"valid": false',
+        "tokens.missing",
     ):
         assert needle in out.stdout, needle
 
