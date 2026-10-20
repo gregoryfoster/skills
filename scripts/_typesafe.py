@@ -26,12 +26,13 @@ skill is vendored on its own and can't import another's.
 one. Edit the root copy and re-copy. Never edit a copy in place.
 
 **Opt-in, per repo, default off.** Judged text leaves the machine, so nothing is
-sent until a repo opts in. The env var `TYPESAFE_OPT_IN` (`on` or `off`) wins.
-Otherwise `.skills/typesafe` is read: one word, `on` or `off`, `#` comments
-allowed. Absent means off. The file is read from the *primary* checkout, as the
-other `.skills/` resolvers read it (#180, #188, #202), so an untracked opt-in
-is seen from a linked worktree too. Any other value reads as off, and the skip
-line names the value.
+sent until a repo opts in. The env var `TYPESAFE_OPT_IN` (`on` or `off`) wins;
+set but empty, it counts as unset, as the shell resolvers read an empty
+override. Otherwise `.skills/typesafe` is read: one word, `on` or `off`, `#`
+comments allowed. Absent means off. The file is read from the *primary*
+checkout, as the other `.skills/` resolvers read it (#180, #188, #202), so an
+untracked opt-in is seen from a linked worktree too. Any other value reads as
+off, and the skip line names the value.
 
 **The key** comes from `TYPESAFE_API_KEY` in the environment only. It's never
 logged, never put in an argument, and never in an error message: every message
