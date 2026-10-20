@@ -660,13 +660,16 @@ def main(
                 raise UsageError(f"the {what}'s directory {path.parent} doesn't exist")
         try:
             raw = args.set.read_bytes()
-            rows = load_set(raw.decode("utf-8").splitlines())
+            # utf-8-sig: an editor's byte-order mark is not line 1 (CR 407, as CR 391)
+            rows = load_set(raw.decode("utf-8-sig").splitlines())
         except (OSError, UnicodeDecodeError) as e:
             raise UsageError(f"can't read the set {args.set}: {e}") from None
         cache = {}
         if args.cache and args.cache.exists():
             try:
-                cache = load_cache(args.cache.read_text(encoding="utf-8").splitlines())
+                cache = load_cache(
+                    args.cache.read_text(encoding="utf-8-sig").splitlines()
+                )
             except (OSError, UnicodeDecodeError) as e:
                 raise UsageError(f"can't read the cache {args.cache}: {e}") from None
         keys = [request_key(args.model, r["state"], r["questions"]) for r in rows]

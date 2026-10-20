@@ -495,6 +495,17 @@ def test_the_cache_directory_must_exist(tmp_path, dataset):
     assert code == 1 and "doesn't exist" in err
 
 
+def test_a_byte_order_mark_is_not_a_malformed_line(tmp_path, dataset):
+    """CR 407."""
+    cache = tmp_path / "cache.jsonl"
+    _run([dataset, "--cache", cache], transport=FakeTransport())
+    bom_set = tmp_path / "bom.jsonl"
+    bom_set.write_bytes(b"\xef\xbb\xbf" + dataset.read_bytes())
+    cache.write_bytes(b"\xef\xbb\xbf" + cache.read_bytes())
+    code, _, err = _run([bom_set, "--cache", cache, "--offline"])
+    assert code == 0, err
+
+
 # --- pure helpers --------------------------------------------------------------
 
 
