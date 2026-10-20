@@ -52,7 +52,6 @@ columns come first, unchanged, so a reader of its TSV still parses each row:
                unresolved  gh couldn't resolve it now
                skipped | failed | not-asked   TypeSafe skipped, failed, or
                            wasn't reached after a failure
-               dry-run
   sentence   the sentence or list item, tabs and newlines as spaces
 
 Judged rows come first, most likely stale first; the rest follow in file
@@ -77,8 +76,9 @@ exit codes:
      printed, the unjudged ones marked
   4  skipped: not opted in, or no key (the client's line on stderr). The rows
      are still printed, unjudged
-  Exits 2 and 4 are advisory: carry on with the verifier's TSV as if this
-  pass hadn't run. verify-facts.sh's own exit code is never touched.
+  Exits 2 and 4 are advisory: rows judged before a failure keep their p, and
+  every unjudged row is read from the verifier's TSV as if this pass hadn't
+  run. verify-facts.sh's own exit code is never touched.
 """
 
 from __future__ import annotations
@@ -515,7 +515,6 @@ def main(
                 "questions": questions,
             }
             stdout.write(json.dumps(case, ensure_ascii=False) + "\n")
-            r.status = "dry-run"
         say(summary(rows, threshold))
         return exit_code
 

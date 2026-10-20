@@ -427,6 +427,34 @@ def test_the_help_names_every_field_that_is_sent():
         assert words in sending, words
 
 
+def test_the_reference_names_every_field_that_is_sent():
+    """The sentence a private repo reads before opting in (CR 437a)."""
+    doc = " ".join(
+        (SCRIPTS.parent / "references" / "fact-verification.md").read_text().split()
+    )
+    for words in (
+        "its heading",
+        "reference as written",
+        "kind, title, state",
+        "close reason",
+        "close date",
+    ):
+        assert words in doc, words
+
+
+def test_every_documented_status_is_one_the_code_sets_and_back():
+    """No dead entry in the output contract (dry-run was one), and none undocumented (CR 437b)."""
+    src = (SCRIPTS / "_stale_issue_prose.py").read_text()
+    code = set(re.findall(r'status(?: =|=)\s*"([a-z-]+)"', src))
+    code |= set(re.findall(r'status(?:, \w+)* = "([a-z-]+)"', src))
+    code |= set(re.findall(r'r\.status = float\(p\), "([a-z-]+)"', src))
+    block = sip.__doc__.split("  status     ", 1)[1].split("  sentence   ", 1)[0]
+    documented = {"judged"} if block.startswith("judged") else set()
+    for entry in re.findall(r"^ {15}([a-z-]+(?: \| [a-z-]+)*) ", block, re.M):
+        documented |= set(entry.split(" | "))
+    assert code == documented
+
+
 def test_the_question_follows_the_state():
     _, q = sip.build_case("s", None, "#1", sip.describe(CLOSED))
     assert list(q) == ["still_open"] and q["still_open"]["type"] == "noul"

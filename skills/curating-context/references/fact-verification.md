@@ -130,9 +130,9 @@ reads the Phase 2 TSV, finds each issue reference in its file again, and asks
 one yes-or-no question about the sentence holding it. For a closed (or merged)
 reference: does the sentence still call it open, pending, planned or blocking?
 For an open one: does the sentence call it done? It is advisory, and off until
-the repo opts in through `.skills/typesafe` or `TYPESAFE_OPT_IN`. The sentence,
-its heading and the issue's title and state go to api.typesafe.ai, so a private
-repo decides for itself. Resolve it on its own, since the Phase 2 block doesn't
+the repo opts in through `.skills/typesafe` or `TYPESAFE_OPT_IN`. Each request carries the sentence, its heading, the
+reference as written, and the item's kind, title, state, close reason and close
+date; nothing else leaves the machine, and a private repo decides for itself. Resolve it on its own, since the Phase 2 block doesn't
 list it:
 
 <!-- skill:required id=skill-scripts -->
@@ -159,9 +159,11 @@ bash "<stale-issue-prose.sh>" /tmp/context-facts.tsv > /tmp/context-stale.tsv
   stop. `p` orders the rows; it isn't a calibrated chance of staleness.
 - **It never changes a verdict.** Every row stays TRUE. A sentence it ranks
   first is rewritten (class C), never deleted on its word.
-- **Exits 2 and 4 are no result.** A TypeSafe or `gh` failure, or a skip (not
-  opted in, or no key), still prints every row unjudged. Go on with the
-  verifier's TSV as if the pass hadn't run.
+- **Exits 2 and 4 are a partial result, or none.** On 4 (a skip: not opted
+  in, or no key) every row is printed unjudged. On 2 (a TypeSafe or `gh`
+  failure) rows judged before it keep their `p`; the rest are `failed`,
+  `not-asked` or `unresolved`. Read every unjudged row as if the pass hadn't
+  run.
 - **Unjudged rows are yours.** `code` is a reference inside a fence or a code
   span. `short-repo` is `watcher#278`: the verifier read it as this repo's
   `#278`, so its TRUE may be about the wrong issue. Check those by hand.
