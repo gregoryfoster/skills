@@ -549,6 +549,15 @@ def test_one_file_cannot_be_two_of_set_cache_and_report(tmp_path, dataset, extra
     assert dataset.read_bytes() == before
 
 
+def test_a_ceiling_directory_does_not_hide_the_checkout(work_tree, monkeypatch):
+    """CR 411."""
+    (work_tree / "sub").mkdir()
+    path = _write(work_tree / "sub" / "set.jsonl", ROWS)
+    monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(work_tree))
+    code, _, err = _run([path])
+    assert code == 1 and "inside a git work tree" in err
+
+
 # --- pure helpers --------------------------------------------------------------
 
 

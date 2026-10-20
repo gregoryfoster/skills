@@ -253,13 +253,14 @@ def in_work_tree(path: Path) -> bool | None:
     """True inside a git work tree, False outside, None when git can't say.
 
     The nearest existing ancestor is asked, after symlinks resolve, so a
-    scratch link pointing into a checkout is caught. GIT_DIR and GIT_WORK_TREE
-    are dropped: either would answer for the repo they name, not the path.
+    scratch link pointing into a checkout is caught. Every GIT_ variable is
+    dropped: GIT_DIR answers for the repo it names, not the path, and
+    GIT_CEILING_DIRECTORIES hides the checkout above it (CR 411).
     """
     probe = Path(os.path.realpath(path))
     while not probe.is_dir():
         probe = probe.parent
-    env = {k: v for k, v in os.environ.items() if k not in ("GIT_DIR", "GIT_WORK_TREE")}
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
     env["LC_ALL"] = "C"  # the "not a git repository" match below reads git's English
     try:
         out = subprocess.run(
