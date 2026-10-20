@@ -561,6 +561,44 @@ class TestKeyHygiene:
             client.ask("x", QUESTIONS)
         assert KEY not in str(e.value)
 
+    @pytest.mark.parametrize(
+        "bad",
+        [
+            f"{KEY}\nX-Injected: 1",
+            f"{KEY}\r",
+            f"ts-\u201ctest\u201d-{KEY}",
+            f"ts {KEY}",
+        ],
+    )
+    def test_a_key_a_header_cant_carry_is_refused_without_quoting_it(self, bad):
+        """http.client's ValueError quotes the whole `Bearer <key>` (CR 399)."""
+        fake = Fake(_ok())
+        client = ts.Client(bad, transport=fake, stderr=io.StringIO())
+        with pytest.raises(ts.TypeSafeError) as e:
+            client.ask("x", QUESTIONS)
+        assert not fake.calls
+        assert KEY not in str(e.value) and "TYPESAFE_API_KEY" in str(e.value)
+
+    def test_a_transport_valueerror_is_redacted_and_not_raw(self):
+        """The second line of defence, if a header check ever moves into the transport."""
+        client, fake, sleeps, _ = _client(
+            ValueError(f"Invalid header value b'Bearer {KEY}'")
+        )
+        with pytest.raises(ts.TypeSafeError) as e:
+            client.ask("x", QUESTIONS)
+        assert KEY not in str(e.value) and len(fake.calls) == 1 and not sleeps
+
+    def test_a_bad_key_through_the_real_transport_never_leaks(
+        self, loopback, monkeypatch
+    ):
+        server, url = loopback
+        server.reply = (200, {}, b"{}")
+        monkeypatch.setattr(ts, "ENDPOINT", url)
+        client = ts.Client(f"{KEY}\nX-Injected: 1", stderr=io.StringIO())
+        with pytest.raises(ts.TypeSafeError) as e:
+            client.ask("x", QUESTIONS)
+        assert KEY not in str(e.value)
+
     def test_the_key_is_not_in_the_clients_repr_or_on_stderr(self):
         client, _, _, err = _client((429, {}, b"{}"), _ok())
         client.ask("x", QUESTIONS)

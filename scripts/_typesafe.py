@@ -458,6 +458,16 @@ class Client:
                 None, f"request isn't valid JSON for the API: {e}"
             ) from None
         _check_size(state, questions)
+        # http.client refuses a header value with a newline, and its ValueError
+        # quotes the whole "Bearer <key>" (CR 399). Refuse first, without the key.
+        if not self._key.isascii() or not all(
+            c.isprintable() and not c.isspace() for c in self._key
+        ):
+            raise TypeSafeError(
+                None,
+                f"{KEY_ENV} holds whitespace, a control character or non-ASCII, which "
+                "an HTTP header can't carry. Check how the key was copied",
+            )
         headers = {
             "Authorization": f"Bearer {self._key}",
             "Content-Type": "application/json",
@@ -470,6 +480,10 @@ class Client:
                 status, resp_headers, body = self._transport(
                     ENDPOINT, data, headers, TIMEOUT
                 )
+            except (ValueError, UnicodeError) as e:
+                # A request the transport won't build: not transient, and its
+                # message can quote a header, so it's redacted (CR 399).
+                raise self._error(None, f"couldn't build the request: {e}") from None
             except OSError as e:
                 if isinstance(getattr(e, "reason", e), ssl.SSLCertVerificationError):
                     # Not transient, so not retried (CR 397). On macOS a
