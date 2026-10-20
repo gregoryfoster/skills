@@ -16,9 +16,9 @@ Three rules:
 - **The client imports only the standard library.** Every skill script does
   [measured 2026-10-19], and the operator decided against `typesafe-sdk`.
 
-Until #438 lands the first copy, the first rule has nothing to compare, and
-pytest reports it as one skip ("got empty parameter set"), not as a pass. That
-is the expected state. The skip goes away on the day a copy arrives.
+Until #438 landed the first copy (`skills/curating-context/scripts/`), the
+first rule had nothing to compare, and pytest reported it as one skip ("got
+empty parameter set"). With no copy at all it would be that skip again.
 
 No API calls. Pure file comparison and AST reads.
 """
