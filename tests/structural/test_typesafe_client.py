@@ -352,6 +352,27 @@ class TestRequest:
         assert json.loads(fake.calls[0]["data"])["model"] == "jev-preview"
         assert "answered by jev-1.14.0 (asked for jev-preview)" in err.getvalue()
 
+    def test_the_pin_answered_by_another_model_warns(self):
+        """Every threshold is measured on the pin; a silent reroute would void them (CR 403)."""
+        client, _, _, err = _client(_ok(model="jev-1.14.0"))
+        client.ask("x", QUESTIONS)
+        assert (
+            "warning: the pinned jev-1.13.0 was asked for and jev-1.14.0 answered"
+            in err.getvalue()
+        )
+
+    def test_the_pin_answered_by_itself_does_not_warn(self):
+        client, _, _, err = _client(_ok())
+        client.ask("x", QUESTIONS)
+        assert "warning" not in err.getvalue()
+
+    def test_an_alias_resolving_to_an_id_does_not_warn(self):
+        fake, err = Fake(_ok(model="jev-1.14.0")), io.StringIO()
+        ts.Client(KEY, model="jev-preview", transport=fake, stderr=err).ask(
+            "x", QUESTIONS
+        )
+        assert "warning" not in err.getvalue()
+
     def test_non_ascii_state_is_sent_as_utf8_json(self):
         client, fake, _, _ = _client(_ok())
         client.ask("naïve — ☃", QUESTIONS)

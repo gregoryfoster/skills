@@ -553,10 +553,17 @@ class Client:
             raise self._error(200, f"response has no answer for {', '.join(missing)}")
         usage = reply.get("usage") if isinstance(reply.get("usage"), dict) else {}
         tokens = usage.get("input_tokens", "?")
+        answered = reply.get("model", "<no model field>")
         self._say(
-            f"typesafe: answered by {reply.get('model', '<no model field>')} "
-            f"(asked for {self.model}), {tokens} input tokens"
+            f"typesafe: answered by {answered} (asked for {self.model}), {tokens} input tokens"
         )
+        if self.model == MODEL and answered != MODEL:
+            # The pin is what every threshold was measured on (CR 403). An alias
+            # asked for through model= is expected to resolve, so only the pin warns.
+            self._say(
+                f"typesafe: warning: the pinned {MODEL} was asked for and {answered} "
+                "answered; thresholds measured on the pin may not hold"
+            )
         return reply
 
 
