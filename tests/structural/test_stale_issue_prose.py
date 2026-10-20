@@ -606,6 +606,21 @@ def test_an_answer_without_a_probability_is_a_failure(checkout):
     assert code == 2 and "no noul probability" in err
 
 
+def test_a_malformed_answer_is_described_not_echoed(checkout):
+    """The pass builds this error itself, outside the client's redaction (CR 438)."""
+
+    class Leaky(FakeClient):
+        def ask(self, state, questions):
+            return {
+                "answers": {
+                    next(iter(questions)): {"type": "noul", "echo": "ts-secret"}
+                }
+            }
+
+    code, _, err = _main([checkout, "--repo", "me/skills"], lambda **kw: Leaky([]))
+    assert code == 2 and "ts-secret" not in err and "['echo', 'type']" in err
+
+
 def test_without_repo_it_asks_gh_like_the_verifier(checkout):
     gh = Gh({1: CLOSED, 2: CLOSED, 3: OPEN})
     code, _, _ = _main([checkout], lambda **kw: FakeClient([0.5, 0.5, 0.5]), gh)

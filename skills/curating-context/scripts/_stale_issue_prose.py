@@ -533,8 +533,15 @@ def main(
                 or isinstance(p, bool)
                 or not 0 <= p <= 1
             ):
+                # Its shape, never its text: server text reaches stderr only
+                # through the client's redaction (CR 404, CR 438).
+                shape = (
+                    f"keys {sorted(answer)}"
+                    if isinstance(answer, dict)
+                    else type(answer).__name__
+                )
                 raise _typesafe.TypeSafeError(
-                    200, f"answer has no noul probability: {answer!r}"
+                    200, f"answer has no noul probability ({shape})"
                 )
         except _typesafe.TypeSafeError as e:
             say(str(e))
