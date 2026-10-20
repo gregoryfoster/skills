@@ -3749,7 +3749,8 @@ class TestRelativeInvocationFromSubdir:
         vendor = repo / "vendor" / "scripts"
         vendor.mkdir(parents=True)
         for f in SCRIPTS.iterdir():
-            shutil.copy2(f, vendor / f.name)
+            if f.is_file():  # not a __pycache__/ a local run left behind
+                shutil.copy2(f, vendor / f.name)
         sub = repo / "docs"
         r = subprocess.run(
             ["bash", f"../vendor/scripts/{script}", *args],

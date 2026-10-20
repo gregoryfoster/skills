@@ -45,6 +45,12 @@ What this file pins:
 - **using-git-worktrees says its root is set by its knobs**, because the
   scripts that act on the root run the resolver beside them, not a project
   `scripts/` copy the agent's printed root may have come from (CR 20).
+- **A reference may carry its own block** (#438). A reference with an armed
+  block of its own publishes its own placeholders, held to the same rules: it
+  clears `SD` per pass, a project copy wins for its own script only, and a
+  script found nowhere stops it by name, under bash and zsh. curating-context's
+  optional TypeSafe pass resolves this way, because its SKILL.md sits at its
+  budget and the operator kept it byte-unchanged.
 - **The cadence workflow, the same way.** curating-context's CI job exports
   one path per script (`MEASURE_CONTEXT_SH`, …) rather than one directory for
   all of them, and fails its resolve step naming a script found nowhere.
@@ -118,17 +124,18 @@ def _docs(name: str) -> list[Path]:
     return [skill_dir / "SKILL.md", *sorted(skill_dir.glob("references/**/*.md"))]
 
 
-def _block(name: str) -> str:
-    """The armed resolution block, fence stripped."""
-    lines = _skill_md(name).read_text().splitlines()
+def _block(name: str, doc: str | None = None) -> str:
+    """The armed resolution block, fence stripped: SKILL.md's, or a reference's own."""
+    path = SKILLS_DIR / name / doc if doc else _skill_md(name)
+    lines = path.read_text().splitlines()
     start = lines.index(MARKER)
     assert lines[start + 1].startswith("```"), f"{name}: {MARKER} arms no fence"
     end = next(i for i in range(start + 2, len(lines)) if lines[i].startswith("```"))
     return "\n".join(lines[start + 2 : end]) + "\n"
 
 
-def _listed(name: str) -> list[str]:
-    m = LIST_HEAD.search(_block(name))
+def _listed(name: str, doc: str | None = None) -> list[str]:
+    m = LIST_HEAD.search(_block(name, doc))
     assert m, (
         f"{name}/SKILL.md's resolution block does not iterate a script list "
         "(`for S in a.sh b.sh; do SD=`). A block that resolves one anchor and "
@@ -190,13 +197,15 @@ def _argv(shell: str) -> list[str]:
     return ["zsh", "-f", "-c"] if shell == "zsh" else ["bash", "-c"]
 
 
-def _run(name: str, proj: Path, shell: str = "bash") -> subprocess.CompletedProcess:
+def _run(
+    name: str, proj: Path, shell: str = "bash", doc: str | None = None
+) -> subprocess.CompletedProcess:
     # HOME is the fixture's, so the third probe cannot find a real user-level
     # install of the skill on the machine running the suite.
     env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
     env["HOME"] = str(proj.parent / "home")
     return subprocess.run(
-        [*_argv(shell), _block(name)],
+        [*_argv(shell), _block(name, doc)],
         cwd=str(proj),
         capture_output=True,
         text=True,
@@ -354,6 +363,79 @@ def test_a_single_script_found_nowhere_stops_the_block_by_name(
 
 
 # ---------------------------------------------------------------------------
+# A reference's own block (#438)
+# ---------------------------------------------------------------------------
+
+# Declared, as PUBLISHERS is, so a block that stops parsing fails here rather
+# than dropping out of the parametrization.
+REFERENCE_BLOCKS = [("curating-context", "references/fact-verification.md")]
+
+
+def test_every_reference_block_is_declared() -> None:
+    found = sorted(
+        (
+            p.relative_to(SKILLS_DIR).parts[0],
+            p.relative_to(SKILLS_DIR).as_posix().split("/", 1)[1],
+        )
+        for p in SKILLS_DIR.glob("*/references/**/*.md")
+        if _own_block(p)
+    )
+    assert found == sorted(REFERENCE_BLOCKS), (
+        f"references carrying their own armed block: {found}; declared "
+        f"REFERENCE_BLOCKS: {REFERENCE_BLOCKS}"
+    )
+
+
+@pytest.mark.parametrize("name,doc", REFERENCE_BLOCKS)
+def test_a_reference_block_clears_sd_each_pass(name: str, doc: str) -> None:
+    _listed(name, doc)
+    assert re.search(r"^for S in [^;\n]+; do SD=$", _block(name, doc), re.M), (
+        f"{name}/{doc}'s script loop must clear SD at the top of every pass"
+    )
+
+
+@pytest.mark.parametrize("name,doc", REFERENCE_BLOCKS)
+def test_a_reference_blocks_scripts_ship_and_are_used_there(
+    name: str, doc: str
+) -> None:
+    listed = _listed(name, doc)
+    absent = sorted(set(listed) - set(_ships(name)))
+    assert not absent, (
+        f"{name}/{doc} resolves {absent}, which its scripts/ does not ship"
+    )
+    used = set(PLACEHOLDER.findall((SKILLS_DIR / name / doc).read_text()))
+    idle = sorted(set(listed) - used)
+    assert not idle, f"{name}/{doc} resolves {idle} but never substitutes it"
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+@pytest.mark.parametrize("name,doc", REFERENCE_BLOCKS)
+def test_a_reference_block_lets_a_project_copy_win_for_its_own_script(
+    name: str, doc: str, shell: str, tmp_path: Path
+) -> None:
+    listed = _listed(name, doc)
+    first = listed[0]
+    r = _run(name, _project(tmp_path, name, project_scripts=(first,)), shell, doc)
+    assert r.returncode == 0, f"stdout={r.stdout!r}\nstderr={r.stderr!r}"
+    expected = {
+        s: (f"scripts/{s}" if s == first else _skill_path(name, s)) for s in listed
+    }
+    assert _resolved(r.stdout) == expected
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+@pytest.mark.parametrize("name,doc", REFERENCE_BLOCKS)
+def test_a_reference_block_stops_by_name_on_a_script_found_nowhere(
+    name: str, doc: str, shell: str, tmp_path: Path
+) -> None:
+    missing = _listed(name, doc)[-1]
+    r = _run(name, _project(tmp_path, name, missing=(missing,)), shell, doc)
+    assert r.returncode != 0, f"{name}/{doc} ({shell}) exited 0 without {missing}"
+    _assert_names_what_it_missed(name, shell, missing, r.stderr)
+    assert missing not in _resolved(r.stdout), r.stdout
+
+
+# ---------------------------------------------------------------------------
 # The text the behaviour depends on
 # ---------------------------------------------------------------------------
 
@@ -387,11 +469,20 @@ def test_each_pass_clears_sd(name: str) -> None:
     )
 
 
+def _own_block(doc: Path) -> bool:
+    return MARKER in doc.read_text().splitlines()
+
+
 @pytest.mark.parametrize("name", PUBLISHERS)
 def test_every_placeholder_has_a_published_path(name: str) -> None:
     listed = set(_listed(name))
     for doc in _docs(name):
-        unpublished = sorted(set(PLACEHOLDER.findall(doc.read_text())) - listed)
+        own = (
+            set(_listed(name, doc.relative_to(SKILLS_DIR / name).as_posix()))
+            if doc.name != "SKILL.md" and _own_block(doc)
+            else set()
+        )
+        unpublished = sorted(set(PLACEHOLDER.findall(doc.read_text())) - listed - own)
         assert not unpublished, (
             f"{doc.relative_to(SKILLS_DIR)} substitutes {unpublished}, which "
             f"{name}'s resolution block never prints. Add each to its "

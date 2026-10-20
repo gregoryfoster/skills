@@ -125,6 +125,47 @@ sections.
 An unresolvable reference is UNVERIFIABLE — it may be a PR, another repo, or
 private.
 
+**Rank the issue rows first (optional, TypeSafe).** `stale-issue-prose.sh`
+reads the Phase 2 TSV, finds each issue reference in its file again, and asks
+one yes-or-no question about the sentence holding it. For a closed (or merged)
+reference: does the sentence still call it open, pending, planned or blocking?
+For an open one: does the sentence call it done? It is advisory, and off until
+the repo opts in through `.skills/typesafe` or `TYPESAFE_OPT_IN`. The sentence,
+its heading and the issue's title and state go to api.typesafe.ai, so a private
+repo decides for itself. Resolve it on its own, since the Phase 2 block doesn't
+list it:
+
+<!-- skill:required id=skill-scripts -->
+```bash
+N=curating-context
+for S in stale-issue-prose.sh; do SD=
+  for d in scripts ".claude/skills/$N/scripts" "$HOME/.claude/skills/$N/scripts"; do
+    [ -f "$d/$S" ] && { SD="$d"; break; }
+  done
+  [ -n "$SD" ] || echo "$S not found in scripts/, .claude/skills/$N/scripts/, or ~/.claude/skills/$N/scripts/" >&2
+  echo "<$S>=${SD:?}/$S"
+done
+```
+
+```bash
+bash "<stale-issue-prose.sh>" /tmp/context-facts.tsv > /tmp/context-stale.tsv
+```
+
+- **Read in its order.** Judged rows come most-likely-stale first, and
+  `stale?` marks those at or over 0.2. On 130 hand-labelled sentences from 12
+  public cohort repos ([#438](https://github.com/gregoryfoster/skills/issues/438)),
+  the flagged 42% held 17 of the 18 stale ones. Keep reading past the flag when
+  the budget allows: the ranking is the result, and the flag is only a place to
+  stop. `p` orders the rows; it isn't a calibrated chance of staleness.
+- **It never changes a verdict.** Every row stays TRUE. A sentence it ranks
+  first is rewritten (class C), never deleted on its word.
+- **Exits 2 and 4 are no result.** A TypeSafe or `gh` failure, or a skip (not
+  opted in, or no key), still prints every row unjudged. Go on with the
+  verifier's TSV as if the pass hadn't run.
+- **Unjudged rows are yours.** `code` is a reference inside a fence or a code
+  span. `short-repo` is `watcher#278`: the verifier read it as this repo's
+  `#278`, so its TRUE may be about the wrong issue. Check those by hand.
+
 ### Behavioural rules and conventions
 Not mechanically verifiable, and mostly should not be. Judge by provenance
 instead: `git log -S'<distinctive phrase>' -- AGENTS.md` finds the commit that
