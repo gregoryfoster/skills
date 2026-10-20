@@ -51,9 +51,9 @@ _TABLE_ROW = re.compile(r"^\s*\|")
 _BOUNDARY = re.compile(r"[.!?][\"')\]*_]*\s+(?=[A-Z0-9(\[*_`\"'#])")
 _TICKS = re.compile(r"`+")
 _QUOTE = re.compile(r"^[ \t]*(?:>[ \t]?)+")
-_ABBREV = frozenset(
-    "e.g i.e etc vs cf approx no nos fig al viz resp esp incl ca".split()
-)
+# Not "no": "The answer is no." ends a sentence far more often in a policy
+# file than "No. 5" abbreviates one (CR 429).
+_ABBREV = frozenset("e.g i.e etc vs cf approx fig al viz resp esp incl ca".split())
 
 
 @dataclass

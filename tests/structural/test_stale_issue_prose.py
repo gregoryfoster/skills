@@ -138,8 +138,9 @@ def test_a_soft_wrapped_sentence_comes_back_whole():
         ("Done in v1.2 by J. Smith (#5). Next.", "Done in v1.2 by J. Smith (#5)."),
         ("First. `a. B` holds #5 here. Last.", "`a. B` holds #5 here."),
         ("Shipped. #5 is pending! Done.", "#5 is pending!"),
+        ("The answer is no. Pending #5 still.", "Pending #5 still."),
     ],
-    ids=["abbreviation", "initial", "code-span", "ref-starts-it"],
+    ids=["abbreviation", "initial", "code-span", "ref-starts-it", "no-ends-it"],
 )
 def test_sentence_boundaries(text, expected):
     (o,) = sent.occurrences(text)
