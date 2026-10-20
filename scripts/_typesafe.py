@@ -238,6 +238,22 @@ def connect(
 # --- the call ----------------------------------------------------------------
 
 
+class _RefuseRedirects(urllib.request.HTTPRedirectHandler):
+    """Hand a 3xx back as an HTTP answer instead of following it.
+
+    urllib follows a 301, 302 or 303 on a POST by sending a GET with every
+    header but the content ones, Authorization included, to whatever host the
+    Location names. The API has no reason to redirect a POST, and the key must
+    not go anywhere else (CR 386).
+    """
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+_OPENER = urllib.request.build_opener(_RefuseRedirects)
+
+
 def urllib_transport(url: str, data: bytes, headers: dict, timeout: float):
     """POST once. Returns (status, headers, body) for any HTTP answer; raises OSError for none.
 
@@ -249,7 +265,7 @@ def urllib_transport(url: str, data: bytes, headers: dict, timeout: float):
     req = urllib.request.Request(url, data=data, headers=headers, method="POST")
     try:
         try:
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
+            with _OPENER.open(req, timeout=timeout) as resp:
                 return resp.status, resp.headers, resp.read()
         except urllib.error.HTTPError as e:
             try:

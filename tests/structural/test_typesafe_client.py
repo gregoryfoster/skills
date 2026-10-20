@@ -595,6 +595,34 @@ class TestUrllibTransport:
         finally:
             server.shutdown()
 
+    def test_a_redirect_is_returned_not_followed_so_the_key_stays_put(self, loopback):
+        """urllib would re-send Authorization to the Location's host (CR 386)."""
+        server, url = loopback
+        elsewhere = http.server.HTTPServer(("127.0.0.1", 0), _Handler)
+        threading.Thread(target=elsewhere.serve_forever, daemon=True).start()
+        try:
+            for code in (301, 302, 303, 307, 308):
+                target = f"http://127.0.0.1:{elsewhere.server_port}/steal"
+                server.reply = (code, {"Location": target}, b"")
+                _Handler.seen.clear()
+                status, _, _ = ts.urllib_transport(
+                    url, b"{}", {"Authorization": f"Bearer {KEY}"}, 5
+                )
+                assert status == code
+                assert len(_Handler.seen) == 1, f"{code} was followed to {target}"
+        finally:
+            elsewhere.shutdown()
+
+    def test_a_redirect_is_a_failure_and_is_not_retried(self, loopback, monkeypatch):
+        server, url = loopback
+        server.reply = (302, {"Location": "http://127.0.0.1:1/"}, b"")
+        monkeypatch.setattr(ts, "ENDPOINT", url)
+        sleeps = []
+        client = ts.Client(KEY, sleep=sleeps.append, stderr=io.StringIO())
+        with pytest.raises(ts.TypeSafeError) as e:
+            client.ask("x", QUESTIONS)
+        assert e.value.status == 302 and not sleeps
+
     def test_the_whole_client_through_loopback_names_the_server_message_and_not_the_key(
         self, loopback, monkeypatch
     ):
