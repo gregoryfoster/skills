@@ -207,6 +207,19 @@ class TestOptIn:
         assert not ts.opted_in({}, str(tmp_path))[0]
         assert ts.opted_in({ts.OPT_IN_ENV: "on"}, str(tmp_path))[0]
 
+    def test_a_deleted_working_directory_is_outside_any_checkout(
+        self, tmp_path, monkeypatch
+    ):
+        """os.getcwd() raises there, and connect() documents only Skipped (CR 400)."""
+        gone = tmp_path / "gone"
+        gone.mkdir()
+        monkeypatch.chdir(gone)
+        gone.rmdir()
+        with pytest.raises(ts.Skipped) as e:
+            ts.connect(environ={ts.KEY_ENV: KEY})
+        assert "no git checkout" in e.value.line
+        assert ts.opted_in({ts.OPT_IN_ENV: "on"})[0]
+
     def test_a_linked_worktree_reads_the_primary_checkouts_untracked_knob(
         self, repo, tmp_path
     ):

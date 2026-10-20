@@ -171,7 +171,13 @@ def project_root(cwd: str | None = None) -> Path | None:
     `resolve-plans-dir.sh`, and it shares that script's one unhandled shape
     (#203): a linked worktree of a submodule falls back to the worktree.
     """
-    cwd = cwd or os.getcwd()
+    if cwd is None:
+        try:
+            cwd = os.getcwd()
+        except (
+            OSError
+        ):  # the directory was deleted under us: outside any checkout (CR 400)
+            return None
     top = _git(["rev-parse", "--show-toplevel"], cwd)
     if top is None:
         return None
