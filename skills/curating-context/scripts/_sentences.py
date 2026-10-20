@@ -113,7 +113,10 @@ def _units(lines: list[str]):
                     fence = None
             out.append(("code", n))
             continue
-        if m:
+        # A backtick fence's info string can't hold a backtick (CommonMark), so
+        # "```json``` blocks" opens an inline span, not a fence that would
+        # swallow the rest of the file as code (CR 421).
+        if m and not (m.group(1)[0] == "`" and "`" in raw[m.end() :]):
             out.append(flush())
             fence = (m.group(1)[0], len(m.group(1)))
             out.append(("code", n))

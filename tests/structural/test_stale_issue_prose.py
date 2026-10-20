@@ -112,6 +112,12 @@ def test_every_fence_shape_is_code(fence):
     assert by == {"#1": True, "#2": False}
 
 
+def test_an_inline_triple_backtick_span_is_not_a_fence():
+    """A backtick fence's info string can't hold a backtick, so the rest of the file stays prose (CR 421)."""
+    text = "```json``` blocks are fine.\n\nBlocked on #4 until spring.\n"
+    assert [(o.ref, o.in_code) for o in sent.occurrences(text)] == [("#4", False)]
+
+
 def test_a_short_cross_repo_form_names_its_repo():
     found = {o.ref: o.short_repo for o in sent.occurrences(GRAMMAR_FIXTURE)}
     assert found["#278"] == "watcher" and found["#81"] == "skills"
