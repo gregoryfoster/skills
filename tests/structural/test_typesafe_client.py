@@ -357,7 +357,9 @@ class TestRequest:
         client.ask("naïve — ☃", QUESTIONS)
         assert "naïve — ☃".encode() in fake.calls[0]["data"]
 
-    @pytest.mark.parametrize("questions", [{}, None, ["stale"]])
+    @pytest.mark.parametrize(
+        "questions", [{}, None, ["stale"], {1: {"type": "noul"}, "b": {"type": "noul"}}]
+    )
     def test_questions_must_be_a_non_empty_object(self, questions):
         client, fake, _, _ = _client()
         with pytest.raises(ts.TypeSafeError, match="non-empty object"):

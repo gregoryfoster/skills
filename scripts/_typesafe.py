@@ -448,9 +448,15 @@ class Client:
 
     def ask(self, state, questions: dict) -> dict:
         """POST state and named questions. Returns the response object, with `answers` keyed by name."""
-        if not isinstance(questions, dict) or not questions:
+        # String names only: JSON turns 1 into "1", and the answer check would
+        # then compare the two and crash in sorted() (CR 401).
+        if (
+            not isinstance(questions, dict)
+            or not questions
+            or not all(isinstance(name, str) for name in questions)
+        ):
             raise TypeSafeError(
-                None, "questions must be a non-empty object of named questions"
+                None, "questions must be a non-empty object of string-named questions"
             )
         try:
             data = _encode(
