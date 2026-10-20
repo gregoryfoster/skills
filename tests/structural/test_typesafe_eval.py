@@ -506,6 +506,28 @@ def test_a_byte_order_mark_is_not_a_malformed_line(tmp_path, dataset):
     assert code == 0, err
 
 
+def test_a_pipe_in_a_choice_name_is_escaped_in_markdown(tmp_path):
+    """CR 408."""
+    criteria = {"refund|credit": "money back", "other": "anything else"}
+    row = {
+        "id": "a",
+        "state": "s",
+        "questions": {"kind": {"type": "choice", "criteria": criteria}},
+        "expected": {"kind": "refund|credit"},
+    }
+
+    def transport(url, data, headers, timeout):
+        answer = {"type": "choice", "choice": "refund|credit", "confidence": 0.9}
+        body = {"model": PIN, "answers": {"kind": answer}, "usage": {}}
+        return 200, {}, json.dumps(body).encode()
+
+    path = _write(tmp_path / "s.jsonl", [row])
+    code, out, _ = _run([path, "--format", "markdown"], transport=transport)
+    assert code == 0
+    assert "| expected \\ predicted | refund\\|credit | other |" in out
+    assert "| refund\\|credit | 1 | 0 |" in out
+
+
 # --- pure helpers --------------------------------------------------------------
 
 

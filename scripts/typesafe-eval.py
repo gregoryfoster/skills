@@ -482,6 +482,11 @@ def usage_totals(replies: list[dict], live: list[bool]) -> dict:
 # --- rendering ---------------------------------------------------------------
 
 
+def _cell(v) -> str:
+    """A table cell: a `|` in a label would split it (CR 408)."""
+    return str(v).replace("|", "\\|")
+
+
 def _fmt(v) -> str:
     if v is None:
         return "n/a"
@@ -532,7 +537,7 @@ def render_markdown(report: dict) -> str:
             line = f"Agreement {_fmt(m['agreement'])} ({m['correct']}/{m['n']})"
             if "mean_abs_error" in m:
                 line += f", mean absolute error {_fmt(m['mean_abs_error'])}"
-            labels = [str(x) for x in m["confusion"]["labels"]]
+            labels = [_cell(x) for x in m["confusion"]["labels"]]
             out += [
                 line + ".",
                 "",
