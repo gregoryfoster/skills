@@ -14,7 +14,7 @@ usage() {
   echo "run). It exports every NAME=VALUE in .env at the repo root (or a legacy"
   echo "bare 'env' file), parsed line by line. Each test skips without its own"
   echo "key: ANTHROPIC_API_KEY for the skill-routing tests, TYPESAFE_API_KEY for"
-  echo "the TypeSafe client's one live call. Neither key is needed by the other."
+  echo "the TypeSafe client's one live call. Each test needs only its own key."
   echo ""
   echo "Options:"
   echo "  --help   Show this text and exit 0, spending nothing."
