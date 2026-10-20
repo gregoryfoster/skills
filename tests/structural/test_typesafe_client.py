@@ -236,6 +236,15 @@ class TestConnectSkips:
         assert e.value.reason == "not-opted-in"
         assert e.value.line.startswith("typesafe: skipped (not-opted-in): ")
         assert "\n" not in e.value.line
+        assert "set TYPESAFE_OPT_IN or .skills/typesafe to on" in e.value.line
+
+    @pytest.mark.parametrize("value", ["off", "yes"])
+    def test_a_set_env_var_is_the_only_place_the_skip_line_points_to(self, repo, value):
+        """The file can't outrank a set env var, so pointing at it would mislead (CR 390)."""
+        with pytest.raises(ts.Skipped) as e:
+            ts.connect(environ={ts.OPT_IN_ENV: value}, cwd=str(repo))
+        assert "set TYPESAFE_OPT_IN to on" in e.value.line
+        assert "or .skills/typesafe" not in e.value.line
 
     @pytest.mark.parametrize("key", [None, "", "   "])
     def test_opted_in_without_a_key_is_a_skip_naming_its_reason(self, repo, key):

@@ -229,8 +229,14 @@ def connect(
     environ = os.environ if environ is None else environ
     on, why = opted_in(environ, cwd)
     if not on:
+        # A set env var outranks the file, so only it can turn this on (CR 390).
+        where = (
+            OPT_IN_ENV
+            if why.startswith(f"{OPT_IN_ENV}=")
+            else f"{OPT_IN_ENV} or {KNOB}"
+        )
         raise Skipped(
-            "not-opted-in", f"{why}; set it to on to send text to api.typesafe.ai"
+            "not-opted-in", f"{why}; set {where} to on to send text to api.typesafe.ai"
         )
     key = (environ.get(KEY_ENV) or "").strip()
     if not key:
