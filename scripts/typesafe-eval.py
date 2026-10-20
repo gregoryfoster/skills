@@ -64,9 +64,10 @@ exit codes:
   0  a valid report
   1  usage error, a malformed set or cache, a cache miss under --offline, or a
      path refused as inside a work tree. Nothing was sent.
-  2  a TypeSafe failure (its message shown), or an answer missing a field its
-     type promises. Answers already received are in the cache, when one was
-     given.
+  2  a TypeSafe failure (its message shown), an answer missing a field its
+     type promises, or a cache or report write that failed after answers came
+     back (a report that can't be written goes to stdout). Answers already
+     received are in the cache, when one was given.
   4  skipped: not opted in, or no key (the client's one line shown)
   5  invalid run: the report is printed, marked "valid": false
 """
@@ -679,6 +680,8 @@ def main(
             path = paths.get(what)
             if path is not None and not path.resolve().parent.is_dir():
                 raise UsageError(f"the {what}'s directory {path.parent} doesn't exist")
+        if args.report and args.report.is_dir():
+            raise UsageError(f"the report {args.report} is a directory")
         try:
             raw = args.set.read_bytes()
             # utf-8-sig: an editor's byte-order mark is not line 1 (CR 407, as CR 391)
@@ -744,8 +747,11 @@ def main(
                         + "\n"
                     )
             except OSError as e:
-                say(f"can't append to the cache {args.cache}: {e}")
-                return EXIT_USAGE
+                # Answers were sent, so this isn't exit 1's "nothing was sent" (CR 413).
+                say(
+                    f"case {row['id']} was answered, but the cache {args.cache} can't take it: {e}"
+                )
+                return EXIT_FAILED
 
     try:
         questions = question_metrics(rows, replies, args.thresholds, args.bins)
@@ -775,8 +781,9 @@ def main(
         try:
             args.report.write_text(text + "\n", encoding="utf-8")
         except OSError as e:
-            say(f"can't write the report {args.report}: {e}")
-            return EXIT_USAGE
+            print(text, file=stdout)  # the answers were paid for; don't drop the report
+            say(f"can't write the report {args.report}, so it's on stdout: {e}")
+            return EXIT_FAILED
     else:
         print(text, file=stdout)
     if not valid:

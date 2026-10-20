@@ -570,6 +570,33 @@ def test_an_overflowing_number_is_refused_before_anything_is_sent(tmp_path):
     assert code == 1 and "overflows" in err and t.calls == []
 
 
+def test_a_report_path_that_is_a_directory_is_refused_up_front(tmp_path, dataset):
+    """CR 413."""
+    (tmp_path / "out").mkdir()
+    t = FakeTransport()
+    code, _, err = _run([dataset, "--report", tmp_path / "out"], transport=t)
+    assert code == 1 and "is a directory" in err and t.calls == []
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root writes through file modes")
+def test_a_report_write_that_fails_late_is_exit_2_and_goes_to_stdout(tmp_path, dataset):
+    """CR 413: exit 1 means nothing was sent, which is no longer true here."""
+    report = tmp_path / "r.json"
+    report.write_text("")
+    report.chmod(0o444)
+    code, out, err = _run([dataset, "--report", report], transport=FakeTransport())
+    assert code == 2 and json.loads(out)["valid"] and "so it's on stdout" in err
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root writes through file modes")
+def test_a_cache_append_that_fails_is_exit_2(tmp_path, dataset):
+    cache = tmp_path / "c.jsonl"
+    cache.write_text("")
+    cache.chmod(0o444)
+    code, _, err = _run([dataset, "--cache", cache], transport=FakeTransport())
+    assert code == 2 and "case a was answered" in err
+
+
 # --- pure helpers --------------------------------------------------------------
 
 
