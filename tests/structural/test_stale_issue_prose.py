@@ -118,6 +118,15 @@ def test_an_inline_triple_backtick_span_is_not_a_fence():
     assert [(o.ref, o.in_code) for o in sent.occurrences(text)] == [("#4", False)]
 
 
+def test_an_escaped_backtick_opens_no_code_span():
+    """`\\`` is a literal; it paired with a later backtick and hid #12 as code (CR 436)."""
+    text = "Use \\` to quote. Pending #12 is open. Also `x` and `#13`.\n"
+    assert [(o.ref, o.in_code) for o in sent.occurrences(text)] == [
+        ("#12", False),
+        ("#13", True),
+    ]
+
+
 def test_a_short_cross_repo_form_names_its_repo():
     found = {o.ref: o.short_repo for o in sent.occurrences(GRAMMAR_FIXTURE)}
     assert found["#278"] == "watcher" and found["#81"] == "skills"

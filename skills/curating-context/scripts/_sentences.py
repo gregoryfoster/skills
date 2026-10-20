@@ -84,6 +84,12 @@ def _code_spans(line: str) -> list[tuple[int, int]]:
         m = _TICKS.search(line, i)
         if not m:
             return spans
+        slashes = len(line[: m.start()]) - len(line[: m.start()].rstrip("\\"))
+        if slashes % 2:
+            # `\`` is a literal backtick and opens nothing; the rest of its run
+            # still can (CommonMark, CR 436).
+            i = m.start() + 1
+            continue
         n = len(m.group())
         close = re.compile(r"(?<!`)`{%d}(?!`)" % n).search(line, m.end())
         if not close:
