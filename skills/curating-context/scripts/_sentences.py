@@ -12,7 +12,7 @@ are joined with single spaces, so a soft-wrapped sentence comes back whole.
 Inside a paragraph or a list item the unit is then cut into sentences, at a
 `.`, `!` or `?` followed by whitespace and an upper-case letter, a digit or an
 opening mark, unless the word before it is a known abbreviation (`e.g.`) or a
-single letter. A heading is one sentence. A table row gives its first cell,
+single letter. A heading, ATX or setext, is one sentence. A table row gives its first cell,
 which names the row, and the cell holding the reference, joined by ` | `. A
 sentence over `MAX_CHARS` is cut down to a window around the reference.
 
@@ -47,6 +47,7 @@ MAX_CHARS = 1200
 # inside a list item is indented past CommonMark's three spaces.
 _FENCE = re.compile(r"^\s*(`{3,}|~{3,})")
 _HEADING = re.compile(r"^ {0,3}(#{1,6})(?:[ \t]+|$)")
+_SETEXT = re.compile(r"^ {0,3}(?:=+|-+)[ \t]*$")
 _LIST_ITEM = re.compile(r"^(\s*)(?:[-*+]|\d{1,9}[.)])[ \t]+")
 _TABLE_ROW = re.compile(r"^\s*\|")
 _BOUNDARY = re.compile(r"[.!?][\"')\]*_]*\s+(?=[A-Z0-9(\[*_`\"'#])")
@@ -128,6 +129,13 @@ def _units(lines: list[str]):
             out.append(("code", n))
             continue
         if not raw.strip():
+            out.append(flush())
+            continue
+        if cur is not None and cur.kind == "para" and _SETEXT.match(raw):
+            # A setext underline turns the paragraph above it into a heading,
+            # rather than joining "=====" onto its sentence (CR 435).
+            cur.kind = "heading"
+            heading = cur.text
             out.append(flush())
             continue
         h = _HEADING.match(raw)

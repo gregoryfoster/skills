@@ -179,6 +179,17 @@ def test_blockquote_markers_stay_out_of_the_sentence():
     ]
 
 
+@pytest.mark.parametrize("underline", ["=====", "---"])
+def test_a_setext_heading_is_a_heading(underline):
+    """Its underline used to join the sentence, and the section stayed the old one (CR 435)."""
+    text = f"# Old\n\nPending #12\n{underline}\n\nNext #13 here.\n"
+    got = [(o.ref, o.sentence, o.heading) for o in sent.occurrences(text)]
+    assert got == [
+        ("#12", "Pending #12", None),
+        ("#13", "Next #13 here.", "Pending #12"),
+    ]
+
+
 def test_a_table_row_gives_its_name_cell_and_the_refs_cell():
     text = "| `stream.x` | live | consumer pending (#9) |\n"
     (o,) = sent.occurrences(text)
