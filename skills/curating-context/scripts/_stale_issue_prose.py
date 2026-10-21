@@ -123,8 +123,9 @@ EXIT_FAILED = 2
 EXIT_SKIPPED = 4
 
 # `_context-lib.sh`'s CTX_ARCHIVAL_DEFAULT, held to it (and to
-# measure-context.sh's copy) by a parity test, so the pass and Phase 1 can't
-# disagree about what is history (#463).
+# measure-context.sh's copy) by a parity test, so the defaults can't drift
+# (#463). An overridden list still can: CTX_ARCHIVAL moves this pass, while
+# Phase 1 takes measure-context.sh --archival.
 ARCHIVAL_DEFAULT = "plans specs research audits archive"
 
 _SLUG = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
