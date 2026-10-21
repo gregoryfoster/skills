@@ -744,7 +744,8 @@ def test_a_malformed_answer_is_described_not_echoed(checkout):
             }
 
     code, _, err = _main([checkout, "--repo", "me/skills"], lambda **kw: Leaky([]))
-    assert code == 2 and "ts-secret" not in err and "['echo', 'type']" in err
+    assert code == 2 and "ts-secret" not in err and "echo" not in err
+    assert "an object with 2 key(s)" in err
 
 
 def test_without_repo_it_asks_gh_like_the_verifier(checkout):
