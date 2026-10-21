@@ -7,7 +7,7 @@ network, no key. What that pins, and what it doesn't:
 
 - **Pinned:** the set (by sha256), the cache (every case replays, zero
   misses, one model), and the evaluator's metrics (the headline sweep row).
-- **Pinned for stale-issue-prose:** `build_case`. Its four inputs are in each
+- **Pinned for stale-issue-prose and bare-digit-counts:** the case builders. Its four inputs are in each
   case's own `state`, so every case is rebuilt through the shipped builder and
   must come back byte-equal: a reworded question or a reshaped state fails here
   instead of at the next re-measure.
@@ -48,6 +48,14 @@ SETS = {
             "already_done": {0.2: (3, 9, 0, 6)},
         },
     ),
+    "bare-digit-counts": (
+        "2f9668b040db12d1387d8b1a3d20a1be92b7ded91b50f4fa6b7bbd3e6511ce89",
+        807,
+        {
+            "tally": {0.8: (5, 0, 14, 769), 0.5: (13, 29, 6, 740)},
+            "enumerated": {0.3: (1, 0, 0, 18)},
+        },
+    ),
 }
 
 
@@ -59,7 +67,7 @@ def _load(name: str, path: Path):
     return mod
 
 
-def _replay(set_path: Path, cache: Path, thresholds: str = "0.2") -> dict:
+def _replay(set_path: Path, cache: Path, thresholds: str = "0.2,0.3,0.5,0.8") -> dict:
     r = subprocess.run(
         [sys.executable, str(EVAL), str(set_path), "--cache", str(cache)]
         + ["--offline", "--public", "--thresholds", thresholds],
@@ -146,3 +154,61 @@ def test_the_archival_split_is_the_one_463_measured(sip, tmp_path):
         assert report["valid"] and report["calls"]["live"] == 0
         assert _row(report, "still_open", 0.2) == still_open
         assert _row(report, "already_done", 0.2) == already_done
+
+
+# --- bare-digit-counts (#441) ------------------------------------------------
+
+BDC_DIR = SETS_DIR / "bare-digit-counts"
+
+
+@pytest.fixture(scope="module")
+def mine():
+    _load("_sentences", SCRIPTS / "_sentences.py")
+    _load("_stale_issue_prose", SCRIPTS / "_stale_issue_prose.py")
+    _load("_bare_digit_counts", SCRIPTS / "_bare_digit_counts.py")
+    return _load("bdc_mine", BDC_DIR / "mine.py")
+
+
+def _jsonl(path: Path) -> list[dict]:
+    return [json.loads(line) for line in path.read_text().splitlines()]
+
+
+def test_the_bare_digit_set_is_what_the_shipped_code_builds(mine):
+    """inputs.jsonl is check-counts.sh's own records, so the whole path past the gate is pinned."""
+    inputs = _jsonl(BDC_DIR / "inputs.jsonl")
+    built = mine.cases(inputs, mine.read_labels(BDC_DIR / "labels.tsv"))
+    as_text = "".join(json.dumps(c, ensure_ascii=False) + "\n" for c in built)
+    assert as_text == (BDC_DIR / "set.jsonl").read_text()
+
+
+def test_every_bare_digit_case_is_what_the_shipped_builder_sends(mine):
+    bdc = mine.bdc
+    for case in _jsonl(BDC_DIR / "set.jsonl"):
+        st = case["state"]
+        if "tally" in case["questions"]:
+            sent = bdc.build_tally_case(st["clause"], st["numbers"], st.get("heading"))
+        else:
+            sent = bdc.build_warrant_case(
+                st["clause"], st["numbers"], st.get("heading"), st["section"]
+            )
+        assert list(sent) == [st, case["questions"]], case["id"]
+
+
+def test_no_labelled_tally_is_prefiltered(mine):
+    """A prefilter that drops a tally is a recall loss nothing downstream can see."""
+    labels = mine.read_labels(BDC_DIR / "labels.tsv")
+    inputs = _jsonl(BDC_DIR / "inputs.jsonl")
+    dropped = [r for r in inputs if not mine.bdc.prefilter(r["clause"])[0]]
+    assert len(inputs) == 1082 and len(dropped) == 294
+    assert all(r["id"].startswith("P") for r in dropped)
+    assert not [r["id"] for r in dropped if labels[r["id"]][0]]
+
+
+def test_the_natural_slices_flag_nothing_at_the_default(tmp_path):
+    """P (every policy-file candidate) and R (random docs) are the rate a run sees."""
+    lines = (BDC_DIR / "set.jsonl").read_text().splitlines()
+    part = tmp_path / "pr.jsonl"
+    part.write_text("".join(f"{x}\n" for x in lines if json.loads(x)["id"][0] in "PR"))
+    report = _replay(part, BDC_DIR / "cache.jsonl")
+    assert report["valid"] and report["calls"]["live"] == 0
+    assert _row(report, "tally", 0.8) == (0, 0, 1, 216)
