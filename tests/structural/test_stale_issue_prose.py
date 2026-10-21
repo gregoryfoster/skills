@@ -1117,7 +1117,7 @@ def test_skip_archival_in_a_dry_run_prints_no_archival_case(with_plan, monkeypat
     def connect(**kw):
         raise AssertionError("--dry-run must not connect")
 
-    for flags, ids in (
+    for flags, ids, tail in (
         (
             [],
             [
@@ -1126,19 +1126,26 @@ def test_skip_archival_in_a_dry_run_prints_no_archival_case(with_plan, monkeypat
                 "AGENTS.md:7:#3",
                 "docs/plans/p.md:1:#1",
             ],
+            # The cost a dry run sizes says how much of it is history (CR 452).
+            "2 code, 4 would-ask (archival: 1)",
         ),
-        (["--skip-archival"], ["AGENTS.md:1:#1", "AGENTS.md:3:#2", "AGENTS.md:7:#3"]),
+        (
+            ["--skip-archival"],
+            ["AGENTS.md:1:#1", "AGENTS.md:3:#2", "AGENTS.md:7:#3"],
+            "1 archival, 2 code, 3 would-ask",
+        ),
     ):
-        out = io.StringIO()
+        out, err = io.StringIO(), io.StringIO()
         code = sip.main(
             [str(with_plan), "--repo", "me/skills", "--dry-run", *flags],
             stdout=out,
-            stderr=io.StringIO(),
+            stderr=err,
             run=Gh({1: CLOSED, 2: CLOSED, 3: OPEN}),
             connect=connect,
         )
         assert code == 0
         assert [json.loads(line)["id"] for line in out.getvalue().splitlines()] == ids
+        assert err.getvalue().rstrip().endswith(tail), err.getvalue()
 
 
 def test_a_skipped_run_still_marks_archival_rows(with_plan, monkeypatch):

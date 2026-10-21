@@ -73,7 +73,7 @@ Live rows come first, then archival ones. In each block, judged rows come
 first, most likely stale first, and the rest follow in file order. A one-line
 summary goes to stderr, with how many occurrences were in code, so a
 reference that appears only in code doesn't silently vanish, and how many of
-the judged rows were archival.
+the judged rows (or a dry run's cases) were archival.
 
 The splitter is `_sentences.py` beside this file; its docstring says what a
 sentence is. One TypeSafe request per occurrence, the shape #438 measured:
@@ -453,7 +453,11 @@ def summary(rows: list[Row], threshold: float) -> str:
             f"; archival: {old} judged, {sum(r.archival for r in flagged)} at or over"
         )
     parts = [head + ")"]
-    parts += [f"{n} {s}" for s, n in sorted(counts.items())]
+    for s, n in sorted(counts.items()):
+        # A dry run sizes the cost before anything is sent: say how much of
+        # it is history (CR 452).
+        asked = sum(1 for r in rows if r.archival and r.status == s == "would-ask")
+        parts.append(f"{n} {s}" + (f" (archival: {asked})" if asked else ""))
     return (
         f"stale-issue-prose: {len(rows)} occurrences of {refs} references: "
         + ", ".join(parts)
