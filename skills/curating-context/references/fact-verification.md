@@ -158,8 +158,11 @@ bash "<stale-issue-prose.sh>" /tmp/context-facts.tsv > /tmp/context-stale.tsv
   the budget allows: the ranking is the result, and the flag is only a place to
   stop. `p` orders the rows; it isn't a calibrated chance of staleness.
 - **Archival rows come last.** A file under an archival subtree (a dated
-  plan or spec: the `CTX_ARCHIVAL` names Phase 1 skips) is judged, but its
-  rows follow every live row, and the summary counts them apart. Its prose was
+  plan or spec: a path component in `plans specs research audits archive`,
+  Phase 1's default) is judged, but its rows follow every live row, and the
+  summary counts them apart. `CTX_ARCHIVAL` replaces that list here, as it
+  does for `check-seams.sh` and the write guard; Phase 1 reads `--archival`
+  instead, so give a custom list to both. Its prose was
   true when written, so it flags less precisely: 4 in 17 at 0.2, against 13 in
   37 for live docs ([#463](https://github.com/gregoryfoster/skills/issues/463)).
   **Read each block to its own flag:** the live block's unflagged rows sit
