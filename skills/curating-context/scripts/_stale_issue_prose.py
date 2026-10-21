@@ -2,6 +2,7 @@
 """stale-issue-prose.sh — rank verify-facts.sh's issue rows by how likely their prose is stale.
 
 usage: stale-issue-prose.sh [TSV] [--repo SLUG] [--threshold P] [--dry-run]
+                            [--skip-archival]
 
 An optional, advisory pass over `verify-facts.sh --issues` output
 (gregoryfoster/skills#438). The verifier stops at the reference: a closed one
@@ -29,6 +30,15 @@ for deletion.
   --dry-run    print what would be sent, one JSONL case per line in
                scripts/typesafe-eval.py's set format (without `expected`),
                and send nothing. It still asks gh for each issue's metadata
+  --skip-archival  don't judge occurrences in an archival file: send
+               nothing for them and ask gh nothing (status `archival`)
+
+ARCHIVAL files are dated history: a path with a component named in
+CTX_ARCHIVAL, the same space-separated list `_context-lib.sh`'s
+ctx_is_archival reads, and with the same default: plans specs research
+audits archive. Unset or empty means the default. Their prose was true when
+written, so they're judged by default but ranked after every live row
+(gregoryfoster/skills#463).
 
 Run it from the checkout the verifier ran in: the TSV's paths are relative to
 that checkout's root.
@@ -52,15 +62,18 @@ columns come first, unchanged, so a reader of its TSV still parses each row:
                unverifiable  the verifier's own row; nothing to judge against
                not-found   the reference is no longer in the file
                unresolved  gh couldn't resolve it now
+               archival    --skip-archival, in an archival file: not sent
                skipped | failed | not-asked   TypeSafe skipped, failed, or
                            wasn't reached after a failure
                would-ask   --dry-run, counted in its summary: printed as a
                            case, not sent
   sentence   the sentence or list item, tabs and newlines as spaces
 
-Judged rows come first, most likely stale first; the rest follow in file
-order. A one-line summary goes to stderr, with how many occurrences were in
-code, so a reference that appears only in code doesn't silently vanish.
+Live rows come first, then archival ones. In each block, judged rows come
+first, most likely stale first, and the rest follow in file order. A one-line
+summary goes to stderr, with how many occurrences were in code, so a
+reference that appears only in code doesn't silently vanish, and how many of
+the judged rows were archival.
 
 The splitter is `_sentences.py` beside this file; its docstring says what a
 sentence is. One TypeSafe request per occurrence, the shape #438 measured:
@@ -89,6 +102,7 @@ exit codes:
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import sys
@@ -107,6 +121,11 @@ BATCH = 50
 EXIT_USAGE = 1
 EXIT_FAILED = 2
 EXIT_SKIPPED = 4
+
+# `_context-lib.sh`'s CTX_ARCHIVAL_DEFAULT, held to it (and to
+# measure-context.sh's copy) by a parity test, so the pass and Phase 1 can't
+# disagree about what is history (#463).
+ARCHIVAL_DEFAULT = "plans specs research audits archive"
 
 _SLUG = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 
@@ -148,6 +167,7 @@ class Row:
     status: str = ""
     sentence: str = ""
     heading: str | None = None
+    archival: bool = False
     meta: dict = field(default_factory=dict)
 
 
@@ -184,6 +204,29 @@ def read_tsv(lines) -> list[tuple[str, ...]]:
 def split_ref(ref: str, default_slug: str | None) -> tuple[str | None, int]:
     slug, _, num = ref.rpartition("#")
     return (slug or default_slug), int(num)
+
+
+def archival_names(environ=None) -> list[str]:
+    """CTX_ARCHIVAL as the library reads it: `${CTX_ARCHIVAL:-default}`, split on whitespace."""
+    env = os.environ if environ is None else environ
+    return (env.get("CTX_ARCHIVAL") or ARCHIVAL_DEFAULT).split()
+
+
+def is_archival(fname: str, root: Path, names) -> bool:
+    """ctx_is_archival: any component of the root-relative path is one of `names`.
+
+    An absolute path under the root is made relative first, so a checkout that
+    happens to sit under ~/archive/ isn't all history.
+    """
+    path = Path(fname)
+    if path.is_absolute():
+        for p, r in ((path, root), (path.resolve(), root.resolve())):
+            try:
+                path = p.relative_to(r)
+                break
+            except ValueError:
+                pass
+    return any(part in names for part in path.parts)
 
 
 # --- issue metadata ----------------------------------------------------------
@@ -321,13 +364,20 @@ def build_case(
     return state, questions
 
 
-def locate(rows, root: Path, default_slug: str | None) -> list[Row]:
+def locate(
+    rows, root: Path, default_slug: str | None, archival=tuple(ARCHIVAL_DEFAULT.split())
+) -> list[Row]:
     """One Row per occurrence of each verifier row's reference in its file."""
     texts: dict[str, list | None] = {}
     out = []
     for verdict, klass, fname, ref, evidence in rows:
         base = dict(
-            verdict=verdict, klass=klass, file=fname, ref=ref, evidence=evidence
+            verdict=verdict,
+            klass=klass,
+            file=fname,
+            ref=ref,
+            evidence=evidence,
+            archival=is_archival(fname, root, archival),
         )
         if verdict != "TRUE":
             out.append(Row(**base, status="unverifiable"))
@@ -368,11 +418,19 @@ def _cell(v) -> str:
     return re.sub(r"[\t\r\n]+", " ", "" if v is None else str(v))
 
 
-def render(rows: list[Row], threshold: float) -> str:
+def _block(rows: list[Row]) -> list[Row]:
     judged = sorted((r for r in rows if r.p is not None), key=lambda r: -r.p)
     rest = sorted((r for r in rows if r.p is None), key=lambda r: (r.file, r.line or 0))
+    return judged + rest
+
+
+def render(rows: list[Row], threshold: float) -> str:
+    # Archival after every live row: sorted, not filtered, so recall is the
+    # measured one and the reading reaches live guidance first (#463).
+    ordered = _block([r for r in rows if not r.archival])
+    ordered += _block([r for r in rows if r.archival])
     lines = []
-    for r in judged + rest:
+    for r in ordered:
         p = "" if r.p is None else f"{r.p:.3f}"
         flag = "stale?" if r.p is not None and r.p >= threshold else ""
         cols = [r.verdict, r.klass, r.file, r.ref, r.evidence, r.line, r.kind, r.state]
@@ -385,9 +443,15 @@ def summary(rows: list[Row], threshold: float) -> str:
     counts: dict[str, int] = {}
     for r in rows:
         counts[r.status] = counts.get(r.status, 0) + 1
-    flagged = sum(1 for r in rows if r.p is not None and r.p >= threshold)
+    flagged = [r for r in rows if r.p is not None and r.p >= threshold]
     refs = len({(r.file, r.ref) for r in rows})
-    parts = [f"{counts.pop('judged', 0)} judged ({flagged} at or over {threshold:g})"]
+    head = f"{counts.pop('judged', 0)} judged ({len(flagged)} at or over {threshold:g}"
+    old = sum(1 for r in rows if r.archival and r.status == "judged")
+    if old:
+        head += (
+            f"; archival: {old} judged, {sum(r.archival for r in flagged)} at or over"
+        )
+    parts = [head + ")"]
     parts += [f"{n} {s}" for s, n in sorted(counts.items())]
     return (
         f"stale-issue-prose: {len(rows)} occurrences of {refs} references: "
@@ -409,7 +473,13 @@ def _threshold(text: str) -> float:
 
 
 def parse_args(argv: list[str]) -> dict:
-    opts = {"tsv": None, "repo": None, "threshold": DEFAULT_THRESHOLD, "dry_run": False}
+    opts = {
+        "tsv": None,
+        "repo": None,
+        "threshold": DEFAULT_THRESHOLD,
+        "dry_run": False,
+        "skip_archival": False,
+    }
     it = iter(argv)
     for a in it:
         if a in ("-h", "--help"):
@@ -427,6 +497,8 @@ def parse_args(argv: list[str]) -> dict:
                 opts["threshold"] = _threshold(v)
         elif a == "--dry-run":
             opts["dry_run"] = True
+        elif a == "--skip-archival":
+            opts["skip_archival"] = True
         elif a.startswith("-") and a != "-":
             raise UsageError(f"unknown option {a}")
         elif opts["tsv"] is not None:
@@ -472,11 +544,24 @@ def main(
     except UsageError as e:
         say(f"stale-issue-prose: {e}")
         say(
-            "usage: stale-issue-prose.sh [TSV] [--repo SLUG] [--threshold P] [--dry-run]"
+            "usage: stale-issue-prose.sh [TSV] [--repo SLUG] [--threshold P] "
+            "[--dry-run] [--skip-archival]"
         )
         return EXIT_USAGE
 
     threshold = opts["threshold"]
+    names = archival_names()
+
+    def find(root: Path, slug: str | None) -> list[Row]:
+        rows = locate(tsv, root, slug, names)
+        if opts["skip_archival"]:
+            for r in rows:
+                # Only what would have been asked: code, short-repo and the
+                # rest describe the occurrence itself, and say more.
+                if r.archival and not r.status:
+                    r.status = "archival"
+        return rows
+
     if not tsv:
         say(
             "stale-issue-prose: the TSV has no issue rows; run verify-facts.sh "
@@ -495,7 +580,7 @@ def main(
             # gh stays unasked, but origin's URL still names the repo, so
             # watcher#278 is reported short-repo here too (CR 445).
             root = _root()
-            rows = locate(tsv, root, opts["repo"] or local_repo(root))
+            rows = find(root, opts["repo"] or local_repo(root))
             for r in rows:
                 if r.status in ("", "unresolved"):
                     r.status = "skipped"
@@ -513,7 +598,7 @@ def main(
         # A gh failure, so exit 2: exit 0 would call a ranking complete that
         # left most of a typical file's references out (CR 432).
         exit_code = EXIT_FAILED
-    rows = locate(tsv, _root(), slug)
+    rows = find(_root(), slug)
 
     # Metadata, one query per repo per BATCH references.
     wanted: dict[str, set] = {}

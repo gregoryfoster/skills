@@ -982,3 +982,178 @@ def test_the_pass_runs_on_python39(tmp_path):
         check=False,
     )
     assert h.returncode == 0 and "exit codes" in h.stdout, h.stderr
+
+
+# --- archival files (#463) ---------------------------------------------------
+
+LIB = SCRIPTS / "_context-lib.sh"
+ARCHIVAL_PATHS = [
+    "AGENTS.md",
+    "docs/plans/2026-01-01-x.md",
+    "docs/PLANS.md",
+    "docs/specs/a/b.md",
+    "plans",
+    "docs/archive",
+    "research/notes.md",
+    "skills/x/references/audits.md",
+    "docs/audits/q3.md",
+    "docs/planning/x.md",
+    "docs/my plans/x.md",
+]
+
+
+def _shell_archival(paths, ctx_archival):
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    env.pop("CTX_ARCHIVAL", None)
+    if ctx_archival is not None:
+        env["CTX_ARCHIVAL"] = ctx_archival
+    script = (
+        'source "$1"; shift; for p in "$@"; do '
+        'if ctx_is_archival "$p"; then echo 1; else echo 0; fi; done'
+    )
+    r = subprocess.run(
+        ["bash", "-c", script, "bash", str(LIB), *paths],
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert r.returncode == 0, r.stderr
+    return [line == "1" for line in r.stdout.split()]
+
+
+@pytest.mark.parametrize("ctx_archival", [None, "", "plans", " audits\tplans ", "x"])
+def test_archival_is_what_the_librarys_matcher_says(ctx_archival, tmp_path):
+    """The pass and Phase 1 read one list one way, env var included, or they disagree."""
+    env = {} if ctx_archival is None else {"CTX_ARCHIVAL": ctx_archival}
+    names = sip.archival_names(env)
+    got = [sip.is_archival(p, tmp_path, names) for p in ARCHIVAL_PATHS]
+    assert got == _shell_archival(ARCHIVAL_PATHS, ctx_archival)
+
+
+def test_the_archival_default_is_the_shells():
+    """Three copies of one list: the library's, measure-context.sh's, and this one."""
+    lib = re.search(r'^CTX_ARCHIVAL_DEFAULT="([^"]*)"$', LIB.read_text(), re.M)
+    mc = re.search(
+        r'^ARCHIVAL="([^"]*)"$', (SCRIPTS / "measure-context.sh").read_text(), re.M
+    )
+    assert lib and mc
+    assert sip.ARCHIVAL_DEFAULT == lib.group(1) == mc.group(1)
+
+
+def test_an_absolute_path_is_read_from_the_root(tmp_path):
+    root = tmp_path / "archive" / "repo"
+    names = sip.archival_names({})
+    assert not sip.is_archival(str(root / "AGENTS.md"), root, names)
+    assert sip.is_archival(str(root / "docs" / "plans" / "x.md"), root, names)
+
+
+@pytest.fixture
+def with_plan(checkout):
+    plans = Path.cwd() / "docs" / "plans"  # the checkout; the TSV sits beside it
+    plans.mkdir(parents=True)
+    (plans / "p.md").write_text("Wait for #1 first.\n\n`#2` here.\n")
+    with checkout.open("a") as f:
+        f.write("TRUE\tissue\tdocs/plans/p.md\t#1\tclosed — check\n")
+        f.write("TRUE\tissue\tdocs/plans/p.md\t#2\tclosed — check\n")
+    return checkout
+
+
+def test_archival_rows_follow_every_live_row(with_plan, monkeypatch):
+    monkeypatch.delenv("CTX_ARCHIVAL", raising=False)
+    client = FakeClient([0.9, 0.1, 0.3, 0.95])
+    code, rows, err = _main([with_plan, "--repo", "me/skills"], lambda **kw: client)
+    assert code == 0
+    assert [(r[2], r[3], r[9], r[10], r[11]) for r in rows] == [
+        ("AGENTS.md", "#1", "0.900", "stale?", "judged"),
+        ("AGENTS.md", "#3", "0.300", "stale?", "judged"),
+        ("AGENTS.md", "#2", "0.100", "", "judged"),
+        ("AGENTS.md", "#2", "", "", "code"),
+        ("docs/plans/p.md", "#1", "0.950", "stale?", "judged"),
+        ("docs/plans/p.md", "#2", "", "", "code"),
+    ]
+    assert (
+        "6 occurrences of 5 references: 4 judged (3 at or over 0.2; "
+        "archival: 1 judged, 1 at or over), 2 code"
+    ) in err
+
+
+def test_ctx_archival_moves_the_line(with_plan, monkeypatch):
+    monkeypatch.setenv("CTX_ARCHIVAL", "nothing")
+    client = FakeClient([0.9, 0.1, 0.3, 0.95])
+    code, rows, err = _main([with_plan, "--repo", "me/skills"], lambda **kw: client)
+    assert code == 0 and rows[0][2:4] == ["docs/plans/p.md", "#1"]
+    assert "archival" not in err
+
+
+def test_skip_archival_sends_and_asks_nothing_for_them(with_plan, monkeypatch):
+    monkeypatch.delenv("CTX_ARCHIVAL", raising=False)
+    client = FakeClient([0.9, 0.1, 0.3])
+    gh = Gh({1: CLOSED, 2: CLOSED, 3: OPEN})
+    code, rows, err = _main(
+        [with_plan, "--repo", "me/skills", "--skip-archival"], lambda **kw: client, gh
+    )
+    assert code == 0 and len(client.asked) == 3
+    assert all("Wait for" not in s["sentence"] for s in client.asked)
+    assert [(r[2], r[11]) for r in rows[-2:]] == [
+        ("docs/plans/p.md", "archival"),
+        ("docs/plans/p.md", "code"),
+    ]
+    assert "3 judged (2 at or over 0.2), 1 archival, 2 code" in err
+    # The plan's #1 is a number the live file also cites, so the only way to
+    # see that gh wasn't asked for it is a run where only the plan cites it.
+    with_plan.write_text("TRUE\tissue\tdocs/plans/p.md\t#1\tclosed — check\n")
+    gh = Gh({1: CLOSED})
+    code, rows, _ = _main(
+        [with_plan, "--repo", "me/skills", "--skip-archival"],
+        lambda **kw: FakeClient([]),
+        gh,
+    )
+    assert code == 0 and gh.calls == [] and rows[0][11] == "archival"
+
+
+def test_skip_archival_in_a_dry_run_prints_no_archival_case(with_plan, monkeypatch):
+    monkeypatch.delenv("CTX_ARCHIVAL", raising=False)
+
+    def connect(**kw):
+        raise AssertionError("--dry-run must not connect")
+
+    for flags, ids in (
+        (
+            [],
+            [
+                "AGENTS.md:1:#1",
+                "AGENTS.md:3:#2",
+                "AGENTS.md:7:#3",
+                "docs/plans/p.md:1:#1",
+            ],
+        ),
+        (["--skip-archival"], ["AGENTS.md:1:#1", "AGENTS.md:3:#2", "AGENTS.md:7:#3"]),
+    ):
+        out = io.StringIO()
+        code = sip.main(
+            [str(with_plan), "--repo", "me/skills", "--dry-run", *flags],
+            stdout=out,
+            stderr=io.StringIO(),
+            run=Gh({1: CLOSED, 2: CLOSED, 3: OPEN}),
+            connect=connect,
+        )
+        assert code == 0
+        assert [json.loads(line)["id"] for line in out.getvalue().splitlines()] == ids
+
+
+def test_a_skipped_run_still_marks_archival_rows(with_plan, monkeypatch):
+    monkeypatch.delenv("CTX_ARCHIVAL", raising=False)
+
+    def connect(**kw):
+        raise ts.Skipped("not-opted-in", "test")
+
+    code, rows, _ = _main(
+        [with_plan, "--repo", "me/skills", "--skip-archival"], connect, Gh({})
+    )
+    assert code == 4
+    assert [(r[2], r[11]) for r in rows if r[11] != "code"] == [
+        ("AGENTS.md", "skipped"),
+        ("AGENTS.md", "skipped"),
+        ("AGENTS.md", "skipped"),
+        ("docs/plans/p.md", "archival"),
+    ]

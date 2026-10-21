@@ -7,6 +7,7 @@
 # (gregoryfoster/skills#438).
 #
 # Usage: stale-issue-prose.sh [TSV] [--repo SLUG] [--threshold P] [--dry-run]
+#                             [--skip-archival]
 #        stale-issue-prose.sh --help    full usage, output columns, exit codes
 #
 # Needs python3 (3.9+) and an authenticated gh. TSV on stdout, one summary line
