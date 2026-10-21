@@ -127,6 +127,24 @@ def test_an_escaped_backtick_opens_no_code_span():
     ]
 
 
+def test_an_even_run_of_backslashes_still_opens_a_span():
+    """`\\\\` is an escaped backslash, so the backtick after it opens a span (CR 442b)."""
+    text = "Done \\\\`#13` here and #14.\n"
+    assert [(o.ref, o.in_code) for o in sent.occurrences(text)] == [
+        ("#13", True),
+        ("#14", False),
+    ]
+
+
+def test_the_rest_of_an_escaped_run_still_opens_a_span():
+    """`\\```` is a literal backtick, then a two-backtick opener (CR 442c)."""
+    text = "See \\```#11`` then #12.\n"
+    assert [(o.ref, o.in_code) for o in sent.occurrences(text)] == [
+        ("#11", True),
+        ("#12", False),
+    ]
+
+
 def test_a_short_cross_repo_form_names_its_repo():
     found = {o.ref: o.short_repo for o in sent.occurrences(GRAMMAR_FIXTURE)}
     assert found["#278"] == "watcher" and found["#81"] == "skills"
@@ -238,6 +256,15 @@ def test_a_section_is_clipped_like_a_sentence():
     text = "# " + "word " * 600 + "\n\nPending #9.\n"
     (o,) = sent.occurrences(text)
     assert len(o.heading) <= sent.MAX_CHARS
+
+
+def test_an_underline_after_a_list_item_is_no_heading():
+    """Setext applies to a paragraph only; `- item` then `---` is a list and a rule (CR 442a)."""
+    text = "- item #3\n---\n\nAfter #4.\n"
+    assert [(o.ref, o.heading) for o in sent.occurrences(text)] == [
+        ("#3", None),
+        ("#4", None),
+    ]
 
 
 def test_a_table_row_gives_its_name_cell_and_the_refs_cell():
@@ -438,6 +465,21 @@ def test_a_repository_gh_cant_resolve_is_a_gh_failure():
     with pytest.raises(sip.GhError) as e:
         sip.fetch_meta("me/typo", [1], run)
     assert "Could not resolve to a Repository" in str(e.value)
+
+
+def test_an_untyped_graphql_error_is_a_gh_failure():
+    """GitHub's timeout error carries no type; it must not pass as NOT_FOUND (CR 442d)."""
+
+    def run(argv):
+        body = {
+            "data": {"repository": {"n1": None}},
+            "errors": [{"message": "Something went wrong while executing your query"}],
+        }
+        return subprocess.CompletedProcess(argv, 1, json.dumps(body), "")
+
+    with pytest.raises(sip.GhError) as e:
+        sip.fetch_meta("me/skills", [1], run)
+    assert "went wrong" in str(e.value)
 
 
 def test_no_data_at_all_is_a_gh_failure():
@@ -668,6 +710,19 @@ def test_an_answer_without_a_probability_is_a_failure(checkout):
 
     code, rows, err = _main([checkout, "--repo", "me/skills"], lambda **kw: Bad([]))
     assert code == 2 and "no noul probability" in err
+
+
+@pytest.mark.parametrize("bad", [True, 1.5, -0.1, "0.5", None])
+def test_a_noul_that_isnt_a_probability_is_a_failure(checkout, bad):
+    """A bool is an int in Python, and 1.5 is a number; neither is a probability (CR 442e)."""
+
+    class Odd(FakeClient):
+        def ask(self, state, questions):
+            return {"answers": {next(iter(questions)): {"type": "noul", "noul": bad}}}
+
+    code, rows, err = _main([checkout, "--repo", "me/skills"], lambda **kw: Odd([]))
+    assert code == 2 and "no noul probability" in err
+    assert "judged" not in [r[11] for r in rows]
 
 
 def test_a_malformed_answer_is_described_not_echoed(checkout):
