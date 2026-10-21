@@ -209,6 +209,21 @@ def default_repo(run=_run) -> str | None:
     return slug if r.returncode == 0 and _SLUG.match(slug) else None
 
 
+def _alias_not_found(error) -> bool:
+    """A NOT_FOUND on one `nN` alias: that number is no issue or PR [measured 2026-10-20]."""
+    if not isinstance(error, dict) or error.get("type") != "NOT_FOUND":
+        return False
+    path = error.get("path")
+    return (
+        isinstance(path, list)
+        and len(path) == 2
+        and path[0] == "repository"
+        and isinstance(path[1], str)
+        and path[1][1:].isdigit()
+        and path[1].startswith("n")
+    )
+
+
 def fetch_meta(slug: str, numbers, run=_run) -> dict[int, dict | None]:
     """{number: metadata, or None when gh resolves no issue or PR}. Raises GhError."""
     owner, name = slug.split("/", 1)
@@ -237,24 +252,20 @@ def fetch_meta(slug: str, numbers, run=_run) -> dict[int, dict | None]:
             raise GhError(
                 f"gh api graphql for {slug}: {msg[-1] if msg else f'exit {r.returncode}'}"
             )
-        # NOT_FOUND is a ref that isn't an issue or PR. Anything else (SSO,
-        # FORBIDDEN, a timeout) can null every alias, and reading that as
-        # "unresolved" would be exit 0 over nothing judged (CR 433).
+        # Only a NOT_FOUND on one alias (path ["repository", "nN"]) is a ref
+        # that isn't an issue or PR. Anything else (SSO, FORBIDDEN, a timeout,
+        # or the repository itself not found) can null every alias, and
+        # reading that as "unresolved" would be exit 0 over nothing judged
+        # (CR 433, CR 439).
         errors = reply.get("errors") if isinstance(reply.get("errors"), list) else []
-        other = [
-            e
-            for e in errors
-            if not (isinstance(e, dict) and e.get("type") == "NOT_FOUND")
-        ]
+        other = [e for e in errors if not _alias_not_found(e)]
         if other:
             first = other[0]
             msg = first.get("message", first) if isinstance(first, dict) else first
             raise GhError(f"gh api graphql for {slug}: {msg}")
         repo = data.get("repository")
         if not isinstance(repo, dict):
-            for n in chunk:
-                out[n] = None
-            continue
+            raise GhError(f"gh api graphql for {slug}: no repository in the reply")
         for n in chunk:
             item = repo.get(f"n{n}")
             out[n] = item if isinstance(item, dict) and item.get("__typename") else None

@@ -326,7 +326,9 @@ class Gh:
         missing = [n for n in nums if self.items.get(n) is None]
         body = {"data": {"repository": data}}
         if missing:
-            body["errors"] = [{"type": "NOT_FOUND"} for _ in missing]
+            body["errors"] = [
+                {"type": "NOT_FOUND", "path": ["repository", f"n{n}"]} for n in missing
+            ]
         return subprocess.CompletedProcess(
             argv, 1 if missing else 0, json.dumps(body), ""
         )
@@ -374,6 +376,27 @@ def test_an_error_other_than_not_found_is_a_gh_failure():
     with pytest.raises(sip.GhError) as e:
         sip.fetch_meta("me/skills", [1], run)
     assert "SAML" in str(e.value)
+
+
+def test_a_repository_gh_cant_resolve_is_a_gh_failure():
+    """The reply measured for a mistyped --repo: NOT_FOUND on the repository itself (CR 439)."""
+
+    def run(argv):
+        body = {
+            "data": {"repository": None},
+            "errors": [
+                {
+                    "type": "NOT_FOUND",
+                    "path": ["repository"],
+                    "message": "Could not resolve to a Repository with the name 'me/typo'.",
+                }
+            ],
+        }
+        return subprocess.CompletedProcess(argv, 1, json.dumps(body), "")
+
+    with pytest.raises(sip.GhError) as e:
+        sip.fetch_meta("me/typo", [1], run)
+    assert "Could not resolve to a Repository" in str(e.value)
 
 
 def test_no_data_at_all_is_a_gh_failure():
