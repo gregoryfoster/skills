@@ -630,7 +630,9 @@ def main(
         r.kind, r.state = r.meta["kind"], r.meta["state"]
         r.question = "already_done" if r.state == "open" else "still_open"
 
-    pending = [r for r in rows if not r.status]
+    # Asked live first, not in the TSV's order: a failure part-way leaves the
+    # rest not-asked, and those should be history, not live guidance (CR 454).
+    pending = sorted((r for r in rows if not r.status), key=lambda r: r.archival)
     if opts["dry_run"]:
         for r in pending:
             # Named, or the summary ends on a bare count (CR 447).

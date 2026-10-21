@@ -1166,3 +1166,31 @@ def test_a_skipped_run_still_marks_archival_rows(with_plan, monkeypatch):
         ("AGENTS.md", "skipped"),
         ("docs/plans/p.md", "archival"),
     ]
+
+
+def test_live_rows_are_asked_first_whatever_the_tsv_order(with_plan, monkeypatch):
+    """A failure part-way leaves history unjudged, not live guidance (CR 454)."""
+    monkeypatch.delenv("CTX_ARCHIVAL", raising=False)
+    lines = with_plan.read_text().splitlines(keepends=True)
+    plan = [x for x in lines if "docs/plans/" in x]
+    with_plan.write_text("".join(plan + [x for x in lines if x not in plan]))
+    client = FakeClient([0.9, 0.1, 0.3, 0.95], fail_at=3)
+    code, rows, _ = _main([with_plan, "--repo", "me/skills"], lambda **kw: client)
+    assert code == 2
+    assert [s["sentence"] for s in client.asked] == [
+        "Blocked on #1 until spring.",
+        "Shipped in #2.",
+        "Done in #3.",
+    ]
+    assert ("docs/plans/p.md", "#1", "not-asked") in [(r[2], r[3], r[11]) for r in rows]
+
+    out = io.StringIO()
+    sip.main(
+        [str(with_plan), "--repo", "me/skills", "--dry-run"],
+        stdout=out,
+        stderr=io.StringIO(),
+        run=Gh({1: CLOSED, 2: CLOSED, 3: OPEN}),
+        connect=lambda **kw: None,
+    )
+    ids = [json.loads(line)["id"] for line in out.getvalue().splitlines()]
+    assert ids[-1] == "docs/plans/p.md:1:#1"
