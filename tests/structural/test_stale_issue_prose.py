@@ -365,6 +365,13 @@ def test_the_policy_file_is_read_as_utf8_whatever_the_locale(tmp_path):
     assert sentence == ascii("Pending — still #1.")
 
 
+def test_without_a_known_repo_no_ref_is_called_short_repo(tmp_path):
+    """With no repo name to compare, skills#81 in the skills repo isn't cross-repo (CR 443)."""
+    (tmp_path / "a.md").write_text("Pending skills#81.\n")
+    (row,) = sip.locate([("TRUE", "issue", "a.md", "#81", "closed")], tmp_path, None)
+    assert row.status == "unresolved"
+
+
 def test_a_bare_ref_with_no_repo_is_unresolved(tmp_path):
     (tmp_path / "a.md").write_text("Pending #1.\n")
     (row,) = sip.locate([("TRUE", "issue", "a.md", "#1", "closed")], tmp_path, None)

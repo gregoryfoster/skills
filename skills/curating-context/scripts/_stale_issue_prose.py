@@ -333,7 +333,9 @@ def locate(rows, root: Path, default_slug: str | None) -> list[Row]:
             row = Row(**base, line=o.line, sentence=o.sentence, heading=o.heading)
             if o.in_code:
                 row.status = "code"
-            elif o.short_repo and o.short_repo.lower() != repo_name:
+            elif slug and o.short_repo and o.short_repo.lower() != repo_name:
+                # Only against a known repo: with none, skills#81 inside the
+                # skills repo would read as cross-repo (CR 443).
                 row.status = "short-repo"
             elif slug is None:
                 row.status = "unresolved"
