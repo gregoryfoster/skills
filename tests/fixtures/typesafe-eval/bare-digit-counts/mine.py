@@ -11,10 +11,12 @@ collect  runs the shipped `check-counts.sh --candidates` over each repo in
          `docs/**/*.md`, as `is_archival()` reads the default list. Each record
          gains `repo` and `rev`. It refuses a clone at another commit.
 select   keeps every policy-file candidate (slice P, prefiltered ones too, so
-         the prefilters' recall is measured), and two seeded samples of the
-         docs candidates that survive the prefilters: TALLY_SHAPED ones that
-         look like a tally (slice S, for positives) and the rest (slice R,
-         for precision at the docs' own rate). Each record gains `id`.
+         the prefilters' recall is measured), then, of the docs candidates
+         that survive the prefilters, every TALLY_SHAPED one (slice S, for
+         positives) and a seeded RANDOM_N of the rest (slice R, for precision
+         at the docs' own rate). S is a seeded SHAPED_N first, then the others
+         in file order: S was first labelled at 300, and widening it this way
+         kept those ids. Each record gains `id`.
 build    writes the evaluator's set through the shipped builders: one tally
          case per record that survives the prefilters, and one warrant case
          per record labelled a tally. LABELS.tsv is `id<TAB>tally[<TAB>
