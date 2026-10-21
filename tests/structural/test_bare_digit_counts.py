@@ -440,7 +440,8 @@ def test_an_answer_that_isnt_a_probability_is_a_failure(tmp_path, bad):
 
     code, rows, err = _main([_input(tmp_path)], lambda **kw: Bad())
     assert code == 2 and "has no noul probability" in err
-    assert str(bad) not in err.replace("0.5", "") or bad is None
+    # Its shape, never its value: server text reaches stderr only redacted (CR 462).
+    assert "(an object with 2 key(s))" in err and repr(bad) not in err
 
 
 def test_dry_run_sends_nothing_and_emits_cases_the_evaluator_loads(tmp_path):
