@@ -18,7 +18,8 @@ sentence over `MAX_CHARS` is cut down to a window around the reference.
 
 **Code is not prose.** A line inside a fenced block (``` or ~~~) and a span
 inside backticks hold no claims, so a match there is marked `in_code` and the
-caller counts it rather than judging it. Indented code blocks aren't detected:
+caller counts it rather than judging it. So is a front-matter block (`---`
+on line 1 through its closing `---` or `...`). Indented code blocks aren't detected:
 in a policy file an indented line is far more often a list item's
 continuation. HTML comments are prose, since an agent reads the raw file.
 A blockquote's leading `>` markers are dropped before a line is classified.
@@ -129,7 +130,21 @@ def _units(lines: list[str]):
         return u
 
     out = []
+    # Front matter is metadata, not prose: a `---` first line through its
+    # closing `---` or `...`. Read as prose, CR 435's setext rule made it the
+    # heading of everything below it (CR 441).
+    front = 0
+    if lines and lines[0].rstrip() == "---":
+        close = next(
+            (i for i in range(1, len(lines)) if lines[i].rstrip() in ("---", "...")),
+            None,
+        )
+        if close is not None:
+            front = close + 1
+            out += [("code", i) for i in range(1, front + 1)]
     for n, raw in enumerate(lines, 1):
+        if n <= front:
+            continue
         if fence is not None:
             # Inside a fence only the markers it was opened under are quoting;
             # a `> ```` in a heredoc is content, not a close (CR 440).
@@ -162,7 +177,7 @@ def _units(lines: list[str]):
                 # A setext underline turns the paragraph above it into a
                 # heading, rather than joining "=====" onto its sentence (CR 435).
                 cur.kind = "heading"
-                heading = cur.text
+                heading = cur.text[:MAX_CHARS]
             # At another quote depth it closes the quote (a thematic break, or a
             # lazy line with no reference in it), never a heading (CR 440).
             out.append(flush())
@@ -172,7 +187,7 @@ def _units(lines: list[str]):
             out.append(flush())
             text = raw[h.end() :].rstrip().rstrip("#").rstrip()
             out.append(_Unit("heading", text, [(0, n, h.end())], heading))
-            heading = text
+            heading = text[:MAX_CHARS]
             continue
         if _TABLE_ROW.match(raw):
             out.append(flush())

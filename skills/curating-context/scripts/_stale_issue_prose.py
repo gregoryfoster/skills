@@ -44,7 +44,8 @@ columns come first, unchanged, so a reader of its TSV still parses each row:
   p          TypeSafe's probability that the answer is yes, 3 places
   flag       `stale?` when p is at least the threshold, else empty
   status     judged, or why the occurrence wasn't judged:
-               code        inside a fenced block or a code span: not a claim
+               code        inside a fenced block, a code span or front matter:
+                           not a claim
                short-repo  `watcher#278`: the verifier resolved #278 against
                            this repo, which may be the wrong issue
                unverifiable  the verifier's own row; nothing to judge against

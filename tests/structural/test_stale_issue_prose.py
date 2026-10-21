@@ -222,6 +222,24 @@ def test_an_underline_at_another_quote_depth_is_no_heading():
     ]
 
 
+def test_front_matter_is_not_prose_and_not_a_heading():
+    """It became the section of every later sentence and went to TypeSafe whole (CR 441)."""
+    text = "---\nname: x\ndescription: fixes #5\n---\n\nIntro pending #6 here.\n"
+    got = [(o.ref, o.in_code, o.heading) for o in sent.occurrences(text)]
+    assert got == [("#5", True, None), ("#6", False, None)]
+
+
+def test_an_unclosed_leading_rule_is_not_front_matter():
+    text = "---\n\nPending #7 still.\n"
+    assert [(o.ref, o.in_code) for o in sent.occurrences(text)] == [("#7", False)]
+
+
+def test_a_section_is_clipped_like_a_sentence():
+    text = "# " + "word " * 600 + "\n\nPending #9.\n"
+    (o,) = sent.occurrences(text)
+    assert len(o.heading) <= sent.MAX_CHARS
+
+
 def test_a_table_row_gives_its_name_cell_and_the_refs_cell():
     text = "| `stream.x` | live | consumer pending (#9) |\n"
     (o,) = sent.occurrences(text)

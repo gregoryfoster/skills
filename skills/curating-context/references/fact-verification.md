@@ -164,8 +164,8 @@ bash "<stale-issue-prose.sh>" /tmp/context-facts.tsv > /tmp/context-stale.tsv
   failure) rows judged before it keep their `p`; the rest are `failed`,
   `not-asked` or `unresolved`. Read every unjudged row as if the pass hadn't
   run.
-- **Unjudged rows are yours.** `code` is a reference inside a fence or a code
-  span. `short-repo` is `watcher#278`: the verifier read it as this repo's
+- **Unjudged rows are yours.** `code` is a reference inside a fence, a code
+  span or front matter. `short-repo` is `watcher#278`: the verifier read it as this repo's
   `#278`, so its TRUE may be about the wrong issue. Check those by hand.
 
 ### Behavioural rules and conventions
