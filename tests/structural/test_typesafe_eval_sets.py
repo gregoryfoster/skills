@@ -49,10 +49,10 @@ SETS = {
         },
     ),
     "bare-digit-counts": (
-        "f92498408c3fe3f3ebde43c5a480cdce337139a8f4d8e79442b6abb4541aba62",
-        807,
+        "8e388a79cf912ad6ba88d50660b76628a0ec3d2dde445a82bbfb42181ec4fd8b",
+        799,
         {
-            "tally": {0.8: (5, 0, 14, 769), 0.5: (13, 30, 6, 739)},
+            "tally": {0.8: (5, 0, 14, 761), 0.5: (13, 30, 6, 731)},
             "enumerated": {0.3: (1, 0, 0, 18)},
         },
     ),
@@ -199,8 +199,17 @@ def test_no_labelled_tally_is_prefiltered(mine):
     labels = mine.read_labels(BDC_DIR / "labels.tsv")
     inputs = _jsonl(BDC_DIR / "inputs.jsonl")
     dropped = [r for r in inputs if not mine.bdc.prefilter(r["clause"])[0]]
-    assert len(inputs) == 1082 and len(dropped) == 294
-    assert all(r["id"].startswith("P") for r in dropped)
+    assert len(inputs) == 1082 and len(dropped) == 302
+    # S and R were drawn from survivors; CR 459's time mask came after.
+    assert sorted(r["id"] for r in dropped if r["id"][0] != "P") == [
+        "R088",
+        "S276",
+        "S427",
+        "S435",
+        "S496",
+        "S515",
+        "S545",
+    ]
     assert not [r["id"] for r in dropped if labels[r["id"]][0]]
 
 
@@ -211,4 +220,4 @@ def test_the_natural_slices_flag_nothing_at_the_default(tmp_path):
     part.write_text("".join(f"{x}\n" for x in lines if json.loads(x)["id"][0] in "PR"))
     report = _replay(part, BDC_DIR / "cache.jsonl")
     assert report["valid"] and report["calls"]["live"] == 0
-    assert _row(report, "tally", 0.8) == (0, 0, 1, 216)
+    assert _row(report, "tally", 0.8) == (0, 0, 1, 214)

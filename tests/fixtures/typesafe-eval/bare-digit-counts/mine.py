@@ -16,7 +16,10 @@ select   keeps every policy-file candidate (slice P, prefiltered ones too, so
          positives) and a seeded RANDOM_N of the rest (slice R, for precision
          at the docs' own rate). S is a seeded SHAPED_N first, then the others
          in file order: S was first labelled at 300, and widening it this way
-         kept those ids. Each record gains `id`.
+         kept those ids. Each record gains `id`. The committed slices were
+         drawn before CR 459 added the `time` mask, so re-running select
+         now draws 7 fewer docs survivors; `build` reads inputs.jsonl and
+         is unaffected.
 build    writes the evaluator's set through the shipped builders: one tally
          case per record that survives the prefilters, and one warrant case
          per record labelled a tally. LABELS.tsv is `id<TAB>tally[<TAB>

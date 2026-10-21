@@ -261,6 +261,7 @@ def test_the_help_documents_the_flag_and_points_at_the_pass():
         ("Pinned to jev-1.13.0, needs 3.9+.", [], ["version"]),
         ("Built at b8c54db8.", [], ["sha"]),
         ("Serves localhost:8080 only.", [], ["port"]),
+        ("Runs at 08:00, reconnected 15:27:00Z.", [], ["time"]),
         ("Covers 72.3% of it.", [], ["percent"]),
         ("2.", [], ["marker"]),
         ("An H1, UTF-8, 5xx and 64k.", [], ["word"]),

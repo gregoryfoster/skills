@@ -128,7 +128,7 @@ about the repo's own policy file line by line.
 always a port, a status code, a version or a limit. So "182 hx-get reveals"
 passes. `bare-digit-counts.sh` reads the clauses the gate passed over, masks
 the digits code can rule out (code spans, links, issue refs, dates, versions,
-SHAs, ports, percentages, list markers, digits fused to letters), and asks one
+SHAs, times, ports, percentages, list markers, digits fused to letters), and asks one
 yes-or-no question about each clause left: does a number in it state how many
 of something the repo holds now, so it goes stale? For a flagged clause it
 asks two more, whether the counted things are listed in the section
@@ -161,7 +161,7 @@ bash "<bare-digit-counts.sh>" /tmp/context-count-candidates.jsonl > /tmp/context
   needs no `.skills/context-counts-ok` entry, nothing is written for you, and
   the `counts` fields on the ledger row don't include it.
 - **Read the flags, then the ranking.** Judged rows come most likely a tally
-  first, and `tally?` marks those at or over 0.8. On 788 hand-labelled clauses
+  first, and `tally?` marks those at or over 0.8. On 780 hand-labelled clauses
   from 12 public cohort repos
   ([#441](https://github.com/gregoryfoster/skills/issues/441)), 0.8 flagged 5,
   all tallies, but caught only 5 of the 19. False positives start at 0.79, so

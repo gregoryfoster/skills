@@ -61,7 +61,7 @@ often at an old commit. A change there shows up only when someone re-measures.
 | Directory | Child | Set sha256 | Measured |
 |---|---|---|---|
 | `stale-issue-prose/` | #438 | `cc3ee5d181b2` | [report](https://github.com/gregoryfoster/skills/issues/438#issuecomment-6302036571), [re-measure](https://github.com/gregoryfoster/skills/issues/438#issuecomment-6303164875) |
-| `bare-digit-counts/` | #441 | `f92498408c3f` | [report](https://github.com/gregoryfoster/skills/issues/441) |
+| `bare-digit-counts/` | #441 | `8e388a79cf91` | [report](https://github.com/gregoryfoster/skills/issues/441) |
 
 `stale-issue-prose/` is 130 cases from gregoryfoster/skills and 11 public
 CannObserv repos (`still_open` 15 positive, `already_done` 3), labelled by one
@@ -69,20 +69,22 @@ labeller. Its cache holds 133 replies: the 3 extra are the pre-CR 428 cases,
 which the set no longer asks (A14, A30, F40, before CR 428 took their
 blockquote markers out).
 
-`bare-digit-counts/` is 807 cases from gregoryfoster/skills and the same 11
+`bare-digit-counts/` is 799 cases from gregoryfoster/skills and the same 11
 public CannObserv repos, mined 2026-10-21 at the commits `mine.py` names,
 labelled by one labeller. `inputs.jsonl` holds 1,082 of `check-counts.sh
 --candidates`' own records in three slices:
 
-- `P`: every candidate in the 12 policy files (411, 294 of them prefiltered);
+- `P`: every candidate in the 12 policy files (411, 295 of them prefiltered);
 - `S`: every docs candidate that survives the prefilters and looks like a
-  tally, a number before a plural that isn't a unit (571);
-- `R`: a seeded sample of the other docs survivors (100).
+  tally, a number before a plural that isn't a unit (571, 6 of them
+  prefiltered since CR 459 added the `time` mask);
+- `R`: a seeded sample of the other docs survivors (100, 1 since
+  prefiltered).
 
 `P` and `R` are the rate a run sees, and `S` is where the positives are: 19
-tallies, 18 of them in `S`. 788 tally cases, plus one warrant case per tally.
+tallies, 18 of them in `S`. 780 tally cases, plus one warrant case per tally.
 A record's `section` is kept only where a warrant case reads it. The cache
-holds exactly the set's 784 distinct requests: 23 cases repeat another's text,
+holds exactly the set's 776 distinct requests: 23 cases repeat another's text,
 vendored docs in several repos.
 
 The rubric: a **tally** is an undated count of what the repo or project holds

@@ -43,6 +43,7 @@ PREFILTERS. A digit that code can rule out is masked before anything is sent:
   percent   12%, 72.3 %
   version   dotted: 1.13.0, v1.15, 0.2, 3.9+
   sha       a hex string of 7 or more holding a letter and a digit
+  time      a clock time: 08:00, 15:27:00Z
   port      after a colon: localhost:8080
   marker    the clause is only a list marker, `1.` or `2)`
   word      fused to letters: H1, UTF-8, 5xx, 64k, 30s, x86_64
@@ -142,6 +143,8 @@ _PREFILTERS = (
     ("percent", re.compile(r"\d+(?:\.\d+)?\s?%")),
     ("version", re.compile(r"\bv?\d+(?:\.\d+)+\+?")),
     ("sha", re.compile(r"\b(?=[0-9a-f]*[a-f])(?=[0-9a-f]*\d)[0-9a-f]{7,40}\b")),
+    # Before `port`, which took ":00" and left the hour (CR 459).
+    ("time", re.compile(r"\b\d{1,2}:\d{2}(?::\d{2}(?:\.\d+)?)?Z?\b")),
     ("port", re.compile(r":\d{2,5}\b")),
     ("word", re.compile(r"\b[A-Za-z_]+[-_]?\d[\w-]*|\b\d+[A-Za-z_]\w*")),
 )
