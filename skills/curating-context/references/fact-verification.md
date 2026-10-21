@@ -162,8 +162,11 @@ bash "<stale-issue-prose.sh>" /tmp/context-facts.tsv > /tmp/context-stale.tsv
   rows follow every live row, and the summary counts them apart. Its prose was
   true when written, so it flags less precisely: 4 in 17 at 0.2, against 13 in
   37 for live docs ([#463](https://github.com/gregoryfoster/skills/issues/463)).
-  Skipping it would have cost 4 of the 18 stale sentences, so it isn't the
-  default. `--skip-archival` sends nothing for those rows (status `archival`).
+  **Read each block to its own flag:** the live block's unflagged rows sit
+  between the two, and stopping at them would drop the archival catch, which
+  is what skipping costs (4 of the 18 stale sentences). Read that way, it is
+  the same 54 rows as one ranking, with every live catch in the first 23.
+  `--skip-archival` sends nothing for those rows (status `archival`).
 - **It never changes a verdict.** Every row stays TRUE. A sentence it ranks
   first is rewritten (class C), never deleted on its word.
 - **Exits 2 and 4 are a partial result, or none.** On 4 (a skip: not opted
