@@ -24,6 +24,8 @@ Indented code blocks aren't detected:
 in a policy file an indented line is far more often a list item's
 continuation. HTML comments are prose, since an agent reads the raw file.
 A blockquote's leading `>` markers are dropped before a line is classified.
+A leading BOM and each line's trailing CR are dropped first; line numbers are
+still `grep`'s.
 
 **The reference grammar is `verify-facts.sh`'s,** `REF` below, so the two can't
 disagree about what a reference is. A bare match directly after a word
@@ -291,7 +293,10 @@ def _short_repo(word: str) -> str | None:
 
 def occurrences(text: str) -> list[Occurrence]:
     """Every reference in `text`, in order, each with its sentence."""
-    lines = text.split("\n")
+    # A file saved on Windows: a BOM hid front matter, and a CR broke the
+    # setext match and went to TypeSafe inside the sentence (CR 449).
+    text = text[1:] if text.startswith("\ufeff") else text
+    lines = [line[:-1] if line.endswith("\r") else line for line in text.split("\n")]
     found: list[Occurrence] = []
     units = _units(lines)
     fenced = {u[1] for u in units if isinstance(u, tuple)}

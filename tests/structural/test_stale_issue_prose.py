@@ -261,6 +261,17 @@ def test_a_setext_section_is_clipped_too():
     assert len(o.heading) <= sent.MAX_CHARS
 
 
+def test_crlf_and_a_bom_read_like_lf():
+    """A Windows-saved file: same units, same line numbers, no CR sent (CR 449)."""
+    lf = "---\nfixes: #4\n---\n\nKnown issues\n===\n\nBlocked on\n#5 until spring.\n"
+    windows = "\ufeff" + lf.replace("\n", "\r\n")
+    assert _occ(windows) == _occ(lf)
+    assert [(o.line, o.in_code, o.heading) for o in sent.occurrences(windows)] == [
+        (2, True, None),
+        (9, False, "Known issues"),
+    ]
+
+
 def test_an_unclosed_leading_rule_is_not_front_matter():
     text = "---\n\nPending #7 still.\n"
     assert [(o.ref, o.in_code) for o in sent.occurrences(text)] == [("#7", False)]
