@@ -256,10 +256,11 @@ def clip_section(section: str, clause: str) -> str:
     """`section` cut to SECTION_CHARS around where `clause` starts in it."""
     if len(section) <= SECTION_CHARS:
         return section
-    words = clause.split()
-    at = section.find(" ".join(words[:4])) if words else -1
-    if at < 0:
-        at = 0
+    # The section is raw lines and the clause is joined, so a hard wrap can
+    # fall anywhere between its words (CR 460).
+    words = clause.split()[:4]
+    m = re.search(r"\s+".join(map(re.escape, words)), section) if words else None
+    at = m.start() if m else 0
     a = min(max(0, at - SECTION_CHARS // 2), len(section) - SECTION_CHARS)
     return (
         ("…" if a else "")

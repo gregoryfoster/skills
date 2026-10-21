@@ -311,6 +311,13 @@ def test_a_long_section_is_cut_around_the_clause():
     assert "The 182 hx-get reveals" in out and out[0] == out[-1] == "…"
 
 
+def test_a_hard_wrap_inside_the_clause_still_finds_it():
+    """The section keeps its line breaks; the clause was joined (CR 460)."""
+    section = "x " * 5000 + "The 182\nhx-get reveals mean this. " + "y " * 5000
+    out = bdc.clip_section(section, "The 182 hx-get reveals mean this.")
+    assert "The 182\nhx-get reveals" in out
+
+
 # --- the run -----------------------------------------------------------------
 
 RECORDS = [
