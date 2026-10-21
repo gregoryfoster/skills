@@ -297,12 +297,18 @@ DUPLICATE_RUN = 3  # consecutive non-blank lines
 DUPLICATE_MIN_CHARS = 120  # skip incidental repeats — table rules, short fences
 
 # Keyed on the first line of the maximal run. Every entry needs a reason and a
-# reference; "it was there already" is not one. Empty today, and kept rather
-# than removed: the registry is the seam where an unadjudicated duplicate waits
-# for its curation call. Its one entry — the paragraph `write-guard-hook.md`
-# shared with `continuous-surfaces.md` — was adjudicated in #218 and deleted, so
-# the rule covers the whole tree with nothing carved out of it.
-DUPLICATION_EXEMPTIONS: dict[str, str] = {}
+# reference; "it was there already" is not one. The registry is the seam where
+# an unadjudicated duplicate waits for its curation call. Its first entry — the
+# paragraph `write-guard-hook.md` shared with `continuous-surfaces.md` — was
+# adjudicated in #218 and deleted.
+DUPLICATION_EXEMPTIONS: dict[str, str] = {
+    '  for d in scripts ".claude/skills/$N/scripts" "$HOME/.claude/skills/$N/scripts"; do': (
+        "a reference's own script-resolution block (#438, #441): each one is the "
+        "`skill:required id=skill-scripts` template, whose loop "
+        "test_per_script_resolution.py holds to one shape, so two references that "
+        "each resolve a script share its lines by construction, not by a copy"
+    ),
+}
 
 
 def _duplicate_runs() -> list[tuple[str, list[str]]]:
