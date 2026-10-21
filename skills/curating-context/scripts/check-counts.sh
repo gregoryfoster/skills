@@ -322,8 +322,30 @@ COMMAND_RE = re.compile(r"`[^`]*(?:wc\s+-[lcwm]|grep\s+-c)[^`]*`")
 # properly re-derived count shelter every bare one beside it.
 CLAUSE_SPLIT = re.compile(r"(?<=[.;:!?])\s+|\s+[—–]\s+")
 
-FENCE = re.compile(r"^\s*(```|~~~)")
+FENCE = re.compile(r"^\s*(`{3,}|~{3,})(.*)$")
 HEADING = re.compile(r"^(#{1,6})\s+(.*?)\s*$")
+
+
+def fence_toggle(line, opener):
+    """(the fence opener after LINE, or None outside one; whether LINE is a marker).
+
+    CommonMark's close, as `_sentences.py` reads it (#441): a fence ends only
+    on a run of its own character at least as long as the one that opened it,
+    with nothing after the run. A ```` fence quoting ``` lines stays open, and
+    a backtick run whose info string holds a backtick ("```json``` blocks")
+    is an inline span, not a fence that swallows the prose after it.
+    """
+    m = FENCE.match(line)
+    if not m:
+        return opener, False
+    run, rest = m.group(1), m.group(2)
+    if opener is None:
+        if run[0] == "`" and "`" in rest:
+            return None, False
+        return run, True
+    if run[0] == opener[0] and len(run) >= len(opener) and not rest.strip():
+        return None, True
+    return opener, False
 
 
 def norm(title):
@@ -408,14 +430,16 @@ headings = []
 # A fence closes only on the marker that opened it. The constant captured the
 # marker from the start and this loop ignored it, toggling on either kind — so a
 # `~~~` inside a ``` block flipped the state and everything after the real close
-# was skipped as fenced, a count in the prose below it never judged. The three
-# scripts that walk fences now agree on this, pinned by test_heredoc_twins.py on
-# the constant and by test_fence_close.py on the behaviour (#275).
+# was skipped as fenced, a count in the prose below it never judged (#275). The
+# close then matched the marker's first three characters only, so a ``` line
+# inside a ```` fence closed it, and "```json``` blocks" in prose opened one
+# that swallowed everything to the next ``` (#441). `fence_toggle` is the three
+# scripts' one rule, pinned by test_heredoc_twins.py as a function and by
+# test_fence_close.py on the behaviour.
 opener = None
 for i, line in enumerate(lines):
-    m = FENCE.match(line)
-    if m and (opener is None or m.group(1) == opener):
-        opener = m.group(1) if opener is None else None
+    opener, marker = fence_toggle(line, opener)
+    if marker:
         if block:
             blocks.append(block)
             block = []

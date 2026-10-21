@@ -69,6 +69,7 @@ KNOWN_TWINS = {
     "HEADING",
     "LINK_DEPTH",
     "_erasable_prefixes",
+    "fence_toggle",
     "is_curation_row",
 }
 

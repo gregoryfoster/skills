@@ -23,8 +23,13 @@ the same answer, one in each direction the old toggle got wrong:
                  never judged; a count INSIDE the fence after the tilde was
                  judged as prose.
 
-The constant itself is pinned identical across the three by
-test_heredoc_twins.py; this file pins what the constant is for.
+#441 then replaced the three toggles with one function, `fence_toggle`, that
+closes the way CommonMark (and `_sentences.py`) does: on a run of the opener's
+character at least as long, with nothing after it. `TestCommonMarkClose` pins
+the two shapes the old close got wrong.
+
+The function is pinned identical across the three by test_heredoc_twins.py;
+this file pins what it is for.
 """
 
 import os
@@ -186,3 +191,65 @@ class TestCheckCounts:
         )
         r = _run(COUNTS, repo)
         assert r.returncode == 0, f"a fenced line was judged as prose:\n{r.stdout}"
+
+
+class TestCommonMarkClose:
+    """A fence ends where CommonMark says it does, in each script (#441)."""
+
+    def test_a_shorter_run_inside_a_longer_fence_is_content(self, tmp_path: Path):
+        """A ```` fence quoting a ``` block: the old close took the inner ```."""
+        repo = TestCheckCounts._repo(
+            tmp_path,
+            "four",
+            "# P\n\n````md\n```\nEight scheduled timers.\n```\n````\n\n"
+            "Seven scheduled jobs keep it fresh.\n",
+        )
+        r = _run(COUNTS, repo)
+        assert "Eight scheduled timers" not in r.stdout, r.stdout
+        assert "Seven scheduled jobs" in r.stdout, r.stdout
+
+    def test_an_inline_triple_backtick_span_opens_no_fence(self, tmp_path: Path):
+        """A backtick info string can't hold a backtick, so this line is prose."""
+        repo = TestCheckCounts._repo(
+            tmp_path,
+            "inline",
+            "# P\n\n```json``` blocks hold six `y` rows.\n\n"
+            "Seven scheduled jobs keep it fresh.\n",
+        )
+        r = _run(COUNTS, repo)
+        assert "six" in r.stdout and "Seven scheduled jobs" in r.stdout, r.stdout
+
+    def test_a_marker_with_text_after_it_does_not_close(self, tmp_path: Path):
+        repo = TestCheckCounts._repo(
+            tmp_path,
+            "info",
+            "# P\n\n```\n``` not a close\nEight scheduled timers.\n```\n",
+        )
+        r = _run(COUNTS, repo)
+        assert r.returncode == 0, r.stdout
+
+    def test_prove_no_loss_keeps_a_longer_fence_open(self, tmp_path: Path):
+        """A ```` fence quoting one ```bash line: the old close took that line,
+        the ```` re-opened a fence, and the prose after the block was read as
+        code, so a verbatim relocation reported `make check` dropped."""
+        repo = tmp_path / "claims4"
+        repo.mkdir()
+        _git(repo, "init", "-q")
+        _git(repo, "config", "user.email", "t@t")
+        _git(repo, "config", "user.name", "t")
+        _write(
+            repo, "AGENTS.md", "# P\n\n## Ship\n\nRun `make check` before shipping.\n"
+        )
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-qm", "pre")
+        _write(
+            repo, "AGENTS.md", "# P\n\n## Ship\n\nSee [docs/SHIP.md](docs/SHIP.md).\n"
+        )
+        block = "````md\n```bash\necho hi\n````\n"
+        _write(
+            repo,
+            "docs/SHIP.md",
+            "# Ship\n\n" + block + "\nRun `make check` before shipping.\n",
+        )
+        r = _run(PROVE, repo, "--base", "HEAD", "--claims")
+        assert r.returncode == 0, f"{r.stdout}{r.stderr}"

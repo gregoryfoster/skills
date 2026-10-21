@@ -664,7 +664,31 @@ RELOC_MIN_CHARS_FENCED = 8
 # destination side applies its own floor and absorbed the case built for it);
 # #275 brought prove-no-loss.sh and check-counts.sh to the same close, and the
 # constant is pinned identical across the three by test_heredoc_twins.py.
-FENCE = re.compile(r"^\s*(```|~~~)")
+FENCE = re.compile(r"^\s*(`{3,}|~{3,})(.*)$")
+
+
+def fence_toggle(line, opener):
+    """(the fence opener after LINE, or None outside one; whether LINE is a marker).
+
+    CommonMark's close, as `_sentences.py` reads it (#441): a fence ends only
+    on a run of its own character at least as long as the one that opened it,
+    with nothing after the run. A ```` fence quoting ``` lines stays open, and
+    a backtick run whose info string holds a backtick ("```json``` blocks")
+    is an inline span, not a fence that swallows the prose after it.
+    """
+    m = FENCE.match(line)
+    if not m:
+        return opener, False
+    run, rest = m.group(1), m.group(2)
+    if opener is None:
+        if run[0] == "`" and "`" in rest:
+            return None, False
+        return run, True
+    if run[0] == opener[0] and len(run) >= len(opener) and not rest.strip():
+        return None, True
+    return opener, False
+
+
 LINK_DEPTH = re.compile(r"\]\((?:\.\./)+")
 # Any ATX heading, where the module's HEADING deliberately starts at `##` — a
 # document title is not a section. Here the range has to be the full one: an H1
@@ -724,12 +748,8 @@ def body_keys(lines, sections=None):
     out, opener, title = {}, None, None
     for raw in lines:
         s = raw.strip()
-        m = FENCE.match(s)
-        if m and opener is None:
-            opener = m.group(1)
-            continue
-        if m and m.group(1) == opener:
-            opener = None
+        opener, marker = fence_toggle(s, opener)
+        if marker:
             continue
         # A marker of the OTHER kind inside a fence falls through to here, where
         # it is keyed as the fenced content it is.

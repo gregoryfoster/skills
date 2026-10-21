@@ -638,7 +638,31 @@ def delink(line):
 # the rest of the file by the fenced rules. One line, keyed differently in two
 # files, is the disagreement #275 is about; this definition is pinned identical
 # across the three scripts that carry it by test_heredoc_twins.py.
-FENCE = re.compile(r"^\s*(```|~~~)")
+FENCE = re.compile(r"^\s*(`{3,}|~{3,})(.*)$")
+
+
+def fence_toggle(line, opener):
+    """(the fence opener after LINE, or None outside one; whether LINE is a marker).
+
+    CommonMark's close, as `_sentences.py` reads it (#441): a fence ends only
+    on a run of its own character at least as long as the one that opened it,
+    with nothing after the run. A ```` fence quoting ``` lines stays open, and
+    a backtick run whose info string holds a backtick ("```json``` blocks")
+    is an inline span, not a fence that swallows the prose after it.
+    """
+    m = FENCE.match(line)
+    if not m:
+        return opener, False
+    run, rest = m.group(1), m.group(2)
+    if opener is None:
+        if run[0] == "`" and "`" in rest:
+            return None, False
+        return run, True
+    if run[0] == opener[0] and len(run) >= len(opener) and not rest.strip():
+        return None, True
+    return opener, False
+
+
 # Single-backtick spans only. A span cannot contain a backtick or span a line,
 # so this leaves ``code with ` inside`` alone rather than mis-splitting it.
 CODE_SPAN = re.compile(r"`([^`\n]+)`")
@@ -676,12 +700,8 @@ def atoms_of(lines, skip_fenced=True):
     """
     found, origin, opener = set(), {}, None
     for raw in lines:
-        m = FENCE.match(raw)
-        if m and opener is None:
-            opener = m.group(1)
-            continue
-        if m and m.group(1) == opener:
-            opener = None
+        opener, marker = fence_toggle(raw, opener)
+        if marker:
             continue
         # A marker of the OTHER kind inside a fence falls through as content.
         if opener is not None:
