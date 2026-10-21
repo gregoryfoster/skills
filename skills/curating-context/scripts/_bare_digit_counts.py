@@ -62,7 +62,9 @@ OUTPUT is TSV on stdout, one row per candidate, no header:
   p           the probability the clause states a tally, 3 places
   flag        `tally?` when p is at least the threshold
   enumerated  for a flagged clause, the probability its section lists the
-  stable      counted things, and that the count is structural; else empty
+  stable      counted things, and that the count is structural; else empty.
+              Empty on a flagged row means its warrant request failed (the
+              run exits 2)
   numbers     the digits left after the prefilters, space-separated
   clause      as check-counts.sh split it, tabs and newlines as spaces
 

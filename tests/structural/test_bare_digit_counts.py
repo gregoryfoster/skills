@@ -429,6 +429,7 @@ def test_a_warrant_failure_keeps_the_tally_judged(tmp_path):
     assert code == 2
     by = {r[1]: r for r in rows}
     assert by["5"][2:6] == ["judged", "0.900", "tally?", ""]
+    assert "Empty on a flagged row means its warrant request failed" in bdc.__doc__
     assert by["7"][2] == "not-asked" and by["9"][2] == "not-asked"
 
 
