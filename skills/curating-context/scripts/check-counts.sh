@@ -127,6 +127,22 @@ Options:
                    `pointer` on a count, or any other warrant on an index line,
                    is refused: the two classes have disjoint remedies and
                    crossing them silences the wrong thing.
+  --candidates FILE
+                   Also write, as JSONL, every clause this scan passed over that
+                   holds a digit: not reported, not carrying its command, not
+                   an index line, not fenced. One object per clause:
+                     file     the path the report names
+                     line     where its first digit is, 1-based
+                     clause   the clause, as this scan split it
+                     heading  the nearest heading above it, or null
+                     section  that heading's section as text: its lines up
+                              to the next heading at the same level or above
+                   OUTPUT ONLY. The report, the trailer, the exit codes and the
+                   ack file are what they are without it, so the advisory pass
+                   that reads it (bare-digit-counts.sh) can't move the gate, and
+                   the two can't disagree about where a clause or a fence ends
+                   (gregoryfoster/skills#441). Written on exit 0, 1 and 3: it
+                   doesn't depend on the ack file. A failed write exits 2.
   -h, --help       Show this help and exit 0.
 
 What it reports, in two classes:
@@ -154,7 +170,9 @@ What it reports, in two classes:
                    version, and a gate that cries wolf on `403` and `ISO 8601`
                    is a gate someone deletes. The gap is real: "182 hx-get
                    reveals" unbackticked passes. Naming it is the price of the
-                   class being usable at all.
+                   class being usable at all. An optional, advisory TypeSafe
+                   pass covers it outside the gate: --candidates below, then
+                   bare-digit-counts.sh (references/seam-accounting.md).
 
                    Fenced code blocks are skipped. A number inside one is
                    executable text that either works or does not; this class is
@@ -182,7 +200,7 @@ is the file learning to state numbers it cannot keep.
 Exit codes:
   0  no unacknowledged hits
   1  usage error, no file found, or an unrecognised warrant in the ack file
-  2  infrastructure failure (python3 missing)
+  2  infrastructure failure (python3 missing, or --candidates unwritable)
   3  one or more hits to judge — fix what rots, acknowledge what is warranted,
      re-run
 USAGE
@@ -192,10 +210,12 @@ POLICY=""
 INDEX_SECTION="Detail Docs"
 INDEX_MAX="200"
 ACK_FILE=".skills/context-counts-ok"
+CANDIDATES=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --file) POLICY="${2:?--file needs a path}"; shift 2 ;;
+    --candidates) CANDIDATES="${2:?--candidates needs a path}"; shift 2 ;;
     --index-section) INDEX_SECTION="${2:?--index-section needs a title}"; shift 2 ;;
     --index-max) INDEX_MAX="${2:?--index-max needs a number}"; shift 2 ;;
     --ack-file) ACK_FILE="${2:?--ack-file needs a path}"; shift 2 ;;
@@ -235,6 +255,12 @@ _libdir="$(cd "$(dirname "$_self")" 2>/dev/null && pwd -P)" || _libdir=""
 # shellcheck source=_context-lib.sh
 . "$_libdir/_context-lib.sh"
 
+# Named from where the caller stands, so resolved before the cd below.
+case "$CANDIDATES" in
+  "" | /*) ;;
+  *) CANDIDATES="$PWD/$CANDIDATES" ;;
+esac
+
 ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || {
   echo "ERROR not inside a git repository" >&2; exit 2; }
 cd "$ROOT" || { echo "ERROR cannot cd to $ROOT" >&2; exit 2; }
@@ -255,14 +281,15 @@ REL="$(ctx_resolve_rel "$ROOT" "$POLICY")"
 [ -n "$REL" ] || REL="$POLICY"
 
 RC=0
-python3 - "$REL" "$ACK_FILE" "$INDEX_SECTION" "$INDEX_MAX" <<'PY' || RC=$?
+python3 - "$REL" "$ACK_FILE" "$INDEX_SECTION" "$INDEX_MAX" "$CANDIDATES" <<'PY' || RC=$?
+import json
 import os
 import re
 import subprocess
 import sys
 from collections import Counter
 
-policy_rel, ack_file, index_section, index_max = sys.argv[1:5]
+policy_rel, ack_file, index_section, index_max, candidates_out = sys.argv[1:6]
 index_max = int(index_max)
 
 with open(policy_rel, encoding="utf-8", errors="replace") as fh:
@@ -376,6 +403,8 @@ def line_at(starts, offset):
 hits = []
 blocks = []
 block = []
+# (line, level, title) of each heading outside a fence, for --candidates only.
+headings = []
 # A fence closes only on the marker that opened it. The constant captured the
 # marker from the start and this loop ignored it, toggling on either kind — so a
 # `~~~` inside a ``` block flipped the state and everything after the real close
@@ -393,6 +422,9 @@ for i, line in enumerate(lines):
         continue
     if opener is not None:
         continue
+    heading = HEADING.match(line)
+    if heading:
+        headings.append((i + 1, len(heading.group(1)), heading.group(2)))
     if index_start is not None and index_start <= i < index_end:
         # Held to the length bound instead. A blurb that states a count AND runs
         # long is one finding about one line, and reporting it twice would make
@@ -420,6 +452,7 @@ for i, line in enumerate(lines):
 if block:
     blocks.append(block)
 
+passed_over = []
 for block in blocks:
     text, starts = joined(block)
     for offset, clause in clauses(text):
@@ -433,6 +466,37 @@ for block in blocks:
                 f"{policy_rel}:{line_at(starts, offset + found.start())}",
                 f"'{found.group(0).strip()}' — {clause[:100]}", clause,
             ))
+            continue
+        digit = re.search(r"\d", clause)
+        if digit:
+            passed_over.append((line_at(starts, offset + digit.start()), clause))
+
+# --candidates: the clauses a bare digit left unjudged, for the advisory pass
+# (#441). Written before the ack file is read, because nothing in it depends on
+# that file, and nothing below reads it back: the report is the same either way.
+if candidates_out:
+    def section_of(lineno):
+        above = [h for h in headings if h[0] <= lineno]
+        if not above:
+            start, level, title = 1, 0, None
+        else:
+            start, level, title = above[-1]
+        end = next((h[0] - 1 for h in headings
+                    if h[0] > start and (level == 0 or h[1] <= level)), len(lines))
+        return title, "\n".join(lines[start - 1:end]).strip("\n")
+
+    try:
+        with open(candidates_out, "w", encoding="utf-8") as fh:
+            for lineno, clause in passed_over:
+                title, section = section_of(lineno)
+                fh.write(json.dumps({
+                    "file": policy_rel, "line": lineno, "clause": clause,
+                    "heading": title, "section": section,
+                }, ensure_ascii=False) + "\n")
+    except OSError as e:
+        print(f"ERROR can't write --candidates {candidates_out}: {e.strerror}",
+              file=sys.stderr)
+        sys.exit(2)
 
 # Reported in file order. The two classes are collected in separate passes, so
 # without this an index-line hit at the bottom of the file lands above a count

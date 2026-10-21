@@ -1,8 +1,12 @@
 """Python shared by copying between heredocs must stay one definition (#275).
 
-Every line of Python in `skills/curating-context/scripts/` lives inline in a
+Most of the Python in `skills/curating-context/scripts/` lives inline in a
 `python3 - <<'PY'` heredoc — twelve blocks across eight scripts — so there is no
 module to import and a helper two scripts both need is copied between them.
+The `_*.py` modules beside them (#438 onward) are imported, not copied, so
+they're outside this pin. Discovery stays on heredocs: it pairs twins by name,
+and the modules' `_FENCE` and `_HEADING` would not pair with `FENCE` and
+`HEADING` anyway (#441).
 The copies drift. `_erasable_prefixes` was copied under #272 and had diverged
 textually before the day was out; `FENCE` existed three times in two spellings
 with two behaviours; `HEADING` existed three times in three. Three of those
