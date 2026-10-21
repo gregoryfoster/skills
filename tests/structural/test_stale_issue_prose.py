@@ -922,6 +922,8 @@ def test_help_documents_columns_statuses_exits_and_the_threshold():
         "exit codes",
         f"default {sip.DEFAULT_THRESHOLD:g}",
         "never changes a verdict",
+        "--skip-archival",
+        "CTX_ARCHIVAL",
     ):
         assert needle in r.stdout, needle
 
