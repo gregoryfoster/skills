@@ -54,6 +54,8 @@ columns come first, unchanged, so a reader of its TSV still parses each row:
                unresolved  gh couldn't resolve it now
                skipped | failed | not-asked   TypeSafe skipped, failed, or
                            wasn't reached after a failure
+               would-ask   --dry-run, counted in its summary: printed as a
+                           case, not sent
   sentence   the sentence or list item, tabs and newlines as spaces
 
 Judged rows come first, most likely stale first; the rest follow in file
@@ -72,7 +74,8 @@ sentence, its heading, the reference as written, and the item's kind, title,
 state, close reason and close date. Nothing else from the file or the repo.
 
 exit codes:
-  0  every occurrence that could be judged was judged
+  0  every occurrence that could be judged was judged (with --dry-run:
+     printed as a case)
   1  usage error, or a TSV that isn't the verifier's (nothing was sent)
   2  a TypeSafe or gh failure (its message on stderr). The rows are still
      printed, the unjudged ones marked
@@ -540,6 +543,8 @@ def main(
     pending = [r for r in rows if not r.status]
     if opts["dry_run"]:
         for r in pending:
+            # Named, or the summary ends on a bare count (CR 447).
+            r.status = "would-ask"
             state, questions = build_case(r.sentence, r.heading, r.ref, r.meta)
             case = {
                 "id": f"{r.file}:{r.line}:{r.ref}",

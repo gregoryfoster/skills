@@ -855,6 +855,8 @@ def test_dry_run_sends_nothing_and_emits_cases_the_evaluator_loads(checkout):
         json.dumps({**c, "expected": {next(iter(c["questions"])): True}}) for c in cases
     ]
     assert len(ev.load_set(labelled)) == 3
+    # Every count in the summary is labelled (CR 447).
+    assert err.getvalue().rstrip().endswith("1 code, 3 would-ask"), err.getvalue()
 
 
 @pytest.mark.parametrize(
