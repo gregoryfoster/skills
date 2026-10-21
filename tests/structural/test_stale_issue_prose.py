@@ -680,6 +680,55 @@ def test_a_skip_without_repo_asks_gh_nothing(checkout):
     assert [r[11] for r in rows] == ["skipped", "skipped", "code", "skipped"]
 
 
+def _git(*argv):
+    subprocess.run(["git", *argv], check=True, capture_output=True)
+
+
+def test_a_skip_without_repo_still_reports_short_repo(checkout):
+    """origin's URL names the repo without gh, so watcher#278 stays short-repo (CR 445)."""
+    Path("AGENTS.md").write_text(
+        "watcher#278 is still pending.\n\nskills#5 is planned.\n"
+    )
+    checkout.write_text(
+        "TRUE\tissue\tAGENTS.md\t#278\tclosed — check\n"
+        "TRUE\tissue\tAGENTS.md\t#5\topen\n"
+    )
+    _git("init", "-q", ".")
+    _git("remote", "add", "origin", "git@github.com:me/skills.git")
+
+    def connect(**kw):
+        raise ts.Skipped("not-opted-in", "test")
+
+    gh = Gh({})
+    code, rows, _ = _main([checkout], connect, gh)
+    assert code == 4 and not gh.calls
+    assert [(r[3], r[11]) for r in rows] == [("#278", "short-repo"), ("#5", "skipped")]
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "git@github.com:me/skills.git",
+        "https://github.com/me/skills",
+        "https://github.com/me/skills.git/",
+        "ssh://git@github.com:22/me/skills.git",
+    ],
+)
+def test_the_local_repo_is_read_from_origins_url(tmp_path, monkeypatch, url):
+    for k in [k for k in os.environ if k.startswith("GIT_")]:
+        monkeypatch.delenv(k)
+    _git("init", "-q", str(tmp_path))
+    _git("-C", str(tmp_path), "remote", "add", "origin", url)
+    assert sip.local_repo(tmp_path) == "me/skills"
+
+
+def test_no_origin_is_no_local_repo(tmp_path, monkeypatch):
+    for k in [k for k in os.environ if k.startswith("GIT_")]:
+        monkeypatch.delenv(k)
+    _git("init", "-q", str(tmp_path))
+    assert sip.local_repo(tmp_path) is None
+
+
 def test_a_tsv_without_issue_rows_says_how_to_get_them(checkout):
     checkout.write_text("TRUE\tpath\tAGENTS.md\tsrc/\texists\n")
     code, rows, err = _main(

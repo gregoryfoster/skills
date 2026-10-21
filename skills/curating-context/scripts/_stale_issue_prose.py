@@ -21,7 +21,8 @@ for deletion.
   TSV          the verifier's output; `-` or absent reads stdin
   --repo SLUG  owner/repo for bare #N references, as passed to the verifier.
                Default: gh's inference for the current directory, which is
-               the verifier's own default
+               the verifier's own default. A skipped run asks gh nothing
+               and reads origin's URL instead
   --threshold  flag a row `stale?` when its probability is at least P
                (default 0.2, chosen from the #438 measurement; ranking
                is the point, and the flag is where to stop reading)
@@ -208,6 +209,20 @@ def default_repo(run=_run) -> str | None:
         return None
     slug = r.stdout.strip()
     return slug if r.returncode == 0 and _SLUG.match(slug) else None
+
+
+# owner/repo at the end of a remote URL: git@host:o/r.git, https://host/o/r
+_REMOTE = re.compile(r"[:/]([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+?)(?:\.git)?/?$")
+
+
+def local_repo(root: Path) -> str | None:
+    """owner/repo from origin's URL, without asking gh: a skipped run's repo (CR 445)."""
+    try:
+        r = _run(["git", "-C", str(root), "remote", "get-url", "origin"])
+    except OSError:
+        return None
+    m = _REMOTE.search(r.stdout.strip()) if r.returncode == 0 else None
+    return m.group(1) if m else None
 
 
 def _alias_not_found(error) -> bool:
@@ -474,7 +489,10 @@ def main(
             client = connect(stderr=stderr)
         except _typesafe.Skipped as s:
             say(s.line)
-            rows = locate(tsv, _root(), opts["repo"])
+            # gh stays unasked, but origin's URL still names the repo, so
+            # watcher#278 is reported short-repo here too (CR 445).
+            root = _root()
+            rows = locate(tsv, root, opts["repo"] or local_repo(root))
             for r in rows:
                 if r.status in ("", "unresolved"):
                     r.status = "skipped"
