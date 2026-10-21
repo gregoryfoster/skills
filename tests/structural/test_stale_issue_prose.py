@@ -252,6 +252,13 @@ def test_an_unclosed_leading_rule_is_not_front_matter():
     assert [(o.ref, o.in_code) for o in sent.occurrences(text)] == [("#7", False)]
 
 
+def test_a_closed_leading_rule_is_not_front_matter():
+    """A blank line after `---` makes it a rule; the next rule closed nothing (CR 446)."""
+    text = "---\n\n# Rules\n\nBlocked on #5.\n\n---\n\n## More\n\nSee #6.\n"
+    got = [(o.ref, o.in_code, o.heading) for o in sent.occurrences(text)]
+    assert got == [("#5", False, "Rules"), ("#6", False, "More")]
+
+
 def test_a_section_is_clipped_like_a_sentence():
     text = "# " + "word " * 600 + "\n\nPending #9.\n"
     (o,) = sent.occurrences(text)

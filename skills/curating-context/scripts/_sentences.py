@@ -19,7 +19,8 @@ sentence over `MAX_CHARS` is cut down to a window around the reference.
 **Code is not prose.** A line inside a fenced block (``` or ~~~) and a span
 inside backticks hold no claims, so a match there is marked `in_code` and the
 caller counts it rather than judging it. So is a front-matter block (`---`
-on line 1 through its closing `---` or `...`). Indented code blocks aren't detected:
+on line 1, not followed by a blank line, through its closing `---` or `...`).
+Indented code blocks aren't detected:
 in a policy file an indented line is far more often a list item's
 continuation. HTML comments are prose, since an agent reads the raw file.
 A blockquote's leading `>` markers are dropped before a line is classified.
@@ -132,9 +133,11 @@ def _units(lines: list[str]):
     out = []
     # Front matter is metadata, not prose: a `---` first line through its
     # closing `---` or `...`. Read as prose, CR 435's setext rule made it the
-    # heading of everything below it (CR 441).
+    # heading of everything below it (CR 441). A `---` followed by a blank
+    # line is a thematic break, as pandoc reads it; taken for front matter it
+    # hid everything up to the next rule as code (CR 446).
     front = 0
-    if lines and lines[0].rstrip() == "---":
+    if len(lines) > 1 and lines[0].rstrip() == "---" and lines[1].strip():
         close = next(
             (i for i in range(1, len(lines)) if lines[i].rstrip() in ("---", "...")),
             None,
