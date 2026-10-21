@@ -3,7 +3,9 @@
 Split out of [cadence.md](cadence.md) in v1.15: the subject is what the
 `seams` number on a row *is*, which is the sweep's semantics rather than the
 schedule's, and cadence.md had reached its per-doc budget. Read this before
-treating a scheduled `seams` count as pure accrual.
+treating a scheduled `seams` count as pure accrual. The last section is Phase
+6.5's other optional step: [the bare digits `check-counts.sh` passes
+over](#bare-digits-the-count-gate-passes-over-optional-typesafe).
 
 ## What the scheduled `seams` count means
 
@@ -119,3 +121,62 @@ the wall where it is. The group's limit is what a decline cannot see: a line
 that describes moved content without naming its section. So group only where the
 lines are about policy files in general, and judge a line that makes a claim
 about the repo's own policy file line by line.
+
+## Bare digits the count gate passes over (optional, TypeSafe)
+
+`check-counts.sh` never reports a bare digit: in a policy file one is nearly
+always a port, a status code, a version or a limit. So "182 hx-get reveals"
+passes. `bare-digit-counts.sh` reads the clauses the gate passed over, masks
+the digits code can rule out (code spans, links, issue refs, dates, versions,
+SHAs, ports, percentages, list markers, digits fused to letters), and asks one
+yes-or-no question about each clause left: does a number in it state how many
+of something the repo holds now, so it goes stale? For a flagged clause it
+asks two more, whether the counted things are listed in the section
+(`enumerated`) and whether the count is structural (`stable`). It is advisory,
+and off until the repo opts in through `.skills/typesafe` or
+`TYPESAFE_OPT_IN`. A tally request carries the `clause`, its `numbers` and its
+`heading`. A warrant request adds the `section`'s text. Nothing else leaves
+the machine, and a private repo decides for itself. Resolve it on its own,
+since SKILL.md's block doesn't list it:
+
+<!-- skill:required id=skill-scripts -->
+```bash
+N=curating-context
+for S in bare-digit-counts.sh; do SD=
+  for d in scripts ".claude/skills/$N/scripts" "$HOME/.claude/skills/$N/scripts"; do
+    [ -f "$d/$S" ] && { SD="$d"; break; }
+  done
+  [ -n "$SD" ] || echo "$S not found in scripts/, .claude/skills/$N/scripts/, or ~/.claude/skills/$N/scripts/" >&2
+  echo "<$S>=${SD:?}/$S"
+done
+```
+
+```bash
+bash "<check-counts.sh>" --candidates /tmp/context-count-candidates.jsonl
+bash "<bare-digit-counts.sh>" /tmp/context-count-candidates.jsonl > /tmp/context-bare-digits.tsv
+```
+
+- **It never touches the gate.** `--candidates` is output only: the report,
+  the trailer and the exit code are the same without it. A flagged clause
+  needs no `.skills/context-counts-ok` entry, nothing is written for you, and
+  the `counts` fields on the ledger row don't include it.
+- **Read the flags, then the ranking.** Judged rows come most likely a tally
+  first, and `tally?` marks those at or over 0.8. On 788 hand-labelled clauses
+  from 12 public cohort repos
+  ([#441](https://github.com/gregoryfoster/skills/issues/441)), 0.8 flagged 5,
+  all tallies, but caught only 5 of the 19. False positives start at 0.79, so
+  read below the flag when the budget allows. `p` orders the rows; it isn't a
+  calibrated chance.
+- **On a policy file, expect silence.** The cohort's 12 policy files held 411
+  passed-over digits and one tally, which scored 0.48. The other 18 tallies
+  came from reference docs, so the pass earns more there (`--file` on both
+  scripts).
+- **A dated count is a record, not a tally.** "Measured 2026-09-23: 132
+  files" stays true as history, and the question says so. A count it ranks
+  first still needs your judgment, and so does a dated one it misses.
+- **The warrant scores are hints.** Among the 19 tallies, one was enumerated
+  and none was stable, so neither question has been measured. The choice among
+  the four forms stays yours.
+- **Exits 2 and 4 are a partial result, or none.** On 4 (a skip: not opted
+  in, or no key) every row is printed unjudged. On 2 (a TypeSafe failure) rows
+  judged before it keep their `p`, and the rest are `failed` or `not-asked`.
