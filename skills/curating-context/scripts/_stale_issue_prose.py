@@ -452,12 +452,13 @@ def summary(rows: list[Row], threshold: float) -> str:
         head += (
             f"; archival: {old} judged, {sum(r.archival for r in flagged)} at or over"
         )
+    # A dry run sizes the cost before anything is sent: say how much of it is
+    # history (CR 452).
+    would = sum(1 for r in rows if r.archival and r.status == "would-ask")
     parts = [head + ")"]
     for s, n in sorted(counts.items()):
-        # A dry run sizes the cost before anything is sent: say how much of
-        # it is history (CR 452).
-        asked = sum(1 for r in rows if r.archival and r.status == s == "would-ask")
-        parts.append(f"{n} {s}" + (f" (archival: {asked})" if asked else ""))
+        note = f" (archival: {would})" if s == "would-ask" and would else ""
+        parts.append(f"{n} {s}{note}")
     return (
         f"stale-issue-prose: {len(rows)} occurrences of {refs} references: "
         + ", ".join(parts)
