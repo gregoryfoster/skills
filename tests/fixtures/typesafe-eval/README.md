@@ -42,10 +42,10 @@ git work tree, where the evaluator's own guard puts them.
 
 ## What a replay pins, and what it doesn't
 
-It pins the set, the cache and the evaluator's metrics. It does **not** pin
-what feeds the case builder: rebuilding a case's input needs the source file
-it came from, which lives in another repo, often at an old commit. A builder change that alters what is sent
-shows up only when someone re-measures.
+It pins the set, the cache and the evaluator's metrics, and step 5 pins the
+case builder itself. It does **not** pin what feeds the builder: rebuilding a
+case's input needs the source file it came from, which lives in another repo,
+often at an old commit. A change there shows up only when someone re-measures.
 
 ## Sets
 
