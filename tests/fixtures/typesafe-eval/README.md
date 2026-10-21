@@ -9,6 +9,10 @@ was measured on and the cache of the replies it got:
   cache.jsonl   the replies, in its CACHE format (holds no case text)
 ```
 
+`tests/structural/test_typesafe_eval_sets.py` replays each one with
+`typesafe-eval.py <set> --cache <cache> --offline --public` and holds it to its
+headline numbers. It needs no network and no key.
+
 ## Only public material lands here
 
 **Decided 2026-10-21 by the operator** (epic #451): a set built from public
@@ -30,12 +34,17 @@ git work tree, where the evaluator's own guard puts them.
 2. Copy the set and its cache into `<child>/` under the names above.
 3. Replay it: `python3 scripts/typesafe-eval.py <child>/set.jsonl --cache
    <child>/cache.jsonl --offline --public`. It must be valid with zero misses.
+4. Add a row to `SETS` in the test: the set's sha256, its case count, and the
+   sweep rows the child chose its threshold on.
+5. If the child's case builder takes only what is in `state`, rebuild every
+   case through it and assert byte equality, as the stale-issue-prose test
+   does. That pins what is sent at no cost.
 
 ## What a replay pins, and what it doesn't
 
 It pins the set, the cache and the evaluator's metrics. It does **not** pin
-the shipped case builder: rebuilding a case needs the source file it came
-from, which lives in another repo. A builder change that alters what is sent
+what feeds the case builder: rebuilding a case's input needs the source file
+it came from, which lives in another repo, often at an old commit. A builder change that alters what is sent
 shows up only when someone re-measures.
 
 ## Sets
