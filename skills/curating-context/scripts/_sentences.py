@@ -53,6 +53,7 @@ _TABLE_ROW = re.compile(r"^\s*\|")
 _BOUNDARY = re.compile(r"[.!?][\"')\]*_]*\s+(?=[A-Z0-9(\[*_`\"'#])")
 _TICKS = re.compile(r"`+")
 _QUOTE = re.compile(r"^[ \t]*(?:>[ \t]?)+")
+_ONE_QUOTE = re.compile(r"^[ \t]*>[ \t]?")
 # Not "no": "The answer is no." ends a sentence far more often in a policy
 # file than "No. 5" abbreviates one (CR 429).
 _ABBREV = frozenset("e.g i.e etc vs cf approx fig al viz resp esp incl ca".split())
@@ -75,6 +76,7 @@ class _Unit:
     # (offset in text, line number, offset in that line) for each joined line
     pieces: list
     heading: str | None
+    depth: int = 0  # how many blockquote markers its first line sat under
 
 
 def _code_spans(line: str) -> list[tuple[int, int]]:
@@ -103,10 +105,22 @@ def _in(spans, pos: int) -> bool:
     return any(a <= pos < b for a, b in spans)
 
 
+def _strip_quotes(raw: str, limit: int | None = None) -> tuple[str, int]:
+    """`raw` without its leading `>` markers, at most `limit` of them, and how many went."""
+    depth = 0
+    while limit is None or depth < limit:
+        m = _ONE_QUOTE.match(raw)
+        if not m:
+            break
+        raw, depth = raw[m.end() :], depth + 1
+    return raw, depth
+
+
 def _units(lines: list[str]):
     """Prose units, and a ("code", line number) tuple for each line inside a fence."""
     heading = None
     fence = None  # the opening fence's character and length
+    fence_depth = 0  # the blockquote markers the fence was opened under
     cur = None
 
     def flush():
@@ -116,32 +130,41 @@ def _units(lines: list[str]):
 
     out = []
     for n, raw in enumerate(lines, 1):
+        if fence is not None:
+            # Inside a fence only the markers it was opened under are quoting;
+            # a `> ```` in a heredoc is content, not a close (CR 440).
+            inner, got = _strip_quotes(raw, fence_depth)
+            if got == fence_depth:
+                m = _FENCE.match(inner)
+                if m and m.group(1)[0] == fence[0] and len(m.group(1)) >= fence[1]:
+                    if not inner[m.end() :].strip():
+                        fence = None
+                out.append(("code", n))
+                continue
+            fence = None  # the quote holding the fence ended, and the fence with it
         # A blockquote's `>` markers aren't prose; left in, they land mid-
         # sentence once its lines are joined (CR 428).
-        raw = _QUOTE.sub("", raw)
+        raw, depth = _strip_quotes(raw)
         m = _FENCE.match(raw)
-        if fence is not None:
-            if m and m.group(1)[0] == fence[0] and len(m.group(1)) >= fence[1]:
-                if not raw[m.end() :].strip():
-                    fence = None
-            out.append(("code", n))
-            continue
         # A backtick fence's info string can't hold a backtick (CommonMark), so
         # "```json``` blocks" opens an inline span, not a fence that would
         # swallow the rest of the file as code (CR 421).
         if m and not (m.group(1)[0] == "`" and "`" in raw[m.end() :]):
             out.append(flush())
-            fence = (m.group(1)[0], len(m.group(1)))
+            fence, fence_depth = (m.group(1)[0], len(m.group(1))), depth
             out.append(("code", n))
             continue
         if not raw.strip():
             out.append(flush())
             continue
         if cur is not None and cur.kind == "para" and _SETEXT.match(raw):
-            # A setext underline turns the paragraph above it into a heading,
-            # rather than joining "=====" onto its sentence (CR 435).
-            cur.kind = "heading"
-            heading = cur.text
+            if depth == cur.depth:
+                # A setext underline turns the paragraph above it into a
+                # heading, rather than joining "=====" onto its sentence (CR 435).
+                cur.kind = "heading"
+                heading = cur.text
+            # At another quote depth it closes the quote (a thematic break, or a
+            # lazy line with no reference in it), never a heading (CR 440).
             out.append(flush())
             continue
         h = _HEADING.match(raw)
@@ -162,12 +185,12 @@ def _units(lines: list[str]):
         li = _LIST_ITEM.match(raw)
         if li:
             out.append(flush())
-            cur = _Unit("item", raw[li.end() :], [(0, n, li.end())], heading)
+            cur = _Unit("item", raw[li.end() :], [(0, n, li.end())], heading, depth)
             continue
         stripped = raw.lstrip()
         lead = len(raw) - len(stripped)
         if cur is None:
-            cur = _Unit("para", stripped, [(0, n, lead)], heading)
+            cur = _Unit("para", stripped, [(0, n, lead)], heading, depth)
         else:
             cur.pieces.append((len(cur.text) + 1, n, lead))
             cur.text = f"{cur.text} {stripped}"

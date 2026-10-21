@@ -199,6 +199,29 @@ def test_a_setext_heading_is_a_heading(underline):
     ]
 
 
+def test_a_quoted_fence_line_inside_a_fence_is_content():
+    """A `> ```` in a heredoc closed the fence and hid the rest of the file as code (CR 440)."""
+    text = "```bash\n$ cat <<EOF\n> ```\nEOF\n```\n\nPending #8 is open.\n"
+    assert [(o.ref, o.in_code) for o in sent.occurrences(text)] == [("#8", False)]
+
+
+def test_a_fence_inside_a_quote_ends_with_the_quote():
+    text = "> ```\n> see #1\n\nAfter #2 here.\n"
+    assert [(o.ref, o.in_code) for o in sent.occurrences(text)] == [
+        ("#1", True),
+        ("#2", False),
+    ]
+
+
+def test_an_underline_at_another_quote_depth_is_no_heading():
+    """`> quoted #15` then `---` is a blockquote and a rule in CommonMark (CR 440)."""
+    text = "> quoted #15\n---\n\nLater #16.\n"
+    assert [(o.ref, o.heading) for o in sent.occurrences(text)] == [
+        ("#15", None),
+        ("#16", None),
+    ]
+
+
 def test_a_table_row_gives_its_name_cell_and_the_refs_cell():
     text = "| `stream.x` | live | consumer pending (#9) |\n"
     (o,) = sent.occurrences(text)
