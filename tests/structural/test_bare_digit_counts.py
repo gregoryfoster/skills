@@ -267,6 +267,8 @@ def test_the_help_documents_the_flag_and_points_at_the_pass():
         ("max 64 chars, #12 aside.", ["64"], ["issue"]),
         ("from 100+ candidates", ["100+"], []),
         ("a 6,000-token budget", ["6,000"], []),
+        ("on port 8000, never 8001.", ["8000", "8001"], []),
+        ("1,2 and 12,345,678 rows", ["1", "2", "12,345,678"], []),
     ],
 )
 def test_prefilters(clause, numbers, masks):

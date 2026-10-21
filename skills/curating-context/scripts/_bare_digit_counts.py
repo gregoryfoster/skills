@@ -146,7 +146,9 @@ _PREFILTERS = (
     ("word", re.compile(r"\b[A-Za-z_]+[-_]?\d[\w-]*|\b\d+[A-Za-z_]\w*")),
 )
 _MARKER = re.compile(r"^\(?\d{1,3}[.)]$")
-_NUMBER = re.compile(r"\d[\d,]*\+?")
+# Thousands separators only: `\d[\d,]*` took the comma after "port 8000," into
+# the number, and 94 of the 788 cases first measured were asked about one (CR 458).
+_NUMBER = re.compile(r"\d{1,3}(?:,\d{3})+\+?|\d+\+?")
 
 
 class UsageError(Exception):

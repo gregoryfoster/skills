@@ -61,7 +61,7 @@ often at an old commit. A change there shows up only when someone re-measures.
 | Directory | Child | Set sha256 | Measured |
 |---|---|---|---|
 | `stale-issue-prose/` | #438 | `cc3ee5d181b2` | [report](https://github.com/gregoryfoster/skills/issues/438#issuecomment-6302036571), [re-measure](https://github.com/gregoryfoster/skills/issues/438#issuecomment-6303164875) |
-| `bare-digit-counts/` | #441 | `2f9668b040db` | [report](https://github.com/gregoryfoster/skills/issues/441) |
+| `bare-digit-counts/` | #441 | `f92498408c3f` | [report](https://github.com/gregoryfoster/skills/issues/441) |
 
 `stale-issue-prose/` is 130 cases from gregoryfoster/skills and 11 public
 CannObserv repos (`still_open` 15 positive, `already_done` 3), labelled by one
