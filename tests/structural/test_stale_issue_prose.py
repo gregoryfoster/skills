@@ -247,6 +247,20 @@ def test_front_matter_is_not_prose_and_not_a_heading():
     assert got == [("#5", True, None), ("#6", False, None)]
 
 
+def test_front_matter_may_close_with_dots():
+    """YAML's document end `...` closes it too (CR 448)."""
+    text = "---\nname: x\nfixes: #5\n...\n\nPending #6 here.\n"
+    got = [(o.ref, o.in_code, o.heading) for o in sent.occurrences(text)]
+    assert got == [("#5", True, None), ("#6", False, None)]
+
+
+def test_a_setext_section_is_clipped_too():
+    """CR 441 clipped both heading forms; only the ATX one was held (CR 448)."""
+    text = "word " * 600 + "\n=====\n\nPending #9.\n"
+    (o,) = sent.occurrences(text)
+    assert len(o.heading) <= sent.MAX_CHARS
+
+
 def test_an_unclosed_leading_rule_is_not_front_matter():
     text = "---\n\nPending #7 still.\n"
     assert [(o.ref, o.in_code) for o in sent.occurrences(text)] == [("#7", False)]
@@ -479,6 +493,18 @@ def test_a_repository_gh_cant_resolve_is_a_gh_failure():
     with pytest.raises(sip.GhError) as e:
         sip.fetch_meta("me/typo", [1], run)
     assert "Could not resolve to a Repository" in str(e.value)
+
+
+def test_a_null_repository_without_errors_is_a_gh_failure():
+    """No repository and nothing to say why: not every ref unresolved (CR 439, 448)."""
+
+    def run(argv):
+        return subprocess.CompletedProcess(
+            argv, 0, json.dumps({"data": {"repository": None}}), ""
+        )
+
+    with pytest.raises(sip.GhError, match="no repository in the reply"):
+        sip.fetch_meta("me/skills", [1], run)
 
 
 def test_an_untyped_graphql_error_is_a_gh_failure():
