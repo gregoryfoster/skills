@@ -102,7 +102,6 @@ exit codes:
 from __future__ import annotations
 
 import json
-import os
 import re
 import subprocess
 import sys
@@ -113,6 +112,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))  # `python3 -I` drops i
 import _sentences  # noqa: E402
 import _typesafe  # noqa: E402
 
+# One matcher for the skill's passes (#463, moved by #441).
+from _archival import ARCHIVAL_DEFAULT, archival_names, is_archival  # noqa: E402,F401
+
 # Chosen from the #438 measurement: the highest threshold that kept recall at
 # 0.9 or more on both questions (still_open 14/15, already_done 3/3).
 DEFAULT_THRESHOLD = 0.2
@@ -121,12 +123,6 @@ BATCH = 50
 EXIT_USAGE = 1
 EXIT_FAILED = 2
 EXIT_SKIPPED = 4
-
-# `_context-lib.sh`'s CTX_ARCHIVAL_DEFAULT, held to it (and to
-# measure-context.sh's copy) by a parity test, so the defaults can't drift
-# (#463). An overridden list still can: CTX_ARCHIVAL moves this pass, while
-# Phase 1 takes measure-context.sh --archival.
-ARCHIVAL_DEFAULT = "plans specs research audits archive"
 
 _SLUG = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 
@@ -205,29 +201,6 @@ def read_tsv(lines) -> list[tuple[str, ...]]:
 def split_ref(ref: str, default_slug: str | None) -> tuple[str | None, int]:
     slug, _, num = ref.rpartition("#")
     return (slug or default_slug), int(num)
-
-
-def archival_names(environ=None) -> list[str]:
-    """CTX_ARCHIVAL as the library reads it: `${CTX_ARCHIVAL:-default}`, split on whitespace."""
-    env = os.environ if environ is None else environ
-    return (env.get("CTX_ARCHIVAL") or ARCHIVAL_DEFAULT).split()
-
-
-def is_archival(fname: str, root: Path, names) -> bool:
-    """ctx_is_archival: any component of the root-relative path is one of `names`.
-
-    An absolute path under the root is made relative first, so a checkout that
-    happens to sit under ~/archive/ isn't all history.
-    """
-    path = Path(fname)
-    if path.is_absolute():
-        for p, r in ((path, root), (path.resolve(), root.resolve())):
-            try:
-                path = p.relative_to(r)
-                break
-            except ValueError:
-                pass
-    return any(part in names for part in path.parts)
 
 
 # --- issue metadata ----------------------------------------------------------

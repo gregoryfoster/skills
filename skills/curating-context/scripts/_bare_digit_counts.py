@@ -17,6 +17,10 @@ REFERENCE DOCS ONLY. A clause from a policy file (any AGENTS.md or CLAUDE.md)
 is never sent, and its row says `policy-file`. The cohort's 12 policy files
 held 411 passed-over digits and one tally, so the pass would spend a call per
 port and status code to find nothing; point the gate's --file at a doc.
+Nor is a clause from an ARCHIVAL doc, a path with a component named in
+CTX_ARCHIVAL (default: plans specs research audits archive), as
+`_context-lib.sh` reads it: a dated plan's counts are records, which the
+question already answers no for. Its row says `archival`.
 
 It flags; it never writes. The gate, its warrants and
 `.skills/context-counts-ok` are untouched: a flagged clause needs no entry,
@@ -54,6 +58,7 @@ OUTPUT is TSV on stdout, one row per candidate, no header:
 
   status      judged, prefiltered:<masks>, or why it wasn't judged:
                 policy-file   from an AGENTS.md or CLAUDE.md: never sent
+                archival      from an archival doc: never sent
                 skipped | failed | not-asked   TypeSafe skipped, failed, or
                             wasn't reached after a failure
                 would-ask   --dry-run: printed as a case, not sent
@@ -71,8 +76,8 @@ TYPESAFE_OPT_IN=on or `.skills/typesafe`. A request carries the clause, its
 numbers and its heading. Nothing else from the file or the repo.
 
 exit codes:
-  0  every candidate was prefiltered, a policy file's, or judged (with
-     --dry-run: printed)
+  0  every candidate was prefiltered, a policy file's or an archival
+     doc's, or judged (with --dry-run: printed)
   1  usage error, or input that isn't check-counts.sh's (nothing was sent)
   2  a TypeSafe failure (its message on stderr). The rows are still
      printed, the unjudged ones marked
@@ -93,6 +98,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # `python3 -I` drops it
 import _sentences  # noqa: E402
 import _typesafe  # noqa: E402
+from _archival import archival_names, is_archival  # noqa: E402
 
 DEFAULT_THRESHOLD = 0.8
 # A policy file's clauses are never sent (#441): 1 tally in its 411 digits.
@@ -214,11 +220,18 @@ def is_policy_file(path: str) -> bool:
     return Path(path).name in POLICY_FILES
 
 
-def to_row(rec: dict) -> Row:
+def to_row(rec: dict, archival=None) -> Row:
+    """One candidate, and why it won't be sent, if it won't.
+
+    `archival` is the list of names; None reads CTX_ARCHIVAL as the library does.
+    """
     numbers, masks = prefilter(rec["clause"])
     row = Row(rec["file"], rec["line"], rec["clause"], rec["heading"], numbers, masks)
+    names = archival_names() if archival is None else archival
     if is_policy_file(row.file):
         row.status = "policy-file"
+    elif is_archival(row.file, Path.cwd(), names):
+        row.status = "archival"
     elif not numbers:
         row.status = "prefiltered:" + ",".join(masks)
     return row
@@ -351,15 +364,17 @@ def main(argv: list[str], stdin=None, stdout=None, stderr=None, connect=None) ->
         return EXIT_USAGE
 
     threshold = opts["threshold"]
-    rows = [to_row(r) for r in recs]
+    names = archival_names()
+    rows = [to_row(r, names) for r in recs]
     pending = [r for r in rows if not r.status]
-    policy = sorted({r.file for r in rows if r.status == "policy-file"})
-    if policy:
-        say(
-            f"bare-digit-counts: {', '.join(policy)} is a policy file, so nothing "
-            "from it is sent (#441). Run check-counts.sh --file <reference doc> "
-            "--candidates FILE instead"
-        )
+    for status, what in (("policy-file", "a policy file"), ("archival", "archival")):
+        files = sorted({r.file for r in rows if r.status == status})
+        if files:
+            say(
+                f"bare-digit-counts: {', '.join(files)} is {what}, so nothing "
+                "from it is sent (#441). Run check-counts.sh --file <live "
+                "reference doc> --candidates FILE instead"
+            )
 
     if opts["dry_run"]:
         for r in pending:

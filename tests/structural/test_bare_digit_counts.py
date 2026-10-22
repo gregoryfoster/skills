@@ -287,6 +287,44 @@ def test_a_policy_files_clause_is_never_sent(path):
     assert row.status == "policy-file" and row.numbers == ["40"]
 
 
+@pytest.mark.parametrize(
+    "path,ctx",
+    [
+        ("docs/plans/2026-01-01-x.md", None),
+        ("docs/archive/old.md", ""),
+        ("research/notes.md", None),
+        ("docs/history/x.md", "history"),
+    ],
+)
+def test_an_archival_docs_clause_is_never_sent(path, ctx, monkeypatch):
+    """A dated plan's counts are records (#441), and the matcher is the library's."""
+    monkeypatch.delenv("CTX_ARCHIVAL", raising=False)
+    if ctx is not None:
+        monkeypatch.setenv("CTX_ARCHIVAL", ctx)
+    rec = {"file": path, "line": 3, "clause": "Holds 40 files.", "heading": None}
+    assert bdc.to_row(rec).status == "archival"
+
+
+def test_the_passes_share_one_archival_matcher():
+    """#463's note: a second importer moves the matcher to a sibling, not a copy."""
+    arch = sys.modules["_archival"]
+    sip = _load("_stale_issue_prose", SCRIPTS / "_stale_issue_prose.py")
+    for name in ("archival_names", "is_archival", "ARCHIVAL_DEFAULT"):
+        assert getattr(bdc, name, getattr(arch, name)) is getattr(arch, name)
+        assert getattr(sip, name) is getattr(arch, name), name
+
+
+def test_an_archival_input_sends_nothing(tmp_path, monkeypatch):
+    def connect(**kw):
+        raise AssertionError("connected")
+
+    monkeypatch.delenv("CTX_ARCHIVAL", raising=False)
+    recs = [{**r, "file": "docs/plans/p.md"} for r in RECORDS]
+    code, rows, err = _main([_input(tmp_path, recs)], connect)
+    assert code == 0 and {r[2] for r in rows} == {"archival"}
+    assert "docs/plans/p.md is archival" in err
+
+
 @pytest.mark.parametrize("path", ["docs/AGENTS-notes.md", "README.md", "agents.md"])
 def test_a_reference_doc_is_sent(path):
     rec = {"file": path, "line": 3, "clause": "Holds 40 files.", "heading": None}
@@ -385,7 +423,7 @@ def test_a_policy_file_input_sends_nothing_and_says_where_to_point(tmp_path):
     recs = [{**r, "file": "AGENTS.md"} for r in RECORDS]
     code, rows, err = _main([_input(tmp_path, recs)], connect)
     assert code == 0 and {r[2] for r in rows} == {"policy-file"}
-    assert "AGENTS.md is a policy file" in err and "--file <reference doc>" in err
+    assert "AGENTS.md is a policy file" in err and "--file <live" in err
     assert "4 policy-file" in err
 
 

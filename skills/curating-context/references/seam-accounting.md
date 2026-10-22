@@ -161,7 +161,9 @@ bash "<bare-digit-counts.sh>" /tmp/context-count-candidates.jsonl > /tmp/context
 - **Never on a policy file.** A clause from an `AGENTS.md` or `CLAUDE.md` is
   not sent; its row says `policy-file`. The cohort's 12 policy files held 411
   passed-over digits and one tally, so a run there buys a call per port to
-  find nothing. Run it on the docs a curation split, or any live doc.
+  find nothing. Run it on the docs a curation split, or any live doc. An
+  archival doc (a dated plan or spec, by the `CTX_ARCHIVAL` names) is skipped
+  the same way, as `archival`: its counts are records.
 - **Read the flags, then the ranking.** Judged rows come most likely a tally
   first, and `tally?` marks those at or over 0.8. On 664 hand-labelled
   clauses from the live docs of 12 public cohort repos
