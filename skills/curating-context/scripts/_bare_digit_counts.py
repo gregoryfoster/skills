@@ -111,7 +111,8 @@ EXIT_SKIPPED = 4
 # The second wording measured (#441). The first lumped "a measurement" in with
 # the limits, and Jev still called every dated graph yield and past dump a tally:
 # no threshold reached precision 0.2. Naming a record as no took the Brier
-# score from 0.065 to 0.037 on the same set.
+# score from 0.065 to 0.037 on the 780-case set both were asked on (policy
+# files included); on the committed docs-only set of 664 it is 0.041 (CR 465).
 TALLY = (
     "Does a number in `numbers`, as `clause` uses it, state how many of something "
     "the repo or project holds right now (files, tests, tables, rules, call sites, "
