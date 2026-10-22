@@ -1,4 +1,4 @@
-# id<TAB>tally[<TAB>enumerated<TAB>stable]; one labeller, 2026-10-21. Rubric: README.md.
+# id<TAB>tally; one labeller, 2026-10-21. Rubric: README.md.
 P000	n
 P001	n
 P002	n
@@ -6,7 +6,7 @@ P003	n
 P004	n
 P005	n
 P006	n
-P007	y	n	n	# 100+ candidate skills
+P007	y	# 100+ candidate skills
 P008	n
 P009	n
 P010	n
@@ -418,7 +418,7 @@ S004	n
 S005	n
 S006	n
 S007	n
-S008	y	n	n	# 49 LDs, 39 counties, 10 CDs in the registry
+S008	y	# 49 LDs, 39 counties, 10 CDs in the registry
 S009	n
 S010	n
 S011	n
@@ -428,7 +428,7 @@ S014	n
 S015	n
 S016	n
 S017	n
-S018	y	n	n	# 5 structural tests, checklist
+S018	y	# 5 structural tests, checklist
 S019	n
 S020	n
 S021	n
@@ -497,7 +497,7 @@ S083	n
 S084	n
 S085	n
 S086	n
-S087	y	n	n	# 103 seeded codes
+S087	y	# 103 seeded codes
 S088	n
 S089	n
 S090	n
@@ -505,12 +505,12 @@ S091	n
 S092	n
 S093	n
 S094	n
-S095	y	y	n	# 5 tests, each named in the clause
+S095	y	# 5 tests, each named in the clause
 S096	n
 S097	n
-S098	y	n	n	# all 17 tables
+S098	y	# all 17 tables
 S099	n
-S100	y	n	n	# ~4,900 archive files
+S100	y	# ~4,900 archive files
 S101	n
 S102	n
 S103	n
@@ -574,7 +574,7 @@ S160	n
 S161	n
 S162	n
 S163	n
-S164	y	n	n	# 95 tracked files, 48 Python
+S164	y	# 95 tracked files, 48 Python
 S165	n
 S166	n
 S167	n
@@ -616,7 +616,7 @@ S202	n
 S203	n
 S204	n
 S205	n
-S206	y	n	n	# ~200 upstream lines
+S206	y	# ~200 upstream lines
 S207	n
 S208	n
 S209	n
@@ -664,7 +664,7 @@ S250	n
 S251	n
 S252	n
 S253	n
-S254	y	n	n	# 6,698 of 11,086 active assignments
+S254	y	# 6,698 of 11,086 active assignments
 S255	n
 S256	n
 S257	n
@@ -676,12 +676,12 @@ S262	n
 S263	n
 S264	n
 S265	n
-S266	y	n	n	# 7 citable types
+S266	y	# 7 citable types
 S267	n
 S268	n
 S269	n
 S270	n
-S271	y	n	n	# ~200 browser tests
+S271	y	# ~200 browser tests
 S272	n
 S273	n
 S274	n
@@ -901,7 +901,7 @@ S387	n
 S388	n
 S389	n
 S390	n
-S391	y	n	n	# all 147 mutation controls
+S391	y	# all 147 mutation controls
 S392	n
 S393	n
 S394	n
@@ -909,7 +909,7 @@ S395	n
 S396	n
 S397	n
 S398	n
-S399	y	n	n	# ~16 seeded values, listed only in part ('etc.')
+S399	y	# ~16 seeded values, listed only in part ('etc.')
 S400	n
 S401	n
 S402	n
@@ -921,13 +921,13 @@ S407	n
 S408	n
 S409	n
 S410	n
-S411	y	n	n	# ~190 hits across the tree
+S411	y	# ~190 hits across the tree
 S412	n
 S413	n
 S414	n
 S415	n
 S416	n
-S417	y	n	n	# 8 terraform resources
+S417	y	# 8 terraform resources
 S418	n
 S419	n
 S420	n
@@ -1012,10 +1012,10 @@ S498	n
 S499	n
 S500	n
 S501	n
-S502	y	n	n	# 35 space-padded acronyms
+S502	y	# 35 space-padded acronyms
 S503	n
 S504	n
-S505	y	n	n	# 922 mid-term boundaries
+S505	y	# 922 mid-term boundaries
 S506	n
 S507	n
 S508	n
@@ -1078,6 +1078,6 @@ S564	n
 S565	n
 S566	n
 S567	n
-S568	y	n	n	# 6 of 12 upstream defaults
+S568	y	# 6 of 12 upstream defaults
 S569	n
 S570	n

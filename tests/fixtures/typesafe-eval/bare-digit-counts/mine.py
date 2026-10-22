@@ -11,7 +11,8 @@ collect  runs the shipped `check-counts.sh --candidates` over each repo in
          `docs/**/*.md`, as `is_archival()` reads the default list. Each record
          gains `repo` and `rev`. It refuses a clone at another commit.
 select   keeps every policy-file candidate (slice P, prefiltered ones too, so
-         the prefilters' recall is measured), then, of the docs candidates
+         the prefilters' recall is measured; the pass sends none of them,
+         and P is why), then, of the docs candidates
          that survive the prefilters, every TALLY_SHAPED one (slice S, for
          positives) and a seeded RANDOM_N of the rest (slice R, for precision
          at the docs' own rate). S is a seeded SHAPED_N first, then the others
@@ -20,10 +21,10 @@ select   keeps every policy-file candidate (slice P, prefiltered ones too, so
          drawn before CR 459 added the `time` mask, so re-running select
          now draws 7 fewer docs survivors; `build` reads inputs.jsonl and
          is unaffected.
-build    writes the evaluator's set through the shipped builders: one tally
-         case per record that survives the prefilters, and one warrant case
-         per record labelled a tally. LABELS.tsv is `id<TAB>tally[<TAB>
-         enumerated<TAB>stable]`, `y` or `n`, with `#` comments.
+build    writes the evaluator's set through the shipped code: one tally case
+         per record the pass would send, so none from a policy file and none
+         prefiltered. LABELS.tsv is `id<TAB>tally`, `y` or `n`, with `#`
+         comments.
 
 The clones are public repos only; the fixture README's step 1 re-checks that
 at commit time. Stdlib only.
@@ -163,14 +164,14 @@ def select(raw: Path, inputs: Path) -> None:
     )
 
 
-def read_labels(path: Path) -> dict[str, list[bool]]:
+def read_labels(path: Path) -> dict[str, bool]:
     labels = {}
     for line in path.read_text().splitlines():
         line = line.split("#", 1)[0].strip()
         if not line:
             continue
-        cid, *marks = line.split("\t")
-        labels[cid] = [m.strip() == "y" for m in marks]
+        cid, mark = line.split("\t")
+        labels[cid] = mark.strip() == "y"
     return labels
 
 
@@ -178,36 +179,22 @@ def source(r: dict) -> str:
     return f"{r['repo']}:{r['file']}:{r['line']}@{r['rev']}"
 
 
-def cases(inputs: list[dict], labels: dict[str, list[bool]]) -> list[dict]:
+def cases(inputs: list[dict], labels: dict[str, bool]) -> list[dict]:
     out = []
     for r in inputs:
-        numbers, _ = bdc.prefilter(r["clause"])
-        if not numbers:
+        row = bdc.to_row(r)
+        if row.status:
             continue
-        marks = labels[r["id"]]
-        state, questions = bdc.build_tally_case(r["clause"], numbers, r["heading"])
+        state, questions = bdc.build_tally_case(row.clause, row.numbers, row.heading)
         out.append(
             {
                 "id": r["id"],
                 "state": state,
                 "questions": questions,
-                "expected": {"tally": marks[0]},
+                "expected": {"tally": labels[r["id"]]},
                 "source": source(r),
             }
         )
-        if marks[0]:
-            state, questions = bdc.build_warrant_case(
-                r["clause"], numbers, r["heading"], r["section"]
-            )
-            out.append(
-                {
-                    "id": f"{r['id']}w",
-                    "state": state,
-                    "questions": questions,
-                    "expected": {"enumerated": marks[1], "stable": marks[2]},
-                    "source": source(r),
-                }
-            )
     return out
 
 

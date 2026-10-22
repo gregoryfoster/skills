@@ -126,18 +126,16 @@ about the repo's own policy file line by line.
 
 `check-counts.sh` never reports a bare digit: in a policy file one is nearly
 always a port, a status code, a version or a limit. So "182 hx-get reveals"
-passes. `bare-digit-counts.sh` reads the clauses the gate passed over, masks
-the digits code can rule out (code spans, links, issue refs, dates, versions,
-SHAs, times, ports, percentages, list markers, digits fused to letters), and asks one
-yes-or-no question about each clause left: does a number in it state how many
-of something the repo holds now, so it goes stale? For a flagged clause it
-asks two more, whether the counted things are listed in the section
-(`enumerated`) and whether the count is structural (`stable`). It is advisory,
-and off until the repo opts in through `.skills/typesafe` or
-`TYPESAFE_OPT_IN`. A tally request carries the `clause`, its `numbers` and its
-`heading`. A warrant request adds the `section`'s text. Nothing else leaves
-the machine, and a private repo decides for itself. Resolve it on its own,
-since SKILL.md's block doesn't list it:
+passes. `bare-digit-counts.sh` reads the clauses the gate passed over in a
+**reference doc**, masks the digits code can rule out (code spans, links,
+issue refs, dates, percentages, versions, SHAs, times, ports, list markers,
+digits fused to letters), and asks one yes-or-no question about each clause
+left: does a number in it state how many of something the repo holds now, so
+it goes stale? It is advisory, and off until the repo opts in through
+`.skills/typesafe` or `TYPESAFE_OPT_IN`. A request carries the `clause`, its
+`numbers` and its `heading`. Nothing else leaves the machine, and a private
+repo decides for itself. Resolve it on its own, since SKILL.md's block doesn't
+list it:
 
 <!-- skill:required id=skill-scripts -->
 ```bash
@@ -152,7 +150,7 @@ done
 ```
 
 ```bash
-bash "<check-counts.sh>" --candidates /tmp/context-count-candidates.jsonl
+bash "<check-counts.sh>" --file <reference doc> --candidates /tmp/context-count-candidates.jsonl
 bash "<bare-digit-counts.sh>" /tmp/context-count-candidates.jsonl > /tmp/context-bare-digits.tsv
 ```
 
@@ -160,23 +158,23 @@ bash "<bare-digit-counts.sh>" /tmp/context-count-candidates.jsonl > /tmp/context
   the trailer and the exit code are the same without it. A flagged clause
   needs no `.skills/context-counts-ok` entry, nothing is written for you, and
   the `counts` fields on the ledger row don't include it.
+- **Never on a policy file.** A clause from an `AGENTS.md` or `CLAUDE.md` is
+  not sent; its row says `policy-file`. The cohort's 12 policy files held 411
+  passed-over digits and one tally, so a run there buys a call per port to
+  find nothing. Run it on the docs a curation split, or any live doc.
 - **Read the flags, then the ranking.** Judged rows come most likely a tally
-  first, and `tally?` marks those at or over 0.8. On 780 hand-labelled clauses
-  from 12 public cohort repos
+  first, and `tally?` marks those at or over 0.8. On 664 hand-labelled
+  clauses from the live docs of 12 public cohort repos
   ([#441](https://github.com/gregoryfoster/skills/issues/441)), 0.8 flagged 5,
-  all tallies, but caught only 5 of the 19. False positives start at 0.79, so
-  read below the flag when the budget allows. `p` orders the rows; it isn't a
-  calibrated chance.
-- **On a policy file, expect silence.** The cohort's 12 policy files held 411
-  passed-over digits and one tally, which scored 0.48. The other 18 tallies
-  came from reference docs, so the pass earns more there (`--file` on both
-  scripts).
+  all tallies, but caught only 5 of the 18. False positives start at 0.79, so
+  read below the flag when the budget allows. On a random sample of docs
+  clauses it flagged nothing. `p` orders the rows; it isn't a calibrated
+  chance.
 - **A dated count is a record, not a tally.** "Measured 2026-09-23: 132
   files" stays true as history, and the question says so. A count it ranks
   first still needs your judgment, and so does a dated one it misses.
-- **The warrant scores are hints.** Among the 19 tallies, one was enumerated
-  and none was stable, so neither question has been measured. The choice among
-  the four forms stays yours.
+- **It doesn't pick the remedy.** Which of the gate's forms fits a flagged
+  count (the command, dropped precision, a gate, or a warrant) stays yours.
 - **Exits 2 and 4 are a partial result, or none.** On 4 (a skip: not opted
   in, or no key) every row is printed unjudged. On 2 (a TypeSafe failure) rows
   judged before it keep their `p`, and the rest are `failed` or `not-asked`.

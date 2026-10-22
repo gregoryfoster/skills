@@ -164,16 +164,11 @@ def test_an_index_line_is_not_a_candidate(repo):
     assert got == ["5 rules."]
 
 
-def test_a_candidate_carries_its_heading_and_section(repo):
+def test_a_candidate_carries_its_heading_and_nothing_more(repo):
     by = {c["line"]: c for c in _candidates(repo, POLICY)}
-    assert by[7]["heading"] == "Section A"
-    assert by[7]["section"].startswith("## Section A\n")
-    # A section runs to the next heading at its level or above, so it holds
-    # its subsections and stops at the next `##`.
-    assert "Quoted 7 items." in by[7]["section"]
-    assert "Section B" not in by[7]["section"]
-    assert by[21]["heading"] == "Sub" and by[21]["section"].startswith("### Sub")
+    assert by[7]["heading"] == "Section A" and by[21]["heading"] == "Sub"
     assert by[7]["file"] == "AGENTS.md"
+    assert set(by[7]) == {"file", "line", "clause", "heading"}
 
 
 def test_a_heading_inside_a_fence_is_no_heading(repo):
@@ -184,7 +179,7 @@ def test_a_heading_inside_a_fence_is_no_heading(repo):
 
 def test_a_candidate_above_every_heading_has_none(repo):
     (c,) = _candidates(repo, "5 rules up top.\n\n## Later\n\nNothing.\n")
-    assert c["heading"] is None and c["section"] == "5 rules up top."
+    assert c["heading"] is None
 
 
 def test_the_report_is_byte_identical_with_and_without_the_flag(repo):
@@ -278,8 +273,24 @@ def test_prefilters(clause, numbers, masks):
 
 def test_a_fully_masked_clause_is_prefiltered_and_names_its_masks():
     rec = {"file": "A.md", "line": 3, "clause": "See #12.", "heading": None}
-    row = bdc.to_row({**rec, "section": ""})
+    row = bdc.to_row(rec)
     assert row.status == "prefiltered:issue" and row.numbers == []
+
+
+@pytest.mark.parametrize(
+    "path", ["AGENTS.md", "CLAUDE.md", "sub/AGENTS.md", "docs/x/CLAUDE.md"]
+)
+def test_a_policy_files_clause_is_never_sent(path):
+    """1 tally in the cohort policy files' 411 digits (#441): reference docs only."""
+    rec = {"file": path, "line": 3, "clause": "Holds 40 files.", "heading": None}
+    row = bdc.to_row(rec)
+    assert row.status == "policy-file" and row.numbers == ["40"]
+
+
+@pytest.mark.parametrize("path", ["docs/AGENTS-notes.md", "README.md", "agents.md"])
+def test_a_reference_doc_is_sent(path):
+    rec = {"file": path, "line": 3, "clause": "Holds 40 files.", "heading": None}
+    assert bdc.to_row(rec).status == ""
 
 
 # --- the cases ---------------------------------------------------------------
@@ -297,45 +308,19 @@ def test_a_tally_case_carries_the_clause_its_numbers_and_heading():
     assert "heading" not in state
 
 
-def test_a_warrant_case_adds_the_section_and_asks_both_warrants():
-    state, questions = bdc.build_warrant_case(
-        "5 tests.", ["5"], "H", "## H\n\n5 tests."
-    )
-    assert state["section"] == "## H\n\n5 tests." and list(questions) == [
-        "enumerated",
-        "stable",
-    ]
-
-
-def test_a_long_section_is_cut_around_the_clause():
-    section = "x " * 5000 + "The 182 hx-get reveals mean this. " + "y " * 5000
-    out = bdc.clip_section(section, "The 182 hx-get reveals mean this.")
-    assert len(out) <= bdc.SECTION_CHARS + 2
-    assert "The 182 hx-get reveals" in out and out[0] == out[-1] == "…"
-
-
-def test_a_hard_wrap_inside_the_clause_still_finds_it():
-    """The section keeps its line breaks; the clause was joined (CR 460)."""
-    section = "x " * 5000 + "The 182\nhx-get reveals mean this. " + "y " * 5000
-    out = bdc.clip_section(section, "The 182 hx-get reveals mean this.")
-    assert "The 182\nhx-get reveals" in out
-
-
 # --- the run -----------------------------------------------------------------
 
 RECORDS = [
-    {"file": "AGENTS.md", "line": 3, "clause": "See #12.", "heading": None},
-    {"file": "AGENTS.md", "line": 5, "clause": "The 182 reveals.", "heading": "A"},
-    {"file": "AGENTS.md", "line": 7, "clause": "Port 8000.", "heading": "A"},
-    {"file": "AGENTS.md", "line": 9, "clause": "Holds 40 files.", "heading": "B"},
+    {"file": "docs/REF.md", "line": 3, "clause": "See #12.", "heading": None},
+    {"file": "docs/REF.md", "line": 5, "clause": "The 182 reveals.", "heading": "A"},
+    {"file": "docs/REF.md", "line": 7, "clause": "Port 8000.", "heading": "A"},
+    {"file": "docs/REF.md", "line": 9, "clause": "Holds 40 files.", "heading": "B"},
 ]
 
 
 def _input(tmp_path, records=RECORDS) -> Path:
     p = tmp_path / "cand.jsonl"
-    p.write_text(
-        "".join(json.dumps({**r, "section": "## A\n"}) + "\n" for r in records)
-    )
+    p.write_text("".join(json.dumps(r) + "\n" for r in records))
     return p
 
 
@@ -359,8 +344,6 @@ TALLY_ANSWERS = {
     ("The 182 reveals.", ("tally",)): {"tally": 0.9},
     ("Port 8000.", ("tally",)): {"tally": 0.1},
     ("Holds 40 files.", ("tally",)): {"tally": 0.85},
-    ("The 182 reveals.", ("enumerated", "stable")): {"enumerated": 0.2, "stable": 0.1},
-    ("Holds 40 files.", ("enumerated", "stable")): {"enumerated": 0.7, "stable": 0.05},
 }
 
 
@@ -371,28 +354,39 @@ def _main(argv, connect):
     return code, rows, err.getvalue()
 
 
-def test_a_judged_run_ranks_flags_and_asks_warrants_only_of_flagged(tmp_path):
+def test_a_judged_run_ranks_and_flags_asking_one_question_a_clause(tmp_path):
     client = FakeClient(TALLY_ANSWERS)
     code, rows, err = _main([_input(tmp_path)], lambda **kw: client)
     assert code == 0
-    assert [(r[1], r[2], r[3], r[4], r[5], r[6]) for r in rows] == [
-        ("5", "judged", "0.900", "tally?", "0.200", "0.100"),
-        ("9", "judged", "0.850", "tally?", "0.700", "0.050"),
-        ("7", "judged", "0.100", "", "", ""),
-        ("3", "prefiltered:issue", "", "", "", ""),
+    assert [r[1:6] for r in rows] == [
+        ["5", "judged", "0.900", "tally?", "182"],
+        ["9", "judged", "0.850", "tally?", "40"],
+        ["7", "judged", "0.100", "", "8000"],
+        ["3", "prefiltered:issue", "", "", ""],
     ]
-    assert [q for _, q in client.asked].count(["enumerated", "stable"]) == 2
+    assert [q for _, q in client.asked] == [["tally"]] * 3
     assert "3 judged (2 at or over 0.8), 1 prefiltered" in err
 
 
-def test_the_threshold_moves_the_flag_and_the_warrants(tmp_path):
+def test_the_threshold_moves_the_flag_only(tmp_path):
     client = FakeClient(TALLY_ANSWERS)
     code, rows, _ = _main(
         [_input(tmp_path), "--threshold", "0.88"], lambda **kw: client
     )
     assert code == 0
     assert [r[4] for r in rows] == ["tally?", "", "", ""]
-    assert [q for _, q in client.asked].count(["enumerated", "stable"]) == 1
+    assert len(client.asked) == 3
+
+
+def test_a_policy_file_input_sends_nothing_and_says_where_to_point(tmp_path):
+    def connect(**kw):
+        raise AssertionError("connected")
+
+    recs = [{**r, "file": "AGENTS.md"} for r in RECORDS]
+    code, rows, err = _main([_input(tmp_path, recs)], connect)
+    assert code == 0 and {r[2] for r in rows} == {"policy-file"}
+    assert "AGENTS.md is a policy file" in err and "--file <reference doc>" in err
+    assert "4 policy-file" in err
 
 
 @pytest.mark.parametrize("reason", ["not-opted-in", "no-key"])
@@ -426,16 +420,6 @@ def test_a_failure_is_exit_2_and_the_rest_are_not_asked(tmp_path):
     ]
 
 
-def test_a_warrant_failure_keeps_the_tally_judged(tmp_path):
-    client = FakeClient(TALLY_ANSWERS, fail_at=2)
-    code, rows, _ = _main([_input(tmp_path)], lambda **kw: client)
-    assert code == 2
-    by = {r[1]: r for r in rows}
-    assert by["5"][2:6] == ["judged", "0.900", "tally?", ""]
-    assert "Empty on a flagged row means its warrant request failed" in bdc.__doc__
-    assert by["7"][2] == "not-asked" and by["9"][2] == "not-asked"
-
-
 @pytest.mark.parametrize("bad", [None, 1.5, True, "0.4"])
 def test_an_answer_that_isnt_a_probability_is_a_failure(tmp_path, bad):
     class Bad:
@@ -467,7 +451,11 @@ def test_dry_run_sends_nothing_and_emits_cases_the_evaluator_loads(tmp_path):
         )
     )
     cases = ev.load_set(labelled.read_text().splitlines())
-    assert [c["id"] for c in cases] == ["AGENTS.md:5", "AGENTS.md:7", "AGENTS.md:9"]
+    assert [c["id"] for c in cases] == [
+        "docs/REF.md:5",
+        "docs/REF.md:7",
+        "docs/REF.md:9",
+    ]
 
 
 @pytest.mark.parametrize(
@@ -489,8 +477,8 @@ def test_usage_errors_are_exit_1(argv, needle):
     "line",
     [
         "not json",
-        '{"file": "A", "line": "3", "clause": "x", "heading": null, "section": ""}',
-        '{"file": "A", "line": 3, "clause": "x", "section": ""}',
+        '{"file": "A", "line": "3", "clause": "x", "heading": null}',
+        '{"file": "A", "line": 3, "clause": "x"}',
         "[1, 2]",
     ],
 )
@@ -504,9 +492,16 @@ def test_input_that_isnt_check_counts_is_exit_1(tmp_path, line):
 def test_help_documents_columns_statuses_masks_exits_and_the_threshold():
     r = subprocess.run(["bash", str(WRAPPER), "--help"], capture_output=True, text=True)
     assert r.returncode == 0
-    head = "file line status p flag enumerated stable numbers clause"
+    head = "file line status p flag numbers clause"
     assert head in r.stdout
-    for needle in ("skipped", "failed", "not-asked", "would-ask", "prefiltered"):
+    for needle in (
+        "skipped",
+        "failed",
+        "not-asked",
+        "would-ask",
+        "prefiltered",
+        "policy-file",
+    ):
         assert needle in r.stdout, needle
     for name, _ in bdc._PREFILTERS:
         assert re.search(rf"^  {name} ", r.stdout, re.M), name
@@ -526,8 +521,7 @@ def test_every_status_the_code_sets_is_documented():
 def test_the_reference_names_every_field_that_is_sent():
     doc = REFERENCE.read_text()
     tally, _ = bdc.build_tally_case("c", ["1"], "h")
-    warrant, _ = bdc.build_warrant_case("c", ["1"], "h", "s")
-    for key in set(tally) | set(warrant):
+    for key in tally:
         assert f"`{key}`" in doc, key
 
 
@@ -554,8 +548,10 @@ def test_the_wrapper_writes_no_bytecode_into_the_skill(tmp_path):
 
 def test_the_flag_feeds_the_pass_end_to_end(repo, tmp_path_factory):
     out = tmp_path_factory.mktemp("o") / "c.jsonl"
-    (repo / "AGENTS.md").write_text(POLICY)
-    assert _check(repo, "--candidates", str(out)).returncode == 3
+    (repo / "docs").mkdir()
+    (repo / "docs" / "REF.md").write_text(POLICY)
+    r = _check(repo, "--file", "docs/REF.md", "--candidates", str(out))
+    assert r.returncode == 3, r.stderr
     r = subprocess.run(
         ["bash", str(WRAPPER), "--dry-run", str(out)],
         capture_output=True,

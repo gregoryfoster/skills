@@ -3,27 +3,24 @@
 
 usage: bare-digit-counts.sh [CANDIDATES] [--threshold P] [--dry-run]
 
-An optional, advisory pass over `check-counts.sh --candidates FILE`
-(gregoryfoster/skills#441). The gate leaves a bare digit alone, because in a
-policy file one is nearly always a status code, a port, a version or a limit,
-so "182 hx-get reveals" passes unbackticked. This pass reads the clauses the
-gate passed over, drops the digits code can rule out, and asks TypeSafe one
-yes-or-no question about each clause left:
+An optional, advisory pass over `check-counts.sh --file <reference doc>
+--candidates FILE` (gregoryfoster/skills#441). The gate leaves a bare digit
+alone, because in a policy file one is nearly always a status code, a port, a
+version or a limit, so "182 hx-get reveals" passes unbackticked. This pass
+reads the clauses the gate passed over, drops the digits code can rule out,
+and asks TypeSafe one yes-or-no question about each clause left:
 
-  tally       does a number in the clause state how many of something exist
-              in the repo or project, so it goes stale when that changes?
+  tally       does a number in the clause state how many of something the
+              repo holds now, so it goes stale when that count changes?
 
-For a clause flagged as a tally it asks two more, together, which say which
-warrant might fit:
+REFERENCE DOCS ONLY. A clause from a policy file (any AGENTS.md or CLAUDE.md)
+is never sent, and its row says `policy-file`. The cohort's 12 policy files
+held 411 passed-over digits and one tally, so the pass would spend a call per
+port and status code to find nothing; point the gate's --file at a doc.
 
-  enumerated  are the counted things listed in the clause's section?
-  stable      is the count structural, so it can't change without the
-              sentence being rewritten?
-
-It suggests; it never writes. The gate, its warrants and
+It flags; it never writes. The gate, its warrants and
 `.skills/context-counts-ok` are untouched: a flagged clause needs no entry,
-and the other two remedies (attach the counting command, drop the precision)
-stay the reader's call. The flag and the warrant scores are advisory.
+and which of the gate's remedies fits stays the reader's call.
 
   CANDIDATES   check-counts.sh's --candidates JSONL; `-` or absent reads stdin
   --threshold  flag a clause `tally?` when its probability is at least P
@@ -31,8 +28,7 @@ stay the reader's call. The flag and the warrant scores are advisory.
                precision: a pass that cries wolf defeats its purpose)
   --dry-run    print the tally cases that would be sent, one JSONL case per
                line in scripts/typesafe-eval.py's set format (without
-               `expected`), and send nothing. The warrant cases depend on the
-               tally answers, so a dry run can't print them
+               `expected`), and send nothing
 
 PREFILTERS. A digit that code can rule out is masked before anything is sent:
 
@@ -54,18 +50,15 @@ digits are named. The rest are asked about, with the digits left listed as
 
 OUTPUT is TSV on stdout, one row per candidate, no header:
 
-  file line status p flag enumerated stable numbers clause
+  file line status p flag numbers clause
 
   status      judged, prefiltered:<masks>, or why it wasn't judged:
+                policy-file   from an AGENTS.md or CLAUDE.md: never sent
                 skipped | failed | not-asked   TypeSafe skipped, failed, or
                             wasn't reached after a failure
                 would-ask   --dry-run: printed as a case, not sent
   p           the probability the clause states a tally, 3 places
   flag        `tally?` when p is at least the threshold
-  enumerated  for a flagged clause, the probability its section lists the
-  stable      counted things, and that the count is structural; else empty.
-              Empty on a flagged row means its warrant request failed (the
-              run exits 2)
   numbers     the digits left after the prefilters, space-separated
   clause      as check-counts.sh split it, tabs and newlines as spaces
 
@@ -74,12 +67,12 @@ order. A one-line summary goes to stderr.
 
 SENDING follows the TypeSafe client beside this file (`python3 _typesafe.py
 --help`): nothing leaves the machine until the repo opts in, with
-TYPESAFE_OPT_IN=on or `.skills/typesafe`. A tally request carries the clause,
-its numbers and its heading. A warrant request adds the section's text, cut to
-SECTION_CHARS around the clause. Nothing else from the file or the repo.
+TYPESAFE_OPT_IN=on or `.skills/typesafe`. A request carries the clause, its
+numbers and its heading. Nothing else from the file or the repo.
 
 exit codes:
-  0  every candidate was prefiltered or judged (with --dry-run: printed)
+  0  every candidate was prefiltered, a policy file's, or judged (with
+     --dry-run: printed)
   1  usage error, or input that isn't check-counts.sh's (nothing was sent)
   2  a TypeSafe failure (its message on stderr). The rows are still
      printed, the unjudged ones marked
@@ -102,7 +95,8 @@ import _sentences  # noqa: E402
 import _typesafe  # noqa: E402
 
 DEFAULT_THRESHOLD = 0.8
-SECTION_CHARS = 6000
+# A policy file's clauses are never sent (#441): 1 tally in its 411 digits.
+POLICY_FILES = frozenset({"AGENTS.md", "CLAUDE.md"})
 
 EXIT_USAGE = 1
 EXIT_FAILED = 2
@@ -123,18 +117,6 @@ TALLY = (
     "dated or told in the past tense, which stays true as history after the repo "
     "changes."
 )
-ENUMERATED = (
-    "The number in `clause` counts something. Are the counted things listed "
-    "one by one in `section`, so a reader can check the number by counting "
-    "them there?"
-)
-STABLE = (
-    "The number in `clause` counts something. Is that count structural, "
-    "fixed by what the sentence describes, so it can't change unless the "
-    "sentence is rewritten, as in 'the 2 halves of the contract'? Answer no "
-    "when it counts things that can be added or removed as the repo changes."
-)
-
 # Applied in this order, each to what the earlier ones left.
 _URL = re.compile(r"\]\([^)\s]*\)|<[a-z][a-z0-9+.-]*:[^>\s]*>|\bhttps?://\S+", re.I)
 _PREFILTERS = (
@@ -164,13 +146,10 @@ class Row:
     line: int
     clause: str
     heading: str | None
-    section: str
     numbers: list
     masks: list
     status: str = ""
     p: float | None = None
-    enumerated: float | None = None
-    stable: float | None = None
 
 
 # --- input -------------------------------------------------------------------
@@ -193,11 +172,10 @@ def read_candidates(lines) -> list[dict]:
             and isinstance(rec.get("clause"), str)
             and "heading" in rec
             and (rec["heading"] is None or isinstance(rec["heading"], str))
-            and isinstance(rec.get("section"), str)
         ):
             raise UsageError(
                 f"line {n} isn't a check-counts.sh --candidates record (file, "
-                f"line, clause, heading, section): {line.strip()[:80]!r}"
+                f"line, clause, heading): {line.strip()[:80]!r}"
             )
         out.append(rec)
     return out
@@ -232,18 +210,16 @@ def prefilter(clause: str) -> tuple[list[str], list[str]]:
     return _NUMBER.findall(text), masks
 
 
+def is_policy_file(path: str) -> bool:
+    return Path(path).name in POLICY_FILES
+
+
 def to_row(rec: dict) -> Row:
     numbers, masks = prefilter(rec["clause"])
-    row = Row(
-        rec["file"],
-        rec["line"],
-        rec["clause"],
-        rec.get("heading"),
-        rec["section"],
-        numbers,
-        masks,
-    )
-    if not numbers:
+    row = Row(rec["file"], rec["line"], rec["clause"], rec["heading"], numbers, masks)
+    if is_policy_file(row.file):
+        row.status = "policy-file"
+    elif not numbers:
         row.status = "prefiltered:" + ",".join(masks)
     return row
 
@@ -257,38 +233,6 @@ def build_tally_case(clause: str, numbers, heading: str | None) -> tuple[dict, d
     if heading:
         state["heading"] = heading
     return state, {"tally": {"type": "noul", "instructions": TALLY}}
-
-
-def clip_section(section: str, clause: str) -> str:
-    """`section` cut to SECTION_CHARS around where `clause` starts in it."""
-    if len(section) <= SECTION_CHARS:
-        return section
-    # The section is raw lines and the clause is joined, so a hard wrap can
-    # fall anywhere between its words (CR 460).
-    words = clause.split()[:4]
-    m = re.search(r"\s+".join(map(re.escape, words)), section) if words else None
-    at = m.start() if m else 0
-    a = min(max(0, at - SECTION_CHARS // 2), len(section) - SECTION_CHARS)
-    return (
-        ("…" if a else "")
-        + section[a : a + SECTION_CHARS]
-        + ("…" if a + SECTION_CHARS < len(section) else "")
-    )
-
-
-def build_warrant_case(
-    clause: str, numbers, heading: str | None, section: str
-) -> tuple[dict, dict]:
-    """(state, questions) for a flagged clause: the two warrant Nouls, asked together."""
-    state = {"clause": clause, "numbers": list(numbers)}
-    if heading:
-        state["heading"] = heading
-    state["section"] = clip_section(section, clause)
-    questions = {
-        "enumerated": {"type": "noul", "instructions": ENUMERATED},
-        "stable": {"type": "noul", "instructions": STABLE},
-    }
-    return state, questions
 
 
 # --- output ------------------------------------------------------------------
@@ -308,8 +252,7 @@ def render(rows: list[Row], threshold: float) -> str:
     out = []
     for r in judged + rest:
         flag = "tally?" if r.p is not None and r.p >= threshold else ""
-        cols = [r.file, r.line, r.status, _p(r.p), flag, _p(r.enumerated)]
-        cols += [_p(r.stable), " ".join(r.numbers), r.clause]
+        cols = [r.file, r.line, r.status, _p(r.p), flag, " ".join(r.numbers), r.clause]
         out.append("\t".join(_cell(c) for c in cols) + "\n")
     return "".join(out)
 
@@ -410,6 +353,13 @@ def main(argv: list[str], stdin=None, stdout=None, stderr=None, connect=None) ->
     threshold = opts["threshold"]
     rows = [to_row(r) for r in recs]
     pending = [r for r in rows if not r.status]
+    policy = sorted({r.file for r in rows if r.status == "policy-file"})
+    if policy:
+        say(
+            f"bare-digit-counts: {', '.join(policy)} is a policy file, so nothing "
+            "from it is sent (#441). Run check-counts.sh --file <reference doc> "
+            "--candidates FILE instead"
+        )
 
     if opts["dry_run"]:
         for r in pending:
@@ -442,18 +392,9 @@ def main(argv: list[str], stdin=None, stdout=None, stderr=None, connect=None) ->
             state, questions = build_tally_case(r.clause, r.numbers, r.heading)
             r.p = _noul(client.ask(state, questions), "tally")
             r.status = "judged"
-            if r.p >= threshold:
-                state, questions = build_warrant_case(
-                    r.clause, r.numbers, r.heading, r.section
-                )
-                reply = client.ask(state, questions)
-                r.enumerated = _noul(reply, "enumerated")
-                r.stable = _noul(reply, "stable")
         except _typesafe.TypeSafeError as e:
             say(str(e))
-            failed, exit_code = True, EXIT_FAILED
-            if r.p is None:
-                r.status = "failed"
+            r.status, failed, exit_code = "failed", True, EXIT_FAILED
     stdout.write(render(rows, threshold))
     say(summary(rows, threshold))
     return exit_code

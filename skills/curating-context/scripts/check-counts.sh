@@ -135,8 +135,6 @@ Options:
                      line     where its first digit is, 1-based
                      clause   the clause, as this scan split it
                      heading  the nearest heading above it, or null
-                     section  that heading's section as text: its lines up
-                              to the next heading at the same level or above
                    OUTPUT ONLY. The report, the trailer, the exit codes and the
                    ack file are what they are without it, so the advisory pass
                    that reads it (bare-digit-counts.sh) can't move the gate, and
@@ -171,7 +169,8 @@ What it reports, in two classes:
                    is a gate someone deletes. The gap is real: "182 hx-get
                    reveals" unbackticked passes. Naming it is the price of the
                    class being usable at all. An optional, advisory TypeSafe
-                   pass covers it outside the gate: --candidates below, then
+                   pass covers it outside the gate, on reference docs only:
+                   --candidates below with --file <doc>, then
                    bare-digit-counts.sh (references/seam-accounting.md).
 
                    Fenced code blocks are skipped. A number inside one is
@@ -425,7 +424,7 @@ def line_at(starts, offset):
 hits = []
 blocks = []
 block = []
-# (line, level, title) of each heading outside a fence, for --candidates only.
+# (line, title) of each heading outside a fence, for --candidates only.
 headings = []
 # A fence closes only on the marker that opened it. The constant captured the
 # marker from the start and this loop ignored it, toggling on either kind — so a
@@ -448,7 +447,7 @@ for i, line in enumerate(lines):
         continue
     heading = HEADING.match(line)
     if heading:
-        headings.append((i + 1, len(heading.group(1)), heading.group(2)))
+        headings.append((i + 1, heading.group(2)))
     if index_start is not None and index_start <= i < index_end:
         # Held to the length bound instead. A blurb that states a count AND runs
         # long is one finding about one line, and reporting it twice would make
@@ -499,23 +498,16 @@ for block in blocks:
 # (#441). Written before the ack file is read, because nothing in it depends on
 # that file, and nothing below reads it back: the report is the same either way.
 if candidates_out:
-    def section_of(lineno):
-        above = [h for h in headings if h[0] <= lineno]
-        if not above:
-            start, level, title = 1, 0, None
-        else:
-            start, level, title = above[-1]
-        end = next((h[0] - 1 for h in headings
-                    if h[0] > start and (level == 0 or h[1] <= level)), len(lines))
-        return title, "\n".join(lines[start - 1:end]).strip("\n")
+    def heading_of(lineno):
+        above = [title for n, title in headings if n <= lineno]
+        return above[-1] if above else None
 
     try:
         with open(candidates_out, "w", encoding="utf-8") as fh:
             for lineno, clause in passed_over:
-                title, section = section_of(lineno)
                 fh.write(json.dumps({
                     "file": policy_rel, "line": lineno, "clause": clause,
-                    "heading": title, "section": section,
+                    "heading": heading_of(lineno),
                 }, ensure_ascii=False) + "\n")
     except OSError as e:
         print(f"ERROR can't write --candidates {candidates_out}: {e.strerror}",

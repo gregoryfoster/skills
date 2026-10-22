@@ -49,12 +49,9 @@ SETS = {
         },
     ),
     "bare-digit-counts": (
-        "8e388a79cf912ad6ba88d50660b76628a0ec3d2dde445a82bbfb42181ec4fd8b",
-        799,
-        {
-            "tally": {0.8: (5, 0, 14, 761), 0.5: (13, 30, 6, 731)},
-            "enumerated": {0.3: (1, 0, 0, 18)},
-        },
+        "31f064bca50a50217aa3f2f2ebb7d8b1776517974d2d7dc73c853c61b3d5072d",
+        664,
+        {"tally": {0.8: (5, 0, 13, 646), 0.5: (13, 28, 5, 618)}},
     ),
 }
 
@@ -185,17 +182,23 @@ def test_every_bare_digit_case_is_what_the_shipped_builder_sends(mine):
     bdc = mine.bdc
     for case in _jsonl(BDC_DIR / "set.jsonl"):
         st = case["state"]
-        if "tally" in case["questions"]:
-            sent = bdc.build_tally_case(st["clause"], st["numbers"], st.get("heading"))
-        else:
-            sent = bdc.build_warrant_case(
-                st["clause"], st["numbers"], st.get("heading"), st["section"]
-            )
+        sent = bdc.build_tally_case(st["clause"], st["numbers"], st.get("heading"))
         assert list(sent) == [st, case["questions"]], case["id"]
 
 
+def test_no_policy_file_clause_is_in_the_set(mine):
+    """The pass never sends one, so the measurement holds none (#441)."""
+    cases = _jsonl(BDC_DIR / "set.jsonl")
+    assert cases and all(c["id"][0] in "SR" for c in cases)
+    assert not [c for c in cases if mine.bdc.is_policy_file(c["source"].split(":")[1])]
+
+
 def test_no_labelled_tally_is_prefiltered(mine):
-    """A prefilter that drops a tally is a recall loss nothing downstream can see."""
+    """A prefilter that drops a tally is a recall loss nothing downstream can see.
+
+    Measured on every candidate, the policy files' included: P is kept for this
+    even though the pass sends none of it.
+    """
     labels = mine.read_labels(BDC_DIR / "labels.tsv")
     inputs = _jsonl(BDC_DIR / "inputs.jsonl")
     dropped = [r for r in inputs if not mine.bdc.prefilter(r["clause"])[0]]
@@ -210,14 +213,14 @@ def test_no_labelled_tally_is_prefiltered(mine):
         "S515",
         "S545",
     ]
-    assert not [r["id"] for r in dropped if labels[r["id"]][0]]
+    assert not [r["id"] for r in dropped if labels[r["id"]]]
 
 
-def test_the_natural_slices_flag_nothing_at_the_default(tmp_path):
-    """P (every policy-file candidate) and R (random docs) are the rate a run sees."""
+def test_the_random_docs_slice_flags_nothing_at_the_default(tmp_path):
+    """R is a seeded sample of the docs' own rate, so it is what a run sees."""
     lines = (BDC_DIR / "set.jsonl").read_text().splitlines()
-    part = tmp_path / "pr.jsonl"
-    part.write_text("".join(f"{x}\n" for x in lines if json.loads(x)["id"][0] in "PR"))
+    part = tmp_path / "r.jsonl"
+    part.write_text("".join(f"{x}\n" for x in lines if json.loads(x)["id"][0] == "R"))
     report = _replay(part, BDC_DIR / "cache.jsonl")
     assert report["valid"] and report["calls"]["live"] == 0
-    assert _row(report, "tally", 0.8) == (0, 0, 1, 214)
+    assert _row(report, "tally", 0.8) == (0, 0, 0, 99)
