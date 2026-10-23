@@ -148,16 +148,17 @@ def row_keys(rows: list[dict]) -> list[tuple]:
 def sections(text: str) -> list[tuple[str, str, list[str]]]:
     """`##` sections outside fences: (heading, body with its heading line, `###` titles).
 
-    A fence closes only on its opener's character, at least as long (CommonMark).
+    A fence closes only on its opener's character, at least as long, with
+    nothing after it: a closing fence takes no info string (CommonMark).
     """
     out, fence = [], None
     for line in text.splitlines(keepends=True):
-        m = re.match(r" {0,3}(`{3,}|~{3,})", line)
+        m = re.match(r" {0,3}(`{3,}|~{3,})(.*)", line)
         if m:
             run = m.group(1)
             if fence is None:
                 fence = (run[0], len(run))
-            elif run[0] == fence[0] and len(run) >= fence[1]:
+            elif run[0] == fence[0] and len(run) >= fence[1] and not m.group(2).strip():
                 fence = None
                 if out:
                     out[-1][1] += line

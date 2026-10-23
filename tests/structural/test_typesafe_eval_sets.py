@@ -476,6 +476,9 @@ def test_a_section_fence_closes_only_on_its_own_character(sc_mine):
     assert [h for h, _, _ in secs] == ["One", "Two"]
     assert secs[0][2] == ["Sub"]
     assert "## Not a heading" in secs[0][1]
+    # A closing fence takes no info string, so ```bash opens nothing and closes nothing.
+    info = "## One\n```\n```bash\n## Not a heading\n```\n## Two\n"
+    assert [h for h, _, _ in sc_mine.sections(info)] == ["One", "Two"]
 
 
 def test_a_tag_names_a_heading_before_a_subsection_or_a_prefix(sc_mine):
