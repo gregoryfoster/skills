@@ -105,7 +105,8 @@ Options:
                    (gregoryfoster/skills#442). Written on exit 0
                    and 3, after every refusal: a record exists only once its
                    entry is trusted. A failed write, or records that
-                   can't be built, exit 2.
+                   can't be built, exit 2. A file already at FILE is
+                   removed first, so after exit 1 or 2 there is none.
   -h, --help       Show this help and exit 0.
 
 Warranted losses (.skills/context-loss-ok):
@@ -378,6 +379,13 @@ while [ $# -gt 0 ]; do
     *) echo "ERROR unknown argument: $1" >&2; usage >&2; exit 1 ;;
   esac
 done
+
+# Cleared before anything can refuse, so the file exists only if this run
+# wrote it: the pass reads it as this curation's, and an earlier run's records
+# left beside an exit 1 or 2 would be judged as if they were.
+if [ -n "$CANDIDATES" ] && [ -e "$CANDIDATES" ]; then
+  rm -f -- "$CANDIDATES" || { echo "ERROR can't clear --candidates $CANDIDATES" >&2; exit 2; }
+fi
 
 # Naming the warrant file without turning the check on is a usage error, not a
 # no-op: the file would go unread, its malformed entries unrefused, and the run

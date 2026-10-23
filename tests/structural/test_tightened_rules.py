@@ -359,6 +359,15 @@ def test_the_flag_needs_claims(repo):
     assert not out.exists()
 
 
+def test_a_refused_run_leaves_no_earlier_records_behind(repo):
+    out = repo.parent / "c.jsonl"
+    assert _prove(repo, "--candidates", str(out)).returncode == 0
+    assert out.read_text()
+    (repo / ".skills" / "context-loss-ok").write_text(ACK + "not an entry\n")
+    r = _prove(repo, "--candidates", str(out))
+    assert r.returncode == 1 and not out.exists()
+
+
 def test_an_unwritable_path_is_exit_2(repo):
     r = _prove(repo, "--candidates", str(repo / "no" / "such" / "c.jsonl"))
     assert r.returncode == 2 and "can't write --candidates" in r.stderr
