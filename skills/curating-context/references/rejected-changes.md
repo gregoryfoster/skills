@@ -302,7 +302,8 @@ would go on the ledger row.
 
 **Refuted by:** labels mined from the ledgers of the 10 public cohort repos
 that keep one: 1,341 sections at the bases of 94 curations. Method and labels:
-[`tests/fixtures/typesafe-eval/section-class/`](../../../tests/fixtures/typesafe-eval/section-class/).
+[`tests/fixtures/typesafe-eval/section-class/`](https://github.com/gregoryfoster/skills/tree/main/tests/fixtures/typesafe-eval/section-class)
+in this skill's home repo.
 - **The ledger records the edit, not the class.** 40 of the 45 sections
   tagged `demote:` stayed in the file, because most large sections split A+B.
   A run stops once it's under budget, so an untouched section was never
