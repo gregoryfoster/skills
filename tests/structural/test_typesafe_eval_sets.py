@@ -16,6 +16,9 @@ network, no key. What that pins, and what it doesn't:
   positive, and the ceiling it implies, computed from the committed cache.
   The step-1 figures read docs at each curation commit, so they need the
   clones: `mine.py delegated` re-derives them, and nothing here does.
+- **Pinned for index-lines (#447):** the labels match the set, and the
+  pairs result #447 closed on, from the cache. No pass shipped, so there is no
+  builder to pin: `mine.py build` rebuilds the set from the clones.
 - **Not pinned:** what feeds the builder. The splitter needs the source file,
   from 12 repos and often a historical commit (485 KB of paragraph windows
   still reproduced only 111 of 130 cases), and `describe` needs gh's reply.
@@ -62,6 +65,11 @@ SETS = {
         "551c3c7c10ac33836a1d466cd211a5fcf707d4566f63698a242e991a1ea2e5e6",
         421,
         {"dropped": {0.3: (52, 128, 9, 232), 0.5: (46, 65, 15, 295)}},
+    ),
+    "index-lines": (
+        "c5a99b92ba64109c80fe255c37d4e03e98e176097d38d24106e7a40eac00f1d8",
+        198,
+        {"inaccurate": {0.3: (4, 25, 13, 156), 0.5: (1, 3, 16, 178)}},
     ),
 }
 
@@ -337,3 +345,37 @@ def test_an_anchor_names_its_section_as_github_slugs_it(tr_mine):
     tilde = "~~~\n```\n## Not a heading\n~~~\n## Real\nbody\n"
     assert tr_mine.anchored(tilde, "not-a-heading") is None
     assert tr_mine.anchored(tilde, "real") == "## Real\nbody"
+
+
+# --- index-lines (#447) -------------------------------------------------------
+
+IL_DIR = SETS_DIR / "index-lines"
+
+
+@pytest.fixture(scope="module")
+def il_mine():
+    return _load("il_mine", IL_DIR / "mine.py")
+
+
+def test_the_index_line_labels_are_the_sets(il_mine):
+    """Every case is labelled once, as the set expects, and every positive has its fix."""
+    labels = il_mine.read_labels(IL_DIR / "labels.tsv")
+    cases = _jsonl(IL_DIR / "set.jsonl")
+    assert [c["id"] for c in cases] == list(labels)
+    for c in cases:
+        lab = labels[c["id"]]
+        assert c["expected"]["inaccurate"] == lab["inaccurate"], c["id"]
+        assert c["source"] == lab["source"], c["id"]
+    hp = {c[2:] for c in labels if c.startswith("HP")}
+    assert hp == {c[2:] for c in labels if c.startswith("HN")}
+    assert len(hp) == 17
+    assert all(lab["inaccurate"] == c.startswith("HP") for c, lab in labels.items())
+    border = [c for c, lab in labels.items() if lab["borderline"]]
+    assert len(border) == 18 and all(c.startswith("R") for c in border)
+
+
+def test_a_fixed_index_line_scores_no_higher_than_its_fix(il_mine):
+    """The result #447 closed on: against the same doc, the line before a review's
+    fix scored above the fixed line in 8 of 17 pairs, a coin flip."""
+    got = il_mine.pairs(IL_DIR / "set.jsonl", IL_DIR / "cache.jsonl")
+    assert got == {"pairs": 17, "before_above": 8, "tied": 0}

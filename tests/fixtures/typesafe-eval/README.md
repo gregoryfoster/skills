@@ -63,6 +63,7 @@ often at an old commit. A change there shows up only when someone re-measures.
 | `stale-issue-prose/` | #438 | `cc3ee5d181b2` | [report](https://github.com/gregoryfoster/skills/issues/438#issuecomment-6302036571), [re-measure](https://github.com/gregoryfoster/skills/issues/438#issuecomment-6303164875) |
 | `bare-digit-counts/` | #441 | `31f064bca50a` | [report](https://github.com/gregoryfoster/skills/issues/441) |
 | `tightened-rules/` | #442 | `551c3c7c10ac` | [report](https://github.com/gregoryfoster/skills/issues/442) |
+| `index-lines/` | #447 | `c5a99b92ba64` | [report](https://github.com/gregoryfoster/skills/issues/447#issuecomment-6370273852) |
 
 `stale-issue-prose/` is 130 cases from gregoryfoster/skills and 11 public
 CannObserv repos (`still_open` 15 positive, `already_done` 3), labelled by one
@@ -140,3 +141,33 @@ carry. **46 of the 61 are held:** 26 of the 28 delegated or moved positives, and
 The suite pins the ceiling this implies from the committed cache. The step-1
 figures read docs at each curation commit, so `mine.py delegated` re-derives
 them from the clones.
+
+`index-lines/` is 198 cases from the same 12 public repos, mined 2026-10-23 at
+the commits `mine.py` names and labelled by one labeller. #447 shipped no pass,
+so there is no `inputs.jsonl`: each case's `state` is all it was asked, and
+`mine.py build` rebuilds the set from the clones. Each case is one index line
+against its doc's `#`–`###` headings and opening paragraph. There are two
+slices:
+
+- `H`: the 17 accuracy fixes in the policy files' history, each as a pair.
+  `HP` is the line before the fix, a yes. `HN` is the fixed line, a no. Both
+  are judged against the doc at the fix's parent, so the pair differs only in
+  the line. They come from 249 rewrites that kept a line's target: 120 landed
+  with a change to their doc, and the 17 are among the other 129.
+- `R`: every HEAD index line whose first target is a Markdown doc, 164 of
+  them. All are no. 7 are an `HN` line unchanged since, and share its request.
+
+The rubric: a line is **inaccurate** when it claims a topic its doc doesn't
+cover, or leaves out a major topic the doc covers, so a task about that topic
+wouldn't open the doc. Not inaccurate: a line naming the doc's purpose rather
+than its contents, an abbreviation of its headings, a routing condition ("read
+it before …") or a link to another doc, which only the line can carry, and a
+heading whose section only says its content moved. `borderline` marks 18 HEAD
+lines whose doc has grown a topic the line doesn't name. They are labelled no,
+because power-map's `docs/CONTEXT.md` Rule 1 keeps an index line a pointer on
+purpose (#667).
+
+The suite pins the labels and the pairs result #447 closed on: the line before
+a fix scored above its own fix in 8 of the 17 pairs. A variant whose state held
+each section's first sentence came out the same, 8 of 17. Its 34 cases aren't
+committed, so that figure isn't pinned.

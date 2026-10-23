@@ -1,0 +1,201 @@
+# id	inaccurate	borderline	source	note
+# HP/HN: an index line before and after an accuracy fix, against the doc at the fix's parent.
+# R: every HEAD index line whose first target is a Markdown doc. borderline: the doc grew a topic the line doesn't name.
+HP009	y	-	address-validator:docs/SOCRATICODE.md@40c79c886b^	claim: says prefetch query; the doc has a prefetch hook (fixed by 40c79c886b: #221 [docs]: CR 2 — Detail Docs index names the prefetch hook, not a query)
+HN009	n	-	address-validator:docs/SOCRATICODE.md@40c79c886b^	the fix of HP009
+HP010	y	-	address-validator:docs/HOST-MEMORY.md@93c95a2f87^	omission: the new ollama-upgrade section (fixed by 93c95a2f87: #318 [docs]: CR 7 — route agents to HOST-MEMORY's ollama upgrade section)
+HN010	n	-	address-validator:docs/HOST-MEMORY.md@93c95a2f87^	the fix of HP010
+HP024	y	-	archiver:docs/CONVENTIONS.md@222fcaebde^	claim: 'the reasoning behind every Conventions rule' overclaims (fixed by 222fcaebde: fix: CR 9 — the same overclaim, on the index an agent scans first)
+HN024	n	-	archiver:docs/CONVENTIONS.md@222fcaebde^	the fix of HP024
+HP030	y	-	broker:docs/NETWORK-PATHS.md@b2a7700c82^	claim: 'outage recovery' is RECOVERY.md's (fixed by b2a7700c82: docs: CR 10 - NETWORK-PATHS' index line says reconnects, not 'outage recovery', which is RECOVERY.md's topic)
+HN030	n	-	broker:docs/NETWORK-PATHS.md@b2a7700c82^	the fix of HP030
+HP037	y	-	notifier:docs/SOCRATICODE.md@a9004a6c15^	claim: promises the prefetch query (fixed by a9004a6c15: #78 docs: CR 2 — the Detail Docs entry stops promising the prefetch query)
+HN037	n	-	notifier:docs/SOCRATICODE.md@a9004a6c15^	the fix of HP037
+HP054	y	-	processor:docs/SKILLS.md@0312f7c7ae^	claim: names a brainstorming override that no longer exists (fixed by 0312f7c7ae: #62 docs: AGENTS.md states the brainstorming preferences)
+HN054	n	-	processor:docs/SKILLS.md@0312f7c7ae^	the fix of HP054
+HP066	y	-	replicator:docs/STREAMS.md@c8b1738dfa^	claim: 'here' resolves to the wrong file (fixed by c8b1738dfa: curate: CR 15 — "here" in the STREAMS.md index row resolved to the wrong file)
+HN066	n	-	replicator:docs/STREAMS.md@c8b1738dfa^	the fix of HP066
+HP067	y	-	replicator:docs/ARCHITECTURE.md@f7dbd74128^	omission: the command -> fact flow a demotion put there (fixed by f7dbd74128: curate: CR 17 — the index row did not describe what the demotion put there)
+HN067	n	-	replicator:docs/ARCHITECTURE.md@f7dbd74128^	the fix of HP067
+HP087	y	-	replicator:docs/contracts/content-fetch-issuer-reference.md@b2683f3b68^	omission: envelope keys moved in (fixed by b2683f3b68: #111 docs: CR 36 — AGENTS.md's index names what moved into the two fetch references)
+HN087	n	-	replicator:docs/contracts/content-fetch-issuer-reference.md@b2683f3b68^	the fix of HP087
+HP088	y	-	replicator:docs/contracts/content-fetch-outcome-reference.md@b2683f3b68^	omission: both facts, field by field, moved in (fixed by b2683f3b68: #111 docs: CR 36 — AGENTS.md's index names what moved into the two fetch references)
+HN088	n	-	replicator:docs/contracts/content-fetch-outcome-reference.md@b2683f3b68^	the fix of HP088
+HP089	y	-	replicator:docs/contracts/content-replicate-issuer-reference.md@6fdf538d68^	omission: triggers, Charter check, open questions moved in (fixed by 6fdf538d68: fix: CR 5 — the AGENTS.md index line names what the replicate reference now holds)
+HN089	n	-	replicator:docs/contracts/content-replicate-issuer-reference.md@6fdf538d68^	the fix of HP089
+HP095	y	-	replicator:docs/STREAMS.md@c0e781c5ab^	claim: 'Bus Conventions in full' overclaims (fixed by c0e781c5ab: #137 docs: CR 5 — the STREAMS.md index line claims what STREAMS.md carries again)
+HN095	n	-	replicator:docs/STREAMS.md@c0e781c5ab^	the fix of HP095
+HP098	y	-	skills:docs/CONVENTIONS.md@4e6904b9b8^	claim: the resolution knobs' inventory moved to KNOBS.md (fixed by 4e6904b9b8: #264 docs: inventory every .skills/ file a project may commit)
+HN098	n	-	skills:docs/CONVENTIONS.md@4e6904b9b8^	the fix of HP098
+HP104	y	-	usa-wa:docs/CODE-EXPLORATION.md@d9c63ff278^	claim: 'broken' graph; the doc now gives a version floor (fixed by d9c63ff278: docs: curate AGENTS.md back under its 6,000-token budget)
+HN104	n	-	usa-wa:docs/CODE-EXPLORATION.md@d9c63ff278^	the fix of HP104
+HP105	y	-	watcher:docs/ARCHITECTURE.md@14d82a09ff^	omission: sibling-service topology (fixed by 14d82a09ff: #255 fix: CR round 3 — repair the reference the compression broke, and demote the class inventory)
+HN105	n	-	watcher:docs/ARCHITECTURE.md@14d82a09ff^	the fix of HP105
+HP119	y	-	watcher:docs/ARCHITECTURE.md@81c94357fc^	omission: the probe destination guard (fixed by 81c94357fc: #305 docs: point the detail-doc index at the destination guard)
+HN119	n	-	watcher:docs/ARCHITECTURE.md@81c94357fc^	the fix of HP119
+HP121	y	-	watcher:docs/WATCHED-ITEMS.md@4b857443fa^	omission: domain keying, media-type dispatch, template CRUD (fixed by 4b857443fa: docs: curate AGENTS.md back under budget (6474 -> 5961))
+HN121	n	-	watcher:docs/WATCHED-ITEMS.md@4b857443fa^	the fix of HP121
+R001	n	n	address-validator:AGENTS.md:182@120058b4b0ee	
+R002	n	y	address-validator:AGENTS.md:183@120058b4b0ee	omits: port map, OS security updates, host memory
+R003	n	n	address-validator:AGENTS.md:184@120058b4b0ee	
+R004	n	n	address-validator:AGENTS.md:185@120058b4b0ee	
+R005	n	n	address-validator:AGENTS.md:186@120058b4b0ee	
+R006	n	y	address-validator:AGENTS.md:187@120058b4b0ee	omits: fallback chain, cache TTL, per-provider sections
+R007	n	n	address-validator:AGENTS.md:188@120058b4b0ee	
+R008	n	n	address-validator:AGENTS.md:189@120058b4b0ee	
+R009	n	n	address-validator:AGENTS.md:190@120058b4b0ee	
+R010	n	y	address-validator:AGENTS.md:191@120058b4b0ee	omits: responsive, data viz, performance, technical rules
+R011	n	n	address-validator:AGENTS.md:192@120058b4b0ee	
+R012	n	n	address-validator:AGENTS.md:193@120058b4b0ee	
+R013	n	n	address-validator:AGENTS.md:194@120058b4b0ee	
+R014	n	n	address-validator:AGENTS.md:195@120058b4b0ee	
+R015	n	n	archiver:AGENTS.md:236@4129d366a75f	
+R016	n	n	archiver:AGENTS.md:237@4129d366a75f	
+R017	n	n	archiver:AGENTS.md:238@4129d366a75f	
+R018	n	n	archiver:AGENTS.md:239@4129d366a75f	
+R019	n	n	archiver:AGENTS.md:240@4129d366a75f	
+R020	n	y	archiver:AGENTS.md:241@4129d366a75f	omits: liveness, nightly backup, reading production, timers
+R021	n	n	archiver:AGENTS.md:242@4129d366a75f	
+R022	n	n	archiver:AGENTS.md:243@4129d366a75f	
+R023	n	y	archiver:AGENTS.md:244@4129d366a75f	omits: schema tightenings, query ordering, override re-sync, cadence, ruff scope
+R024	n	n	archiver:AGENTS.md:245@4129d366a75f	
+R025	n	n	archiver:AGENTS.md:246@4129d366a75f	
+R026	n	n	archiver:AGENTS.md:247@4129d366a75f	
+R027	n	n	archiver:AGENTS.md:248@4129d366a75f	
+R028	n	n	broker:AGENTS.md:201@26269460e6de	
+R029	n	n	broker:AGENTS.md:202@26269460e6de	
+R030	n	n	broker:AGENTS.md:203@26269460e6de	
+R031	n	n	broker:AGENTS.md:204@26269460e6de	
+R032	n	n	broker:AGENTS.md:205@26269460e6de	
+R033	n	n	broker:AGENTS.md:206@26269460e6de	
+R034	n	n	broker:AGENTS.md:207@26269460e6de	
+R035	n	n	broker:AGENTS.md:208@26269460e6de	
+R036	n	n	broker:AGENTS.md:209@26269460e6de	
+R037	n	n	broker:AGENTS.md:210@26269460e6de	
+R038	n	n	broker:AGENTS.md:211@26269460e6de	
+R039	n	n	broker:AGENTS.md:212@26269460e6de	
+R040	n	n	broker:AGENTS.md:213@26269460e6de	
+R041	n	n	broker:AGENTS.md:214@26269460e6de	
+R042	n	n	broker:AGENTS.md:215@26269460e6de	
+R043	n	n	broker:AGENTS.md:216@26269460e6de	
+R044	n	n	broker:AGENTS.md:217@26269460e6de	
+R045	n	n	notifier:AGENTS.md:245@36f950d6fd06	
+R046	n	n	notifier:AGENTS.md:246@36f950d6fd06	
+R047	n	y	notifier:AGENTS.md:247@36f950d6fd06	omits: health checks, dev endpoint, production DB opt-in, memory reservation
+R048	n	n	notifier:AGENTS.md:248@36f950d6fd06	
+R049	n	n	notifier:AGENTS.md:249@36f950d6fd06	
+R050	n	n	notifier:AGENTS.md:250@36f950d6fd06	
+R051	n	n	notifier:AGENTS.md:251@36f950d6fd06	
+R052	n	y	power-map:AGENTS.md:163@cba807236842	omits: producer crosswalk, curation overlay, guards
+R053	n	y	power-map:AGENTS.md:164@cba807236842	omits: org lifespan, assignments, reparent, citations, RA->RA
+R054	n	n	power-map:AGENTS.md:165@cba807236842	
+R055	n	y	power-map:AGENTS.md:169@cba807236842	omits: caching, timestamps, 422s, versioning, observation writes, citations
+R056	n	n	power-map:AGENTS.md:170@cba807236842	
+R057	n	n	power-map:AGENTS.md:171@cba807236842	
+R058	n	n	power-map:AGENTS.md:172@cba807236842	
+R059	n	n	power-map:AGENTS.md:173@cba807236842	
+R060	n	n	power-map:AGENTS.md:174@cba807236842	
+R061	n	n	power-map:AGENTS.md:175@cba807236842	
+R062	n	n	power-map:AGENTS.md:176@cba807236842	
+R063	n	n	power-map:AGENTS.md:177@cba807236842	
+R064	n	n	power-map:AGENTS.md:181@cba807236842	
+R065	n	n	power-map:AGENTS.md:182@cba807236842	
+R066	n	n	power-map:AGENTS.md:183@cba807236842	
+R067	n	n	power-map:AGENTS.md:184@cba807236842	
+R068	n	n	power-map:AGENTS.md:185@cba807236842	
+R069	n	n	power-map:AGENTS.md:186@cba807236842	
+R070	n	n	power-map:AGENTS.md:187@cba807236842	
+R071	n	n	power-map:AGENTS.md:188@cba807236842	
+R072	n	n	power-map:AGENTS.md:192@cba807236842	
+R073	n	n	power-map:AGENTS.md:193@cba807236842	
+R074	n	y	power-map:AGENTS.md:194@cba807236842	omits: usa-wa snapshot pull, desired-state build and apply
+R075	n	n	power-map:AGENTS.md:195@cba807236842	
+R076	n	n	power-map:AGENTS.md:196@cba807236842	
+R077	n	n	power-map:AGENTS.md:197@cba807236842	
+R078	n	y	power-map:AGENTS.md:198@cba807236842	omits: the connection boundary; power-map CONTEXT.md Rule 1 keeps the line short on purpose (#667)
+R079	n	n	power-map:AGENTS.md:199@cba807236842	
+R080	n	n	power-map:AGENTS.md:200@cba807236842	
+R081	n	n	power-map:AGENTS.md:201@cba807236842	
+R082	n	n	power-map:AGENTS.md:202@cba807236842	
+R083	n	n	processor:AGENTS.md:102@a23970b9b3cc	
+R084	n	n	processor:AGENTS.md:103@a23970b9b3cc	
+R085	n	n	processor:AGENTS.md:105@a23970b9b3cc	
+R086	n	n	processor:AGENTS.md:106@a23970b9b3cc	
+R087	n	y	replicator:AGENTS.md:230@cb0d7b934c93	omits: 'founding design' is a pointer to a plan, not content
+R088	n	n	replicator:AGENTS.md:231@cb0d7b934c93	
+R089	n	n	replicator:AGENTS.md:232@cb0d7b934c93	
+R090	n	n	replicator:AGENTS.md:233@cb0d7b934c93	
+R091	n	n	replicator:AGENTS.md:234@cb0d7b934c93	
+R092	n	n	replicator:AGENTS.md:235@cb0d7b934c93	
+R093	n	n	replicator:AGENTS.md:236@cb0d7b934c93	
+R094	n	n	replicator:AGENTS.md:237@cb0d7b934c93	
+R095	n	y	replicator:AGENTS.md:238@cb0d7b934c93	omits: the co-index store
+R096	n	n	replicator:AGENTS.md:239@cb0d7b934c93	
+R097	n	n	replicator:AGENTS.md:240@cb0d7b934c93	
+R098	n	y	replicator:AGENTS.md:241@cb0d7b934c93	omits: test layout, reconnection rehearsal, the at-cap procedure
+R099	n	n	replicator:AGENTS.md:242@cb0d7b934c93	
+R100	n	n	replicator:AGENTS.md:243@cb0d7b934c93	
+R101	n	n	replicator:AGENTS.md:244@cb0d7b934c93	
+R102	n	n	replicator:AGENTS.md:245@cb0d7b934c93	
+R103	n	n	replicator:AGENTS.md:246@cb0d7b934c93	
+R104	n	n	replicator:AGENTS.md:247@cb0d7b934c93	
+R105	n	n	replicator:AGENTS.md:248@cb0d7b934c93	
+R106	n	n	replicator:AGENTS.md:249@cb0d7b934c93	
+R107	n	n	replicator:AGENTS.md:251@cb0d7b934c93	
+R108	n	n	replicator:AGENTS.md:252@cb0d7b934c93	
+R109	n	n	replicator:AGENTS.md:253@cb0d7b934c93	
+R110	n	n	skills:AGENTS.md:291@ae1c15d6f8fc	
+R111	n	y	skills:AGENTS.md:292@ae1c15d6f8fc	omits: TypeSafe client convention, variant selection surface
+R112	n	n	skills:AGENTS.md:293@ae1c15d6f8fc	
+R113	n	n	skills:AGENTS.md:294@ae1c15d6f8fc	
+R114	n	n	skills:AGENTS.md:295@ae1c15d6f8fc	
+R115	n	n	status:AGENTS.md:136@5cf187834e70	
+R116	n	n	status:AGENTS.md:137@5cf187834e70	
+R117	n	n	status:AGENTS.md:138@5cf187834e70	
+R118	n	n	usa-wa:AGENTS.md:209@b75bd451c91d	
+R119	n	n	usa-wa:AGENTS.md:210@b75bd451c91d	
+R120	n	n	usa-wa:AGENTS.md:211@b75bd451c91d	
+R121	n	n	usa-wa:AGENTS.md:212@b75bd451c91d	
+R122	n	n	usa-wa:AGENTS.md:213@b75bd451c91d	
+R123	n	n	usa-wa:AGENTS.md:214@b75bd451c91d	
+R124	n	n	usa-wa:AGENTS.md:215@b75bd451c91d	
+R125	n	n	usa-wa:AGENTS.md:216@b75bd451c91d	
+R126	n	n	usa-wa:AGENTS.md:217@b75bd451c91d	
+R127	n	n	usa-wa:AGENTS.md:218@b75bd451c91d	
+R128	n	y	usa-wa:AGENTS.md:219@b75bd451c91d	omits: doctor preflight, hook timeouts, context budget, sensitive paths, worktree sections
+R129	n	n	watcher:AGENTS.md:183@1a0b69778ba8	
+R130	n	n	watcher:AGENTS.md:184@1a0b69778ba8	
+R131	n	n	watcher:AGENTS.md:185@1a0b69778ba8	
+R132	n	n	watcher:AGENTS.md:186@1a0b69778ba8	
+R133	n	n	watcher:AGENTS.md:187@1a0b69778ba8	
+R134	n	n	watcher:AGENTS.md:188@1a0b69778ba8	
+R135	n	n	watcher:AGENTS.md:189@1a0b69778ba8	
+R136	n	n	watcher:AGENTS.md:190@1a0b69778ba8	
+R137	n	n	watcher:AGENTS.md:191@1a0b69778ba8	
+R138	n	n	watcher:AGENTS.md:192@1a0b69778ba8	
+R139	n	n	watcher:AGENTS.md:193@1a0b69778ba8	
+R140	n	n	watcher:AGENTS.md:194@1a0b69778ba8	
+R141	n	n	watcher:AGENTS.md:195@1a0b69778ba8	
+R142	n	n	watcher:AGENTS.md:196@1a0b69778ba8	
+R143	n	n	watcher:AGENTS.md:197@1a0b69778ba8	
+R144	n	n	watcher:AGENTS.md:198@1a0b69778ba8	
+R145	n	n	watcher:AGENTS.md:199@1a0b69778ba8	
+R146	n	n	watcher:AGENTS.md:200@1a0b69778ba8	
+R147	n	n	watcher:AGENTS.md:201@1a0b69778ba8	
+R148	n	n	watcher:AGENTS.md:202@1a0b69778ba8	
+R149	n	n	watcher:AGENTS.md:203@1a0b69778ba8	
+R150	n	n	watcher:AGENTS.md:204@1a0b69778ba8	
+R151	n	n	watcher:AGENTS.md:205@1a0b69778ba8	
+R152	n	n	watcher:AGENTS.md:206@1a0b69778ba8	
+R153	n	n	watcher:AGENTS.md:207@1a0b69778ba8	
+R154	n	y	wslcb-licensing-tracker:AGENTS.md:189@d5ac823469da	omits: memory pressure, OS updates, logging, classification, testing, caching
+R155	n	n	wslcb-licensing-tracker:AGENTS.md:190@d5ac823469da	
+R156	n	n	wslcb-licensing-tracker:AGENTS.md:191@d5ac823469da	
+R157	n	n	wslcb-licensing-tracker:AGENTS.md:192@d5ac823469da	
+R158	n	n	wslcb-licensing-tracker:AGENTS.md:193@d5ac823469da	
+R159	n	n	wslcb-licensing-tracker:AGENTS.md:194@d5ac823469da	
+R160	n	n	wslcb-licensing-tracker:AGENTS.md:195@d5ac823469da	
+R161	n	n	wslcb-licensing-tracker:AGENTS.md:196@d5ac823469da	
+R162	n	y	wslcb-licensing-tracker:AGENTS.md:197@d5ac823469da	omits: accessibility, performance, responsiveness rules, flash banners
+R163	n	n	wslcb-licensing-tracker:AGENTS.md:198@d5ac823469da	
+R164	n	n	wslcb-licensing-tracker:AGENTS.md:199@d5ac823469da	
