@@ -237,10 +237,12 @@ and only 26 of them are the delegated ones.**
   review put 8 of them back there. Replicator's "Consumers must be idempotent"
   (CR 8) sat verbatim in `docs/CONVENTIONS.md` before the curation weakened its
   bullet.
-- **The substring test settles 4 delegated positives, and that one.** The
-  slice's flags fall from 79 to 70.
-- **A perfect judgment of "held" takes them to 58 at best.** It also clears 14
-  labelled drops, 3 of them review-restored rules the default catches today.
+- **The substring test, at the whole doc, settles 4 delegated positives and
+  that one.** The random slice's flags fall from 79 to 70. At an anchored
+  section it settles none.
+- **A perfect judgment of "held" takes them to 58 at best.** Among the flags
+  it clears are 14 labelled drops, 3 of them review-restored rules the default
+  catches today.
 
 The pass exists for recall.
 
