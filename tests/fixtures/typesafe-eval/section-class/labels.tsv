@@ -1,0 +1,1180 @@
+# id	label	after_state	source	heading
+# label: the curation's tags (demote B; prune, tighten C; delete D); an untagged section its curation left unchanged is A.
+S0001	A	same	address-validator:AGENTS.md@22bba3af34bd	What this project is
+S0002	A	same	address-validator:AGENTS.md@22bba3af34bd	Code Exploration Policy
+S0003	A	same	address-validator:AGENTS.md@22bba3af34bd	Code Exploration Notes (repo-specific)
+S0004	B	edited	address-validator:AGENTS.md@22bba3af34bd	Architecture
+S0005	A	same	address-validator:AGENTS.md@22bba3af34bd	Key conventions
+S0006	A	same	address-validator:AGENTS.md@22bba3af34bd	Logging
+S0007	A	same	address-validator:AGENTS.md@22bba3af34bd	Validation provider
+S0008	A	same	address-validator:AGENTS.md@22bba3af34bd	Deployment
+S0009	A	same	address-validator:AGENTS.md@22bba3af34bd	Infrastructure
+S0010	A	same	address-validator:AGENTS.md@22bba3af34bd	Environment
+S0011	A	same	address-validator:AGENTS.md@22bba3af34bd	Testing and linting
+S0012	A	same	address-validator:AGENTS.md@22bba3af34bd	Common tasks
+S0013	A	same	address-validator:AGENTS.md@22bba3af34bd	GitHub CLI
+S0014	A	same	address-validator:AGENTS.md@22bba3af34bd	Sensitive areas
+S0015	A	same	address-validator:AGENTS.md@22bba3af34bd	Skills
+S0016	A	same	address-validator:AGENTS.md@22bba3af34bd	Commit convention
+S0017	A	same	address-validator:AGENTS.md@22bba3af34bd	Detail Docs
+S0018	A	same	address-validator:AGENTS.md@213d39825631	What this project is
+S0019	A	same	address-validator:AGENTS.md@213d39825631	Code Exploration Policy
+S0020	C	edited	address-validator:AGENTS.md@213d39825631	Code Exploration Notes (repo-specific)
+S0021	A	same	address-validator:AGENTS.md@213d39825631	Architecture
+S0022	A	same	address-validator:AGENTS.md@213d39825631	Key conventions
+S0023	A	same	address-validator:AGENTS.md@213d39825631	Authentication
+S0024	A	same	address-validator:AGENTS.md@213d39825631	Logging
+S0025	A	same	address-validator:AGENTS.md@213d39825631	Validation provider
+S0026	A	same	address-validator:AGENTS.md@213d39825631	Deployment
+S0027	A	same	address-validator:AGENTS.md@213d39825631	Environment
+S0028	A	same	address-validator:AGENTS.md@213d39825631	Testing and linting
+S0029	C	edited	address-validator:AGENTS.md@213d39825631	Common tasks
+S0030	A	same	address-validator:AGENTS.md@213d39825631	GitHub CLI
+S0031	A	same	address-validator:AGENTS.md@213d39825631	Sensitive areas
+S0032	C	edited	address-validator:AGENTS.md@213d39825631	Skills
+S0033	A	same	address-validator:AGENTS.md@213d39825631	Commit convention
+S0034	A	same	address-validator:AGENTS.md@93c95a2f8765	What this project is
+S0035	A	same	address-validator:AGENTS.md@93c95a2f8765	Code Exploration Policy
+S0036	A	same	address-validator:AGENTS.md@93c95a2f8765	Code Exploration Notes (repo-specific)
+S0037	A	same	address-validator:AGENTS.md@93c95a2f8765	Architecture
+S0038	A	same	address-validator:AGENTS.md@93c95a2f8765	Key conventions
+S0039	C	edited	address-validator:AGENTS.md@93c95a2f8765	Authentication
+S0040	A	same	address-validator:AGENTS.md@93c95a2f8765	Logging
+S0041	C	edited	address-validator:AGENTS.md@93c95a2f8765	Validation provider
+S0042	C	edited	address-validator:AGENTS.md@93c95a2f8765	Deployment
+S0043	A	same	address-validator:AGENTS.md@93c95a2f8765	Infrastructure
+S0044	C	edited	address-validator:AGENTS.md@93c95a2f8765	Environment
+S0045	C	edited	address-validator:AGENTS.md@93c95a2f8765	Testing and linting
+S0046	C	edited	address-validator:AGENTS.md@93c95a2f8765	Common tasks
+S0047	A	same	address-validator:AGENTS.md@93c95a2f8765	GitHub CLI
+S0048	A	same	address-validator:AGENTS.md@93c95a2f8765	Sensitive areas
+S0049	C	edited	address-validator:AGENTS.md@93c95a2f8765	Skills
+S0050	A	same	address-validator:AGENTS.md@93c95a2f8765	Commit convention
+S0051	A	same	address-validator:AGENTS.md@93c95a2f8765	Detail Docs
+S0052	A	same	address-validator:AGENTS.md@b88164c3176c	What this project is
+S0053	A	same	address-validator:AGENTS.md@b88164c3176c	Code Exploration Policy
+S0054	A	same	address-validator:AGENTS.md@b88164c3176c	Code Exploration Notes (repo-specific)
+S0055	C	edited	address-validator:AGENTS.md@b88164c3176c	Architecture
+S0056	C	edited	address-validator:AGENTS.md@b88164c3176c	Key conventions
+S0057	C	edited	address-validator:AGENTS.md@b88164c3176c	Authentication
+S0058	C	edited	address-validator:AGENTS.md@b88164c3176c	Logging
+S0059	A	same	address-validator:AGENTS.md@b88164c3176c	Validation provider
+S0060	C	edited	address-validator:AGENTS.md@b88164c3176c	Deployment
+S0061	C	edited	address-validator:AGENTS.md@b88164c3176c	Infrastructure
+S0062	C	edited	address-validator:AGENTS.md@b88164c3176c	Environment
+S0063	C	edited	address-validator:AGENTS.md@b88164c3176c	Testing and linting
+S0064	A	same	address-validator:AGENTS.md@b88164c3176c	Common tasks
+S0065	C	edited	address-validator:AGENTS.md@b88164c3176c	GitHub CLI
+S0066	C	edited	address-validator:AGENTS.md@b88164c3176c	Sensitive areas
+S0067	A	same	address-validator:AGENTS.md@b88164c3176c	Skills
+S0068	A	same	address-validator:AGENTS.md@b88164c3176c	Design workflow (/brainstorming)
+S0069	A	same	address-validator:AGENTS.md@b88164c3176c	Commit convention
+S0070	A	same	archiver:AGENTS.md@bcbc644e68d6	Development Methodology
+S0071	A	same	archiver:AGENTS.md@bcbc644e68d6	Environment & Tooling
+S0072	B	edited	archiver:AGENTS.md@bcbc644e68d6	Code Exploration Policy
+S0073	A	same	archiver:AGENTS.md@bcbc644e68d6	Architecture
+S0074	A	same	archiver:AGENTS.md@bcbc644e68d6	Content-acquisition via co-core (archiver#72 Phase 1)
+S0075	A	same	archiver:AGENTS.md@bcbc644e68d6	Infrastructure
+S0076	A	same	archiver:AGENTS.md@bcbc644e68d6	Server Lifecycle
+S0077	A	same	archiver:AGENTS.md@bcbc644e68d6	Common Commands
+S0078	A	same	archiver:AGENTS.md@bcbc644e68d6	API & Change-Bus Surface
+S0079	A	same	archiver:AGENTS.md@bcbc644e68d6	Conventions
+S0080	A	same	archiver:AGENTS.md@bcbc644e68d6	Agent Skills
+S0081	A	same	archiver:AGENTS.md@bcbc644e68d6	SessionStart Hooks
+S0082	A	same	archiver:AGENTS.md@bcbc644e68d6	Detail Docs
+S0083	A	same	archiver:AGENTS.md@b3c7255afc02	Development Methodology
+S0084	A	same	archiver:AGENTS.md@b3c7255afc02	Environment & Tooling
+S0085	A	same	archiver:AGENTS.md@b3c7255afc02	Code Exploration Policy
+S0086	A	same	archiver:AGENTS.md@b3c7255afc02	Architecture
+S0087	A	same	archiver:AGENTS.md@b3c7255afc02	Content-acquisition via co-core (archiver#72 Phase 1)
+S0088	A	same	archiver:AGENTS.md@b3c7255afc02	Infrastructure
+S0089	A	same	archiver:AGENTS.md@b3c7255afc02	Server Lifecycle
+S0090	A	same	archiver:AGENTS.md@b3c7255afc02	Environment Files
+S0091	A	same	archiver:AGENTS.md@b3c7255afc02	Common Commands
+S0092	A	same	archiver:AGENTS.md@b3c7255afc02	API & Change-Bus Surface
+S0093	A	same	archiver:AGENTS.md@b3c7255afc02	Conventions
+S0094	A	same	archiver:AGENTS.md@b3c7255afc02	Agent Skills
+S0095	A	same	archiver:AGENTS.md@b3c7255afc02	SessionStart Hooks
+S0096	A	same	archiver:AGENTS.md@e168a902ec0f	Development Methodology
+S0097	A	same	archiver:AGENTS.md@e168a902ec0f	Environment & Tooling
+S0098	A	same	archiver:AGENTS.md@e168a902ec0f	Architecture
+S0099	A	same	archiver:AGENTS.md@e168a902ec0f	Infrastructure
+S0100	A	same	archiver:AGENTS.md@e168a902ec0f	Server Lifecycle
+S0101	A	same	archiver:AGENTS.md@e168a902ec0f	Environment Files
+S0102	A	same	archiver:AGENTS.md@e168a902ec0f	Common Commands
+S0103	A	same	archiver:AGENTS.md@e168a902ec0f	Conventions
+S0104	A	same	archiver:AGENTS.md@e168a902ec0f	Vocabulary
+S0105	A	same	archiver:AGENTS.md@e168a902ec0f	Agent Skills
+S0106	A	same	archiver:AGENTS.md@35696cb184d5	Project Overview
+S0107	A	same	archiver:AGENTS.md@35696cb184d5	Development Methodology
+S0108	A	same	archiver:AGENTS.md@35696cb184d5	Environment & Tooling
+S0109	A	same	archiver:AGENTS.md@35696cb184d5	Code Exploration Policy
+S0110	A	same	archiver:AGENTS.md@35696cb184d5	Architecture
+S0111	A	same	archiver:AGENTS.md@35696cb184d5	Content-acquisition via co-core (archiver#72 Phase 1)
+S0112	A	same	archiver:AGENTS.md@35696cb184d5	Infrastructure
+S0113	A	same	archiver:AGENTS.md@35696cb184d5	Server Lifecycle
+S0114	A	same	archiver:AGENTS.md@35696cb184d5	Environment Files
+S0115	A	same	archiver:AGENTS.md@35696cb184d5	Common Commands
+S0116	A	same	archiver:AGENTS.md@35696cb184d5	API & Change-Bus Surface
+S0117	A	same	archiver:AGENTS.md@35696cb184d5	Conventions
+S0118	A	same	archiver:AGENTS.md@35696cb184d5	Vocabulary
+S0119	A	same	archiver:AGENTS.md@35696cb184d5	Agent Skills
+S0120	A	same	archiver:AGENTS.md@35696cb184d5	SessionStart Hooks
+S0121	A	same	archiver:AGENTS.md@35696cb184d5	Detail Docs
+S0122	A	same	archiver:AGENTS.md@35696cb184d5	Project Overview
+S0123	A	same	archiver:AGENTS.md@35696cb184d5	Development Methodology
+S0124	A	same	archiver:AGENTS.md@35696cb184d5	Environment & Tooling
+S0125	A	same	archiver:AGENTS.md@35696cb184d5	Code Exploration Policy
+S0126	A	same	archiver:AGENTS.md@35696cb184d5	Architecture
+S0127	A	same	archiver:AGENTS.md@35696cb184d5	Content-acquisition via co-core (archiver#72 Phase 1)
+S0128	A	same	archiver:AGENTS.md@35696cb184d5	Infrastructure
+S0129	A	same	archiver:AGENTS.md@35696cb184d5	Server Lifecycle
+S0130	A	same	archiver:AGENTS.md@35696cb184d5	Environment Files
+S0131	A	same	archiver:AGENTS.md@35696cb184d5	Common Commands
+S0132	A	same	archiver:AGENTS.md@35696cb184d5	API & Change-Bus Surface
+S0133	A	same	archiver:AGENTS.md@35696cb184d5	Conventions
+S0134	A	same	archiver:AGENTS.md@35696cb184d5	Vocabulary
+S0135	A	same	archiver:AGENTS.md@35696cb184d5	Agent Skills
+S0136	A	same	archiver:AGENTS.md@35696cb184d5	SessionStart Hooks
+S0137	A	same	archiver:AGENTS.md@35696cb184d5	Detail Docs
+S0138	A	same	archiver:AGENTS.md@2133234578b8	Project Overview
+S0139	A	same	archiver:AGENTS.md@2133234578b8	Development Methodology
+S0140	A	same	archiver:AGENTS.md@2133234578b8	Environment & Tooling
+S0141	A	same	archiver:AGENTS.md@2133234578b8	Code Exploration Policy
+S0142	A	same	archiver:AGENTS.md@2133234578b8	Architecture
+S0143	A	same	archiver:AGENTS.md@2133234578b8	Content-acquisition via co-core (archiver#72 Phase 1)
+S0144	A	same	archiver:AGENTS.md@2133234578b8	Infrastructure
+S0145	A	same	archiver:AGENTS.md@2133234578b8	Server Lifecycle
+S0146	A	same	archiver:AGENTS.md@2133234578b8	Environment Files
+S0147	A	same	archiver:AGENTS.md@2133234578b8	Common Commands
+S0148	A	same	archiver:AGENTS.md@2133234578b8	API & Change-Bus Surface
+S0149	A	same	archiver:AGENTS.md@2133234578b8	Conventions
+S0150	A	same	archiver:AGENTS.md@2133234578b8	Vocabulary
+S0151	A	same	archiver:AGENTS.md@2133234578b8	Agent Skills
+S0152	A	same	archiver:AGENTS.md@2133234578b8	SessionStart Hooks
+S0153	A	same	archiver:AGENTS.md@2133234578b8	Detail Docs
+S0154	A	same	archiver:AGENTS.md@4b7d1755e65a	Project Overview
+S0155	A	same	archiver:AGENTS.md@4b7d1755e65a	Development Methodology
+S0156	A	same	archiver:AGENTS.md@4b7d1755e65a	Environment & Tooling
+S0157	A	same	archiver:AGENTS.md@4b7d1755e65a	Code Exploration Policy
+S0158	A	same	archiver:AGENTS.md@4b7d1755e65a	Architecture
+S0159	A	same	archiver:AGENTS.md@4b7d1755e65a	Content-acquisition via co-core (archiver#72 Phase 1)
+S0160	A	same	archiver:AGENTS.md@4b7d1755e65a	Infrastructure
+S0161	A	same	archiver:AGENTS.md@4b7d1755e65a	Server Lifecycle
+S0162	A	same	archiver:AGENTS.md@4b7d1755e65a	Environment Files
+S0163	A	same	archiver:AGENTS.md@4b7d1755e65a	Common Commands
+S0164	A	same	archiver:AGENTS.md@4b7d1755e65a	API & Change-Bus Surface
+S0165	A	same	archiver:AGENTS.md@4b7d1755e65a	Conventions
+S0166	A	same	archiver:AGENTS.md@4b7d1755e65a	Vocabulary
+S0167	A	same	archiver:AGENTS.md@4b7d1755e65a	Agent Skills
+S0168	A	same	archiver:AGENTS.md@4b7d1755e65a	SessionStart Hooks
+S0169	A	same	archiver:AGENTS.md@4b7d1755e65a	Detail Docs
+S0170	A	same	archiver:AGENTS.md@4b7d1755e65a	Project Overview
+S0171	A	same	archiver:AGENTS.md@4b7d1755e65a	Development Methodology
+S0172	A	same	archiver:AGENTS.md@4b7d1755e65a	Environment & Tooling
+S0173	A	same	archiver:AGENTS.md@4b7d1755e65a	Code Exploration Policy
+S0174	A	same	archiver:AGENTS.md@4b7d1755e65a	Architecture
+S0175	A	same	archiver:AGENTS.md@4b7d1755e65a	Content-acquisition via co-core (archiver#72 Phase 1)
+S0176	A	same	archiver:AGENTS.md@4b7d1755e65a	Infrastructure
+S0177	A	same	archiver:AGENTS.md@4b7d1755e65a	Server Lifecycle
+S0178	A	same	archiver:AGENTS.md@4b7d1755e65a	Environment Files
+S0179	A	same	archiver:AGENTS.md@4b7d1755e65a	Common Commands
+S0180	A	same	archiver:AGENTS.md@4b7d1755e65a	API & Change-Bus Surface
+S0181	A	same	archiver:AGENTS.md@4b7d1755e65a	Conventions
+S0182	A	same	archiver:AGENTS.md@4b7d1755e65a	Vocabulary
+S0183	A	same	archiver:AGENTS.md@4b7d1755e65a	Agent Skills
+S0184	A	same	archiver:AGENTS.md@4b7d1755e65a	SessionStart Hooks
+S0185	A	same	archiver:AGENTS.md@4b7d1755e65a	Detail Docs
+S0186	C	edited	archiver:AGENTS.md@4183d5972baa	Project Overview
+S0187	A	same	archiver:AGENTS.md@4183d5972baa	Development Methodology
+S0188	A	same	archiver:AGENTS.md@4183d5972baa	Environment & Tooling
+S0189	A	same	archiver:AGENTS.md@4183d5972baa	Code Exploration Policy
+S0190	C	edited	archiver:AGENTS.md@4183d5972baa	Architecture
+S0191	A	same	archiver:AGENTS.md@4183d5972baa	Infrastructure
+S0192	A	same	archiver:AGENTS.md@4183d5972baa	Server Lifecycle
+S0193	A	same	archiver:AGENTS.md@4183d5972baa	Environment Files
+S0194	C	edited	archiver:AGENTS.md@4183d5972baa	Common Commands
+S0195	A	same	archiver:AGENTS.md@4183d5972baa	API & Change-Bus Surface
+S0196	A	same	archiver:AGENTS.md@4183d5972baa	Conventions
+S0197	A	same	archiver:AGENTS.md@4183d5972baa	Vocabulary
+S0198	A	same	archiver:AGENTS.md@4183d5972baa	Agent Skills
+S0199	A	same	archiver:AGENTS.md@4183d5972baa	SessionStart Hooks
+S0200	A	same	archiver:AGENTS.md@4183d5972baa	Detail Docs
+S0201	A	same	archiver:AGENTS.md@fc2496b8bd15	Project Overview
+S0202	A	same	archiver:AGENTS.md@fc2496b8bd15	Development Methodology
+S0203	A	same	archiver:AGENTS.md@fc2496b8bd15	Environment & Tooling
+S0204	A	same	archiver:AGENTS.md@fc2496b8bd15	Code Exploration Policy
+S0205	A	same	archiver:AGENTS.md@fc2496b8bd15	Architecture
+S0206	A	same	archiver:AGENTS.md@fc2496b8bd15	Content-acquisition via co-core
+S0207	A	same	archiver:AGENTS.md@fc2496b8bd15	Infrastructure
+S0208	A	same	archiver:AGENTS.md@fc2496b8bd15	Server Lifecycle
+S0209	A	same	archiver:AGENTS.md@fc2496b8bd15	Environment Files
+S0210	A	same	archiver:AGENTS.md@fc2496b8bd15	Common Commands
+S0211	A	same	archiver:AGENTS.md@fc2496b8bd15	API & Change-Bus Surface
+S0212	A	same	archiver:AGENTS.md@fc2496b8bd15	Conventions
+S0213	A	same	archiver:AGENTS.md@fc2496b8bd15	Vocabulary
+S0214	A	same	archiver:AGENTS.md@fc2496b8bd15	Agent Skills
+S0215	A	same	archiver:AGENTS.md@fc2496b8bd15	SessionStart Hooks
+S0216	A	same	archiver:AGENTS.md@fc2496b8bd15	Detail Docs
+S0217	A	same	archiver:AGENTS.md@b0b2be6c32e0	Project Overview
+S0218	A	same	archiver:AGENTS.md@b0b2be6c32e0	Development Methodology
+S0219	A	same	archiver:AGENTS.md@b0b2be6c32e0	Environment & Tooling
+S0220	A	same	archiver:AGENTS.md@b0b2be6c32e0	Code Exploration Policy
+S0221	A	same	archiver:AGENTS.md@b0b2be6c32e0	Architecture
+S0222	A	same	archiver:AGENTS.md@b0b2be6c32e0	Content-acquisition via co-core
+S0223	A	same	archiver:AGENTS.md@b0b2be6c32e0	Infrastructure
+S0224	A	same	archiver:AGENTS.md@b0b2be6c32e0	Server Lifecycle
+S0225	A	same	archiver:AGENTS.md@b0b2be6c32e0	Environment Files
+S0226	A	same	archiver:AGENTS.md@b0b2be6c32e0	Common Commands
+S0227	A	same	archiver:AGENTS.md@b0b2be6c32e0	API & Change-Bus Surface
+S0228	A	same	archiver:AGENTS.md@b0b2be6c32e0	Conventions
+S0229	A	same	archiver:AGENTS.md@b0b2be6c32e0	Vocabulary
+S0230	A	same	archiver:AGENTS.md@b0b2be6c32e0	Agent Skills
+S0231	A	same	archiver:AGENTS.md@b0b2be6c32e0	SessionStart Hooks
+S0232	A	same	archiver:AGENTS.md@b0b2be6c32e0	Detail Docs
+S0233	A	same	archiver:AGENTS.md@b0b2be6c32e0	Project Overview
+S0234	A	same	archiver:AGENTS.md@b0b2be6c32e0	Development Methodology
+S0235	A	same	archiver:AGENTS.md@b0b2be6c32e0	Environment & Tooling
+S0236	A	same	archiver:AGENTS.md@b0b2be6c32e0	Code Exploration Policy
+S0237	A	same	archiver:AGENTS.md@b0b2be6c32e0	Architecture
+S0238	A	same	archiver:AGENTS.md@b0b2be6c32e0	Content-acquisition via co-core
+S0239	A	same	archiver:AGENTS.md@b0b2be6c32e0	Infrastructure
+S0240	A	same	archiver:AGENTS.md@b0b2be6c32e0	Server Lifecycle
+S0241	A	same	archiver:AGENTS.md@b0b2be6c32e0	Environment Files
+S0242	A	same	archiver:AGENTS.md@b0b2be6c32e0	Common Commands
+S0243	A	same	archiver:AGENTS.md@b0b2be6c32e0	API & Change-Bus Surface
+S0244	C	edited	archiver:AGENTS.md@b0b2be6c32e0	Conventions
+S0245	A	same	archiver:AGENTS.md@b0b2be6c32e0	Vocabulary
+S0246	A	same	archiver:AGENTS.md@b0b2be6c32e0	Agent Skills
+S0247	A	same	archiver:AGENTS.md@b0b2be6c32e0	SessionStart Hooks
+S0248	A	same	archiver:AGENTS.md@b0b2be6c32e0	Detail Docs
+S0249	C	edited	archiver:AGENTS.md@c3186ad8d74a	Project Overview
+S0250	A	same	archiver:AGENTS.md@c3186ad8d74a	Development Methodology
+S0251	A	same	archiver:AGENTS.md@c3186ad8d74a	Architecture
+S0252	C	edited	archiver:AGENTS.md@c3186ad8d74a	Infrastructure
+S0253	C	edited	archiver:AGENTS.md@c3186ad8d74a	Environment Files
+S0254	A	same	archiver:AGENTS.md@c3186ad8d74a	Common Commands
+S0255	C	edited	archiver:AGENTS.md@c3186ad8d74a	Conventions
+S0256	C	edited	archiver:AGENTS.md@c3186ad8d74a	Vocabulary
+S0257	C	edited	archiver:AGENTS.md@c3186ad8d74a	SessionStart Hooks
+S0258	C	edited	archiver:AGENTS.md@4bf97cc0bb6f	Code Exploration Policy
+S0259	A	same	archiver:AGENTS.md@4bf97cc0bb6f	Architecture
+S0260	C	edited	archiver:AGENTS.md@4bf97cc0bb6f	Infrastructure
+S0261	C	edited	archiver:AGENTS.md@4bf97cc0bb6f	Common Commands
+S0262	C	edited	archiver:AGENTS.md@4bf97cc0bb6f	API & Change-Bus Surface
+S0263	B	edited	archiver:AGENTS.md@4bf97cc0bb6f	Agent Skills
+S0264	C	edited	archiver:AGENTS.md@4bf97cc0bb6f	Detail Docs
+S0265	A	same	archiver:AGENTS.md@5f60b5024133	Project Overview
+S0266	A	same	archiver:AGENTS.md@5f60b5024133	Development Methodology
+S0267	C	edited	archiver:AGENTS.md@5f60b5024133	Environment & Tooling
+S0268	C	edited	archiver:AGENTS.md@5f60b5024133	Code Exploration Policy
+S0269	A	same	archiver:AGENTS.md@5f60b5024133	Architecture
+S0270	C	edited	archiver:AGENTS.md@5f60b5024133	Content-acquisition via co-core
+S0271	C	edited	archiver:AGENTS.md@5f60b5024133	Infrastructure
+S0272	A	same	archiver:AGENTS.md@5f60b5024133	Server Lifecycle
+S0273	A	same	archiver:AGENTS.md@5f60b5024133	Environment Files
+S0274	A	same	archiver:AGENTS.md@5f60b5024133	Common Commands
+S0275	C	edited	archiver:AGENTS.md@5f60b5024133	API & Change-Bus Surface
+S0276	A	same	archiver:AGENTS.md@5f60b5024133	Conventions
+S0277	B	edited	archiver:AGENTS.md@5f60b5024133	Vocabulary
+S0278	C	edited	archiver:AGENTS.md@5f60b5024133	Agent Skills
+S0279	C	edited	archiver:AGENTS.md@5f60b5024133	SessionStart Hooks
+S0280	A	same	archiver:AGENTS.md@5f60b5024133	Detail Docs
+S0281	A	same	archiver:AGENTS.md@9cf65726a3d3	Development Methodology
+S0282	A	same	archiver:AGENTS.md@9cf65726a3d3	Environment & Tooling
+S0283	A	same	archiver:AGENTS.md@9cf65726a3d3	Code Exploration Policy
+S0284	A	same	archiver:AGENTS.md@9cf65726a3d3	Architecture
+S0285	A	same	archiver:AGENTS.md@9cf65726a3d3	Content-acquisition via co-core
+S0286	B	edited	archiver:AGENTS.md@9cf65726a3d3	Infrastructure
+S0287	A	same	archiver:AGENTS.md@9cf65726a3d3	Server Lifecycle
+S0288	A	same	archiver:AGENTS.md@9cf65726a3d3	Environment Files
+S0289	A	same	archiver:AGENTS.md@9cf65726a3d3	Common Commands
+S0290	A	same	archiver:AGENTS.md@9cf65726a3d3	API & Change-Bus Surface
+S0291	A	same	archiver:AGENTS.md@9cf65726a3d3	Conventions
+S0292	A	same	archiver:AGENTS.md@9cf65726a3d3	Vocabulary
+S0293	B	gone	archiver:AGENTS.md@9cf65726a3d3	SessionStart Hooks
+S0294	A	same	archiver:AGENTS.md@0d506d609e0f	Development Methodology
+S0295	A	same	archiver:AGENTS.md@0d506d609e0f	Environment & Tooling
+S0296	A	same	archiver:AGENTS.md@0d506d609e0f	Code Exploration Policy
+S0297	A	same	archiver:AGENTS.md@0d506d609e0f	Architecture
+S0298	B	edited	archiver:AGENTS.md@0d506d609e0f	Content-acquisition via co-core
+S0299	A	same	archiver:AGENTS.md@0d506d609e0f	Infrastructure
+S0300	A	same	archiver:AGENTS.md@0d506d609e0f	Server Lifecycle
+S0301	A	same	archiver:AGENTS.md@0d506d609e0f	Environment Files
+S0302	A	same	archiver:AGENTS.md@0d506d609e0f	Common Commands
+S0303	A	same	archiver:AGENTS.md@0d506d609e0f	API & Change-Bus Surface
+S0304	A	same	archiver:AGENTS.md@0d506d609e0f	Vocabulary
+S0305	A	same	archiver:AGENTS.md@0d506d609e0f	Agent Skills
+S0306	A	same	archiver:AGENTS.md@0d506d609e0f	Detail Docs
+S0307	B	edited	archiver:AGENTS.md@311f3e969afe	Project Overview
+S0308	A	same	archiver:AGENTS.md@311f3e969afe	Development Methodology
+S0309	A	same	archiver:AGENTS.md@311f3e969afe	Environment & Tooling
+S0310	A	same	archiver:AGENTS.md@311f3e969afe	Code Exploration Policy
+S0311	A	same	archiver:AGENTS.md@311f3e969afe	Infrastructure
+S0312	A	same	archiver:AGENTS.md@311f3e969afe	Common Commands
+S0313	A	same	archiver:AGENTS.md@311f3e969afe	Vocabulary
+S0314	B	gone	archiver:AGENTS.md@311f3e969afe	Agent Skills
+S0315	A	same	broker:AGENTS.md@654e3a5cbb57	Project Overview
+S0316	A	same	broker:AGENTS.md@654e3a5cbb57	Development Methodology
+S0317	A	same	broker:AGENTS.md@654e3a5cbb57	Environment & Tooling
+S0318	C	edited	broker:AGENTS.md@654e3a5cbb57	Rules
+S0319	A	same	broker:AGENTS.md@654e3a5cbb57	Commit Messages
+S0320	C	edited	broker:AGENTS.md@654e3a5cbb57	Agent Skills
+S0321	C	edited	broker:AGENTS.md@654e3a5cbb57	Related
+S0322	A	same	broker:AGENTS.md@9d2d88b1d48a	Project Overview
+S0323	A	same	broker:AGENTS.md@9d2d88b1d48a	Development Methodology
+S0324	A	same	broker:AGENTS.md@9d2d88b1d48a	Environment & Tooling
+S0325	A	same	broker:AGENTS.md@9d2d88b1d48a	Rules
+S0326	A	same	broker:AGENTS.md@9d2d88b1d48a	Commit Messages
+S0327	A	same	broker:AGENTS.md@9d2d88b1d48a	Agent Skills
+S0328	A	same	broker:AGENTS.md@9d2d88b1d48a	Related
+S0329	A	same	broker:AGENTS.md@9d2d88b1d48a	Code Exploration Policy
+S0330	A	same	broker:AGENTS.md@6c545cf4418e	Project Overview
+S0331	A	same	broker:AGENTS.md@6c545cf4418e	Development Methodology
+S0332	A	same	broker:AGENTS.md@6c545cf4418e	Environment & Tooling
+S0333	A	same	broker:AGENTS.md@6c545cf4418e	Commit Messages
+S0334	A	same	broker:AGENTS.md@6c545cf4418e	Agent Skills
+S0335	A	same	broker:AGENTS.md@6c545cf4418e	Related
+S0336	A	same	broker:AGENTS.md@6c545cf4418e	Code Exploration Policy
+S0337	A	same	broker:AGENTS.md@7cb9bf224ee9	Project Overview
+S0338	A	same	broker:AGENTS.md@7cb9bf224ee9	Development Methodology
+S0339	A	same	broker:AGENTS.md@7cb9bf224ee9	Environment & Tooling
+S0340	A	same	broker:AGENTS.md@7cb9bf224ee9	Commit Messages
+S0341	A	same	broker:AGENTS.md@7cb9bf224ee9	Layout
+S0342	A	same	broker:AGENTS.md@7cb9bf224ee9	Agent Skills
+S0343	B	edited	broker:AGENTS.md@7cb9bf224ee9	Related
+S0344	A	same	broker:AGENTS.md@7cb9bf224ee9	Detail Docs
+S0345	A	same	broker:AGENTS.md@7cb9bf224ee9	Code Exploration Policy
+S0346	A	same	broker:AGENTS.md@14c610b26570	Project Overview
+S0347	A	same	broker:AGENTS.md@14c610b26570	Development Methodology
+S0348	A	same	broker:AGENTS.md@14c610b26570	Environment & Tooling
+S0349	A	same	broker:AGENTS.md@14c610b26570	Rules
+S0350	A	same	broker:AGENTS.md@14c610b26570	Commit Messages
+S0351	C	edited	broker:AGENTS.md@14c610b26570	Layout
+S0352	A	same	broker:AGENTS.md@14c610b26570	Agent Skills
+S0353	B	edited	broker:AGENTS.md@14c610b26570	Related
+S0354	A	same	broker:AGENTS.md@14c610b26570	Code Exploration Policy
+S0355	A	same	broker:AGENTS.md@26838656daf2	Project Overview
+S0356	A	same	broker:AGENTS.md@26838656daf2	Development Methodology
+S0357	A	same	broker:AGENTS.md@26838656daf2	Environment & Tooling
+S0358	A	same	broker:AGENTS.md@26838656daf2	Commit Messages
+S0359	A	same	broker:AGENTS.md@26838656daf2	Layout
+S0360	A	same	broker:AGENTS.md@26838656daf2	Agent Skills
+S0361	A	same	broker:AGENTS.md@26838656daf2	Related
+S0362	A	same	broker:AGENTS.md@26838656daf2	Code Exploration Policy
+S0363	A	same	broker:AGENTS.md@30db99111061	Project Overview
+S0364	A	same	broker:AGENTS.md@30db99111061	Development Methodology
+S0365	A	same	broker:AGENTS.md@30db99111061	Environment & Tooling
+S0366	A	same	broker:AGENTS.md@30db99111061	Commit Messages
+S0367	A	same	broker:AGENTS.md@30db99111061	Layout
+S0368	A	same	broker:AGENTS.md@30db99111061	Agent Skills
+S0369	A	same	broker:AGENTS.md@30db99111061	Related
+S0370	A	same	broker:AGENTS.md@30db99111061	Code Exploration Policy
+S0371	A	same	broker:AGENTS.md@fb28795f7b5c	Project Overview
+S0372	A	same	broker:AGENTS.md@fb28795f7b5c	Development Methodology
+S0373	A	same	broker:AGENTS.md@fb28795f7b5c	Environment & Tooling
+S0374	A	same	broker:AGENTS.md@fb28795f7b5c	Rules
+S0375	A	same	broker:AGENTS.md@fb28795f7b5c	Commit Messages
+S0376	A	same	broker:AGENTS.md@fb28795f7b5c	Agent Skills
+S0377	A	same	broker:AGENTS.md@fb28795f7b5c	Related
+S0378	A	same	broker:AGENTS.md@fb28795f7b5c	Code Exploration Policy
+S0379	A	same	broker:AGENTS.md@655e9a06e29f	Project Overview
+S0380	A	same	broker:AGENTS.md@655e9a06e29f	Development Methodology
+S0381	A	same	broker:AGENTS.md@655e9a06e29f	Environment & Tooling
+S0382	A	same	broker:AGENTS.md@655e9a06e29f	Rules
+S0383	A	same	broker:AGENTS.md@655e9a06e29f	Commit Messages
+S0384	A	same	broker:AGENTS.md@655e9a06e29f	Layout
+S0385	A	same	broker:AGENTS.md@655e9a06e29f	Agent Skills
+S0386	A	same	broker:AGENTS.md@655e9a06e29f	Related
+S0387	A	same	broker:AGENTS.md@655e9a06e29f	Detail Docs
+S0388	A	same	broker:AGENTS.md@655e9a06e29f	Code Exploration Policy
+S0389	A	same	notifier:AGENTS.md@aab96321b15b	Project Overview
+S0390	A	same	notifier:AGENTS.md@aab96321b15b	Development Methodology
+S0391	A	same	notifier:AGENTS.md@aab96321b15b	Environment & Tooling
+S0392	A	same	notifier:AGENTS.md@aab96321b15b	Continuous Integration
+S0393	A	same	notifier:AGENTS.md@aab96321b15b	Code Exploration Policy
+S0394	A	same	notifier:AGENTS.md@aab96321b15b	Project Layout
+S0395	A	same	notifier:AGENTS.md@aab96321b15b	Infrastructure
+S0396	A	same	notifier:AGENTS.md@aab96321b15b	Server Lifecycle
+S0397	A	same	notifier:AGENTS.md@aab96321b15b	Environment Variables
+S0398	A	same	notifier:AGENTS.md@aab96321b15b	Common Commands
+S0399	A	same	notifier:AGENTS.md@aab96321b15b	Agent Skills
+S0400	B	edited	notifier:AGENTS.md@aab96321b15b	Conventions
+S0401	A	same	notifier:AGENTS.md@aab96321b15b	API Boundary Principles
+S0402	A	same	notifier:AGENTS.md@c7cb796f8038	Project Overview
+S0403	A	same	notifier:AGENTS.md@c7cb796f8038	Development Methodology
+S0404	A	same	notifier:AGENTS.md@c7cb796f8038	Environment & Tooling
+S0405	A	same	notifier:AGENTS.md@c7cb796f8038	Continuous Integration
+S0406	A	same	notifier:AGENTS.md@c7cb796f8038	Code Exploration Policy
+S0407	A	same	notifier:AGENTS.md@c7cb796f8038	Project Layout
+S0408	C	edited	notifier:AGENTS.md@c7cb796f8038	Infrastructure
+S0409	C	edited	notifier:AGENTS.md@c7cb796f8038	Server Lifecycle
+S0410	B	edited	notifier:AGENTS.md@c7cb796f8038	Environment Variables
+S0411	C	edited	notifier:AGENTS.md@c7cb796f8038	Common Commands
+S0412	A	same	notifier:AGENTS.md@c7cb796f8038	Agent Skills
+S0413	A	same	notifier:AGENTS.md@c7cb796f8038	Conventions
+S0414	A	same	notifier:AGENTS.md@c7cb796f8038	API Boundary Principles
+S0415	C	edited	notifier:AGENTS.md@c7cb796f8038	Detail Docs
+S0416	A	same	notifier:AGENTS.md@a6c643195d73	Project Overview
+S0417	A	same	notifier:AGENTS.md@a6c643195d73	Development Methodology
+S0418	A	same	notifier:AGENTS.md@a6c643195d73	Environment & Tooling
+S0419	A	same	notifier:AGENTS.md@a6c643195d73	Continuous Integration
+S0420	A	same	notifier:AGENTS.md@a6c643195d73	Code Exploration Policy
+S0421	A	same	notifier:AGENTS.md@a6c643195d73	Project Layout
+S0422	B	edited	notifier:AGENTS.md@a6c643195d73	Infrastructure
+S0423	A	same	notifier:AGENTS.md@a6c643195d73	Server Lifecycle
+S0424	A	same	notifier:AGENTS.md@a6c643195d73	Environment Variables
+S0425	A	same	notifier:AGENTS.md@a6c643195d73	Common Commands
+S0426	A	same	notifier:AGENTS.md@a6c643195d73	Agent Skills
+S0427	A	same	notifier:AGENTS.md@a6c643195d73	Conventions
+S0428	A	same	notifier:AGENTS.md@a6c643195d73	API Boundary Principles
+S0429	A	same	notifier:AGENTS.md@a6c643195d73	Detail Docs
+S0430	C	edited	notifier:AGENTS.md@20a7a41d97dd	Project Overview
+S0431	A	same	notifier:AGENTS.md@20a7a41d97dd	Development Methodology
+S0432	A	same	notifier:AGENTS.md@20a7a41d97dd	Environment & Tooling
+S0433	A	same	notifier:AGENTS.md@20a7a41d97dd	Continuous Integration
+S0434	A	same	notifier:AGENTS.md@20a7a41d97dd	Code Exploration Policy
+S0435	A	same	notifier:AGENTS.md@20a7a41d97dd	Project Layout
+S0436	C	edited	notifier:AGENTS.md@20a7a41d97dd	Infrastructure
+S0437	C	edited	notifier:AGENTS.md@20a7a41d97dd	Server Lifecycle
+S0438	C	edited	notifier:AGENTS.md@20a7a41d97dd	Environment Variables
+S0439	C	edited	notifier:AGENTS.md@20a7a41d97dd	Common Commands
+S0440	C	edited	notifier:AGENTS.md@20a7a41d97dd	Agent Skills
+S0441	C	edited	notifier:AGENTS.md@20a7a41d97dd	API Boundary Principles
+S0442	A	same	notifier:AGENTS.md@20a7a41d97dd	Detail Docs
+S0443	A	same	notifier:AGENTS.md@a9004a6c1597	Project Overview
+S0444	A	same	notifier:AGENTS.md@a9004a6c1597	Development Methodology
+S0445	A	same	notifier:AGENTS.md@a9004a6c1597	Environment & Tooling
+S0446	A	same	notifier:AGENTS.md@a9004a6c1597	Continuous Integration
+S0447	A	same	notifier:AGENTS.md@a9004a6c1597	Code Exploration Policy
+S0448	A	same	notifier:AGENTS.md@a9004a6c1597	Project Layout
+S0449	A	same	notifier:AGENTS.md@a9004a6c1597	Infrastructure
+S0450	B	edited	notifier:AGENTS.md@a9004a6c1597	Server Lifecycle
+S0451	A	same	notifier:AGENTS.md@a9004a6c1597	Environment Variables
+S0452	A	same	notifier:AGENTS.md@a9004a6c1597	Common Commands
+S0453	A	same	notifier:AGENTS.md@a9004a6c1597	Agent Skills
+S0454	A	same	notifier:AGENTS.md@a9004a6c1597	Conventions
+S0455	A	same	notifier:AGENTS.md@a9004a6c1597	API Boundary Principles
+S0456	A	same	power-map:AGENTS.md@6747c47e22cb	Project Overview
+S0457	A	same	power-map:AGENTS.md@6747c47e22cb	Development Methodology
+S0458	A	same	power-map:AGENTS.md@6747c47e22cb	Environment & Tooling
+S0459	A	same	power-map:AGENTS.md@6747c47e22cb	Code Exploration Policy
+S0460	A	same	power-map:AGENTS.md@6747c47e22cb	Public API Key Rules
+S0461	A	same	power-map:AGENTS.md@6747c47e22cb	Agent Skills & Tools
+S0462	A	same	power-map:AGENTS.md@6747c47e22cb	Conventions
+S0463	A	same	power-map:AGENTS.md@15b38549a913	Project Overview
+S0464	A	same	power-map:AGENTS.md@15b38549a913	Development Methodology
+S0465	A	same	power-map:AGENTS.md@15b38549a913	Environment & Tooling
+S0466	A	same	power-map:AGENTS.md@15b38549a913	Code Exploration Policy
+S0467	A	same	power-map:AGENTS.md@15b38549a913	Project Layout
+S0468	A	same	power-map:AGENTS.md@15b38549a913	Public API Key Rules
+S0469	A	same	power-map:AGENTS.md@15b38549a913	DB Key Rules
+S0470	A	same	power-map:AGENTS.md@15b38549a913	Infrastructure
+S0471	A	same	power-map:AGENTS.md@15b38549a913	Agent Skills & Tools
+S0472	A	same	power-map:AGENTS.md@15b38549a913	Conventions
+S0473	A	same	power-map:AGENTS.md@859f42be9651	Project Overview
+S0474	A	same	power-map:AGENTS.md@859f42be9651	Development Methodology
+S0475	A	same	power-map:AGENTS.md@859f42be9651	Environment & Tooling
+S0476	A	same	power-map:AGENTS.md@859f42be9651	Code Exploration Policy
+S0477	A	same	power-map:AGENTS.md@859f42be9651	Project Layout
+S0478	A	same	power-map:AGENTS.md@859f42be9651	Admin Dashboard Key Rules
+S0479	A	same	power-map:AGENTS.md@859f42be9651	Public API Key Rules
+S0480	A	same	power-map:AGENTS.md@859f42be9651	Infrastructure
+S0481	A	same	power-map:AGENTS.md@859f42be9651	Agent Skills & Tools
+S0482	A	same	power-map:AGENTS.md@859f42be9651	Conventions
+S0483	A	same	power-map:AGENTS.md@223d77788491	Project Overview
+S0484	A	same	power-map:AGENTS.md@223d77788491	Development Methodology
+S0485	A	same	power-map:AGENTS.md@223d77788491	Environment & Tooling
+S0486	A	same	power-map:AGENTS.md@223d77788491	Code Exploration Policy
+S0487	A	same	power-map:AGENTS.md@223d77788491	Project Layout
+S0488	A	same	power-map:AGENTS.md@223d77788491	Admin Dashboard Key Rules
+S0489	A	same	power-map:AGENTS.md@223d77788491	Public API Key Rules
+S0490	A	same	power-map:AGENTS.md@223d77788491	DB Key Rules
+S0491	A	same	power-map:AGENTS.md@223d77788491	Infrastructure
+S0492	A	same	power-map:AGENTS.md@223d77788491	Agent Skills & Tools
+S0493	A	same	power-map:AGENTS.md@223d77788491	Conventions
+S0494	A	same	power-map:AGENTS.md@63c04286bfe4	Project Overview
+S0495	A	same	power-map:AGENTS.md@63c04286bfe4	Development Methodology
+S0496	A	same	power-map:AGENTS.md@63c04286bfe4	Environment & Tooling
+S0497	A	same	power-map:AGENTS.md@63c04286bfe4	Code Exploration Policy
+S0498	A	same	power-map:AGENTS.md@63c04286bfe4	Project Layout
+S0499	A	same	power-map:AGENTS.md@63c04286bfe4	Admin Dashboard Key Rules
+S0500	A	same	power-map:AGENTS.md@63c04286bfe4	Public API Key Rules
+S0501	A	same	power-map:AGENTS.md@63c04286bfe4	DB Key Rules
+S0502	A	same	power-map:AGENTS.md@63c04286bfe4	Infrastructure
+S0503	A	same	power-map:AGENTS.md@63c04286bfe4	Agent Skills & Tools
+S0504	A	same	power-map:AGENTS.md@63c04286bfe4	Conventions
+S0505	C	edited	power-map:AGENTS.md@63c04286bfe4	Detail Docs
+S0506	A	same	power-map:AGENTS.md@54d0aade7b61	Project Overview
+S0507	A	same	power-map:AGENTS.md@54d0aade7b61	Development Methodology
+S0508	A	same	power-map:AGENTS.md@54d0aade7b61	Environment & Tooling
+S0509	A	same	power-map:AGENTS.md@54d0aade7b61	Project Layout
+S0510	A	same	power-map:AGENTS.md@54d0aade7b61	Admin Dashboard Key Rules
+S0511	A	same	power-map:AGENTS.md@54d0aade7b61	Public API Key Rules
+S0512	A	same	power-map:AGENTS.md@54d0aade7b61	DB Key Rules
+S0513	C	same	power-map:AGENTS.md@54d0aade7b61	Agent Skills & Tools
+S0514	A	same	power-map:AGENTS.md@54d0aade7b61	Conventions
+S0515	A	same	power-map:AGENTS.md@de9fb3bdadde	Project Overview
+S0516	A	same	power-map:AGENTS.md@de9fb3bdadde	Development Methodology
+S0517	A	same	power-map:AGENTS.md@de9fb3bdadde	Environment & Tooling
+S0518	A	same	power-map:AGENTS.md@de9fb3bdadde	Code Exploration Policy
+S0519	A	same	power-map:AGENTS.md@de9fb3bdadde	Project Layout
+S0520	A	same	power-map:AGENTS.md@de9fb3bdadde	Admin Dashboard Key Rules
+S0521	A	same	power-map:AGENTS.md@de9fb3bdadde	Agent Skills & Tools
+S0522	A	same	power-map:AGENTS.md@de9fb3bdadde	Conventions
+S0523	A	same	power-map:AGENTS.md@3c6a69ac8482	Project Overview
+S0524	A	same	power-map:AGENTS.md@3c6a69ac8482	Development Methodology
+S0525	A	same	power-map:AGENTS.md@3c6a69ac8482	Environment & Tooling
+S0526	A	same	power-map:AGENTS.md@3c6a69ac8482	Code Exploration Policy
+S0527	A	same	power-map:AGENTS.md@3c6a69ac8482	Project Layout
+S0528	A	same	power-map:AGENTS.md@3c6a69ac8482	Admin Dashboard Key Rules
+S0529	A	same	power-map:AGENTS.md@3c6a69ac8482	Public API Key Rules
+S0530	A	same	power-map:AGENTS.md@3c6a69ac8482	DB Key Rules
+S0531	A	same	power-map:AGENTS.md@3c6a69ac8482	Agent Skills & Tools
+S0532	A	same	power-map:AGENTS.md@3c6a69ac8482	Conventions
+S0533	A	same	power-map:AGENTS.md@3c6a69ac8482	Detail Docs
+S0534	A	same	power-map:AGENTS.md@ebc76a56e8ef	Project Overview
+S0535	A	same	power-map:AGENTS.md@ebc76a56e8ef	Development Methodology
+S0536	A	same	power-map:AGENTS.md@ebc76a56e8ef	Environment & Tooling
+S0537	A	same	power-map:AGENTS.md@ebc76a56e8ef	Code Exploration Policy
+S0538	C	edited	power-map:AGENTS.md@ebc76a56e8ef	Project Layout
+S0539	A	same	power-map:AGENTS.md@ebc76a56e8ef	Admin Dashboard Key Rules
+S0540	A	same	power-map:AGENTS.md@ebc76a56e8ef	Public API Key Rules
+S0541	A	same	power-map:AGENTS.md@ebc76a56e8ef	DB Key Rules
+S0542	C	edited	power-map:AGENTS.md@ebc76a56e8ef	Infrastructure
+S0543	A	same	power-map:AGENTS.md@ebc76a56e8ef	Agent Skills & Tools
+S0544	A	same	power-map:AGENTS.md@ebc76a56e8ef	Conventions
+S0545	A	same	power-map:AGENTS.md@ebc76a56e8ef	Detail Docs
+S0546	A	same	power-map:AGENTS.md@dc64e9acf38a	Project Overview
+S0547	A	same	power-map:AGENTS.md@dc64e9acf38a	Development Methodology
+S0548	A	same	power-map:AGENTS.md@dc64e9acf38a	Environment & Tooling
+S0549	A	same	power-map:AGENTS.md@dc64e9acf38a	Code Exploration Policy
+S0550	C	same	power-map:AGENTS.md@dc64e9acf38a	Project Layout
+S0551	C	same	power-map:AGENTS.md@dc64e9acf38a	Admin Dashboard Key Rules
+S0552	C	same	power-map:AGENTS.md@dc64e9acf38a	Public API Key Rules
+S0553	C	same	power-map:AGENTS.md@dc64e9acf38a	DB Key Rules
+S0554	C	edited	power-map:AGENTS.md@dc64e9acf38a	Infrastructure
+S0555	C	same	power-map:AGENTS.md@dc64e9acf38a	Agent Skills & Tools
+S0556	A	same	power-map:AGENTS.md@dc64e9acf38a	Conventions
+S0557	A	same	power-map:AGENTS.md@dc64e9acf38a	Detail Docs
+S0558	A	same	power-map:AGENTS.md@e4ea23589d9e	Project Overview
+S0559	A	same	power-map:AGENTS.md@e4ea23589d9e	Development Methodology
+S0560	A	same	power-map:AGENTS.md@e4ea23589d9e	Environment & Tooling
+S0561	A	same	power-map:AGENTS.md@e4ea23589d9e	Code Exploration Policy
+S0562	A	same	power-map:AGENTS.md@e4ea23589d9e	Project Layout
+S0563	A	same	power-map:AGENTS.md@e4ea23589d9e	Admin Dashboard Key Rules
+S0564	A	same	power-map:AGENTS.md@e4ea23589d9e	Public API Key Rules
+S0565	A	same	power-map:AGENTS.md@e4ea23589d9e	DB Key Rules
+S0566	A	same	power-map:AGENTS.md@e4ea23589d9e	Agent Skills & Tools
+S0567	A	same	power-map:AGENTS.md@e4ea23589d9e	Conventions
+S0568	A	same	power-map:AGENTS.md@60a15407286b	Project Overview
+S0569	A	same	power-map:AGENTS.md@60a15407286b	Development Methodology
+S0570	A	same	power-map:AGENTS.md@60a15407286b	Environment & Tooling
+S0571	A	same	power-map:AGENTS.md@60a15407286b	Code Exploration Policy
+S0572	A	same	power-map:AGENTS.md@60a15407286b	Project Layout
+S0573	A	same	power-map:AGENTS.md@60a15407286b	Admin Dashboard Key Rules
+S0574	A	same	power-map:AGENTS.md@60a15407286b	Public API Key Rules
+S0575	A	same	power-map:AGENTS.md@60a15407286b	DB Key Rules
+S0576	A	same	power-map:AGENTS.md@60a15407286b	Agent Skills & Tools
+S0577	A	same	power-map:AGENTS.md@60a15407286b	Conventions
+S0578	A	same	power-map:AGENTS.md@60a15407286b	Detail Docs
+S0579	A	same	power-map:AGENTS.md@603266815a2f	Project Overview
+S0580	A	same	power-map:AGENTS.md@603266815a2f	Development Methodology
+S0581	A	same	power-map:AGENTS.md@603266815a2f	Environment & Tooling
+S0582	A	same	power-map:AGENTS.md@603266815a2f	Code Exploration Policy
+S0583	A	same	power-map:AGENTS.md@603266815a2f	Project Layout
+S0584	A	same	power-map:AGENTS.md@603266815a2f	Admin Dashboard Key Rules
+S0585	A	same	power-map:AGENTS.md@603266815a2f	Public API Key Rules
+S0586	A	same	power-map:AGENTS.md@603266815a2f	DB Key Rules
+S0587	A	same	power-map:AGENTS.md@603266815a2f	Infrastructure
+S0588	A	same	power-map:AGENTS.md@603266815a2f	Agent Skills & Tools
+S0589	A	same	power-map:AGENTS.md@603266815a2f	Conventions
+S0590	A	same	power-map:AGENTS.md@603266815a2f	Detail Docs
+S0591	A	same	power-map:AGENTS.md@851e17cf6f12	Project Overview
+S0592	A	same	power-map:AGENTS.md@851e17cf6f12	Development Methodology
+S0593	A	same	power-map:AGENTS.md@851e17cf6f12	Environment & Tooling
+S0594	A	same	power-map:AGENTS.md@851e17cf6f12	Code Exploration Policy
+S0595	A	same	power-map:AGENTS.md@851e17cf6f12	Project Layout
+S0596	A	same	power-map:AGENTS.md@851e17cf6f12	Admin Dashboard Key Rules
+S0597	A	same	power-map:AGENTS.md@851e17cf6f12	Public API Key Rules
+S0598	A	same	power-map:AGENTS.md@851e17cf6f12	DB Key Rules
+S0599	A	same	power-map:AGENTS.md@851e17cf6f12	Infrastructure
+S0600	A	same	power-map:AGENTS.md@851e17cf6f12	Agent Skills & Tools
+S0601	A	same	power-map:AGENTS.md@851e17cf6f12	Conventions
+S0602	A	same	power-map:AGENTS.md@851e17cf6f12	Detail Docs
+S0603	A	same	replicator:AGENTS.md@149e70a86883	Project Overview
+S0604	A	same	replicator:AGENTS.md@149e70a86883	Development Methodology
+S0605	C	edited	replicator:AGENTS.md@149e70a86883	Code Exploration Policy
+S0606	A	same	replicator:AGENTS.md@149e70a86883	Project Layout
+S0607	A	same	replicator:AGENTS.md@149e70a86883	Infrastructure
+S0608	A	same	replicator:AGENTS.md@149e70a86883	Server Lifecycle
+S0609	A	same	replicator:AGENTS.md@149e70a86883	Environment Variables
+S0610	A	same	replicator:AGENTS.md@149e70a86883	Common Commands
+S0611	A	same	replicator:AGENTS.md@149e70a86883	Agent Skills
+S0612	A	same	replicator:AGENTS.md@149e70a86883	Conventions
+S0613	A	same	replicator:AGENTS.md@55d5adb5d119	Development Methodology
+S0614	A	same	replicator:AGENTS.md@55d5adb5d119	Infrastructure
+S0615	A	same	replicator:AGENTS.md@55d5adb5d119	Server Lifecycle
+S0616	C	edited	replicator:AGENTS.md@55d5adb5d119	Bus Conventions
+S0617	A	same	replicator:AGENTS.md@55d5adb5d119	Agent Skills
+S0618	A	same	replicator:AGENTS.md@347a168178a3	Project Overview
+S0619	A	same	replicator:AGENTS.md@347a168178a3	Development Methodology
+S0620	A	same	replicator:AGENTS.md@347a168178a3	Code Exploration Policy
+S0621	A	same	replicator:AGENTS.md@347a168178a3	Code Exploration Notes (repo-specific)
+S0622	A	same	replicator:AGENTS.md@347a168178a3	Project Layout
+S0623	A	same	replicator:AGENTS.md@347a168178a3	Infrastructure
+S0624	A	same	replicator:AGENTS.md@347a168178a3	Server Lifecycle
+S0625	A	same	replicator:AGENTS.md@347a168178a3	Environment Variables
+S0626	B	edited	replicator:AGENTS.md@347a168178a3	Bus Conventions
+S0627	A	same	replicator:AGENTS.md@347a168178a3	Common Commands
+S0628	A	same	replicator:AGENTS.md@347a168178a3	Agent Skills
+S0629	A	same	replicator:AGENTS.md@347a168178a3	Conventions
+S0630	A	same	replicator:AGENTS.md@347a168178a3	Detail Docs
+S0631	A	same	replicator:AGENTS.md@7cd0c012feb9	Project Overview
+S0632	A	same	replicator:AGENTS.md@7cd0c012feb9	Development Methodology
+S0633	A	same	replicator:AGENTS.md@7cd0c012feb9	Environment & Tooling
+S0634	A	same	replicator:AGENTS.md@7cd0c012feb9	Code Exploration Policy
+S0635	A	same	replicator:AGENTS.md@7cd0c012feb9	Code Exploration Notes (repo-specific)
+S0636	A	same	replicator:AGENTS.md@7cd0c012feb9	Project Layout
+S0637	A	same	replicator:AGENTS.md@7cd0c012feb9	Infrastructure
+S0638	A	same	replicator:AGENTS.md@7cd0c012feb9	Server Lifecycle
+S0639	A	same	replicator:AGENTS.md@7cd0c012feb9	Environment Variables
+S0640	A	same	replicator:AGENTS.md@7cd0c012feb9	Bus Conventions
+S0641	A	same	replicator:AGENTS.md@7cd0c012feb9	Common Commands
+S0642	A	same	replicator:AGENTS.md@7cd0c012feb9	Agent Skills
+S0643	A	same	replicator:AGENTS.md@7cd0c012feb9	Conventions
+S0644	A	same	replicator:AGENTS.md@7cd0c012feb9	Detail Docs
+S0645	A	same	replicator:AGENTS.md@7cd0c012feb9	Project Overview
+S0646	A	same	replicator:AGENTS.md@7cd0c012feb9	Development Methodology
+S0647	A	same	replicator:AGENTS.md@7cd0c012feb9	Code Exploration Policy
+S0648	A	same	replicator:AGENTS.md@7cd0c012feb9	Code Exploration Notes (repo-specific)
+S0649	A	same	replicator:AGENTS.md@7cd0c012feb9	Project Layout
+S0650	A	same	replicator:AGENTS.md@7cd0c012feb9	Infrastructure
+S0651	A	same	replicator:AGENTS.md@7cd0c012feb9	Common Commands
+S0652	A	same	replicator:AGENTS.md@7cd0c012feb9	Agent Skills
+S0653	A	same	replicator:AGENTS.md@7cd0c012feb9	Conventions
+S0654	A	same	replicator:AGENTS.md@95478da718f0	Project Overview
+S0655	A	same	replicator:AGENTS.md@95478da718f0	Development Methodology
+S0656	A	same	replicator:AGENTS.md@95478da718f0	Environment & Tooling
+S0657	A	same	replicator:AGENTS.md@95478da718f0	Code Exploration Policy
+S0658	A	same	replicator:AGENTS.md@95478da718f0	Code Exploration Notes (repo-specific)
+S0659	A	same	replicator:AGENTS.md@95478da718f0	Project Layout
+S0660	A	same	replicator:AGENTS.md@95478da718f0	Infrastructure
+S0661	B	edited	replicator:AGENTS.md@95478da718f0	Server Lifecycle
+S0662	B	edited	replicator:AGENTS.md@95478da718f0	Environment Variables
+S0663	C	edited	replicator:AGENTS.md@95478da718f0	Bus Conventions
+S0664	A	same	replicator:AGENTS.md@95478da718f0	Common Commands
+S0665	A	same	replicator:AGENTS.md@95478da718f0	Agent Skills
+S0666	B	edited	replicator:AGENTS.md@95478da718f0	Conventions
+S0667	A	same	replicator:AGENTS.md@95478da718f0	Detail Docs
+S0668	B	edited	replicator:AGENTS.md@325212026e4c	Project Overview
+S0669	A	same	replicator:AGENTS.md@325212026e4c	Development Methodology
+S0670	A	same	replicator:AGENTS.md@325212026e4c	Code Exploration Policy
+S0671	C	edited	replicator:AGENTS.md@325212026e4c	Bus Conventions
+S0672	A	same	replicator:AGENTS.md@325212026e4c	Common Commands
+S0673	A	same	replicator:AGENTS.md@325212026e4c	Agent Skills
+S0674	C	edited	replicator:AGENTS.md@325212026e4c	Detail Docs
+S0675	A	same	replicator:AGENTS.md@00b05219d335	Project Overview
+S0676	A	same	replicator:AGENTS.md@00b05219d335	Development Methodology
+S0677	A	same	replicator:AGENTS.md@00b05219d335	Environment & Tooling
+S0678	A	same	replicator:AGENTS.md@00b05219d335	Code Exploration Policy
+S0679	A	same	replicator:AGENTS.md@00b05219d335	Code Exploration Notes (repo-specific)
+S0680	B	edited	replicator:AGENTS.md@00b05219d335	Project Layout
+S0681	A	same	replicator:AGENTS.md@00b05219d335	Server Lifecycle
+S0682	A	same	replicator:AGENTS.md@00b05219d335	Environment Variables
+S0683	C	edited	replicator:AGENTS.md@00b05219d335	Bus Conventions
+S0684	A	same	replicator:AGENTS.md@00b05219d335	Common Commands
+S0685	A	same	replicator:AGENTS.md@00b05219d335	Agent Skills
+S0686	C	edited	replicator:AGENTS.md@00b05219d335	Conventions
+S0687	A	same	replicator:AGENTS.md@c0f0fcf48cae	Environment & Tooling
+S0688	A	same	replicator:AGENTS.md@c0f0fcf48cae	Code Exploration Policy
+S0689	A	same	replicator:AGENTS.md@c0f0fcf48cae	Project Layout
+S0690	A	same	replicator:AGENTS.md@c0f0fcf48cae	Infrastructure
+S0691	C	edited	replicator:AGENTS.md@c0f0fcf48cae	Server Lifecycle
+S0692	C	edited	replicator:AGENTS.md@c0f0fcf48cae	Bus Conventions
+S0693	C	edited	replicator:AGENTS.md@c0f0fcf48cae	Common Commands
+S0694	A	same	replicator:AGENTS.md@c0f0fcf48cae	Agent Skills
+S0695	A	same	replicator:AGENTS.md@c0f0fcf48cae	Conventions
+S0696	A	same	replicator:AGENTS.md@dce1bdb73e5d	Project Overview
+S0697	A	same	replicator:AGENTS.md@dce1bdb73e5d	Development Methodology
+S0698	A	same	replicator:AGENTS.md@dce1bdb73e5d	Environment & Tooling
+S0699	A	same	replicator:AGENTS.md@dce1bdb73e5d	Code Exploration Policy
+S0700	A	same	replicator:AGENTS.md@dce1bdb73e5d	Code Exploration Notes (repo-specific)
+S0701	A	same	replicator:AGENTS.md@dce1bdb73e5d	Project Layout
+S0702	A	same	replicator:AGENTS.md@dce1bdb73e5d	Infrastructure
+S0703	A	same	replicator:AGENTS.md@dce1bdb73e5d	Server Lifecycle
+S0704	A	same	replicator:AGENTS.md@dce1bdb73e5d	Environment Variables
+S0705	A	same	replicator:AGENTS.md@dce1bdb73e5d	Bus Conventions
+S0706	A	same	replicator:AGENTS.md@dce1bdb73e5d	Common Commands
+S0707	A	same	replicator:AGENTS.md@dce1bdb73e5d	Agent Skills
+S0708	C	same	replicator:AGENTS.md@dce1bdb73e5d	Conventions
+S0709	A	same	replicator:AGENTS.md@dce1bdb73e5d	Detail Docs
+S0710	A	same	replicator:AGENTS.md@dce1bdb73e5d	Project Overview
+S0711	A	same	replicator:AGENTS.md@dce1bdb73e5d	Development Methodology
+S0712	A	same	replicator:AGENTS.md@dce1bdb73e5d	Environment & Tooling
+S0713	A	same	replicator:AGENTS.md@dce1bdb73e5d	Code Exploration Policy
+S0714	A	same	replicator:AGENTS.md@dce1bdb73e5d	Code Exploration Notes (repo-specific)
+S0715	A	same	replicator:AGENTS.md@dce1bdb73e5d	Project Layout
+S0716	A	same	replicator:AGENTS.md@dce1bdb73e5d	Infrastructure
+S0717	A	same	replicator:AGENTS.md@dce1bdb73e5d	Server Lifecycle
+S0718	A	same	replicator:AGENTS.md@dce1bdb73e5d	Environment Variables
+S0719	A	same	replicator:AGENTS.md@dce1bdb73e5d	Bus Conventions
+S0720	A	same	replicator:AGENTS.md@dce1bdb73e5d	Common Commands
+S0721	A	same	replicator:AGENTS.md@dce1bdb73e5d	Agent Skills
+S0722	A	same	replicator:AGENTS.md@dce1bdb73e5d	Conventions
+S0723	C	edited	replicator:AGENTS.md@dce1bdb73e5d	Detail Docs
+S0724	A	same	replicator:AGENTS.md@e2131a44e09f	Project Overview
+S0725	A	same	replicator:AGENTS.md@e2131a44e09f	Development Methodology
+S0726	A	same	replicator:AGENTS.md@e2131a44e09f	Environment & Tooling
+S0727	A	same	replicator:AGENTS.md@e2131a44e09f	Code Exploration Policy
+S0728	C	edited	replicator:AGENTS.md@e2131a44e09f	Project Layout
+S0729	A	same	replicator:AGENTS.md@e2131a44e09f	Infrastructure
+S0730	C	edited	replicator:AGENTS.md@e2131a44e09f	Server Lifecycle
+S0731	C	edited	replicator:AGENTS.md@e2131a44e09f	Environment Variables
+S0732	A	same	replicator:AGENTS.md@e2131a44e09f	Bus Conventions
+S0733	A	same	replicator:AGENTS.md@e2131a44e09f	Common Commands
+S0734	A	same	replicator:AGENTS.md@e2131a44e09f	Agent Skills
+S0735	A	same	replicator:AGENTS.md@e2131a44e09f	Conventions
+S0736	A	same	replicator:AGENTS.md@86bb7aeb69ba	Project Overview
+S0737	A	same	replicator:AGENTS.md@86bb7aeb69ba	Development Methodology
+S0738	A	same	replicator:AGENTS.md@86bb7aeb69ba	Environment & Tooling
+S0739	A	same	replicator:AGENTS.md@86bb7aeb69ba	Code Exploration Policy
+S0740	A	same	replicator:AGENTS.md@86bb7aeb69ba	Project Layout
+S0741	A	same	replicator:AGENTS.md@86bb7aeb69ba	Infrastructure
+S0742	D	edited	replicator:AGENTS.md@86bb7aeb69ba	Environment Variables
+S0743	A	same	replicator:AGENTS.md@86bb7aeb69ba	Bus Conventions
+S0744	A	same	replicator:AGENTS.md@86bb7aeb69ba	Agent Skills
+S0745	A	same	replicator:AGENTS.md@86bb7aeb69ba	Conventions
+S0746	A	same	replicator:AGENTS.md@6fdf538d6888	Project Overview
+S0747	A	same	replicator:AGENTS.md@6fdf538d6888	Development Methodology
+S0748	C	edited	replicator:AGENTS.md@6fdf538d6888	Environment & Tooling
+S0749	A	same	replicator:AGENTS.md@6fdf538d6888	Code Exploration Policy
+S0750	A	same	replicator:AGENTS.md@6fdf538d6888	Code Exploration Notes (repo-specific)
+S0751	C	edited	replicator:AGENTS.md@6fdf538d6888	Project Layout
+S0752	C	edited	replicator:AGENTS.md@6fdf538d6888	Infrastructure
+S0753	A	same	replicator:AGENTS.md@6fdf538d6888	Server Lifecycle
+S0754	C	edited	replicator:AGENTS.md@6fdf538d6888	Environment Variables
+S0755	C	edited	replicator:AGENTS.md@6fdf538d6888	Bus Conventions
+S0756	A	same	replicator:AGENTS.md@6fdf538d6888	Common Commands
+S0757	A	same	replicator:AGENTS.md@6fdf538d6888	Agent Skills
+S0758	A	same	replicator:AGENTS.md@6fdf538d6888	Conventions
+S0759	C	edited	replicator:AGENTS.md@6fdf538d6888	Detail Docs
+S0760	A	same	replicator:AGENTS.md@931ddbffe656	Project Overview
+S0761	A	same	replicator:AGENTS.md@931ddbffe656	Development Methodology
+S0762	A	same	replicator:AGENTS.md@931ddbffe656	Design Preferences
+S0763	A	same	replicator:AGENTS.md@931ddbffe656	Environment & Tooling
+S0764	A	same	replicator:AGENTS.md@931ddbffe656	Code Exploration Policy
+S0765	A	same	replicator:AGENTS.md@931ddbffe656	Code Exploration Notes (repo-specific)
+S0766	A	same	replicator:AGENTS.md@931ddbffe656	Project Layout
+S0767	A	same	replicator:AGENTS.md@931ddbffe656	Infrastructure
+S0768	A	same	replicator:AGENTS.md@931ddbffe656	Server Lifecycle
+S0769	A	same	replicator:AGENTS.md@931ddbffe656	Environment Variables
+S0770	C	edited	replicator:AGENTS.md@931ddbffe656	Bus Conventions
+S0771	A	same	replicator:AGENTS.md@931ddbffe656	Common Commands
+S0772	A	same	replicator:AGENTS.md@931ddbffe656	Agent Skills
+S0773	A	same	replicator:AGENTS.md@931ddbffe656	Conventions
+S0774	A	same	replicator:AGENTS.md@931ddbffe656	Detail Docs
+S0775	A	same	replicator:AGENTS.md@70231284366e	Project Overview
+S0776	A	same	replicator:AGENTS.md@70231284366e	Development Methodology
+S0777	A	same	replicator:AGENTS.md@70231284366e	Design Preferences
+S0778	A	same	replicator:AGENTS.md@70231284366e	Environment & Tooling
+S0779	A	same	replicator:AGENTS.md@70231284366e	Code Exploration Policy
+S0780	C	edited	replicator:AGENTS.md@70231284366e	Code Exploration Notes (repo-specific)
+S0781	C	edited	replicator:AGENTS.md@70231284366e	Project Layout
+S0782	A	same	replicator:AGENTS.md@70231284366e	Infrastructure
+S0783	C	edited	replicator:AGENTS.md@70231284366e	Server Lifecycle
+S0784	C	edited	replicator:AGENTS.md@70231284366e	Environment Variables
+S0785	C	edited	replicator:AGENTS.md@70231284366e	Bus Conventions
+S0786	C	edited	replicator:AGENTS.md@70231284366e	Common Commands
+S0787	A	same	replicator:AGENTS.md@70231284366e	Agent Skills
+S0788	C	edited	replicator:AGENTS.md@70231284366e	Conventions
+S0789	C	edited	replicator:AGENTS.md@70231284366e	Detail Docs
+S0790	A	same	skills:AGENTS.md@b21a674a16f1	What this repo is
+S0791	A	same	skills:AGENTS.md@b21a674a16f1	Repository structure
+S0792	A	same	skills:AGENTS.md@b21a674a16f1	Naming conventions
+S0793	A	same	skills:AGENTS.md@b21a674a16f1	Variant strategy
+S0794	B	edited	skills:AGENTS.md@b21a674a16f1	Project-level superseding
+S0795	A	same	skills:AGENTS.md@b21a674a16f1	Spec compliance
+S0796	A	same	skills:AGENTS.md@b21a674a16f1	Writing effective skills
+S0797	B	edited	skills:AGENTS.md@b21a674a16f1	Scripts
+S0798	A	same	skills:AGENTS.md@b21a674a16f1	Worktree root convention
+S0799	A	same	skills:AGENTS.md@b21a674a16f1	Plans directory convention
+S0800	B	edited	skills:AGENTS.md@b21a674a16f1	References convention
+S0801	A	same	skills:AGENTS.md@b21a674a16f1	Commit conventions
+S0802	B	edited	skills:AGENTS.md@b21a674a16f1	How downstream projects consume this repo
+S0803	A	same	skills:AGENTS.md@b21a674a16f1	Dev setup
+S0804	A	same	skills:AGENTS.md@b21a674a16f1	Adding a new skill
+S0805	A	same	skills:AGENTS.md@b21a674a16f1	Adding a variant
+S0806	A	same	skills:skills/managing-skills/SKILL.md@57d9832b07fb	Pattern overview
+S0807	B	edited	skills:skills/managing-skills/SKILL.md@57d9832b07fb	Procedure
+S0808	B	edited	skills:skills/managing-skills/SKILL.md@57d9832b07fb	Troubleshooting
+S0809	A	same	skills:skills/managing-skills/SKILL.md@2defeb02f5ed	Pattern overview
+S0810	A	same	skills:skills/managing-skills/SKILL.md@2defeb02f5ed	Troubleshooting
+S0811	A	same	skills:AGENTS.md@d7d07a31a19a	What this repo is
+S0812	A	same	skills:AGENTS.md@d7d07a31a19a	Repository structure
+S0813	A	same	skills:AGENTS.md@d7d07a31a19a	Naming conventions
+S0814	A	same	skills:AGENTS.md@d7d07a31a19a	Variant strategy
+S0815	A	same	skills:AGENTS.md@d7d07a31a19a	Project-level superseding
+S0816	A	same	skills:AGENTS.md@d7d07a31a19a	Spec compliance
+S0817	A	same	skills:AGENTS.md@d7d07a31a19a	Writing effective skills
+S0818	A	same	skills:AGENTS.md@d7d07a31a19a	Resolution knobs
+S0819	A	same	skills:AGENTS.md@d7d07a31a19a	References convention
+S0820	B	edited	skills:AGENTS.md@d7d07a31a19a	Self-budget
+S0821	A	same	skills:AGENTS.md@d7d07a31a19a	Commit conventions
+S0822	A	same	skills:AGENTS.md@d7d07a31a19a	How downstream projects consume this repo
+S0823	A	same	skills:AGENTS.md@d7d07a31a19a	Adding a new skill
+S0824	A	same	skills:AGENTS.md@d7d07a31a19a	Adding a variant
+S0825	A	same	skills:AGENTS.md@d7d07a31a19a	Detail Docs
+S0826	A	same	skills:skills/using-git-worktrees/SKILL.md@a657b7d862cb	The Iron Law
+S0827	A	same	skills:skills/using-git-worktrees/SKILL.md@a657b7d862cb	Rationalization prevention
+S0828	A	same	skills:skills/using-git-worktrees/SKILL.md@a657b7d862cb	Parameterized invocation
+S0829	A	same	skills:skills/using-git-worktrees/SKILL.md@a657b7d862cb	Script path resolution
+S0830	A	same	skills:skills/using-git-worktrees/SKILL.md@a657b7d862cb	Worktree root resolution
+S0831	A	same	skills:skills/using-git-worktrees/SKILL.md@a657b7d862cb	Venv linking — `.skills/worktree_venv`
+S0832	B	edited	skills:skills/using-git-worktrees/SKILL.md@a657b7d862cb	Procedure
+S0833	A	same	skills:skills/using-git-worktrees/SKILL.md@a657b7d862cb	Project-local wrapper scripts
+S0834	A	same	skills:skills/curating-context/SKILL.md@a10f317346d4	The Iron Law
+S0835	A	same	skills:skills/curating-context/SKILL.md@a10f317346d4	Rationalization prevention
+S0836	A	same	skills:skills/curating-context/SKILL.md@a10f317346d4	Scope: one repo, and only this repo
+S0837	A	same	skills:skills/curating-context/SKILL.md@a10f317346d4	This skill's own surface
+S0838	A	same	skills:skills/curating-context/SKILL.md@a10f317346d4	Parameterized invocation
+S0839	A	same	skills:skills/curating-context/SKILL.md@a10f317346d4	Script path resolution
+S0840	A	same	skills:skills/curating-context/SKILL.md@a10f317346d4	Phase 0 — Preflight the credential
+S0841	A	same	skills:skills/curating-context/SKILL.md@a10f317346d4	Phase 2 — Verify facts
+S0842	A	same	skills:skills/curating-context/SKILL.md@a10f317346d4	Phase 3 — Classify every section
+S0843	A	same	skills:skills/curating-context/SKILL.md@a10f317346d4	Phase 4 — Plan to the budget
+S0844	A	same	skills:skills/curating-context/SKILL.md@a10f317346d4	Phase 5 — Apply
+S0845	A	same	skills:skills/curating-context/SKILL.md@a10f317346d4	Phase 6 — Prove no loss
+S0846	A	same	skills:skills/curating-context/SKILL.md@a10f317346d4	Phase 6.5 — Sweep the seams
+S0847	A	same	skills:skills/curating-context/SKILL.md@a10f317346d4	Phase 8 — Wire the continuous surfaces
+S0848	B	edited	skills:skills/orchestrating-issue-backlog/SKILL.md@4d3e6f47dc71	Process
+S0849	B	gone	skills:skills/orchestrating-issue-backlog/SKILL.md@4d3e6f47dc71	Agent Roles
+S0850	B	gone	skills:skills/orchestrating-issue-backlog/SKILL.md@4d3e6f47dc71	Branch Hygiene Rules
+S0851	B	gone	skills:skills/orchestrating-issue-backlog/SKILL.md@4d3e6f47dc71	Recovery
+S0852	A	same	skills:skills/orchestrating-issue-backlog/SKILL.md@101030a10c83	Checklist
+S0853	A	same	skills:skills/orchestrating-issue-backlog/SKILL.md@101030a10c83	Executing the plan
+S0854	A	same	skills:skills/orchestrating-issue-backlog/SKILL.md@101030a10c83	Key Principles
+S0855	A	same	skills:skills/orchestrating-issue-backlog/SKILL.md@101030a10c83	Process Logs
+S0856	A	same	skills:skills/init-socraticode/SKILL.md@707b9d933fb3	Parameters to collect
+S0857	C	edited	skills:skills/init-socraticode/SKILL.md@707b9d933fb3	Procedure
+S0858	C	edited	skills:skills/init-socraticode/SKILL.md@707b9d933fb3	Re-run on an existing project (audit/repair)
+S0859	C	edited	skills:skills/init-socraticode/SKILL.md@707b9d933fb3	Key invariants
+S0860	A	same	skills:AGENTS.md@814f5ca0a88f	What this repo is
+S0861	A	same	skills:AGENTS.md@814f5ca0a88f	Repository structure
+S0862	A	same	skills:AGENTS.md@814f5ca0a88f	Naming conventions
+S0863	A	same	skills:AGENTS.md@814f5ca0a88f	Variant strategy
+S0864	A	same	skills:AGENTS.md@814f5ca0a88f	Project-level superseding
+S0865	A	same	skills:AGENTS.md@814f5ca0a88f	Spec compliance
+S0866	A	same	skills:AGENTS.md@814f5ca0a88f	Writing effective skills
+S0867	A	same	skills:AGENTS.md@814f5ca0a88f	Scripts
+S0868	C	edited	skills:AGENTS.md@814f5ca0a88f	Resolution knobs
+S0869	C	edited	skills:AGENTS.md@814f5ca0a88f	References convention
+S0870	C	edited	skills:AGENTS.md@814f5ca0a88f	Self-budget
+S0871	A	same	skills:AGENTS.md@814f5ca0a88f	Commit conventions
+S0872	A	same	skills:AGENTS.md@814f5ca0a88f	How downstream projects consume this repo
+S0873	C	edited	skills:AGENTS.md@814f5ca0a88f	Dev setup
+S0874	A	same	skills:AGENTS.md@814f5ca0a88f	Adding a new skill
+S0875	A	same	skills:AGENTS.md@814f5ca0a88f	Adding a variant
+S0876	A	same	usa-wa:AGENTS.md@f2ac1e10f100	Project Overview
+S0877	A	same	usa-wa:AGENTS.md@f2ac1e10f100	Development Methodology
+S0878	A	same	usa-wa:AGENTS.md@f2ac1e10f100	Environment & Tooling
+S0879	B	edited	usa-wa:AGENTS.md@f2ac1e10f100	Code Exploration Policy
+S0880	A	same	usa-wa:AGENTS.md@f2ac1e10f100	Infrastructure
+S0881	C	edited	usa-wa:AGENTS.md@f2ac1e10f100	Server Lifecycle
+S0882	A	same	usa-wa:AGENTS.md@f2ac1e10f100	Environment Variables
+S0883	A	same	usa-wa:AGENTS.md@f2ac1e10f100	Agent Skills
+S0884	A	same	usa-wa:AGENTS.md@f2ac1e10f100	Conventions
+S0885	A	same	usa-wa:AGENTS.md@c085669393e9	Project Overview
+S0886	A	same	usa-wa:AGENTS.md@c085669393e9	Development Methodology
+S0887	A	same	usa-wa:AGENTS.md@c085669393e9	Environment & Tooling
+S0888	A	same	usa-wa:AGENTS.md@c085669393e9	Code Exploration Policy
+S0889	C	edited	usa-wa:AGENTS.md@c085669393e9	Project Layout
+S0890	A	same	usa-wa:AGENTS.md@c085669393e9	Infrastructure
+S0891	A	same	usa-wa:AGENTS.md@c085669393e9	Server Lifecycle
+S0892	A	same	usa-wa:AGENTS.md@c085669393e9	Environment Variables
+S0893	A	same	usa-wa:AGENTS.md@c085669393e9	Common Commands
+S0894	A	same	usa-wa:AGENTS.md@c085669393e9	Agent Skills
+S0895	B	edited	usa-wa:AGENTS.md@c085669393e9	Conventions
+S0896	A	same	usa-wa:AGENTS.md@f855d443187c	Project Overview
+S0897	A	same	usa-wa:AGENTS.md@f855d443187c	Development Methodology
+S0898	A	same	usa-wa:AGENTS.md@f855d443187c	Environment & Tooling
+S0899	A	same	usa-wa:AGENTS.md@f855d443187c	Code Exploration Policy
+S0900	A	same	usa-wa:AGENTS.md@f855d443187c	Project Layout
+S0901	A	same	usa-wa:AGENTS.md@f855d443187c	Infrastructure
+S0902	A	same	usa-wa:AGENTS.md@f855d443187c	Server Lifecycle
+S0903	A	same	usa-wa:AGENTS.md@f855d443187c	Environment Variables
+S0904	A	same	usa-wa:AGENTS.md@f855d443187c	Common Commands
+S0905	A	same	usa-wa:AGENTS.md@f855d443187c	Agent Skills
+S0906	A	same	usa-wa:AGENTS.md@f855d443187c	Conventions
+S0907	A	same	usa-wa:AGENTS.md@f855d443187c	Detail Docs
+S0908	A	same	usa-wa:AGENTS.md@f855d443187c	Project Overview
+S0909	A	same	usa-wa:AGENTS.md@f855d443187c	Development Methodology
+S0910	A	same	usa-wa:AGENTS.md@f855d443187c	Environment & Tooling
+S0911	C	edited	usa-wa:AGENTS.md@f855d443187c	Code Exploration Policy
+S0912	C	edited	usa-wa:AGENTS.md@f855d443187c	Infrastructure
+S0913	C	edited	usa-wa:AGENTS.md@f855d443187c	Server Lifecycle
+S0914	A	same	usa-wa:AGENTS.md@f855d443187c	Environment Variables
+S0915	A	same	usa-wa:AGENTS.md@f855d443187c	Agent Skills
+S0916	C	edited	usa-wa:AGENTS.md@f855d443187c	Conventions
+S0917	C	edited	usa-wa:AGENTS.md@f855d443187c	Detail Docs
+S0918	A	same	usa-wa:AGENTS.md@c7ae605ab810	Project Overview
+S0919	A	same	usa-wa:AGENTS.md@c7ae605ab810	Development Methodology
+S0920	A	same	usa-wa:AGENTS.md@c7ae605ab810	Environment & Tooling
+S0921	A	same	usa-wa:AGENTS.md@c7ae605ab810	Code Exploration Policy
+S0922	A	same	usa-wa:AGENTS.md@c7ae605ab810	Code Exploration Notes (repo-specific)
+S0923	A	same	usa-wa:AGENTS.md@c7ae605ab810	Project Layout
+S0924	A	same	usa-wa:AGENTS.md@c7ae605ab810	Infrastructure
+S0925	A	same	usa-wa:AGENTS.md@c7ae605ab810	Environment Variables
+S0926	A	same	usa-wa:AGENTS.md@c7ae605ab810	Common Commands
+S0927	A	same	usa-wa:AGENTS.md@c7ae605ab810	Agent Skills
+S0928	A	same	usa-wa:AGENTS.md@c7ae605ab810	Conventions
+S0929	A	same	usa-wa:AGENTS.md@c7ae605ab810	Detail Docs
+S0930	A	same	usa-wa:AGENTS.md@ec83e464b748	Project Overview
+S0931	A	same	usa-wa:AGENTS.md@ec83e464b748	Development Methodology
+S0932	A	same	usa-wa:AGENTS.md@ec83e464b748	Environment & Tooling
+S0933	A	same	usa-wa:AGENTS.md@ec83e464b748	Code Exploration Policy
+S0934	A	same	usa-wa:AGENTS.md@ec83e464b748	Code Exploration Notes (repo-specific)
+S0935	A	same	usa-wa:AGENTS.md@ec83e464b748	Project Layout
+S0936	A	same	usa-wa:AGENTS.md@ec83e464b748	Infrastructure
+S0937	A	same	usa-wa:AGENTS.md@ec83e464b748	Server Lifecycle
+S0938	A	same	usa-wa:AGENTS.md@ec83e464b748	Environment Variables
+S0939	A	same	usa-wa:AGENTS.md@ec83e464b748	Common Commands
+S0940	A	same	usa-wa:AGENTS.md@ec83e464b748	Agent Skills
+S0941	A	same	usa-wa:AGENTS.md@ec83e464b748	Conventions
+S0942	A	same	usa-wa:AGENTS.md@ec83e464b748	Detail Docs
+S0943	A	same	watcher:AGENTS.md@f6b36f09320f	Project Overview
+S0944	A	same	watcher:AGENTS.md@f6b36f09320f	Development Methodology
+S0945	A	same	watcher:AGENTS.md@f6b36f09320f	Environment & Tooling
+S0946	B	edited	watcher:AGENTS.md@f6b36f09320f	Code Exploration Policy
+S0947	B	edited	watcher:AGENTS.md@f6b36f09320f	Infrastructure
+S0948	B	edited	watcher:AGENTS.md@f6b36f09320f	Server Lifecycle
+S0949	B	edited	watcher:AGENTS.md@f6b36f09320f	Environment Files
+S0950	A	same	watcher:AGENTS.md@f6b36f09320f	Common Commands
+S0951	A	same	watcher:AGENTS.md@f6b36f09320f	Watched Items
+S0952	B	edited	watcher:AGENTS.md@f6b36f09320f	Conventions
+S0953	B	edited	watcher:AGENTS.md@f6b36f09320f	Style & UI
+S0954	A	same	watcher:AGENTS.md@f6b36f09320f	Agent Skills
+S0955	A	same	watcher:AGENTS.md@f6b36f09320f	Detail Docs
+S0956	A	same	watcher:AGENTS.md@6f69ea720887	Project Overview
+S0957	A	same	watcher:AGENTS.md@6f69ea720887	Development Methodology
+S0958	A	same	watcher:AGENTS.md@6f69ea720887	Environment & Tooling
+S0959	A	same	watcher:AGENTS.md@6f69ea720887	Code Exploration Policy
+S0960	A	same	watcher:AGENTS.md@6f69ea720887	Infrastructure
+S0961	A	same	watcher:AGENTS.md@6f69ea720887	Server Lifecycle
+S0962	A	same	watcher:AGENTS.md@6f69ea720887	Environment Files
+S0963	A	same	watcher:AGENTS.md@6f69ea720887	Common Commands
+S0964	A	same	watcher:AGENTS.md@6f69ea720887	Watched Items
+S0965	A	same	watcher:AGENTS.md@6f69ea720887	Conventions
+S0966	A	same	watcher:AGENTS.md@6f69ea720887	Style & UI
+S0967	A	same	watcher:AGENTS.md@6f69ea720887	Agent Skills
+S0968	A	same	watcher:AGENTS.md@6f69ea720887	Detail Docs
+S0969	A	same	watcher:AGENTS.md@6f69ea720887	Project Overview
+S0970	A	same	watcher:AGENTS.md@6f69ea720887	Development Methodology
+S0971	A	same	watcher:AGENTS.md@6f69ea720887	Environment & Tooling
+S0972	A	same	watcher:AGENTS.md@6f69ea720887	Code Exploration Policy
+S0973	A	same	watcher:AGENTS.md@6f69ea720887	Infrastructure
+S0974	A	same	watcher:AGENTS.md@6f69ea720887	Server Lifecycle
+S0975	A	same	watcher:AGENTS.md@6f69ea720887	Environment Files
+S0976	A	same	watcher:AGENTS.md@6f69ea720887	Common Commands
+S0977	B	edited	watcher:AGENTS.md@6f69ea720887	Watched Items
+S0978	A	same	watcher:AGENTS.md@6f69ea720887	Conventions
+S0979	A	same	watcher:AGENTS.md@6f69ea720887	Style & UI
+S0980	A	same	watcher:AGENTS.md@6f69ea720887	Agent Skills
+S0981	A	same	watcher:AGENTS.md@58b9936cb482	Project Overview
+S0982	A	same	watcher:AGENTS.md@58b9936cb482	Development Methodology
+S0983	A	same	watcher:AGENTS.md@58b9936cb482	Environment & Tooling
+S0984	C	edited	watcher:AGENTS.md@58b9936cb482	Code Exploration Policy
+S0985	A	same	watcher:AGENTS.md@58b9936cb482	Infrastructure
+S0986	A	same	watcher:AGENTS.md@58b9936cb482	Common Commands
+S0987	A	same	watcher:AGENTS.md@58b9936cb482	Watched Items
+S0988	A	same	watcher:AGENTS.md@58b9936cb482	Conventions
+S0989	A	same	watcher:AGENTS.md@58b9936cb482	Agent Skills
+S0990	A	same	watcher:AGENTS.md@58b9936cb482	Detail Docs
+S0991	A	same	watcher:AGENTS.md@2dfea6f6ab0e	Project Overview
+S0992	A	same	watcher:AGENTS.md@2dfea6f6ab0e	Development Methodology
+S0993	A	same	watcher:AGENTS.md@2dfea6f6ab0e	Environment & Tooling
+S0994	A	same	watcher:AGENTS.md@2dfea6f6ab0e	Code Exploration Policy
+S0995	A	same	watcher:AGENTS.md@2dfea6f6ab0e	Infrastructure
+S0996	A	same	watcher:AGENTS.md@2dfea6f6ab0e	Server Lifecycle
+S0997	A	same	watcher:AGENTS.md@2dfea6f6ab0e	Environment Files
+S0998	A	same	watcher:AGENTS.md@2dfea6f6ab0e	Common Commands
+S0999	A	same	watcher:AGENTS.md@2dfea6f6ab0e	Watched Items
+S1000	A	same	watcher:AGENTS.md@2dfea6f6ab0e	Conventions
+S1001	A	same	watcher:AGENTS.md@2dfea6f6ab0e	Style & UI
+S1002	A	same	watcher:AGENTS.md@2dfea6f6ab0e	Agent Skills
+S1003	A	same	watcher:AGENTS.md@2dfea6f6ab0e	Detail Docs
+S1004	A	same	watcher:AGENTS.md@2dfea6f6ab0e	Project Overview
+S1005	A	same	watcher:AGENTS.md@2dfea6f6ab0e	Development Methodology
+S1006	A	same	watcher:AGENTS.md@2dfea6f6ab0e	Environment & Tooling
+S1007	A	same	watcher:AGENTS.md@2dfea6f6ab0e	Code Exploration Policy
+S1008	A	same	watcher:AGENTS.md@2dfea6f6ab0e	Infrastructure
+S1009	A	same	watcher:AGENTS.md@2dfea6f6ab0e	Server Lifecycle
+S1010	A	same	watcher:AGENTS.md@2dfea6f6ab0e	Environment Files
+S1011	A	same	watcher:AGENTS.md@2dfea6f6ab0e	Common Commands
+S1012	C	same	watcher:AGENTS.md@2dfea6f6ab0e	Watched Items
+S1013	C	same	watcher:AGENTS.md@2dfea6f6ab0e	Conventions
+S1014	C	same	watcher:AGENTS.md@2dfea6f6ab0e	Style & UI
+S1015	A	same	watcher:AGENTS.md@2dfea6f6ab0e	Agent Skills
+S1016	A	same	watcher:AGENTS.md@2dfea6f6ab0e	Detail Docs
+S1017	A	same	watcher:AGENTS.md@932a6afe2a6a	Project Overview
+S1018	A	same	watcher:AGENTS.md@932a6afe2a6a	Development Methodology
+S1019	A	same	watcher:AGENTS.md@932a6afe2a6a	Environment & Tooling
+S1020	C	edited	watcher:AGENTS.md@932a6afe2a6a	Infrastructure
+S1021	C	edited	watcher:AGENTS.md@932a6afe2a6a	Server Lifecycle
+S1022	A	same	watcher:AGENTS.md@932a6afe2a6a	Environment Files
+S1023	A	same	watcher:AGENTS.md@932a6afe2a6a	Common Commands
+S1024	C	edited	watcher:AGENTS.md@932a6afe2a6a	Watched Items
+S1025	C	edited	watcher:AGENTS.md@932a6afe2a6a	Conventions
+S1026	A	same	watcher:AGENTS.md@932a6afe2a6a	Style & UI
+S1027	A	same	watcher:AGENTS.md@932a6afe2a6a	Agent Skills
+S1028	A	same	watcher:AGENTS.md@932a6afe2a6a	Detail Docs
+S1029	A	same	watcher:AGENTS.md@bf7df2ca9226	Project Overview
+S1030	A	same	watcher:AGENTS.md@bf7df2ca9226	Development Methodology
+S1031	A	same	watcher:AGENTS.md@bf7df2ca9226	Environment & Tooling
+S1032	A	same	watcher:AGENTS.md@bf7df2ca9226	Code Exploration Policy
+S1033	A	same	watcher:AGENTS.md@bf7df2ca9226	Infrastructure
+S1034	A	same	watcher:AGENTS.md@bf7df2ca9226	Server Lifecycle
+S1035	A	same	watcher:AGENTS.md@bf7df2ca9226	Common Commands
+S1036	A	same	watcher:AGENTS.md@bf7df2ca9226	Watched Items
+S1037	A	same	watcher:AGENTS.md@bf7df2ca9226	Conventions
+S1038	A	same	watcher:AGENTS.md@bf7df2ca9226	Style & UI
+S1039	A	same	watcher:AGENTS.md@bf7df2ca9226	Agent Skills
+S1040	A	same	watcher:AGENTS.md@9c048e0d0b8e	Project Overview
+S1041	A	same	watcher:AGENTS.md@9c048e0d0b8e	Development Methodology
+S1042	A	same	watcher:AGENTS.md@9c048e0d0b8e	Environment & Tooling
+S1043	A	same	watcher:AGENTS.md@9c048e0d0b8e	Code Exploration Policy
+S1044	A	same	watcher:AGENTS.md@9c048e0d0b8e	Infrastructure
+S1045	A	same	watcher:AGENTS.md@9c048e0d0b8e	Server Lifecycle
+S1046	A	same	watcher:AGENTS.md@9c048e0d0b8e	Environment Files
+S1047	A	same	watcher:AGENTS.md@9c048e0d0b8e	Common Commands
+S1048	C	edited	watcher:AGENTS.md@9c048e0d0b8e	Watched Items
+S1049	A	same	watcher:AGENTS.md@9c048e0d0b8e	Conventions
+S1050	A	same	watcher:AGENTS.md@9c048e0d0b8e	Style & UI
+S1051	A	same	watcher:AGENTS.md@9c048e0d0b8e	Agent Skills
+S1052	A	same	watcher:AGENTS.md@9c048e0d0b8e	Detail Docs
+S1053	A	same	watcher:AGENTS.md@669d9d9373d1	Project Overview
+S1054	A	same	watcher:AGENTS.md@669d9d9373d1	Development Methodology
+S1055	A	same	watcher:AGENTS.md@669d9d9373d1	Environment & Tooling
+S1056	A	same	watcher:AGENTS.md@669d9d9373d1	Code Exploration Policy
+S1057	A	same	watcher:AGENTS.md@669d9d9373d1	Infrastructure
+S1058	A	same	watcher:AGENTS.md@669d9d9373d1	Server Lifecycle
+S1059	A	same	watcher:AGENTS.md@669d9d9373d1	Environment Files
+S1060	A	same	watcher:AGENTS.md@669d9d9373d1	Common Commands
+S1061	A	same	watcher:AGENTS.md@669d9d9373d1	Conventions
+S1062	A	same	watcher:AGENTS.md@669d9d9373d1	Style & UI
+S1063	A	same	watcher:AGENTS.md@669d9d9373d1	Agent Skills
+S1064	C	edited	watcher:AGENTS.md@669d9d9373d1	Detail Docs
+S1065	A	same	watcher:AGENTS.md@5fa4e4f10dee	Project Overview
+S1066	A	same	watcher:AGENTS.md@5fa4e4f10dee	Development Methodology
+S1067	A	same	watcher:AGENTS.md@5fa4e4f10dee	Environment & Tooling
+S1068	A	same	watcher:AGENTS.md@5fa4e4f10dee	Code Exploration Policy
+S1069	C	edited	watcher:AGENTS.md@5fa4e4f10dee	Infrastructure
+S1070	A	same	watcher:AGENTS.md@5fa4e4f10dee	Server Lifecycle
+S1071	A	same	watcher:AGENTS.md@5fa4e4f10dee	Environment Files
+S1072	A	same	watcher:AGENTS.md@5fa4e4f10dee	Common Commands
+S1073	C	edited	watcher:AGENTS.md@5fa4e4f10dee	Watched Items
+S1074	A	same	watcher:AGENTS.md@5fa4e4f10dee	Conventions
+S1075	A	same	watcher:AGENTS.md@5fa4e4f10dee	Style & UI
+S1076	A	same	watcher:AGENTS.md@5fa4e4f10dee	Agent Skills
+S1077	A	same	watcher:AGENTS.md@70593c592ad4	Project Overview
+S1078	A	same	watcher:AGENTS.md@70593c592ad4	Development Methodology
+S1079	A	same	watcher:AGENTS.md@70593c592ad4	Environment & Tooling
+S1080	A	same	watcher:AGENTS.md@70593c592ad4	Code Exploration Policy
+S1081	A	same	watcher:AGENTS.md@70593c592ad4	Server Lifecycle
+S1082	A	same	watcher:AGENTS.md@70593c592ad4	Environment Files
+S1083	A	same	watcher:AGENTS.md@70593c592ad4	Common Commands
+S1084	A	same	watcher:AGENTS.md@70593c592ad4	Watched Items
+S1085	A	same	watcher:AGENTS.md@70593c592ad4	Conventions
+S1086	C	edited	watcher:AGENTS.md@70593c592ad4	Style & UI
+S1087	C	edited	watcher:AGENTS.md@70593c592ad4	Agent Skills
+S1088	A	same	watcher:AGENTS.md@70593c592ad4	Detail Docs
+S1089	A	same	watcher:AGENTS.md@f152990c961c	Project Overview
+S1090	A	same	watcher:AGENTS.md@f152990c961c	Development Methodology
+S1091	A	same	watcher:AGENTS.md@f152990c961c	Environment & Tooling
+S1092	A	same	watcher:AGENTS.md@f152990c961c	Code Exploration Policy
+S1093	A	same	watcher:AGENTS.md@f152990c961c	Infrastructure
+S1094	A	same	watcher:AGENTS.md@f152990c961c	Server Lifecycle
+S1095	A	same	watcher:AGENTS.md@f152990c961c	Environment Files
+S1096	A	same	watcher:AGENTS.md@f152990c961c	Common Commands
+S1097	A	same	watcher:AGENTS.md@f152990c961c	Watched Items
+S1098	A	same	watcher:AGENTS.md@f152990c961c	Conventions
+S1099	A	same	watcher:AGENTS.md@f152990c961c	Style & UI
+S1100	A	same	watcher:AGENTS.md@f152990c961c	Agent Skills
+S1101	A	same	watcher:AGENTS.md@f152990c961c	Detail Docs
+S1102	A	same	watcher:AGENTS.md@ef1624ea3868	Project Overview
+S1103	A	same	watcher:AGENTS.md@ef1624ea3868	Development Methodology
+S1104	C	edited	watcher:AGENTS.md@ef1624ea3868	Environment & Tooling
+S1105	C	edited	watcher:AGENTS.md@ef1624ea3868	Code Exploration Policy
+S1106	C	edited	watcher:AGENTS.md@ef1624ea3868	Infrastructure
+S1107	C	edited	watcher:AGENTS.md@ef1624ea3868	Server Lifecycle
+S1108	C	edited	watcher:AGENTS.md@ef1624ea3868	Watched Items
+S1109	A	same	watcher:AGENTS.md@ef1624ea3868	Conventions
+S1110	B	edited	watcher:AGENTS.md@ef1624ea3868	Style & UI
+S1111	A	same	watcher:AGENTS.md@ef1624ea3868	Agent Skills
+S1112	C	edited	watcher:AGENTS.md@ef1624ea3868	Detail Docs
+S1113	A	same	watcher:AGENTS.md@557d373272f1	Project Overview
+S1114	A	same	watcher:AGENTS.md@557d373272f1	Development Methodology
+S1115	A	same	watcher:AGENTS.md@557d373272f1	Environment & Tooling
+S1116	C	edited	watcher:AGENTS.md@557d373272f1	Code Exploration Policy
+S1117	C	edited	watcher:AGENTS.md@557d373272f1	Infrastructure
+S1118	A	same	watcher:AGENTS.md@557d373272f1	Server Lifecycle
+S1119	A	same	watcher:AGENTS.md@557d373272f1	Environment Files
+S1120	A	same	watcher:AGENTS.md@557d373272f1	Common Commands
+S1121	C	edited	watcher:AGENTS.md@557d373272f1	Watched Items
+S1122	C	edited	watcher:AGENTS.md@557d373272f1	Conventions
+S1123	C	edited	watcher:AGENTS.md@557d373272f1	Style & UI
+S1124	A	same	watcher:AGENTS.md@557d373272f1	Agent Skills
+S1125	C	edited	watcher:AGENTS.md@557d373272f1	Detail Docs
+S1126	A	same	watcher:AGENTS.md@e4c4d9be456a	Project Overview
+S1127	A	same	watcher:AGENTS.md@e4c4d9be456a	Development Methodology
+S1128	A	same	watcher:AGENTS.md@e4c4d9be456a	Environment & Tooling
+S1129	A	same	watcher:AGENTS.md@e4c4d9be456a	Code Exploration Policy
+S1130	C	edited	watcher:AGENTS.md@e4c4d9be456a	Infrastructure
+S1131	A	same	watcher:AGENTS.md@e4c4d9be456a	Server Lifecycle
+S1132	A	same	watcher:AGENTS.md@e4c4d9be456a	Environment Files
+S1133	A	same	watcher:AGENTS.md@e4c4d9be456a	Common Commands
+S1134	A	same	watcher:AGENTS.md@e4c4d9be456a	Watched Items
+S1135	A	same	watcher:AGENTS.md@e4c4d9be456a	Conventions
+S1136	A	same	watcher:AGENTS.md@e4c4d9be456a	Style & UI
+S1137	A	same	watcher:AGENTS.md@e4c4d9be456a	Agent Skills
+S1138	A	same	watcher:AGENTS.md@f727c995784b	Project Overview
+S1139	A	same	watcher:AGENTS.md@f727c995784b	Development Methodology
+S1140	A	same	watcher:AGENTS.md@f727c995784b	Environment & Tooling
+S1141	A	same	watcher:AGENTS.md@f727c995784b	Code Exploration Policy
+S1142	B	edited	watcher:AGENTS.md@f727c995784b	Infrastructure
+S1143	A	same	watcher:AGENTS.md@f727c995784b	Server Lifecycle
+S1144	A	same	watcher:AGENTS.md@f727c995784b	Environment Files
+S1145	A	same	watcher:AGENTS.md@f727c995784b	Common Commands
+S1146	A	same	watcher:AGENTS.md@f727c995784b	Conventions
+S1147	A	same	watcher:AGENTS.md@f727c995784b	Style & UI
+S1148	A	same	watcher:AGENTS.md@f727c995784b	Agent Skills
+S1149	A	same	watcher:AGENTS.md@2aa5389deb45	Project Overview
+S1150	A	same	watcher:AGENTS.md@2aa5389deb45	Development Methodology
+S1151	A	same	watcher:AGENTS.md@2aa5389deb45	Environment & Tooling
+S1152	A	same	watcher:AGENTS.md@2aa5389deb45	Code Exploration Policy
+S1153	C	edited	watcher:AGENTS.md@2aa5389deb45	Infrastructure
+S1154	A	same	watcher:AGENTS.md@2aa5389deb45	Server Lifecycle
+S1155	A	same	watcher:AGENTS.md@2aa5389deb45	Environment Files
+S1156	A	same	watcher:AGENTS.md@2aa5389deb45	Common Commands
+S1157	A	same	watcher:AGENTS.md@2aa5389deb45	Watched Items
+S1158	A	same	watcher:AGENTS.md@2aa5389deb45	Conventions
+S1159	A	same	watcher:AGENTS.md@2aa5389deb45	Style & UI
+S1160	A	same	watcher:AGENTS.md@2aa5389deb45	Agent Skills
+S1161	A	same	watcher:AGENTS.md@d6d789aaddff	Project Overview
+S1162	A	same	watcher:AGENTS.md@d6d789aaddff	Development Methodology
+S1163	A	same	watcher:AGENTS.md@d6d789aaddff	Code Exploration Policy
+S1164	C	edited	watcher:AGENTS.md@d6d789aaddff	Infrastructure
+S1165	C	edited	watcher:AGENTS.md@d6d789aaddff	Server Lifecycle
+S1166	A	same	watcher:AGENTS.md@d6d789aaddff	Environment Files
+S1167	A	same	watcher:AGENTS.md@d6d789aaddff	Common Commands
+S1168	C	edited	watcher:AGENTS.md@d6d789aaddff	Watched Items
+S1169	C	edited	watcher:AGENTS.md@d6d789aaddff	Conventions
+S1170	A	same	watcher:AGENTS.md@d6d789aaddff	Style & UI
+S1171	A	same	watcher:AGENTS.md@d6d789aaddff	Agent Skills
+S1172	A	same	wslcb-licensing-tracker:AGENTS.md@55987edfc5b3	Code Exploration Policy
+S1173	A	same	wslcb-licensing-tracker:AGENTS.md@55987edfc5b3	Architecture
+S1174	A	same	wslcb-licensing-tracker:AGENTS.md@55987edfc5b3	Frozen vs. Derived Data Contract
+S1175	A	same	wslcb-licensing-tracker:AGENTS.md@55987edfc5b3	Git Workflow
+S1176	A	same	wslcb-licensing-tracker:AGENTS.md@55987edfc5b3	Dev Setup
+S1177	A	same	wslcb-licensing-tracker:AGENTS.md@55987edfc5b3	Common Tasks
+S1178	B	edited	wslcb-licensing-tracker:AGENTS.md@55987edfc5b3	Skills

@@ -19,6 +19,9 @@ network, no key. What that pins, and what it doesn't:
 - **Pinned for index-lines (#447):** the labels match the set, and the
   pairs result #447 closed on, from the cache. No pass shipped, so there is no
   builder to pin: `mine.py build` rebuilds the set from the clones.
+- **Pinned for section-class (#435):** the labels match the set, the
+  confusion and the pairs result #435 closed on, and the repeat noise the
+  pairs are read against, all from the cache. No pass shipped either.
 - **Not pinned:** what feeds the builder. The splitter needs the source file,
   from 12 repos and often a historical commit (485 KB of paragraph windows
   still reproduced only 111 of 130 cases), and `describe` needs gh's reply.
@@ -70,6 +73,11 @@ SETS = {
         "c5a99b92ba64109c80fe255c37d4e03e98e176097d38d24106e7a40eac00f1d8",
         198,
         {"inaccurate": {0.3: (4, 25, 13, 156), 0.5: (1, 3, 16, 178)}},
+    ),
+    "section-class": (
+        "a24ecb5ef6673b7fe0ba8ae11263cddbd9caae910cf6de458e7e3f81cce52616",
+        1178,
+        {"default": {0.3: (0, 39, 0, 1139), 0.5: (0, 0, 0, 1178)}},
     ),
 }
 
@@ -386,3 +394,93 @@ def test_an_outline_fence_closes_only_on_its_own_character(il_mine):
         "# T\n~~~\n```\n## Not a heading\n~~~\n## Real\n````\n```\n## Also not\n````\n"
     )
     assert il_mine.outline(doc)["headings"] == ["# T", "## Real"]
+
+
+# --- section-class (#435) -----------------------------------------------------
+
+SC_DIR = SETS_DIR / "section-class"
+
+
+@pytest.fixture(scope="module")
+def sc_mine():
+    return _load("sc_mine", SC_DIR / "mine.py")
+
+
+def test_the_section_class_labels_are_the_sets(sc_mine):
+    """Every case is labelled once, as the set expects, and A means left alone."""
+    labels = sc_mine.read_labels(SC_DIR / "labels.tsv")
+    cases = _jsonl(SC_DIR / "set.jsonl")
+    assert [c["id"] for c in cases] == list(labels)
+    for c in cases:
+        lab = labels[c["id"]]
+        assert c["expected"] == {"class": lab["label"], "default": False}, c["id"]
+        assert (c["source"], c["state"]["heading"]) == (lab["source"], lab["heading"])
+        assert c["questions"] == sc_mine.QUESTIONS
+    assert all(
+        lab["after_state"] == "same" for lab in labels.values() if lab["label"] == "A"
+    )
+
+
+def test_the_same_section_text_carries_two_labels(sc_mine):
+    """Why no state-only judgment can match the ledger: 32 byte-identical sections
+    were tagged by one curation and left alone by another."""
+    by_state = {}
+    for c in _jsonl(SC_DIR / "set.jsonl"):
+        by_state.setdefault(json.dumps(c["state"], sort_keys=True), set()).add(
+            c["expected"]["class"]
+        )
+    mixed = [sorted(v) for v in by_state.values() if len(v) > 1]
+    assert len(mixed) == 32
+    assert sorted(map(tuple, mixed)).count(("A", "C")) == 30
+
+
+def test_jev_never_answers_tighten(sc_mine):
+    """The confusion #435 closed on: no section is called C, and always-A beats Jev."""
+    report = _replay(SC_DIR / "set.jsonl", SC_DIR / "cache.jsonl")
+    cls = report["questions"]["class"]
+    assert cls["confusion"]["labels"] == ["A", "B", "C", "D"]
+    assert cls["confusion"]["matrix"] == [
+        [627, 351, 0, 11],
+        [25, 20, 0, 0],
+        [92, 51, 0, 0],
+        [1, 0, 0, 0],
+    ]
+    assert cls["correct"] == 647 < 989
+
+
+def test_a_curated_section_reads_no_differently_after(sc_mine):
+    """The pairs #435 closed on, [right, wrong, tied]: past Jev's own repeat noise,
+    a section reads about as often more as less like its class after the edit."""
+    noise = sc_mine.repeats(SC_DIR / "cache.jsonl")
+    assert noise == {
+        "repeated": 186,
+        "choice_changed": 7,
+        "max_move": 0.14,
+        "p90_move": 0.07,
+    }
+    pairs = SC_DIR / "pairs.jsonl"
+    cache = SC_DIR / "cache.jsonl"
+    assert sc_mine.pairs(pairs, cache) == {
+        "tightened": {"C_falls": [38, 12, 87], "A_rises": [61, 57, 19]},
+        "part-demoted": {"B_falls": [23, 17, 3]},
+    }
+    assert sc_mine.pairs(pairs, cache, noise["p90_move"]) == {
+        "tightened": {"C_falls": [2, 0, 135], "A_rises": [14, 11, 112]},
+        "part-demoted": {"B_falls": [8, 8, 27]},
+    }
+
+
+def test_a_section_fence_closes_only_on_its_own_character(sc_mine):
+    text = "## One\n~~~\n```\n## Not a heading\n~~~\n### Sub\n## Two\nbody\n"
+    secs = sc_mine.sections(text)
+    assert [h for h, _, _ in secs] == ["One", "Two"]
+    assert secs[0][2] == ["Sub"]
+    assert "## Not a heading" in secs[0][1]
+
+
+def test_a_tag_names_a_heading_before_a_subsection_or_a_prefix(sc_mine):
+    secs = sc_mine.sections("## Scripts\n### Style\n## Style guide\n## Style\n")
+    assert sc_mine.match("Style", secs) == (2, "exact")
+    assert sc_mine.match("`Scripts`", secs) == (0, "exact")
+    assert sc_mine.match("Scripts gate discipline", secs) == (0, "prefix")
+    assert sc_mine.match("redundant-heading", secs) == (None, "none")

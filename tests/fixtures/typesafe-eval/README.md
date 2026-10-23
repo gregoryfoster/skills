@@ -64,6 +64,7 @@ often at an old commit. A change there shows up only when someone re-measures.
 | `bare-digit-counts/` | #441 | `31f064bca50a` | [report](https://github.com/gregoryfoster/skills/issues/441) |
 | `tightened-rules/` | #442 | `551c3c7c10ac` | [report](https://github.com/gregoryfoster/skills/issues/442) |
 | `index-lines/` | #447 | `c5a99b92ba64` | [report](https://github.com/gregoryfoster/skills/issues/447#issuecomment-6370273852) |
+| `section-class/` | #435 | `a24ecb5ef667` | [report](https://github.com/gregoryfoster/skills/issues/435#issuecomment-6372110302) |
 
 `stale-issue-prose/` is 130 cases from gregoryfoster/skills and 11 public
 CannObserv repos (`still_open` 15 positive, `already_done` 3), labelled by one
@@ -171,3 +172,25 @@ The suite pins the labels and the pairs result #447 closed on: the line before
 a fix scored above its own fix in 8 of the 17 pairs. A variant whose state held
 each section's first sentence came out the same, 8 of 17. Its 34 cases aren't
 committed, so that figure isn't pinned.
+
+`section-class/` is 1,178 cases from the 10 public repos that keep a ledger
+(processor and status don't), mined 2026-10-23 at the commits `mine.py`
+names. Each case is one `##` section of a policy file at the base of a
+curation, alone in the state (V1). Its label comes from that curation's ledger
+row: `demote:` is B, `prune:` and `tighten:` are C, `delete:` is D, and a
+section the curation left unchanged is A. That last label is the weakest: a
+run stops once it is under budget, so it means "not acted on", and 32
+byte-identical sections carry A in one curation and C or B in another. No
+`delete:` in these ledgers removes a trained default, so the `default` Noul
+has no positives, and every case expects no.
+
+`pairs.jsonl` holds the 178 sections each curation edited, before and after,
+and the cache answers both. The suite pins the result #435 closed on: Jev
+never answers C, and past its own repeat noise (186 requests sent more than
+once; the probabilities' 90th-percentile spread is 0.07), a tightened
+section's P(A) rose in 14 pairs and fell in 11. The cache keeps every repeated
+reply in call order, so the evaluator's last-reply rule gives the pinned
+numbers. The issue's own design, the whole file in the state with a question
+per section (V2), did no better: 41% agreement, and P(B) fell in 21
+part-demoted pairs and rose in 20. `mine.py v2` rebuilds its requests, but
+they aren't committed, so its figures aren't pinned.
