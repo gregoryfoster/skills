@@ -96,9 +96,10 @@ incident's result (a record, true as history), a limit or a config value, a
 code, a port, a version, an ordinal or step, a duration, an external
 standard's figure.
 
-`tightened-rules/` is 421 sentences from 61 curations in 9 public repos
+`tightened-rules/` is 421 sentences from 49 curations in 9 public repos
 (gregoryfoster/skills and 8 CannObserv repos), mined 2026-10-22 at the clone
-commits `mine.py` names and labelled by one labeller. Each is a base sentence
+commits `mine.py` names and labelled by one labeller. The pool they were drawn
+from is every `tighten`-warranted line of 61 curations, 66 policy files. Each is a base sentence
 on a line a `tighten` entry warranted, judged against the section the rewrite
 left. `inputs.jsonl` holds 580 of `prove-no-loss.sh --candidates`' own records:
 those on the lines of a labelled sentence, enough to rebuild every case and its

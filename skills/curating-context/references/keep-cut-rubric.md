@@ -172,7 +172,7 @@ bash "<tightened-rules.sh>" /tmp/context-tightened.jsonl > /tmp/context-tightene
   ledger row don't include it.
 - **Re-read every `dropped?` row against the rewrite.** A flag says "check
   this", not "this was lost", and a low score is not a pass. On 421
-  hand-labelled sentences from 61 curations in 9 public cohort repos
+  hand-labelled sentences from 49 curations in 9 public cohort repos
   ([#442](https://github.com/gregoryfoster/skills/issues/442)), the default
   0.3 caught 52 of 61 losses and flagged 180. It is set for recall, because a
   missed loss costs more than a re-read.
