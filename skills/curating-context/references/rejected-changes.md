@@ -252,3 +252,39 @@ That is a class-B call on its own merits, which the pass can't make.
 
 **Generalisable lesson:** "stated somewhere" isn't "still where the reader
 looks". Measure a dedup against the reviews that undid it.
+
+## A Noul asking whether an index line still describes its doc
+
+**Proposed:** [#447](https://github.com/gregoryfoster/skills/issues/447). It
+adds an advisory pass to Phase 6.5: one TypeSafe Noul per index line, asking
+whether the line still describes its doc's headings and opening, with no major
+topic missing and none claimed that isn't there. A second Noul per (topic,
+sibling line) would flag a line that steals another doc's route.
+
+**Refuted by:** a natural-rate read and a measurement on the 12 public cohort
+repos. Method and labels:
+[`tests/fixtures/typesafe-eval/index-lines/`](../../../tests/fixtures/typesafe-eval/index-lines/).
+- **At HEAD, none of the 164 index lines that point at a doc misdescribes
+  it.** 18 leave out a topic their doc has grown. One of those, power-map's,
+  is kept short on purpose by that repo's own rule that an index line is a
+  pointer.
+- **History has inaccurate lines, and reviews fix them.** 17 of the 249
+  rewrites that kept a line's target were accuracy fixes. A CR found 12 of
+  them, and 13 came in with a curation, split or demotion. Ten stayed on main
+  for 5 to 41 days.
+- **Jev can't tell a fixed line from its fix.** Against the same doc, the line
+  before the fix scored higher in 8 of 17 pairs. With each section's first
+  sentence added to the state, it was still 8. On all 198 cases its Brier score
+  was 0.103, worse than always answering the base rate, and at 0.3 it caught 4
+  of the 17 with 25 false flags.
+
+The second Noul was never built, since it depends on the first.
+
+**Replaced by:** nothing new. The review that follows a curation already
+catches most of these, 12 of the 17. What a line should say is in
+[cohort-patterns.md](cohort-patterns.md#the-detail-docs-index): what a task would
+need the doc for.
+
+**Generalisable lesson:** a short line judged against a long outline gets
+ranked by how much it leaves out, not by whether it's wrong. Test such a
+judgment on before/after pairs, which hold the doc constant.
