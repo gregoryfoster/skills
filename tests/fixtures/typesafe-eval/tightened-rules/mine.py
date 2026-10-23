@@ -561,7 +561,11 @@ def tally(labels: dict, p: dict, cleared, part: str | None = None) -> dict:
 def cost(labels: dict, p: dict, cleared) -> dict:
     """What clearing CLEARED takes from the flags: its catches, the drops and
     review-restored rules among them, and every restored rule it clears at
-    any p (the threshold can't bring those back)."""
+    any p (the threshold can't bring those back).
+
+    A positive is a delegation, not a drop, when its labels.tsv note starts
+    `delegated` or `moved`, the words the fixture README's rubric gives those
+    kinds. Rewording a note moves a case between the two (CR 481)."""
     hidden = [
         c for c in cleared if labels[c]["dropped"] and p[c] >= tr.DEFAULT_THRESHOLD
     ]
