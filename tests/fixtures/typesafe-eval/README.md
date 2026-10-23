@@ -192,8 +192,8 @@ and the cache answers both. The suite pins the result #435 closed on: Jev
 never answers C, and past its own repeat noise (186 requests sent more than
 once; the probabilities' 90th-percentile spread is 0.07), a tightened
 section's P(A) rose in 14 pairs and fell in 11. The cache keeps every repeated
-reply in call order, so the evaluator's last-reply rule gives the pinned
-numbers. The issue's own design, the whole file in the state with a question
+reply, in the order the replies came back, and the pinned numbers are read by
+the evaluator's rule: the last reply for a request wins. The issue's own design, the whole file in the state with a question
 per section (V2), did no better: 41% agreement, and P(B) fell in 21
 part-demoted pairs and rose in 20. `mine.py v2` rebuilds its requests, but
 they aren't committed, so its figures aren't pinned.
