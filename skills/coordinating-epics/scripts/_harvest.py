@@ -36,7 +36,10 @@ filed" comment. Nothing here writes to GitHub.
                last hand-off brief on the source (a comment whose first line
                is a brief's heading), else the whole thread. A "Changed since
                filed" comment is never read: it is a harvest into the thread
-  --until      read comments created before TS, for a replay
+  --until      read comments created before TS. Only the thread is cut:
+               the open children and their bodies are read as they are now,
+               so this doesn't replay a past check-in (the #436 fixture
+               rebuilds those from the edit history; this step can't)
   --max-calls  refuse, sending nothing, when the residue needs more than N
                calls (default 2500; a thread here measured up to about 2,100)
   --dry-run    print the cases that would be sent, one JSONL case per line
