@@ -271,8 +271,9 @@ in this skill's home repo.
   pointer.
 - **History has inaccurate lines, and reviews fix them.** 17 of the 249
   rewrites that kept a line's target were accuracy fixes. A CR found 12 of
-  them, and 13 came in with a curation, split or demotion. Ten stayed on main
-  for 5 to 41 days.
+  them. By the subjects of the commits that introduced them, 13 came in with
+  a curation, split or demotion. Ten lived 5 to 41 days from that commit to
+  the fix. `mine.py` re-derives the 17, but not these last two figures.
 - **Jev can't tell a fixed line from its fix.** Against the same doc, the line
   before the fix scored higher in 8 of 17 pairs. With each section's first
   sentence added to the state, it was still 8. On all 198 cases its Brier score
