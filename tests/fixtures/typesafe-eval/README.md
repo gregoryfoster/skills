@@ -182,7 +182,10 @@ section the curation left unchanged is A. That last label is the weakest: a
 run stops once it is under budget, so it means "not acted on", and 32
 byte-identical sections carry A in one curation and C or B in another. No
 `delete:` in these ledgers removes a trained default, so the `default` Noul
-has no positives, and every case expects no.
+has no positives, and every case expects no. A label follows the tag even when
+the edit landed after the commit the row was stamped with: 10 C sections are
+unchanged there (power-map 2026-08-17 and 2026-09-19, replicator 2026-09-18,
+watcher 2026-08-19), so they stay out of the pairs.
 
 `pairs.jsonl` holds the 178 sections each curation edited, before and after,
 and the cache answers both. The suite pins the result #435 closed on: Jev
