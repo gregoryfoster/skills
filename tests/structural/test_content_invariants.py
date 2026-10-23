@@ -1543,6 +1543,16 @@ NON_GATE_SCRIPTS = {
         "in test_coordinating_epics_scan.py). The wrapper `exec`s _scan.py and "
         "those tests run through it"
     ),
+    "harvest-candidates.sh": (
+        "reporting, and advisory (#436): a ranked TSV the coordinator reads "
+        "before writing a harvest by hand; no gate parses it. gh failing on "
+        "the epic, a child or the thread exits 2 with gh's own stderr "
+        "(test_a_gh_failure_is_exit_2_with_ghs_cause), and a TypeSafe skip or "
+        "failure still prints every row under its own exit code "
+        "(test_a_skip_is_exit_4_and_still_prints_every_row, "
+        "test_a_failure_is_exit_2_and_the_rest_are_not_asked, all in "
+        "test_harvest_candidates.py). The wrapper `exec`s _harvest.py"
+    ),
 }
 
 

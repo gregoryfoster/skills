@@ -369,6 +369,7 @@ def test_a_single_script_found_nowhere_stops_the_block_by_name(
 # Declared, as PUBLISHERS is, so a block that stops parsing fails here rather
 # than dropping out of the parametrization.
 REFERENCE_BLOCKS = [
+    ("coordinating-epics", "references/check-in.md"),
     ("curating-context", "references/fact-verification.md"),
     ("curating-context", "references/keep-cut-rubric.md"),
     ("curating-context", "references/seam-accounting.md"),

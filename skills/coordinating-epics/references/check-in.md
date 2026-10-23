@@ -74,6 +74,31 @@ From the closing comment, the PR, and every comment since the hand-off:
 - **Corrections to a claim.** Search the epic, the trackers and sibling issues for everywhere it was made, including claims the coordinator inherited (private-cli 48).
 - **Answers to a later child's step.** Re-verify them, then record them with the evidence where that child will read them (archiver 47).
 
+**A note that never names its child** is the one reading misses. `harvest-candidates.sh` is an optional, advisory step for it. It pairs every paragraph of the source's thread since the hand-off with every open child. A paragraph under a `For #N` heading, lead or item, or one linking `#N`, is settled without a call. Every other pair gets one TypeSafe question: does this paragraph bear on what the child relies on?
+- **It's off until the repo opts in,** through `.skills/typesafe` or `TYPESAFE_OPT_IN`. Run it from the epic's repo, so a private repo decides for itself. Each request carries one paragraph and one child's title and body.
+- **It writes nothing to GitHub.**
+- **Measured on 4 public epics (#436):** unnamed notes reached the right child in the top 3 for 16 of 22, against 12 by word matching.
+
+Resolve it on its own:
+
+<!-- skill:required id=skill-scripts -->
+```bash
+N=coordinating-epics
+for S in harvest-candidates.sh; do SD=
+  for d in scripts ".claude/skills/$N/scripts" "$HOME/.claude/skills/$N/scripts"; do
+    [ -f "$d/$S" ] && { SD="$d"; break; }
+  done
+  [ -n "$SD" ] || echo "$S not found in scripts/, .claude/skills/$N/scripts/, or ~/.claude/skills/$N/scripts/" >&2
+  echo "<$S>=${SD:?}/$S"
+done
+```
+
+```bash
+bash "<harvest-candidates.sh>" --repo <owner/repo> --epic <N> --source <closed child> > <scratch>/harvest.tsv
+```
+
+Read the `named` rows, then the `judged` rows from the top. Verify each row before you write it back. A row ranks a candidate; it isn't a finding. Exits 2 and 4 mean harvest by reading alone. `--help` gives the columns and `--max-calls`, which caps a long thread.
+
 **Write back as comments,** headed "Changed since filed". A comment only appends, so it can't race a concurrent body edit, and it keeps what the issue first said. Body edits are kept for the epic's checklist and its own lines (archiver 15). A design amendment goes through a docs PR. The hand-off names it as a prerequisite once a child depends on it (archiver 16, 23).
 
 **When an item closes, rewrite the lines that depended on it.** "Depends on #270" becomes "dependency met: the error now carries `retry_after_seconds`, so the route only forwards it" (address-validator 45).
