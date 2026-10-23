@@ -263,7 +263,8 @@ sibling line) would flag a line that steals another doc's route.
 
 **Refuted by:** a natural-rate read and a measurement on the 12 public cohort
 repos. Method and labels:
-[`tests/fixtures/typesafe-eval/index-lines/`](../../../tests/fixtures/typesafe-eval/index-lines/).
+[`tests/fixtures/typesafe-eval/index-lines/`](https://github.com/gregoryfoster/skills/tree/main/tests/fixtures/typesafe-eval/index-lines)
+in this skill's home repo.
 - **At HEAD, none of the 164 index lines that point at a doc misdescribes
   it.** 18 leave out a topic their doc has grown. One of those, power-map's,
   is kept short on purpose by that repo's own rule that an index line is a
