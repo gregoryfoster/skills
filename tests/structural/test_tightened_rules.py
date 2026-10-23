@@ -217,6 +217,53 @@ def test_a_title_owns_its_preamble_not_the_document(repo):
     assert s["text"] == "# Title\n\nBe terse; lead with the answer.\n"
 
 
+def _repo_of(root: Path, base: str, after: str, ack: str, docs: dict) -> Path:
+    root.mkdir()
+    _git(root, "init", "-q")
+    _git(root, "config", "user.email", "t@t")
+    _git(root, "config", "user.name", "t")
+    (root / "AGENTS.md").write_text(base)
+    _git(root, "add", "-A")
+    _git(root, "commit", "-qm", "base")
+    (root / "AGENTS.md").write_text(after)
+    (root / "docs").mkdir()
+    for name, text in docs.items():
+        (root / "docs" / name).write_text(text)
+    (root / ".skills").mkdir()
+    (root / ".skills" / "context-loss-ok").write_text(ack)
+    return root
+
+
+def test_the_nth_heading_of_a_name_maps_to_the_nth(tmp_path):
+    two = "# T\n\n## Example\n\nThe first example stays as it was.\n\n## Example\n\n"
+    r = _repo_of(
+        tmp_path / "r",
+        two + "The second example is tightened here now.\n",
+        two + "The second example, tightened.\n",
+        "tighten :: The second example is tightened here now.\n",
+        {},
+    )
+    (s,) = [rec["successor"] for rec in _records(r)]
+    assert (s["how"], s["line"]) == ("heading", 7)
+    assert "The second example, tightened." in s["text"]
+
+
+def test_a_heading_in_two_destinations_goes_to_the_one_sharing_its_words(tmp_path):
+    # docs/a.md sorts first, so taking the first destination would pick it.
+    r = _repo_of(
+        tmp_path / "r",
+        "# T\n\n## Overview\n\nRetry the upload twice before failing the job.\n",
+        "# T\n",
+        "tighten :: Retry the upload twice before failing the job.\n",
+        {
+            "a.md": "## Overview\n\nAn unrelated summary of something else.\n",
+            "b.md": "## Overview\n\nRetry the upload twice, then fail the job.\n",
+        },
+    )
+    (s,) = [rec["successor"] for rec in _records(r)]
+    assert (s["file"], s["how"]) == ("docs/b.md", "heading")
+
+
 def test_nothing_sharing_a_word_has_no_successor(repo):
     (repo / "AGENTS.md").write_text("# Title\n\nUnrelated.\n")
     (repo / "docs" / "MOVED.md").unlink()

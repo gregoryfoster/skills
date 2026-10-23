@@ -92,7 +92,9 @@ Options:
                                    level or above (a `#` title's: its own
                                    block). One per block. `how` is `heading`
                                    (the same heading, normalised as a line
-                                   is: --file first, then each destination)
+                                   is: in --file, the n-th of that name for
+                                   the n-th at --base; else the destination
+                                   whose section shares the most words)
                                    or `words` (no such heading, so the block
                                    sharing the most word 3-grams with the
                                    block's tightened lines, --file first)
@@ -1329,15 +1331,32 @@ def candidate_records():
         return {" ".join(words[i:i + 3]) for i in range(len(words) - 2)}
 
     def successor(base_start):
+        own = next(lines for a, lines in blocks(before, base_heads)
+                   if a == base_start)
+        want = shingles([l for l in own if l.strip() in tightened])
         if base_start is not None:
-            want = normalise(before[base_start])
-            for path, lines, skipped, heads in targets:
-                hit = next((h[0] for h in heads if h[2] == want), None)
-                if hit is not None:
-                    at, text = section_at(lines, heads, hit)
-                    return {"file": path, "line": at + skipped + 1,
-                            "heading": title_of(lines, hit), "how": "heading",
-                            "text": text}
+            name = normalise(before[base_start])
+            hits = [(t, h[0]) for t in targets for h in t[3] if h[2] == name]
+            mine = [hit for hit in hits if hit[0][0] == policy]
+            if mine:
+                # The n-th heading of that name at --base is the n-th now, so
+                # two `### Example` blocks don't both map to the first.
+                nth = sum(1 for h in base_heads
+                          if h[2] == name and h[0] < base_start)
+                hit = mine[min(nth, len(mine) - 1)]
+            elif hits:
+                # Only elsewhere: of the destinations holding that name, the
+                # one whose section shares most words with the tightened
+                # lines, so an `## Overview` that left goes to its own doc
+                # rather than to whichever destination is listed first.
+                hit = max(hits, key=lambda h: len(want & shingles(
+                    section_at(h[0][1], h[0][3], h[1])[1].splitlines())))
+            if hits:
+                (path, lines, skipped, heads), at = hit
+                at, text = section_at(lines, heads, at)
+                return {"file": path, "line": at + skipped + 1,
+                        "heading": title_of(lines, at), "how": "heading",
+                        "text": text}
         # No heading of that name: a `rename` beside the `tighten`, or a
         # tightening that merged sections. The rewrite went to the block
         # sharing the most word 3-grams with what the tightening rewrote: the
@@ -1349,9 +1368,6 @@ def candidate_records():
         # whole file repeats sent a renamed heading's lines to the wrong one.
         # --file is searched before any destination, because a tightening is
         # a rewrite in place.
-        own = next(lines for a, lines in blocks(before, base_heads)
-                   if a == base_start)
-        want = shingles([l for l in own if l.strip() in tightened])
         best = None
         for tier in ([t for t in targets if t[0] == policy],
                      [t for t in targets if t[0] != policy]):
