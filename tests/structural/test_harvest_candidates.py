@@ -254,13 +254,20 @@ def test_an_answer_that_isnt_a_probability_is_a_failure(bad):
     assert code == 2 and "has no noul probability" in err
 
 
-def test_over_max_calls_is_refused_before_connecting():
+def test_over_max_calls_is_refused_before_anything_is_asked():
+    client = FakeClient(ANSWERS)
+    code, rows, err = _main(ARGS + ["--max-calls", "2"], lambda **kw: client)
+    assert code == 1 and rows == [] and client.asked == []
+    assert "needs 3 calls, over --max-calls 2; nothing was sent" in err
+
+
+def test_a_repo_not_opted_in_skips_whatever_the_cap():
     def connect(**kw):
-        raise AssertionError("connected")
+        raise ts.Skipped("not-opted-in", "test")
 
     code, rows, err = _main(ARGS + ["--max-calls", "2"], connect)
-    assert code == 1 and rows == []
-    assert "needs 3 calls, over --max-calls 2; nothing was sent" in err
+    assert code == 4 and "max-calls" not in err
+    assert [r[0] for r in rows] == ["named", "skipped", "skipped", "skipped"]
 
 
 def test_all_named_needs_no_client():

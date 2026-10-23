@@ -499,18 +499,12 @@ def main(argv: list[str], stdout=None, stderr=None, connect=None, load=None) -> 
         say(summary(rows, children, paras))
         return 0
 
-    if len(pending) > opts["max_calls"]:
-        say(
-            f"harvest-candidates: the residue needs {len(pending)} calls, over "
-            f"--max-calls {opts['max_calls']}; nothing was sent. Narrow it with "
-            "--since / --until, or raise the cap"
-        )
-        return EXIT_USAGE
-
     lines = _CallLines(stderr)
     client = None
     if pending:
         try:
+            # The opt-in first: a repo that never opted in skips (exit 4),
+            # however long its thread, rather than hearing about the cap.
             client = connect(stderr=lines)
         except _typesafe.Skipped as s:
             say(s.line)
@@ -519,6 +513,14 @@ def main(argv: list[str], stdout=None, stderr=None, connect=None, load=None) -> 
             stdout.write(render(rows))
             say(summary(rows, children, paras))
             return EXIT_SKIPPED
+
+    if len(pending) > opts["max_calls"]:
+        say(
+            f"harvest-candidates: the residue needs {len(pending)} calls, over "
+            f"--max-calls {opts['max_calls']}; nothing was sent. Narrow it with "
+            "--since / --until, or raise the cap"
+        )
+        return EXIT_USAGE
 
     exit_code, failed = 0, False
     for r in pending:
