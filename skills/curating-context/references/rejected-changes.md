@@ -220,3 +220,33 @@ except through that parent.
 **Generalisable lesson:** a passing gate is no evidence about a property it does
 not measure. #274 took `docs_orphaned` to be what made the index line
 mandatory, while four repos carried docs no line named at `docs_orphaned: 0`.
+
+## Counting a rule held at a destination as kept
+
+**Proposed:** [#470](https://github.com/gregoryfoster/skills/issues/470), from
+#442's report. `tightened-rules.sh` sees only the successor section, so a rule
+the rewrite moved behind a link reads as dropped. That was 18 of the random
+slice's 26 positives. The proposal: follow the successor's pointers, and settle
+a sentence the destination still states as `delegated`, sending nothing. It
+would be settled by the `kept` substring test first, then by a second Noul.
+
+**Refuted by:** a second label on #442's 421-case set (`held.tsv`, beside its
+labels). **46 of the 61 positives are held at a doc the successor points to,
+and only 26 of them are the delegated ones.**
+- **The other 20 are rules the policy file's reader no longer sees.** A later
+  review put 8 of them back there. Replicator's "Consumers must be idempotent"
+  (CR 8) sat verbatim in `docs/CONVENTIONS.md` before the curation weakened its
+  bullet.
+- **The substring test settles 4 delegated positives, and that one.** The
+  slice's flags fall from 79 to 70.
+- **A perfect judgment of "held" takes them to 58 at best.** It also clears 14
+  labelled drops, 3 of them review-restored rules the default catches today.
+
+The pass exists for recall.
+
+**Replaced by:** the flag stands, and the rubric says what to do with it. Find
+the rule at the destination, then decide whether it may leave the policy file.
+That is a class-B call on its own merits, which the pass can't make.
+
+**Generalisable lesson:** "stated somewhere" isn't "still where the reader
+looks". Measure a dedup against the reviews that undid it.

@@ -186,6 +186,12 @@ bash "<tightened-rules.sh>" /tmp/context-tightened.jsonl > /tmp/context-tightene
   no such heading, it is the block sharing the most words with what was
   tightened. A rule moved to another section of the file reads as dropped
   there.
+- **A rule the successor points to is still flagged, on purpose.** Find it at
+  the destination before restoring anything, but finding it isn't a pass. On
+  the #442 set, 20 rules labelled drops were held at a doc the successor
+  pointed to, and a later review put 8 back in the policy file. Whether a rule
+  may leave the always-loaded file is the [class B](#class-b--demote-to-docs)
+  call ([why it isn't skipped](rejected-changes.md#counting-a-rule-held-at-a-destination-as-kept)).
 - **A skip or a failure still prints the rows.** Exit 4 (not opted in, or no
   key) leaves them all unjudged; exit 2 (a TypeSafe failure) keeps the `p` of
   those judged first and marks the others `failed` or `not-asked`.
