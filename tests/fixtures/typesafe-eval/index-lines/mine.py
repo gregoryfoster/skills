@@ -160,8 +160,17 @@ def outline(text: str) -> dict:
 def head_lines(clones: Path) -> list[dict]:
     rows = []
     for repo, (_slug, rev) in sorted(REPOS.items()):
-        lines = git(clones, repo, "show", f"{rev}:{POLICY}").splitlines()
-        start, end = section(lines, repo)
+        text = git(clones, repo, "show", f"{rev}:{POLICY}")
+        if text is None:
+            sys.exit(
+                f"mine.py: {repo} has no {POLICY} at {rev}: is {clones / repo} its clone?"
+            )
+        lines = text.splitlines()
+        span = section(lines, repo)
+        if span is None:
+            title = SECTION.get(repo, "Detail Docs")
+            sys.exit(f"mine.py: {repo}'s {POLICY} at {rev} has no '{title}' section")
+        start, end = span
         opener = None
         for i in range(start, end):
             line = lines[i]
