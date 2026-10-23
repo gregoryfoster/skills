@@ -72,6 +72,36 @@ Options:
                    as --ack-file minus `tighten` and `index`, and ATOM is
                    matched WHOLE, not as a substring.
   --show-relocated Also list which destination each moved line landed in.
+  --candidates FILE
+                   Also write, as JSONL, every base line a `tighten` entry
+                   accounted for. Needs --claims, without which `tighten` is
+                   refused and the file could only be empty. One object per
+                   line, each copy of a repeated line its own:
+                     file          the --file the report names
+                     line          its line number at --base, 1-based
+                     text          the line, as the report prints it
+                     warrant       the entry that accounted for it, as written
+                     heading       the nearest heading above it at --base, or
+                                   null
+                     section_line  where that block starts
+                     section       the heading's block as text: its lines up
+                                   to the next heading of any level
+                     successor     the section the rewrite left, or null:
+                                   {file, line, heading, how, text}, with
+                                   text up to the next heading at the same
+                                   level or above (a `#` title's: its own
+                                   block). One per block. `how` is `heading`
+                                   (the same heading, normalised as a line
+                                   is: --file first, then each destination)
+                                   or `words` (no such heading, so the block
+                                   sharing the most word 3-grams with the
+                                   block's tightened lines, --file first)
+                   OUTPUT ONLY. The report, the trailer, the exit codes and
+                   both warrant files are what they are without it, so the
+                   advisory pass that reads it (tightened-rules.sh) can't move
+                   the verdict (gregoryfoster/skills#442). Written on exit 0
+                   and 3, after every refusal: a record exists only once its
+                   entry is trusted. A failed write exits 2.
   -h, --help       Show this help and exit 0.
 
 Warranted losses (.skills/context-loss-ok):
@@ -308,8 +338,9 @@ Exit codes:
   0  every line accounted for, or warranted
   1  usage error, no policy file found, a malformed acknowledgement entry, a
      `tighten` warrant without --claims, an `index` warrant its evidence does
-     not bear out, or --claims-ack-file without --claims
-  2  infrastructure failure (base revision unreadable, python3 missing)
+     not bear out, or --claims-ack-file or --candidates without --claims
+  2  infrastructure failure (base revision unreadable, python3 missing,
+     --candidates unwritable)
   3  one or more lines — or, under --claims, atoms — unaccounted for and
      unwarranted; the run must justify or restore them
 USAGE
@@ -323,6 +354,7 @@ CLAIMS_ACK_FILE=".skills/context-claims-ok"
 CLAIMS_ACK_SET=0
 CLAIMS=0
 SHOW_RELOCATED=0
+CANDIDATES=""
 EXTRA=()
 
 while [ $# -gt 0 ]; do
@@ -337,6 +369,7 @@ while [ $# -gt 0 ]; do
       CLAIMS_ACK_SET=1; shift 2 ;;
     --claims) CLAIMS=1; shift ;;
     --show-relocated) SHOW_RELOCATED=1; shift ;;
+    --candidates) CANDIDATES="${2:?--candidates needs a path}"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "ERROR unknown argument: $1" >&2; usage >&2; exit 1 ;;
   esac
@@ -349,6 +382,13 @@ done
 # ignoring it, and a flag that quietly does nothing is the same mute failure.
 if [ "$CLAIMS_ACK_SET" -eq 1 ] && [ "$CLAIMS" -eq 0 ]; then
   echo "ERROR --claims-ack-file needs --claims; without it the file is never read" >&2
+  exit 1
+fi
+# The same rule for the output: without --claims a `tighten` entry is refused,
+# so --candidates would only ever write an empty file that reads as "nothing
+# was tightened".
+if [ -n "$CANDIDATES" ] && [ "$CLAIMS" -eq 0 ]; then
+  echo "ERROR --candidates needs --claims; a \`tighten\` entry is refused without it" >&2
   exit 1
 fi
 
@@ -376,6 +416,12 @@ _libdir="$(cd "$(dirname "$_self")" 2>/dev/null && pwd -P)" || _libdir=""
   echo "ERROR _context-lib.sh not found next to $_self" >&2; exit 2; }
 # shellcheck source=_context-lib.sh
 . "$_libdir/_context-lib.sh"
+
+# Named from where the caller stands, so resolved before the cd below.
+case "$CANDIDATES" in
+  "" | /*) ;;
+  *) CANDIDATES="$PWD/$CANDIDATES" ;;
+esac
 
 ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || {
   echo "ERROR not inside a git repository" >&2; exit 2; }
@@ -454,14 +500,15 @@ sort -u "$TMP/dests" >"$TMP/dests.u"
 
 RC=0
 python3 - "$TMP/before" "$POLICY" "$TMP/dests.u" "$SHOW_RELOCATED" "$ACK_FILE" \
-  "$DOCS_DIR" "$CLAIMS" "$CLAIMS_ACK_FILE" <<'PY' || RC=$?
+  "$DOCS_DIR" "$CLAIMS" "$CLAIMS_ACK_FILE" "$CANDIDATES" <<'PY' || RC=$?
+import json
 import os
 import re
 import sys
 from collections import Counter
 
 (before_path, policy, dests_path, show, ack_path, docs_dir, claims_on,
- claims_ack_path) = sys.argv[1:9]
+ claims_ack_path, candidates_out) = sys.argv[1:10]
 claims_on = claims_on == "1"
 
 # Why an unaccounted line was legitimate. A CLOSED set on purpose: the point of
@@ -1206,6 +1253,156 @@ if index_refused:
           "did not link\n  at --base. Anything else wants its own warrant, or "
           "the line restored.", file=sys.stderr)
     sys.exit(1)
+
+# --- --candidates (#442) --------------------------------------------------
+# The base lines a `tighten` entry accounted for, each with the section it sat
+# in and the section the rewrite left, for the advisory pass that asks whether
+# each rewritten sentence still states its rule. Written here, after the last
+# refusal, because a record exists only once the entry behind it is trusted;
+# nothing below reads it, so the report is the same with the flag or without.
+
+
+def heads_of(lines):
+    """(index, level, normalised line) of each heading outside a fence."""
+    found, opener = [], None
+    for i, raw in enumerate(lines):
+        opener, marker = fence_toggle(raw, opener)
+        if marker or opener is not None:
+            continue
+        m = HEADING.match(raw.strip())
+        if m:
+            found.append((i, len(m.group(1)), normalise(raw)))
+    return found
+
+
+def section_at(lines, heads, start, nested=True):
+    """The section opened by the heading at index START (None: the preamble),
+    as (start, text): up to the next heading at the same level or above, or,
+    with nested=False, up to the next heading of any level. A `#` title's
+    section is its own block either way: a document's title owns its
+    preamble, not the document, and the whole file is no successor."""
+    if start is None:
+        end = heads[0][0] if heads else len(lines)
+        return 0, "\n".join(lines[:end])
+    level = next(h[1] for h in heads if h[0] == start)
+    deeper = nested and level > 1
+    end = next((h[0] for h in heads
+                if h[0] > start and (h[1] <= level or not deeper)), len(lines))
+    return start, "\n".join(lines[start:end])
+
+
+def title_of(lines, start):
+    return None if start is None else HEADING.match(lines[start].strip()).group(2)
+
+
+def candidate_records():
+    tightened = {}
+    for (warrant, content, scope), hits in zip(entries, charged):
+        if warrant == "tighten":
+            written = f"{scope} :: " if scope is not None else ""
+            for line in hits:
+                tightened.setdefault(line, f"{written}{warrant} :: {content}")
+    if not tightened:
+        return []
+    # Where the rewrite may have left a section: --file as it is now, then each
+    # destination, read again here so the gate's own pass above is untouched.
+    # Frontmatter is dropped as the gate drops it, and counted back into `line`.
+    targets = []
+    for path in dest_paths:
+        raw = open(path, encoding="utf-8", errors="replace").read().splitlines()
+        lines, skipped = strip_frontmatter(raw)
+        targets.append((path, lines, skipped, heads_of(lines)))
+    targets.sort(key=lambda t: t[0] != policy)
+    base_heads = heads_of(before)
+
+    def blocks(lines, heads):
+        """(heading index or None, lines) for each heading's own block: up to
+        the next heading of any level, so the top-level section holding the
+        whole file doesn't outscore the block a rewrite actually left."""
+        starts = [None] + [h[0] for h in heads]
+        return [(a, lines[(a or 0):b])
+                for a, b in zip(starts, starts[1:] + [len(lines)])]
+
+    def shingles(lines):
+        words = re.findall(r"\w+", " ".join(delink(l) for l in lines).lower())
+        return {" ".join(words[i:i + 3]) for i in range(len(words) - 2)}
+
+    def successor(base_start):
+        if base_start is not None:
+            want = normalise(before[base_start])
+            for path, lines, skipped, heads in targets:
+                hit = next((h[0] for h in heads if h[2] == want), None)
+                if hit is not None:
+                    at, text = section_at(lines, heads, hit)
+                    return {"file": path, "line": at + skipped + 1,
+                            "heading": title_of(lines, hit), "how": "heading",
+                            "text": text}
+        # No heading of that name: a `rename` beside the `tighten`, or a
+        # tightening that merged sections. The rewrite went to the block
+        # sharing the most word 3-grams with what the tightening rewrote: the
+        # base block's `tighten`-warranted lines, not all of it, because a
+        # line relocated verbatim is accounted for already and can pull the
+        # whole block towards where it went. One answer per base block, so a
+        # sentence's wrapped lines can't each pick a different section.
+        # Words, not atoms: a prose line often has none, and an issue ref the
+        # whole file repeats sent a renamed heading's lines to the wrong one.
+        # --file is searched before any destination, because a tightening is
+        # a rewrite in place.
+        own = next(lines for a, lines in blocks(before, base_heads)
+                   if a == base_start)
+        want = shingles([l for l in own if l.strip() in tightened])
+        best = None
+        for tier in ([t for t in targets if t[0] == policy],
+                     [t for t in targets if t[0] != policy]):
+            score = 0
+            for path, lines, skipped, heads in tier:
+                for a, block in blocks(lines, heads):
+                    n = len(want & shingles(block))
+                    if n > score:
+                        best, score = (path, lines, skipped, heads, a), n
+            if best is not None:
+                break
+        if best is None:
+            return None
+        path, lines, skipped, heads, a = best
+        at, text = section_at(lines, heads, a)
+        return {"file": path, "line": at + skipped + 1,
+                "heading": title_of(lines, a), "how": "words", "text": text}
+
+    records, cache = [], {}
+    for i, raw in enumerate(before):
+        line = raw.strip()
+        if line not in tightened:
+            continue
+        above = [h[0] for h in base_heads if h[0] <= i]
+        start = above[-1] if above else None
+        if start not in cache:
+            cache[start] = (section_at(before, base_heads, start, nested=False),
+                            successor(start))
+        (at, text), after = cache[start]
+        records.append({
+            "file": policy, "line": i + front_skipped + 1, "text": line,
+            "warrant": tightened[line], "heading": title_of(before, start),
+            "section_line": at + front_skipped + 1, "section": text,
+            "successor": after,
+        })
+    return records
+
+
+if candidates_out:
+    try:
+        records = candidate_records()
+    except OSError as exc:
+        print(f"ERROR {exc}", file=sys.stderr)
+        sys.exit(2)
+    try:
+        with open(candidates_out, "w", encoding="utf-8") as fh:
+            for rec in records:
+                fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    except OSError as e:
+        print(f"ERROR can't write --candidates {candidates_out}: {e.strerror}",
+              file=sys.stderr)
+        sys.exit(2)
 
 # --- the claim check ------------------------------------------------------
 # Set difference, not line matching: an atom that exists at --base and in no
