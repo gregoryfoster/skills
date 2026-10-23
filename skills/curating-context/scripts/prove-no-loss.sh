@@ -101,7 +101,8 @@ Options:
                    advisory pass that reads it (tightened-rules.sh) can't move
                    the verdict (gregoryfoster/skills#442). Written on exit 0
                    and 3, after every refusal: a record exists only once its
-                   entry is trusted. A failed write exits 2.
+                   entry is trusted. A failed write, or records that
+                   can't be built, exit 2.
   -h, --help       Show this help and exit 0.
 
 Warranted losses (.skills/context-loss-ok):
@@ -340,7 +341,7 @@ Exit codes:
      `tighten` warrant without --claims, an `index` warrant its evidence does
      not bear out, or --claims-ack-file or --candidates without --claims
   2  infrastructure failure (base revision unreadable, python3 missing,
-     --candidates unwritable)
+     --candidates unwritable or failed)
   3  one or more lines — or, under --claims, atoms — unaccounted for and
      unwarranted; the run must justify or restore them
 USAGE
@@ -1390,15 +1391,20 @@ def candidate_records():
 
 
 if candidates_out:
+    # Whatever goes wrong here is the flag's, not the verdict's: exit 2, which
+    # says re-run, and never a traceback's exit 1, which reads as a malformed
+    # warrant file. Built in full before the file is opened, so a failure
+    # leaves no half-written records behind.
     try:
-        records = candidate_records()
-    except OSError as exc:
-        print(f"ERROR {exc}", file=sys.stderr)
+        body = "".join(json.dumps(rec, ensure_ascii=False) + "\n"
+                       for rec in candidate_records())
+    except Exception as exc:
+        print(f"ERROR --candidates failed: {type(exc).__name__}: {exc}",
+              file=sys.stderr)
         sys.exit(2)
     try:
         with open(candidates_out, "w", encoding="utf-8") as fh:
-            for rec in records:
-                fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
+            fh.write(body)
     except OSError as e:
         print(f"ERROR can't write --candidates {candidates_out}: {e.strerror}",
               file=sys.stderr)

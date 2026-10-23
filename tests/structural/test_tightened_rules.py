@@ -285,6 +285,30 @@ def test_an_unwritable_path_is_exit_2(repo):
     assert r.returncode == 2 and "can't write --candidates" in r.stderr
 
 
+def test_a_failure_building_the_records_is_exit_2_not_a_traceback(repo, tmp_path):
+    # An output-only flag must not turn the verdict into exit 1, which reads as
+    # a malformed warrant file. json.dumps is broken for the gate's Python
+    # only, through a sitecustomize; the run without the flag never calls it.
+    site = tmp_path / "site"
+    site.mkdir()
+    (site / "sitecustomize.py").write_text(
+        "import json\n"
+        "def _boom(*a, **k):\n"
+        "    raise RuntimeError('injected')\n"
+        "json.dumps = _boom\n"
+    )
+    env = {**_env(), "PYTHONPATH": str(site)}
+    out = repo.parent / "c.jsonl"
+    run = ["bash", str(PROVE), "--claims", "--candidates", str(out)]
+    r = subprocess.run(run, cwd=repo, capture_output=True, text=True, env=env)
+    assert r.returncode == 2, r.stderr
+    assert "ERROR --candidates failed: RuntimeError: injected" in r.stderr
+    assert "Traceback" not in r.stderr and not out.exists()
+    plain = ["bash", str(PROVE), "--claims"]
+    p = subprocess.run(plain, cwd=repo, capture_output=True, text=True, env=env)
+    assert p.returncode == 0, p.stderr
+
+
 def test_a_relative_path_is_read_from_where_the_caller_stands(repo):
     sub = repo / "docs"
     r = _prove(repo, "--candidates", "c.jsonl", cwd=sub)
