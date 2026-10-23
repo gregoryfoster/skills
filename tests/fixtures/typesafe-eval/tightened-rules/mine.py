@@ -43,8 +43,9 @@ delegated  #470's measurement, printed as JSON. For each labelled case it
          the successor's directory and then the repo root. It applies the
          pass's `kept` test there twice, to the whole doc and to the anchored
          section when the link has an anchor (a `§"Heading"` is read as
-         none). At the default threshold it reports the flags and catches
-         with each, and the ceiling a perfect "held at the destination"
+         none). It counts the pointers it read and those it couldn't. At
+         the default threshold it reports the flags and catches with each,
+         and the ceiling a perfect "held at the destination"
          judgment reaches, from HELD.tsv:
          `id<TAB>held<TAB>where<TAB>how<TAB>note`, one row per positive.
 
@@ -485,7 +486,9 @@ def anchored(text: str, anchor: str) -> str | None:
 
 
 def step1(clones: Path, inputs: list[dict], labels: dict) -> dict[str, dict]:
-    """{id: {doc, section}}: whether the sentence is `kept` at a doc its successor points to."""
+    """{id: {doc, section, followed, unresolved}}: whether the sentence is `kept`
+    at a doc its successor points to, and how many of its pointers were read
+    and how many weren't (a placeholder path, or no such file at the commit)."""
     docs: dict = {}
 
     def show(repo: str, commit: str, path: str):
@@ -505,6 +508,7 @@ def step1(clones: Path, inputs: list[dict], labels: dict) -> dict[str, dict]:
             continue
         sentence, here = tr._flat(row.sentence), row.successor["file"]
         doc = section = False
+        followed = unresolved = 0
         for target, backticked in pointers(row.successor["text"]):
             if URL.match(target):
                 continue
@@ -518,14 +522,24 @@ def step1(clones: Path, inputs: list[dict], labels: dict) -> dict[str, dict]:
             )
             if path and backticked:
                 tried.append(os.path.normpath(path.lstrip("/")))
-            text = next((t for t in (show(repo, commit, p) for p in tried) if t), None)
+            texts = (show(repo, commit, p) for p in tried)
+            text = next((t for t in texts if t is not None), None)
             if text is None:
+                # Counted, never silent: an unread destination isn't one that
+                # lacks the rule (CR 478).
+                unresolved += 1
                 continue
+            followed += 1
             doc = doc or sentence in tr._flat(text)
             if anchor:
                 part = anchored(text, anchor)
                 section = section or (part is not None and sentence in tr._flat(part))
-        out[cid] = {"doc": doc, "section": section}
+        out[cid] = {
+            "doc": doc,
+            "section": section,
+            "followed": followed,
+            "unresolved": unresolved,
+        }
     return out
 
 
@@ -584,7 +598,13 @@ def delegated(clones: Path, inputs: Path, labels: Path, held: Path, cache: Path)
         sys.exit(f"{held} must hold exactly the {len(positives)} positives")
     p = probabilities(recs, lab, cache)
     found = step1(clones, recs, lab)
-    report = {"threshold": tr.DEFAULT_THRESHOLD}
+    report = {
+        "threshold": tr.DEFAULT_THRESHOLD,
+        "pointers": {
+            "followed": sum(f["followed"] for f in found.values()),
+            "unresolved": sum(f["unresolved"] for f in found.values()),
+        },
+    }
     for name, cleared in (
         ("shipped", set()),
         ("whole_doc", {c for c, f in found.items() if f["doc"]}),
