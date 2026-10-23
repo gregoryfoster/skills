@@ -1,0 +1,134 @@
+# repo	source	target	harvest_at	comment	k	kind	verdict
+CannObserv/archiver	-	305	2026-10-04T01:45:12Z			out-of-scope	another-tracker
+CannObserv/archiver	302	303	2026-10-03T16:12:40Z	5961417501	7	named	genuine
+CannObserv/archiver	302	304	2026-10-03T16:12:41Z			unaligned	-
+CannObserv/archiver	302	305	2026-10-03T16:12:42Z			unaligned	-
+CannObserv/archiver	302	306	2026-10-03T16:12:43Z			unaligned	-
+CannObserv/archiver	302	307	2026-10-03T16:12:44Z			unaligned	-
+CannObserv/archiver	303	304	2026-10-04T01:44:29Z	5973402075	2	named	genuine
+CannObserv/archiver	303	304	2026-10-04T01:44:29Z	5973402075	5	named	unchecked
+CannObserv/archiver	304	305	2026-10-07T13:44:50Z			unaligned	-
+CannObserv/archiver	304	306	2026-10-07T13:44:51Z			unaligned	-
+CannObserv/archiver	304	306	2026-10-07T13:44:51Z	6025859194	0	unnamed	spurious
+CannObserv/archiver	307	304	2026-10-05T17:07:40Z			unaligned	-
+CannObserv/archiver	307	308	2026-10-05T17:07:39Z	5987783720	0	unnamed	spurious
+CannObserv/archiver	307	308	2026-10-05T17:07:39Z	5999111107	8	unnamed	genuine
+CannObserv/archiver	307	308	2026-10-05T17:07:39Z	5999111107	11	named	unchecked
+CannObserv/archiver	307	308	2026-10-05T17:07:39Z	5999111107	12	named	unchecked
+CannObserv/archiver	307	308	2026-10-05T17:07:39Z	5999111107	13	named	unchecked
+CannObserv/archiver	307	308	2026-10-05T17:07:39Z	5999111107	14	named	unchecked
+CannObserv/archiver	312	307	2026-10-04T03:04:41Z	5975949646	1	unnamed	genuine
+CannObserv/archiver	312	307	2026-10-04T03:04:41Z	5975949646	2	unnamed	genuine
+CannObserv/archiver	312	307	2026-10-04T03:04:41Z	5975949646	5	unnamed	genuine
+CannObserv/archiver	312	308	2026-10-04T03:04:43Z	5975949646	2	unnamed	genuine
+CannObserv/broker	-	33	2026-10-05T16:55:00Z			out-of-scope	coordinator-measurement
+CannObserv/broker	-	43	2026-10-05T16:54:57Z			out-of-scope	coordinator-measurement
+CannObserv/broker	-	53	2026-10-05T16:54:59Z			out-of-scope	coordinator-measurement
+CannObserv/broker	-	68	2026-10-05T16:54:52Z			out-of-scope	coordinator-measurement
+CannObserv/broker	-	70	2026-10-05T16:54:49Z			out-of-scope	coordinator-measurement
+CannObserv/broker	-	71	2026-10-05T16:54:50Z			out-of-scope	coordinator-measurement
+CannObserv/broker	-	78	2026-10-05T16:54:55Z			out-of-scope	coordinator-measurement
+CannObserv/broker	-	93	2026-10-16T21:56:20Z			out-of-scope	another-tracker
+CannObserv/broker	101	85	2026-10-16T16:44:28Z	6208146227	0	unnamed	spurious
+CannObserv/broker	101	85	2026-10-16T16:44:28Z	6217497854	1	unnamed	genuine
+CannObserv/broker	101	85	2026-10-16T16:44:28Z	6217497854	16	unnamed	genuine
+CannObserv/broker	101	85	2026-10-16T16:44:28Z	6217497854	19	unnamed	genuine
+CannObserv/broker	101	85	2026-10-16T16:44:28Z	6217497854	63	unnamed	genuine
+CannObserv/broker	101	85	2026-10-16T16:44:28Z	6217497854	65	unnamed	genuine
+CannObserv/broker	101	85	2026-10-16T16:44:28Z	6219179786	8	named	genuine
+CannObserv/broker	79	73	2026-10-05T20:03:33Z	5999364333	8	named	unchecked
+CannObserv/processor	-	20	2026-10-03T16:21:16Z			out-of-scope	another-tracker
+CannObserv/wslcb-licensing-tracker	-	210	2026-10-23T12:26:19Z			out-of-scope	coordinator-measurement
+CannObserv/wslcb-licensing-tracker	206	204	2026-10-23T00:09:09Z			out-of-scope	target-not-in-the-epic
+CannObserv/wslcb-licensing-tracker	206	208	2026-10-23T00:09:12Z	6353707328	33	unnamed	spurious
+CannObserv/wslcb-licensing-tracker	206	208	2026-10-23T00:09:12Z	6353707328	35	named	genuine
+CannObserv/wslcb-licensing-tracker	206	208	2026-10-23T00:09:12Z	6353707328	36	unnamed	genuine
+CannObserv/wslcb-licensing-tracker	206	208	2026-10-23T00:09:12Z	6353707328	49	named	unchecked
+CannObserv/wslcb-licensing-tracker	206	208	2026-10-23T00:09:12Z	6353707328	50	named	unchecked
+CannObserv/wslcb-licensing-tracker	206	209	2026-10-23T00:09:13Z	6352962840	10	unnamed	genuine
+CannObserv/wslcb-licensing-tracker	206	209	2026-10-23T00:09:13Z	6353707328	52	named	unchecked
+CannObserv/wslcb-licensing-tracker	206	210	2026-10-23T00:09:14Z	6353707328	9	unnamed	genuine
+CannObserv/wslcb-licensing-tracker	206	211	2026-10-23T00:09:15Z			out-of-scope	target-not-in-the-epic
+CannObserv/wslcb-licensing-tracker	207	210	2026-10-23T12:08:29Z	6354559813	13	unnamed	genuine
+CannObserv/wslcb-licensing-tracker	207	210	2026-10-23T12:08:29Z	6354559813	46	named	unchecked
+CannObserv/wslcb-licensing-tracker	207	210	2026-10-23T12:08:29Z	6354559813	47	named	unchecked
+CannObserv/wslcb-licensing-tracker	207	210	2026-10-23T12:08:29Z	6354559813	48	named	unchecked
+CannObserv/wslcb-licensing-tracker	207	210	2026-10-23T12:08:29Z	6357064128	8	named	unchecked
+CannObserv/wslcb-licensing-tracker	208	209	2026-10-23T14:51:59Z	6365487059	63	named	unchecked
+CannObserv/wslcb-licensing-tracker	208	209	2026-10-23T14:51:59Z	6365487059	64	named	unchecked
+CannObserv/wslcb-licensing-tracker	208	209	2026-10-23T14:51:59Z	6365487059	66	named	unchecked
+CannObserv/wslcb-licensing-tracker	208	209	2026-10-23T14:51:59Z	6365487059	72	unnamed	genuine
+CannObserv/wslcb-licensing-tracker	208	209	2026-10-23T14:51:59Z	6366485144	0	unnamed	spurious
+CannObserv/wslcb-licensing-tracker	208	210	2026-10-23T14:52:01Z	6365487059	40	unnamed	genuine
+CannObserv/wslcb-licensing-tracker	208	210	2026-10-23T14:52:01Z	6365487059	68	named	unchecked
+CannObserv/wslcb-licensing-tracker	208	210	2026-10-23T14:52:01Z	6365487059	69	named	unchecked
+CannObserv/wslcb-licensing-tracker	208	210	2026-10-23T14:52:01Z	6365487059	71	named	unchecked
+gregoryfoster/skills	-	395	2026-10-15T15:31:41Z			out-of-scope	adoption-findings
+gregoryfoster/skills	-	399	2026-10-15T15:31:38Z			out-of-scope	adoption-findings
+gregoryfoster/skills	-	399	2026-10-15T16:05:57Z			out-of-scope	adoption-findings
+gregoryfoster/skills	-	400	2026-10-15T15:31:40Z			out-of-scope	adoption-findings
+gregoryfoster/skills	-	412	2026-10-16T16:34:01Z			out-of-scope	adoption-findings
+gregoryfoster/skills	-	413	2026-10-16T16:34:15Z			out-of-scope	adoption-findings
+gregoryfoster/skills	-	437	2026-10-19T19:54:20Z			out-of-scope	epic-split
+gregoryfoster/skills	435	437	2026-10-23T22:20:52Z	6372110302	63	named	unchecked
+gregoryfoster/skills	435	437	2026-10-23T22:20:52Z	6375350413	1	unnamed	spurious
+gregoryfoster/skills	435	440	2026-10-23T22:20:54Z	6372110302	64	named	unchecked
+gregoryfoster/skills	435	440	2026-10-23T22:20:54Z	6372908995	39	named	unchecked
+gregoryfoster/skills	435	440	2026-10-23T22:20:54Z	6375350413	1	unnamed	spurious
+gregoryfoster/skills	438	441	2026-10-21T15:55:26Z	6301327410	17	unnamed	spurious
+gregoryfoster/skills	438	441	2026-10-21T15:55:26Z	6303164875	37	unnamed	spurious
+gregoryfoster/skills	438	441	2026-10-21T15:55:26Z	6303164875	39	named	unchecked
+gregoryfoster/skills	438	441	2026-10-21T15:55:26Z	6303164875	40	named	unchecked
+gregoryfoster/skills	438	441	2026-10-21T15:55:26Z	6303164875	41	named	unchecked
+gregoryfoster/skills	438	441	2026-10-21T15:55:26Z	6303164875	42	named	unchecked
+gregoryfoster/skills	438	441	2026-10-21T15:55:26Z	6303164875	43	named	unchecked
+gregoryfoster/skills	438	441	2026-10-21T15:55:26Z	6303164875	44	named	unchecked
+gregoryfoster/skills	438	441	2026-10-21T15:55:26Z	6303164875	45	named	unchecked
+gregoryfoster/skills	438	442	2026-10-21T15:55:27Z	6301327410	17	unnamed	spurious
+gregoryfoster/skills	438	442	2026-10-21T15:55:27Z	6303164875	37	unnamed	spurious
+gregoryfoster/skills	438	442	2026-10-21T15:55:27Z	6303164875	39	named	unchecked
+gregoryfoster/skills	438	442	2026-10-21T15:55:27Z	6303164875	40	named	unchecked
+gregoryfoster/skills	438	442	2026-10-21T15:55:27Z	6303164875	41	named	unchecked
+gregoryfoster/skills	438	442	2026-10-21T15:55:27Z	6303164875	42	named	unchecked
+gregoryfoster/skills	438	442	2026-10-21T15:55:27Z	6303164875	43	named	unchecked
+gregoryfoster/skills	438	442	2026-10-21T15:55:27Z	6303164875	44	named	unchecked
+gregoryfoster/skills	438	442	2026-10-21T15:55:27Z	6303164875	45	named	unchecked
+gregoryfoster/skills	438	445	2026-10-21T15:55:30Z			unaligned	-
+gregoryfoster/skills	438	447	2026-10-21T15:55:29Z	6301327410	17	unnamed	spurious
+gregoryfoster/skills	438	447	2026-10-21T15:55:29Z	6303164875	37	unnamed	spurious
+gregoryfoster/skills	438	447	2026-10-21T15:55:29Z	6303164875	39	named	unchecked
+gregoryfoster/skills	438	447	2026-10-21T15:55:29Z	6303164875	40	named	unchecked
+gregoryfoster/skills	438	447	2026-10-21T15:55:29Z	6303164875	41	named	unchecked
+gregoryfoster/skills	438	447	2026-10-21T15:55:29Z	6303164875	42	named	unchecked
+gregoryfoster/skills	438	447	2026-10-21T15:55:29Z	6303164875	43	named	unchecked
+gregoryfoster/skills	438	447	2026-10-21T15:55:29Z	6303164875	44	named	unchecked
+gregoryfoster/skills	438	447	2026-10-21T15:55:29Z	6303164875	45	named	unchecked
+gregoryfoster/skills	438	447	2026-10-21T15:55:29Z	6303164875	46	named	unchecked
+gregoryfoster/skills	441	447	2026-10-22T23:09:23Z	6325554063	63	named	unchecked
+gregoryfoster/skills	441	447	2026-10-22T23:09:23Z	6325554063	64	named	unchecked
+gregoryfoster/skills	441	447	2026-10-22T23:09:23Z	6325554063	65	named	unchecked
+gregoryfoster/skills	441	447	2026-10-22T23:09:23Z	6325554063	67	unnamed	genuine
+gregoryfoster/skills	441	447	2026-10-22T23:09:23Z	6352770580	4	unnamed	genuine
+gregoryfoster/skills	442	447	2026-10-23T13:26:17Z	6357235012	5	unnamed	genuine
+gregoryfoster/skills	442	447	2026-10-23T13:26:17Z	6357235012	81	named	unchecked
+gregoryfoster/skills	442	447	2026-10-23T13:26:17Z	6357235012	82	named	unchecked
+gregoryfoster/skills	442	447	2026-10-23T13:26:17Z	6357235012	83	named	unchecked
+gregoryfoster/skills	448	438	2026-10-20T13:00:39Z	6283033094	44	named	unchecked
+gregoryfoster/skills	448	438	2026-10-20T13:00:39Z	6283033094	45	named	unchecked
+gregoryfoster/skills	448	438	2026-10-20T13:00:39Z	6283332775	11	named	unchecked
+gregoryfoster/skills	448	440	2026-10-20T13:00:41Z	6283033094	36	unnamed	genuine
+gregoryfoster/skills	448	440	2026-10-20T13:00:41Z	6283033094	52	named	unchecked
+gregoryfoster/skills	448	440	2026-10-20T13:00:41Z	6283033094	53	named	unchecked
+gregoryfoster/skills	448	440	2026-10-20T13:00:41Z	6283332775	10	named	unchecked
+gregoryfoster/skills	448	442	2026-10-20T13:00:40Z	6283033094	54	named	unchecked
+gregoryfoster/skills	448	449	2026-10-20T13:00:42Z	6283033094	48	named	unchecked
+gregoryfoster/skills	448	449	2026-10-20T13:00:42Z	6283033094	50	named	unchecked
+gregoryfoster/skills	448	449	2026-10-20T13:00:42Z	6283033094	56	unnamed	genuine
+gregoryfoster/skills	448	449	2026-10-20T13:00:42Z	6283332775	12	named	unchecked
+gregoryfoster/skills	448	449	2026-10-20T13:00:42Z	6290658175	7	named	unchecked
+gregoryfoster/skills	449	437	2026-10-20T20:18:28Z	6296291526	39	unnamed	genuine
+gregoryfoster/skills	449	440	2026-10-20T20:18:27Z	6296291526	52	named	unchecked
+gregoryfoster/skills	463	436	2026-10-21T19:07:29Z	6321998680	50	named	unchecked
+gregoryfoster/skills	463	440	2026-10-21T19:07:30Z	6321998680	50	named	unchecked
+gregoryfoster/skills	463	442	2026-10-21T19:07:27Z			unaligned	-
+gregoryfoster/skills	463	447	2026-10-21T19:07:28Z			unaligned	-

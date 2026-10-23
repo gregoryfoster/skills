@@ -22,6 +22,11 @@ network, no key. What that pins, and what it doesn't:
 - **Pinned for section-class (#435):** the labels match the set, the
   confusion and the pairs result #435 closed on, and the repeat noise the
   pairs are read against, all from the cache. No pass shipped either.
+- **Pinned for harvest-candidates (#436):** every case is what the shipped
+  `_harvest.build_case` sends, the labels match the set, and the ranks #436
+  built on (against the plain-matching baseline, with the repeat noise), plus
+  the whole-thread table from `scores.tsv`. `mine.py build` rebuilds the set
+  from the raw threads, through the shipped paragraph reader.
 - **Not pinned:** what feeds the builder. The splitter needs the source file,
   from 12 repos and often a historical commit (485 KB of paragraph windows
   still reproduced only 111 of 130 cases), and `describe` needs gh's reply.
@@ -78,6 +83,11 @@ SETS = {
         "a24ecb5ef6673b7fe0ba8ae11263cddbd9caae910cf6de458e7e3f81cce52616",
         1178,
         {"default": {0.3: (0, 39, 0, 1139), 0.5: (0, 0, 0, 1178)}},
+    ),
+    "harvest-candidates": (
+        "504a91a8273ad6b29b77c965c1ece10d25e2ac76944e3607cca4dc2242d96bcb",
+        156,
+        {"bears_on": {0.3: (14, 48, 8, 86), 0.5: (10, 22, 12, 112)}},
     ),
 }
 
@@ -497,3 +507,57 @@ def test_a_tag_names_a_heading_before_a_subsection_or_a_prefix(sc_mine):
     assert sc_mine.match("`Scripts`", secs) == (0, "exact")
     assert sc_mine.match("Scripts gate discipline", secs) == (0, "prefix")
     assert sc_mine.match("redundant-heading", secs) == (None, "none")
+
+
+# --- harvest-candidates ---------------------------------------------------------
+
+HC_DIR = SETS_DIR / "harvest-candidates"
+
+
+@pytest.fixture(scope="module")
+def hc_mine():
+    return _load("hc_mine", HC_DIR / "mine.py")
+
+
+def _hc_cases() -> list[dict]:
+    return [json.loads(x) for x in (HC_DIR / "set.jsonl").read_text().splitlines()]
+
+
+def test_every_harvest_case_is_what_the_shipped_builder_sends(hc_mine):
+    for c in _hc_cases():
+        repo, source, _para, _child = c["id"].split("|")
+        state, questions = hc_mine.H.build_case(
+            c["state"]["paragraph"], repo, int(source), c["state"]["child"]
+        )
+        assert (state, questions) == (c["state"], c["questions"]), c["id"]
+
+
+def test_the_harvest_labels_match_the_set(hc_mine):
+    labels = hc_mine.read_labels()
+    want = {
+        f"{r['repo']}|{r['source']}|{r['comment']}:{r['k']}|{r['target']}"
+        for r in labels
+        if r["verdict"] == "genuine" and r["kind"] == "unnamed"
+    }
+    got = {c["id"] for c in _hc_cases() if c["expected"]["bears_on"]}
+    assert got == want and len(got) == 22
+    # 58 public harvests: 40 from a child's thread, 18 from elsewhere.
+    harvests = {(r["repo"], r["source"], r["target"], r["harvest_at"]) for r in labels}
+    assert len(harvests) == 58
+    assert sum(r["source"] == "-" for r in labels) == 18
+
+
+def test_the_harvest_ranks_436_built_on(hc_mine):
+    got = hc_mine.rank(HC_DIR / "set.jsonl", HC_DIR / "cache.jsonl")
+    assert got["pairs"] == 22
+    assert got["baseline"] == [3, 12] and got["random"] == [3.8, 11.4]
+    assert got["noul_last"] == [14, 16] and got["noul_mean"] == [14, 16]
+    assert got["paired"] == [15, 2, 5] and got["sign_p"] == 0.0012
+    assert got["repeats"] == {"repeated": 156, "max_move": 0.11, "p90_move": 0.04}
+
+
+def test_the_whole_thread_table(hc_mine):
+    got = hc_mine.scores(HC_DIR / "scores.tsv")
+    assert sum(n for n, _, _ in got.values()) == 1732
+    assert sum(len(r) for _, r, _ in got.values()) == 16
+    assert sum(top for _, _, top in got.values()) == 10
