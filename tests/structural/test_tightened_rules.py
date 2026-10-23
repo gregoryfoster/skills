@@ -367,6 +367,7 @@ def test_the_help_documents_the_flag_and_points_at_the_pass():
     r = subprocess.run(["bash", str(PROVE), "--help"], capture_output=True, text=True)
     help_text = r.stdout
     assert "--candidates FILE" in help_text and "tightened-rules.sh" in help_text
+    assert "references/keep-cut-rubric.md" in help_text
     for field in ("file", "line", "text", "warrant", "heading", "section_line"):
         assert re.search(rf"^\s+{field}\s", help_text, re.M), field
     assert "--candidates unwritable" in help_text

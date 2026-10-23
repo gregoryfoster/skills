@@ -100,8 +100,9 @@ Options:
                                    block's tightened lines, --file first)
                    OUTPUT ONLY. The report, the trailer, the exit codes and
                    both warrant files are what they are without it, so the
-                   advisory pass that reads it (tightened-rules.sh) can't move
-                   the verdict (gregoryfoster/skills#442). Written on exit 0
+                   advisory pass that reads it (tightened-rules.sh, in
+                   references/keep-cut-rubric.md) can't move the verdict
+                   (gregoryfoster/skills#442). Written on exit 0
                    and 3, after every refusal: a record exists only once its
                    entry is trusted. A failed write, or records that
                    can't be built, exit 2.
