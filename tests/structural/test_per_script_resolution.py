@@ -370,6 +370,7 @@ def test_a_single_script_found_nowhere_stops_the_block_by_name(
 # than dropping out of the parametrization.
 REFERENCE_BLOCKS = [
     ("curating-context", "references/fact-verification.md"),
+    ("curating-context", "references/keep-cut-rubric.md"),
     ("curating-context", "references/seam-accounting.md"),
 ]
 

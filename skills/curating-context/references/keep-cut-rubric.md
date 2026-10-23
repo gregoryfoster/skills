@@ -136,6 +136,60 @@ warrants is too weak to substitute — one covered a 62-token trim and the next 
 proxy was refused, are in
 [rejected-changes.md](rejected-changes.md#a-tightened-count-as-the-measure-of-what-class-c-recovers).
 
+### Whether a tightening still states its rule (optional, TypeSafe)
+
+`--claims` checks atoms, so a rewrite can keep every span, link and issue
+reference and still lose the "never", the "only when", the exception or the
+reason between them. `tightened-rules.sh` reads the lines your `tighten`
+entries accounted for, rebuilds their sentences across wrapped lines, and asks
+one yes-or-no question about each sentence against the section the rewrite
+left: did the edit drop or weaken a rule it states? It is advisory, and off
+until the repo opts in through `.skills/typesafe` or `TYPESAFE_OPT_IN`. A
+request carries the `sentence`, its `heading` and the `after_section`. Nothing
+else leaves the machine, and a private repo decides for itself. Resolve it on
+its own, since SKILL.md's block doesn't list it:
+
+<!-- skill:required id=skill-scripts -->
+```bash
+N=curating-context
+for S in tightened-rules.sh; do SD=
+  for d in scripts ".claude/skills/$N/scripts" "$HOME/.claude/skills/$N/scripts"; do
+    [ -f "$d/$S" ] && { SD="$d"; break; }
+  done
+  [ -n "$SD" ] || echo "$S not found in scripts/, .claude/skills/$N/scripts/, or ~/.claude/skills/$N/scripts/" >&2
+  echo "<$S>=${SD:?}/$S"
+done
+```
+
+```bash
+bash "<prove-no-loss.sh>" --base <branch-point> --claims --candidates /tmp/context-tightened.jsonl
+bash "<tightened-rules.sh>" /tmp/context-tightened.jsonl > /tmp/context-tightened.tsv
+```
+
+- **It never moves the verdict.** `--candidates` is output only: the report,
+  the trailer and exit 3 are the same without it. A flagged sentence needs no
+  warrant, nothing is written for you, and `no_loss` and `claims_*` on the
+  ledger row don't include it.
+- **Re-read every `dropped?` row against the rewrite.** A flag says "check
+  this", not "this was lost", and a low score is not a pass. On 421
+  hand-labelled sentences from 61 curations in 9 public cohort repos
+  ([#442](https://github.com/gregoryfoster/skills/issues/442)), the default
+  0.3 caught 52 of 61 losses and flagged 180. It is set for recall, because a
+  missed loss costs more than a re-read.
+- **It is weakest where a review is strongest.** A rule that vanished, or
+  survives only as a link elsewhere, scores high. A subtle weakening scores
+  low: "must be idempotent" became "are idempotent", or "only X" lost its
+  "only". Most of what it misses is that kind of change, so still read the
+  diff of every rule you rewrote.
+- **The successor is a guess when the heading changed.** The section the
+  rewrite left is the same heading in `--file`, then in a destination. With
+  no such heading, it is the block sharing the most words with what was
+  tightened. A rule moved to another section of the file reads as dropped
+  there.
+- **A skip or a failure still prints the rows.** Exit 4 (not opted in, or no
+  key) leaves them all unjudged; exit 2 (a TypeSafe failure) keeps the `p` of
+  those judged first and marks the others `failed` or `not-asked`.
+
 ### Class D — delete
 
 Requires a named warrant. One of exactly three:
