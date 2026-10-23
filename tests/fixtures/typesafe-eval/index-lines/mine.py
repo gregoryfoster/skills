@@ -102,6 +102,20 @@ def norm(d: str, t: str) -> str:
     return "/".join(out)
 
 
+def fence(line: str, opener: str | None) -> tuple[str | None, bool]:
+    """(the open fence after LINE, or None; whether LINE is a marker). Only a run of
+    the opener's own character, at least as long, closes it (CR 480's rule)."""
+    m = FENCE.match(line)
+    if not m:
+        return opener, False
+    run = m.group(1)
+    if opener is None:
+        return run, True
+    if run[0] == opener[0] and len(run) >= len(opener):
+        return None, True
+    return opener, False
+
+
 def section(lines: list[str], match) -> tuple[int, int] | None:
     """[start, end) of the first heading MATCH accepts, to the next at its level or above."""
     start = level = None
@@ -118,13 +132,10 @@ def section(lines: list[str], match) -> tuple[int, int] | None:
 
 def outline(text: str) -> dict:
     """The doc as the question sees it: `#`-`###` headings, and the opening paragraph."""
-    heads, para, opening, fence = [], [], None, None
+    heads, para, opening, opener = [], [], None, None
     for line in text.splitlines():
-        m = FENCE.match(line)
-        if m:
-            fence = None if fence else m.group(1)
-            continue
-        if fence:
+        opener, marker = fence(line, opener)
+        if marker or opener:
             continue
         h = HEADING.match(line)
         if h:
@@ -151,14 +162,11 @@ def head_lines(clones: Path) -> list[dict]:
         lines = git(clones, repo, "show", f"{rev}:{POLICY}").splitlines()
         title = SECTION.get(repo, "Detail Docs").lower()
         start, end = section(lines, lambda t, title=title: t == title)
-        fence = None
+        opener = None
         for i in range(start, end):
             line = lines[i]
-            m = FENCE.match(line)
-            if m:
-                fence = None if fence else m.group(1)
-                continue
-            if fence or not line.strip():
+            opener, marker = fence(line, opener)
+            if marker or opener or not line.strip():
                 continue
             targets = []
             for t in INLINE.findall(line):

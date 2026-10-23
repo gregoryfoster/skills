@@ -379,3 +379,10 @@ def test_a_fixed_index_line_scores_no_higher_than_its_fix(il_mine):
     fix scored above the fixed line in 8 of 17 pairs, a coin flip."""
     got = il_mine.pairs(IL_DIR / "set.jsonl", IL_DIR / "cache.jsonl")
     assert got == {"pairs": 17, "before_above": 8, "tied": 0}
+
+
+def test_an_outline_fence_closes_only_on_its_own_character(il_mine):
+    doc = (
+        "# T\n~~~\n```\n## Not a heading\n~~~\n## Real\n````\n```\n## Also not\n````\n"
+    )
+    assert il_mine.outline(doc)["headings"] == ["# T", "## Real"]
