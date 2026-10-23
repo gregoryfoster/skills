@@ -264,6 +264,38 @@ def test_a_heading_in_two_destinations_goes_to_the_one_sharing_its_words(tmp_pat
     assert (s["file"], s["how"]) == ("docs/b.md", "heading")
 
 
+def test_a_scoped_entry_is_the_warrant_as_written(tmp_path):
+    line = "Rebase only a branch that nobody else has pulled."
+    r = _repo_of(
+        tmp_path / "r",
+        f"# T\n\n{line}\n",
+        "# T\n\nRebase only an unshared branch.\n",
+        f"AGENTS.md :: tighten :: {line}\n",
+        {},
+    )
+    (rec,) = _records(r)
+    assert rec["warrant"] == f"AGENTS.md :: tighten :: {line}"
+
+
+def test_each_copy_of_a_repeated_line_is_its_own_record(tmp_path):
+    line = "Run the suite before every commit, not after."
+    base = f"# T\n\n## One\n\n{line}\n\n## Two\n\n{line}\n"
+    r = _repo_of(
+        tmp_path / "r",
+        base,
+        "# T\n\n## One\n\nTest first.\n\n## Two\n\nTest first.\n",
+        f"tighten :: {line}\n",
+        {},
+    )
+    recs = _records(r)
+    lines = base.splitlines()
+    assert [(x["line"], x["heading"]) for x in recs] == [
+        (lines.index(line) + 1, "One"),
+        (len(lines), "Two"),
+    ]
+    assert [x["successor"]["heading"] for x in recs] == ["One", "Two"]
+
+
 def test_nothing_sharing_a_word_has_no_successor(repo):
     (repo / "AGENTS.md").write_text("# Title\n\nUnrelated.\n")
     (repo / "docs" / "MOVED.md").unlink()
