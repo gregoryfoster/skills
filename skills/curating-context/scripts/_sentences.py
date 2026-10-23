@@ -218,6 +218,19 @@ def _units(lines: list[str]):
     return [u for u in out if u is not None]
 
 
+def _cuts(text: str):
+    """Each sentence boundary in a paragraph's or list item's text, in order."""
+    spans = _code_spans(text)
+    for m in _BOUNDARY.finditer(text):
+        if _in(spans, m.start()):
+            continue
+        word = re.search(r"([A-Za-z.]+)$", text[: m.start()])
+        w = word.group(1).strip(".").lower() if word else ""
+        if w in _ABBREV or (len(w) == 1 and w.isalpha()):
+            continue
+        yield m
+
+
 def _sentence(unit: _Unit, pos: int) -> str:
     """The sentence of `unit.text` holding offset `pos`."""
     text = unit.text
@@ -226,15 +239,8 @@ def _sentence(unit: _Unit, pos: int) -> str:
     if unit.kind == "heading":
         start, end = 0, len(text)
     else:
-        spans = _code_spans(text)
         start, end = 0, len(text)
-        for m in _BOUNDARY.finditer(text):
-            if _in(spans, m.start()):
-                continue
-            word = re.search(r"([A-Za-z.]+)$", text[: m.start()])
-            w = word.group(1).strip(".").lower() if word else ""
-            if w in _ABBREV or (len(w) == 1 and w.isalpha()):
-                continue
+        for m in _cuts(text):
             if m.end() <= pos:
                 start = m.end()
             elif m.start() >= pos:
@@ -291,12 +297,63 @@ def _short_repo(word: str) -> str | None:
     return word
 
 
-def occurrences(text: str) -> list[Occurrence]:
-    """Every reference in `text`, in order, each with its sentence."""
+def _lines(text: str) -> list[str]:
     # A file saved on Windows: a BOM hid front matter, and a CR broke the
     # setext match and went to TypeSafe inside the sentence (CR 449).
     text = text[1:] if text.startswith("\ufeff") else text
-    lines = [line[:-1] if line.endswith("\r") else line for line in text.split("\n")]
+    return [line[:-1] if line.endswith("\r") else line for line in text.split("\n")]
+
+
+@dataclass
+class Sentence:
+    text: str
+    line: int  # 1-based, where it starts
+    end_line: int  # where it ends
+    heading: str | None  # the nearest heading above, without its #s
+    kind: str  # heading | item | row | para
+
+
+def sentences(text: str) -> list[Sentence]:
+    """Every prose sentence in `text`, in order, unclipped (#442).
+
+    The units and the boundaries are `occurrences()`'s, so the two can't
+    disagree about where a sentence ends. A heading or a table row is one
+    sentence, whole. Fenced and front-matter lines give none; a code span stays
+    inside its sentence, since there it is part of the prose.
+    """
+    found: list[Sentence] = []
+    for unit in _units(_lines(text)):
+        if isinstance(unit, tuple):
+            continue
+        cuts = [] if unit.kind in ("heading", "row") else list(_cuts(unit.text))
+        bounds = [0] + [m.end() for m in cuts] + [len(unit.text)]
+        for a, b in zip(bounds, bounds[1:]):
+            raw = unit.text[a:b]
+            if not raw.strip():
+                continue
+            a += len(raw) - len(raw.lstrip())
+            last = a + len(raw.strip()) - 1
+            first_line = end_line = unit.pieces[0][1]
+            for off, ln, _lead in unit.pieces:
+                if off <= a:
+                    first_line = ln
+                if off <= last:
+                    end_line = ln
+            found.append(
+                Sentence(
+                    text=raw.strip(),
+                    line=first_line,
+                    end_line=end_line,
+                    heading=unit.heading if unit.kind != "heading" else None,
+                    kind=unit.kind,
+                )
+            )
+    return found
+
+
+def occurrences(text: str) -> list[Occurrence]:
+    """Every reference in `text`, in order, each with its sentence."""
+    lines = _lines(text)
     found: list[Occurrence] = []
     units = _units(lines)
     fenced = {u[1] for u in units if isinstance(u, tuple)}
