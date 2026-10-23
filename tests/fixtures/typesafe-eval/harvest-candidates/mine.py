@@ -53,6 +53,7 @@ scores   the whole-thread table from scores.tsv (no text in it): where each
 from __future__ import annotations
 
 import collections
+import functools
 import json
 import math
 import os
@@ -338,11 +339,12 @@ def write(cases: list[dict], out: Path) -> None:
 
 
 def request_key(state, questions) -> str:
-    ev = _load_eval()
-    return ev.request_key("jev-1.13.0", state, questions)
+    return _load_eval().request_key("jev-1.13.0", state, questions)
 
 
+@functools.lru_cache(maxsize=None)
 def _load_eval():
+    """The evaluator, loaded once: its request_key is the cache's key."""
     import importlib.util
 
     spec = importlib.util.spec_from_file_location(
