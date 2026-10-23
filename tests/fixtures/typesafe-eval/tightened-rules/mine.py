@@ -472,8 +472,10 @@ def anchored(text: str, anchor: str) -> str | None:
     """The section GitHub's slug ANCHOR names in TEXT, to the next heading at its level or above."""
     lines, heads, fence = text.splitlines(), [], None
     for i, line in enumerate(lines):
-        if line.lstrip().startswith(("```", "~~~")):
-            fence = None if fence else line.lstrip()[:3]
+        mark = line.lstrip()[:3]
+        if mark in ("```", "~~~") and fence in (None, mark):
+            # Only the opener's own character closes it (CR 480).
+            fence = None if fence else mark
         elif fence is None and (m := HEADING.match(line.strip())):
             heads.append((i, len(m.group(1)), _slug(m.group(2))))
     seen: dict = {}

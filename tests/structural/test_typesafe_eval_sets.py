@@ -330,3 +330,6 @@ def test_an_anchor_names_its_section_as_github_slugs_it(tr_mine):
     assert tr_mine.anchored(doc, "run-it") == "## Run `it`\nfirst\n### Sub\nnested"
     assert tr_mine.anchored(doc, "run-it-1").startswith("## Run it\nsecond")
     assert tr_mine.anchored(doc, "run-it-2") is None
+    tilde = "~~~\n```\n## Not a heading\n~~~\n## Real\nbody\n"
+    assert tr_mine.anchored(tilde, "not-a-heading") is None
+    assert tr_mine.anchored(tilde, "real") == "## Real\nbody"
