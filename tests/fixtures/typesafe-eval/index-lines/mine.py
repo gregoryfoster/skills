@@ -57,9 +57,9 @@ REPOS = {
     "wslcb-licensing-tracker": ("CannObserv/wslcb-licensing-tracker", "d5ac823469da"),
 }
 POLICY = "AGENTS.md"
+# The index section's title, where it isn't "Detail Docs". No repo's history
+# used another (CR 487), so both walks match it exactly.
 SECTION = {"wslcb-licensing-tracker": "Reference"}
-# Older titles the history walk also accepts.
-HISTORY_TITLES = ("detail docs", "reference docs", "detail documentation")
 
 INLINE = re.compile(r"\]\(\s*<?([^)\s>]+)>?(?:\s+\"[^\"]*\")?\s*\)")
 TICKED = re.compile(r"`((?:\.{1,2}/|[\w.-]+/)*[\w.-]+\.md)(#[\w-]+)?`")
@@ -116,14 +116,15 @@ def fence(line: str, opener: str | None) -> tuple[str | None, bool]:
     return opener, False
 
 
-def section(lines: list[str], match) -> tuple[int, int] | None:
-    """[start, end) of the first heading MATCH accepts, to the next at its level or above."""
+def section(lines: list[str], repo: str) -> tuple[int, int] | None:
+    """[start, end) of REPO's index section, to the next heading at its level or above."""
+    title = SECTION.get(repo, "Detail Docs").lower()
     start = level = None
     for i, line in enumerate(lines):
         h = HEADING.match(line)
         if not h:
             continue
-        if start is None and match(h.group(2).lower()):
+        if start is None and h.group(2).lower() == title:
             start, level = i + 1, len(h.group(1))
         elif start is not None and len(h.group(1)) <= level:
             return start, i
@@ -160,8 +161,7 @@ def head_lines(clones: Path) -> list[dict]:
     rows = []
     for repo, (_slug, rev) in sorted(REPOS.items()):
         lines = git(clones, repo, "show", f"{rev}:{POLICY}").splitlines()
-        title = SECTION.get(repo, "Detail Docs").lower()
-        start, end = section(lines, lambda t, title=title: t == title)
+        start, end = section(lines, repo)
         opener = None
         for i in range(start, end):
             line = lines[i]
@@ -210,16 +210,18 @@ def first_doc(row: dict) -> dict | None:
 
 
 def index_by_target(text: str, repo: str) -> dict[str, str]:
-    """{first link target: line} for the index lines in TEXT."""
-    if repo in SECTION:
-        title = SECTION[repo].lower()
-        span = section(text.splitlines(), lambda t: t.startswith(title))
-    else:
-        span = section(text.splitlines(), lambda t: t in HISTORY_TITLES)
+    """{first link target: line} for the index lines in TEXT, fences skipped as
+    `head_lines` skips them."""
+    lines = text.splitlines()
+    span = section(lines, repo)
     if span is None:
         return {}
     out: dict[str, str] = {}
-    for line in text.splitlines()[span[0] : span[1]]:
+    opener = None
+    for line in lines[span[0] : span[1]]:
+        opener, marker = fence(line, opener)
+        if marker or opener:
+            continue
         m = INLINE.search(line)
         if m and not URL.match(m.group(1)):
             out.setdefault(m.group(1).split("#")[0].lstrip("./"), line.strip())
