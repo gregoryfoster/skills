@@ -12,6 +12,10 @@ network, no key. What that pins, and what it doesn't:
   case's own `state`, so every case is rebuilt through the shipped builder and
   must come back byte-equal: a reworded question or a reshaped state fails here
   instead of at the next re-measure.
+- **Pinned for tightened-rules' second label (#470):** `held.tsv` covers every
+  positive, and the ceiling it implies, computed from the committed cache.
+  The step-1 figures read docs at each curation commit, so they need the
+  clones: `mine.py delegated` re-derives them, and nothing here does.
 - **Not pinned:** what feeds the builder. The splitter needs the source file,
   from 12 repos and often a historical commit (485 KB of paragraph windows
   still reproduced only 111 of 130 cases), and `describe` needs gh's reply.

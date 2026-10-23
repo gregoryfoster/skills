@@ -137,4 +137,6 @@ path. A rule moved within its own file, with no pointer to it, is not held.
 Nor is a routing condition ("read it before …"), which only the pointer can
 carry. **46 of the 61 are held:** 26 of the 28 delegated or moved positives, and
 20 that `labels.tsv` calls drops, 8 of which a later review restored.
-`mine.py delegated` re-derives #470's numbers from the clones.
+The suite pins the ceiling this implies from the committed cache. The step-1
+figures read docs at each curation commit, so `mine.py delegated` re-derives
+them from the clones.
