@@ -315,9 +315,14 @@ def test_pointers_read_the_cohorts_three_forms(tr_mine):
         "[x]: https://example.com/e.md\n"
     )
     assert sorted(tr_mine.pointers(text)) == sorted(
-        ["docs/A.md#one", "docs/B.md", "docs/C.md#two", "https://example.com/e.md"]
+        [
+            ("docs/A.md#one", False),
+            ("docs/B.md", True),
+            ("docs/C.md#two", True),
+            ("https://example.com/e.md", False),
+        ]
     )
-    assert tr_mine.pointers("[ref]: ../D.md\n") == ["../D.md"]
+    assert tr_mine.pointers("[ref]: ../D.md\n") == [("../D.md", False)]
 
 
 def test_an_anchor_names_its_section_as_github_slugs_it(tr_mine):

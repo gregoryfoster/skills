@@ -455,10 +455,10 @@ def probabilities(inputs: list[dict], labels: dict, cache: Path) -> dict[str, fl
     }
 
 
-def pointers(text: str) -> list[str]:
-    """Every target the text points to: Markdown links, then backticked `.md` paths."""
-    found = INLINE.findall(text) + REFDEF.findall(text)
-    return found + [path + (anchor or "") for path, anchor in TICKED.findall(text)]
+def pointers(text: str) -> list[tuple[str, bool]]:
+    """(target, backticked) for every pointer: Markdown links, then backticked `.md` paths."""
+    found = [(t, False) for t in INLINE.findall(text) + REFDEF.findall(text)]
+    return found + [(p + (a or ""), True) for p, a in TICKED.findall(text)]
 
 
 def _slug(heading: str) -> str:
@@ -505,19 +505,19 @@ def step1(clones: Path, inputs: list[dict], labels: dict) -> dict[str, dict]:
             continue
         sentence, here = tr._flat(row.sentence), row.successor["file"]
         doc = section = False
-        for target in pointers(row.successor["text"]):
+        for target, backticked in pointers(row.successor["text"]):
             if URL.match(target):
                 continue
             path, _, anchor = target.partition("#")
-            # A link is relative to its file; a backticked path is often the repo's.
+            # A link is relative to its file, as GitHub renders it; a backticked
+            # path is often the repo's, so it is tried there too (CR 479).
             tried = (
                 [here]
                 if not path
-                else [
-                    os.path.normpath(os.path.join(os.path.dirname(here), path)),
-                    os.path.normpath(path.lstrip("/")),
-                ]
+                else [os.path.normpath(os.path.join(os.path.dirname(here), path))]
             )
+            if path and backticked:
+                tried.append(os.path.normpath(path.lstrip("/")))
             text = next((t for t in (show(repo, commit, p) for p in tried) if t), None)
             if text is None:
                 continue
