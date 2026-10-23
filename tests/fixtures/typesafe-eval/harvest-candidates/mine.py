@@ -229,6 +229,26 @@ def spans(text: str) -> set[str]:
     }
 
 
+def harvests_of(comments: list, source: int, when: str) -> list:
+    """The "Changed since filed" comments from WHEN on whose heading names SOURCE.
+
+    The source is the heading's first ref; when none is (broker#73's heading
+    names its epic first), any ref to it in the heading line will do.
+    """
+    csf = [
+        c
+        for c in comments
+        if "changed since filed" in (c["body"] or "").split("\n")[0].lower()
+        and c["created_at"] >= when
+    ]
+
+    def heading_refs(c):
+        return re.findall(r"#(\d+)", c["body"].split("\n")[0])
+
+    first = [c for c in csf if heading_refs(c)[:1] == [str(source)]]
+    return first or [c for c in csf if str(source) in heading_refs(c)]
+
+
 def align(raw: Path, jmin: float) -> None:
     labels = read_labels()
     for (repo, source), (when, kids, comments) in events(raw).items():
@@ -239,14 +259,7 @@ def align(raw: Path, jmin: float) -> None:
             if r["repo"] == repo and r["source"] == str(source)
         }
         for t in sorted(targets):
-            harvest = [
-                c
-                for c in issue(raw, repo, t)["comments"]
-                if "changed since filed" in (c["body"] or "").split("\n")[0].lower()
-                and c["created_at"] >= when
-                and (re.findall(r"#(\d+)", c["body"].split("\n")[0]) or ["0"])[0]
-                in (str(source), "80")
-            ]
+            harvest = harvests_of(issue(raw, repo, t)["comments"], source, when)
             best: dict = {}
             for c in harvest:
                 for h, _ in E.paragraphs(c["body"].splitlines()):
