@@ -6,6 +6,10 @@ landed it for `stale-issue-prose.sh`, and it's shared within curating-context
 only: #441, #442 and #447 import it from beside them. It isn't generalised past
 this skill.
 
+**Every sentence, too.** `sentences()` (#442) returns each prose sentence of a
+file in order, with the lines it starts and ends on: the same units and
+boundaries as below, unclipped, and a table row whole rather than two cells.
+
 **Units, then sentences.** A file is cut into units: a heading, a list item, a
 table row, or a paragraph (consecutive lines up to a blank one). A unit's lines
 are joined with single spaces, so a soft-wrapped sentence comes back whole.
