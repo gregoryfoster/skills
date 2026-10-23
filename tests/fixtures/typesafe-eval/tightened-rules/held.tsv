@@ -1,0 +1,62 @@
+# id<TAB>held<TAB>where<TAB>how<TAB>note; #470's second label, on labels.tsv's 61 positives; one labeller, 2026-10-23. Rubric: README.md.
+address-validator:635dc00:AGENTS.md:147#1	n			not in docs/DEPENDENCY-POLICY.md, the one doc the successor points to
+address-validator:635dc00:AGENTS.md:147#2	n			not in docs/DEPENDENCY-POLICY.md
+archiver:4bf97cc:AGENTS.md:143#1	n			docs/DEPLOYMENT.md tells the race as history; "set it" is not stated
+archiver:4bf97cc:AGENTS.md:245#1	y	docs/SCHEMA.md	reworded	InfoItemSource: "the one active row", one per InfoItem
+archiver:4bf97cc:AGENTS.md:246#1	y	docs/SCHEMA.md	reworded	Tiered mutability: an assigned spec is frozen
+archiver:9882165:AGENTS.md:170#1	y	docs/BUS.md	reworded	broker-side observability moved out of this repo
+archiver:cef16b2:AGENTS.md:198#1	y	docs/CONVENTIONS.md	reworded	the living-docs list, per doc
+archiver:cef16b2:AGENTS.md:208#1	y	docs/CONVENTIONS.md	reworded	Logging: ExecStartPre lines are plain text; a consumer must tolerate them
+archiver:cef16b2:AGENTS.md:51#1	n			docs/ARCHITECTURE.md says tests/deploy/ asserts a match, without "file-parity only"
+archiver:cef16b2:AGENTS.md:80#1	n			"forwards 3000-9999" is not in docs/reference/tailscale.md
+notifier:1069059:AGENTS.md:196#1	y	docs/DEPLOYMENT.md	reworded	"Keep it in the unit"; the opt-in belongs to notifier.service alone
+notifier:cc2e6b9:AGENTS.md:102#1	y	docs/DEPLOYMENT.md	reworded	"To run a branch by hand, stop the unit first"
+notifier:cc2e6b9:AGENTS.md:96#1	y	docs/reference/monitors.md	reworded	a systemd timer, not a task inside the API process, and why
+power-map:83955d7:docs/COMMANDS.md:389#1	y	docs/RUNBOOKS.md	reworded	--test and --database-url together is an error
+power-map:83955d7:docs/COMMANDS.md:391#1	y	docs/RUNBOOKS.md	reworded	anything unmatched is unknown, assume production
+power-map:83955d7:docs/COMMANDS.md:426#1	y	docs/AUDITS.md	reworded	role/citation orphans go to manual triage
+power-map:83955d7:docs/COMMANDS.md:430#1	y	docs/TESTING.md	reworded	the one-time setup block installs chromium
+power-map:83955d7:docs/COMMANDS.md:437#1	y	docs/RUNBOOKS.md	reworded	DATABASE_URL resolves to production from any directory
+power-map:83955d7:docs/COMMANDS.md:437#3	y	docs/RUNBOOKS.md	reworded	side effects outside the transaction do not roll back
+power-map:83955d7:docs/COMMANDS.md:437#5	y	docs/RUNBOOKS.md	reworded	apply-schema.sh keeps its own copy of the redaction, and why
+power-map:e4ea235:docs/SCHEMA.md:19#3	y	docs/SCHEMA_INDEXES.md	reworded	rule 3: concept in the type, jurisdiction label in the title
+power-map:e4ea235:docs/SCHEMA.md:20#2	y	docs/OBSERVATIONS.md	reworded	is_current, not end_date IS NULL, is the currency signal
+power-map:e4ea235:docs/SCHEMA.md:23#4	y	docs/ANCILLARY.md	reworded	ingestion telemetry stays trigger-less; a re-home emits manually
+power-map:e4ea235:docs/SCHEMA.md:28#3	y	docs/NAMES.md	reworded	assisted suggestion allowed via suggest_parts; the decomposer never persists
+replicator:0ae6c0c:AGENTS.md:132#1	y	docs/STORAGE.md	reworded	to_thread is a fourth term in the unit's shutdown budget
+replicator:0ae6c0c:AGENTS.md:147#1	y	docs/CONVENTIONS.md	reworded	a dead-letter is two commands, XADD .dlq then XACK (broker#2)
+replicator:0ae6c0c:AGENTS.md:149#1	y	docs/CONVENTIONS.md	reworded	XDEL is refused on every other stream
+replicator:0ae6c0c:AGENTS.md:158#1	n			"never the shared one" is in neither destination
+replicator:0d8090d:AGENTS.md:147#1	y	docs/CONVENTIONS.md	reworded	"the one refusal this service does not retry"
+replicator:0d8090d:AGENTS.md:156#1	y	docs/CONVENTIONS.md	verbatim	held there before the curation
+replicator:0d8090d:AGENTS.md:72#1	y	docs/INFRASTRUCTURE.md	reworded	Redis >= 7.0 is Replicator-critical, and why
+replicator:2a9e9f2:docs/contracts/content-fetch-issuer-contract.md:159#1	n			moved within the file; the successor has no pointer
+replicator:2a9e9f2:docs/contracts/content-fetch-issuer-contract.md:199#1	y	docs/contracts/content-fetch-outcome-reference.md	reworded	not content loss; alert on fetch_failed where reason != not_modified
+replicator:2a9e9f2:docs/contracts/content-fetch-outcome-reference.md:90#1	y	docs/contracts/content-fetch-issuer-contract.md	reworded	"Why this is a MUST": the default fetch_failed branch handles it
+replicator:2a9e9f2:docs/contracts/content-fetch-outcome-reference.md:93#1	y	docs/contracts/content-fetch-issuer-contract.md	reworded	the better the caching, the more healthy resources recorded as failing
+replicator:2a9e9f2:docs/contracts/content-fetch-outcome-reference.md:97#1	y	docs/contracts/content-fetch-issuer-contract.md	reworded	replay verbatim or not at all
+replicator:2f87c71:AGENTS.md:115#2	y	docs/ENVIRONMENT.md	reworded	PATs the worker has no use for; their blast radius must not widen
+replicator:2f87c71:AGENTS.md:131#1	n			"not interchangeable" is not in docs/STORAGE.md or docs/CONVENTIONS.md
+replicator:2f87c71:AGENTS.md:168#1	n			"never the shared one" is in neither destination
+replicator:6801e02:AGENTS.md:114#1	n			"dev only" and "load both" are not in docs/ENVIRONMENT.md
+replicator:dce1bdb:AGENTS.md:134#1	n			a routing condition ("read it before ...") can't be held by the doc it routes to
+replicator:ef0f981:docs/DEPLOYMENT.md:65#1	n			docs/FAILURE-NOTIFICATION.md hands the cp back to DEPLOYMENT.md
+replicator:f27d11c:docs/STREAMS.md:24#15	y	docs/POLITENESS.md	verbatim	
+replicator:f27d11c:docs/STREAMS.md:24#18	y	docs/POLITENESS.md	verbatim	
+replicator:f27d11c:docs/STREAMS.md:24#3	y	docs/POLITENESS.md	verbatim	
+skills:3d0633c:skills/init-socraticode/SKILL.md:397#1	n			moved to Phase 3 of the same file; no pointer reaches it
+skills:3db8548:AGENTS.md:153#1	y	docs/STYLE.md	reworded	a wrapper, never a fork, which drifts silently
+skills:923caf2:skills/using-git-worktrees/SKILL.md:178#5	y	skills/using-git-worktrees/references/destroy-flags.md	verbatim	
+skills:ac2025f:skills/curating-context/SKILL.md:73#1	y	skills/curating-context/references/self-curation.md	verbatim	inside a blockquote, so the substring test misses it
+skills:ac2025f:skills/curating-context/SKILL.md:75#1	y	skills/curating-context/references/self-curation.md	verbatim	inside a blockquote
+usa-wa:d9c63ff:AGENTS.md:183#1	n			docs/LOGGING.md also says "passes", as weak as the successor
+usa-wa:d9c63ff:AGENTS.md:200#1	n			a routing condition held only inside the doc it routes to
+watcher:1012dee:AGENTS.md:122#1	y	docs/WATCHED-ITEMS.md	reworded	"Item-level pause lives in Archiver's dashboard alone"
+watcher:1012dee:AGENTS.md:138#1	y	docs/CONTENT-PIPELINE.md	reworded	the baseline is never renewed: a first observation, not a refresh
+watcher:237c1a2:AGENTS.md:175#2	y	docs/STYLE.md	reworded	both prohibitions
+watcher:4b85744:AGENTS.md:129#2	y	docs/CONTENT-PIPELINE.md	reworded	when every spec yields empty; unconditional, both sides of a baseline
+watcher:4b85744:AGENTS.md:134#1	y	docs/CONTENT-PIPELINE.md	reworded	the cache-hit branch upserts; bounded by full fetches
+watcher:4b85744:AGENTS.md:50#3	y	docs/DEPLOYMENT.md	reworded	1.2 G cold install; a reservation, never a cap
+watcher:4b85744:AGENTS.md:54#3	y	docs/ARCHITECTURE.md	reworded	retuning any of the three here alone makes a threshold there wrong
+watcher:9134667:AGENTS.md:50#5	y	docs/HOST-MEMORY.md	reworded	re-pin as a decision rather than on a schedule
+watcher:e603357:AGENTS.md:133#1	y	docs/CONTENT-PIPELINE.md	reworded	unconditional, on both sides of a baseline

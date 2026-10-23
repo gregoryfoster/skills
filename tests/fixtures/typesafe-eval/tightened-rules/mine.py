@@ -5,6 +5,7 @@ usage: python3 -I -B mine.py groups CLONES GROUPS.jsonl
        python3 -I -B mine.py collect CLONES GROUPS.jsonl RAW.jsonl
        python3 -I -B mine.py select CLONES RAW.jsonl INPUTS.jsonl [LABELS.tsv]
        python3 -I -B mine.py build INPUTS.jsonl LABELS.tsv SET.jsonl
+       python3 -I -B mine.py delegated CLONES INPUTS.jsonl LABELS.tsv HELD.tsv CACHE.jsonl
 
 groups   finds every commit that added a `tighten` entry to a repo's
          `.skills/context-loss-ok`, and for each entry the base line it names:
@@ -36,6 +37,16 @@ build    writes the evaluator's set through the shipped code: `to_rows`, then
          `id<TAB>dropped<TAB>restored<TAB>slice<TAB>note`, `y` or `n`, with `#`
          comments; `restored` says a later review put the sentence's content
          back, and is evidence, not the label.
+delegated  #470's measurement, printed as JSON. For each labelled case it
+         follows every pointer in the successor to its doc at the curation
+         commit: a Markdown link, or a backticked `*.md` path, read against
+         the successor's directory and then the repo root. It applies the
+         pass's `kept` test there twice, to the whole doc and to the anchored
+         section when the link has an anchor (a `§"Heading"` is read as
+         none). At the default threshold it reports the flags and catches
+         with each, and the ceiling a perfect "held at the destination"
+         judgment reaches, from HELD.tsv:
+         `id<TAB>held<TAB>where<TAB>how<TAB>note`, one row per positive.
 
 A case id is `<repo>:<commit>:<file>:<line>#<k>`, the k-th sentence the pass
 builds that starts on that base line. The clones are public repos only; the
@@ -44,6 +55,7 @@ fixture README's step 1 re-checks that at commit time. Stdlib only.
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import random
@@ -58,6 +70,7 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[3]
 SCRIPTS = ROOT / "skills" / "curating-context" / "scripts"
 PROVE = SCRIPTS / "prove-no-loss.sh"
+EVAL = ROOT / "scripts" / "typesafe-eval.py"
 sys.path.insert(0, str(SCRIPTS))
 import _tightened_rules as tr  # noqa: E402
 
@@ -406,6 +419,190 @@ def build(inputs: Path, labels: Path, out: Path) -> None:
     print(f"{len(built)} cases", file=sys.stderr)
 
 
+# --- delegated (#470) --------------------------------------------------------
+
+INLINE = re.compile(r"\]\(\s*<?([^)\s>]+)>?(?:\s+\"[^\"]*\")?\s*\)")
+REFDEF = re.compile(r"^\s{0,3}\[[^\]]+\]:\s*<?(\S+?)>?(?:\s|$)", re.M)
+TICKED = re.compile(r"`((?:\.{1,2}/|[\w.-]+/)*[\w.-]+\.md)(#[\w-]+)?`")
+URL = re.compile(r"^[a-z][a-z0-9+.-]*:", re.I)
+HEADING = re.compile(r"^(#{1,6})\s+(.*?)\s*#*\s*$")
+DELEGATED = re.compile(r"(delegated|moved)\b")
+
+
+def read_held(path: Path) -> dict[str, dict]:
+    held = {}
+    for line in path.read_text().splitlines():
+        if not line.strip() or line.startswith("#"):
+            continue
+        cid, flag, where, how, note = line.split("\t", 4)
+        held[cid] = {"held": flag == "y", "where": where, "how": how, "note": note}
+    return held
+
+
+def probabilities(inputs: list[dict], labels: dict, cache: Path) -> dict[str, float]:
+    """Each case's committed `dropped` p, keyed as typesafe-eval.py keys its cache."""
+    spec = importlib.util.spec_from_file_location("typesafe_eval", EVAL)
+    ev = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(ev)
+    replies = {}
+    for line in cache.read_text().splitlines():
+        row = json.loads(line)
+        replies[row["key"]] = row["reply"]["answers"]["dropped"]["noul"]
+    model = tr._typesafe.MODEL
+    return {
+        c["id"]: replies[ev.request_key(model, c["state"], c["questions"])]
+        for c in cases(inputs, labels)
+    }
+
+
+def pointers(text: str) -> list[str]:
+    """Every target the text points to: Markdown links, then backticked `.md` paths."""
+    found = INLINE.findall(text) + REFDEF.findall(text)
+    return found + [path + (anchor or "") for path, anchor in TICKED.findall(text)]
+
+
+def _slug(heading: str) -> str:
+    h = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", heading.strip().lower())
+    h = re.sub(r"`|\*|(?<!\w)_|_(?!\w)", "", h)
+    return re.sub(r"[^\w\- ]", "", h).replace(" ", "-")
+
+
+def anchored(text: str, anchor: str) -> str | None:
+    """The section GitHub's slug ANCHOR names in TEXT, to the next heading at its level or above."""
+    lines, heads, fence = text.splitlines(), [], None
+    for i, line in enumerate(lines):
+        if line.lstrip().startswith(("```", "~~~")):
+            fence = None if fence else line.lstrip()[:3]
+        elif fence is None and (m := HEADING.match(line.strip())):
+            heads.append((i, len(m.group(1)), _slug(m.group(2))))
+    seen: dict = {}
+    for i, level, slug in heads:
+        n = seen[slug] = seen.get(slug, -1) + 1
+        if (slug if n == 0 else f"{slug}-{n}") == anchor:
+            end = next((j for j, lv, _ in heads if j > i and lv <= level), len(lines))
+            return "\n".join(lines[i:end])
+    return None
+
+
+def step1(clones: Path, inputs: list[dict], labels: dict) -> dict[str, dict]:
+    """{id: {doc, section}}: whether the sentence is `kept` at a doc its successor points to."""
+    docs: dict = {}
+
+    def show(repo: str, commit: str, path: str):
+        if (repo, commit, path) not in docs:
+            r = subprocess.run(
+                ["git", "-C", str(clones / repo), "show", f"{commit}:{path}"],
+                capture_output=True,
+                text=True,
+                env=_env(),
+            )
+            docs[(repo, commit, path)] = r.stdout if r.returncode == 0 else None
+        return docs[(repo, commit, path)]
+
+    out = {}
+    for cid, row, (repo, commit, _file, _start) in rows(inputs):
+        if cid not in labels:
+            continue
+        sentence, here = tr._flat(row.sentence), row.successor["file"]
+        doc = section = False
+        for target in pointers(row.successor["text"]):
+            if URL.match(target):
+                continue
+            path, _, anchor = target.partition("#")
+            # A link is relative to its file; a backticked path is often the repo's.
+            tried = (
+                [here]
+                if not path
+                else [
+                    os.path.normpath(os.path.join(os.path.dirname(here), path)),
+                    os.path.normpath(path.lstrip("/")),
+                ]
+            )
+            text = next((t for t in (show(repo, commit, p) for p in tried) if t), None)
+            if text is None:
+                continue
+            doc = doc or sentence in tr._flat(text)
+            if anchor:
+                part = anchored(text, anchor)
+                section = section or (part is not None and sentence in tr._flat(part))
+        out[cid] = {"doc": doc, "section": section}
+    return out
+
+
+def tally(labels: dict, p: dict, cleared, part: str | None = None) -> dict:
+    """Flags, catches and false alarms at the default threshold, CLEARED ids never flagged."""
+    ids = [c for c in labels if part is None or labels[c]["slice"] == part]
+    flagged = [c for c in ids if p[c] >= tr.DEFAULT_THRESHOLD and c not in cleared]
+    caught = sum(labels[c]["dropped"] for c in flagged)
+    return {
+        "flags": len(flagged),
+        "catches": caught,
+        "positives": sum(labels[c]["dropped"] for c in ids),
+        "false_alarms": len(flagged) - caught,
+    }
+
+
+def cost(labels: dict, p: dict, cleared) -> dict:
+    """What clearing CLEARED takes from the flags: its catches, the drops and
+    review-restored rules among them, and every restored rule it clears at
+    any p (the threshold can't bring those back)."""
+    hidden = [
+        c for c in cleared if labels[c]["dropped"] and p[c] >= tr.DEFAULT_THRESHOLD
+    ]
+    return {
+        "cleared_catches": len(hidden),
+        "hidden_drops": sorted(
+            c for c in hidden if not DELEGATED.match(labels[c]["note"])
+        ),
+        "hidden_restored": sorted(c for c in hidden if labels[c]["restored"]),
+        "restored_at_any_threshold": sorted(
+            c for c in cleared if labels[c]["dropped"] and labels[c]["restored"]
+        ),
+    }
+
+
+def ceiling(labels: dict, held: dict, p: dict) -> dict:
+    """A perfect "held at the destination" judgment: every held positive cleared.
+
+    Negatives have no held label, so the flags are an upper bound: a negative
+    held at a destination would be cleared too, and that only helps.
+    """
+    cleared = {c for c, h in held.items() if h["held"]}
+    return {
+        "all": tally(labels, p, cleared),
+        "R": tally(labels, p, cleared, "R"),
+        **cost(labels, p, cleared),
+    }
+
+
+def delegated(clones: Path, inputs: Path, labels: Path, held: Path, cache: Path):
+    _check_heads(clones)
+    recs = [json.loads(x) for x in inputs.read_text().splitlines()]
+    lab, kept = read_labels(labels), read_held(held)
+    positives = {c for c in lab if lab[c]["dropped"]}
+    if set(kept) != positives:
+        sys.exit(f"{held} must hold exactly the {len(positives)} positives")
+    p = probabilities(recs, lab, cache)
+    found = step1(clones, recs, lab)
+    report = {"threshold": tr.DEFAULT_THRESHOLD}
+    for name, cleared in (
+        ("shipped", set()),
+        ("whole_doc", {c for c, f in found.items() if f["doc"]}),
+        ("anchored_section", {c for c, f in found.items() if f["section"]}),
+    ):
+        report[name] = {
+            "all": tally(lab, p, cleared),
+            "R": tally(lab, p, cleared, "R"),
+            "cleared": {
+                "positives": sum(lab[c]["dropped"] for c in cleared),
+                "negatives": sum(not lab[c]["dropped"] for c in cleared),
+            },
+            **cost(lab, p, cleared),
+        }
+    report["ceiling"] = ceiling(lab, kept, p)
+    print(json.dumps(report, indent=1))
+
+
 def main(argv: list[str]) -> int:
     if len(argv) == 3 and argv[0] == "groups":
         groups(Path(argv[1]), Path(argv[2]))
@@ -415,6 +612,8 @@ def main(argv: list[str]) -> int:
         select(*(Path(a) for a in argv[1:]))
     elif len(argv) == 4 and argv[0] == "build":
         build(Path(argv[1]), Path(argv[2]), Path(argv[3]))
+    elif len(argv) == 6 and argv[0] == "delegated":
+        delegated(*(Path(a) for a in argv[1:]))
     else:
         print(__doc__.strip(), file=sys.stderr)
         return 1

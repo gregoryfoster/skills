@@ -273,3 +273,55 @@ def test_the_random_slice_is_caught_at_the_default(tmp_path):
     assert report["valid"] and report["calls"]["live"] == 0
     assert report["cases"] == 150
     assert _row(report, "dropped", 0.3) == (23, 56, 3, 68)
+
+
+# --- tightened-rules: a rule held at a destination (#470) ---------------------
+
+
+def test_held_labels_every_positive_once(tr_mine):
+    """held.tsv is the second label, on labels.tsv's positives and nothing else."""
+    labels = tr_mine.read_labels(TR_DIR / "labels.tsv")
+    held = tr_mine.read_held(TR_DIR / "held.tsv")
+    assert set(held) == {c for c, lab in labels.items() if lab["dropped"]}
+    for cid, h in held.items():
+        if h["held"]:
+            assert h["where"] and h["how"] in ("verbatim", "reworded"), cid
+        else:
+            assert not h["where"] and not h["how"] and h["note"], cid
+
+
+def test_counting_a_held_rule_as_kept_hides_review_restored_drops(tr_mine):
+    """The ceiling #470 closed on: even a perfect "held at the destination"
+    judgment clears flags only by hiding drops a later review put back."""
+    inputs = _jsonl(TR_DIR / "inputs.jsonl")
+    labels = tr_mine.read_labels(TR_DIR / "labels.tsv")
+    p = tr_mine.probabilities(inputs, labels, TR_DIR / "cache.jsonl")
+    got = tr_mine.ceiling(labels, tr_mine.read_held(TR_DIR / "held.tsv"), p)
+    assert (got["all"]["flags"], got["R"]["flags"]) == (142, 58)
+    assert got["cleared_catches"] == 38
+    assert len(got["hidden_drops"]) == 14
+    assert got["hidden_restored"] == [
+        "archiver:9882165:AGENTS.md:170#1",
+        "replicator:2a9e9f2:docs/contracts/content-fetch-outcome-reference.md:90#1",
+        "watcher:4b85744:AGENTS.md:54#3",
+    ]
+    assert len(got["restored_at_any_threshold"]) == 8
+
+
+def test_pointers_read_the_cohorts_three_forms(tr_mine):
+    text = (
+        "See [the doc](docs/A.md#one) and `docs/B.md`.\n"
+        'Full rules → `docs/C.md#two` §"Two"; [ref]: ../D.md\n'
+        "[x]: https://example.com/e.md\n"
+    )
+    assert sorted(tr_mine.pointers(text)) == sorted(
+        ["docs/A.md#one", "docs/B.md", "docs/C.md#two", "https://example.com/e.md"]
+    )
+    assert tr_mine.pointers("[ref]: ../D.md\n") == ["../D.md"]
+
+
+def test_an_anchor_names_its_section_as_github_slugs_it(tr_mine):
+    doc = "# T\n## Run `it`\nfirst\n### Sub\nnested\n## Run it\nsecond\n```\n## Run it\n```\n"
+    assert tr_mine.anchored(doc, "run-it") == "## Run `it`\nfirst\n### Sub\nnested"
+    assert tr_mine.anchored(doc, "run-it-1").startswith("## Run it\nsecond")
+    assert tr_mine.anchored(doc, "run-it-2") is None

@@ -126,3 +126,15 @@ a descriptive word too.
 
 The set and its inputs are the largest here, 1.7 MB and 3.7 MB: each record
 repeats its block and its successor, as `--candidates` writes them.
+
+`held.tsv` is a second label on the same set, added for
+[#470](https://github.com/gregoryfoster/skills/issues/470) beside `labels.tsv`
+and drawn from nothing new. It covers all 61 positives, and only them. A
+positive is **held** when a doc its successor points to states the same rule
+at the curation commit, in any words. `where` names that doc, and `how` says
+`verbatim` or `reworded`. A pointer is a Markdown link or a backticked `*.md`
+path. A rule moved within its own file, with no pointer to it, is not held.
+Nor is a routing condition ("read it before …"), which only the pointer can
+carry. **46 of the 61 are held:** 26 of the 28 delegated or moved positives, and
+20 that `labels.tsv` calls drops, 8 of which a later review restored.
+`mine.py delegated` re-derives #470's numbers from the clones.
