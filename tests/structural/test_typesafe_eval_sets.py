@@ -7,7 +7,8 @@ network, no key. What that pins, and what it doesn't:
 
 - **Pinned:** the set (by sha256), the cache (every case replays, zero
   misses, one model), and the evaluator's metrics (the headline sweep row).
-- **Pinned for stale-issue-prose and bare-digit-counts:** the case builders. Its four inputs are in each
+- **Pinned for stale-issue-prose, bare-digit-counts and tightened-rules:** the
+  case builders. Its four inputs are in each
   case's own `state`, so every case is rebuilt through the shipped builder and
   must come back byte-equal: a reworded question or a reshaped state fails here
   instead of at the next re-measure.
@@ -52,6 +53,11 @@ SETS = {
         "31f064bca50a50217aa3f2f2ebb7d8b1776517974d2d7dc73c853c61b3d5072d",
         664,
         {"tally": {0.8: (5, 0, 13, 646), 0.5: (13, 28, 5, 618)}},
+    ),
+    "tightened-rules": (
+        "551c3c7c10ac33836a1d466cd211a5fcf707d4566f63698a242e991a1ea2e5e6",
+        421,
+        {"dropped": {0.3: (52, 128, 9, 232), 0.5: (46, 65, 15, 295)}},
     ),
 }
 
@@ -224,3 +230,46 @@ def test_the_random_docs_slice_flags_nothing_at_the_default(tmp_path):
     report = _replay(part, BDC_DIR / "cache.jsonl")
     assert report["valid"] and report["calls"]["live"] == 0
     assert _row(report, "tally", 0.8) == (0, 0, 0, 99)
+
+
+# --- tightened-rules (#442) --------------------------------------------------
+
+TR_DIR = SETS_DIR / "tightened-rules"
+
+
+@pytest.fixture(scope="module")
+def tr_mine():
+    _load("_sentences", SCRIPTS / "_sentences.py")
+    _load("_tightened_rules", SCRIPTS / "_tightened_rules.py")
+    return _load("tr_mine", TR_DIR / "mine.py")
+
+
+def test_the_tightened_set_is_what_the_shipped_code_builds(tr_mine):
+    """inputs.jsonl is prove-no-loss.sh's own records, so the splitter, the
+    kept test, the clip and the case builder are all pinned."""
+    inputs = _jsonl(TR_DIR / "inputs.jsonl")
+    built = tr_mine.cases(inputs, tr_mine.read_labels(TR_DIR / "labels.tsv"))
+    as_text = "".join(json.dumps(c, ensure_ascii=False) + "\n" for c in built)
+    assert as_text == (TR_DIR / "set.jsonl").read_text()
+
+
+def test_the_inputs_are_records_the_pass_reads(tr_mine):
+    lines = (TR_DIR / "inputs.jsonl").read_text().splitlines()
+    assert len(tr_mine.tr.read_candidates(lines)) == len(lines) == 580
+
+
+def test_the_default_threshold_is_the_one_measured(tr_mine):
+    assert tr_mine.tr.DEFAULT_THRESHOLD == 0.3
+
+
+def test_the_random_slice_is_caught_at_the_default(tmp_path):
+    """R is a seeded sample of the sentences with no history, so it is the rate a run sees."""
+    lines = (TR_DIR / "set.jsonl").read_text().splitlines()
+    part = tmp_path / "r.jsonl"
+    part.write_text(
+        "".join(f"{x}\n" for x in lines if json.loads(x)["source"].endswith("(R)"))
+    )
+    report = _replay(part, TR_DIR / "cache.jsonl")
+    assert report["valid"] and report["calls"]["live"] == 0
+    assert report["cases"] == 150
+    assert _row(report, "dropped", 0.3) == (23, 56, 3, 68)

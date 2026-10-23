@@ -62,6 +62,7 @@ often at an old commit. A change there shows up only when someone re-measures.
 |---|---|---|---|
 | `stale-issue-prose/` | #438 | `cc3ee5d181b2` | [report](https://github.com/gregoryfoster/skills/issues/438#issuecomment-6302036571), [re-measure](https://github.com/gregoryfoster/skills/issues/438#issuecomment-6303164875) |
 | `bare-digit-counts/` | #441 | `31f064bca50a` | [report](https://github.com/gregoryfoster/skills/issues/441) |
+| `tightened-rules/` | #442 | `551c3c7c10ac` | [report](https://github.com/gregoryfoster/skills/issues/442) |
 
 `stale-issue-prose/` is 130 cases from gregoryfoster/skills and 11 public
 CannObserv repos (`still_open` 15 positive, `already_done` 3), labelled by one
@@ -94,3 +95,33 @@ changes. Not a tally: a dated measurement or a past run's, audit's or
 incident's result (a record, true as history), a limit or a config value, a
 code, a port, a version, an ordinal or step, a duration, an external
 standard's figure.
+
+`tightened-rules/` is 421 sentences from 61 curations in 9 public repos
+(gregoryfoster/skills and 8 CannObserv repos), mined 2026-10-22 at the clone
+commits `mine.py` names and labelled by one labeller. Each is a base sentence
+on a line a `tighten` entry warranted, judged against the section the rewrite
+left. `inputs.jsonl` holds 580 of `prove-no-loss.sh --candidates`' own records:
+those on the lines of a labelled sentence, enough to rebuild every case and its
+id. There are two slices:
+
+- `H`: every sentence the pass would send that has history evidence, 271 of
+  them. Either a word 4-gram it had and its successor lacked came back later,
+  or a review fix edited its successor. This slice is where the positives are:
+  35, 14 of them a later review restored.
+- `R`: a seeded 150 of the other 580. This is the rate a run sees: 26
+  positives.
+
+The rubric: a sentence is a **yes** when it states a rule and the successor no
+longer states it, or states it more weakly or more broadly. A rule is a
+requirement, a prohibition, a condition or scope, an exception, a boundary, or
+the stated reason for one. A rule that survives only as a link to another doc
+is a yes, and so is one moved to another section (`delegated`, `moved` in the
+notes), because the pass sees only the successor. A **no** is a rule kept in
+other words, or a sentence that states no rule: an index line or other
+pointer, a description of how something works, a dated measurement,
+history, an incident's story. `restored` marks a sentence a later review put
+back. It is evidence, not the label: a review restored a pointer's anchor or
+a descriptive word too.
+
+The set and its inputs are the largest here, 1.7 MB and 3.7 MB: each record
+repeats its block and its successor, as `--candidates` writes them.

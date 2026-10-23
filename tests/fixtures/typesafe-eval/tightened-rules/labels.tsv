@@ -1,0 +1,422 @@
+# id<TAB>dropped<TAB>restored<TAB>slice<TAB>note; one labeller, 2026-10-22. Rubric: README.md.
+address-validator:3647b46:AGENTS.md:54#1	n	n	R	same rule, reworded
+address-validator:4884e6c:AGENTS.md:170#1	n	n	R	pointer kept
+address-validator:4884e6c:AGENTS.md:182#1	n	n	R	trigger phrases, no rule
+address-validator:635dc00:AGENTS.md:147#1	y	n	H	gone: run uv sync in a new worktree before its first test
+address-validator:635dc00:AGENTS.md:147#2	y	n	H	gone: the reason (link default prunes the service venv)
+address-validator:635dc00:AGENTS.md:147#3	n	n	H	pointer
+address-validator:635dc00:AGENTS.md:41#1	n	n	R	pointer
+address-validator:63ef19d:AGENTS.md:115#1	n	n	H	never-root kept; what it reaches dropped is detail
+address-validator:63ef19d:AGENTS.md:115#2	n	n	H	pointer
+address-validator:63ef19d:AGENTS.md:66#2	n	n	R	reference list behind a pointer, no rule
+address-validator:63ef19d:AGENTS.md:76#1	n	n	H	pointer kept
+address-validator:63ef19d:AGENTS.md:83#1	n	n	R	kept
+address-validator:8be7784:AGENTS.md:143#1	n	n	H	pointer kept
+address-validator:8be7784:AGENTS.md:63#1	n	n	H	kept
+address-validator:8be7784:AGENTS.md:68#2	n	n	H	garbled ("ever") but the rule reads
+archiver:2fa7099:AGENTS.md:228#2	n	n	R	lead-in
+archiver:4bf97cc:AGENTS.md:143#1	y	n	H	gone: set ARCHIVER_DEV_DATABASE_URL or the dev server races the suite
+archiver:4bf97cc:AGENTS.md:175#1	n	n	R	kept
+archiver:4bf97cc:AGENTS.md:178#1	n	n	H	boundary kept; "own node" is location detail
+archiver:4bf97cc:AGENTS.md:197#1	n	n	H	"at the repo root" dropped; rule kept
+archiver:4bf97cc:AGENTS.md:198#1	n	n	H	kept
+archiver:4bf97cc:AGENTS.md:230#1	n	n	H	kept, merged
+archiver:4bf97cc:AGENTS.md:234#1	n	n	H	"always" dropped; the imperative keeps it
+archiver:4bf97cc:AGENTS.md:245#1	y	n	R	delegated: invariant "one active primary" now only behind the SCHEMA.md pointer
+archiver:4bf97cc:AGENTS.md:246#1	y	n	R	delegated: invariant "document frozen once assigned" now only behind the SCHEMA.md pointer
+archiver:4bf97cc:AGENTS.md:261#1	n	n	R	kept
+archiver:4bf97cc:AGENTS.md:265#1	n	n	R	kept
+archiver:4bf97cc:AGENTS.md:267#1	n	n	R	kept
+archiver:4bf97cc:AGENTS.md:270#1	n	n	R	kept
+archiver:4bf97cc:AGENTS.md:285#1	n	n	R	index descriptions, no rule
+archiver:4bf97cc:AGENTS.md:31#1	n	n	R	corrected fact
+archiver:4bf97cc:AGENTS.md:31#3	n	n	R	kept
+archiver:4bf97cc:AGENTS.md:7#3	n	n	R	fact kept
+archiver:4bf97cc:AGENTS.md:81#1	n	n	H	facts kept; "no port suffix" dropped is detail
+archiver:4bf97cc:AGENTS.md:83#1	n	n	H	history ("no longer shared") dropped
+archiver:9882165:AGENTS.md:167#1	n	n	H	kept
+archiver:9882165:AGENTS.md:170#1	y	y	H	dropped: broker-side monitoring is not this repo's (CR 5 restored it)
+archiver:9882165:AGENTS.md:171#1	n	n	H	kept
+archiver:9882165:AGENTS.md:247#1	n	n	R	kept
+archiver:9882165:AGENTS.md:31#1	n	n	H	fact dropped (health hook reports), no rule
+archiver:9882165:AGENTS.md:31#2	n	n	H	reason folded into the instruction
+archiver:9882165:AGENTS.md:31#3	n	n	H	kept
+archiver:9882165:AGENTS.md:56#1	n	n	R	history dropped
+archiver:9882165:AGENTS.md:83#1	n	n	R	topology fact dropped, no rule
+archiver:cef16b2:AGENTS.md:168#1	n	y	H	"periodic" dropped (CR 14): descriptive, not a rule
+archiver:cef16b2:AGENTS.md:171#1	n	n	H	scope list dropped; the boundary is kept
+archiver:cef16b2:AGENTS.md:178#1	n	y	H	pointer broadened into an overclaim (CR 8); a pointer, not a rule
+archiver:cef16b2:AGENTS.md:190#1	n	n	H	kept
+archiver:cef16b2:AGENTS.md:198#1	y	n	H	delegated: which doc each change updates, now behind a pointer
+archiver:cef16b2:AGENTS.md:200#1	n	n	H	kept
+archiver:cef16b2:AGENTS.md:208#1	y	y	H	broadened: whose ExecStartPre steps write plain text (CR 11)
+archiver:cef16b2:AGENTS.md:212#1	n	n	H	kept
+archiver:cef16b2:AGENTS.md:243#1	n	n	H	kept
+archiver:cef16b2:AGENTS.md:243#2	n	y	H	pointer anchor dropped (CR 10); a pointer
+archiver:cef16b2:AGENTS.md:259#1	n	n	H	index line
+archiver:cef16b2:AGENTS.md:260#1	n	n	H	index line
+archiver:cef16b2:AGENTS.md:261#1	n	n	H	index line
+archiver:cef16b2:AGENTS.md:263#1	n	n	H	index line
+archiver:cef16b2:AGENTS.md:264#1	n	y	H	index line overclaims (CR 9); a pointer
+archiver:cef16b2:AGENTS.md:265#1	n	n	H	index line
+archiver:cef16b2:AGENTS.md:266#1	n	n	H	index line
+archiver:cef16b2:AGENTS.md:3#2	n	n	H	kept
+archiver:cef16b2:AGENTS.md:3#3	n	n	H	kept
+archiver:cef16b2:AGENTS.md:3#4	n	n	H	kept
+archiver:cef16b2:AGENTS.md:3#5	n	n	H	kept
+archiver:cef16b2:AGENTS.md:51#1	y	y	H	dropped boundary "(file-parity only)" (CR 13)
+archiver:cef16b2:AGENTS.md:59#2	n	n	R	kept
+archiver:cef16b2:AGENTS.md:62#1	n	n	R	kept
+archiver:cef16b2:AGENTS.md:80#1	y	y	H	dropped the reason the :8001 URL works, "forwards 3000-9999" (CR 12)
+archiver:cef16b2:AGENTS.md:85#1	n	n	H	kept
+archiver:cef16b2:AGENTS.md:85#2	n	n	H	latency fact dropped
+broker:30db991:AGENTS.md:132#1	n	n	R	pointer
+broker:7769796:AGENTS.md:65#1	n	n	H	kept, sharper
+broker:7769796:AGENTS.md:75#1	n	n	H	kept
+broker:7769796:AGENTS.md:78#2	n	n	H	kept
+broker:acf2b38:AGENTS.md:199#1	n	n	H	history narrative
+broker:acf2b38:AGENTS.md:203#1	n	n	H	kept
+broker:d929409:docs/BUS-HEALTH.md:138#1	n	n	H	kept
+broker:d929409:docs/BUS-HEALTH.md:144#1	n	n	H	kept
+notifier:1069059:AGENTS.md:100#1	n	n	H	kept
+notifier:1069059:AGENTS.md:103#1	n	n	H	kept
+notifier:1069059:AGENTS.md:103#2	n	n	H	kept
+notifier:1069059:AGENTS.md:105#1	n	n	H	"waits for tailscaled" behind a pointer; the rule is kept
+notifier:1069059:AGENTS.md:107#1	n	n	H	pointer
+notifier:1069059:AGENTS.md:155#2	n	n	H	kept
+notifier:1069059:AGENTS.md:196#1	y	n	H	delegated: "in deploy/notifier.service only" now behind the env-var pointer
+notifier:1069059:AGENTS.md:313#1	n	n	H	index line
+notifier:1069059:AGENTS.md:314#1	n	n	H	index line
+notifier:1069059:AGENTS.md:315#1	n	n	H	index line
+notifier:1069059:AGENTS.md:316#1	n	n	H	index line
+notifier:1069059:AGENTS.md:317#1	n	n	H	index line
+notifier:1069059:AGENTS.md:318#1	n	n	H	index line
+notifier:1069059:AGENTS.md:319#1	n	n	H	index line
+notifier:cc2e6b9:AGENTS.md:102#1	y	n	H	moved: stop the dev unit before a hand run (now only in the Server Lifecycle table)
+notifier:cc2e6b9:AGENTS.md:105#1	n	n	H	kept
+notifier:cc2e6b9:AGENTS.md:107#1	n	n	H	kept
+notifier:cc2e6b9:AGENTS.md:108#1	n	n	H	pointer
+notifier:cc2e6b9:AGENTS.md:11#1	n	n	R	kept
+notifier:cc2e6b9:AGENTS.md:114#1	n	n	H	pointer
+notifier:cc2e6b9:AGENTS.md:127#1	n	n	R	kept
+notifier:cc2e6b9:AGENTS.md:132#1	n	n	R	kept
+notifier:cc2e6b9:AGENTS.md:152#1	n	n	R	kept
+notifier:cc2e6b9:AGENTS.md:223#1	n	n	R	kept
+notifier:cc2e6b9:AGENTS.md:223#2	n	n	R	pointer
+notifier:cc2e6b9:AGENTS.md:225#2	n	n	R	pointer
+notifier:cc2e6b9:AGENTS.md:258#1	n	n	R	kept
+notifier:cc2e6b9:AGENTS.md:273#1	n	n	R	kept
+notifier:cc2e6b9:AGENTS.md:273#2	n	n	R	kept
+notifier:cc2e6b9:AGENTS.md:76#1	n	n	H	kept
+notifier:cc2e6b9:AGENTS.md:77#1	n	n	H	kept
+notifier:cc2e6b9:AGENTS.md:77#2	n	n	H	port fact dropped; the table carries it
+notifier:cc2e6b9:AGENTS.md:94#1	n	n	H	kept
+notifier:cc2e6b9:AGENTS.md:94#2	n	n	H	kept
+notifier:cc2e6b9:AGENTS.md:96#1	y	n	H	delegated: the reason for timers over an in-process task, behind a pointer
+notifier:d444133:AGENTS.md:100#1	n	n	R	kept
+notifier:d444133:AGENTS.md:103#2	n	n	R	kept
+notifier:d444133:AGENTS.md:138#1	n	n	H	kept
+notifier:d444133:AGENTS.md:139#1	n	n	H	"loads secrets" dropped; behaviour detail
+notifier:d444133:AGENTS.md:155#2	n	n	H	kept
+notifier:d444133:AGENTS.md:157#1	n	n	H	kept
+notifier:d444133:AGENTS.md:158#1	n	n	H	kept
+notifier:d444133:AGENTS.md:313#1	n	n	H	index line
+notifier:d444133:AGENTS.md:314#1	n	n	H	index line
+notifier:d444133:AGENTS.md:315#1	n	n	H	index line
+notifier:d444133:AGENTS.md:316#1	n	n	H	index line
+notifier:d444133:AGENTS.md:317#1	n	n	H	index line
+notifier:d444133:AGENTS.md:318#1	n	n	H	index line
+notifier:d444133:AGENTS.md:319#1	n	n	H	index line
+notifier:e3cf3b5:docs/DEPLOYMENT.md:137#1	n	n	H	the prohibition is kept; detail points up the doc
+power-map:83955d7:docs/COMMANDS.md:389#1	y	n	R	delegated: --test with --database-url is a usage error
+power-map:83955d7:docs/COMMANDS.md:390#1	n	n	R	labelling detail behind a pointer, no rule
+power-map:83955d7:docs/COMMANDS.md:391#1	y	n	R	delegated: an unknown target is to be read as production
+power-map:83955d7:docs/COMMANDS.md:392#1	n	n	R	kept
+power-map:83955d7:docs/COMMANDS.md:395#1	n	n	R	enforcement fact behind a pointer
+power-map:83955d7:docs/COMMANDS.md:395#2	n	n	R	pointer
+power-map:83955d7:docs/COMMANDS.md:416#1	n	n	R	kept
+power-map:83955d7:docs/COMMANDS.md:423#1	n	n	R	roster row: description delegated, "writes no DB rows" kept
+power-map:83955d7:docs/COMMANDS.md:424#1	n	n	H	roster row: dry run kept
+power-map:83955d7:docs/COMMANDS.md:425#1	n	n	R	roster row: description
+power-map:83955d7:docs/COMMANDS.md:426#1	y	n	R	delegated: role/citation orphans go to manual triage
+power-map:83955d7:docs/COMMANDS.md:428#1	n	n	H	roster row: the exit rule kept
+power-map:83955d7:docs/COMMANDS.md:429#1	n	n	H	roster row: behaviour description
+power-map:83955d7:docs/COMMANDS.md:430#1	y	n	H	delegated: the one-time browser install the sweep requires
+power-map:83955d7:docs/COMMANDS.md:437#1	y	n	R	dropped reason: DATABASE_URL resolves to production from any directory
+power-map:83955d7:docs/COMMANDS.md:437#3	y	n	R	delegated: a rolled-back dry run must account for side effects that don't roll back
+power-map:83955d7:docs/COMMANDS.md:437#5	y	n	R	delegated: the duplicate redaction is kept on purpose
+power-map:e4ea235:AGENTS.md:116#1	n	n	R	command row, no rule
+power-map:e4ea235:AGENTS.md:135#1	n	n	R	pointer
+power-map:e4ea235:AGENTS.md:187#1	n	n	R	index line
+power-map:e4ea235:AGENTS.md:83#1	n	n	R	kept
+power-map:e4ea235:docs/SCHEMA.md:17#1	n	n	R	kept
+power-map:e4ea235:docs/SCHEMA.md:18#4	n	n	R	kept
+power-map:e4ea235:docs/SCHEMA.md:18#6	n	n	R	enforcement kept; the error-code detail dropped
+power-map:e4ea235:docs/SCHEMA.md:19#3	y	n	R	delegated: the jurisdiction label belongs in the producer's free-text title
+power-map:e4ea235:docs/SCHEMA.md:19#5	n	n	R	history (a retired type)
+power-map:e4ea235:docs/SCHEMA.md:20#2	y	n	R	delegated: the currency signal is is_current, not end_date IS NULL
+power-map:e4ea235:docs/SCHEMA.md:21#5	n	n	R	behaviour fact
+power-map:e4ea235:docs/SCHEMA.md:22#1	n	n	R	kept
+power-map:e4ea235:docs/SCHEMA.md:22#4	n	n	R	recovery-script pointer
+power-map:e4ea235:docs/SCHEMA.md:23#1	n	n	R	kept
+power-map:e4ea235:docs/SCHEMA.md:23#4	y	n	R	delegated: a re-home must emit the trigger-less tables manually
+power-map:e4ea235:docs/SCHEMA.md:23#6	n	n	R	covered by the kept never-emit rule
+power-map:e4ea235:docs/SCHEMA.md:27#2	n	n	R	cross-reference
+power-map:e4ea235:docs/SCHEMA.md:28#3	y	n	R	delegated: assisted decomposition is allowed, and persistence goes through the name-row form
+power-map:e4ea235:docs/SCHEMA.md:28#4	n	n	R	pointer
+power-map:e4ea235:docs/SCHEMA.md:29#2	n	n	R	kept
+power-map:e4ea235:docs/SCHEMA.md:30#2	n	n	R	kept; mechanics detail dropped
+power-map:e4ea235:docs/SCHEMA.md:31#2	n	n	R	kept
+power-map:e4ea235:docs/SCHEMA.md:32#1	n	n	H	kept
+power-map:e4ea235:docs/SCHEMA.md:32#2	n	n	H	pointer
+power-map:e4ea235:docs/SCHEMA.md:34#1	n	n	R	kept
+power-map:e4ea235:docs/SCHEMA.md:34#4	n	n	R	pointer
+replicator:0700180:docs/STREAMS.md:22#12	n	n	R	behaviour description behind a pointer
+replicator:0ae6c0c:AGENTS.md:132#1	y	n	H	dropped reason: to_thread puts the call in the unit's shutdown budget
+replicator:0ae6c0c:AGENTS.md:147#1	y	n	H	dropped constraint: XADD .dlq then XACK, the only form the ACL grants
+replicator:0ae6c0c:AGENTS.md:149#1	y	n	H	dropped boundary: by XDEL on <topic>.dlq and nowhere else
+replicator:0ae6c0c:AGENTS.md:153#1	n	n	H	reworded; the OOM rule is kept
+replicator:0ae6c0c:AGENTS.md:154#1	n	n	H	kept
+replicator:0ae6c0c:AGENTS.md:156#1	n	n	H	consequence dropped; the rule is kept
+replicator:0ae6c0c:AGENTS.md:158#1	y	y	H	dropped prohibition: never against the shared broker (CR 20)
+replicator:0ae6c0c:AGENTS.md:161#1	n	n	H	merged
+replicator:0ae6c0c:AGENTS.md:161#2	n	n	H	trade-off delegated; the rule is kept
+replicator:0ae6c0c:AGENTS.md:185#1	n	n	H	fact dropped
+replicator:0ae6c0c:AGENTS.md:77#1	n	n	H	pointer
+replicator:0d8090d:AGENTS.md:143#1	n	n	H	kept
+replicator:0d8090d:AGENTS.md:144#1	n	n	H	kept
+replicator:0d8090d:AGENTS.md:147#1	y	y	H	broadened: "only boot's XGROUP CREATE does not retry" (CR 7)
+replicator:0d8090d:AGENTS.md:148#1	n	n	H	kept
+replicator:0d8090d:AGENTS.md:150#1	n	n	H	pointer
+replicator:0d8090d:AGENTS.md:152#1	n	n	H	kept
+replicator:0d8090d:AGENTS.md:153#1	n	n	H	kept
+replicator:0d8090d:AGENTS.md:156#1	y	y	H	weakened: "must be idempotent" became "are idempotent" (CR 8)
+replicator:0d8090d:AGENTS.md:156#2	n	n	H	kept
+replicator:0d8090d:AGENTS.md:157#1	n	n	H	kept
+replicator:0d8090d:AGENTS.md:234#1	n	n	H	index line
+replicator:0d8090d:AGENTS.md:252#1	n	n	R	index line
+replicator:0d8090d:AGENTS.md:62#1	n	n	R	kept
+replicator:0d8090d:AGENTS.md:72#1	y	n	R	delegated: the reason 7.0 is critical
+replicator:0d8090d:AGENTS.md:98#1	n	n	H	kept
+replicator:2a9e9f2:docs/contracts/content-fetch-issuer-contract.md:159#1	y	n	H	moved: the reading rules now sit in another section of the reference
+replicator:2a9e9f2:docs/contracts/content-fetch-issuer-contract.md:165#1	n	n	H	pointer
+replicator:2a9e9f2:docs/contracts/content-fetch-issuer-contract.md:186#1	n	n	H	kept
+replicator:2a9e9f2:docs/contracts/content-fetch-issuer-contract.md:191#1	n	n	H	producer facts behind a pointer
+replicator:2a9e9f2:docs/contracts/content-fetch-issuer-contract.md:195#2	n	n	R	definition
+replicator:2a9e9f2:docs/contracts/content-fetch-issuer-contract.md:196#1	n	n	H	design explanation
+replicator:2a9e9f2:docs/contracts/content-fetch-issuer-contract.md:199#1	y	n	H	moved: don't treat not_modified as loss or alert on fetch_failed rate
+replicator:2a9e9f2:docs/contracts/content-fetch-issuer-contract.md:387#1	n	n	R	kept in the bullet above
+replicator:2a9e9f2:docs/contracts/content-fetch-issuer-contract.md:43#1	n	n	H	pointer
+replicator:2a9e9f2:docs/contracts/content-fetch-issuer-contract.md:46#1	n	n	H	pointer
+replicator:2a9e9f2:docs/contracts/content-fetch-outcome-reference.md:79#2	n	n	H	kept; mechanics detail dropped
+replicator:2a9e9f2:docs/contracts/content-fetch-outcome-reference.md:83#1	n	n	H	history
+replicator:2a9e9f2:docs/contracts/content-fetch-outcome-reference.md:88#1	n	n	H	kept
+replicator:2a9e9f2:docs/contracts/content-fetch-outcome-reference.md:90#1	y	y	H	dropped reason, and the branch "that branch" names (CR 20)
+replicator:2a9e9f2:docs/contracts/content-fetch-outcome-reference.md:93#1	y	n	H	dropped reason: every no-change check becomes a spurious loss
+replicator:2a9e9f2:docs/contracts/content-fetch-outcome-reference.md:96#1	n	n	H	kept
+replicator:2a9e9f2:docs/contracts/content-fetch-outcome-reference.md:97#1	y	n	H	dropped reason: a re-serialized validator can never match
+replicator:2f87c71:AGENTS.md:104#1	n	n	R	pointer
+replicator:2f87c71:AGENTS.md:115#2	y	y	H	garbled; dropped reason "the worker has no use for" (CR 14)
+replicator:2f87c71:AGENTS.md:117#1	n	n	H	kept
+replicator:2f87c71:AGENTS.md:124#1	n	n	H	pointer
+replicator:2f87c71:AGENTS.md:129#1	n	n	H	kept
+replicator:2f87c71:AGENTS.md:129#2	n	n	H	kept
+replicator:2f87c71:AGENTS.md:131#1	y	n	H	dropped reason: storage and correlation identity are not interchangeable
+replicator:2f87c71:AGENTS.md:134#1	n	n	H	kept
+replicator:2f87c71:AGENTS.md:138#1	n	n	H	history dropped
+replicator:2f87c71:AGENTS.md:140#1	n	n	H	kept
+replicator:2f87c71:AGENTS.md:145#2	n	n	H	kept
+replicator:2f87c71:AGENTS.md:156#1	n	n	H	history dropped
+replicator:2f87c71:AGENTS.md:162#1	n	n	H	consequence dropped; the rule is kept
+replicator:2f87c71:AGENTS.md:165#1	n	n	H	mechanism dropped
+replicator:2f87c71:AGENTS.md:168#1	y	y	H	dropped prohibition: never the shared broker (CR 13)
+replicator:2f87c71:AGENTS.md:169#1	n	n	H	kept
+replicator:2f87c71:AGENTS.md:171#1	n	n	H	kept
+replicator:2f87c71:AGENTS.md:174#1	n	n	H	kept
+replicator:2f87c71:AGENTS.md:177#1	n	n	H	kept
+replicator:2f87c71:AGENTS.md:179#1	n	n	H	rationale pointer
+replicator:2f87c71:AGENTS.md:192#1	n	n	H	kept
+replicator:2f87c71:AGENTS.md:194#1	n	n	H	kept
+replicator:2f87c71:AGENTS.md:197#1	n	n	H	kept
+replicator:2f87c71:AGENTS.md:262#1	n	y	H	pointer moved away from logging (CR 16); a pointer
+replicator:2f87c71:AGENTS.md:269#1	n	n	H	pointer
+replicator:2f87c71:AGENTS.md:275#1	n	n	H	index line
+replicator:2f87c71:AGENTS.md:276#1	n	y	H	index line's "here" resolves to the wrong file (CR 15); a pointer
+replicator:2f87c71:AGENTS.md:277#1	n	n	H	index line
+replicator:2f87c71:AGENTS.md:278#1	n	n	H	index line
+replicator:2f87c71:AGENTS.md:279#1	n	n	H	index line
+replicator:2f87c71:AGENTS.md:281#1	n	n	H	index line
+replicator:2f87c71:AGENTS.md:284#1	n	n	H	index line
+replicator:2f87c71:AGENTS.md:285#1	n	n	H	index line
+replicator:2f87c71:AGENTS.md:287#1	n	n	H	index line
+replicator:2f87c71:AGENTS.md:289#1	n	n	H	index line
+replicator:2f87c71:AGENTS.md:61#2	n	n	H	kept, folded into the rule
+replicator:2f87c71:AGENTS.md:61#3	n	n	H	kept
+replicator:2f87c71:AGENTS.md:69#1	n	n	H	kept
+replicator:300ad55:AGENTS.md:161#1	n	n	H	covered by the at-least-once bullet
+replicator:300ad55:AGENTS.md:218#1	n	n	H	kept
+replicator:300ad55:AGENTS.md:218#2	n	n	H	kept
+replicator:300ad55:AGENTS.md:231#1	n	y	H	index line (CR 5); a pointer
+replicator:300ad55:AGENTS.md:68#3	n	n	R	kept
+replicator:30520fd:docs/contracts/content-replicate-issuer-contract.md:285#1	n	n	H	pointer kept
+replicator:50876b5:AGENTS.md:127#2	n	n	R	kept
+replicator:6801e02:AGENTS.md:114#1	y	y	R	dropped scope: load both env files for shell commands, dev only (CR 25)
+replicator:723ff6a:docs/contracts/content-fetch-issuer-contract.md:341#1	n	n	R	mechanism dropped; the guarantee is kept
+replicator:91127ba:AGENTS.md:237#1	n	n	H	index line
+replicator:91127ba:AGENTS.md:238#1	n	n	H	index line
+replicator:91127ba:AGENTS.md:239#1	n	n	H	index line
+replicator:91127ba:AGENTS.md:240#1	n	n	H	index line
+replicator:91127ba:AGENTS.md:241#1	n	n	H	index line
+replicator:91127ba:AGENTS.md:242#1	n	n	H	index line
+replicator:91127ba:AGENTS.md:243#1	n	n	H	index line
+replicator:91127ba:AGENTS.md:244#1	n	n	H	index line
+replicator:91127ba:AGENTS.md:245#1	n	n	H	index line
+replicator:91127ba:AGENTS.md:246#1	n	n	H	index line
+replicator:91127ba:AGENTS.md:247#1	n	n	H	index line
+replicator:91127ba:AGENTS.md:248#1	n	n	H	index line
+replicator:91127ba:AGENTS.md:249#1	n	n	H	index line
+replicator:91127ba:AGENTS.md:250#1	n	n	H	index line
+replicator:91127ba:AGENTS.md:252#1	n	n	H	index line
+replicator:91127ba:AGENTS.md:253#1	n	n	H	index line
+replicator:c468384:docs/CONVENTIONS.md:23#2	n	n	H	dated audit dropped
+replicator:c468384:docs/CONVENTIONS.md:23#6	n	n	H	kept
+replicator:c468384:docs/CONVENTIONS.md:24#4	n	n	H	history
+replicator:c468384:docs/contracts/replicator-boundaries.md:272#1	n	n	H	history, re-tensed
+replicator:c468384:docs/contracts/replicator-boundaries.md:272#2	n	n	H	history, re-tensed
+replicator:caa1fed:docs/DEPLOYMENT.md:77#4	n	n	H	strengthened (every pin move)
+replicator:caa1fed:docs/DEPLOYMENT.md:77#5	n	n	H	procedure superseded by the closure script
+replicator:caa1fed:docs/DEPLOYMENT.md:77#6	n	n	H	kept
+replicator:dce1bdb:AGENTS.md:134#1	y	n	R	weakened: "read it before touching either store" dropped
+replicator:dce1bdb:AGENTS.md:256#1	n	n	R	index line
+replicator:dce1bdb:AGENTS.md:59#3	n	n	H	kept
+replicator:ef0f981:docs/DEPLOYMENT.md:217#1	n	n	H	kept, told as history under the renamed heading
+replicator:ef0f981:docs/DEPLOYMENT.md:219#1	n	n	H	rationale now told as history
+replicator:ef0f981:docs/DEPLOYMENT.md:226#1	n	n	R	kept
+replicator:ef0f981:docs/DEPLOYMENT.md:235#1	n	n	H	kept under the renamed heading (nothing reads the old keys)
+replicator:ef0f981:docs/DEPLOYMENT.md:238#1	n	n	R	history
+replicator:ef0f981:docs/DEPLOYMENT.md:243#1	n	n	R	claim kept; its reasoning behind a pointer
+replicator:ef0f981:docs/DEPLOYMENT.md:65#1	y	y	H	dropped requirement: the handler unit is a copy and needs the cp (restored by CR 15)
+replicator:f27d11c:docs/STREAMS.md:24#1	n	n	R	kept
+replicator:f27d11c:docs/STREAMS.md:24#15	y	n	R	delegated invariant: recovery is bounded, and the replay takes the stop event
+replicator:f27d11c:docs/STREAMS.md:24#18	y	n	R	delegated invariant: log a policy only when its value changes
+replicator:f27d11c:docs/STREAMS.md:24#2	n	n	R	mechanism description delegated
+replicator:f27d11c:docs/STREAMS.md:24#22	n	n	R	config fact
+replicator:f27d11c:docs/STREAMS.md:24#3	y	n	R	delegated: use streams.CONTENT_FETCH_POLICY, never a dotted name
+skills:31dcf0a:skills/managing-skills/SKILL.md:161#3	n	n	R	incident narrative
+skills:3d0633c:skills/init-socraticode/SKILL.md:119#1	n	n	R	label
+skills:3d0633c:skills/init-socraticode/SKILL.md:119#2	n	n	R	kept
+skills:3d0633c:skills/init-socraticode/SKILL.md:132#1	n	n	R	kept
+skills:3d0633c:skills/init-socraticode/SKILL.md:136#1	n	n	R	kept
+skills:3d0633c:skills/init-socraticode/SKILL.md:138#1	n	n	R	kept
+skills:3d0633c:skills/init-socraticode/SKILL.md:141#1	n	n	R	kept
+skills:3d0633c:skills/init-socraticode/SKILL.md:148#2	n	n	R	kept
+skills:3d0633c:skills/init-socraticode/SKILL.md:153#1	n	n	R	kept, folded into step a
+skills:3d0633c:skills/init-socraticode/SKILL.md:158#1	n	n	R	kept
+skills:3d0633c:skills/init-socraticode/SKILL.md:163#1	n	n	R	behaviour fact dropped
+skills:3d0633c:skills/init-socraticode/SKILL.md:164#1	n	n	R	kept
+skills:3d0633c:skills/init-socraticode/SKILL.md:167#2	n	n	R	kept
+skills:3d0633c:skills/init-socraticode/SKILL.md:170#1	n	n	H	kept
+skills:3d0633c:skills/init-socraticode/SKILL.md:178#1	n	n	R	kept
+skills:3d0633c:skills/init-socraticode/SKILL.md:179#1	n	n	R	kept; the pointer to why dropped
+skills:3d0633c:skills/init-socraticode/SKILL.md:195#1	n	n	R	kept
+skills:3d0633c:skills/init-socraticode/SKILL.md:199#1	n	n	R	pointer kept
+skills:3d0633c:skills/init-socraticode/SKILL.md:230#1	n	n	H	kept
+skills:3d0633c:skills/init-socraticode/SKILL.md:234#1	n	n	H	kept
+skills:3d0633c:skills/init-socraticode/SKILL.md:238#1	n	n	H	kept
+skills:3d0633c:skills/init-socraticode/SKILL.md:244#1	n	n	H	exit detail dropped
+skills:3d0633c:skills/init-socraticode/SKILL.md:246#1	n	n	H	kept
+skills:3d0633c:skills/init-socraticode/SKILL.md:248#1	n	n	H	kept
+skills:3d0633c:skills/init-socraticode/SKILL.md:313#1	n	n	H	kept
+skills:3d0633c:skills/init-socraticode/SKILL.md:314#1	n	n	H	kept
+skills:3d0633c:skills/init-socraticode/SKILL.md:315#1	n	n	H	incident narrative
+skills:3d0633c:skills/init-socraticode/SKILL.md:319#1	n	n	H	kept; incident dropped
+skills:3d0633c:skills/init-socraticode/SKILL.md:334#1	n	n	H	detail dropped
+skills:3d0633c:skills/init-socraticode/SKILL.md:360#1	n	n	R	kept
+skills:3d0633c:skills/init-socraticode/SKILL.md:362#1	n	n	H	kept, briefer
+skills:3d0633c:skills/init-socraticode/SKILL.md:397#1	y	n	H	moved: the rescue rule now only in Phase 3
+skills:3d0633c:skills/init-socraticode/SKILL.md:97#1	n	n	R	kept ("the skill's dry-run")
+skills:3db8548:AGENTS.md:135#1	n	n	R	lead-in
+skills:3db8548:AGENTS.md:138#1	n	n	R	kept
+skills:3db8548:AGENTS.md:145#2	n	n	R	kept; the consequence trimmed
+skills:3db8548:AGENTS.md:153#1	y	n	R	dropped reason: a fork drifts silently on every submodule update
+skills:923caf2:skills/using-git-worktrees/SKILL.md:174#1	n	n	R	label
+skills:923caf2:skills/using-git-worktrees/SKILL.md:176#2	n	n	R	kept
+skills:923caf2:skills/using-git-worktrees/SKILL.md:176#3	n	n	R	behaviour fact behind a pointer
+skills:923caf2:skills/using-git-worktrees/SKILL.md:176#4	n	n	R	kept
+skills:923caf2:skills/using-git-worktrees/SKILL.md:178#4	n	n	R	behaviour fact behind a pointer
+skills:923caf2:skills/using-git-worktrees/SKILL.md:178#5	y	n	R	delegated exception: a .venv symlink needs neither flag
+skills:96d6183:skills/curating-context/SKILL.md:263#1	n	n	H	kept
+skills:96d6183:skills/curating-context/SKILL.md:268#1	n	n	H	kept, extended
+skills:ac2025f:skills/curating-context/SKILL.md:111#1	n	n	R	kept
+skills:ac2025f:skills/curating-context/SKILL.md:139#2	n	n	R	kept
+skills:ac2025f:skills/curating-context/SKILL.md:299#1	n	n	R	kept
+skills:ac2025f:skills/curating-context/SKILL.md:300#1	n	n	R	kept
+skills:ac2025f:skills/curating-context/SKILL.md:317#1	n	n	R	kept
+skills:ac2025f:skills/curating-context/SKILL.md:344#1	n	n	R	kept
+skills:ac2025f:skills/curating-context/SKILL.md:42#1	n	n	R	kept
+skills:ac2025f:skills/curating-context/SKILL.md:73#1	y	n	R	dropped: measure before writing (the ceiling binds first)
+skills:ac2025f:skills/curating-context/SKILL.md:75#1	y	n	R	dropped reason for the edit budget
+skills:ac2025f:skills/curating-context/references/cadence.md:177#1	n	n	H	behaviour fact behind a pointer
+skills:ac2025f:skills/curating-context/references/cadence.md:185#1	n	n	H	history
+skills:ac2025f:skills/curating-context/references/cadence.md:219#1	n	n	H	behaviour behind a pointer
+skills:ac2025f:skills/curating-context/references/cadence.md:223#1	n	n	R	behaviour behind a pointer
+skills:ac2025f:skills/curating-context/references/cadence.md:225#1	n	n	R	behaviour behind a pointer
+skills:ac2025f:skills/curating-context/references/cadence.md:3#1	n	n	H	history
+skills:ac2025f:skills/curating-context/references/cadence.md:53#1	n	n	H	kept
+skills:ac2025f:skills/curating-context/references/cadence.md:56#1	n	n	H	kept
+skills:f08d446:AGENTS.md:171#1	n	n	R	kept
+skills:f08d446:AGENTS.md:199#1	n	n	R	kept
+skills:f08d446:AGENTS.md:203#1	n	n	R	fact behind a pointer
+skills:f08d446:AGENTS.md:204#1	n	n	R	kept
+skills:f08d446:AGENTS.md:205#1	n	n	H	pointer
+usa-wa:d9c63ff:AGENTS.md:183#1	y	n	R	weakened: "must pass --log-config" became "passes", and its scope (ExecStart and the dev server) dropped
+usa-wa:d9c63ff:AGENTS.md:183#2	n	n	R	pointer
+usa-wa:d9c63ff:AGENTS.md:200#1	y	y	H	dropped condition: read it before adding an adapter, a source or a builder
+usa-wa:d9c63ff:AGENTS.md:25#1	n	n	R	measurement record dropped
+usa-wa:d9c63ff:AGENTS.md:28#1	n	n	R	pointer
+usa-wa:d9c63ff:AGENTS.md:91#2	n	n	H	pointer
+watcher:1012dee:AGENTS.md:122#1	y	n	R	delegated boundary: item-level pause lives in Archiver's dashboard alone
+watcher:1012dee:AGENTS.md:127#1	n	n	H	fact behind a pointer
+watcher:1012dee:AGENTS.md:138#1	y	n	R	dropped reason: a baseline would be a first observation, not a refresh
+watcher:1012dee:AGENTS.md:177#1	n	n	H	pointer
+watcher:1012dee:AGENTS.md:177#2	n	n	H	pointer
+watcher:1012dee:AGENTS.md:34#2	n	n	R	kept
+watcher:1012dee:AGENTS.md:34#4	n	n	R	kept
+watcher:1012dee:AGENTS.md:58#3	n	n	H	kept
+watcher:1012dee:AGENTS.md:76#3	n	n	R	kept
+watcher:237c1a2:AGENTS.md:175#1	n	n	H	kept
+watcher:237c1a2:AGENTS.md:175#2	y	n	H	delegated prohibitions: never restate min-h-[44px] on a .btn, never min-h-0
+watcher:237c1a2:AGENTS.md:175#3	n	n	H	pointer
+watcher:237c1a2:AGENTS.md:179#1	n	n	H	kept
+watcher:237c1a2:AGENTS.md:179#2	n	n	H	reference detail behind a pointer
+watcher:237c1a2:AGENTS.md:183#1	n	n	H	layout fact behind a pointer
+watcher:237c1a2:AGENTS.md:185#1	n	n	H	kept
+watcher:4b85744:AGENTS.md:120#1	n	n	H	kept
+watcher:4b85744:AGENTS.md:124#1	n	n	H	fact dropped
+watcher:4b85744:AGENTS.md:129#1	n	n	H	kept
+watcher:4b85744:AGENTS.md:129#2	y	y	H	changed: "an empty source_spec" for "a source_spec yielding empty chunks" (CR 1)
+watcher:4b85744:AGENTS.md:134#1	y	n	H	dropped reason: a full fetch renews the blob, so the cache-hit branch upserts
+watcher:4b85744:AGENTS.md:136#1	n	n	H	kept ("never a 304")
+watcher:4b85744:AGENTS.md:136#2	n	n	H	kept
+watcher:4b85744:AGENTS.md:140#1	n	n	H	pointer
+watcher:4b85744:AGENTS.md:140#2	n	n	H	pointer
+watcher:4b85744:AGENTS.md:159#1	n	n	R	key list behind a pointer
+watcher:4b85744:AGENTS.md:35#1	n	y	H	pointer dropped (CR 2); a pointer
+watcher:4b85744:AGENTS.md:50#2	n	n	H	kept; measurement date dropped
+watcher:4b85744:AGENTS.md:50#3	y	n	H	dropped reason: a cold install peaks at 1.2 G
+watcher:4b85744:AGENTS.md:54#1	n	n	H	kept
+watcher:4b85744:AGENTS.md:54#2	n	n	H	kept
+watcher:4b85744:AGENTS.md:54#3	y	y	H	garbled: the retune check no longer parses as its own clause (CR 3)
+watcher:4b85744:AGENTS.md:54#4	n	n	H	kept
+watcher:9134667:AGENTS.md:50#2	n	n	H	kept
+watcher:9134667:AGENTS.md:50#4	n	n	H	directive names dropped; the rule is kept
+watcher:9134667:AGENTS.md:50#5	y	n	H	delegated: re-pin as a decision, not on a schedule
+watcher:d648301:AGENTS.md:51#3	n	n	H	kept
+watcher:d648301:AGENTS.md:51#4	n	n	H	pointer
+watcher:d648301:AGENTS.md:53#4	n	n	H	pointer
+watcher:d648301:AGENTS.md:73#1	n	n	H	kept
+watcher:d648301:AGENTS.md:73#2	n	n	H	kept
+watcher:e603357:AGENTS.md:133#1	y	n	R	delegated scope: writes nothing, either side of a baseline
+watcher:e603357:AGENTS.md:60#2	n	y	H	garbled stream list (CR 14); facts, not a rule
+watcher:e603357:AGENTS.md:60#3	n	n	H	behaviour fact dropped
+watcher:e603357:AGENTS.md:60#4	n	n	H	pointer
