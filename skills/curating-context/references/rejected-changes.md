@@ -320,8 +320,9 @@ in this skill's home repo.
   B in 8 and more in 8. With the whole file in the state, as #435 proposed,
   the result was no better.
 - **The Noul has nothing to find.** None of the 4 `delete:` tags removed a
-  trained default; each removed a duplicate pointer. Jev scored no section 0.5
-  or above.
+  trained default; each removed a duplicate pointer. Jev scored no section
+  0.5 or above when asked about it alone, and 9 of 1,339 with the whole file
+  in the state.
 
 Since the pass doesn't ship, there is no `class_contested` field, and
 `telemetry.md` is not split for it.
