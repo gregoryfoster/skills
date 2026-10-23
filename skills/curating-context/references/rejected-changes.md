@@ -290,3 +290,45 @@ need the doc for.
 **Generalisable lesson:** a short line judged against a long outline gets
 ranked by how much it leaves out, not by whether it's wrong. Test such a
 judgment on before/after pairs, which hold the doc constant.
+
+## A Choice per section as a second reading of the Phase 3 class
+
+**Proposed:** [#435](https://github.com/gregoryfoster/skills/issues/435). An
+optional script sends the policy file to TypeSafe with one Choice per `##`
+section over A/B/C/D, taken from this rubric's class definitions, and one Noul
+asking whether the section restates a default. A low-confidence or dissenting
+class would earn a second look before Phase 4, and a `class_contested` count
+would go on the ledger row.
+
+**Refuted by:** labels mined from the ledgers of the 10 public cohort repos
+that keep one: 1,341 sections at the bases of 94 curations. Method and labels:
+[`tests/fixtures/typesafe-eval/section-class/`](../../../tests/fixtures/typesafe-eval/section-class/).
+- **The ledger records the edit, not the class.** 40 of the 45 sections
+  tagged `demote:` stayed in the file, because most large sections split A+B.
+  A run stops once it's under budget, so an untouched section was never
+  called A, and 32 byte-identical sections were tagged in one curation and
+  left alone in another. A third of all class tags name no heading.
+- **Jev never answers C.** No section of the 1,341 gets C, and the 143
+  tightened ones are called A or B. Answering A every time agrees with the
+  labels more often than Jev does (989 against 647 of 1,178).
+- **It can't tell a section from its own curation.** Asked about the same
+  section before and after, the probabilities moved by no more than Jev's own
+  noise in most of the 178 pairs (sent twice, a request's probabilities spread
+  by up to 0.14). Past that noise, a tightened section read more like class A
+  afterwards in 14 pairs and less in 11. A part-demoted section read less like
+  B in 8 and more in 8. With the whole file in the state, as #435 proposed,
+  the result was no better.
+- **The Noul has nothing to find.** None of the 4 `delete:` tags removed a
+  trained default; each removed a duplicate pointer. Jev scored no section 0.5
+  or above.
+
+Since the pass doesn't ship, there is no `class_contested` field, and
+`telemetry.md` is not split for it.
+
+**Replaced by:** nothing new. The class stays the agent's call, made before
+any edit, as [keep-cut-rubric.md](keep-cut-rubric.md) says. A review of the
+curation is what catches a wrong call.
+
+**Generalisable lesson:** before measuring a judgment against labels mined
+from actions, count the identical inputs that carry two labels. Each one is a
+case no judgment of the input alone can get right.
