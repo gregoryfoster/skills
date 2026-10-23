@@ -16,7 +16,10 @@ mine   every ledger row (`.skills/context-metrics.jsonl`, at the commit REPOS
        section of the base is one case, labelled by the tags that name it or
        one of its `###` subsections (normalised text, exact before prefix), or
        `untagged`. `after_state` says whether the section is the same, edited
-       or gone at the curation commit. Counts go to stderr, as posted on #435.
+       or gone at the curation commit. A row whose base or curation version
+       has two headings that normalise alike is skipped and counted, since a
+       heading can't name one section there. Counts go to stderr, as posted
+       on #435.
 build  the evaluator's set, the pairs and the labels, from mine's output.
        Only policy files (AGENTS.md, CLAUDE.md, SKILL.md) are used. The set
        is every base section with one label: `untagged` and unchanged is A,
@@ -178,6 +181,12 @@ def norm(s: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", s).strip()
 
 
+def ambiguous(secs) -> bool:
+    """Two `##` headings normalise alike, so a heading can't name one section."""
+    names = [norm(h) for h, _, _ in secs]
+    return len(names) != len(set(names))
+
+
 def match(target: str, secs) -> tuple[int | None, str]:
     """The section a tag's target names: exact heading, exact `###`, then prefixes."""
     t = norm(target)
@@ -237,12 +246,15 @@ def mine(clones: Path, out: Path) -> None:
             if not base:
                 stats["base_unresolved"] += 1
                 continue
+            bsec = sections(git(repo, "show", f"{base}:{path}"))
+            after_secs = sections(git(repo, "show", f"{after}:{path}"))
+            if ambiguous(bsec) or ambiguous(after_secs):
+                # A label or an after-text could land on the wrong section.
+                stats["ambiguous_headings"] += 1
+                continue
             policy = os.path.basename(path) in POLICY
             stats["policy_rows" if policy else "doc_rows"] += 1
-            bsec = sections(git(repo, "show", f"{base}:{path}"))
-            asec = {
-                norm(h): b for h, b, _ in sections(git(repo, "show", f"{after}:{path}"))
-            }
+            asec = {norm(h): b for h, b, _ in after_secs}
 
             def by_section(tag_list):
                 got = collections.defaultdict(set)
@@ -305,6 +317,8 @@ def show(clones: Path, repo: str, rev: str, path: str) -> str:
 
 def v1_state(text: str, heading: str, path: str) -> dict | None:
     secs = sections(text)
+    if ambiguous(secs):
+        return None
     total = sum(len(b.encode()) for _, b, _ in secs) or 1
     for h, body, _ in secs:
         if norm(h) == norm(heading):

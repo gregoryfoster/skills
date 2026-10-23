@@ -481,6 +481,16 @@ def test_a_section_fence_closes_only_on_its_own_character(sc_mine):
     assert [h for h, _, _ in sc_mine.sections(info)] == ["One", "Two"]
 
 
+def test_a_repeated_heading_names_no_section(sc_mine):
+    text = "## Notes\none\n## `Notes`\ntwo\n"
+    assert sc_mine.ambiguous(sc_mine.sections(text))
+    assert sc_mine.v1_state(text, "Notes", "AGENTS.md") is None
+    assert (
+        sc_mine.v1_state("## Notes\none\n", "Notes", "AGENTS.md")["text"]
+        == "## Notes\none\n"
+    )
+
+
 def test_a_tag_names_a_heading_before_a_subsection_or_a_prefix(sc_mine):
     secs = sc_mine.sections("## Scripts\n### Style\n## Style guide\n## Style\n")
     assert sc_mine.match("Style", secs) == (2, "exact")
