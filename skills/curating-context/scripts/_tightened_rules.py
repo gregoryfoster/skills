@@ -217,6 +217,10 @@ def to_rows(recs: list[dict], archival=None) -> list[Row]:
                 row.status = "archival"
             elif successor is None:
                 row.status = "no-successor"
+            # A substring, not a whole sentence of the successor: on the #442
+            # pool, 10 of 200 kept rows are inside a longer sentence, and all 10
+            # still state their rule (a period or bold added, a clause joined
+            # on). Whole sentences would ask those 10 and catch nothing.
             elif _flat(s.text) in _flat(successor["text"]):
                 row.status = "kept"
             rows.append(row)
