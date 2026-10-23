@@ -81,6 +81,7 @@ SEED = 442
 RANDOM_N = 150
 ANCESTORS = 40
 FIX_WINDOW = 15
+GREP_CHUNK = 400
 ACK = ".skills/context-loss-ok"
 WARRANTS = {
     "retarget",
@@ -128,6 +129,28 @@ def _tighten(line: str):
     return (scope, content) if sep and warrant == "tighten" and content else None
 
 
+def _grep_first(repo: Path, content: str, base: str, files: list[str]) -> str:
+    """The first line at BASE in FILES holding CONTENT, or "".
+
+    In chunks of GREP_CHUNK paths, so a long list neither overflows argv nor
+    is cut short, and git grep's own order across chunks is kept. Exit 1 is no
+    match; anything above it is an error, not an empty result.
+    """
+    for i in range(0, len(files), GREP_CHUNK):
+        args = ["grep", "-F", "-n", "-e", content, base, "--"]
+        r = subprocess.run(
+            ["git", "-C", str(repo), *args, *files[i : i + GREP_CHUNK]],
+            capture_output=True,
+            text=True,
+            env=_env(),
+        )
+        if r.returncode > 1:
+            sys.exit(f"git grep at {base} in {repo}: {r.stderr.strip()}")
+        if r.returncode == 0:
+            return r.stdout.splitlines()[0]
+    return ""
+
+
 def groups(clones: Path, out: Path) -> None:
     _check_heads(clones)
     found = {}
@@ -156,24 +179,9 @@ def groups(clones: Path, out: Path) -> None:
             for scope, content in added:
                 files = [f for f in mds if scope is None or scope in f]
                 for depth, base in enumerate(ancestors):
-                    hit = (
-                        _git(
-                            repo,
-                            "grep",
-                            "-F",
-                            "-n",
-                            "-e",
-                            content,
-                            base,
-                            "--",
-                            *files[:400],
-                            check=False,
-                        )
-                        if files
-                        else ""
-                    )
+                    hit = _grep_first(repo, content, base, files)
                     if hit:
-                        _rev, path, _line, text = hit.splitlines()[0].split(":", 3)
+                        _rev, path, _line, text = hit.split(":", 3)
                         g = found.setdefault(
                             (name, commit, path),
                             {
