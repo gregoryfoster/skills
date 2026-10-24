@@ -12,7 +12,7 @@ every paragraph with every child of the epic that is still open. A pair is
 settled without a call when the paragraph names the child:
 
   named   the paragraph sits under a `For #N` heading, bold lead or list
-          item naming the child, or links `#N` itself. 68 of the 90
+          item naming the child, or links `#N` itself. 80 of the 116
           harvested pairs #436 aligned in 4 public epics were named
 
 Every other pair is the residue, and gets one TypeSafe question:
@@ -20,11 +20,12 @@ Every other pair is the residue, and gets one TypeSafe question:
   bears_on  does the paragraph change or settle a fact, contract, interface,
             limit or step that the child's body relies on?
 
-The residue is where a note reaches a child it never names. On the other 22
-pairs the Noul put the target first among the open children 14 times and in
-the top 3 16 times, against 3 and 12 for plain word matching. Over six whole
-threads (1,732 residue rows), each thread's top 20 held 10 of its 16 such
-notes, against 5 (#436's measurement, pinned by its fixture). It ranks; it doesn't decide. Read the named rows, then
+The residue is where a note reaches a child it never names. On the other 36
+pairs the Noul put the target first among the open children 23 times and in
+the top 3 28 times, against 6 and 20 for plain word matching (chance: 6.7 and
+20.1). Over six whole threads (1,732 residue rows), each thread's top 20 held
+13 of its 25 such notes, against 7 (#436's measurement, pinned by its
+fixture). It ranks; it doesn't decide. Read the named rows, then
 the residue from the top, and verify each one before writing a "Changed since
 filed" comment. Nothing here writes to GitHub.
 
@@ -110,7 +111,7 @@ EXIT_USAGE = 1
 EXIT_FAILED = 2
 EXIT_SKIPPED = 4
 
-# The wording #436 measured: 156 cases (22 unnamed pairs against their open
+# The wording #436 measured: 259 cases (36 unnamed pairs against their open
 # children) and 1,732 whole-thread residue rows. A reworded question needs a
 # re-measure on the committed set.
 BEARS_ON = (

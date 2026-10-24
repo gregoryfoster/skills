@@ -85,9 +85,9 @@ SETS = {
         {"default": {0.3: (0, 39, 0, 1139), 0.5: (0, 0, 0, 1178)}},
     ),
     "harvest-candidates": (
-        "504a91a8273ad6b29b77c965c1ece10d25e2ac76944e3607cca4dc2242d96bcb",
-        156,
-        {"bears_on": {0.3: (14, 48, 8, 86), 0.5: (10, 22, 12, 112)}},
+        "62b1b7ea0fc949ff714721dfb625c51588e5b7d5cd01c855a6849f7ec95e3b79",
+        259,
+        {"bears_on": {0.3: (24, 90, 12, 133), 0.5: (13, 32, 23, 191)}},
     ),
 }
 
@@ -540,7 +540,7 @@ def test_the_harvest_labels_match_the_set(hc_mine):
         if r["verdict"] == "genuine" and r["kind"] == "unnamed"
     }
     got = {c["id"] for c in _hc_cases() if c["expected"]["bears_on"]}
-    assert got == want and len(got) == 22
+    assert got == want and len(got) == 36
     # 58 public harvests: 40 from a child's thread, 18 from elsewhere.
     harvests = {(r["repo"], r["source"], r["target"], r["harvest_at"]) for r in labels}
     assert len(harvests) == 58
@@ -549,15 +549,15 @@ def test_the_harvest_labels_match_the_set(hc_mine):
 
 def test_the_harvest_ranks_436_built_on(hc_mine):
     got = hc_mine.rank(HC_DIR / "set.jsonl", HC_DIR / "cache.jsonl")
-    assert got["pairs"] == 22
-    assert got["baseline"] == [3, 12] and got["random"] == [3.8, 11.4]
-    assert got["noul_last"] == [14, 16] and got["noul_mean"] == [14, 16]
-    assert got["paired"] == [15, 2, 5] and got["sign_p"] == 0.0012
-    assert got["repeats"] == {"repeated": 156, "max_move": 0.11, "p90_move": 0.04}
+    assert got["pairs"] == 36
+    assert got["baseline"] == [6, 20] and got["random"] == [6.7, 20.1]
+    assert got["noul_last"] == [23, 28] and got["noul_mean"] == [23, 28]
+    assert got["paired"] == [25, 3, 8] and got["sign_p"] < 0.001
+    assert got["repeats"] == {"repeated": 259, "max_move": 0.11, "p90_move": 0.04}
 
 
 def test_the_whole_thread_table(hc_mine):
     got = hc_mine.scores(HC_DIR / "scores.tsv")
     assert sum(n for n, _, _ in got.values()) == 1732
-    assert sum(len(r) for _, r, _ in got.values()) == 16
-    assert sum(top for _, _, top in got.values()) == 10
+    assert sum(len(r) for _, r, _ in got.values()) == 25
+    assert sum(top for _, _, top in got.values()) == 13

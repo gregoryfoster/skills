@@ -257,7 +257,9 @@ def align(raw: Path, jmin: float) -> None:
         targets = {
             int(r["target"])
             for r in labels
-            if r["repo"] == repo and r["source"] == str(source)
+            if r["repo"] == repo
+            and r["source"] == str(source)
+            and r["kind"] != "out-of-scope"
         }
         for t in sorted(targets):
             harvest = harvests_of(issue(raw, repo, t)["comments"], source, when)
@@ -411,9 +413,8 @@ def rank(set_path: Path, cache: Path) -> dict:
             result["paired"][0 if n < b else 1 if n > b else 2] += 1
     better, worse, _ = result["paired"]
     m = better + worse
-    result["sign_p"] = round(
-        sum(math.comb(m, k) for k in range(better, m + 1)) / 2**m, 4
-    )
+    tail = sum(math.comb(m, k) for k in range(better, m + 1)) / 2**m
+    result["sign_p"] = float(f"{tail:.2g}")
     result["random"] = [round(x, 1) for x in result["random"]]
     moves = sorted(round(max(v) - min(v), 6) for v in ans.values() if len(v) > 1)
     result["repeats"] = {

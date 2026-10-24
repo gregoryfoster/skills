@@ -199,7 +199,7 @@ part-demoted pairs and rose in 20. `mine.py v2` rebuilds its requests, but
 they aren't committed, so its figures aren't pinned.
 
 `harvest-candidates/` comes from harvests that actually happened. It holds
-156 cases from 4 public epics: wslcb-licensing-tracker#205, archiver#300,
+259 cases from 4 public epics: wslcb-licensing-tracker#205, archiver#300,
 broker#80 and this repo's #451. A "Changed since filed" comment on child T
 that harvests child S's thread is one event. Its time is that comment's. The
 candidates are the epic's children open at that time, with their bodies as
@@ -212,25 +212,25 @@ comments before the harvest, read the way `_harvest.select` reads them.
 - **2 target an issue outside the epic.**
 - **The other 38 were aligned** to the source paragraphs sharing the most
   words with them (Jaccard ≥ 0.2, `mine.py align`). Each alignment to a
-  paragraph that doesn't name its target was checked by hand: 13 were
+  paragraph that doesn't name its target was checked by hand: 19 were
   spurious, mostly a heading matched to a heading. A hand-check of the Noul's
   top-ranked "negatives" found 3 more real harvests.
-- **What's left:** 68 pairs whose paragraph names the target (a `For #N`
-  scope or a linked `#N`), 22 that don't, and 10 harvests rewritten past
+- **What's left:** 80 pairs whose paragraph names the target (a `For #N`
+  scope or a linked `#N`), 36 that don't, and 10 harvests rewritten past
   word overlap, which have no paragraph.
 
-The set is the 22 unnamed paragraphs, each against every child open at its
-event. The suite pins three results #436 built on:
-- **The target's rank among those children.** The Noul put it first for 14
-  of 22 and in the top 3 for 16. Plain matching (shared backticked spans,
-  then shared words) did 3 and 12; random order expects 3.8 and 11.4.
-  Paired, the Noul did better on 15, worse on 2 and the same on 5.
+The set is the 36 unnamed pairs, each paragraph against every child open at
+its event. The suite pins three results #436 built on:
+- **The target's rank among those children.** The Noul put it first for 23
+  of 36 and in the top 3 for 28. Plain matching (shared backticked spans,
+  then shared words) did 6 and 20; random order expects 6.7 and 20.1.
+  Paired, the Noul did better on 25, worse on 3 and the same on 8.
 - **Repeat noise.** The cache answers every request twice, and the last
   reply wins. The two replies differ by at most 0.11, p90 0.04.
 - **The whole-thread table.** `scores.tsv` holds the Noul for every residue
   row of six events, 1,732 rows with no text. A row is in the residue when
   its paragraph doesn't name its child. The top 20 rows of each event hold
-  10 of their 16 unnamed positives; plain matching's hold 5.
+  13 of their 25 unnamed positives; plain matching's hold 7.
 
 Labels mined from these comments undercount positives: a harvest also lands
 in the next child's brief. Of the strongest "negatives" checked by hand, 7 of
