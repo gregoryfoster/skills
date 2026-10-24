@@ -1520,6 +1520,13 @@ NON_GATE_SCRIPTS = {
         "an action, not a gate: `git push`'s own exit code is the verdict and "
         "no output is parsed"
     ),
+    "cloud-session-start.sh": (
+        "an action, off the ship path: the SessionStart hook that provisions "
+        "a cloud session's .venv (#479). Its own exit code is the verdict, "
+        "and uv's, pip's and pre-commit's stderr reach the session unfiltered. "
+        "No gate reads its output; structural-tests.sh still names a missing "
+        "venv on its own"
+    ),
     "close-issue.sh": "an action: `gh issue close`'s exit code is the verdict",
     "comment-issue.sh": "an action: `gh issue comment`'s exit code is the verdict",
     "run-integration-tests.sh": (
