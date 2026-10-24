@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Mine and build #439's labelled set. Kept beside the set (#463's note).
 
-usage: python3 -I -B mine.py fetch RAW LABELS.tsv
+usage: python3 -I -B mine.py fetch RAW [LABELS.tsv]
        python3 -I -B mine.py first-seen RAW > ROWS.jsonl
        python3 -I -B mine.py build RAW LABELS.tsv SET.jsonl PAIRS.jsonl
        python3 -I -B mine.py compare SET.jsonl CACHE.jsonl LABELS.tsv
@@ -11,7 +11,8 @@ usage: python3 -I -B mine.py fetch RAW LABELS.tsv
 fetch       every public epic in EPICS with its whole body history
             (`userContentEdits`, whose oldest node is the original body), each
             epic repo's issue list, and the history of every item LABELS.tsv
-            names, into RAW. Needs an authenticated gh.
+            names, into RAW. Without LABELS.tsv (a fresh mine), every item
+            `first-seen` finds a revision for. Needs an authenticated gh.
 first-seen  the mechanical half of the labelling, one JSON row per same-repo
             issue (not PR) filed after its epic: the first body revision that
             names it, ranges like `#360–#373` included, where it lands there
@@ -289,7 +290,7 @@ def _issues(repo: str) -> list:
         page += 1
 
 
-def fetch(raw: Path, labels: Path) -> None:
+def fetch(raw: Path, labels: Path | None = None) -> None:
     for sub in ("epics", "repos", "items"):
         (raw / sub).mkdir(parents=True, exist_ok=True)
     for ref in EPICS:
@@ -299,8 +300,12 @@ def fetch(raw: Path, labels: Path) -> None:
         (raw / "repos" / f"{repo.replace('/', '_')}.json").write_text(
             json.dumps(_issues(repo))
         )
-    for lab in read_labels(labels).values():
-        o, r, n = _name(lab["id"].split("@")[0])
+    if labels:
+        ids = list(read_labels(labels))
+    else:
+        ids = [row["id"] for row in first_seen(raw) if "rev" in row]
+    for i in ids:
+        o, r, n = _name(i.split("@")[0])
         (raw / "items" / f"{o}_{r}_{n}.json").write_text(json.dumps(_history(o, r, n)))
 
 
@@ -582,8 +587,8 @@ def repeats(cache_path: Path) -> dict:
 
 def main(argv: list[str]) -> int:
     cmd, *args = argv or ["--help"]
-    if cmd == "fetch" and len(args) == 2:
-        fetch(Path(args[0]), Path(args[1]))
+    if cmd == "fetch" and len(args) in (1, 2):
+        fetch(*map(Path, args))
     elif cmd == "first-seen" and len(args) == 1:
         for row in first_seen(Path(args[0])):
             print(json.dumps(row, ensure_ascii=False))
