@@ -123,6 +123,8 @@ Also re-read:
 - **duplicate**;
 - **park**, with a trigger.
 
+**The epic's kind predicts most slots, but read every item.** In 6 public burn-downs, 157 of 177 new issues became children. In 7 themed epics, 75 of 140 were out. A TypeSafe Choice per item lost to that prior plus a mention check ([#439](https://github.com/gregoryfoster/skills/issues/439)).
+
 **Before sizing a follow-up,** re-run its snapshot evidence (status 28) and re-derive its counts from source (broker 142). Rank it by how long its problem has been live, not by when it was filed (broker 132). Slot a follow-up as soon as it's seen, even before its parent closes (status 27).
 
 ## 4. Blockers and gates
