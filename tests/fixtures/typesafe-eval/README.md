@@ -246,7 +246,10 @@ the slot check-in.md §3 gave it at the check-in that first named it. The
 epics are this repo's #451 and #404 and 11 CannObserv epics; `mine.py`'s
 `EPICS` names all 15 that carry the cursor header. Each case is the epic as
 it read in the body revision *before* the slotting edit, and the item's body
-as it stood at that edit, both rebuilt from GitHub's edit history.
+as it stood at that edit, both rebuilt from GitHub's edit history. The
+item's title, labels and closed state come from its issue as fetched, since
+GitHub keeps no history of those here. The set's labels are only
+`enhancement`, `bug`, `documentation` and `question`, so none names a slot.
 
 `mine.py first-seen` finds, for every same-repo issue filed after its epic,
 the first revision that names it (a range like `#360–#373` names what it

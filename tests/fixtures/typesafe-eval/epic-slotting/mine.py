@@ -25,7 +25,9 @@ first-seen  the mechanical half of the labelling, one JSON row per same-repo
 build       the evaluator's set and the pairs. A case is one labelled item:
             the epic as it read in the revision *before* the one that slotted
             the item (`epic_view`), and the item's body as it stood at that
-            edit (`item_view`), asked QUESTIONS. A pair case asks again with
+            edit (`item_view`), asked QUESTIONS. Its title, labels and
+            closed-at come from the issue list as fetched: only bodies have
+            a history. A pair case asks again with
             the epic as it read before the later edit that changed the slot.
 compare     #439's headline, from the set and the cache alone, as JSON: the
             Choice's agreement against the kind-aware plain baseline
