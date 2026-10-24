@@ -27,6 +27,11 @@ network, no key. What that pins, and what it doesn't:
   built on (against the plain-matching baseline, with the repeat noise), plus
   the whole-thread table from `scores.tsv`. `mine.py build` rebuilds the set
   from the raw threads, through the shipped paragraph reader.
+- **Pinned for epic-slotting (#439):** the labels match the set, the epic
+  kind reads from the title, and the comparison #439 closed on: the Choice
+  against the kind-aware plain baseline, the pairs and the repeat noise, all
+  from the set and the cache. No pass shipped: `mine.py build` rebuilds the
+  set from the epics' and items' edit histories.
 - **Not pinned:** what feeds the builder. The splitter needs the source file,
   from 12 repos and often a historical commit (485 KB of paragraph windows
   still reproduced only 111 of 130 cases), and `describe` needs gh's reply.
@@ -37,6 +42,7 @@ The fixture README says how to add a set, public check included.
 
 from __future__ import annotations
 
+import collections
 import importlib.util
 import json
 import subprocess
@@ -88,6 +94,12 @@ SETS = {
         "62b1b7ea0fc949ff714721dfb625c51588e5b7d5cd01c855a6849f7ec95e3b79",
         259,
         {"bears_on": {0.3: (24, 90, 12, 133), 0.5: (13, 32, 23, 191)}},
+    ),
+    # A Choice alone: no sweep. Its confusion is pinned below.
+    "epic-slotting": (
+        "a2ee4d2a5e2af5a8efa98ae1dbeab84123184fbf4401f9857f01073048369c3d",
+        317,
+        {},
     ),
 }
 
@@ -561,3 +573,103 @@ def test_the_whole_thread_table(hc_mine):
     assert sum(n for n, _, _ in got.values()) == 1732
     assert sum(len(r) for _, r, _ in got.values()) == 25
     assert sum(top for _, _, top in got.values()) == 13
+
+
+# --- epic-slotting (#439) -------------------------------------------------------
+
+ES_DIR = SETS_DIR / "epic-slotting"
+
+
+@pytest.fixture(scope="module")
+def es_mine():
+    return _load("es_mine", ES_DIR / "mine.py")
+
+
+def test_the_slot_labels_are_the_sets(es_mine):
+    """Every usable label is a case, asked the one Choice, in §3's six outcomes."""
+    labels = es_mine.read_labels(ES_DIR / "labels.tsv")
+    cases = _jsonl(ES_DIR / "set.jsonl")
+    assert [c["id"] for c in cases] == [
+        i for i, lab in labels.items() if lab["label"] in es_mine.USABLE
+    ]
+    for c in cases:
+        lab = labels[c["id"]]
+        assert c["expected"] == {"slot": lab["label"]}, c["id"]
+        assert c["source"] == f"{lab['epic']} r{lab['rev']}"
+        assert c["questions"] == es_mine.QUESTIONS
+    assert set(es_mine.OPTIONS) == set(es_mine.USABLE)
+    counts = collections.Counter(lab["label"] for lab in labels.values())
+    assert counts == {
+        "child": 210,
+        "out of epic": 87,
+        "park": 16,
+        "closed-in-fact": 3,
+        "duplicate": 1,
+        "never": 72,
+        "setup": 22,
+        "unclear": 12,
+    }
+
+
+def test_the_epic_kind_reads_from_its_title(es_mine):
+    labels = es_mine.read_labels(ES_DIR / "labels.tsv")
+    for c in _jsonl(ES_DIR / "set.jsonl"):
+        assert es_mine.kind(c["state"]["epic"]["title"]) == labels[c["id"]]["kind"]
+
+
+def test_the_choice_loses_to_the_kind_aware_baseline(es_mine):
+    """The comparison #439 closed on: plain beats the Choice overall and in
+    burn-downs, past chance, and ties it in themed epics."""
+    got = es_mine.compare(
+        ES_DIR / "set.jsonl", ES_DIR / "cache.jsonl", ES_DIR / "labels.tsv"
+    )
+    pick = {
+        k: (v["choice"], v["plain"], v["choice_only"], v["plain_only"])
+        for k, v in got.items()
+    }
+    assert pick == {
+        "all": (236, 266, 17, 47),
+        "all, no same-edit": (220, 248, 17, 45),
+        "burn-down": (127, 157, 4, 34),
+        "themed": (109, 109, 13, 13),
+    }
+    assert got["all"]["sign_p"] < 0.001 and got["burn-down"]["sign_p"] < 0.001
+    report = _replay(ES_DIR / "set.jsonl", ES_DIR / "cache.jsonl")
+    slot = report["questions"]["slot"]
+    assert slot["confusion"]["labels"] == list(es_mine.OPTIONS)
+    assert slot["correct"] == 236
+
+
+def test_a_reslotted_item_reads_no_closer_to_its_later_slot(es_mine):
+    noise = es_mine.repeats(ES_DIR / "cache.jsonl")
+    assert noise == {
+        "repeated": 317,
+        "choice_changed": 9,
+        "max_move": 0.22,
+        "p90_move": 0.06,
+    }
+    args = (ES_DIR / "set.jsonl", ES_DIR / "pairs.jsonl", ES_DIR / "cache.jsonl")
+    assert es_mine.pairs(*args, 0.0) == [2, 5, 0]
+    assert es_mine.pairs(*args, noise["p90_move"]) == [0, 4, 3]
+    assert _replay(ES_DIR / "pairs.jsonl", ES_DIR / "cache.jsonl")["calls"] == {
+        "live": 0,
+        "replayed": 7,
+    }
+
+
+def test_a_range_names_every_issue_inside_it(es_mine):
+    assert es_mine.mentions(365, "children (#360–#373) are not children here", "o/r")
+    assert es_mine.mentions(94, "its children #93 to #96", "o/r")
+    assert not es_mine.mentions(374, "children (#360–#373)", "o/r")
+    assert es_mine.mentions(
+        117, "CannObserv/notifier#117 verified", "CannObserv/notifier"
+    )
+    assert not es_mine.mentions(117, "CannObserv/other#117", "CannObserv/notifier")
+
+
+def test_a_checklist_line_is_its_first_refs(es_mine):
+    assert es_mine.leads(415, "- [ ] 12. #415 (added 2026-09-30) pin it", "o/r")
+    assert not es_mine.leads(471, "- [ ] 19. #475 (added, from #471) scan", "o/r")
+    assert es_mine.leads(
+        142, "- [x] CannObserv/replicator#142 Drop it", "CannObserv/replicator"
+    )

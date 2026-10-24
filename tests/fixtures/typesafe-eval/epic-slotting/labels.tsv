@@ -1,0 +1,424 @@
+id	label	kind	flag	epic	rev	note
+CannObserv/address-validator#275@272	child	burn-down		CannObserv/address-validator#272	2	
+CannObserv/address-validator#276@272	child	burn-down		CannObserv/address-validator#272	4	
+CannObserv/address-validator#278@272	child	burn-down		CannObserv/address-validator#272	6	
+CannObserv/address-validator#281@272	child	burn-down		CannObserv/address-validator#272	8	
+CannObserv/address-validator#285@272	child	burn-down		CannObserv/address-validator#272	11	
+CannObserv/address-validator#286@272	child	burn-down		CannObserv/address-validator#272	11	
+CannObserv/address-validator#287@272	child	burn-down		CannObserv/address-validator#272	11	
+CannObserv/address-validator#288@272	child	burn-down		CannObserv/address-validator#272	11	
+CannObserv/address-validator#289@272	child	burn-down		CannObserv/address-validator#272	11	
+CannObserv/address-validator#290@272	child	burn-down		CannObserv/address-validator#272	12	
+CannObserv/address-validator#292@272	child	burn-down		CannObserv/address-validator#272	13	
+CannObserv/address-validator#293@272	child	burn-down		CannObserv/address-validator#272	13	
+CannObserv/address-validator#297@272	child	burn-down		CannObserv/address-validator#272	15	merged with #288 into one piece of work
+CannObserv/address-validator#298@272	child	burn-down		CannObserv/address-validator#272	16	
+CannObserv/address-validator#299@272	child	burn-down		CannObserv/address-validator#272	16	batched at the end of tier 3
+CannObserv/address-validator#302@272	child	burn-down		CannObserv/address-validator#272	18	
+CannObserv/address-validator#304@272	child	burn-down		CannObserv/address-validator#272	19	
+CannObserv/address-validator#305@272	child	burn-down		CannObserv/address-validator#272	19	batched in tier 3
+CannObserv/address-validator#307@272	child	burn-down		CannObserv/address-validator#272	20	
+CannObserv/address-validator#311@272	child	burn-down	deferred	CannObserv/address-validator#272	26	placement awaiting the operator; slotted in tier 4 next check-in
+CannObserv/address-validator#312@272	out of epic	burn-down		CannObserv/address-validator#272	26	this epic's tooling, not a child
+CannObserv/address-validator#317@272	child	burn-down		CannObserv/address-validator#272	31	
+CannObserv/address-validator#318@272	child	burn-down		CannObserv/address-validator#272	31	
+CannObserv/address-validator#319@272	child	burn-down		CannObserv/address-validator#272	31	
+CannObserv/address-validator#321@272	child	burn-down		CannObserv/address-validator#272	32	
+CannObserv/address-validator#322@272	child	burn-down		CannObserv/address-validator#272	33	
+CannObserv/address-validator#326@272	park	burn-down		CannObserv/address-validator#272	34	
+CannObserv/address-validator#328@272	child	burn-down		CannObserv/address-validator#272	36	
+CannObserv/address-validator#334@272	child	burn-down		CannObserv/address-validator#272	44	
+CannObserv/address-validator#338@272	child	burn-down		CannObserv/address-validator#272	46	
+CannObserv/address-validator#339@272	child	burn-down		CannObserv/address-validator#272	46	
+CannObserv/address-validator#342@272	closed-in-fact	burn-down		CannObserv/address-validator#272	48	new, closed and verified, added ticked
+CannObserv/address-validator#343@272	child	burn-down		CannObserv/address-validator#272	48	
+CannObserv/address-validator#345@272	child	burn-down		CannObserv/address-validator#272	49	
+CannObserv/address-validator#350@272	park	burn-down		CannObserv/address-validator#272	58	filed on the operator's decision, parked
+CannObserv/archiver#358@357	child	themed		CannObserv/archiver#357	1	
+CannObserv/archiver#359@357	out of epic	themed	same-edit	CannObserv/archiver#357	1	classified as a separate epic
+CannObserv/archiver#360@357	out of epic	themed	same-edit	CannObserv/archiver#357	1	children of separate epic #359; boundary decided in the slotting edit
+CannObserv/archiver#361@357	out of epic	themed	same-edit	CannObserv/archiver#357	1	children of separate epic #359; boundary decided in the slotting edit
+CannObserv/archiver#362@357	out of epic	themed	same-edit	CannObserv/archiver#357	1	children of separate epic #359; boundary decided in the slotting edit
+CannObserv/archiver#363@357	out of epic	themed	same-edit	CannObserv/archiver#357	1	children of separate epic #359; boundary decided in the slotting edit
+CannObserv/archiver#364@357	out of epic	themed	same-edit	CannObserv/archiver#357	1	children of separate epic #359; boundary decided in the slotting edit
+CannObserv/archiver#365@357	out of epic	themed	same-edit	CannObserv/archiver#357	1	children of separate epic #359; boundary decided in the slotting edit
+CannObserv/archiver#366@357	out of epic	themed	same-edit	CannObserv/archiver#357	1	children of separate epic #359; boundary decided in the slotting edit
+CannObserv/archiver#367@357	out of epic	themed	same-edit	CannObserv/archiver#357	1	children of separate epic #359; boundary decided in the slotting edit
+CannObserv/archiver#368@357	out of epic	themed	same-edit	CannObserv/archiver#357	1	children of separate epic #359; boundary decided in the slotting edit
+CannObserv/archiver#369@357	out of epic	themed	same-edit	CannObserv/archiver#357	1	children of separate epic #359; boundary decided in the slotting edit
+CannObserv/archiver#370@357	out of epic	themed	same-edit	CannObserv/archiver#357	1	children of separate epic #359; boundary decided in the slotting edit
+CannObserv/archiver#371@357	out of epic	themed	same-edit	CannObserv/archiver#357	1	children of separate epic #359; boundary decided in the slotting edit
+CannObserv/archiver#372@357	out of epic	themed	same-edit	CannObserv/archiver#357	1	children of separate epic #359; boundary decided in the slotting edit
+CannObserv/archiver#373@357	out of epic	themed	same-edit	CannObserv/archiver#357	1	children of separate epic #359; boundary decided in the slotting edit
+CannObserv/archiver#375@357	park	themed		CannObserv/archiver#357	1	
+CannObserv/archiver#376@357	park	themed	same-edit	CannObserv/archiver#357	1	operator walk-through: #5 split into #376-#380, parked
+CannObserv/archiver#377@357	park	themed	same-edit	CannObserv/archiver#357	1	operator walk-through: #5 split into #376-#380, parked
+CannObserv/archiver#378@357	park	themed	same-edit	CannObserv/archiver#357	1	operator walk-through: #5 split into #376-#380, parked
+CannObserv/archiver#379@357	park	themed	same-edit	CannObserv/archiver#357	1	operator walk-through: #5 split into #376-#380, parked
+CannObserv/archiver#380@357	park	themed	same-edit	CannObserv/archiver#357	1	operator walk-through: #5 split into #376-#380, parked
+CannObserv/archiver#381@357	child	themed		CannObserv/archiver#357	1	
+CannObserv/archiver#382@357	child	themed		CannObserv/archiver#357	1	
+CannObserv/archiver#383@357	out of epic	themed	same-edit	CannObserv/archiver#357	1	children of separate epic #359; boundary decided in the slotting edit
+CannObserv/archiver#386@357	child	themed		CannObserv/archiver#357	3	
+CannObserv/archiver#389@357	closed-in-fact	themed		CannObserv/archiver#357	6	closed by child #392 before the check-in
+CannObserv/archiver#390@357	park	themed		CannObserv/archiver#357	6	
+CannObserv/archiver#392@357	child	themed		CannObserv/archiver#357	6	
+CannObserv/archiver#394@357	park	themed		CannObserv/archiver#357	6	
+CannObserv/archiver#397@357	child	themed		CannObserv/archiver#357	11	
+CannObserv/archiver#399@357	child	themed		CannObserv/archiver#357	15	
+CannObserv/archiver#400@357	child	themed		CannObserv/archiver#357	15	
+CannObserv/archiver#401@357	child	themed		CannObserv/archiver#357	15	
+CannObserv/archiver#404@357	child	themed		CannObserv/archiver#357	16	
+CannObserv/archiver#405@357	child	themed		CannObserv/archiver#357	16	
+CannObserv/archiver#406@357	child	themed		CannObserv/archiver#357	17	
+CannObserv/archiver#408@357	child	themed		CannObserv/archiver#357	17	
+CannObserv/archiver#409@357	child	themed		CannObserv/archiver#357	18	
+CannObserv/archiver#410@357	child	themed		CannObserv/archiver#357	19	
+CannObserv/archiver#411@357	child	themed		CannObserv/archiver#357	19	
+CannObserv/archiver#416@357	child	themed		CannObserv/archiver#357	25	
+CannObserv/archiver#418@357	child	themed		CannObserv/archiver#357	25	
+CannObserv/archiver#420@357	child	themed		CannObserv/archiver#357	29	
+CannObserv/archiver#421@357	child	themed		CannObserv/archiver#357	30	
+CannObserv/archiver#427@357	child	themed		CannObserv/archiver#357	30	
+CannObserv/archiver#428@357	child	themed		CannObserv/archiver#357	30	
+CannObserv/archiver#429@357	child	themed		CannObserv/archiver#357	30	
+CannObserv/archiver#431@357	never	themed		CannObserv/archiver#357		never named
+CannObserv/archiver#432@357	never	themed		CannObserv/archiver#357		never named
+CannObserv/archiver#433@357	never	themed		CannObserv/archiver#357		never named
+CannObserv/broker#81@80	child	burn-down		CannObserv/broker#80	3	
+CannObserv/broker#82@80	child	burn-down		CannObserv/broker#80	5	
+CannObserv/broker#83@80	child	burn-down		CannObserv/broker#80	12	
+CannObserv/broker#84@80	child	burn-down		CannObserv/broker#80	16	
+CannObserv/broker#85@80	child	burn-down		CannObserv/broker#80	16	
+CannObserv/broker#86@80	child	burn-down		CannObserv/broker#80	18	
+CannObserv/broker#87@80	child	burn-down		CannObserv/broker#80	18	
+CannObserv/broker#88@80	child	burn-down		CannObserv/broker#80	20	
+CannObserv/broker#89@80	child	burn-down		CannObserv/broker#80	20	
+CannObserv/broker#90@80	child	burn-down		CannObserv/broker#80	22	
+CannObserv/broker#91@80	child	burn-down		CannObserv/broker#80	22	
+CannObserv/broker#92@80	out of epic	burn-down		CannObserv/broker#80	25	sibling epic, tracked on #92, not here
+CannObserv/broker#93@80	unclear	burn-down		CannObserv/broker#80	25	sibling epic's children tracked under Waiting on others
+CannObserv/broker#94@80	unclear	burn-down		CannObserv/broker#80	25	sibling epic's children tracked under Waiting on others
+CannObserv/broker#95@80	unclear	burn-down		CannObserv/broker#80	25	sibling epic's children tracked under Waiting on others
+CannObserv/broker#96@80	child	burn-down		CannObserv/broker#80	25	
+CannObserv/broker#97@80	child	burn-down		CannObserv/broker#80	26	
+CannObserv/broker#98@80	child	burn-down		CannObserv/broker#80	27	
+CannObserv/broker#99@80	child	burn-down		CannObserv/broker#80	27	
+CannObserv/broker#101@80	child	burn-down		CannObserv/broker#80	29	
+CannObserv/broker#102@80	child	burn-down		CannObserv/broker#80	29	
+CannObserv/broker#103@80	child	burn-down		CannObserv/broker#80	31	
+CannObserv/broker#104@80	child	burn-down		CannObserv/broker#80	32	
+CannObserv/broker#105@80	out of epic	burn-down		CannObserv/broker#80	34	#22 runs as its own epic
+CannObserv/broker#106@80	out of epic	burn-down		CannObserv/broker#80	34	#22 runs as its own epic
+CannObserv/broker#107@80	out of epic	burn-down		CannObserv/broker#80	34	#22 runs as its own epic
+CannObserv/broker#108@80	out of epic	burn-down		CannObserv/broker#80	34	#22 runs as its own epic
+CannObserv/broker#109@80	out of epic	burn-down		CannObserv/broker#80	34	#22 runs as its own epic
+CannObserv/broker#110@80	out of epic	burn-down		CannObserv/broker#80	34	#22 runs as its own epic
+CannObserv/broker#111@80	out of epic	burn-down		CannObserv/broker#80	34	#22 runs as its own epic
+CannObserv/broker#112@80	child	burn-down		CannObserv/broker#80	34	
+CannObserv/broker#113@80	child	burn-down		CannObserv/broker#80	34	
+CannObserv/broker#114@80	child	burn-down		CannObserv/broker#80	35	
+CannObserv/broker#115@80	unclear	burn-down		CannObserv/broker#80	37	sibling epic's children tracked under Waiting on others
+CannObserv/broker#116@80	child	burn-down		CannObserv/broker#80	39	in the epic, under Waiting on others
+CannObserv/broker#117@80	child	burn-down		CannObserv/broker#80	39	
+CannObserv/broker#118@80	unclear	burn-down		CannObserv/broker#80	40	a closed record of an incident
+CannObserv/broker#119@80	child	burn-down		CannObserv/broker#80	40	
+CannObserv/broker#120@80	child	burn-down		CannObserv/broker#80	40	
+CannObserv/broker#121@80	child	burn-down		CannObserv/broker#80	40	
+CannObserv/broker#122@80	child	burn-down		CannObserv/broker#80	40	
+CannObserv/broker#123@80	child	burn-down		CannObserv/broker#80	40	in the epic, under Waiting on others
+CannObserv/broker#124@80	child	burn-down		CannObserv/broker#80	40	
+CannObserv/broker#125@80	child	burn-down		CannObserv/broker#80	41	
+CannObserv/notifier#117@116	setup	themed		CannObserv/notifier#116	1	
+CannObserv/notifier#118@116	setup	themed		CannObserv/notifier#116	1	
+CannObserv/notifier#124@116	child	themed		CannObserv/notifier#116	2	
+CannObserv/notifier#126@116	out of epic	themed		CannObserv/notifier#116	3	
+CannObserv/notifier#127@116	child	themed		CannObserv/notifier#116	5	
+CannObserv/notifier#131@116	never	themed		CannObserv/notifier#116		never named
+CannObserv/notifier#132@116	never	themed		CannObserv/notifier#116		never named
+CannObserv/notifier#133@116	never	themed		CannObserv/notifier#116		never named
+CannObserv/notifier#134@116	never	themed		CannObserv/notifier#116		never named
+CannObserv/power-map#600@598	unclear	burn-down		CannObserv/power-map#598	1	an FYI folded into #595
+CannObserv/power-map#602@598	child	burn-down		CannObserv/power-map#598	3	
+CannObserv/power-map#603@598	child	burn-down		CannObserv/power-map#598	3	
+CannObserv/power-map#604@598	child	burn-down		CannObserv/power-map#598	3	
+CannObserv/power-map#605@598	child	burn-down		CannObserv/power-map#598	3	
+CannObserv/power-map#607@598	child	burn-down		CannObserv/power-map#598	5	
+CannObserv/power-map#608@598	child	burn-down		CannObserv/power-map#598	5	
+CannObserv/power-map#609@598	child	burn-down		CannObserv/power-map#598	5	
+CannObserv/power-map#611@598	child	burn-down		CannObserv/power-map#598	6	
+CannObserv/power-map#615@598	child	burn-down		CannObserv/power-map#598	8	
+CannObserv/power-map#617@598	child	burn-down		CannObserv/power-map#598	9	
+CannObserv/power-map#618@598	child	burn-down		CannObserv/power-map#598	10	
+CannObserv/power-map#622@598	child	burn-down		CannObserv/power-map#598	12	
+CannObserv/power-map#625@598	park	burn-down		CannObserv/power-map#598	13	
+CannObserv/power-map#626@598	park	burn-down		CannObserv/power-map#598	13	
+CannObserv/power-map#630@598	child	burn-down		CannObserv/power-map#598	15	
+CannObserv/power-map#631@598	child	burn-down		CannObserv/power-map#598	16	
+CannObserv/power-map#632@598	child	burn-down		CannObserv/power-map#598	16	
+CannObserv/power-map#634@598	child	burn-down		CannObserv/power-map#598	17	
+CannObserv/power-map#638@598	child	burn-down		CannObserv/power-map#598	20	
+CannObserv/power-map#639@598	child	burn-down		CannObserv/power-map#598	21	
+CannObserv/power-map#651@598	child	burn-down		CannObserv/power-map#598	28	
+CannObserv/power-map#654@598	child	burn-down		CannObserv/power-map#598	30	
+CannObserv/power-map#655@598	child	burn-down		CannObserv/power-map#598	30	
+CannObserv/power-map#656@598	closed-in-fact	burn-down		CannObserv/power-map#598	30	closed by a supervised execute before the check-in
+CannObserv/power-map#658@598	child	burn-down		CannObserv/power-map#598	30	
+CannObserv/power-map#661@598	child	burn-down		CannObserv/power-map#598	32	
+CannObserv/power-map#663@598	child	burn-down		CannObserv/power-map#598	35	
+CannObserv/power-map#664@598	child	burn-down		CannObserv/power-map#598	35	
+CannObserv/power-map#665@598	child	burn-down		CannObserv/power-map#598	35	
+CannObserv/power-map#667@598	child	burn-down		CannObserv/power-map#598	36	
+CannObserv/power-map#669@598	child	burn-down		CannObserv/power-map#598	36	
+CannObserv/power-map#671@598	child	burn-down		CannObserv/power-map#598	37	
+CannObserv/power-map#672@598	child	burn-down		CannObserv/power-map#598	38	
+CannObserv/power-map#674@598	child	burn-down		CannObserv/power-map#598	39	
+CannObserv/power-map#680@598	child	burn-down		CannObserv/power-map#598	42	
+CannObserv/power-map#683@598	never	burn-down		CannObserv/power-map#598		never named
+CannObserv/power-map#684@598	never	burn-down		CannObserv/power-map#598		never named
+CannObserv/power-map#685@598	never	burn-down		CannObserv/power-map#598		never named
+CannObserv/power-map#687@598	never	burn-down		CannObserv/power-map#598		never named
+CannObserv/power-map#688@598	never	burn-down		CannObserv/power-map#598		never named
+CannObserv/power-map#690@598	never	burn-down		CannObserv/power-map#598		never named
+CannObserv/power-map#692@598	never	burn-down		CannObserv/power-map#598		never named
+CannObserv/power-map#694@598	never	burn-down		CannObserv/power-map#598		never named
+CannObserv/processor#26@24	child	burn-down		CannObserv/processor#24	3	
+CannObserv/processor#28@24	child	burn-down		CannObserv/processor#24	5	
+CannObserv/processor#29@24	child	burn-down		CannObserv/processor#24	5	
+CannObserv/processor#34@24	child	burn-down		CannObserv/processor#24	14	
+CannObserv/processor#35@24	child	burn-down		CannObserv/processor#24	14	
+CannObserv/processor#37@24	child	burn-down		CannObserv/processor#24	16	
+CannObserv/processor#39@24	child	burn-down		CannObserv/processor#24	17	
+CannObserv/processor#40@24	child	burn-down		CannObserv/processor#24	17	
+CannObserv/processor#43@24	child	burn-down		CannObserv/processor#24	20	
+CannObserv/processor#45@24	child	burn-down		CannObserv/processor#24	21	
+CannObserv/processor#47@24	child	burn-down		CannObserv/processor#24	21	
+CannObserv/processor#52@24	child	burn-down		CannObserv/processor#24	29	
+CannObserv/processor#54@24	child	burn-down		CannObserv/processor#24	31	
+CannObserv/processor#57@24	child	burn-down		CannObserv/processor#24	36	
+CannObserv/processor#58@24	child	burn-down		CannObserv/processor#24	36	
+CannObserv/processor#62@24	child	burn-down		CannObserv/processor#24	38	
+CannObserv/processor#65@24	child	burn-down		CannObserv/processor#24	39	
+CannObserv/processor#66@24	child	burn-down		CannObserv/processor#24	39	
+CannObserv/processor#67@24	child	burn-down		CannObserv/processor#24	39	
+CannObserv/processor#70@24	child	burn-down		CannObserv/processor#24	42	
+CannObserv/processor#71@24	never	burn-down		CannObserv/processor#24		never named
+CannObserv/processor#73@24	never	burn-down		CannObserv/processor#24		never named
+CannObserv/replicator#136@135	setup	themed		CannObserv/replicator#135	1	
+CannObserv/replicator#137@135	setup	themed		CannObserv/replicator#135	1	
+CannObserv/replicator#138@135	out of epic	themed		CannObserv/replicator#135	2	related, not in this epic
+CannObserv/replicator#140@135	child	themed		CannObserv/replicator#135	2	filed at adoption on the operator's decision
+CannObserv/replicator#142@135	child	themed		CannObserv/replicator#135	3	
+CannObserv/replicator#144@135	park	themed		CannObserv/replicator#135	6	
+CannObserv/replicator#145@135	out of epic	themed		CannObserv/replicator#135	7	follow-ups, not children, standalone
+CannObserv/replicator#146@135	out of epic	themed		CannObserv/replicator#135	7	follow-ups, not children, standalone
+CannObserv/replicator#148@135	never	themed		CannObserv/replicator#135		never named
+CannObserv/replicator#149@135	never	themed		CannObserv/replicator#135		never named
+CannObserv/replicator#150@135	never	themed		CannObserv/replicator#135		never named
+CannObserv/replicator#151@135	never	themed		CannObserv/replicator#135		never named
+CannObserv/replicator#152@135	never	themed		CannObserv/replicator#135		never named
+CannObserv/usa-wa#415@414	child	burn-down		CannObserv/usa-wa#414	6	
+CannObserv/usa-wa#421@414	child	burn-down		CannObserv/usa-wa#414	4	
+CannObserv/usa-wa#422@414	never	burn-down		CannObserv/usa-wa#414		seen by a later watermark, never named
+CannObserv/usa-wa#428@414	never	burn-down		CannObserv/usa-wa#414		seen by a later watermark, never named
+CannObserv/usa-wa#430@414	unclear	burn-down		CannObserv/usa-wa#414	32	incidental mention / folded into #475
+CannObserv/usa-wa#433@414	never	burn-down		CannObserv/usa-wa#414		seen by a later watermark, never named
+CannObserv/usa-wa#434@414	child	burn-down		CannObserv/usa-wa#414	6	
+CannObserv/usa-wa#440@414	out of epic	burn-down		CannObserv/usa-wa#414	6	
+CannObserv/usa-wa#442@414	never	burn-down		CannObserv/usa-wa#414		seen by a later watermark, never named
+CannObserv/usa-wa#444@414	never	burn-down		CannObserv/usa-wa#414		seen by a later watermark, never named
+CannObserv/usa-wa#445@414	never	burn-down		CannObserv/usa-wa#414		seen by a later watermark, never named
+CannObserv/usa-wa#447@414	child	burn-down		CannObserv/usa-wa#414	6	
+CannObserv/usa-wa#451@414	child	burn-down		CannObserv/usa-wa#414	9	
+CannObserv/usa-wa#452@414	child	burn-down		CannObserv/usa-wa#414	9	
+CannObserv/usa-wa#453@414	child	burn-down		CannObserv/usa-wa#414	9	
+CannObserv/usa-wa#455@414	child	burn-down		CannObserv/usa-wa#414	10	
+CannObserv/usa-wa#458@414	child	burn-down		CannObserv/usa-wa#414	11	
+CannObserv/usa-wa#460@414	child	burn-down		CannObserv/usa-wa#414	12	
+CannObserv/usa-wa#461@414	child	burn-down		CannObserv/usa-wa#414	12	bundled into another child's line
+CannObserv/usa-wa#462@414	out of epic	burn-down		CannObserv/usa-wa#414	12	
+CannObserv/usa-wa#466@414	child	burn-down		CannObserv/usa-wa#414	14	
+CannObserv/usa-wa#468@414	child	burn-down		CannObserv/usa-wa#414	15	
+CannObserv/usa-wa#469@414	child	burn-down		CannObserv/usa-wa#414	15	
+CannObserv/usa-wa#471@414	unclear	burn-down		CannObserv/usa-wa#414	17	incidental mention / folded into #475
+CannObserv/usa-wa#472@414	child	burn-down		CannObserv/usa-wa#414	17	
+CannObserv/usa-wa#475@414	child	burn-down		CannObserv/usa-wa#414	17	
+CannObserv/usa-wa#479@414	out of epic	burn-down		CannObserv/usa-wa#414	21	
+CannObserv/usa-wa#482@414	child	burn-down		CannObserv/usa-wa#414	22	
+CannObserv/usa-wa#485@414	child	burn-down		CannObserv/usa-wa#414	24	
+CannObserv/usa-wa#487@414	child	burn-down		CannObserv/usa-wa#414	26	bundled into another child's line
+CannObserv/usa-wa#489@414	child	burn-down		CannObserv/usa-wa#414	26	
+CannObserv/usa-wa#490@414	child	burn-down		CannObserv/usa-wa#414	26	
+CannObserv/usa-wa#492@414	child	burn-down		CannObserv/usa-wa#414	27	
+CannObserv/usa-wa#495@414	child	burn-down		CannObserv/usa-wa#414	29	
+CannObserv/usa-wa#497@414	child	burn-down		CannObserv/usa-wa#414	32	
+CannObserv/usa-wa#499@414	child	burn-down		CannObserv/usa-wa#414	33	
+CannObserv/usa-wa#500@414	child	burn-down		CannObserv/usa-wa#414	33	
+CannObserv/usa-wa#501@414	child	burn-down		CannObserv/usa-wa#414	33	
+CannObserv/usa-wa#505@414	child	burn-down		CannObserv/usa-wa#414	36	
+CannObserv/usa-wa#508@414	park	burn-down		CannObserv/usa-wa#414	39	
+CannObserv/usa-wa#509@414	child	burn-down		CannObserv/usa-wa#414	39	
+CannObserv/usa-wa#512@414	child	burn-down		CannObserv/usa-wa#414	41	
+CannObserv/usa-wa#514@414	child	burn-down		CannObserv/usa-wa#414	44	
+CannObserv/usa-wa#517@414	child	burn-down		CannObserv/usa-wa#414	45	
+CannObserv/usa-wa#518@414	child	burn-down		CannObserv/usa-wa#414	45	
+CannObserv/usa-wa#520@414	child	burn-down		CannObserv/usa-wa#414	46	
+CannObserv/usa-wa#525@414	child	burn-down		CannObserv/usa-wa#414	48	
+CannObserv/usa-wa#526@414	child	burn-down		CannObserv/usa-wa#414	49	
+CannObserv/usa-wa#527@414	child	burn-down		CannObserv/usa-wa#414	49	
+CannObserv/usa-wa#530@414	child	burn-down		CannObserv/usa-wa#414	50	
+CannObserv/usa-wa#533@414	child	burn-down		CannObserv/usa-wa#414	53	
+CannObserv/usa-wa#534@414	never	burn-down		CannObserv/usa-wa#414		never named
+CannObserv/watcher#369@368	setup	themed		CannObserv/watcher#368	1	
+CannObserv/watcher#370@368	setup	themed		CannObserv/watcher#368	1	
+CannObserv/watcher#371@368	setup	themed		CannObserv/watcher#368	1	
+CannObserv/watcher#372@368	setup	themed		CannObserv/watcher#368	1	
+CannObserv/watcher#373@368	setup	themed		CannObserv/watcher#368	1	
+CannObserv/watcher#374@368	setup	themed		CannObserv/watcher#368	1	
+CannObserv/watcher#375@368	setup	themed		CannObserv/watcher#368	1	
+CannObserv/watcher#376@368	setup	themed		CannObserv/watcher#368	1	
+CannObserv/watcher#377@368	setup	themed		CannObserv/watcher#368	1	
+CannObserv/watcher#378@368	setup	themed		CannObserv/watcher#368	1	
+CannObserv/watcher#379@368	setup	themed		CannObserv/watcher#368	1	
+CannObserv/watcher#380@368	setup	themed		CannObserv/watcher#368	1	
+CannObserv/watcher#381@368	setup	themed		CannObserv/watcher#368	1	
+CannObserv/watcher#382@368	unclear	themed		CannObserv/watcher#368	3	named only in a watermark line, or answered as a question
+CannObserv/watcher#383@368	unclear	themed		CannObserv/watcher#368	3	named only in a watermark line, or answered as a question
+CannObserv/watcher#384@368	child	themed		CannObserv/watcher#368	6	
+CannObserv/watcher#385@368	out of epic	themed		CannObserv/watcher#368	9	
+CannObserv/watcher#386@368	child	themed		CannObserv/watcher#368	9	
+CannObserv/watcher#387@368	unclear	themed		CannObserv/watcher#368	11	named only in a watermark line, or answered as a question
+CannObserv/watcher#388@368	out of epic	themed		CannObserv/watcher#368	11	
+CannObserv/watcher#389@368	child	themed		CannObserv/watcher#368	13	
+CannObserv/watcher#390@368	never	themed		CannObserv/watcher#368		never named
+CannObserv/watcher#391@368	never	themed		CannObserv/watcher#368		never named
+CannObserv/watcher#392@368	never	themed		CannObserv/watcher#368		never named
+CannObserv/watcher#393@368	never	themed		CannObserv/watcher#368		never named
+CannObserv/watcher#394@368	never	themed		CannObserv/watcher#368		never named
+CannObserv/watcher#395@368	never	themed		CannObserv/watcher#368		never named
+CannObserv/watcher#396@368	never	themed		CannObserv/watcher#368		never named
+CannObserv/watcher#397@368	never	themed		CannObserv/watcher#368		never named
+CannObserv/watcher#398@368	never	themed		CannObserv/watcher#368		never named
+CannObserv/watcher#399@368	never	themed		CannObserv/watcher#368		never named
+CannObserv/watcher#395@394	child	burn-down		CannObserv/watcher#394	3	
+CannObserv/watcher#396@394	child	burn-down		CannObserv/watcher#394	3	
+CannObserv/watcher#397@394	child	burn-down		CannObserv/watcher#394	5	
+CannObserv/watcher#398@394	park	burn-down		CannObserv/watcher#394	5	
+CannObserv/watcher#399@394	child	burn-down		CannObserv/watcher#394	5	
+CannObserv/wslcb-licensing-tracker#206@205	setup	themed		CannObserv/wslcb-licensing-tracker#205	1	
+CannObserv/wslcb-licensing-tracker#207@205	setup	themed		CannObserv/wslcb-licensing-tracker#205	1	
+CannObserv/wslcb-licensing-tracker#208@205	setup	themed		CannObserv/wslcb-licensing-tracker#205	1	
+CannObserv/wslcb-licensing-tracker#209@205	setup	themed		CannObserv/wslcb-licensing-tracker#205	1	
+CannObserv/wslcb-licensing-tracker#210@205	setup	themed		CannObserv/wslcb-licensing-tracker#205	1	
+CannObserv/wslcb-licensing-tracker#211@205	unclear	themed		CannObserv/wslcb-licensing-tracker#205	2	hand-off context, deferred
+CannObserv/wslcb-licensing-tracker#212@205	child	themed		CannObserv/wslcb-licensing-tracker#205	4	
+CannObserv/wslcb-licensing-tracker#213@205	out of epic	themed		CannObserv/wslcb-licensing-tracker#205	7	
+CannObserv/wslcb-licensing-tracker#214@205	child	themed		CannObserv/wslcb-licensing-tracker#205	11	
+CannObserv/wslcb-licensing-tracker#215@205	never	themed		CannObserv/wslcb-licensing-tracker#205		never named
+CannObserv/wslcb-licensing-tracker#216@205	never	themed		CannObserv/wslcb-licensing-tracker#205		never named
+CannObserv/wslcb-licensing-tracker#217@205	never	themed		CannObserv/wslcb-licensing-tracker#205		never named
+CannObserv/wslcb-licensing-tracker#218@205	never	themed		CannObserv/wslcb-licensing-tracker#205		never named
+CannObserv/wslcb-licensing-tracker#219@205	never	themed		CannObserv/wslcb-licensing-tracker#205		never named
+CannObserv/wslcb-licensing-tracker#220@205	never	themed		CannObserv/wslcb-licensing-tracker#205		never named
+CannObserv/wslcb-licensing-tracker#220@219	never	burn-down		CannObserv/wslcb-licensing-tracker#219		never named
+gregoryfoster/skills#405@404	child	themed		gregoryfoster/skills#404	2	
+gregoryfoster/skills#406@404	child	themed		gregoryfoster/skills#404	2	
+gregoryfoster/skills#407@404	child	themed		gregoryfoster/skills#404	3	
+gregoryfoster/skills#408@404	child	themed		gregoryfoster/skills#404	4	
+gregoryfoster/skills#409@404	out of epic	themed		gregoryfoster/skills#404	4	
+gregoryfoster/skills#410@404	child	themed		gregoryfoster/skills#404	4	
+gregoryfoster/skills#411@404	child	themed		gregoryfoster/skills#404	4	
+gregoryfoster/skills#412@404	child	themed		gregoryfoster/skills#404	4	
+gregoryfoster/skills#413@404	child	themed		gregoryfoster/skills#404	4	
+gregoryfoster/skills#414@404	child	themed		gregoryfoster/skills#404	4	
+gregoryfoster/skills#415@404	child	themed		gregoryfoster/skills#404	5	
+gregoryfoster/skills#416@404	child	themed		gregoryfoster/skills#404	5	
+gregoryfoster/skills#417@404	child	themed		gregoryfoster/skills#404	5	
+gregoryfoster/skills#418@404	out of epic	themed		gregoryfoster/skills#404	6	
+gregoryfoster/skills#419@404	out of epic	themed		gregoryfoster/skills#404	6	
+gregoryfoster/skills#420@404	out of epic	themed		gregoryfoster/skills#404	6	
+gregoryfoster/skills#421@404	out of epic	themed		gregoryfoster/skills#404	6	
+gregoryfoster/skills#422@404	out of epic	themed		gregoryfoster/skills#404	6	
+gregoryfoster/skills#423@404	out of epic	themed		gregoryfoster/skills#404	6	
+gregoryfoster/skills#424@404	duplicate	themed		gregoryfoster/skills#404	6	closed as a duplicate of #411 and #412
+gregoryfoster/skills#425@404	out of epic	themed		gregoryfoster/skills#404	7	
+gregoryfoster/skills#426@404	child	themed		gregoryfoster/skills#404	8	
+gregoryfoster/skills#427@404	out of epic	themed		gregoryfoster/skills#404	8	
+gregoryfoster/skills#428@404	child	themed		gregoryfoster/skills#404	8	
+gregoryfoster/skills#429@404	child	themed		gregoryfoster/skills#404	8	
+gregoryfoster/skills#430@404	child	themed		gregoryfoster/skills#404	8	
+gregoryfoster/skills#431@404	child	themed		gregoryfoster/skills#404	9	
+gregoryfoster/skills#432@404	out of epic	themed		gregoryfoster/skills#404	9	
+gregoryfoster/skills#433@404	out of epic	themed		gregoryfoster/skills#404	10	
+gregoryfoster/skills#434@404	child	themed		gregoryfoster/skills#404	10	
+gregoryfoster/skills#435@404	out of epic	themed		gregoryfoster/skills#404	11	log: other skills or #451's foundation
+gregoryfoster/skills#436@404	out of epic	themed	same-edit	gregoryfoster/skills#404	11	boundary clause written in the slotting edit: another epic holds it
+gregoryfoster/skills#437@404	out of epic	themed		gregoryfoster/skills#404	11	log: other skills or #451's foundation
+gregoryfoster/skills#438@404	out of epic	themed		gregoryfoster/skills#404	11	log: other skills or #451's foundation
+gregoryfoster/skills#439@404	out of epic	themed	same-edit	gregoryfoster/skills#404	11	boundary clause written in the slotting edit: another epic holds it
+gregoryfoster/skills#440@404	out of epic	themed		gregoryfoster/skills#404	11	log: other skills or #451's foundation
+gregoryfoster/skills#441@404	out of epic	themed		gregoryfoster/skills#404	11	log: other skills or #451's foundation
+gregoryfoster/skills#442@404	out of epic	themed		gregoryfoster/skills#404	11	log: other skills or #451's foundation
+gregoryfoster/skills#443@404	out of epic	themed		gregoryfoster/skills#404	11	log: other skills or #451's foundation
+gregoryfoster/skills#444@404	out of epic	themed		gregoryfoster/skills#404	11	log: other skills or #451's foundation
+gregoryfoster/skills#445@404	out of epic	themed		gregoryfoster/skills#404	11	log: other skills or #451's foundation
+gregoryfoster/skills#446@404	out of epic	themed		gregoryfoster/skills#404	11	log: other skills or #451's foundation
+gregoryfoster/skills#447@404	out of epic	themed		gregoryfoster/skills#404	11	log: other skills or #451's foundation
+gregoryfoster/skills#448@404	out of epic	themed		gregoryfoster/skills#404	11	log: other skills or #451's foundation
+gregoryfoster/skills#449@404	out of epic	themed		gregoryfoster/skills#404	11	log: other skills or #451's foundation
+gregoryfoster/skills#450@404	out of epic	themed		gregoryfoster/skills#404	11	log: other skills or #451's foundation
+gregoryfoster/skills#451@404	out of epic	themed	same-edit	gregoryfoster/skills#404	11	boundary clause written in the slotting edit: another epic holds it
+gregoryfoster/skills#452@404	child	themed		gregoryfoster/skills#404	11	
+gregoryfoster/skills#453@404	never	themed		gregoryfoster/skills#404		never named
+gregoryfoster/skills#454@404	never	themed		gregoryfoster/skills#404		never named
+gregoryfoster/skills#455@404	never	themed		gregoryfoster/skills#404		never named
+gregoryfoster/skills#456@404	never	themed		gregoryfoster/skills#404		never named
+gregoryfoster/skills#457@404	never	themed		gregoryfoster/skills#404		never named
+gregoryfoster/skills#458@404	never	themed		gregoryfoster/skills#404		never named
+gregoryfoster/skills#459@404	never	themed		gregoryfoster/skills#404		never named
+gregoryfoster/skills#460@404	never	themed		gregoryfoster/skills#404		never named
+gregoryfoster/skills#461@404	never	themed		gregoryfoster/skills#404		never named
+gregoryfoster/skills#462@404	never	themed		gregoryfoster/skills#404		never named
+gregoryfoster/skills#463@404	never	themed		gregoryfoster/skills#404		never named
+gregoryfoster/skills#464@404	never	themed		gregoryfoster/skills#404		never named
+gregoryfoster/skills#465@404	never	themed		gregoryfoster/skills#404		never named
+gregoryfoster/skills#466@404	never	themed		gregoryfoster/skills#404		never named
+gregoryfoster/skills#467@404	never	themed		gregoryfoster/skills#404		never named
+gregoryfoster/skills#468@404	never	themed		gregoryfoster/skills#404		never named
+gregoryfoster/skills#469@404	never	themed		gregoryfoster/skills#404		never named
+gregoryfoster/skills#470@404	never	themed		gregoryfoster/skills#404		never named
+gregoryfoster/skills#471@404	never	themed		gregoryfoster/skills#404		never named
+gregoryfoster/skills#472@404	never	themed		gregoryfoster/skills#404		never named
+gregoryfoster/skills#473@404	never	themed		gregoryfoster/skills#404		never named
+gregoryfoster/skills#474@404	never	themed		gregoryfoster/skills#404		never named
+gregoryfoster/skills#475@404	never	themed		gregoryfoster/skills#404		never named
+gregoryfoster/skills#476@404	never	themed		gregoryfoster/skills#404		never named
+gregoryfoster/skills#477@404	never	themed		gregoryfoster/skills#404		never named
+gregoryfoster/skills#478@404	never	themed		gregoryfoster/skills#404		never named
+gregoryfoster/skills#452@451	out of epic	themed		gregoryfoster/skills#451	3	log: out of epic
+gregoryfoster/skills#453@451	out of epic	themed		gregoryfoster/skills#451	3	log: out of epic
+gregoryfoster/skills#454@451	out of epic	themed		gregoryfoster/skills#451	3	log: out of epic
+gregoryfoster/skills#455@451	out of epic	themed		gregoryfoster/skills#451	3	log: out of epic
+gregoryfoster/skills#456@451	out of epic	themed		gregoryfoster/skills#451	3	log: out of epic
+gregoryfoster/skills#457@451	out of epic	themed		gregoryfoster/skills#451	3	log: out of epic
+gregoryfoster/skills#458@451	out of epic	themed		gregoryfoster/skills#451	4	
+gregoryfoster/skills#459@451	out of epic	themed		gregoryfoster/skills#451	5	log: out of epic
+gregoryfoster/skills#460@451	out of epic	themed		gregoryfoster/skills#451	5	log: out of epic
+gregoryfoster/skills#461@451	out of epic	themed		gregoryfoster/skills#451	5	log: out of epic
+gregoryfoster/skills#462@451	out of epic	themed		gregoryfoster/skills#451	5	log: out of epic
+gregoryfoster/skills#463@451	child	themed		gregoryfoster/skills#451	5	
+gregoryfoster/skills#464@451	out of epic	themed		gregoryfoster/skills#451	5	log: out of epic
+gregoryfoster/skills#465@451	out of epic	themed		gregoryfoster/skills#451	6	
+gregoryfoster/skills#466@451	out of epic	themed		gregoryfoster/skills#451	7	log: out of epic
+gregoryfoster/skills#467@451	out of epic	themed		gregoryfoster/skills#451	7	log: out of epic
+gregoryfoster/skills#468@451	out of epic	themed		gregoryfoster/skills#451	7	log: out of epic
+gregoryfoster/skills#469@451	out of epic	themed		gregoryfoster/skills#451	8	
+gregoryfoster/skills#470@451	child	themed		gregoryfoster/skills#451	8	
+gregoryfoster/skills#471@451	park	themed		gregoryfoster/skills#451	9	
+gregoryfoster/skills#472@451	out of epic	themed		gregoryfoster/skills#451	9	log: out of epic
+gregoryfoster/skills#473@451	out of epic	themed		gregoryfoster/skills#451	9	log: out of epic
+gregoryfoster/skills#474@451	out of epic	themed		gregoryfoster/skills#451	9	log: out of epic
+gregoryfoster/skills#475@451	out of epic	themed		gregoryfoster/skills#451	10	
+gregoryfoster/skills#476@451	out of epic	themed		gregoryfoster/skills#451	11	
+gregoryfoster/skills#477@451	out of epic	themed		gregoryfoster/skills#451	12	log: out of epic
+gregoryfoster/skills#478@451	out of epic	themed		gregoryfoster/skills#451	12	log: out of epic

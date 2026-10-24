@@ -65,6 +65,8 @@ often at an old commit. A change there shows up only when someone re-measures.
 | `tightened-rules/` | #442 | `551c3c7c10ac` | [report](https://github.com/gregoryfoster/skills/issues/442) |
 | `index-lines/` | #447 | `c5a99b92ba64` | [report](https://github.com/gregoryfoster/skills/issues/447#issuecomment-6370273852) |
 | `section-class/` | #435 | `a24ecb5ef667` | [report](https://github.com/gregoryfoster/skills/issues/435#issuecomment-6372110302) |
+| `harvest-candidates/` | #436 | `62b1b7ea0fc9` | [report](https://github.com/gregoryfoster/skills/issues/436#issuecomment-6376428787) |
+| `epic-slotting/` | #439 | `a2ee4d2a5e2a` | [labels and baseline](https://github.com/gregoryfoster/skills/issues/439#issuecomment-6387078141) |
 
 `stale-issue-prose/` is 130 cases from gregoryfoster/skills and 11 public
 CannObserv repos (`still_open` 15 positive, `already_done` 3), labelled by one
@@ -238,3 +240,44 @@ to both #307 and #308), each paragraph against every child open at its event. Th
 Labels mined from these comments undercount positives: a harvest also lands
 in the next child's brief. Of the strongest "negatives" checked by hand, 7 of
 11 had been delivered that way.
+
+`epic-slotting/` is 317 new items from 13 public epics, each labelled with
+the slot check-in.md §3 gave it at the check-in that first named it. The
+epics are this repo's #451 and #404 and 11 CannObserv epics; `mine.py`'s
+`EPICS` names all 15 that carry the cursor header. Each case is the epic as
+it read in the body revision *before* the slotting edit, and the item's body
+as it stood at that edit, both rebuilt from GitHub's edit history.
+
+`mine.py first-seen` finds, for every same-repo issue filed after its epic,
+the first revision that names it (a range like `#360–#373` names what it
+spans) and drafts a label from where it lands: a checklist line it leads is
+a child, a Parked section is park, an out-of-scope section or "out of epic"
+in the new log text is out. `labels.tsv` holds those drafts after a hand read
+of every row that isn't a checklist line, and of a sample of 30 that are. It
+accounts for all 423 rows:
+- **317 usable:** child 210, out of epic 87, park 16, closed-in-fact 3,
+  duplicate 1, split 0. Every "split" in the logs splits an existing child
+  into a new issue, which is then a child.
+- **Left out:** 22 children seeded when their epic was created (`setup`),
+  12 the logs don't settle (`unclear`), and 72 no revision names (`never`).
+- **`kind`** is burn-down (6 epics, 177 items, 157 children) or themed
+  (7 epics, 140 items, 75 out). The epic's title tells them apart.
+- **`flag`**: `same-edit` marks 24 labels settled by a boundary decision or
+  an operator walk-through written in the very edit that slotted them, so the
+  epic as it read before can't hold the answer. `deferred` marks
+  address-validator #311, left to the operator and slotted at the next
+  check-in.
+
+The suite pins what #439 closed on:
+- **The Choice against the kind-aware plain baseline** (`mine.py plain`:
+  in a burn-down every new issue is a child; in a themed epic, a child only
+  when it names the epic or an open child; a process-log entry is out of
+  either). Plain gets 266 of 317, the Choice 236. Paired, plain alone is
+  right on 47 and the Choice alone on 17. In burn-downs it's 157 against 127,
+  and in themed epics 109 each. Without the same-edit labels, 248 against 220.
+- **Repeat noise.** The cache answers every case twice, and the last reply
+  wins. The choice changed on 9 of 317; confidence moved at most 0.22, p90
+  0.06. The first run's answers agree with the labels on 234.
+- **The pairs.** `pairs.jsonl` asks again, for 7 items whose slot changed at
+  a later check-in, with the epic as it read before that edit. Past the
+  noise, the later slot's probability rose in none, and fell in 4.
