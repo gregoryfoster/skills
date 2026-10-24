@@ -1966,6 +1966,93 @@ def test_an_onfailure_target_is_cleared_only_when_what_it_runs_was_read(
         assert said in _finding(out, "restarter:app.service")["message"]
 
 
+UNIT_FAILURE = (
+    "[Service]\nType=oneshot\nExecStart=/usr/local/bin/notify-unit-failure %i\n"
+)
+
+
+def _hooked(host, units: tuple[str, ...], target: str) -> None:
+    for u in units:
+        host.write(
+            f"etc/systemd/system/{u}",
+            f"[Unit]\nOnFailure={target}\n[Service]\nExecStart=/usr/bin/{u}\n",
+        )
+
+
+@pytest.mark.parametrize(
+    "target, unit_file, key",
+    [
+        # #420: address-validator's notifier, which seven units hook. The
+        # template is the key, whatever instance a unit names.
+        (
+            "unit-failure@%n.service",
+            "unit-failure@.service",
+            "not-restarter:unit-failure@.service",
+        ),
+        (
+            "app-notify.service",
+            "app-notify.service",
+            "not-restarter:app-notify.service",
+        ),
+    ],
+)
+def test_an_unreadable_onfailure_target_takes_a_not_restarter_exception(
+    host, target, unit_file, key
+):
+    _hooked(host, ("app.service", "worker.service"), target)
+    host.write(f"etc/systemd/system/{unit_file}", UNIT_FAILURE)
+    host.write("usr/local/bin/notify-unit-failure", b"\x7fELF\x00\x00")
+    out = host.run()
+    for u in ("app.service", "worker.service"):
+        f = _finding(out, f"restarter:{u}")
+        assert f["exception_what"] == key
+        assert f"exception {key} <review-by> <reason>" in f["message"]
+        assert "/usr/local/bin/notify-unit-failure, a binary" in f["message"]
+    # One declaration covers every unit hooked to it.
+    host.knob(f"posture scheduled\nexception {key} 2099-01-01 notifies only\n")
+    out = host.run()
+    assert not [i for i in _ids(out) if i.startswith("restarter")]
+    assert {"restarter:app.service", "restarter:worker.service"} <= set(
+        _ids(out, "excepted")
+    )
+    assert not out["impact"]["restarters"]
+    assert out["impact"]["restarters_complete"] is True
+    # An expired one covers nothing.
+    host.knob(f"posture scheduled\nexception {key} 2001-01-01 notifies only\n")
+    out = host.run()
+    assert "restarter:app.service" in _ids(out)
+
+
+def test_a_not_restarter_exception_doesnt_cover_a_restart_the_scan_read(host):
+    # app.service's other target restarts on an Exec line, and worker's own
+    # Exec line does: what was read isn't declared away.
+    _hooked(host, ("app.service",), "app-notify.service store-fix.service")
+    host.write("etc/systemd/system/app-notify.service", UNIT_FAILURE)
+    host.write("usr/local/bin/notify-unit-failure", b"\x7fELF\x00\x00")
+    host.write(
+        "etc/systemd/system/store-fix.service",
+        "[Service]\nExecStart=/bin/systemctl restart store.service\n",
+    )
+    host.write(
+        "etc/systemd/system/worker.service",
+        "[Unit]\nOnFailure=app-notify.service\n"
+        "[Service]\nExecStart=/usr/bin/worker\n"
+        "ExecStopPost=/bin/systemctl restart store.service\n",
+    )
+    host.knob(
+        "posture scheduled\n"
+        "exception not-restarter:app-notify.service 2099-01-01 notifies only\n"
+    )
+    out = host.run()
+    for u in ("app.service", "worker.service"):
+        f = _finding(out, f"restarter:{u}")
+        assert f["exception_what"] is None
+        assert "not-restarter" not in f["message"]
+    assert {"app.service", "worker.service"} <= {
+        r["unit"] for r in out["impact"]["restarters"]
+    }
+
+
 def test_a_readable_setup_script_holding_a_key_is_named_by_pattern_and_line_only(host):
     host.write(
         "exe.dev/setup",
