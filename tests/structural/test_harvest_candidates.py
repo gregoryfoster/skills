@@ -362,6 +362,38 @@ def test_open_children_are_the_open_checklist_items_less_the_source(monkeypatch)
     ]
 
 
+def test_an_unreadable_child_is_left_out_with_ghs_cause(monkeypatch):
+    issues = {
+        "repos/o/r/issues/1": {"body": "- [ ] #3 open\n- [ ] p/q#4 private"},
+        "repos/o/r/issues/3": {"state": "open", "title": "three", "body": ""},
+    }
+
+    def gh_json(args, what):
+        if args[1] not in issues:
+            raise hv.Infra(what, stderr="gh: Could not resolve to a Repository", code=1)
+        return issues[args[1]]
+
+    monkeypatch.setattr(hv, "gh_json", gh_json)
+    warnings: list[str] = []
+    got = hv.open_children("o/r", 1, 2, warnings)
+    assert [c.label for c in got] == ["#3"]
+    assert warnings == [
+        "p/q#4 left out, gh can't read it: gh: Could not resolve to a Repository"
+    ]
+    with pytest.raises(hv.Infra):  # without a warnings list, it stays an error
+        hv.open_children("o/r", 1, 2)
+
+
+def test_an_unreadable_epic_is_still_exit_2(monkeypatch):
+    def gh_json(args, what):
+        raise hv.Infra(what, stderr="HTTP 404: Not Found", code=1)
+
+    monkeypatch.setattr(hv, "gh_json", gh_json)
+    out, err = io.StringIO(), io.StringIO()
+    assert hv.main(ARGS, stdout=out, stderr=err) == 2
+    assert "HTTP 404: Not Found" in err.getvalue()
+
+
 def test_the_step_never_writes_to_github():
     src = (SCRIPTS / "_harvest.py").read_text()
     for verb in ("PATCH", "POST", "PUT", "DELETE", "--method", "-X", "--input"):

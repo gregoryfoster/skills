@@ -1546,8 +1546,11 @@ NON_GATE_SCRIPTS = {
     "harvest-candidates.sh": (
         "reporting, and advisory (#436): a ranked TSV the coordinator reads "
         "before writing a harvest by hand; no gate parses it. gh failing on "
-        "the epic, a child or the thread exits 2 with gh's own stderr "
-        "(test_a_gh_failure_is_exit_2_with_ghs_cause), and a TypeSafe skip or "
+        "the epic or the thread exits 2 with gh's own stderr "
+        "(test_a_gh_failure_is_exit_2_with_ghs_cause, "
+        "test_an_unreadable_epic_is_still_exit_2); on one checklist item it "
+        "is a WARNING carrying gh's stderr, and that item is left out "
+        "(test_an_unreadable_child_is_left_out_with_ghs_cause); a TypeSafe skip or "
         "failure still prints every row under its own exit code "
         "(test_a_skip_is_exit_4_and_still_prints_every_row, "
         "test_a_failure_is_exit_2_and_the_rest_are_not_asked, all in "

@@ -73,8 +73,10 @@ MAX_BODY_CHARS). Nothing else.
 exit codes:
   0  every pair was named or judged (with --dry-run: printed)
   1  usage error, or a residue over --max-calls (nothing was sent)
-  2  gh failed (its stderr shown), or a TypeSafe failure (its message on
-     stderr). After a TypeSafe failure the rows are still printed
+  2  gh failed on the epic or the thread (its stderr shown), or a TypeSafe
+     failure (its message on stderr). After a TypeSafe failure the rows are
+     still printed. A checklist item gh can't read is only a WARNING: it is
+     left out, with gh's stderr
   4  skipped: not opted in, or no key (the client's line on stderr). The rows
      are still printed, the residue unjudged
   Exits 2 and 4 are advisory: harvest by reading, as if the step hadn't run.
@@ -262,8 +264,16 @@ def _ts(value: str, flag: str) -> str:
         raise UsageError(f"{flag} wants an ISO 8601 time with a zone, not {value!r}")
 
 
-def open_children(repo: str, epic: int, source: int) -> list[Child]:
-    """The epic's checklist items whose issue is open, in checklist order, less the source."""
+def open_children(
+    repo: str, epic: int, source: int, warnings: list[str] | None = None
+) -> list[Child]:
+    """The epic's checklist items whose issue is open, in checklist order, less the source.
+
+    An item gh can't read (another org's private repo, a transferred issue) is
+    left out with a warning carrying gh's own stderr, as scan.sh treats a
+    cross-repo ref: one unreadable item mustn't cost every other child. The
+    epic itself failing is still an Infra.
+    """
     body = gh_json(["api", f"repos/{repo}/issues/{epic}"], "fetching the epic")
     host = repo.lower()
     out, seen = [], {key(None, epic, host), key(None, source, host)}
@@ -275,7 +285,13 @@ def open_children(repo: str, epic: int, source: int) -> list[Child]:
             continue
         seen.add(ref[1])
         r, num = ref[1].rsplit("#", 1)
-        it = gh_json(["api", f"repos/{r}/issues/{num}"], f"fetching {ref[1]}")
+        try:
+            it = gh_json(["api", f"repos/{r}/issues/{num}"], f"fetching {ref[1]}")
+        except Infra as e:
+            if warnings is not None:
+                warnings.append(f"{ref[1]} left out, gh can't read it: {gh_cause(e)}")
+                continue
+            raise
         if it.get("state") != "open":
             continue
         out.append(
@@ -470,17 +486,20 @@ def main(argv: list[str], stdout=None, stderr=None, connect=None, load=None) -> 
         return 0
 
     repo, host = opts["repo"], opts["repo"].lower()
+    warnings: list[str] = []
     try:
         if load:
             children, comments = load(opts)
         else:
-            children = open_children(repo, opts["epic"], opts["source"])
+            children = open_children(repo, opts["epic"], opts["source"], warnings)
             comments = thread(repo, opts["source"], opts["since"], opts["until"])
     except Infra as e:
         say(f"harvest-candidates: {gh_cause(e)}")
         return EXIT_FAILED
     for what in CAPPED:
         say(f"harvest-candidates: WARNING {what} stopped at the page cap")
+    for w in warnings:
+        say(f"harvest-candidates: WARNING {w}")
 
     rows = to_rows(comments, children, host)
     paras = len({(r.para.comment_id, r.para.k) for r in rows})
