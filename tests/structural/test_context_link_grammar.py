@@ -30,6 +30,8 @@ import shutil
 import subprocess
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CURATING = REPO_ROOT / "skills" / "curating-context"
 MEASURE = CURATING / "scripts" / "measure-context.sh"
@@ -192,6 +194,10 @@ class TestTheExtractorDoesNotFailQuietly:
         )
         assert _dead(repo) == ["AGENTS.md -> docs/AFTER.md"]
 
+    @pytest.mark.skipif(
+        os.geteuid() == 0,
+        reason="chmod 000 does not restrict root, so the unreadable file is readable",
+    )
     def test_an_unreadable_source_warns_rather_than_reading_as_clean(
         self, tmp_path: Path
     ):

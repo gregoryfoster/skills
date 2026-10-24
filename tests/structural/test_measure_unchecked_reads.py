@@ -62,6 +62,8 @@ import re
 import subprocess
 from pathlib import Path
 
+import pytest
+
 SCRIPTS = (
     Path(__file__).resolve().parent.parent.parent
     / "skills"
@@ -141,6 +143,10 @@ def _stray_bash_lines(stderr: str) -> list[str]:
     ]
 
 
+@pytest.mark.skipif(
+    os.geteuid() == 0,
+    reason="chmod 000 does not restrict root, so the unreadable file is readable",
+)
 class TestUnreadablePolicyFile:
     """Site 1. The same defect #157 fixed, one stage earlier, and worse: the
     stage that dies is the one the header's exit-2 promise is about."""
@@ -177,6 +183,10 @@ class TestUnreadablePolicyFile:
         assert _stray_bash_lines(result.stderr) == [], result.stderr
 
 
+@pytest.mark.skipif(
+    os.geteuid() == 0,
+    reason="chmod 000 does not restrict root, so the unreadable file is readable",
+)
 class TestSlugsOfDoesNotSpeakOverItsOwnDiagnosis:
     """Site 3. `anchor_missing` already prints a clean WARN when `slugs_of`
     fails; awk printed its own two-line complaint in front of it."""
