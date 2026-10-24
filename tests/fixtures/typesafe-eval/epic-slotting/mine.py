@@ -54,6 +54,12 @@ import subprocess
 import sys
 from pathlib import Path
 
+ROOT = Path(__file__).resolve().parents[4]
+# The ref reader scan.json's `mentions_epic` uses: fences, spans and issue
+# URLs read as GitHub links them.
+sys.path.insert(0, str(ROOT / "skills" / "coordinating-epics" / "scripts"))
+from _epic_edit import key, refs_in  # noqa: E402
+
 MODEL = "jev-1.13.0"
 # The 15 public epics carrying the cursor header, 2026-10-24. status#16 has
 # no Log, and wslcb#219 had slotted nothing yet, so neither gives a label.
@@ -193,7 +199,6 @@ def build_case(epic: dict, item: dict) -> tuple:
 
 # --- the plain baseline -------------------------------------------------------
 
-CODE = re.compile(r"```.*?```|`[^`\n]*`", re.S)
 REF = re.compile(r"(?<![\w#.-])(?:([\w.-]+/[\w.-]+))?#(\d+)(?!\d)")
 PROCESS_LOG = re.compile(r"process[- ]log", re.I)
 BURN_DOWN = re.compile(r"burn[- ]?down|backlog", re.I)
@@ -202,13 +207,6 @@ BURN_DOWN = re.compile(r"burn[- ]?down|backlog", re.I)
 def kind(epic_title: str) -> str:
     """A whole-backlog burn-down, or a themed epic: read from the title."""
     return "burn-down" if BURN_DOWN.search(epic_title) else "themed"
-
-
-def _refs(text: str, repo: str) -> set:
-    return {
-        ((m.group(1) or repo).lower(), int(m.group(2)))
-        for m in REF.finditer(CODE.sub(" ", text))
-    }
 
 
 def plain(state: dict, repo: str) -> str:
@@ -224,11 +222,11 @@ def plain(state: dict, repo: str) -> str:
     for c in epic["children"]:
         m = None if c["done"] else REF.search(c["line"])
         if m:
-            open_refs.add(((m.group(1) or repo).lower(), int(m.group(2))))
-    named = _refs(item["title"] + "\n" + item["body"], repo)
+            open_refs.add(key(m.group(1), m.group(2), repo))
+    named = refs_in((item["title"] + "\n" + item["body"]).splitlines(), repo)
     return (
         "child"
-        if (repo, epic["number"]) in named or named & open_refs
+        if key(None, epic["number"], repo) in named or named & open_refs
         else "out of epic"
     )
 
