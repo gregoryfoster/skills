@@ -2710,10 +2710,13 @@ inline_verdict() {  # <command>
 # can't, 2 when it can't be read, with SV_WHY saying why. One level deep: a
 # script it calls in turn isn't followed, so a restart two scripts down is
 # missed (CR 208). A relative path is read where systemd runs it, against
-# the unit's WorkingDirectory= (#418); one it can't place stays unread.
+# the unit's WorkingDirectory= (#418); one it can't place stays unread. Every
+# line but a comment counts, a docstring's too, since a restarter missed runs
+# unstopped through a data-store step; SV_MATCH names the first that matched,
+# so the owner can tell a call from a mention (#419).
 script_verdict() {  # <path> [<working directory>]
-  local p=$1 wd=${2-} rc=0
-  SV_WHY=""
+  local p=$1 wd=${2-} rc=0 m n
+  SV_WHY="" SV_MATCH=""
   case $1 in
     *%*) SV_WHY="$1, a path with a specifier" && return 2 ;;
     /*) ;;
@@ -2733,17 +2736,24 @@ script_verdict() {  # <path> [<working directory>]
     1) SV_WHY="$p, a binary" && return 2 ;;
     *) SV_WHY="$p, which couldn't be read" && return 2 ;;
   esac
-  if as_reader grep -v '^[[:space:]]*#' "$P_ROOT$p" 2>/dev/null | grep -qE "$RESTART_RE"; then return 0; fi
+  while IFS= read -r m; do
+    n=${m%%:*} m=${m#*:}
+    if [[ $m =~ ^[[:space:]]*# ]]; then continue; fi
+    m=${m#"${m%%[![:space:]]*}"}
+    if [ "${#m}" -gt 120 ]; then m="${m:0:117}..."; fi
+    SV_MATCH="$p, which matches at line $n: $m"
+    return 0
+  done < <(as_reader grep -nE "$RESTART_RE" "$P_ROOT$p" 2>/dev/null || true)
   return 1
 }
 
 # Whether an OnFailure= target starts or restarts anything (#351). A unit
 # that isn't a service can't be read from Exec lines, and stays a restarter
 # (CR 199). 0 when it can restart, 1 when it can't, 2 when that couldn't be
-# read, with OF_WHY saying what.
+# read, with OF_WHY saying what, and OF_MATCH the script line that matched.
 onfailure_restarts() {  # <target unit>
   local rc=0
-  OF_WHY=""
+  OF_WHY="" OF_MATCH=""
   case $1 in
     *.service) ;;
     *)
@@ -2751,7 +2761,7 @@ onfailure_restarts() {  # <target unit>
       return 2 ;;
   esac
   unit_restarts "$1" "its OnFailure= target $1" || rc=$?
-  OF_WHY=$UR_WHY
+  OF_WHY=$UR_WHY OF_MATCH=$UR_MATCH
   return $rc
 }
 
@@ -2761,11 +2771,12 @@ onfailure_restarts() {  # <target unit>
 # script (through env), a program that starts nothing, and each command of
 # an inline one. A binary or an unreadable script can't be (CR 205). 0 when
 # it can restart, 1 when it can't, 2 when that couldn't be read, with UR_WHY
-# saying what, after WHO.
+# saying what, after WHO. A 0 from a script's line, rather than an Exec
+# line's, sets UR_MATCH to that line (#419).
 unit_restarts() {  # <service> <who>
   local t=$1 who=$2 tmpl="" d f files="" line raw prog base script rc=1 w i v text mod wd=""
   local -a tok=() texts=()
-  UR_WHY=""
+  UR_WHY="" UR_MATCH=""
   case $t in *@*.*) tmpl=${t%%@*}@.${t##*.} ;; esac
   for d in etc/systemd/system run/systemd/system usr/local/lib/systemd/system usr/lib/systemd/system lib/systemd/system; do
     for f in "$P_ROOT/$d/$t" ${tmpl:+"$P_ROOT/$d/$tmpl"}; do
@@ -2837,7 +2848,7 @@ unit_restarts() {  # <service> <who>
                 v=0
                 inline_verdict "${raw#* -c }" || v=$?
                 case $v in
-                  0) return 0 ;;
+                  0) UR_MATCH="$who runs $SV_MATCH" && return 0 ;;
                   2) UR_WHY="$who runs $IV_WHY" rc=2 ;;
                 esac
                 break ;;
@@ -2857,14 +2868,17 @@ unit_restarts() {  # <service> <who>
         v=0
         script_verdict "$script" "$wd" || v=$?
         case $v in
-          0) return 0 ;;
+          0) UR_MATCH="$who runs $SV_MATCH" && return 0 ;;
           2) UR_WHY="$who runs $SV_WHY" rc=2 ;;
         esac
       fi
       # Any other script the line names, read where it can be.
       for w in "${tok[@]:1}"; do
         case $w in /*) [ "$w" != "$script" ] || continue ;; *) continue ;; esac
-        if [ -f "$P_ROOT$w" ] && script_verdict "$w"; then return 0; fi
+        if [ -f "$P_ROOT$w" ] && script_verdict "$w"; then
+          UR_MATCH="$who runs $SV_MATCH"
+          return 0
+        fi
       done
     done <<<"$text"
   done
@@ -2876,14 +2890,18 @@ unit_restarts() {  # <service> <who>
 # notifies isn't a restarter: declaring it would stop the service it watches
 # around every held step (#351). One the knob doesn't name isn't stopped
 # around a data-store step. A unit found only through an OnFailure= target
-# the scan can't read takes exception not-restarter:<target>, keyed by the
-# target's template when it has one, so one line covers every unit hooked to
-# it (#420); one found through an Exec line that was read takes none.
+# the scan can't read, or a script line it matched, takes exception
+# not-restarter:<target>, keyed by the target's template when it has one, so
+# one line covers every unit hooked to it (#420, #419); a timer's service
+# found through its script's line takes not-restarter:<service>. One found
+# through an Exec line takes none: that line was read.
 read_restarters() {
-  local f u base found="" stem declared e how line t rc why text unread="" svc opaque="" open=0 runs="" listed=""
+  local f u base found="" stem declared e how line t rc text unread="" svc opaque="" open=0 runs="" listed=""
   # soft: what a unit was found through that an exception can declare
-  # away, a line each: unit, way, the exception's key, and why.
-  local key what hard="" of_hard="" covered soft=""
+  # away, a line each: unit, way, the exception's key, whether the scan
+  # matched a line (m) or couldn't read what it runs (u), and that line or
+  # why.
+  local key what kind detail hard="" of_hard="" covered soft=""
   local -a tok=() s=()
   R_RESTARTERS="" R_RESTARTERS_READ=""
   for f in "$P_ROOT"/etc/systemd/system/*.service "$P_ROOT"/etc/systemd/system/*.service.d/*.conf; do
@@ -2916,7 +2934,9 @@ read_restarters() {
           key=$t
           case $t in *@*.*) key=${t%%@*}@.${t##*.} ;; esac
           if [ "$rc" -eq 2 ]; then
-            soft="$soft$base${KNOB_US}on-failure$KNOB_US$key$KNOB_US$OF_WHY"$'\n'
+            soft="$soft$base${KNOB_US}on-failure$KNOB_US$key${KNOB_US}u$KNOB_US$OF_WHY"$'\n'
+          elif [ -n "$OF_MATCH" ]; then
+            soft="$soft$base${KNOB_US}on-failure$KNOB_US$key${KNOB_US}m$KNOB_US$OF_MATCH"$'\n'
           else
             hard="$hard $base" of_hard="$of_hard $base"
           fi
@@ -2948,7 +2968,11 @@ read_restarters() {
     case $rc in
       0)
         in_words "$svc:script" "$found" || found="$found $svc:script"
-        hard="$hard $svc" ;;
+        if [ -n "$UR_MATCH" ]; then
+          soft="$soft$svc${KNOB_US}script$KNOB_US$svc${KNOB_US}m$KNOB_US$UR_MATCH"$'\n'
+        else
+          hard="$hard $svc"
+        fi ;;
       2)
         if in_words "$svc" "$KNOB_RESTARTERS" || in_words "$base" "$KNOB_RESTARTERS"; then continue; fi
         if ! { exception_for "not-restarter:$svc" && [ "$EX_EXPIRED" = 0 ]; }; then open=1; fi
@@ -2972,17 +2996,17 @@ read_restarters() {
     done
     # The exception it can take: the first of its keys no live exception
     # covers, or, when each is covered, the first, which lands it in
-    # excepted and off the list.
-    what="" why="" covered=0
-    if ! in_words "$u" "$hard"; then
-      while IFS=$KNOB_US read -r -a s; do
-        if [ "${#s[@]}" -ne 4 ] || [ "${s[0]}" != "$u" ]; then continue; fi
-        [ -n "$what" ] || what=${s[2]} why=${s[3]} covered=1
-        if [ "$covered" -eq 1 ] && ! { exception_for "not-restarter:${s[2]}" && [ "$EX_EXPIRED" = 0 ]; }; then
-          what=${s[2]} why=${s[3]} covered=0
-        fi
-      done <<<"$soft"
-    fi
+    # excepted and off the list. detail is what the way that named it read.
+    what="" kind="" covered=0 detail=""
+    while IFS=$KNOB_US read -r -a s; do
+      if [ "${#s[@]}" -ne 5 ] || [ "${s[0]}" != "$u" ]; then continue; fi
+      if [ -z "$detail" ] && [ "${s[1]}" = "${f#*:}" ]; then detail=${s[3]}${s[4]}; fi
+      if in_words "$u" "$hard"; then continue; fi
+      [ -n "$what" ] || what=${s[2]} kind=${s[3]} covered=1
+      if [ "$covered" -eq 1 ] && ! { exception_for "not-restarter:${s[2]}" && [ "$EX_EXPIRED" = 0 ]; }; then
+        what=${s[2]} kind=${s[3]} covered=0
+      fi
+    done <<<"$soft"
     if [ "$declared" -eq 1 ] || [ "$covered" -eq 0 ]; then
       e=""
       jadds e unit "$u"
@@ -2993,15 +3017,19 @@ read_restarters() {
     if [ "$declared" -eq 0 ]; then
       how="an Exec line runs systemctl restart"
       if [ "${f#*:}" = script ]; then how="what its timer runs starts or restarts one"; fi
-      if [ "${f#*:}" = on-failure ]; then
-        how="its OnFailure= target starts or restarts one"
-        if ! in_words "$u" "$of_hard" && [ -n "$why" ]; then how="it may: $why"; fi
+      if [ "${f#*:}" = on-failure ]; then how="its OnFailure= target starts or restarts one"; fi
+      if [ "${f#*:}" = on-failure ] && in_words "$u" "$of_hard"; then
+        :
+      elif [ "${detail:0:1}" = m ]; then
+        how="$how: ${detail:1}"
+      elif [ "${detail:0:1}" = u ]; then
+        how="it may: ${detail:1}"
       fi
-      if [ -n "$what" ]; then
-        finding knob "restarter:$u" "not-restarter:$what" "$u can restart a service ($how), and no restarter line names it or its timer, so a data-store step wouldn't stop it. If it can start or restart a service, declare it; if it can't, declare exception not-restarter:$what <review-by> <reason> (knob.md)."
-      else
-        finding knob "restarter:$u" "" "$u can restart a service ($how), and no restarter line names it or its timer, so a data-store step wouldn't stop it. Declare it (knob.md)."
-      fi
+      case $kind in
+        u) finding knob "restarter:$u" "not-restarter:$what" "$u can restart a service ($how), and no restarter line names it or its timer, so a data-store step wouldn't stop it. If it can start or restart a service, declare it; if it can't, declare exception not-restarter:$what <review-by> <reason> (knob.md)." ;;
+        m) finding knob "restarter:$u" "not-restarter:$what" "$u can restart a service ($how), and no restarter line names it or its timer, so a data-store step wouldn't stop it. Declare it; if the line it matched isn't a call, declare exception not-restarter:$what <review-by> <reason> (knob.md)." ;;
+        *) finding knob "restarter:$u" "" "$u can restart a service ($how), and no restarter line names it or its timer, so a data-store step wouldn't stop it. Declare it (knob.md)." ;;
+      esac
     fi
   done
   # What was found is still listed; the list just isn't the whole answer.
