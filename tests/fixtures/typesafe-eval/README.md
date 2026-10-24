@@ -276,8 +276,9 @@ The suite pins what #439 closed on:
   right on 47 and the Choice alone on 17. In burn-downs it's 157 against 127,
   and in themed epics 109 each. Without the same-edit labels, 248 against 220.
 - **Repeat noise.** The cache answers every case twice, and the last reply
-  wins. The choice changed on 9 of 317; confidence moved at most 0.22, p90
-  0.06. The first run's answers agree with the labels on 234.
+  wins. The choice changed on 9 of 317. On the 308 that kept their choice,
+  its confidence moved at most 0.22, p90 0.06. The first run's answers agree
+  with the labels on 234.
 - **The pairs.** `pairs.jsonl` asks again, for 7 items whose slot changed at
   a later check-in, with the epic as it read before that edit. Past the
   noise, the later slot's probability rose in none, and fell in 4.
