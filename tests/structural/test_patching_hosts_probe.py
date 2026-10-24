@@ -1700,6 +1700,47 @@ def test_a_unit_found_two_ways_is_one_restarter(host):
     assert units.count("store-renew.service") == 1
 
 
+@pytest.mark.parametrize(
+    "exec_line, unread, said",
+    [
+        # #393: usa-wa's backup. -m takes a module, not a script path; one
+        # isn't followed to a file, so it stays unread, named as a module.
+        (
+            "ExecStart=/home/exedev/usa-wa/.venv/bin/python -m usa_wa_api.backup.run",
+            True,
+            "python -m usa_wa_api.backup.run, a Python module",
+        ),
+        (
+            "ExecStart=/usr/bin/python3 -mapp.backup",
+            True,
+            "python3 -m app.backup, a Python module",
+        ),
+        # -X and -W take a value, which isn't the script: the script is read,
+        # and only notifies.
+        ("ExecStart=/usr/bin/python3 -X dev -W ignore /opt/app/r.py", False, ""),
+        ("ExecStart=/usr/bin/python3 -Xdev /opt/app/r.py", False, ""),
+    ],
+)
+def test_a_python_module_is_named_as_one_and_an_options_value_isnt_the_script(
+    host, exec_line, unread, said
+):
+    host.write("etc/systemd/system/store-cert.timer", RENEW_TIMER)
+    host.write(
+        "etc/systemd/system/store-renew.service",
+        f"[Service]\nType=oneshot\n{exec_line}\n",
+    )
+    host.write("opt/app/r.py", "import urllib.request\nurllib.request.urlopen('x')\n")
+    out = host.run()
+    assert "restarter:store-renew.service" not in _ids(out)
+    assert ("restarters:unread:store-renew.service" in _ids(out)) is unread
+    assert out["impact"]["restarters_complete"] is (not unread)
+    if unread:
+        f = _finding(out, "restarters:unread:store-renew.service")
+        assert said in f["message"]
+        assert "relative to its working directory" not in f["message"]
+        assert f["exception_what"] == "not-restarter:store-renew.service"
+
+
 def test_an_exception_clears_a_timers_service_the_scan_cant_follow(host):
     host.write("etc/systemd/system/store-cert.timer", RENEW_TIMER)
     host.write("etc/systemd/system/store-renew.service", RENEW_UNIT)
@@ -1737,7 +1778,7 @@ def test_an_exception_clears_a_timers_service_the_scan_cant_follow(host):
             "ExecStart=/usr/bin/python3 -m app.notify",
             {},
             True,
-            "a path relative to its working directory",
+            "python3 -m app.notify, a Python module",
         ),
         # env, then the interpreter's script.
         (
