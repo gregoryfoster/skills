@@ -75,7 +75,7 @@ From the closing comment, the PR, and every comment since the hand-off:
 - **Answers to a later child's step.** Re-verify them, then record them with the evidence where that child will read them (archiver 47).
 
 **A note that never names its child** is the one reading misses. `harvest-candidates.sh` is an optional, advisory step for it. It pairs every paragraph of the source's thread since the hand-off with every open child. A paragraph under a `For #N` heading, lead or item, or one linking `#N`, is settled without a call. Every other pair gets one TypeSafe question: does this paragraph bear on what the child relies on?
-- **It's off until the repo opts in,** through `.skills/typesafe` or `TYPESAFE_OPT_IN`. Run it from the epic's repo, so a private repo decides for itself. Each request carries one paragraph and one child's title and body.
+- **It's off until the repo opts in,** through `.skills/typesafe` or `TYPESAFE_OPT_IN`. Run it from the epic's repo, so a private repo decides for itself. Each request carries one paragraph, the source's `owner/repo#N`, and one child's number, title and body.
 - **It writes nothing to GitHub.**
 - **Measured on 4 public epics (#436):** unnamed notes reached the right child in the top 3 for 28 of 36, against 20 by word matching (chance).
 
