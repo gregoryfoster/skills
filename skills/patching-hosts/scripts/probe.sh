@@ -2755,7 +2755,7 @@ onfailure_restarts() {  # <target unit>
 # it can restart, 1 when it can't, 2 when that couldn't be read, with UR_WHY
 # saying what, after WHO.
 unit_restarts() {  # <service> <who>
-  local t=$1 who=$2 tmpl="" d f files="" line raw prog base script rc=1 w i v text
+  local t=$1 who=$2 tmpl="" d f files="" line raw prog base script rc=1 w i v text mod
   local -a tok=()
   UR_WHY=""
   case $t in *@*.*) tmpl=${t%%@*}@.${t##*.} ;; esac
@@ -2806,9 +2806,13 @@ unit_restarts() {  # <service> <who>
         sh | bash | dash | zsh | python | python[0-9]* | perl | perl[0-9]* | ruby | node)
           # Its script is its first argument that isn't an option. With -c,
           # the command follows, and each simple command in it is read.
-          for w in "${tok[@]:$i}"; do
-            case $w in
-              -c)
+          # Python's -m takes a module, which isn't followed to a file (#393),
+          # and -X and -W take a value that isn't the script.
+          while [ "$i" -lt "${#tok[@]}" ]; do
+            w=${tok[$i]}
+            i=$((i + 1))
+            case $base:$w in
+              *:-c)
                 v=0
                 inline_verdict "${raw#* -c }" || v=$?
                 case $v in
@@ -2816,7 +2820,13 @@ unit_restarts() {  # <service> <who>
                   2) UR_WHY="$who runs $IV_WHY" rc=2 ;;
                 esac
                 break ;;
-              -*) ;;
+              python*:-m*)
+                mod=${w#-m}
+                if [ -z "$mod" ]; then mod=${tok[$i]:-}; fi
+                UR_WHY="$who runs $base -m $mod, a Python module the scan doesn't follow to a file" rc=2
+                break ;;
+              python*:-[XW]) i=$((i + 1)) ;;
+              *:-*) ;;
               *) script=$w && break ;;
             esac
           done ;;
