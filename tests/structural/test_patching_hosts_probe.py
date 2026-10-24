@@ -1741,6 +1741,118 @@ def test_a_python_module_is_named_as_one_and_an_options_value_isnt_the_script(
         assert f["exception_what"] == "not-restarter:store-renew.service"
 
 
+AV = "/home/exedev/address-validator"
+SWEEP = f"{AV[1:]}/infra/sweep_cache.py"
+OLD_SWEEP = "srv/old/infra/sweep_cache.py"
+
+
+@pytest.mark.parametrize(
+    "wd, dropin, files, finds, said",
+    [
+        # #418: address-validator's sweep, read where systemd runs it.
+        (f"WorkingDirectory={AV}", None, {SWEEP: RESTARTS}, True, ""),
+        (f"WorkingDirectory={AV}", None, {SWEEP: NOTIFIES}, False, ""),
+        (
+            f"WorkingDirectory={AV}",
+            None,
+            {},
+            False,
+            f"{AV}/infra/sweep_cache.py, which couldn't be read",
+        ),
+        # A leading - only says a missing directory is ignored.
+        (f"WorkingDirectory=-{AV}", None, {SWEEP: RESTARTS}, True, ""),
+        # The last assignment wins, a drop-in's over the unit's.
+        (
+            "WorkingDirectory=/srv/old",
+            f"WorkingDirectory={AV}",
+            {SWEEP: NOTIFIES, OLD_SWEEP: RESTARTS},
+            False,
+            "",
+        ),
+        (
+            f"WorkingDirectory={AV}",
+            "WorkingDirectory=/srv/old",
+            {SWEEP: NOTIFIES, OLD_SWEEP: RESTARTS},
+            True,
+            "",
+        ),
+        # What can't be resolved stays unread, saying why.
+        (
+            "WorkingDirectory=~",
+            None,
+            {SWEEP: NOTIFIES},
+            False,
+            "infra/sweep_cache.py, a path relative to its working directory ~",
+        ),
+        (
+            "WorkingDirectory=%h/address-validator",
+            None,
+            {SWEEP: NOTIFIES},
+            False,
+            "infra/sweep_cache.py, a path relative to its working directory "
+            "%h/address-validator, which has a specifier",
+        ),
+        (
+            "",
+            None,
+            {SWEEP: NOTIFIES},
+            False,
+            "infra/sweep_cache.py, a path relative to a working directory "
+            "the unit doesn't set",
+        ),
+    ],
+)
+def test_a_relative_script_is_read_against_the_units_working_directory(
+    host, wd, dropin, files, finds, said
+):
+    host.write("etc/systemd/system/cache-sweep.timer", "[Timer]\nOnCalendar=daily\n")
+    host.write(
+        "etc/systemd/system/cache-sweep.service",
+        f"[Service]\nType=oneshot\n{wd}\n"
+        f"ExecStart={AV}/.venv/bin/python infra/sweep_cache.py\n",
+    )
+    if dropin is not None:
+        host.write(
+            "etc/systemd/system/cache-sweep.service.d/wd.conf", f"[Service]\n{dropin}\n"
+        )
+    for rel, text in files.items():
+        host.write(rel, text)
+    out = host.run()
+    assert ("restarter:cache-sweep.service" in _ids(out)) is finds
+    assert ("restarters:unread:cache-sweep.service" in _ids(out)) is bool(said)
+    if said:
+        assert said in _finding(out, "restarters:unread:cache-sweep.service")["message"]
+
+
+def test_a_relative_onfailure_script_is_read_against_its_working_directory(host):
+    # #418: address-validator's notifier, a template every unit hooks.
+    host.write(
+        "etc/systemd/system/address-validator.service",
+        "[Unit]\nOnFailure=unit-failure@%n.service\n[Service]\nExecStart=/usr/bin/app\n",
+    )
+    host.write(
+        "etc/systemd/system/unit-failure@.service",
+        f"[Service]\nType=oneshot\nWorkingDirectory={AV}\n"
+        f"ExecStart={AV}/.venv/bin/python infra/notify_unit_failure.py %i\n",
+    )
+    host.write(f"{AV[1:]}/infra/notify_unit_failure.py", NOTIFIES)
+    out = host.run()
+    assert "restarter:address-validator.service" not in _ids(out)
+    assert not out["impact"]["restarters"]
+
+
+def test_a_module_stays_unread_whatever_its_working_directory(host):
+    host.write("etc/systemd/system/store-cert.timer", RENEW_TIMER)
+    host.write(
+        "etc/systemd/system/store-renew.service",
+        f"[Service]\nWorkingDirectory={AV}\nExecStart=/usr/bin/python3 -m infra.renew\n",
+    )
+    host.write(f"{AV[1:]}/infra/renew.py", NOTIFIES)
+    out = host.run()
+    f = _finding(out, "restarters:unread:store-renew.service")
+    assert "python3 -m infra.renew, a Python module" in f["message"]
+
+
 def test_an_exception_clears_a_timers_service_the_scan_cant_follow(host):
     host.write("etc/systemd/system/store-cert.timer", RENEW_TIMER)
     host.write("etc/systemd/system/store-renew.service", RENEW_UNIT)
