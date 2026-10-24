@@ -2053,6 +2053,85 @@ def test_a_not_restarter_exception_doesnt_cover_a_restart_the_scan_read(host):
     }
 
 
+NOTIFY_DOCSTRING = (
+    '"""Notify the operator that a unit failed.\n'
+    "\n"
+    "Set by systemd (>= 251) for an ``OnFailure=`` handler; absent on a manual\n"
+    "``systemctl start unit-failure@<unit>.service``:\n"
+    '"""\n'
+    "import urllib.request\n"
+)
+
+
+def test_a_script_match_is_named_and_can_be_declared_not_a_call(host):
+    # #419: address-validator's notifier matches only in its docstring. Every
+    # non-comment line still counts, since a missed restarter runs unstopped
+    # through a data-store step; the finding names the line.
+    _hooked(host, ("app.service", "worker.service"), "unit-failure@%n.service")
+    host.write(
+        "etc/systemd/system/unit-failure@.service",
+        f"[Service]\nType=oneshot\nWorkingDirectory={AV}\n"
+        f"ExecStart={AV}/.venv/bin/python infra/notify_unit_failure.py %i\n",
+    )
+    host.write(f"{AV[1:]}/infra/notify_unit_failure.py", NOTIFY_DOCSTRING)
+    out = host.run()
+    for u in ("app.service", "worker.service"):
+        f = _finding(out, f"restarter:{u}")
+        assert f["exception_what"] == "not-restarter:unit-failure@.service"
+        assert (
+            f"{AV}/infra/notify_unit_failure.py, which matches at line 4: "
+            "``systemctl start unit-failure@<unit>.service``:"
+        ) in f["message"]
+        assert "its OnFailure= target starts or restarts one" in f["message"]
+        assert (
+            "if the line it matched isn't a call, declare exception "
+            "not-restarter:unit-failure@.service <review-by> <reason>"
+        ) in f["message"]
+    host.knob(
+        "posture scheduled\n"
+        "exception not-restarter:unit-failure@.service 2099-01-01 a docstring\n"
+    )
+    out = host.run()
+    assert not [i for i in _ids(out) if i.startswith("restarter")]
+    assert "restarter:app.service" in _ids(out, "excepted")
+    assert not out["impact"]["restarters"]
+
+
+def test_a_timers_script_match_is_named_and_can_be_declared_not_a_call(host):
+    host.write("etc/systemd/system/store-cert.timer", RENEW_TIMER)
+    host.write("etc/systemd/system/store-renew.service", RENEW_UNIT)
+    host.write(
+        "usr/local/bin/store-renew.sh",
+        "#!/bin/sh\n# systemctl restart store, if the cert changed\n"
+        "  if changed; then systemctl restart store; fi\n",
+    )
+    out = host.run()
+    f = _finding(out, "restarter:store-renew.service")
+    assert f["exception_what"] == "not-restarter:store-renew.service"
+    assert (
+        "what its timer runs starts or restarts one: store-renew.service runs "
+        "/usr/local/bin/store-renew.sh, which matches at line 3: "
+        "if changed; then systemctl restart store; fi"
+    ) in f["message"]
+    host.knob(
+        "posture scheduled\n"
+        "exception not-restarter:store-renew.service 2099-01-01 never changes\n"
+    )
+    out = host.run()
+    assert "restarter:store-renew.service" in _ids(out, "excepted")
+    assert not out["impact"]["restarters"]
+
+
+def test_a_restart_on_a_targets_exec_line_takes_no_exception(host):
+    _hooked(host, ("app.service",), "store-fix.service")
+    host.write(
+        "etc/systemd/system/store-fix.service",
+        "[Service]\nExecStart=/bin/systemctl restart store.service\n",
+    )
+    out = host.run()
+    assert _finding(out, "restarter:app.service")["exception_what"] is None
+
+
 def test_a_readable_setup_script_holding_a_key_is_named_by_pattern_and_line_only(host):
     host.write(
         "exe.dev/setup",
