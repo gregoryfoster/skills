@@ -213,14 +213,17 @@ comments before the harvest, read the way `_harvest.select` reads them.
 - **The other 38 were aligned** to the source paragraphs sharing the most
   words with them (Jaccard ≥ 0.2, `mine.py align`). Each alignment to a
   paragraph that doesn't name its target was checked by hand: 19 were
-  spurious, mostly a heading matched to a heading. A hand-check of the Noul's
-  top-ranked "negatives" found 3 more real harvests.
+  spurious, mostly a heading matched to a heading. `align` proposes every
+  row in `labels.tsv` but 3. Two are real harvests found by hand-checking
+  the Noul's top-ranked "negatives": #312's slug paragraph → #308 and #101's
+  fix-version table → #85. The third is a spurious row on #101's hand-off
+  brief, a comment `_harvest.select` no longer reads.
 - **What's left:** 80 pairs whose paragraph names the target (a `For #N`
   scope or a linked `#N`), 36 that don't, and 10 harvests rewritten past
   word overlap, which have no paragraph.
 
-The set is the 36 unnamed pairs, each paragraph against every child open at
-its event. The suite pins three results #436 built on:
+The set is the 36 unnamed pairs, on 35 paragraphs (#312's slug paragraph went
+to both #307 and #308), each paragraph against every child open at its event. The suite pins three results #436 built on:
 - **The target's rank among those children.** The Noul put it first for 23
   of 36 and in the top 3 for 28. Plain matching (shared backticked spans,
   then shared words) did 6 and 20; random order expects 6.7 and 20.1.
