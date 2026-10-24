@@ -2709,23 +2709,31 @@ inline_verdict() {  # <command>
 # Whether a script restarts anything: 0 when it can, 1 when it's read and
 # can't, 2 when it can't be read, with SV_WHY saying why. One level deep: a
 # script it calls in turn isn't followed, so a restart two scripts down is
-# missed (CR 208).
-script_verdict() {  # <path>
+# missed (CR 208). A relative path is read where systemd runs it, against
+# the unit's WorkingDirectory= (#418); one it can't place stays unread.
+script_verdict() {  # <path> [<working directory>]
+  local p=$1 wd=${2-} rc=0
   SV_WHY=""
   case $1 in
     *%*) SV_WHY="$1, a path with a specifier" && return 2 ;;
     /*) ;;
-    *) SV_WHY="$1, a path relative to its working directory" && return 2 ;;
+    *)
+      case $wd in
+        "") SV_WHY="$1, a path relative to a working directory the unit doesn't set" && return 2 ;;
+        *%*) SV_WHY="$1, a path relative to its working directory $wd, which has a specifier" && return 2 ;;
+        /*) p=${wd%/}/${1#./} ;;
+        "~"*) SV_WHY="$1, a path relative to its working directory $wd, in a home directory the scan doesn't resolve" && return 2 ;;
+        *) SV_WHY="$1, a path relative to its working directory $wd, which the scan doesn't resolve" && return 2 ;;
+      esac ;;
   esac
-  local rc=0
   # grep -I reads a binary as no match (1), and exits 2 on an error.
-  as_reader grep -qI '' "$P_ROOT$1" 2>/dev/null || rc=$?
+  as_reader grep -qI '' "$P_ROOT$p" 2>/dev/null || rc=$?
   case $rc in
     0) ;;
-    1) SV_WHY="$1, a binary" && return 2 ;;
-    *) SV_WHY="$1, which couldn't be read" && return 2 ;;
+    1) SV_WHY="$p, a binary" && return 2 ;;
+    *) SV_WHY="$p, which couldn't be read" && return 2 ;;
   esac
-  if as_reader grep -v '^[[:space:]]*#' "$P_ROOT$1" 2>/dev/null | grep -qE "$RESTART_RE"; then return 0; fi
+  if as_reader grep -v '^[[:space:]]*#' "$P_ROOT$p" 2>/dev/null | grep -qE "$RESTART_RE"; then return 0; fi
   return 1
 }
 
@@ -2755,8 +2763,8 @@ onfailure_restarts() {  # <target unit>
 # it can restart, 1 when it can't, 2 when that couldn't be read, with UR_WHY
 # saying what, after WHO.
 unit_restarts() {  # <service> <who>
-  local t=$1 who=$2 tmpl="" d f files="" line raw prog base script rc=1 w i v text mod
-  local -a tok=()
+  local t=$1 who=$2 tmpl="" d f files="" line raw prog base script rc=1 w i v text mod wd=""
+  local -a tok=() texts=()
   UR_WHY=""
   case $t in *@*.*) tmpl=${t%%@*}@.${t##*.} ;; esac
   for d in etc/systemd/system run/systemd/system usr/local/lib/systemd/system usr/lib/systemd/system lib/systemd/system; do
@@ -2773,6 +2781,9 @@ unit_restarts() {  # <service> <who>
       [ -f "$f" ] && files="$files"$'\n'"$f"
     done
   done
+  # Each file is read once, before any Exec line is: its WorkingDirectory=
+  # is the last assignment across them all, a drop-in's over the unit's, and
+  # a leading - only lets the directory be missing (#418).
   while IFS= read -r f; do
     capture text as_reader cat -- "$f"
     if [ "$CAP_RC" -ne 0 ]; then
@@ -2780,6 +2791,16 @@ unit_restarts() {  # <service> <who>
       rc=2
       continue
     fi
+    texts+=("$text")
+    while IFS= read -r line || [ -n "$line" ]; do
+      case $line in
+        [[:space:]]*WorkingDirectory=* | WorkingDirectory=*)
+          read -r wd <<<"${line#*=}" || true
+          wd=${wd#-} ;;
+      esac
+    done <<<"$text"
+  done <<<"$files"
+  for text in ${texts[@]+"${texts[@]}"}; do
     while IFS= read -r line || [ -n "$line" ]; do
       case $line in [[:space:]]*Exec*=* | Exec*=*) ;; *) continue ;; esac
       if [[ $line =~ $RESTART_RE ]]; then return 0; fi
@@ -2834,7 +2855,7 @@ unit_restarts() {  # <service> <who>
       esac
       if [ -n "$script" ]; then
         v=0
-        script_verdict "$script" || v=$?
+        script_verdict "$script" "$wd" || v=$?
         case $v in
           0) return 0 ;;
           2) UR_WHY="$who runs $SV_WHY" rc=2 ;;
@@ -2846,7 +2867,7 @@ unit_restarts() {  # <service> <who>
         if [ -f "$P_ROOT$w" ] && script_verdict "$w"; then return 0; fi
       done
     done <<<"$text"
-  done <<<"$files"
+  done
   return $rc
 }
 
