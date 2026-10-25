@@ -32,10 +32,6 @@ SCRIPT = (
 SESSION = "cse_016cbbv9tDawyfSFk6xgv8NJ"
 URL = "https://github.com/o/r/issues/1#issuecomment-"
 
-pytestmark = pytest.mark.skipif(
-    shutil.which("jq") is None, reason="the fake gh applies --jq with jq"
-)
-
 FAKE_GH = r"""#!/usr/bin/env bash
 set -euo pipefail
 path=$2 filter=""
@@ -68,6 +64,10 @@ def _comment(n: int, login: str, body: str) -> dict:
 
 @pytest.fixture
 def fake(tmp_path: Path):
+    # Only the tests that reach gh need jq; the bad-argument ones exit first
+    # (CR 519).
+    if shutil.which("jq") is None:
+        pytest.skip("the fake gh applies --jq with jq")
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     gh = bin_dir / "gh"
