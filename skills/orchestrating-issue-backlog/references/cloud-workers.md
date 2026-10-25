@@ -174,8 +174,15 @@ can only write to GitHub.**
 
   ```bash
   bash "<await-report.sh>" --repo <O/R> --issue <N> --session <id> \
-    --author <login> --branch <branch> --since <launch time>
+    --author <login> --branch <branch> --since <round start>
   ```
+  - `<round start>` is when **this round** began: the launch for round 1,
+    the `-p` send for each round after. Record it on the tracking issue with
+    the send. A later round's wait given the launch time ends at once on the
+    previous round's report, the same session's marker (CR 513). Leaving
+    `--since` out means "now", which is right only for a wait started at the
+    send; one re-armed after a restart or a compaction would miss a report
+    already posted.
   - It exits on the first report carrying this session's marker from the
     expected author. Every status ends it.
   - With `--branch`, each push counts as activity; `--progress` prints it.
