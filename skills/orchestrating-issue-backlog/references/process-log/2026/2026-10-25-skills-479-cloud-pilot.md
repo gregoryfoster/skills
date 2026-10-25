@@ -57,8 +57,9 @@ Linux-only tests that macOS skips. The briefed baseline was the measured
 bundle count plus one test, named, which a clone passes. The worker measured
 it exactly, and every later count reconciled by arithmetic: run 1 → run 2 was
 −4 failed, −3 passed, +7 skipped, and the 7 were the root fix's 4 failures and
-3 vacuous passes. The root skips also exposed four tests with no root skip of
-their own, and the first two smoke runs both failed on them (b6034b39).
+3 vacuous passes. Running as root also exposed four tests with no root skip of
+their own: the first smoke run failed on them, and b6034b39 added their skips
+before the second.
 
 ### 5. A new way to silence a finding has to be tried against a true positive
 
