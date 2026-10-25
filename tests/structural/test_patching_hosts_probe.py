@@ -2203,6 +2203,26 @@ def test_a_script_match_names_every_line_it_matched(host, tail, said):
     assert "if none of the lines it matched is a call" in f["message"]
 
 
+def test_a_match_in_each_of_two_scripts_is_named(host):
+    # The first script's docstring doesn't hide the second script's call.
+    _hooked(host, ("app.service",), "unit-failure@%n.service")
+    host.write(
+        "etc/systemd/system/unit-failure@.service",
+        f"[Service]\nType=oneshot\nWorkingDirectory={AV}\n"
+        f"ExecStart={AV}/.venv/bin/python infra/notify_unit_failure.py %i\n"
+        "ExecStartPost=/bin/sh /opt/app/fix.sh\n",
+    )
+    host.write(f"{AV[1:]}/infra/notify_unit_failure.py", NOTIFY_DOCSTRING)
+    host.write("opt/app/fix.sh", RESTARTS)
+    out = host.run()
+    f = _finding(out, "restarter:app.service")
+    assert "notify_unit_failure.py, which matches at line 4" in f["message"]
+    assert (
+        ", and /opt/app/fix.sh, which matches at line 2: systemctl restart app.service"
+        in f["message"]
+    )
+
+
 def test_a_restart_on_a_targets_exec_line_takes_no_exception(host):
     _hooked(host, ("app.service",), "store-fix.service")
     host.write(
