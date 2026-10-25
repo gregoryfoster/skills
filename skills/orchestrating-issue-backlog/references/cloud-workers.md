@@ -117,10 +117,11 @@ Worker steps 4–11 and the report-back slot, unchanged in substance. Steps 1–
 become a preflight, and the brief names concrete values for each:
 
 1. Read `AGENTS.md`.
-2. Confirm `CLAUDE_CODE_REMOTE` is `true`, `git remote -v` shows an `origin`,
-   and a `gh api` read of the repo works. If any of these fails, request
-   `add_repo`, work in the clone it creates, run the setup hook there, and say
-   so in the report.
+2. Confirm `CLAUDE_CODE_REMOTE` is `true`. If it isn't, this isn't a cloud
+   session: stop and report `blocked`. Then confirm `git remote -v` shows an
+   `origin` and a `gh api` read of the repo works. If either fails, the
+   session is on an uploaded bundle: request `add_repo`, work in the clone it
+   creates, run the setup hook there, and say so in the report.
 3. `git fetch` the base, confirm its SHA, create the briefed branch at it, and
    push it. The session's system prompt names a `claude/…` branch of its own;
    the brief's branch wins, and the push goes through.
