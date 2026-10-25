@@ -78,8 +78,9 @@ brief: here, a newer shellcheck than the local one, which became #481.
   differs from a developer's. Record it as a verification-mode asymmetry
   (Step 8): the local gate after the merge is the first run of those tests.
   The reverse holds too: Linux-only tests run in the cloud and skip on macOS.
-  The pilot's counts reconciled exactly (7743 collected on both sides; 35 root
-  skips; 5 version failures).
+  The pilot's counts reconciled exactly: 7743 collected on both sides, a net
+  35 more skips in the cloud (its root skips, less the Linux-only tests macOS
+  skips), and 5 failures from a newer shellcheck.
 - **`gh issue` and `gh pr` fail**, because the GitHub proxy rejects GraphQL.
   `gh api` (REST) works.
 - **The proxy lets a push update any branch**, `main` included, and it pushes

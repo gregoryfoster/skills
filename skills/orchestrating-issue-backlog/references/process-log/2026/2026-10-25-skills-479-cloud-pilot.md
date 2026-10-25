@@ -52,8 +52,8 @@ the corrections half is for.
 
 ### 4. A delta named by cause reconciled across root and macOS
 
-The cloud runs as root, so 35 tests skip there that run on macOS, and it runs
-Linux-only tests that macOS skips. The briefed baseline was the measured
+The cloud runs as root, so its root skips fire, and it runs Linux-only tests
+that macOS skips: a net 35 more skips in the cloud. The briefed baseline was the measured
 bundle count plus one test, named, which a clone passes. The worker measured
 it exactly, and every later count reconciled by arithmetic: run 1 → run 2 was
 −4 failed, −3 passed, +7 skipped, and the 7 were the root fix's 4 failures and
