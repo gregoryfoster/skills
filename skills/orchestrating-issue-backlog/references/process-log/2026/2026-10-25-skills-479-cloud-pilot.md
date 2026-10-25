@@ -91,3 +91,15 @@ but only the check showed that.
   was set.
 - `AGENTS.md` loaded on its own in all three sessions.
 - The suite took 13 minutes on 4 vCPU.
+
+## #479's open questions, answered
+
+| Question | Answer |
+|---|---|
+| Does `--cloud` push to the briefed branch? | Yes. The session's system prompt named a `claude/…` branch of its own; the briefed `pilot/479-restarter-scan` won, and the proxy allowed the push |
+| Does the `.claude/skills → ../skills` symlink resolve? | Yes, in every session |
+| Does the pre-commit chain run once the hook has made `.venv`? | Yes. Over known failures, though, it can't pass (lesson 3) |
+| Does the cloud count match macOS? | Not as a number, but by arithmetic: same collected count, a net 35 more skips in the cloud, 5 version failures (lesson 4) |
+| How do you list sessions? | `claude --cloud` prints the session ID and a `--teleport` line, and the worker reports `$CLAUDE_CODE_REMOTE_SESSION_ID`; claude.ai/code lists them |
+| How long is the uncached startup install? | About 1 s (uv) to 7 s (pip) for the SessionStart hook. The setup script is cached once it finishes in about five minutes |
+| Not asked, found | Creating a session needs a TTY and steering it doesn't (lesson 1); a CLI launch may bundle (lesson 2) |
