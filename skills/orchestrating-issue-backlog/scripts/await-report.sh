@@ -106,12 +106,15 @@ fi
 
 # gh's --jq reads these through env, so no value is spliced into the filter.
 export AR_AUTHOR=$AUTHOR AR_SESSION=$SESSION
+# The marker must open the body (CR 512). The orchestrator posts as the same
+# user as the worker, so the author filter can't tell them apart, and a review
+# quoting the worker's last marker would otherwise end the wait that follows.
 # The $ are jq's, not the shell's: this filter is passed to gh literally.
 # shellcheck disable=SC2016
 FILTER='[.[] | select(.user.login == env.AR_AUTHOR)
-  | select(.body | test("<!-- worker-report session=" + env.AR_SESSION + "[ >]"))][0]
+  | select(.body | test("^\\s*<!-- worker-report session=" + env.AR_SESSION + "[ >]"))][0]
   | if . == null then empty else
-      (.body | capture("<!-- worker-report session=" + env.AR_SESSION
+      (.body | capture("^\\s*<!-- worker-report session=" + env.AR_SESSION
         + "(?<rest>[^>]*)-->").rest) as $m
       | ($m | capture("status=(?<s>[A-Za-z]+)").s // "unknown") as $s
       | ($m | capture("sha=(?<h>[0-9a-f]+)").h // "") as $h

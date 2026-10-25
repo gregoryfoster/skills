@@ -137,6 +137,31 @@ def test_the_first_matching_report_wins_over_later_ones(fake):
     assert r.stdout == f"report\tblocked\t{URL}8\taaaa\n"
 
 
+@pytest.mark.parametrize(
+    "body",
+    [
+        f"## Orchestrator review\n\nYour last report (`{_marker('done').splitlines()[0]}`) "
+        "missed two cases.\n",
+        f"## Orchestrator review\n\n```\n{_marker('done').splitlines()[0]}\n```\n",
+    ],
+    ids=["inline-code", "fenced"],
+)
+def test_a_marker_quoted_inside_a_comment_is_not_a_report(fake, body):
+    # CR 512: the orchestrator posts as the same user as the worker, so the
+    # author filter can't tell them apart. A review quoting the worker's last
+    # marker ended the very wait that followed it. Only a marker that opens
+    # the body is a report.
+    r = _run(fake, "--silence", "0", comments=[_comment(7, "me", body)])
+    assert r.returncode == 3, r.stdout
+    assert r.stdout.startswith("silent\t")
+
+
+def test_a_marker_after_leading_whitespace_still_opens_the_body(fake):
+    r = _run(fake, comments=[_comment(7, "me", "\n  " + _marker("done"))])
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.startswith("report\tdone\t")
+
+
 def test_a_comment_without_a_marker_is_not_a_report(fake):
     r = _run(
         fake,
