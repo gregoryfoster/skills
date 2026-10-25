@@ -2084,9 +2084,12 @@ def test_a_script_match_is_named_and_can_be_declared_not_a_call(host):
         ) in f["message"]
         assert "its OnFailure= target starts or restarts one" in f["message"]
         assert (
-            "if the line it matched isn't a call, declare exception "
+            "if none of the lines it matched is a call, declare exception "
             "not-restarter:unit-failure@.service <review-by> <reason>"
         ) in f["message"]
+        # Said once: "its OnFailure= target starts or restarts one:
+        # unit-failure@%n.service runs ..." (review of cbb59c0).
+        assert f["message"].count("its OnFailure= target") == 1
     host.knob(
         "posture scheduled\n"
         "exception not-restarter:unit-failure@.service 2099-01-01 a docstring\n"
@@ -2120,6 +2123,84 @@ def test_a_timers_script_match_is_named_and_can_be_declared_not_a_call(host):
     out = host.run()
     assert "restarter:store-renew.service" in _ids(out, "excepted")
     assert not out["impact"]["restarters"]
+
+
+def test_an_exec_line_restart_wins_over_an_earlier_script_match(host):
+    # Review of cbb59c0: the first Exec line's script matches only in its
+    # docstring, and a later Exec line restarts. That restart was read, so
+    # no exception may cover it.
+    _hooked(host, ("app.service",), "unit-failure@%n.service")
+    host.write(
+        "etc/systemd/system/unit-failure@.service",
+        f"[Service]\nType=oneshot\nWorkingDirectory={AV}\n"
+        f"ExecStart={AV}/.venv/bin/python infra/notify_unit_failure.py %i\n"
+        "ExecStartPost=/bin/systemctl restart store.service\n",
+    )
+    host.write(f"{AV[1:]}/infra/notify_unit_failure.py", NOTIFY_DOCSTRING)
+    host.knob(
+        "posture scheduled\n"
+        "exception not-restarter:unit-failure@.service 2099-01-01 a docstring\n"
+    )
+    out = host.run()
+    f = _finding(out, "restarter:app.service")
+    assert f["exception_what"] is None
+    assert "not-restarter" not in f["message"]
+    assert "app.service" in {r["unit"] for r in out["impact"]["restarters"]}
+
+
+def test_a_timers_service_exec_line_restart_wins_over_its_script_match(host):
+    # The timer-service twin, in a drop-in, and with start, which the unit
+    # files' own restart grep doesn't take.
+    host.write("etc/systemd/system/store-cert.timer", RENEW_TIMER)
+    host.write("etc/systemd/system/store-renew.service", RENEW_UNIT)
+    host.write(
+        "etc/systemd/system/store-renew.service.d/after.conf",
+        "[Service]\nExecStartPost=/bin/systemctl start store.service\n",
+    )
+    host.write(
+        "usr/local/bin/store-renew.sh",
+        "#!/bin/sh\necho 'run systemctl restart store by hand'\n",
+    )
+    host.knob(
+        "posture scheduled\n"
+        "exception not-restarter:store-renew.service 2099-01-01 a usage line\n"
+    )
+    out = host.run()
+    f = _finding(out, "restarter:store-renew.service")
+    assert f["exception_what"] is None
+    assert "not-restarter" not in f["message"]
+
+
+@pytest.mark.parametrize(
+    "tail, said",
+    [
+        # Review of cbb59c0: the docstring at line 4 and the call at line 8
+        # are both named, so declaring it can't silence the call unread.
+        (
+            'import subprocess\nsubprocess.run(["systemctl", "restart", "store.service"])\n',
+            "notify_unit_failure.py, which matches at lines 4 and 8 "
+            "(line 4: ``systemctl start unit-failure@<unit>.service``:; "
+            'line 8: subprocess.run(["systemctl", "restart", "store.service"]))',
+        ),
+        # Capped: three named, and the count of the rest.
+        (
+            "".join(f"# {i}\nprint('systemctl restart x{i}')\n" for i in range(4)),
+            "which matches at lines 4, 8, 10 and 2 more (line 4: ",
+        ),
+    ],
+)
+def test_a_script_match_names_every_line_it_matched(host, tail, said):
+    _hooked(host, ("app.service",), "unit-failure@%n.service")
+    host.write(
+        "etc/systemd/system/unit-failure@.service",
+        f"[Service]\nType=oneshot\nWorkingDirectory={AV}\n"
+        f"ExecStart={AV}/.venv/bin/python infra/notify_unit_failure.py %i\n",
+    )
+    host.write(f"{AV[1:]}/infra/notify_unit_failure.py", NOTIFY_DOCSTRING + tail)
+    out = host.run()
+    f = _finding(out, "restarter:app.service")
+    assert said in f["message"]
+    assert "if none of the lines it matched is a call" in f["message"]
 
 
 def test_a_restart_on_a_targets_exec_line_takes_no_exception(host):
