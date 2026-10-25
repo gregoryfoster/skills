@@ -70,7 +70,7 @@ Skip Q0 entirely if Step 1–2 flagged neither a candidate pair nor a partially-
 
 **Q4 — Parallelism preference?**
 > Maximize parallel agents, sequential waves, or hybrid (parallel within batches, gates between)?
-> Follow up: worktrees for branch isolation? (almost always yes)
+> Follow up: local worktrees, or [cloud sessions](references/cloud-workers.md)?
 
 **Q5 — Concurrency ceiling: worktree provisioning *and* shared backing services?**
 
@@ -225,7 +225,7 @@ The branch strategy, the orchestrator and worker protocols, Branch Hygiene Rules
 - **One question at a time** — stacking questions gets partial answers
 - **Approval gates are real** — do not proceed past a section without explicit user sign-off
 - **Blast radius ≠ priority** — a high-blast issue may score high but still wait for lower-priority isolates to merge first. Three variants: **score determines what gets done, ordering constraints determine when** — a zero-conflict issue is the most *schedulable* thing in a backlog, so it fills whichever slot would otherwise idle rather than earning Batch A by score (2026-08-11 observo); a **trivial issue can be a hard gate** when its guard must exist before a later issue widens the surface it guards (2026-08-07); and an issue whose deliverable is a **measurement of the final state** sequences last on epistemics, not contention — run early, it measures a state that won't exist at merge time (2026-08-11 usa-wa)
-- **Worktrees always — and verify the host project can provision them** — `isolation: "worktree"` for every worker; the batch branch is the merge *target*, not the base, so brief each worker to merge it and reconcile each explicitly (Rule 3). The parameter does NOT guarantee filesystem isolation: cap per-batch agents at the provisioning ceiling (Rule 5) and detect fall-through at runtime (Rule 6).
+- **Local workers: worktrees always — and verify the host project can provision them** — `isolation: "worktree"` for every worker; the batch branch is the merge *target*, not the base, so brief each worker to merge it and reconcile each explicitly (Rule 3). The parameter does NOT guarantee filesystem isolation: cap per-batch agents at the provisioning ceiling (Rule 5) and detect fall-through at runtime (Rule 6).
 - **Deferred is a decision** — explicitly name what is out of scope and why; don't silently omit
 - **Orchestrator launches all unblocked batches** — not just the next one in sequence; if two independent batches become unblocked simultaneously, launch both
 

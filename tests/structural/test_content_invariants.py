@@ -2243,12 +2243,16 @@ def _skills_with_resolution_block():
 #     are absolute from the start (see init-project-fastapi / init-socraticode).
 #   - managing-skills: runs during bootstrap, before the .claude/skills symlinks
 #     it installs exist, so it uses full vendor paths.
+#   - orchestrating-issue-backlog: its one script, await-report.sh (#479), runs
+#     only from references/cloud-workers.md, which carries the standard block
+#     itself. SKILL.md runs no script and sits at its 9,200-token ratchet.
 # test_resolution_block_roster pins this set so a NEW skill that ships scripts/
 # and forgets a block fails loudly instead of silently escaping coverage.
 SKILLS_EXEMPT_FROM_RESOLUTION_BLOCK = {
     "init-project-fastapi",
     "init-socraticode",
     "managing-skills",
+    "orchestrating-issue-backlog",
 }
 
 

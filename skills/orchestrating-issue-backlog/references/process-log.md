@@ -52,6 +52,7 @@ Step and Q numbers refer to `SKILL.md`; Rule and Worker-step numbers to
 - Branch strategy and Orchestrator steps 10–11 ([`execution.md`](execution.md)) the post-merge tail as planned work with an owner — 2026-08-13 usa-wa, 2026-08-13/14 usa-wa #218 execution, 2026-09-16/21 wordpress execution; the merge comment and the closing disposition — 2026-09-16/21 wordpress execution
 - Worker step 5 ([`execution.md`](execution.md)) a measured deliverable names its instrument's version — 2026-08-27 skills selection surface (the interpreter), 2026-09-16/21 wordpress execution
 - Step 10 ("Adding an entry", below) a private consumer's entry names no identifier from it — 2026-09-16/21 wordpress execution
+- Q4's cloud-session worker mode ([`cloud-workers.md`](cloud-workers.md)): the launch as a person's step, post-then-point coordination with `await-report.sh`, the preflight against a bundled launch, the suite hook skipped over known failures, the per-pair red/green check, and "try to silence a true positive" as a review probe — 2026-10-24/25 skills #479 pilot
 
 ---
 ## Adding an entry

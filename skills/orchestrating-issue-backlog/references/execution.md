@@ -9,6 +9,10 @@ Demoted from the body in the #285 curation. A planning run cites Rules 1 and 6 a
 Step 1–2 and Rule 5 at Step 7, and needs the whole protocol from Step 8; a batch
 launch needs all of it.
 
+**Where Q4 chose cloud sessions for a batch**, its workers follow
+[`cloud-workers.md`](cloud-workers.md) instead for Worker steps 1–3, the launch,
+coordination and Orchestrator step 5. Everything else here still applies.
+
 ## Agent Roles
 
 ### Branch strategy
