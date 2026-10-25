@@ -1700,6 +1700,159 @@ def test_a_unit_found_two_ways_is_one_restarter(host):
     assert units.count("store-renew.service") == 1
 
 
+@pytest.mark.parametrize(
+    "exec_line, unread, said",
+    [
+        # #393: usa-wa's backup. -m takes a module, not a script path; one
+        # isn't followed to a file, so it stays unread, named as a module.
+        (
+            "ExecStart=/home/exedev/usa-wa/.venv/bin/python -m usa_wa_api.backup.run",
+            True,
+            "python -m usa_wa_api.backup.run, a Python module",
+        ),
+        (
+            "ExecStart=/usr/bin/python3 -mapp.backup",
+            True,
+            "python3 -m app.backup, a Python module",
+        ),
+        # -X and -W take a value, which isn't the script: the script is read,
+        # and only notifies.
+        ("ExecStart=/usr/bin/python3 -X dev -W ignore /opt/app/r.py", False, ""),
+        ("ExecStart=/usr/bin/python3 -Xdev /opt/app/r.py", False, ""),
+    ],
+)
+def test_a_python_module_is_named_as_one_and_an_options_value_isnt_the_script(
+    host, exec_line, unread, said
+):
+    host.write("etc/systemd/system/store-cert.timer", RENEW_TIMER)
+    host.write(
+        "etc/systemd/system/store-renew.service",
+        f"[Service]\nType=oneshot\n{exec_line}\n",
+    )
+    host.write("opt/app/r.py", "import urllib.request\nurllib.request.urlopen('x')\n")
+    out = host.run()
+    assert "restarter:store-renew.service" not in _ids(out)
+    assert ("restarters:unread:store-renew.service" in _ids(out)) is unread
+    assert out["impact"]["restarters_complete"] is (not unread)
+    if unread:
+        f = _finding(out, "restarters:unread:store-renew.service")
+        assert said in f["message"]
+        assert "relative to its working directory" not in f["message"]
+        assert f["exception_what"] == "not-restarter:store-renew.service"
+
+
+AV = "/home/exedev/address-validator"
+SWEEP = f"{AV[1:]}/infra/sweep_cache.py"
+OLD_SWEEP = "srv/old/infra/sweep_cache.py"
+
+
+@pytest.mark.parametrize(
+    "wd, dropin, files, finds, said",
+    [
+        # #418: address-validator's sweep, read where systemd runs it.
+        (f"WorkingDirectory={AV}", None, {SWEEP: RESTARTS}, True, ""),
+        (f"WorkingDirectory={AV}", None, {SWEEP: NOTIFIES}, False, ""),
+        (
+            f"WorkingDirectory={AV}",
+            None,
+            {},
+            False,
+            f"{AV}/infra/sweep_cache.py, which couldn't be read",
+        ),
+        # A leading - only says a missing directory is ignored.
+        (f"WorkingDirectory=-{AV}", None, {SWEEP: RESTARTS}, True, ""),
+        # The last assignment wins, a drop-in's over the unit's.
+        (
+            "WorkingDirectory=/srv/old",
+            f"WorkingDirectory={AV}",
+            {SWEEP: NOTIFIES, OLD_SWEEP: RESTARTS},
+            False,
+            "",
+        ),
+        (
+            f"WorkingDirectory={AV}",
+            "WorkingDirectory=/srv/old",
+            {SWEEP: NOTIFIES, OLD_SWEEP: RESTARTS},
+            True,
+            "",
+        ),
+        # What can't be resolved stays unread, saying why.
+        (
+            "WorkingDirectory=~",
+            None,
+            {SWEEP: NOTIFIES},
+            False,
+            "infra/sweep_cache.py, a path relative to its working directory ~",
+        ),
+        (
+            "WorkingDirectory=%h/address-validator",
+            None,
+            {SWEEP: NOTIFIES},
+            False,
+            "infra/sweep_cache.py, a path relative to its working directory "
+            "%h/address-validator, which has a specifier",
+        ),
+        (
+            "",
+            None,
+            {SWEEP: NOTIFIES},
+            False,
+            "infra/sweep_cache.py, a path relative to a working directory "
+            "the unit doesn't set",
+        ),
+    ],
+)
+def test_a_relative_script_is_read_against_the_units_working_directory(
+    host, wd, dropin, files, finds, said
+):
+    host.write("etc/systemd/system/cache-sweep.timer", "[Timer]\nOnCalendar=daily\n")
+    host.write(
+        "etc/systemd/system/cache-sweep.service",
+        f"[Service]\nType=oneshot\n{wd}\n"
+        f"ExecStart={AV}/.venv/bin/python infra/sweep_cache.py\n",
+    )
+    if dropin is not None:
+        host.write(
+            "etc/systemd/system/cache-sweep.service.d/wd.conf", f"[Service]\n{dropin}\n"
+        )
+    for rel, text in files.items():
+        host.write(rel, text)
+    out = host.run()
+    assert ("restarter:cache-sweep.service" in _ids(out)) is finds
+    assert ("restarters:unread:cache-sweep.service" in _ids(out)) is bool(said)
+    if said:
+        assert said in _finding(out, "restarters:unread:cache-sweep.service")["message"]
+
+
+def test_a_relative_onfailure_script_is_read_against_its_working_directory(host):
+    # #418: address-validator's notifier, a template every unit hooks.
+    host.write(
+        "etc/systemd/system/address-validator.service",
+        "[Unit]\nOnFailure=unit-failure@%n.service\n[Service]\nExecStart=/usr/bin/app\n",
+    )
+    host.write(
+        "etc/systemd/system/unit-failure@.service",
+        f"[Service]\nType=oneshot\nWorkingDirectory={AV}\n"
+        f"ExecStart={AV}/.venv/bin/python infra/notify_unit_failure.py %i\n",
+    )
+    host.write(f"{AV[1:]}/infra/notify_unit_failure.py", NOTIFIES)
+    out = host.run()
+    assert "restarter:address-validator.service" not in _ids(out)
+    assert not out["impact"]["restarters"]
+
+
+def test_a_module_stays_unread_whatever_its_working_directory(host):
+    host.write("etc/systemd/system/store-cert.timer", RENEW_TIMER)
+    host.write(
+        "etc/systemd/system/store-renew.service",
+        f"[Service]\nWorkingDirectory={AV}\nExecStart=/usr/bin/python3 -m infra.renew\n",
+    )
+    host.write(f"{AV[1:]}/infra/renew.py", NOTIFIES)
+    out = host.run()
+    f = _finding(out, "restarters:unread:store-renew.service")
+    assert "python3 -m infra.renew, a Python module" in f["message"]
+
+
 def test_an_exception_clears_a_timers_service_the_scan_cant_follow(host):
     host.write("etc/systemd/system/store-cert.timer", RENEW_TIMER)
     host.write("etc/systemd/system/store-renew.service", RENEW_UNIT)
@@ -1737,7 +1890,7 @@ def test_an_exception_clears_a_timers_service_the_scan_cant_follow(host):
             "ExecStart=/usr/bin/python3 -m app.notify",
             {},
             True,
-            "a path relative to its working directory",
+            "python3 -m app.notify, a Python module",
         ),
         # env, then the interpreter's script.
         (
@@ -1811,6 +1964,273 @@ def test_an_onfailure_target_is_cleared_only_when_what_it_runs_was_read(
     assert ("restarter:app.service" in _ids(out)) is finds
     if finds:
         assert said in _finding(out, "restarter:app.service")["message"]
+
+
+UNIT_FAILURE = (
+    "[Service]\nType=oneshot\nExecStart=/usr/local/bin/notify-unit-failure %i\n"
+)
+
+
+def _hooked(host, units: tuple[str, ...], target: str) -> None:
+    for u in units:
+        host.write(
+            f"etc/systemd/system/{u}",
+            f"[Unit]\nOnFailure={target}\n[Service]\nExecStart=/usr/bin/{u}\n",
+        )
+
+
+@pytest.mark.parametrize(
+    "target, unit_file, key",
+    [
+        # #420: address-validator's notifier, which seven units hook. The
+        # template is the key, whatever instance a unit names.
+        (
+            "unit-failure@%n.service",
+            "unit-failure@.service",
+            "not-restarter:unit-failure@.service",
+        ),
+        (
+            "app-notify.service",
+            "app-notify.service",
+            "not-restarter:app-notify.service",
+        ),
+    ],
+)
+def test_an_unreadable_onfailure_target_takes_a_not_restarter_exception(
+    host, target, unit_file, key
+):
+    _hooked(host, ("app.service", "worker.service"), target)
+    host.write(f"etc/systemd/system/{unit_file}", UNIT_FAILURE)
+    host.write("usr/local/bin/notify-unit-failure", b"\x7fELF\x00\x00")
+    out = host.run()
+    for u in ("app.service", "worker.service"):
+        f = _finding(out, f"restarter:{u}")
+        assert f["exception_what"] == key
+        assert f"exception {key} <review-by> <reason>" in f["message"]
+        assert "/usr/local/bin/notify-unit-failure, a binary" in f["message"]
+    # One declaration covers every unit hooked to it.
+    host.knob(f"posture scheduled\nexception {key} 2099-01-01 notifies only\n")
+    out = host.run()
+    assert not [i for i in _ids(out) if i.startswith("restarter")]
+    assert {"restarter:app.service", "restarter:worker.service"} <= set(
+        _ids(out, "excepted")
+    )
+    assert not out["impact"]["restarters"]
+    assert out["impact"]["restarters_complete"] is True
+    # An expired one covers nothing.
+    host.knob(f"posture scheduled\nexception {key} 2001-01-01 notifies only\n")
+    out = host.run()
+    assert "restarter:app.service" in _ids(out)
+
+
+def test_a_not_restarter_exception_doesnt_cover_a_restart_the_scan_read(host):
+    # app.service's other target restarts on an Exec line, and worker's own
+    # Exec line does: what was read isn't declared away.
+    _hooked(host, ("app.service",), "app-notify.service store-fix.service")
+    host.write("etc/systemd/system/app-notify.service", UNIT_FAILURE)
+    host.write("usr/local/bin/notify-unit-failure", b"\x7fELF\x00\x00")
+    host.write(
+        "etc/systemd/system/store-fix.service",
+        "[Service]\nExecStart=/bin/systemctl restart store.service\n",
+    )
+    host.write(
+        "etc/systemd/system/worker.service",
+        "[Unit]\nOnFailure=app-notify.service\n"
+        "[Service]\nExecStart=/usr/bin/worker\n"
+        "ExecStopPost=/bin/systemctl restart store.service\n",
+    )
+    host.knob(
+        "posture scheduled\n"
+        "exception not-restarter:app-notify.service 2099-01-01 notifies only\n"
+    )
+    out = host.run()
+    for u in ("app.service", "worker.service"):
+        f = _finding(out, f"restarter:{u}")
+        assert f["exception_what"] is None
+        assert "not-restarter" not in f["message"]
+    assert {"app.service", "worker.service"} <= {
+        r["unit"] for r in out["impact"]["restarters"]
+    }
+
+
+NOTIFY_DOCSTRING = (
+    '"""Notify the operator that a unit failed.\n'
+    "\n"
+    "Set by systemd (>= 251) for an ``OnFailure=`` handler; absent on a manual\n"
+    "``systemctl start unit-failure@<unit>.service``:\n"
+    '"""\n'
+    "import urllib.request\n"
+)
+
+
+def test_a_script_match_is_named_and_can_be_declared_not_a_call(host):
+    # #419: address-validator's notifier matches only in its docstring. Every
+    # non-comment line still counts, since a missed restarter runs unstopped
+    # through a data-store step; the finding names the line.
+    _hooked(host, ("app.service", "worker.service"), "unit-failure@%n.service")
+    host.write(
+        "etc/systemd/system/unit-failure@.service",
+        f"[Service]\nType=oneshot\nWorkingDirectory={AV}\n"
+        f"ExecStart={AV}/.venv/bin/python infra/notify_unit_failure.py %i\n",
+    )
+    host.write(f"{AV[1:]}/infra/notify_unit_failure.py", NOTIFY_DOCSTRING)
+    out = host.run()
+    for u in ("app.service", "worker.service"):
+        f = _finding(out, f"restarter:{u}")
+        assert f["exception_what"] == "not-restarter:unit-failure@.service"
+        assert (
+            f"{AV}/infra/notify_unit_failure.py, which matches at line 4: "
+            "``systemctl start unit-failure@<unit>.service``:"
+        ) in f["message"]
+        assert "its OnFailure= target starts or restarts one" in f["message"]
+        assert (
+            "if none of the lines it matched is a call, declare exception "
+            "not-restarter:unit-failure@.service <review-by> <reason>"
+        ) in f["message"]
+        # Said once: "its OnFailure= target starts or restarts one:
+        # unit-failure@%n.service runs ..." (review of cbb59c0).
+        assert f["message"].count("its OnFailure= target") == 1
+    host.knob(
+        "posture scheduled\n"
+        "exception not-restarter:unit-failure@.service 2099-01-01 a docstring\n"
+    )
+    out = host.run()
+    assert not [i for i in _ids(out) if i.startswith("restarter")]
+    assert "restarter:app.service" in _ids(out, "excepted")
+    assert not out["impact"]["restarters"]
+
+
+def test_a_timers_script_match_is_named_and_can_be_declared_not_a_call(host):
+    host.write("etc/systemd/system/store-cert.timer", RENEW_TIMER)
+    host.write("etc/systemd/system/store-renew.service", RENEW_UNIT)
+    host.write(
+        "usr/local/bin/store-renew.sh",
+        "#!/bin/sh\n# systemctl restart store, if the cert changed\n"
+        "  if changed; then systemctl restart store; fi\n",
+    )
+    out = host.run()
+    f = _finding(out, "restarter:store-renew.service")
+    assert f["exception_what"] == "not-restarter:store-renew.service"
+    assert (
+        "what its timer runs starts or restarts one: store-renew.service runs "
+        "/usr/local/bin/store-renew.sh, which matches at line 3: "
+        "if changed; then systemctl restart store; fi"
+    ) in f["message"]
+    host.knob(
+        "posture scheduled\n"
+        "exception not-restarter:store-renew.service 2099-01-01 never changes\n"
+    )
+    out = host.run()
+    assert "restarter:store-renew.service" in _ids(out, "excepted")
+    assert not out["impact"]["restarters"]
+
+
+def test_an_exec_line_restart_wins_over_an_earlier_script_match(host):
+    # Review of cbb59c0: the first Exec line's script matches only in its
+    # docstring, and a later Exec line restarts. That restart was read, so
+    # no exception may cover it.
+    _hooked(host, ("app.service",), "unit-failure@%n.service")
+    host.write(
+        "etc/systemd/system/unit-failure@.service",
+        f"[Service]\nType=oneshot\nWorkingDirectory={AV}\n"
+        f"ExecStart={AV}/.venv/bin/python infra/notify_unit_failure.py %i\n"
+        "ExecStartPost=/bin/systemctl restart store.service\n",
+    )
+    host.write(f"{AV[1:]}/infra/notify_unit_failure.py", NOTIFY_DOCSTRING)
+    host.knob(
+        "posture scheduled\n"
+        "exception not-restarter:unit-failure@.service 2099-01-01 a docstring\n"
+    )
+    out = host.run()
+    f = _finding(out, "restarter:app.service")
+    assert f["exception_what"] is None
+    assert "not-restarter" not in f["message"]
+    assert "app.service" in {r["unit"] for r in out["impact"]["restarters"]}
+
+
+def test_a_timers_service_exec_line_restart_wins_over_its_script_match(host):
+    # The timer-service twin, in a drop-in, and with start, which the unit
+    # files' own restart grep doesn't take.
+    host.write("etc/systemd/system/store-cert.timer", RENEW_TIMER)
+    host.write("etc/systemd/system/store-renew.service", RENEW_UNIT)
+    host.write(
+        "etc/systemd/system/store-renew.service.d/after.conf",
+        "[Service]\nExecStartPost=/bin/systemctl start store.service\n",
+    )
+    host.write(
+        "usr/local/bin/store-renew.sh",
+        "#!/bin/sh\necho 'run systemctl restart store by hand'\n",
+    )
+    host.knob(
+        "posture scheduled\n"
+        "exception not-restarter:store-renew.service 2099-01-01 a usage line\n"
+    )
+    out = host.run()
+    f = _finding(out, "restarter:store-renew.service")
+    assert f["exception_what"] is None
+    assert "not-restarter" not in f["message"]
+
+
+@pytest.mark.parametrize(
+    "tail, said",
+    [
+        # Review of cbb59c0: the docstring at line 4 and the call at line 8
+        # are both named, so declaring it can't silence the call unread.
+        (
+            'import subprocess\nsubprocess.run(["systemctl", "restart", "store.service"])\n',
+            "notify_unit_failure.py, which matches at lines 4 and 8 "
+            "(line 4: ``systemctl start unit-failure@<unit>.service``:; "
+            'line 8: subprocess.run(["systemctl", "restart", "store.service"]))',
+        ),
+        # Capped: three named, and the count of the rest.
+        (
+            "".join(f"# {i}\nprint('systemctl restart x{i}')\n" for i in range(4)),
+            "which matches at lines 4, 8, 10 and 2 more (line 4: ",
+        ),
+    ],
+)
+def test_a_script_match_names_every_line_it_matched(host, tail, said):
+    _hooked(host, ("app.service",), "unit-failure@%n.service")
+    host.write(
+        "etc/systemd/system/unit-failure@.service",
+        f"[Service]\nType=oneshot\nWorkingDirectory={AV}\n"
+        f"ExecStart={AV}/.venv/bin/python infra/notify_unit_failure.py %i\n",
+    )
+    host.write(f"{AV[1:]}/infra/notify_unit_failure.py", NOTIFY_DOCSTRING + tail)
+    out = host.run()
+    f = _finding(out, "restarter:app.service")
+    assert said in f["message"]
+    assert "if none of the lines it matched is a call" in f["message"]
+
+
+def test_a_match_in_each_of_two_scripts_is_named(host):
+    # The first script's docstring doesn't hide the second script's call.
+    _hooked(host, ("app.service",), "unit-failure@%n.service")
+    host.write(
+        "etc/systemd/system/unit-failure@.service",
+        f"[Service]\nType=oneshot\nWorkingDirectory={AV}\n"
+        f"ExecStart={AV}/.venv/bin/python infra/notify_unit_failure.py %i\n"
+        "ExecStartPost=/bin/sh /opt/app/fix.sh\n",
+    )
+    host.write(f"{AV[1:]}/infra/notify_unit_failure.py", NOTIFY_DOCSTRING)
+    host.write("opt/app/fix.sh", RESTARTS)
+    out = host.run()
+    f = _finding(out, "restarter:app.service")
+    assert "notify_unit_failure.py, which matches at line 4" in f["message"]
+    assert (
+        ", and /opt/app/fix.sh, which matches at line 2: systemctl restart app.service"
+        in f["message"]
+    )
+
+
+def test_a_restart_on_a_targets_exec_line_takes_no_exception(host):
+    _hooked(host, ("app.service",), "store-fix.service")
+    host.write(
+        "etc/systemd/system/store-fix.service",
+        "[Service]\nExecStart=/bin/systemctl restart store.service\n",
+    )
+    out = host.run()
+    assert _finding(out, "restarter:app.service")["exception_what"] is None
 
 
 def test_a_readable_setup_script_holding_a_key_is_named_by_pattern_and_line_only(host):

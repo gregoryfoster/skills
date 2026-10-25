@@ -110,14 +110,14 @@ exception <what> <review-by YYYY-MM-DD> <reason>
 | `datastore:<container>` | a running Qdrant container no `datastore` line names, because the owner rebuilds the store rather than snapshot it (#367) |
 | `ordering:<service>` | a `service` with no `After=` on a data store |
 | `journal:volatile` | the journal doesn't survive a reboot |
-| `not-restarter:<service>` | a timer's service runs a program the restarter scan can't follow (a binary, `uv run`), and the owner says it starts or restarts nothing (#368) |
+| `not-restarter:<service>` | a timer's service runs a program the restarter scan can't follow (a binary, `uv run`), and the owner says it starts or restarts nothing (#368). Also an `OnFailure=` target the scan can't read, which the owner says only notifies: its `restarter:<unit>` finding names the target, or its template for an instance (`not-restarter:unit-failure@.service`), and one line covers every unit hooked to it (#420). Also a script line the scan matched that the owner says isn't a call, such as a docstring naming `systemctl start`: the finding names the file and every line it matched, the first three with their text, and takes the same `<what>`, the target's or the timer's service's (#419). A restart on an Exec line the scan read takes none, whatever a script also matched: the unit's own, or one in any file of its target or its timer's service, a drop-in's included |
 | `session:adj` | a process of the session's own, below the platform's agent (`exe-init` or `sshd`), runs at `oom_score_adj` -1000 |
 | `setup-script:redelivered` | the platform delivers the VM's creation-time setup script at every boot, and it ran at each one. The host can stop the runs and contain the file in place (the profile), which the probe reads as `contained`. Revoking the script's key changes nothing the probe reads, so the owner declares the remedy here, such as the key's revocation date. The review-by date makes someone re-check it |
 | `keep:<component>` | a dormant component the owner keeps; a prune stage is `disabled:`, `removed:` or `purged:` |
 
 The rest take no exception, because each is fixed where it is:
 - a provisioning leftover the host can fix, such as a setup script on disk that isn't contained;
-- a knob gap: an undeclared restarter, backup regime or third-party origin;
+- a knob gap: an undeclared restarter (unless found only through what the scan couldn't read or a script line it matched, above), backup regime or third-party origin;
 - a failing health check;
 - a pending reboot.
 
