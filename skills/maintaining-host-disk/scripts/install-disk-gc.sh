@@ -43,8 +43,9 @@ The install, as root:
      `systemctl disable --now`
   4. systemctl daemon-reload, and systemctl restart systemd-journald only
      when a journald.conf.d drop-in differs from what the installed
-     MANIFEST records or from the file on disk (or it lists one the new
-     MANIFEST drops)
+     MANIFEST records or from the file on disk, it lists one the new
+     MANIFEST drops, or the run is a reinstall or a resumed update, which
+     may be finishing a run that stopped before its restart
   5. MANIFEST, mode 644: the commit marker
 A run that fails before step 5 leaves the old MANIFEST (or none) in place,
 so a re-run sees the same plan and finishes it.
@@ -314,6 +315,14 @@ done
 for p in ${REMOVED[@]+"${REMOVED[@]}"}; do
   case "$p" in "$JOURNALD_DIR"*) JRESTART=1 ;; esac
 done
+# A reinstall, or a resumed update, may re-run one that already wrote the
+# drop-in and stopped before its restart: then neither the marker nor the
+# disk shows a difference, so any drop-in in the plan restarts journald.
+if [ "$ACTION" = reinstall ] || [ "$INTERRUPTED" = true ]; then
+  for p in ${S_PATHS[@]+"${S_PATHS[@]}"}; do
+    case "$p" in "$JOURNALD_DIR"*) JRESTART=1 ;; esac
+  done
+fi
 
 # --- report, and act ------------------------------------------------------------
 

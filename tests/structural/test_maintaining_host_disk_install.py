@@ -354,7 +354,8 @@ def test_update_that_fails_to_reload_keeps_the_old_marker_and_resumes(tmp_path, 
     assert out["action"] == "update"
     assert not (host / OLD_HELPER).exists()
     assert installed(host) == want_tree(rig.gc_files())
-    assert rig.calls(stub)[-1] == "daemon-reload"
+    # Resumed (interrupted), so the drop-in it may have written restarts too.
+    assert rig.calls(stub)[-2:] == ["daemon-reload", "restart systemd-journald"]
 
 
 def test_install_that_fails_to_restart_journald_restarts_it_on_the_re_run(
