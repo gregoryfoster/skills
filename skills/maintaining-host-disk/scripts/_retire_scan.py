@@ -388,10 +388,14 @@ def scan_cron(root):
     for kind, rels in (("cron", files), ("anacron", ["etc/anacrontab"])):
         for rel in rels:
             text = read(os.path.join(root, rel))
+            # Debian's cron reads /etc/cron.d by run-parts' naming rule too.
+            runs = not rel.startswith("etc/cron.d/") or bool(
+                RUN_PARTS_NAME.match(os.path.basename(rel))
+            )
             for lineno, line in enumerate((text or "").splitlines(), 1):
                 line = line.strip()
                 if line and not line.startswith("#") and not assignment(line):
-                    out.append((kind, f"{rel}:{lineno}", line, True))
+                    out.append((kind, f"{rel}:{lineno}", line, runs))
     for period in ("hourly", "daily", "weekly", "monthly"):
         d = f"etc/cron.{period}"
         full = os.path.join(root, d)
