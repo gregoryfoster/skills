@@ -555,8 +555,12 @@ def canonical(root):
     timers = {}
     system = os.path.join(root, "etc/systemd/system")
     for t in TIMERS:
+        mask = os.path.join(system, t)
         if not os.path.isfile(os.path.join(root, "usr/local/lib/systemd/system", t)):
             timers[t] = "absent"
+        elif os.path.islink(mask) and os.readlink(mask) == "/dev/null":
+            # `systemctl mask` leaves the wants link: the timer never runs.
+            timers[t] = "masked"
         else:
             timers[t] = "enabled" if wanted(root, [system], t) else "disabled"
     return {

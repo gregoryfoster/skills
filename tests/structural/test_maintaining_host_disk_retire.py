@@ -1003,3 +1003,15 @@ def test_567_a_binary_or_a_system_path_is_not_read(host):
         "[Service]\nExecStart=/opt/blob\nExecStartPost=/usr/bin/tidier\n",
     )
     assert units_found(check(host), "odd.service") == []
+
+
+# --- CR 568: a masked canonical timer is masked, not enabled ----------------
+
+
+def test_568_a_masked_canonical_timer_reads_masked(host):
+    """`systemctl mask` leaves the wants link, so the link alone would read
+    a GC that never runs as enabled."""
+    os.symlink("/dev/null", host / "etc/systemd/system/cannobserv-disk-gc.timer")
+    timers = check(host)["canonical"]["timers"]
+    assert timers["cannobserv-disk-gc.timer"] == "masked"
+    assert timers["cannobserv-disk-headroom.timer"] == "disabled"

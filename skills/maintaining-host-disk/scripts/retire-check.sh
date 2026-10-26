@@ -39,7 +39,8 @@ JSON says which entries are by hand only.
               are never offered
   by_hand     retire-list entries with no fixed name to match
   canonical   whether the GC is installed, its VERSION, and each timer:
-              enabled, disabled or absent
+              enabled, disabled, masked (it never runs, whatever links
+              remain) or absent
   gc_report   the report: exit, json (from --run-gc-report), lines,
               truncated and total_lines (at most 500 lines), or null
   unreadable  directories and files it couldn't read: run it as root
