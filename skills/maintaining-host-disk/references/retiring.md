@@ -33,7 +33,7 @@ Six hosts built their own GC before the canonical one existed (inventory in Cann
 
 The check finds where an old tool runs. It can't read an arbitrary script and say what it removed, so this part is a checklist, read against the old tool's own source and the GC's report:
 
-1. **Which paths did it remove that no GC tier covers,** or that a tier covers but this host's config leaves off (`worktrees` with an empty `worktree_repos`, `docker` off)?
+1. **Which paths did it remove that no GC tier covers,** or that a tier covers but this host's config leaves off (`worktrees` not in `tiers` or with an empty `worktree_repos`, `docker` off)?
 2. **Did it remove anything the GC deliberately keeps?** Containers, volumes, unused tagged images unless `docker_unused_images_days` opts in, a VS Code build still in use or touched within the grace window, a tree with any entry newer than 60 minutes.
 3. **Did it keep anything the GC removes?** A staged newer VS Code build and the VSIX cache are the known ones ([editor-builds.md](editor-builds.md)).
 4. **Does anything else depend on it?** A monitor reading its journal lines, a state file, a health check calling it.
@@ -54,7 +54,7 @@ address-validator#326's nine rules are implemented in the GC. The skill doesn't 
 | 5 | the grace is the newest entry anywhere, 60 min; a walk error keeps the tree | the mtime or ctime of any entry. npx reinstalls a moved spec into the same directory, so the top level's mtime can be old |
 | 6 | warnings at warning priority | sd-daemon `<4>` prefixes |
 | 7 | VS Code: the 2 newest by `lru.json`, plus running | **differs:** liveness only. `lru.json` omitted the live build on co-provisioner, observo and co-replicator, and named builds no longer on disk |
-| 8 | orphaned worktrees, unregistered, older than 30 min | yes, off unless `worktree_repos` names the repo |
+| 8 | orphaned worktrees, unregistered, older than 30 min | yes, once `tiers` lists `worktrees` and `worktree_repos` names the repo; the template has neither |
 | 9 | the timer's quiet window | daily 05:15 UTC plus up to 30 min; a host overrides `OnCalendar=` with a drop-in |
 
 ### Docker

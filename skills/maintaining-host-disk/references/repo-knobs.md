@@ -18,7 +18,7 @@ This solves *growth*, not the *swing*. The newest run's tree is always on disk (
 
 Each worktree carries its own `.venv` and `node_modules`, about 0.2–0.8G each. That's a repo's cost while the worktree is live; a host tool can't tell a parked worktree from an abandoned one.
 
-Orphaned worktree directories, ones git no longer registers, are the GC's `worktrees` tier. It's off unless `worktree_repos` names the repo, and then it removes only unregistered directories older than 30 minutes.
+Orphaned worktree directories, ones git no longer registers, are the GC's `worktrees` tier. It runs only when the host's config lists `worktrees` in `tiers` **and** names the repo in `worktree_repos`; the template does neither. Then it removes only unregistered directories older than 30 minutes.
 
 ## App data tiers
 

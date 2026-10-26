@@ -11,7 +11,7 @@ Copy `/usr/local/lib/cannobserv/disk-gc/disk-gc.conf.example` to `/etc/cannobser
 - `homes`: whose trees the GC walks;
 - `tiers`: which tiers run. The `docker` tier is off in the template; turn it on only where Docker builds ([retiring.md](retiring.md#docker));
 - `npx_spec_files`: the repo's `.claude/settings.json`, so the pinned SocratiCode tree is kept ([repo-knobs.md](repo-knobs.md));
-- `worktree_repos`: the repos whose orphaned worktree directories may go. The `worktrees` tier is off while it's empty;
+- `worktree_repos`: the repos whose orphaned worktree directories may go. The template has neither half of the `worktrees` tier: to turn it on, add `worktrees` to `tiers` **and** name the repo here. Either one alone does nothing;
 - `uv_clean_above_mb`: the cache size above which `uv cache clean --force` runs too;
 - `alert_at_percent`, and `clear_at_percent` only where it's needed (below);
 - `monitor_id`.
