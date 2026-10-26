@@ -15,6 +15,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tarfile
@@ -399,32 +400,67 @@ def pull(pin, staging, work, made):
     }
 
 
-def main():
+def on_signal(signum, _frame):
+    raise Refused("internal", f"interrupted by signal {signum}")
+
+
+def remove_tree(path):
+    """Remove a staging tree this run made, read-only directories and all;
+    whether it is gone."""
+    try:
+        os.chmod(path, 0o700)
+        for top, dirs, _files in os.walk(path):
+            for d in dirs:
+                p = os.path.join(top, d)
+                if not os.path.islink(p):
+                    os.chmod(p, 0o700)
+    except OSError:
+        pass
+    shutil.rmtree(path, ignore_errors=True)
+    return not os.path.lexists(path)
+
+
+def main(argv=None):
     ap = argparse.ArgumentParser(prog="_pull.py")
     ap.add_argument("--pin", required=True)
     ap.add_argument("--into", required=True)
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
     staging = os.path.abspath(args.into)
-    work = tempfile.mkdtemp(prefix="disk-gc-pull.")
     made = []
+    signals = (signal.SIGTERM, signal.SIGHUP, signal.SIGINT)
+    previous = {s: signal.signal(s, on_signal) for s in signals}
     try:
-        pin = read_pin(args.pin)
-        result = pull(pin, staging, work, made)
-    except Refused as e:
+        work = tempfile.mkdtemp(prefix="disk-gc-pull.")
+        try:
+            try:
+                result = pull(read_pin(args.pin), staging, work, made)
+            except Refused as e:
+                refusal = e
+            except Exception as e:  # any failure is a refusal, never a traceback
+                refusal = Refused("internal", f"{type(e).__name__}: {e}")
+            else:
+                refusal = None
+        finally:
+            remove_tree(work)
+        if refusal is None:
+            print(json.dumps(result, indent=2))
+            return 0
         # Only a directory this run made: nothing half-checked is left to install.
-        for path in made:
-            shutil.rmtree(path, ignore_errors=True)
-        print(
-            json.dumps(
-                {"ok": False, "refused": {"step": e.step, "why": e.why}}, indent=2
+        left = [path for path in made if not remove_tree(path)]
+        out = {"ok": False, "refused": {"step": refusal.step, "why": refusal.why}}
+        if left:
+            out["staging_left"] = left[0]
+            print(
+                f"pull-disk-gc: couldn't remove {left[0]}; delete it", file=sys.stderr
             )
+        print(json.dumps(out, indent=2))
+        print(
+            f"pull-disk-gc: refused at {refusal.step}: {refusal.why}", file=sys.stderr
         )
-        print(f"pull-disk-gc: refused at {e.step}: {e.why}", file=sys.stderr)
         return 3
     finally:
-        shutil.rmtree(work, ignore_errors=True)
-    print(json.dumps(result, indent=2))
-    return 0
+        for s, handler in previous.items():
+            signal.signal(s, handler)
 
 
 if __name__ == "__main__":

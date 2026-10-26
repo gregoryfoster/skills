@@ -37,7 +37,9 @@ DIR. Every check refuses, and a refusal leaves no DIR behind:
 
 Output (stdout, JSON): {"ok": true, "staging", "pin", "config_digest",
 "layer": {index, digest, diff_id, bytes}, "version", "files"}, or
-{"ok": false, "refused": {"step", "why"}}. curl's and sha256sum's own
+{"ok": false, "refused": {"step", "why"}}. Any other failure, and a signal
+(TERM, HUP, INT), is a refusal at step "internal"; a staging directory it
+made but couldn't remove is named in "staging_left". curl's and sha256sum's own
 output, and every diagnostic, go to stderr.
 
 Needs curl, tar, sha256sum and python3 (stdlib only). No root: run it as
