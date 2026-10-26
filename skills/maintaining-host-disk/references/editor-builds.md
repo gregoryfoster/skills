@@ -15,19 +15,24 @@ Both:
 
 - keep anything in use, judged from `/proc` (exe, cwd, maps, fd), not from `lru.json`, which omitted the live build on three hosts and named builds no longer on disk;
 - withhold a tree with any entry touched within `grace_minutes` (60);
-- remove only trees the home's owner owns, and run as that owner;
+- remove only trees the home's owner owns, and remove them **as root**, by file descriptor;
 - never touch `lru.json`.
 
 ## Where they differ from #482's ask
 
-Read from the VERSION 2 layer at the #485 gate. The skill states these; changing any of them is Provisioner's to do.
+Read from the VERSION 2 layer, at the #485 gate and in its review. Each says who can change it.
 
-1. **A staged newer build is removed** once it's past the grace window. The CLI's agent host pre-downloads every Stable release, and #482 keeps a build newer than the newest running one. The likely cost is a re-download per release, which is unmeasured.
-2. **The VSIX cache is pruned.** #482 left it, since the server prunes `CachedExtensionVSIXs` itself on restart.
-3. **Stable only.** Insiders builds aren't matched.
-4. **No Cursor or Windsurf** (`~/.cursor-server`, `~/.windsurf-server`). #482 hadn't verified their layout either.
+| # | The GC | #482 asked | Who controls it |
+|---|---|---|---|
+| 1 | removes a **staged newer build** once it's past the grace window. The CLI's agent host pre-downloads every Stable release; the likely cost is a re-download per release, unmeasured | keep anything newer than the newest running build | Provisioner |
+| 2 | with nothing running, **keeps none**: there is no keep-newest rule | with nothing running, keep the newest | Provisioner |
+| 3 | prunes the **VSIX cache**, as its own `vsix-cache` tier | leave it: the server prunes `CachedExtensionVSIXs` itself on restart | **the host:** drop `vsix-cache` from `tiers` |
+| 4 | matches **Stable only**; Insiders builds aren't matched | any quality | Provisioner |
+| 5 | has **no Cursor or Windsurf** (`~/.cursor-server`, `~/.windsurf-server`); #482 hadn't verified their layout either | maybe both | Provisioner |
+| 6 | removes **as root**, by descriptor, only what the owner owns | as the user, never root | Provisioner |
+| 7 | prunes **on its timer**, daily | a dry run first, and each removal approved | **the host**, in part: read the report-only `gc` run before enabling the timer, or leave `vscode-servers` and `vscode-clis` out of `tiers` and keep its own pruning |
 
-A host that needs any of these kept differently files it on Provisioner, with the owner's approval.
+A host that needs one of Provisioner's kept differently files it there, with the owner's approval.
 
 ## broker's script
 

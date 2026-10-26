@@ -73,7 +73,7 @@ The release this skill installs is pinned in `scripts/_pin.sh`, and only there: 
 
 Some disk costs belong to a repo, not to a host tool: pytest basetemps, each worktree's own environment, app data tiers, and the SocratiCode pin the GC must keep. Each is a measured, per-repo decision: [repo-knobs.md](references/repo-knobs.md).
 
-The GC's VS Code tiers prune editor server builds under each home, and differ from a host's own editor-build pruning in four stated ways: [editor-builds.md](references/editor-builds.md).
+The GC's VS Code tiers prune editor server builds under each home, and differ from #482's editor-build pruning in the ways that reference lists, each with who controls it: [editor-builds.md](references/editor-builds.md).
 
 ## What the skill never does on its own
 
