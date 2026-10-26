@@ -172,9 +172,17 @@ failed() {
 
 # A private copy, so nothing the staging tree's owner does after this point
 # reaches what is checked and installed. Under sudo, mktemp's 0700 directory
-# and cp's new files are root's.
-COPY=$(mktemp -d "${TMPDIR:-/tmp}/disk-gc-install.XXXXXX") ||
-  failed "couldn't make a private directory under ${TMPDIR:-/tmp}; nothing installed"
+# and cp's new files are root's. As root it ignores TMPDIR: sudo can keep a
+# user's, whose owner could rename the directory away and put their own in
+# its place. /run is root's on a systemd host; /root where there is none.
+if [ "$(id -u)" = 0 ]; then
+  PRIVATE_BASE=/run
+  [ -d "$PRIVATE_BASE" ] && [ ! -L "$PRIVATE_BASE" ] || PRIVATE_BASE=/root
+else
+  PRIVATE_BASE=${TMPDIR:-/tmp}
+fi
+COPY=$(mktemp -d "$PRIVATE_BASE/disk-gc-install.XXXXXX") ||
+  failed "couldn't make a private directory under $PRIVATE_BASE; nothing installed"
 trap 'rm -rf "$COPY"' EXIT
 CP_OK=1
 # STAGING is the physical path (canon_dir), so cp copies the tree it names,

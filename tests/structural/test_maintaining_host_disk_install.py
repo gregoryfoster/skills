@@ -443,6 +443,11 @@ def test_a_failure_before_any_install_says_applied_false(tmp_path, host):
 
 def test_no_private_directory_is_a_json_failure_with_applied_false(tmp_path, host):
     scripts = rig.pinned_scripts(tmp_path / "s", staged(tmp_path))
+    # A mktemp that fails, as root or not (as root, TMPDIR is ignored).
+    bindir = tmp_path / "shim"
+    bindir.mkdir()
+    (bindir / "mktemp").write_text("#!/usr/bin/env bash\nexit 1\n")
+    (bindir / "mktemp").chmod(0o755)
     result = rig.run(
         scripts / INSTALL.name,
         "--staging",
@@ -450,7 +455,7 @@ def test_no_private_directory_is_a_json_failure_with_applied_false(tmp_path, hos
         "--root",
         host,
         "--approve",
-        env={"TMPDIR": str(tmp_path / "no-such-dir")},
+        env={"PATH": f"{bindir}:{os.environ['PATH']}"},
     )
     assert result.returncode == 1, result.stdout
     out = rig.stdout_json(result)
