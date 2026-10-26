@@ -959,3 +959,47 @@ def test_561_a_users_own_mask_masks_it_for_them(host):
     assert found["user:exedev"]["masked"] is True
     assert found["user:exedev"]["enabled"] is False
     assert found["user"]["enabled"] is True
+
+
+# --- CR 567: a wrapper behind a unit or a cron line is read too -------------
+
+
+def wrapper(host, rel, body, mode=0o755):
+    p = write(host, rel, body)
+    p.chmod(mode)
+    return p
+
+
+def test_567_a_wrapper_behind_a_unit_is_read(host):
+    wrapper(host, "usr/local/bin/nightly", "#!/bin/sh\n/srv/av/disk-hygiene.sh\n")
+    write(
+        host,
+        "etc/systemd/system/nightly.service",
+        "[Service]\nExecStart=/bin/sh /usr/local/bin/nightly\n",
+    )
+    found = units_found(check(host), "nightly.service")
+    assert [(f["entry"], f["where"]) for f in found] == [
+        ("disk-hygiene.sh", "usr/local/bin/nightly:2")
+    ]
+
+
+def test_567_a_wrapper_behind_a_cron_line_is_read(host):
+    wrapper(host, "usr/local/bin/tidy", "#!/bin/sh\nexec /opt/pm/prune_disk.py\n")
+    write(host, "etc/cron.d/tidy", "0 3 * * * root /usr/local/bin/tidy\n")
+    found = [
+        f for f in check(host)["found"] if f["where"].startswith("usr/local/bin/tidy")
+    ]
+    assert [(f["entry"], f["where"], f["enabled"]) for f in found] == [
+        ("prune_disk.py", "usr/local/bin/tidy:2", True)
+    ]
+
+
+def test_567_a_binary_or_a_system_path_is_not_read(host):
+    wrapper(host, "opt/blob", "\0\0ELF cleanup.sh\n")
+    wrapper(host, "usr/bin/tidier", "#!/bin/sh\n/srv/watcher/cleanup.sh\n")
+    write(
+        host,
+        "etc/systemd/system/odd.service",
+        "[Service]\nExecStart=/opt/blob\nExecStartPost=/usr/bin/tidier\n",
+    )
+    assert units_found(check(host), "odd.service") == []

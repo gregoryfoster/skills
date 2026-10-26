@@ -12,13 +12,17 @@ Finds what on this host runs an implementation the canonical GC replaces
 (references/retiring.md has the list): a systemd service (system, or per
 user from each etc/passwd home), with its drop-ins from every directory
 merged as systemd merges them, its timer, or a crontab, anacrontab or
-cron.<period> entry, whose script's own lines (its first 64 KiB) are
-read too. A match is a whole word of a command (inside sh -c
-too) or the unit's own name; enabled follows the wants links, and for
-cron.<period>, run-parts' own rules. A unit in /etc/systemd/user is
-also reported as user:<name> once that user's directories enable,
-mask or extend it, judged by their links and /etc/systemd/user's. Then puts the GC's report-only
-`gc` run beside it, so the two can be read together before anything retires.
+cron.<period> entry. A wrapper is read for what it calls: a
+cron.<period> script's own lines (its first 64 KiB), and, one level
+deep, a script an absolute path in an Exec line or a cron line names (a
+text file of at most 64 KiB, outside bin/, sbin/, usr/bin/ and
+usr/sbin/). A match is a whole word of a command (inside sh -c too) or
+the unit's own name; enabled follows the wants links, and for
+cron.<period>, run-parts' own rules. A unit in /etc/systemd/user is also
+reported as user:<name> once that user's directories enable, mask or
+extend it, judged by their links and /etc/systemd/user's. Then puts the
+GC's report-only `gc` run beside it, so the two can be read together
+before anything retires.
 
 It reads unit files, drop-ins and crontabs, and changes nothing. What it
 can't do is read an arbitrary script and say what it removed that the GC

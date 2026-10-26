@@ -440,6 +440,48 @@ WRAPPER_BYTES = 64 * 1024  # a cron.<period> script read for what it runs
 RUN_PARTS_NAME = re.compile(r"[A-Za-z0-9_-]+\Z")
 
 
+ABS_PATH = re.compile(r"(?<![\w.$%-])(/[^\s'\"`;&|()<>]+)")
+SYSTEM_BIN = ("bin/", "sbin/", "usr/bin/", "usr/sbin/")
+WRAPPERS = {}
+
+
+def wrapper_lines(root, command):
+    """(file:line, line) for each line of a script an absolute path in the
+    command names, one level deep: a regular text file of at most
+    WRAPPER_BYTES outside the system bin directories. So a unit's or a
+    cron line's wrapper is read for what it calls, as a cron.<period>
+    script is."""
+    out = []
+    for path in ABS_PATH.findall(command):
+        rel = os.path.normpath(path).lstrip("/")
+        if rel.startswith(SYSTEM_BIN):
+            continue
+        if rel not in WRAPPERS:
+            WRAPPERS[rel] = []
+            real = in_root(root, os.path.join(root, rel))
+            try:
+                ok = (
+                    real is not None
+                    and os.path.isfile(real)
+                    and os.path.getsize(real) <= WRAPPER_BYTES
+                )
+                if ok:
+                    with open(real, "rb") as f:
+                        ok = b"\0" not in f.read(1024)
+            except PermissionError:
+                UNREADABLE.append(real)
+                ok = False
+            except OSError:
+                ok = False
+            text = read(real) if ok else None
+            for lineno, line in enumerate((text or "").splitlines(), 1):
+                line = line.strip()
+                if line and not line.startswith("#"):
+                    WRAPPERS[rel].append((f"{rel}:{lineno}", line))
+        out += WRAPPERS[rel]
+    return out
+
+
 def inside(root, path):
     """Where a symlink at path points, resolved inside the root."""
     return in_root(root, path) or os.path.join(root, ".no-such-path")
@@ -480,6 +522,8 @@ def scan_cron(root):
                 line = line.strip()
                 if line and not line.startswith("#") and not assignment(line):
                     out.append((kind, f"{rel}:{lineno}", line, runs))
+                    for where, wline in wrapper_lines(root, line):
+                        out.append((kind, where, wline, runs))
     for period in ("hourly", "daily", "weekly", "monthly"):
         d = f"etc/cron.{period}"
         full = os.path.join(root, d)
@@ -606,6 +650,9 @@ def main():
         for where, cmd in commands:
             for repo, entry, word in match(cmd):
                 hits.setdefault((repo, entry), (word, where, cmd))
+            for wwhere, wline in wrapper_lines(root, cmd):
+                for repo, entry, word in match(wline):
+                    hits.setdefault((repo, entry), (word, wwhere, wline))
         for repo, entry, word in match("", stem):
             first = commands[0] if commands else (unit["where"], "")
             hits.setdefault((repo, entry), (word, *first))
