@@ -67,7 +67,7 @@ The release this skill installs is pinned in `scripts/_pin.sh`, and only there: 
 5. **Verify**, in this order: the sensor's first `ok` from its timer, then enable the monitor, then the `--test-alert` rehearsal, which is a real page ([turning-on.md](references/turning-on.md#6-the-first-ok-then-the-monitor-then-the-rehearsal), [verifying.md](references/verifying.md)).
 6. **Record** what was installed (the pin's `VERSION`), the config's lines and tiers, what was retired and why it was safe to, on the host's adoption issue.
 
-**Removing it:** `bash "<remove-disk-gc.sh>"` prints the plan; with `--approve`, as root, it disables both timers and stops both services, removes MANIFEST's files, reloads, restarts journald, and removes MANIFEST last. It keeps the host's config and key, the GC's state, and anything MANIFEST doesn't list. Ask for the monitor to be disabled with it, or it pages *has stopped reporting*.
+**Removing it:** `bash "<remove-disk-gc.sh>"` prints the plan; with `--approve`, as root, it disables both timers and stops both services, removes MANIFEST's files, reloads, restarts journald, and removes MANIFEST last. It keeps the host's config and key, the GC's state, and anything MANIFEST doesn't list. Ask for the monitor to be disabled with it, or it pages *has stopped reporting*. A failed install or update is finished by running the installer again, not by removing: remove reads MANIFEST, so it can't see what an interrupted install left, and it refuses after an interrupted update.
 
 ## Beyond the host
 

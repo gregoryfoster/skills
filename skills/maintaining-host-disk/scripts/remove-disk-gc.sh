@@ -26,6 +26,12 @@ the GC's state in /var/lib/cannobserv-disk-gc/, and any file MANIFEST
 doesn't list. Ask for the co-status monitor to be disabled too: with the
 sensor gone, it pages "has stopped reporting".
 
+After an install that stopped before writing MANIFEST there is nothing
+for it to read: it reports absent, with a note to finish the install by
+running install-disk-gc.sh again. After an update that stopped the same
+way (the VERSION on disk isn't the one MANIFEST records), it refuses until
+install-disk-gc.sh has finished the update.
+
 It refuses (exit 3) before anything changes when MANIFEST names a path
 outside usr/local/lib/ or isn't in sha256sum's format, when a path it would
 remove is (or sits under) a symlink, when --approve is given for / without
@@ -41,8 +47,8 @@ Options:
   -h, --help        show this help
 
 Output (stdout, JSON): ok, action (remove, or absent when no MANIFEST is
-installed), applied, root, files, modified, missing, kept, journald_restart,
-systemctl, systemctl_ran, refused, failed.
+installed), applied, root, files, modified, missing, kept, note,
+journald_restart, systemctl, systemctl_ran, refused, failed.
 
 Exit codes:
   0  planned, done, or nothing installed
@@ -82,13 +88,16 @@ if [ "$APPROVE" = 1 ] && [ "$ROOT" = / ] && [ "$(id -u)" != 0 ]; then
   refuse "removing from / needs root"
 fi
 
-ACTION=remove APPLIED=false FAILED_WHY="" JRESTART=0
+ACTION=remove APPLIED=false FAILED_WHY="" JRESTART=0 NOTE=""
 PATHS=() MODIFIED=() MISSING=()
 KEPT=("etc/cannobserv/disk-gc/" "var/lib/cannobserv-disk-gc/")
 I_MAN=$R/$MANIFEST_REL
 no_symlink_under "$R" "$MANIFEST_REL"
 if [ ${#REFUSED[@]} -eq 0 ] && [ ! -e "$I_MAN" ]; then
   ACTION=absent
+  if [ -e "$R/$VERSION_REL" ] || [ -e "$R/$GC_DIR/disk-gc" ]; then
+    NOTE="no MANIFEST, but the GC's files are on disk: an install stopped before writing it. Finish it by running install-disk-gc.sh again; remove reads MANIFEST, so it can't remove them"
+  fi
 elif [ ${#REFUSED[@]} -eq 0 ]; then
   read_manifest "$I_MAN" installed
   PATHS=(${M_PATHS[@]+"${M_PATHS[@]}"})
@@ -106,7 +115,17 @@ elif [ ${#REFUSED[@]} -eq 0 ]; then
     # stopped before the restart left it already absent.
     case "$p" in "$JOURNALD_DIR"*) JRESTART=1 ;; esac
   done
-  if [ ${#MODIFIED[@]} -gt 0 ] && [ "$EVEN_MODIFIED" = 0 ]; then
+  # The installer's own test: a VERSION on disk that isn't the one the
+  # marker records is an update that stopped before writing its MANIFEST.
+  # Removing by the old MANIFEST would leave the new release's own files.
+  marked=""
+  for i in ${PATHS[@]+"${!PATHS[@]}"}; do
+    [ "${PATHS[$i]}" != "$VERSION_REL" ] || marked=${M_HASHES[$i]}
+  done
+  on_disk=$(hash_of "$R/$VERSION_REL")
+  if [ "$on_disk" != absent ] && [ -n "$marked" ] && [ "$on_disk" != "$marked" ]; then
+    refuse "an update was interrupted (the VERSION on disk isn't the one MANIFEST records); finish it with install-disk-gc.sh first, then remove"
+  elif [ ${#MODIFIED[@]} -gt 0 ] && [ "$EVEN_MODIFIED" = 0 ]; then
     refuse "edited since install: ${MODIFIED[*]}; --even-modified removes them anyway"
   fi
 fi
@@ -132,6 +151,7 @@ emit() {
   printf '  "modified": %s,\n' "$(json_list ${MODIFIED[@]+"${MODIFIED[@]}"})"
   printf '  "missing": %s,\n' "$(json_list ${MISSING[@]+"${MISSING[@]}"})"
   printf '  "kept": %s,\n' "$(json_list "${KEPT[@]}")"
+  if [ -n "$NOTE" ]; then printf '  "note": %s,\n' "$(json_str "$NOTE")"; else printf '  "note": null,\n'; fi
   printf '  "journald_restart": %s,\n' "$([ "$JRESTART" = 1 ] && echo true || echo false)"
   printf '  "systemctl": %s,\n  "systemctl_ran": %s,\n' "$(json_list ${SYSTEMCTL_CALLS[@]+"${SYSTEMCTL_CALLS[@]}"})" "$ran"
   printf '  "refused": %s,\n' "$(json_list ${REFUSED[@]+"${REFUSED[@]}"})"
