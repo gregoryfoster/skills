@@ -149,11 +149,12 @@ def test_reports_where_and_whether_it_runs(host):
     assert headroom["timer"] == "headroom-check.timer"
     assert headroom["enabled"] is False
     assert found[("broker", "prune_editor_builds.sh")]["scope"] == "user:exedev"
-    assert found[("watcher", "cleanup.sh")]["where"].endswith(
-        "maint.service.d/override.conf"
+    assert (
+        found[("watcher", "cleanup.sh")]["where"]
+        == "etc/systemd/system/maint.service.d/override.conf:3"
     )
     cron = found[("wslcb", "disk_hygiene.py")]
-    assert cron["kind"] == "cron" and cron["where"] == "etc/cron.d/wslcb"
+    assert cron["kind"] == "cron" and cron["where"] == "etc/cron.d/wslcb:2"
 
 
 def test_canonical_gc_is_neither_found_nor_a_candidate(host):

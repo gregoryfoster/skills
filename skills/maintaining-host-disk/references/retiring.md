@@ -24,7 +24,7 @@ Six hosts built their own GC before the canonical one existed (inventory in Cann
 
 `retire-check.sh` reads the host and changes nothing:
 
-- **found:** each systemd service (system or per-user, including a drop-in's `ExecStart=`), its timer, and each cron line or `cron.<period>` script that runs a listed implementation, with whether it's enabled. A match is on a command word's basename, or on the unit's own name. A basename can collide: `cleanup.sh` on a host that isn't watcher's is a candidate to read, whatever repo the match names.
+- **found:** each systemd service (system or per-user, including a drop-in's `ExecStart=`), its timer, and each cron line or `cron.<period>` script that runs a listed implementation, with whether it's enabled, the word that matched, and `file:line`. A match is on a command word's basename, or on the unit's own name. Commands print redacted (tokens, keys, passwords, Authorization headers, URL paths), so the JSON can go on the adoption issue; still read it before pasting. A basename can collide: `cleanup.sh` on a host that isn't watcher's is a candidate to read, whatever repo the match names.
 - **candidates:** host-local units and cron lines whose name or command looks like disk tooling but matches no entry. Read each one: a host may have built more than the list knows. Packaged units under `lib/` are never offered.
 - **canonical:** whether the GC is installed, its `VERSION`, and each timer's state.
 - **gc_report:** the GC's report-only run (`--run-gc-report`, or `--gc-report FILE` for one you took).

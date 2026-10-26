@@ -93,16 +93,54 @@ def read(path):
 
 
 def directives(text):
-    """(key, value) pairs, with line continuations joined."""
+    """(key, value, line number) triples, a continued line joined onto the
+    line it starts on."""
     out = []
-    joined = re.sub(r"\\\n", " ", text or "")
-    for line in joined.splitlines():
+    lines = (text or "").splitlines()
+    i = 0
+    while i < len(lines):
+        start, line = i + 1, lines[i]
+        while line.endswith("\\") and i + 1 < len(lines):
+            i += 1
+            line = line[:-1] + " " + lines[i]
+        i += 1
         line = line.strip()
         if not line or line[0] in "#;[" or "=" not in line:
             continue
         key, value = line.split("=", 1)
-        out.append((key.strip(), value.strip()))
+        out.append((key.strip(), value.strip(), start))
     return out
+
+
+# What a printed command may not carry (#425: no secrets on an issue).
+SECRET_WORD = r"[A-Za-z0-9_.-]*(?:token|key|secret|pass|auth)[A-Za-z0-9_.-]*"
+QUOTED_OR_WORD = r"(?:\"[^\"]*\"|'[^']*'|[^\s'\"]+)"
+REDACTIONS = (
+    (
+        re.compile(rf"(?i)(?<![A-Za-z0-9_])((?:--?)?{SECRET_WORD})={QUOTED_OR_WORD}"),
+        r"\1=<redacted>",
+    ),
+    (
+        re.compile(rf"(?i)(?<![A-Za-z0-9_])(--{SECRET_WORD})\s+(?!-){QUOTED_OR_WORD}"),
+        r"\1 <redacted>",
+    ),
+    (re.compile(r"(?i)(authorization:\s*)[^'\"\n]*"), r"\1<redacted>"),
+)
+URL = re.compile(
+    r"(?i)\b([a-z][a-z0-9+.-]*://)(?:[^/@\s'\"]*@)?([^/\s'\"?#]+)([^\s'\"]*)"
+)
+
+
+def redact(command):
+    """The command with secrets masked: NAME=value and --name value where the
+    name says token, key, secret, pass or auth; an Authorization header; and
+    a URL's userinfo, path and query (its host stays, to say what it was)."""
+    for pattern, repl in REDACTIONS:
+        command = pattern.sub(repl, command)
+    return URL.sub(
+        lambda m: m.group(1) + m.group(2) + ("/<redacted>" if m.group(3) else ""),
+        command,
+    )
 
 
 def basenames(command):
@@ -173,13 +211,13 @@ def exec_lines(unit):
     that key, as systemd does."""
     by_key = {}
     for where, text in [(unit["where"], unit["text"])] + unit.get("dropins", []):
-        for key, value in directives(text):
+        for key, value, lineno in directives(text):
             if key not in EXEC_KEYS:
                 continue
             if value == "":
                 by_key[key] = []
             else:
-                by_key.setdefault(key, []).append((where, value))
+                by_key.setdefault(key, []).append((f"{where}:{lineno}", value))
     return [line for key in EXEC_KEYS for line in by_key.get(key, [])]
 
 
@@ -198,7 +236,7 @@ def setting(unit, key):
     drop-in in order, the last one setting it winning."""
     value = None
     for text in [unit["text"]] + [t for _w, t in unit.get("dropins", [])]:
-        for k, v in directives(text):
+        for k, v, _lineno in directives(text):
             if k == key:
                 value = v or None
     return value
@@ -225,13 +263,13 @@ def scan_cron(root):
             files += [f"{d}/{n}" for n in listdir(full)]
     for rel in files:
         text = read(os.path.join(root, rel))
-        for line in (text or "").splitlines():
+        for lineno, line in enumerate((text or "").splitlines(), 1):
             if (
                 line.strip()
                 and not line.lstrip().startswith("#")
                 and "=" not in line.split()[0]
             ):
-                out.append((rel, line.strip()))
+                out.append((f"{rel}:{lineno}", line.strip()))
     for period in ("hourly", "daily", "weekly", "monthly"):
         d = f"etc/cron.{period}"
         full = os.path.join(root, d)
@@ -309,6 +347,7 @@ def main():
                 ((w, c) for w, c in commands if tokens & basenames(c)),
                 commands[0] if commands else (unit["where"], ""),
             )
+            word = sorted(tokens & (basenames(cmd) | {name.rsplit(".", 1)[0]}))[0]
             timer = timer_for(units, scope, name) if name.endswith(".service") else None
             dirs = scope_dirs(root, scope)
             enabled = wanted(root, dirs, name) or bool(
@@ -323,8 +362,9 @@ def main():
                     "unit": name,
                     "timer": timer,
                     "enabled": enabled,
+                    "match": word,
                     "where": where,
-                    "command": cmd,
+                    "command": redact(cmd),
                 }
             )
             matched.add((scope, name))
@@ -333,21 +373,23 @@ def main():
     for (scope, name), unit in sorted(units.items()):
         if name.startswith(CANONICAL) or (scope, name) in matched or not unit["local"]:
             continue
-        text = " ".join(c for _w, c in exec_lines(unit))
+        lines = exec_lines(unit)
+        text = " ".join(c for _w, c in lines)
         if LOOKALIKE.search(name) or LOOKALIKE.search(text):
             candidates.append(
                 {
                     "kind": "systemd",
                     "scope": scope,
                     "unit": name,
-                    "where": unit["where"],
-                    "command": text,
+                    "where": lines[0][0] if lines else unit["where"],
+                    "command": redact(text),
                     "why": "its name or command looks like disk tooling; read what it removes",
                 }
             )
     for where, line in scan_cron(root):
         hits = match(basenames(line))
         for repo, entry in hits:
+            word = sorted(set(TOKENS[(repo, entry)]) & basenames(line))[0]
             found.append(
                 {
                     "repo": repo,
@@ -357,8 +399,9 @@ def main():
                     "unit": None,
                     "timer": None,
                     "enabled": True,
+                    "match": word,
                     "where": where,
-                    "command": line,
+                    "command": redact(line),
                 }
             )
         if not hits and LOOKALIKE.search(line):
@@ -368,7 +411,7 @@ def main():
                     "scope": "cron",
                     "unit": None,
                     "where": where,
-                    "command": line,
+                    "command": redact(line),
                     "why": "a cron line that looks like disk tooling; read what it removes",
                 }
             )

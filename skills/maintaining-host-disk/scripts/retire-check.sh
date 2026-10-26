@@ -21,7 +21,8 @@ JSON says which entries are by hand only.
 
   found       each retire-list match: repo, entry, kind (systemd or cron),
               scope (system, user, user:<name> or cron), unit, timer,
-              enabled, where, command
+              enabled, match (the word that matched), where (file:line)
+              and command
   candidates  host-local units and cron lines that look like disk tooling
               but match no entry: read each one; packaged units under lib/
               are never offered
@@ -44,6 +45,11 @@ Options:
   --python CMD      the interpreter for --run-gc-report (default
                     /usr/bin/python3, the one the GC's units run)
   -h, --help        show this help
+
+Every command is printed redacted, since the JSON is meant for the host's
+adoption issue: NAME=value and --name value where the name says token, key,
+secret, pass or auth, an Authorization header, and a URL's userinfo, path
+and query (its host stays) all read <redacted>.
 
 Output: one JSON document on stdout. Exit codes: 0 read, 2 usage.
 USAGE
