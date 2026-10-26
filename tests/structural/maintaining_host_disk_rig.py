@@ -417,13 +417,27 @@ def tree(root: Path) -> dict:
 
 
 def stub_systemctl(bindir: Path) -> Path:
-    """A systemctl that appends its argv, one call per line, to its log."""
+    """A systemctl that appends its argv, one call per line, to its log.
+
+    `fail_once(stub, verb)` makes its next call with that first argument
+    exit 1 (still logged), and every later one succeed."""
     bindir.mkdir(parents=True, exist_ok=True)
     log = bindir / "systemctl.log"
     stub = bindir / "systemctl"
-    stub.write_text(f'#!/usr/bin/env bash\nprintf "%s\\n" "$*" >>"{log}"\n')
+    fail = bindir / "fail-once"
+    stub.write_text(
+        "#!/usr/bin/env bash\n"
+        f'printf "%s\\n" "$*" >>"{log}"\n'
+        f'if [ -f "{fail}/$1" ]; then rm -f "{fail}/$1"; exit 1; fi\n'
+    )
     stub.chmod(0o755)
     return stub
+
+
+def fail_once(stub: Path, verb: str) -> None:
+    d = stub.parent / "fail-once"
+    d.mkdir(exist_ok=True)
+    (d / verb).write_text("")
 
 
 def calls(stub: Path) -> list:

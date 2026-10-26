@@ -80,6 +80,20 @@ def test_modified_file_refuses_without_even_modified(tmp_path, host):
     assert not (host / rig.GC_DIR / "disk-gc").exists()
 
 
+def test_remove_that_fails_to_reload_keeps_the_marker_and_resumes(tmp_path, host):
+    """CR 521: MANIFEST goes last, after the reload, so a re-run finds it."""
+    rig.stage(host, rig.gc_files())
+    stub = rig.stub_systemctl(tmp_path / "bin")
+    rig.fail_once(stub, "daemon-reload")
+    result = rig.run(REMOVE, "--root", host, "--systemctl", stub, "--approve")
+    assert result.returncode == 1, result.stdout
+    assert (host / rig.GC_DIR / "MANIFEST").exists()
+    result, stub = remove(tmp_path, host, "--approve")
+    assert result.returncode == 0, result.stderr
+    assert not (host / rig.GC_DIR / "MANIFEST").exists()
+    assert "daemon-reload" in rig.calls(stub)
+
+
 def test_nothing_installed(tmp_path, host):
     result, stub = remove(tmp_path, host, "--approve")
     assert result.returncode == 0, result.stderr

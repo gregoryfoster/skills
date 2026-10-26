@@ -1,10 +1,11 @@
 """#425 — install-disk-gc.sh installs or updates the GC from a staging tree.
 
 The contract's install, on a scratch root prefix: each MANIFEST file with its
-staged mode, then MANIFEST, then `sha256sum --strict -c` from the root, then
-`daemon-reload`. An update copies the installed MANIFEST aside before
-installing, and removes only the paths the old MANIFEST lists that the new
-one doesn't. journald restarts only when its drop-in changed. Nothing touches
+staged mode, `sha256sum --strict -c` from the root against the staged
+MANIFEST, the removals, `daemon-reload`, and only then MANIFEST itself, the
+commit marker a re-run reads (CR 521). An update removes only the paths the
+old MANIFEST lists that the new one doesn't. journald restarts only when its
+drop-in changed. Nothing touches
 `/etc/cannobserv/disk-gc/`, and no timer is enabled or disabled.
 
 No test touches the real `/`: every run takes `--root` under tmp_path, and
@@ -55,7 +56,7 @@ def install(tmp_path, root, staging, *extra, systemctl=True, pin_from=None):
     scripts = rig.pinned_scripts(
         tmp_path / f"scripts-{len(copies)}", pin_from or staging
     )
-    args = ["--staging", staging, "--root", root, "--aside", tmp_path / "aside", *extra]
+    args = ["--staging", staging, "--root", root, *extra]
     stub = None
     if systemctl:
         stub = rig.stub_systemctl(tmp_path / "bin")
@@ -123,11 +124,8 @@ def test_scratch_root_without_systemctl_runs_none(tmp_path, host):
 # --- an update ---------------------------------------------------------------
 
 
-def test_update_copies_old_manifest_aside_and_removes_only_what_it_dropped(
-    tmp_path, host
-):
+def test_update_removes_only_what_it_dropped(tmp_path, host):
     rig.stage(host, v1_files())
-    old_manifest = (host / rig.GC_DIR / "MANIFEST").read_bytes()
     stray = host / rig.GC_DIR / "host-notes"
     stray.write_text("the host's own\n")
     keep = host_files(host)
@@ -138,9 +136,6 @@ def test_update_copies_old_manifest_aside_and_removes_only_what_it_dropped(
     assert out["removed"] == [OLD_HELPER]
     assert not (host / OLD_HELPER).exists()
     assert stray.read_text() == "the host's own\n"
-    aside = tmp_path / "aside" / "MANIFEST"
-    assert out["aside"] == str(aside)
-    assert aside.read_bytes() == old_manifest
     got = installed(host)
     got.pop(f"{rig.GC_DIR}/host-notes")
     assert got == want_tree(rig.gc_files())
@@ -190,8 +185,15 @@ def test_same_version_is_current_and_changes_nothing(tmp_path, host):
     before = rig.tree(host)
     result, stub = install(tmp_path, host, staged(tmp_path), "--approve")
     out = ok(result)
-    assert out["action"] == "current" and out["applied"] is False
+    assert out["action"] == "current"
     assert rig.tree(host) == before
+    assert rig.calls(stub) == ["daemon-reload"]
+
+
+def test_same_version_without_approve_runs_nothing(tmp_path, host):
+    rig.stage(host, rig.gc_files())
+    result, stub = install(tmp_path, host, staged(tmp_path))
+    assert ok(result)["action"] == "current"
     assert rig.calls(stub) == []
 
 
@@ -315,6 +317,52 @@ def test_content_and_manifest_swapped_together_is_refused(tmp_path, host):
     result, _ = install(tmp_path, host, staging, "--approve", pin_from=pin_from)
     refused(result, "pin")
     assert not (host / "usr").exists()
+
+
+# --- CR 521: MANIFEST is the commit marker, written last ----------------------
+
+
+def test_fresh_install_that_fails_to_reload_leaves_no_marker_and_resumes(
+    tmp_path, host
+):
+    staging = staged(tmp_path)
+    stub = rig.stub_systemctl(tmp_path / "bin")
+    rig.fail_once(stub, "daemon-reload")
+    result, _ = install(tmp_path, host, staging, "--approve")
+    assert result.returncode == 1, result.stdout
+    assert rig.stdout_json(result)["failed"]
+    assert not (host / rig.GC_DIR / "MANIFEST").exists()
+    result, stub = install(tmp_path, host, staging, "--approve")
+    out = ok(result)
+    assert out["action"] == "install"
+    assert installed(host) == want_tree(rig.gc_files())
+    assert rig.calls(stub)[-2:] == ["daemon-reload", "restart systemd-journald"]
+
+
+def test_update_that_fails_to_reload_keeps_the_old_marker_and_resumes(tmp_path, host):
+    rig.stage(host, v1_files())
+    old_manifest = (host / rig.GC_DIR / "MANIFEST").read_bytes()
+    staging = staged(tmp_path)
+    stub = rig.stub_systemctl(tmp_path / "bin")
+    rig.fail_once(stub, "daemon-reload")
+    result, _ = install(tmp_path, host, staging, "--approve")
+    assert result.returncode == 1, result.stdout
+    assert (host / rig.GC_DIR / "MANIFEST").read_bytes() == old_manifest
+    result, stub = install(tmp_path, host, staging, "--approve")
+    out = ok(result)
+    assert out["action"] == "update"
+    assert not (host / OLD_HELPER).exists()
+    assert installed(host) == want_tree(rig.gc_files())
+    assert rig.calls(stub)[-1] == "daemon-reload"
+
+
+def test_current_after_a_lost_reload_reloads_again(tmp_path, host):
+    """A run that installed the marker but whose reload didn't take reads
+    as current; with --approve, current still reloads."""
+    rig.stage(host, rig.gc_files())
+    result, stub = install(tmp_path, host, staged(tmp_path), "--approve")
+    assert ok(result)["action"] == "current"
+    assert rig.calls(stub) == ["daemon-reload"]
 
 
 def test_real_root_needs_root(tmp_path):
