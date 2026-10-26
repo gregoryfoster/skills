@@ -11,11 +11,11 @@ What to read after an install, an update, turning it on, and a retirement. Read 
 
 ## The GC's and the sensor's runs
 
-The GC's journal lines carry sd-daemon priorities: alerts `<3>`, warnings `<4>`, `ok` `<6>`. So `journalctl -p` works for it:
+The GC's journal lines carry sd-daemon priorities: alerts `<3>`, warnings `<4>`, `ok` `<6>`. So `journalctl -p` works for it. Read the journal **with sudo**: for a user outside `adm` and `systemd-journal`, `journalctl` prints `-- No entries --` and exits 0, which reads exactly like "no alerts":
 
 ```bash
-journalctl -u cannobserv-disk-headroom.service -p err --since -1d     # alerts
-journalctl -u cannobserv-disk-gc.service -p warning --since -1d       # warnings and worse
+sudo journalctl -u cannobserv-disk-headroom.service -p err --since -1d     # alerts
+sudo journalctl -u cannobserv-disk-gc.service -p warning --since -1d       # warnings and worse
 systemctl list-timers 'cannobserv-disk-*'                             # next and last runs
 ```
 
@@ -25,7 +25,7 @@ A healthy sensor run reads like `ok: <host>: / is 48% used, 12.2G available (ale
 
 **Don't trust `journalctl -p` on a script the skill retires or keeps.** journald files a script's plain stderr at `info`, so `-p err` finds nothing even when it fired: power-map's guard fired 8 times in a week that `-p err` counted none (CannObserv/power-map#665). For those:
 
-- grep the message text: `journalctl -u <unit> --since -7d | grep -c '<its alert text>'`; or
+- grep the message text: `sudo journalctl -u <unit> --since -7d | grep -c '<its alert text>'`; or
 - first check that the script emits `<N>` prefixes when `$JOURNAL_STREAM` is set (power-map#690 shows the ~20-line stdlib pattern).
 
 ## After a retirement

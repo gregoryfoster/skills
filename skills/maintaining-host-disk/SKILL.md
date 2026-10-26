@@ -34,7 +34,7 @@ The GC's tiers, keep rules and sensor are Provisioner's. Where the GC does somet
 | "`:latest` is the newest release, so pull that" | `:latest` only says which release is newest. Install from the pin, whose manifest digest the puller checks first. |
 | "The digests matched, so the layer is safe to extract" | The digests prove the bytes are the release's. Members are checked separately, before extracting: no link, no `..`, nothing outside `usr/local/lib/`. |
 | "The GC prunes the same things, so the old script can go" | Read what the old one removed that the GC keeps: containers, volumes, unused tagged images, tiers that are off. [retiring.md](references/retiring.md). |
-| "`journalctl -p err` shows no alerts" | It does for the GC, whose lines carry priorities. A host's own script logs plain stderr at `info`. [verifying.md](references/verifying.md). |
+| "`journalctl -p err` shows no alerts" | Only with `sudo`: without it, a user outside `adm` gets `-- No entries --`. And only for the GC, whose lines carry priorities: a host's own script logs plain stderr at `info`. [verifying.md](references/verifying.md). |
 | "Weekly is enough for VS Code builds" | Two ~640M server builds shipped in one week on power-map. Keep the GC daily. |
 | "The update only changed the GC script, so restart journald anyway" | Only when its drop-in changed: the installer compares the bytes and says. |
 
