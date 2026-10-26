@@ -676,3 +676,49 @@ def test_a_home_it_cannot_enter_is_reported_unreadable(mode):
     finally:
         (base / "root/var/lib/svc").chmod(0o755)
         shutil.rmtree(base)
+
+
+# --- CR 545: more shapes a secret takes in a command ------------------------
+
+
+@pytest.mark.parametrize(
+    "command, secret",
+    [
+        ("curl -u ops:userpass1 https://x.example/ping", "userpass1"),
+        ("curl --user ops:userpass2 https://x.example/ping", "userpass2"),
+        ("curl --user=ops:userpass3 https://x.example/ping", "userpass3"),
+        ('curl -H "X-Api-Key: hdrsecret" https://x.example/', "hdrsecret"),
+        ("curl -H 'X-Auth-Token: hdr2secret' https://x.example/", "hdr2secret"),
+        ("mysqldump -uops -pmysqlsecret wslcb > /tmp/d.sql", "mysqlsecret"),
+        ("redis-cli -h 127.0.0.1 -a redissecret BGSAVE", "redissecret"),
+        ("""curl -d '{"token": "jsonsecret"}' https://x.example/""", "jsonsecret"),
+        ("""curl -d '{"api_key":"json2secret"}' https://x.example/""", "json2secret"),
+    ],
+    ids=lambda v: v.split()[0] if " " in v else v,
+)
+def test_more_secret_shapes_never_reach_stdout(host, command, secret):
+    write(
+        host,
+        "etc/cron.d/backup",
+        f"0 4 * * * root {command}; /srv/wslcb/disk_hygiene.py\n",
+    )
+    result = rig.run(RETIRE, "--root", host)
+    assert result.returncode == 0, result.stderr
+    assert secret not in result.stdout
+    (found,) = [
+        f
+        for f in rig.stdout_json(result)["found"]
+        if f["where"] == "etc/cron.d/backup:1"
+    ]
+    assert "<redacted>" in found["command"]
+
+
+def test_a_mysql_flag_on_another_command_is_kept(host):
+    """-p is a password only to mysql*: elsewhere it stays as written."""
+    write(
+        host,
+        "etc/cron.d/mk",
+        "0 4 * * * root mkdir -p /var/x; /srv/wslcb/disk_hygiene.py\n",
+    )
+    (found,) = [f for f in check(host)["found"] if f["where"] == "etc/cron.d/mk:1"]
+    assert "mkdir -p /var/x" in found["command"]
