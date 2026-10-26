@@ -193,12 +193,23 @@ def scope_dirs(root, scope):
     return [os.path.join(root, home, ".config/systemd/user")]
 
 
+def setting(unit, key):
+    """A single-valued key's effective value: the unit file, then each
+    drop-in in order, the last one setting it winning."""
+    value = None
+    for text in [unit["text"]] + [t for _w, t in unit.get("dropins", [])]:
+        for k, v in directives(text):
+            if k == key:
+                value = v or None
+    return value
+
+
 def timer_for(units, scope, service):
     stem = service[: -len(".service")]
     for (s, name), t in units.items():
         if s != scope or not name.endswith(".timer"):
             continue
-        target = dict(directives(t["text"])).get("Unit")
+        target = setting(t, "Unit")
         if target == service or (target is None and name[: -len(".timer")] == stem):
             return name
     return None
