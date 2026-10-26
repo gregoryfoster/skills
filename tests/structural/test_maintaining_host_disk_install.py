@@ -188,7 +188,9 @@ def test_same_version_is_current_and_changes_nothing(tmp_path, host):
     out = ok(result)
     assert out["action"] == "current"
     assert rig.tree(host) == before
-    assert rig.calls(stub) == ["daemon-reload"]
+    # CR 565: the reload comes before the marker, so a marker means it took.
+    assert rig.calls(stub) == []
+    assert out["systemctl"] == [] and out["systemctl_ran"] is False
 
 
 def test_same_version_without_approve_runs_nothing(tmp_path, host):
@@ -374,15 +376,6 @@ def test_install_that_fails_to_restart_journald_restarts_it_on_the_re_run(
     assert rig.calls(stub)[-1] == "restart systemd-journald"
 
 
-def test_current_after_a_lost_reload_reloads_again(tmp_path, host):
-    """A run that installed the marker but whose reload didn't take reads
-    as current; with --approve, current still reloads."""
-    rig.stage(host, rig.gc_files())
-    result, stub = install(tmp_path, host, staged(tmp_path), "--approve")
-    assert ok(result)["action"] == "current"
-    assert rig.calls(stub) == ["daemon-reload"]
-
-
 def test_real_root_needs_root(tmp_path):
     if os.geteuid() == 0:
         pytest.skip("runs as root, so the refusal for a non-root caller can't arise")
@@ -433,13 +426,22 @@ def test_a_dropped_unit_is_disabled_before_it_is_removed(tmp_path, host):
 
 
 def test_a_failure_before_any_install_says_applied_false(tmp_path, host):
-    rig.stage(host, rig.gc_files())
-    stub = rig.stub_systemctl(tmp_path / "bin")
-    rig.fail_once(stub, "daemon-reload")
-    result, _ = install(tmp_path, host, staged(tmp_path), "--approve")
+    """A fresh install whose first `install` fails: nothing changed."""
+    bindir = tmp_path / "shim"
+    bindir.mkdir()
+    (bindir / "install").write_text("#!/usr/bin/env bash\nexit 1\n")
+    (bindir / "install").chmod(0o755)
+    result, _ = install(
+        tmp_path,
+        host,
+        staged(tmp_path),
+        "--approve",
+        env={"PATH": f"{bindir}:{os.environ['PATH']}"},
+    )
     assert result.returncode == 1, result.stdout
     out = rig.stdout_json(result)
     assert out["failed"] and out["applied"] is False
+    assert not (host / rig.GC_DIR).exists()
 
 
 def test_no_private_directory_is_a_json_failure_with_applied_false(tmp_path, host):

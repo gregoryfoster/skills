@@ -25,9 +25,8 @@ from it, and from the installed VERSION it records:
              release stopped before writing its MANIFEST (interrupted),
              which a re-run finishes
   current    the staged MANIFEST is the installed one, and the installed
-             files still match it: nothing to install. With --approve it
-             still runs daemon-reload, in case a run stopped after its
-             MANIFEST but its reload didn't take
+             files still match it: nothing to install, and no systemctl
+             call (the marker lands only after the reload took)
   reinstall  the same VERSION again, with --reinstall
 A staged VERSION lower than the installed one refuses: no downgrade. So
 does a VERSION on disk that is neither the marker's nor the staged one: an
@@ -348,8 +347,9 @@ if [ "$APPROVE" = 0 ]; then
 fi
 
 
+# The reload comes before the marker (step 4), so an installed MANIFEST
+# means it took: current has nothing to call.
 if [ "$ACTION" = current ]; then
-  run_systemctl daemon-reload || failed "systemctl daemon-reload failed"
   emit
   exit 0
 fi
