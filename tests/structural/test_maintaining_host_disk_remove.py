@@ -94,6 +94,20 @@ def test_remove_that_fails_to_reload_keeps_the_marker_and_resumes(tmp_path, host
     assert "daemon-reload" in rig.calls(stub)
 
 
+def test_remove_that_fails_to_restart_journald_restarts_it_on_the_re_run(
+    tmp_path, host
+):
+    rig.stage(host, rig.gc_files())
+    stub = rig.stub_systemctl(tmp_path / "bin")
+    rig.fail_once(stub, "restart")
+    result = rig.run(REMOVE, "--root", host, "--systemctl", stub, "--approve")
+    assert result.returncode == 1, result.stdout
+    assert not (host / rig.JOURNALD).exists()
+    result, stub = remove(tmp_path, host, "--approve")
+    assert result.returncode == 0, result.stderr
+    assert rig.calls(stub)[-1] == "restart systemd-journald"
+
+
 def test_nothing_installed(tmp_path, host):
     result, stub = remove(tmp_path, host, "--approve")
     assert result.returncode == 0, result.stderr

@@ -13,10 +13,11 @@ Removes the canonical disk GC the installed MANIFEST describes. Without
 
   1. systemctl disable --now cannobserv-disk-gc.timer
      cannobserv-disk-headroom.timer
-  2. each file MANIFEST lists, then MANIFEST, then the GC's directory if
-     that leaves it empty
+  2. each file MANIFEST lists
   3. systemctl daemon-reload, and systemctl restart systemd-journald when
      a journald.conf.d drop-in went
+  4. MANIFEST, last, then the GC's directory if that leaves it empty. Until
+     MANIFEST goes, a re-run finds what is left and finishes the job
 
 It keeps the host's /etc/cannobserv/disk-gc/ (disk-gc.conf, checkin.key),
 the GC's state in /var/lib/cannobserv-disk-gc/, and any file MANIFEST
@@ -99,7 +100,9 @@ elif [ ${#REFUSED[@]} -eq 0 ]; then
     elif [ "$h" != "${M_HASHES[$i]}" ]; then
       MODIFIED+=("$p")
     fi
-    case "$p" in "$JOURNALD_DIR"*) [ "$h" = absent ] || JRESTART=1 ;; esac
+    # From the marker, not the disk: a run that removed the drop-in but
+    # stopped before the restart left it already absent.
+    case "$p" in "$JOURNALD_DIR"*) JRESTART=1 ;; esac
   done
   if [ ${#MODIFIED[@]} -gt 0 ] && [ "$EVEN_MODIFIED" = 0 ]; then
     refuse "edited since install: ${MODIFIED[*]}; --even-modified removes them anyway"
@@ -153,12 +156,13 @@ run_systemctl disable --now $TIMERS || failed "systemctl disable --now failed; n
 for p in "${PATHS[@]}"; do
   rm -f "$R/$p" || failed "couldn't remove $p"
 done
-rm -f "$I_MAN" || failed "couldn't remove MANIFEST"
-for d in "$R/$GC_DIR" "$R/${GC_DIR%/*}"; do
-  if [ -d "$d" ] && [ -z "$(ls -A "$d")" ]; then rmdir "$d" || failed "couldn't remove the empty $d"; fi
-done
 run_systemctl daemon-reload || failed "systemctl daemon-reload failed"
 if [ "$JRESTART" = 1 ]; then
   run_systemctl restart systemd-journald || failed "systemctl restart systemd-journald failed"
 fi
+# The commit marker goes last: until then, a re-run sees what is left.
+rm -f "$I_MAN" || failed "couldn't remove MANIFEST"
+for d in "$R/$GC_DIR" "$R/${GC_DIR%/*}"; do
+  if [ -d "$d" ] && [ -z "$(ls -A "$d")" ]; then rmdir "$d" || failed "couldn't remove the empty $d"; fi
+done
 emit

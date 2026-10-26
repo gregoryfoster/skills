@@ -6,7 +6,7 @@ set -euo pipefail
 usage() {
   cat <<'USAGE'
 Usage: bash install-disk-gc.sh --staging DIR [--approve] [--reinstall]
-                               [--root DIR] [--aside DIR] [--systemctl CMD]
+                               [--root DIR] [--systemctl CMD]
 
 Installs the files a staging tree's MANIFEST lists, from pull-disk-gc.sh's
 --into DIR. Without --approve it prints the plan and changes nothing.
@@ -17,24 +17,32 @@ sudo) and every check below reads that copy, which is what gets installed.
 Its MANIFEST must have the sha256 that _pin.sh names, which binds every
 file it lists to the pinned release.
 
-It decides from the installed VERSION, read beside the installed MANIFEST:
-  install    nothing installed yet
-  update     the staged VERSION is higher
-  current    the same VERSION, and the installed files still match their
-             MANIFEST: nothing to do
+The installed MANIFEST is the commit marker: it is written last, so it
+names what was installed only once everything else is done. It decides
+from it, and from the installed VERSION it records:
+  install    no MANIFEST installed
+  update     the staged VERSION is higher; or an earlier run of this same
+             release stopped before writing its MANIFEST (interrupted),
+             which a re-run finishes
+  current    the staged MANIFEST is the installed one, and the installed
+             files still match it: nothing to install. With --approve it
+             still runs daemon-reload, in case a run stopped after its
+             MANIFEST but its reload didn't take
   reinstall  the same VERSION again, with --reinstall
 A staged VERSION lower than the installed one refuses: no downgrade.
 
-The install, as root (the contract's own steps):
-  1. an update first copies the installed MANIFEST into --aside, since the
-     install overwrites it
-  2. each MANIFEST file: install -D -o root -g root -m <its staged mode>
-  3. MANIFEST itself, mode 644
-  4. sha256sum --strict -c MANIFEST, from the root
-  5. an update removes each path the old MANIFEST listed that the new one
-     doesn't, and nothing else
-  6. systemctl daemon-reload, and systemctl restart systemd-journald only
-     when a journald.conf.d drop-in it installs or removes changed
+The install, as root:
+  1. each MANIFEST file but MANIFEST: install -D -o root -g root -m <its
+     staged mode>
+  2. sha256sum --strict -c of the staged MANIFEST, from the root
+  3. an update removes each path the installed MANIFEST lists that the new
+     one doesn't, and nothing else
+  4. systemctl daemon-reload, and systemctl restart systemd-journald only
+     when a journald.conf.d drop-in differs from what the installed
+     MANIFEST records (or it lists one the new MANIFEST drops)
+  5. MANIFEST, mode 644: the commit marker
+A run that fails before step 5 leaves the old MANIFEST (or none) in place,
+so a re-run sees the same plan and finishes it.
 
 It never touches /etc/cannobserv/disk-gc/ (the host's disk-gc.conf and
 checkin.key), the GC's state under /var/lib, or a timer: an enabled timer
@@ -60,21 +68,20 @@ Options:
   --root DIR        install under DIR instead of / (a scratch root, for a
                     test or a rehearsal); systemctl isn't called unless
                     --systemctl names one
-  --aside DIR       where an update copies the old MANIFEST (default: a new
-                    mktemp -d directory); printed as aside
   --systemctl CMD   the systemctl to call (default: systemctl, under / only)
   -h, --help        show this help
 
 Paths may hold only [A-Za-z0-9._+@/-].
 
 Output (stdout, JSON): ok, action, applied, root, staging,
-installed_version, staged_version, files, removed, aside, journald_restart,
-systemctl (the calls, made or planned), systemctl_ran, refused, failed.
+installed_version, staged_version, interrupted, files, removed,
+journald_restart, systemctl (the calls, made or planned), systemctl_ran,
+refused, failed.
 
 Exit codes:
   0  planned, done, or already current
-  1  failed part-way: what's in place is in failed, and the old MANIFEST is
-     in aside
+  1  failed part-way: failed says where; the old MANIFEST is still the
+     marker, so run it again once the cause is fixed
   2  usage
   3  refused: nothing changed
 USAGE
@@ -86,16 +93,15 @@ HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=_pin.sh
 . "$HERE/_pin.sh"
 
-STAGING="" ROOT=/ ASIDE="" APPROVE=0 REINSTALL=0 SYSTEMCTL="" RUN_SYSTEMCTL=0
+STAGING="" ROOT=/ APPROVE=0 REINSTALL=0 SYSTEMCTL="" RUN_SYSTEMCTL=0
 usage_error() { echo "install-disk-gc: $1" >&2; exit 2; }
 while [ $# -gt 0 ]; do
   case "$1" in
-    --staging | --root | --aside | --systemctl)
+    --staging | --root | --systemctl)
       [ $# -ge 2 ] || usage_error "$1 needs a value"
       case "$1" in
         --staging) STAGING=$2 ;;
         --root) ROOT=$2 ;;
-        --aside) ASIDE=$2 ;;
         --systemctl) SYSTEMCTL=$2 RUN_SYSTEMCTL=1 ;;
       esac
       shift 2
@@ -107,7 +113,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 [ -n "$STAGING" ] || usage_error "--staging DIR is required"
-for v in "$STAGING" "$ROOT" "$ASIDE" "$SYSTEMCTL"; do
+for v in "$STAGING" "$ROOT" "$SYSTEMCTL"; do
   [[ $v =~ ^[A-Za-z0-9._+@/-]*$ ]] || usage_error "$v: paths may hold only [A-Za-z0-9._+@/-]"
 done
 [ -d "$STAGING" ] || usage_error "$STAGING is not a directory"
@@ -171,21 +177,22 @@ fi
 
 # --- what's installed ---------------------------------------------------------
 
-I_PATHS=() I_HASHES=() I_VER="" ACTION=install
+I_PATHS=() I_HASHES=() I_VER="" ACTION=install INTERRUPTED=false
 I_MAN=$R/$MANIFEST_REL
 no_symlink_under "$R" "$MANIFEST_REL"
 if [ -f "$I_MAN" ] && [ ! -L "$I_MAN" ]; then
   read_manifest "$I_MAN" installed
   I_PATHS=(${M_PATHS[@]+"${M_PATHS[@]}"}) I_HASHES=(${M_HASHES[@]+"${M_HASHES[@]}"})
   if [ -f "$R/$VERSION_REL" ]; then I_VER=$(tr -d '[:space:]' <"$R/$VERSION_REL"); fi
-  if ! [[ $I_VER =~ ^[0-9]+$ ]]; then
-    refuse "the installed VERSION is not an integer; read it by hand"
-  elif [[ $S_VER =~ ^[0-9]+$ ]]; then
-    if [ "$S_VER" -gt "$I_VER" ]; then
-      ACTION=update
-    elif [ "$S_VER" -lt "$I_VER" ]; then
-      refuse "staged VERSION $S_VER is older than the installed $I_VER: no downgrade"
-    elif [ "$REINSTALL" = 1 ]; then
+  on_disk=$(hash_of "$R/$VERSION_REL") marked="" staged_v=""
+  for i in ${I_PATHS[@]+"${!I_PATHS[@]}"}; do
+    [ "${I_PATHS[$i]}" != "$VERSION_REL" ] || marked=${I_HASHES[$i]}
+  done
+  for i in ${S_PATHS[@]+"${!S_PATHS[@]}"}; do
+    [ "${S_PATHS[$i]}" != "$VERSION_REL" ] || staged_v=${S_HASHES[$i]}
+  done
+  if [ -f "$S_MAN" ] && cmp -s "$I_MAN" "$S_MAN"; then
+    if [ "$REINSTALL" = 1 ]; then
       ACTION=reinstall
     else
       ACTION=current
@@ -194,8 +201,25 @@ if [ -f "$I_MAN" ] && [ ! -L "$I_MAN" ]; then
         [ "$(hash_of "$R/${I_PATHS[$i]}")" = "${I_HASHES[$i]}" ] || drift="$drift ${I_PATHS[$i]}"
       done
       [ -z "$drift" ] || refuse "VERSION $I_VER is installed, but differs from its MANIFEST:$drift; --reinstall replaces it"
-      cmp -s "$I_MAN" "$S_MAN" || refuse "VERSION $I_VER is installed with a different MANIFEST from the staged one; --reinstall replaces it"
     fi
+  elif [ -n "$marked" ] && [ "$on_disk" = "$marked" ] && [[ $I_VER =~ ^[0-9]+$ ]]; then
+    if ! [[ $S_VER =~ ^[0-9]+$ ]]; then
+      :
+    elif [ "$S_VER" -gt "$I_VER" ]; then
+      ACTION=update
+    elif [ "$S_VER" -lt "$I_VER" ]; then
+      refuse "staged VERSION $S_VER is older than the installed $I_VER: no downgrade"
+    elif [ "$REINSTALL" = 1 ]; then
+      ACTION=reinstall
+    else
+      refuse "VERSION $I_VER is installed with a different MANIFEST from the staged one; --reinstall replaces it"
+    fi
+  elif [ -n "$staged_v" ] && [ "$on_disk" = "$staged_v" ]; then
+    # This release's VERSION is on disk, under the old marker: an earlier
+    # run stopped before writing its MANIFEST.
+    ACTION=update INTERRUPTED=true
+  else
+    refuse "the installed VERSION is not the one its MANIFEST records, or not an integer; read it by hand"
   fi
 fi
 
@@ -210,31 +234,41 @@ for p in ${S_PATHS[@]+"${S_PATHS[@]}"} ${REMOVED[@]+"${REMOVED[@]}"}; do
   if [ -e "$R/$p" ] && [ ! -L "$R/$p" ] && [ ! -f "$R/$p" ]; then refuse "$p is not a regular file on the root"; fi
 done
 
+# journald restarts when a drop-in differs from what the installed MANIFEST
+# records, not from the bytes on disk: a run that stopped after writing the
+# drop-in but before the restart left them already equal.
+marked_hash() {
+  local want=$1 i
+  for i in ${I_PATHS[@]+"${!I_PATHS[@]}"}; do
+    [ "${I_PATHS[$i]}" != "$want" ] || { printf '%s\n' "${I_HASHES[$i]}"; return 0; }
+  done
+  printf 'absent\n'
+}
 JRESTART=0
 for i in ${S_PATHS[@]+"${!S_PATHS[@]}"}; do
   case "${S_PATHS[$i]}" in
-    "$JOURNALD_DIR"*) [ "$(hash_of "$R/${S_PATHS[$i]}")" = "${S_HASHES[$i]}" ] || JRESTART=1 ;;
+    "$JOURNALD_DIR"*) [ "$(marked_hash "${S_PATHS[$i]}")" = "${S_HASHES[$i]}" ] || JRESTART=1 ;;
   esac
 done
 for p in ${REMOVED[@]+"${REMOVED[@]}"}; do
-  case "$p" in "$JOURNALD_DIR"*) [ "$(hash_of "$R/$p")" = absent ] || JRESTART=1 ;; esac
+  case "$p" in "$JOURNALD_DIR"*) JRESTART=1 ;; esac
 done
 
 # --- report, and act ------------------------------------------------------------
 
-APPLIED=false FAILED_WHY="" ASIDE_OUT=""
+APPLIED=false FAILED_WHY=""
 emit() {
   local ok=true iv=null sv=null ran=false
   [ ${#REFUSED[@]} -eq 0 ] && [ -z "$FAILED_WHY" ] || ok=false
   if [[ $I_VER =~ ^[0-9]+$ ]]; then iv=$I_VER; fi
   if [[ $S_VER =~ ^[0-9]+$ ]]; then sv=$S_VER; fi
-  [ "$RUN_SYSTEMCTL" = 0 ] || [ "$APPLIED" = false ] || ran=true
+  [ "$RUN_SYSTEMCTL" = 0 ] || [ "$APPROVE" = 0 ] || [ ${#SYSTEMCTL_CALLS[@]} -eq 0 ] || ran=true
   printf '{\n  "ok": %s,\n  "action": "%s",\n  "applied": %s,\n' "$ok" "$ACTION" "$APPLIED"
   printf '  "root": %s,\n  "staging": %s,\n' "$(json_str "$ROOT")" "$(json_str "$STAGING")"
   printf '  "installed_version": %s,\n  "staged_version": %s,\n' "$iv" "$sv"
+  printf '  "interrupted": %s,\n' "$INTERRUPTED"
   printf '  "files": %s,\n' "$(json_list ${S_PATHS[@]+"${S_PATHS[@]}"})"
   printf '  "removed": %s,\n' "$(json_list ${REMOVED[@]+"${REMOVED[@]}"})"
-  if [ -n "$ASIDE_OUT" ]; then printf '  "aside": %s,\n' "$(json_str "$ASIDE_OUT")"; else printf '  "aside": null,\n'; fi
   printf '  "journald_restart": %s,\n' "$([ "$JRESTART" = 1 ] && echo true || echo false)"
   printf '  "systemctl": %s,\n  "systemctl_ran": %s,\n' "$(json_list ${SYSTEMCTL_CALLS[@]+"${SYSTEMCTL_CALLS[@]}"})" "$ran"
   printf '  "refused": %s,\n' "$(json_list ${REFUSED[@]+"${REFUSED[@]}"})"
@@ -246,13 +280,11 @@ if [ ${#REFUSED[@]} -gt 0 ]; then
   emit
   exit 3
 fi
-if [ "$ACTION" = current ]; then
-  emit
-  exit 0
-fi
 if [ "$APPROVE" = 0 ]; then
-  SYSTEMCTL_CALLS=(daemon-reload)
-  [ "$JRESTART" = 0 ] || SYSTEMCTL_CALLS+=("restart systemd-journald")
+  if [ "$ACTION" != current ]; then
+    SYSTEMCTL_CALLS=(daemon-reload)
+    [ "$JRESTART" = 0 ] || SYSTEMCTL_CALLS+=("restart systemd-journald")
+  fi
   emit
   exit 0
 fi
@@ -265,14 +297,10 @@ failed() {
   exit 1
 }
 
-if [ -f "$I_MAN" ]; then
-  if [ -z "$ASIDE" ]; then
-    ASIDE=$(mktemp -d "${TMPDIR:-/tmp}/disk-gc-aside.XXXXXX") || failed "couldn't make an aside directory"
-  fi
-  mkdir -p "$ASIDE" || failed "couldn't make $ASIDE"
-  ASIDE_OUT=$ASIDE/MANIFEST
-  cp "$I_MAN" "$ASIDE_OUT" || failed "couldn't copy the old MANIFEST aside; nothing installed"
-  cmp -s "$I_MAN" "$ASIDE_OUT" || failed "the aside copy of the old MANIFEST doesn't match it; nothing installed"
+if [ "$ACTION" = current ]; then
+  run_systemctl daemon-reload || failed "systemctl daemon-reload failed"
+  emit
+  exit 0
 fi
 
 OWN=()
@@ -280,10 +308,9 @@ OWN=()
 for p in "${S_PATHS[@]}"; do
   mode=$(stat -c %a "$STAGED/$p") || failed "couldn't read $p's staged mode"
   install -D ${OWN[@]+"${OWN[@]}"} -m "$mode" "$STAGED/$p" "$R/$p" || failed "install of $p failed"
+  APPLIED=true
 done
-install ${OWN[@]+"${OWN[@]}"} -m 644 "$S_MAN" "$I_MAN" || failed "install of MANIFEST failed"
-APPLIED=true
-(cd "$ROOT" && sha256sum --strict --quiet -c "$MANIFEST_REL") >&2 || failed "the installed files fail sha256sum --strict -c MANIFEST"
+(cd "$ROOT" && sha256sum --strict --quiet -c "$S_MAN") >&2 || failed "the installed files fail sha256sum --strict -c of the staged MANIFEST"
 for p in ${REMOVED[@]+"${REMOVED[@]}"}; do
   rm -f "$R/$p" || failed "couldn't remove $p, which the new MANIFEST dropped"
 done
@@ -291,4 +318,6 @@ run_systemctl daemon-reload || failed "systemctl daemon-reload failed"
 if [ "$JRESTART" = 1 ]; then
   run_systemctl restart systemd-journald || failed "systemctl restart systemd-journald failed"
 fi
+# The commit marker, last: until it lands, a re-run sees this same plan.
+install ${OWN[@]+"${OWN[@]}"} -m 644 "$S_MAN" "$I_MAN" || failed "install of MANIFEST, the commit marker, failed"
 emit

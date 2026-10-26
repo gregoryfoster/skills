@@ -356,6 +356,22 @@ def test_update_that_fails_to_reload_keeps_the_old_marker_and_resumes(tmp_path, 
     assert rig.calls(stub)[-1] == "daemon-reload"
 
 
+def test_install_that_fails_to_restart_journald_restarts_it_on_the_re_run(
+    tmp_path, host
+):
+    """The drop-in is already on disk after the failed run, so only the
+    marker can say journald hasn't taken it yet."""
+    staging = staged(tmp_path)
+    stub = rig.stub_systemctl(tmp_path / "bin")
+    rig.fail_once(stub, "restart")
+    result, _ = install(tmp_path, host, staging, "--approve")
+    assert result.returncode == 1, result.stdout
+    assert (host / rig.JOURNALD).exists()
+    result, stub = install(tmp_path, host, staging, "--approve")
+    assert ok(result)["journald_restart"] is True
+    assert rig.calls(stub)[-1] == "restart systemd-journald"
+
+
 def test_current_after_a_lost_reload_reloads_again(tmp_path, host):
     """A run that installed the marker but whose reload didn't take reads
     as current; with --approve, current still reloads."""
