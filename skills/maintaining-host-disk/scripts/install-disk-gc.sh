@@ -120,7 +120,7 @@ for v in "$STAGING" "$ROOT" "$SYSTEMCTL"; do
 done
 [ -d "$STAGING" ] || usage_error "$STAGING is not a directory"
 [ -d "$ROOT" ] || usage_error "$ROOT is not a directory"
-STAGING=$(cd "$STAGING" && pwd)
+STAGING=$(canon_dir "$STAGING")
 ROOT=$(canon_dir "$ROOT")
 R=${ROOT%/}
 if [ "$ROOT" = / ] && [ -z "$SYSTEMCTL" ]; then SYSTEMCTL=systemctl RUN_SYSTEMCTL=1; fi
@@ -177,8 +177,11 @@ COPY=$(mktemp -d "${TMPDIR:-/tmp}/disk-gc-install.XXXXXX") ||
   failed "couldn't make a private directory under ${TMPDIR:-/tmp}; nothing installed"
 trap 'rm -rf "$COPY"' EXIT
 CP_OK=1
+# STAGING is the physical path (canon_dir), so cp copies the tree it names,
+# never a link back into it; and the copy must be a real directory.
 cp -R --preserve=mode "$STAGING" "$COPY/stage" || CP_OK=0
 STAGED=$COPY/stage
+if [ -L "$STAGED" ] || [ ! -d "$STAGED" ]; then CP_OK=0; fi
 
 S_MAN=$STAGED/$MANIFEST_REL
 if [ "$CP_OK" = 0 ]; then
