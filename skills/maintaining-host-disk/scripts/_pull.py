@@ -104,7 +104,8 @@ def fetch(url, out, step, headers=(), size=None):
     """GET url into out with curl, https only, redirects included, and its
     stderr ours, unswallowed. With `size`, the manifest's declared size: curl
     stops past it, and any other length refuses; without, MAX_DOC_BYTES."""
-    cmd = ["curl", "-fsSL", "--proto", "=https", "--proto-redir", "=https"]
+    # -q first: no ~/.curlrc, which could add a header, a proxy or --insecure.
+    cmd = ["curl", "-q", "-fsSL", "--proto", "=https", "--proto-redir", "=https"]
     cmd += ["--max-redirs", "3", "--retry", "2", "--connect-timeout", "20"]
     cmd += ["-m", "120", "--max-filesize", str(size or MAX_DOC_BYTES), "-o", out]
     for h in headers:
