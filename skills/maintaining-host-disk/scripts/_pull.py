@@ -483,9 +483,16 @@ def main(argv=None):
             else:
                 refusal = None
             # From here on, cleanup and the report run to the end: a second
-            # signal is ignored rather than raised out of them.
-            for s in SIGNALS:
-                signal.signal(s, signal.SIG_IGN)
+            # signal is ignored rather than raised out of them. One that
+            # lands while the handlers are being swapped (Python delivers a
+            # pending signal as each call returns) only restarts the swap.
+            while True:
+                try:
+                    for s in SIGNALS:
+                        signal.signal(s, signal.SIG_IGN)
+                    break
+                except Refused:
+                    continue
         finally:
             remove_tree(work)
         if refusal is None:
