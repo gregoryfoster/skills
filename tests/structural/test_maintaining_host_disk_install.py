@@ -403,3 +403,25 @@ def test_slashes_that_name_root_are_root(tmp_path, spelling):
     result, _ = install(tmp_path, spelling, staged(tmp_path), systemctl=False)
     out = rig.stdout_json(result)
     assert out["root"] == "/"
+
+
+# --- CR 530: a unit the new MANIFEST drops is disabled before it goes -------
+
+OLD_TIMER = f"{rig.UNIT_DIR}/cannobserv-disk-old.timer"
+
+
+def test_a_dropped_unit_is_disabled_before_it_is_removed(tmp_path, host):
+    rig.stage(host, v1_files(**{OLD_TIMER: (b"[Timer]\n", 0o644)}))
+    result, stub = install(tmp_path, host, staged(tmp_path))
+    plan = ok(result)
+    assert plan["systemctl"] == [
+        "disable --now cannobserv-disk-old.timer",
+        "daemon-reload",
+    ]
+    result, stub = install(tmp_path, host, staged(tmp_path, name="again"), "--approve")
+    ok(result)
+    assert rig.calls(stub) == [
+        "disable --now cannobserv-disk-old.timer",
+        "daemon-reload",
+    ]
+    assert not (host / OLD_TIMER).exists()

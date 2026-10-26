@@ -60,6 +60,7 @@ def test_removes_manifest_files_and_keeps_the_hosts(tmp_path, host):
     assert host_files(host) == keep
     assert rig.calls(stub) == [
         "disable --now cannobserv-disk-gc.timer cannobserv-disk-headroom.timer",
+        "stop cannobserv-disk-gc.service cannobserv-disk-headroom.service",
         "daemon-reload",
         "restart systemd-journald",
     ]
