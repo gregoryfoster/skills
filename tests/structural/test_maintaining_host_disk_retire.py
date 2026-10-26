@@ -823,3 +823,23 @@ def test_554e_a_user_drop_in_on_an_etc_user_unit_is_merged(host):
     assert found[0]["where"].startswith(
         "home/exedev/.config/systemd/user/sweep.service.d/"
     )
+
+
+def test_554f_an_absolute_link_resolves_inside_the_scratch_root(host):
+    write(
+        host,
+        "opt/units/linked.service",
+        "[Service]\nExecStart=/srv/watcher/cleanup.sh\n",
+    )
+    os.symlink("/opt/units/linked.service", host / "etc/systemd/system/linked.service")
+    assert [f["entry"] for f in units_found(check(host), "linked.service")] == [
+        "cleanup.sh"
+    ]
+
+
+def test_554f_a_link_out_of_the_scratch_root_is_not_followed(host, tmp_path):
+    outside = tmp_path / "outside.service"
+    outside.write_text("[Service]\nExecStart=/srv/watcher/cleanup.sh\n")
+    rel = os.path.relpath(outside, host / "etc/systemd/system")
+    os.symlink(rel, host / "etc/systemd/system/escape.service")
+    assert units_found(check(host), "escape.service") == []
