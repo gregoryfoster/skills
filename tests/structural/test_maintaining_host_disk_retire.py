@@ -1065,5 +1065,22 @@ def test_578_a_timeout_kills_the_gcs_children_and_returns(tmp_path):
     assert gc["exit"] == "timeout" and "<4>partial" in gc["lines"]
     assert elapsed < 10, elapsed
     pid = int(pidfile.read_text())
-    with pytest.raises(ProcessLookupError):
+    # The killed child is reparented to PID 1 and stays a zombie until it is
+    # reaped, and kill(pid, 0) succeeds on a zombie. A lazy init (the cloud
+    # container's) reaps seconds later, so poll for gone *or* a zombie: both
+    # mean dead. A child the kill missed sleeps on, so this still fails then.
+    deadline = time.monotonic() + 5
+    while not _gone_or_zombie(pid):
+        assert time.monotonic() < deadline, f"child {pid} still running"
+        time.sleep(0.1)
+
+
+def _gone_or_zombie(pid):
+    try:
         os.kill(pid, 0)
+    except ProcessLookupError:
+        return True
+    state = subprocess.run(
+        ["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True
+    ).stdout.strip()
+    return state == "" or state.startswith("Z")
