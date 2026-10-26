@@ -78,7 +78,7 @@ def test_layer_is_found_by_history_not_position(tmp_path, registry):
     result, _ = pull(tmp_path, registry, rig.Image())
     assert result.returncode == 0, result.stderr
     out = rig.stdout_json(result)
-    manifest, _, _, m = rig.Image().serialize()
+    _, _, _, m = rig.Image().serialize()
     assert out["layer"]["digest"] == m["layers"][1]["digest"]
 
 
@@ -97,6 +97,19 @@ def test_an_oci_manifest_passes_too(tmp_path, registry):
     image.layer_media_type = "application/vnd.oci.image.layer.v1.tar+gzip"
     result, _ = pull(tmp_path, registry, image)
     assert result.returncode == 0, result.stderr
+
+
+def test_a_root_entry_and_dot_slash_names_pass(tmp_path, registry):
+    """Some tar writers emit the archive's root as `./` and prefix every
+    name with it; that is the same layer, not a refusal."""
+    members = [rig.Member("./", kind=tarfile.DIRTYPE, mode=0o755)]
+    for m in rig.gc_members():
+        m.name = "./" + m.name
+        members.append(m)
+    image = rig.Image(gc_layer_tar=rig.tar_bytes(members))
+    result, into = pull(tmp_path, registry, image)
+    assert result.returncode == 0, result.stdout
+    assert (into / rig.GC_DIR / "disk-gc").is_file()
 
 
 def test_never_asks_for_latest(tmp_path, registry):

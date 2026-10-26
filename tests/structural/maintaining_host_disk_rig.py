@@ -178,10 +178,6 @@ class Image:
         self.diff_ids_override = None
         self.extra_layers = []
 
-    @property
-    def gc_index(self) -> int:
-        return 1
-
     def serialize(self):
         """(manifest bytes, {digest: blob bytes}, config dict, manifest dict)."""
         blobs = {}
