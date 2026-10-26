@@ -37,7 +37,7 @@ Request one on the host's co-status tenant, in CannObserv/status#48's shape:
 | renotify | 3600 |
 | `title_template` | `{{ host }} disk: {{ kind }}` |
 | `body_template` | `{{ body }}` |
-| enabled | `false` until the first `ok` |
+| enabled | `false`, until step 6 |
 
 Check-ins carry `host`, `kind` and `body`. The faults are `low-headroom`, `gc-failed`, `gc-stale`, `unreadable` and `test`. The request goes to another repo, so it needs the owner's approval like any filing.
 
@@ -55,14 +55,20 @@ Enable them in the same change that retires the host's own disk tooling, once it
 
 **A host that already reports its free space** (observo's `co-observo-live`) enables only the GC timer, and sets `gc_stale_hours = 0`.
 
-## 6. The rehearsal
+## 6. The first `ok`, then the monitor, then the rehearsal
 
-```bash
-sudo systemd-run --wait -p LoadCredential=checkin-key:/etc/cannobserv/disk-gc/checkin.key \
-  /usr/bin/python3 -I /usr/local/lib/cannobserv/disk-gc/disk-gc sensor --test-alert
-```
+In this order, and only this one:
 
-**It is a real page.** Tell whoever gets it first. The next `ok` clears it. Then turn the monitor on.
+1. **The first `ok`:** wait for a sensor run from the timer to log `ok` ([verifying.md](verifying.md#the-gcs-and-the-sensors-runs)).
+2. **Enable the monitor** on co-status.
+3. **Rehearse:**
+
+   ```bash
+   sudo systemd-run --wait -p LoadCredential=checkin-key:/etc/cannobserv/disk-gc/checkin.key \
+     /usr/bin/python3 -I /usr/local/lib/cannobserv/disk-gc/disk-gc sensor --test-alert
+   ```
+
+   **It is a real page.** Tell whoever gets it first. The next `ok` clears it.
 
 ## Picking the lines
 
