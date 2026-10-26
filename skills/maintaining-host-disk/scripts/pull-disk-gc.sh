@@ -50,12 +50,14 @@ Needs curl, tar, sha256sum and python3 (stdlib only). No root: run it as
 any user, then install as root.
 
 Options:
-  --into DIR   where to stage the files; must not exist, and its parent must
+  --into DIR   where to stage the files: DIR must not exist yet, and its
+               parent directory must
   -h, --help   show this help
 
 Exit codes:
   0  staged and checked
-  2  usage: --into missing or already there, or a needed tool missing
+  2  usage: --into missing, already there, or without a parent directory,
+     or a needed tool missing
   3  refused: a check failed, and the JSON says which
 USAGE
 }
@@ -76,6 +78,11 @@ done
 [ -n "$INTO" ] || { echo "pull-disk-gc: --into DIR is required" >&2; exit 2; }
 if [ -e "$INTO" ] || [ -L "$INTO" ]; then
   echo "pull-disk-gc: $INTO already exists; stage into a new directory" >&2
+  exit 2
+fi
+parent=$(dirname "$INTO")
+if [ ! -d "$parent" ]; then
+  echo "pull-disk-gc: $parent is not a directory; --into's parent must exist" >&2
   exit 2
 fi
 for tool in curl tar sha256sum python3; do
