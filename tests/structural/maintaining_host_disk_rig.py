@@ -327,8 +327,12 @@ class Registry:
         # handshake.
         self.plain = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         self.ports = {"https": self.port, "http": self.plain.server_address[1]}
+        # A 50 ms poll, not serve_forever's 0.5 s: shutdown() waits out one
+        # poll per server, which was ~1 s of idle teardown per pull test.
         for server in (self.server, self.plain):
-            threading.Thread(target=server.serve_forever, daemon=True).start()
+            threading.Thread(
+                target=server.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True
+            ).start()
 
     def publish(self, image: Image) -> str:
         """Serve the image, and return its manifest digest: the pin."""
