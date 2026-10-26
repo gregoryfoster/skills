@@ -93,7 +93,7 @@ def host(tmp_path):
     write(
         root,
         f"{rig.UNIT_DIR}/cannobserv-disk-gc.service",
-        "[Service]\nExecStart=/usr/bin/python3 -I /usr/local/lib/cannobserv/disk-gc/disk-gc gc --apply\n",
+        "[Service]\nExecStart=/usr/bin/python3 -I /usr/local/lib/cannobserv/disk-gc/disk-gc gc --prune\n",
     )
     enable(root, "cannobserv-disk-gc.timer")
     # a host-local unit that only looks like disk tooling
@@ -614,3 +614,19 @@ def test_a_drop_in_that_blanks_the_command_unfinds_it(host):
         "[Service]\nExecStart=\nExecStart=/bin/true\n",
     )
     assert units_found(check(host), "old-hygiene.service") == []
+
+
+# --- CR 539: a masked unit is masked, not enabled ----------------------------
+
+
+def test_a_masked_unit_is_reported_masked_not_enabled(host):
+    write(
+        host,
+        "lib/systemd/system/legacy-clean.service",
+        "[Service]\nExecStart=/srv/watcher/cleanup.sh\n",
+    )
+    os.symlink("/dev/null", host / "etc/systemd/system/legacy-clean.service")
+    enable(host, "legacy-clean.service", wants="multi-user.target.wants")
+    (found,) = units_found(check(host), "legacy-clean.service")
+    assert found["masked"] is True
+    assert found["enabled"] is False
