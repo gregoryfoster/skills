@@ -766,3 +766,28 @@ def test_554b_a_cron_d_file_with_a_dot_in_its_name_never_runs(host):
         f for f in check(host)["found"] if f["where"] == "etc/cron.d/hygiene.bak:1"
     ]
     assert found["enabled"] is False
+
+
+def test_554c_run_parts_executable_is_judged_by_mode_not_the_caller():
+    """run-parts runs as root, so a root-owned 0700 script runs; a check
+    run as anyone else must still read it as enabled."""
+    base = Path(tempfile.mkdtemp(prefix="retire-554c."))
+    try:
+        base.chmod(0o755)
+        root = base / "root"
+        # Matched by its link's target, which a non-root caller can stat
+        # but not read or execute.
+        script = root / "opt/pm/prune_disk.py"
+        script.parent.mkdir(parents=True)
+        script.write_text("#!/usr/bin/python3\n")
+        (root / "etc/cron.daily").mkdir(parents=True)
+        os.symlink("/opt/pm/prune_disk.py", root / "etc/cron.daily/pm-prune")
+        for d in [root, *root.rglob("*")]:
+            if d.is_dir() and not d.is_symlink():
+                d.chmod(0o755)
+        script.chmod(0o700 if os.geteuid() == 0 else 0o755)
+        out = check_as_unprivileged(root)
+        found = [f for f in out["found"] if f["where"] == "etc/cron.daily/pm-prune"]
+        assert found and found[0]["enabled"] is True, out["found"]
+    finally:
+        shutil.rmtree(base)
