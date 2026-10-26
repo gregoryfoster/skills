@@ -268,7 +268,9 @@ class Registry:
         self.served = {}
         self.requests = []
         self.redirect_scheme = "https"
-        self.redirect_host = "127.0.0.1"
+        # A second host name for the same server, as ghcr.io hands blobs to
+        # pkg-containers.githubusercontent.com: curl must drop the token.
+        self.redirect_host = "localhost"
         registry = self
 
         class Handler(http.server.BaseHTTPRequestHandler):

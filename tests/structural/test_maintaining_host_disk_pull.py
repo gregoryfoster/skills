@@ -158,7 +158,9 @@ def test_index_is_refused(tmp_path, registry):
     registry.manifest_type = rig.OCI_INDEX
     scripts = rig.copy_scripts(tmp_path / "s", registry.url, rig.sha256(index))
     result = rig.run(scripts / "pull-disk-gc.sh", "--into", tmp_path / "staging")
-    assert "index" in refused(result, "manifest")
+    assert refused(result, "manifest") == (
+        "the pinned digest names an index, not one image"
+    )
 
 
 # --- step 4: the config ------------------------------------------------------
@@ -559,3 +561,36 @@ def test_a_config_smaller_than_its_declared_size_is_refused(tmp_path, registry):
     image.config_size_override = manifest["config"]["size"] + 10
     result, _ = pull(tmp_path, registry, image)
     assert "size" in refused(result, "config")
+
+
+# --- CR 537a: tests that hold the logic they cover --------------------------
+
+
+def test_the_token_never_follows_the_redirect_to_another_host(tmp_path, registry):
+    result, _ = pull(tmp_path, registry, rig.Image())
+    assert result.returncode == 0, result.stderr
+    storage = [h for p, h in registry.requests if p.startswith("/storage/")]
+    assert storage, "the blobs must be fetched through the redirect"
+    assert all("Authorization" not in h for h in storage)
+    assert all(h.get("Host", "").startswith("localhost") for h in storage)
+
+
+def test_nothing_is_extracted_before_the_member_checks(tmp_path, registry):
+    """A link out of the tree, then a file through it: extracting first
+    would write into the sentinel directory."""
+    sentinel = tmp_path / "sentinel"
+    sentinel.mkdir()
+    members = rig.gc_members() + [
+        rig.Member(
+            "usr/local/lib/cannobserv/escape",
+            kind=tarfile.SYMTYPE,
+            linkname=str(sentinel),
+        ),
+        rig.Member("usr/local/lib/cannobserv/escape/evil", b"written through the link"),
+    ]
+    result, into = pull(
+        tmp_path, registry, rig.Image(gc_layer_tar=rig.tar_bytes(members))
+    )
+    assert "link" in refused(result, "members")
+    assert list(sentinel.iterdir()) == []
+    assert not into.exists()
