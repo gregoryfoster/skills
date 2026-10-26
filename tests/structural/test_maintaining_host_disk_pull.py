@@ -517,9 +517,10 @@ def test_a_signal_after_staging_is_made_still_removes_it(tmp_path, capsys):
     assert not into.exists()
 
 
-def test_staging_it_cannot_remove_is_reported(tmp_path, capsys):
+def test_staging_it_cannot_remove_is_reported(tmp_path, capsys, monkeypatch):
     module = load_pull()
-    module.shutil.rmtree = lambda *a, **k: None
+    # module.shutil is the process's own shutil: patch it so it's put back.
+    monkeypatch.setattr(module.shutil, "rmtree", lambda *a, **k: None)
 
     def boom():
         raise OSError("no")
