@@ -756,3 +756,13 @@ def test_554a_a_masked_timer_does_not_enable_its_service(host):
     enable(host, "sweep.timer")
     (found,) = units_found(check(host), "sweep.service")
     assert found["enabled"] is False
+
+
+def test_554b_a_cron_d_file_with_a_dot_in_its_name_never_runs(host):
+    """Debian's cron applies run-parts' naming to /etc/cron.d: hygiene.bak
+    is skipped, so it is found but not enabled."""
+    write(host, "etc/cron.d/hygiene.bak", "0 3 * * * root /srv/wslcb/disk_hygiene.py\n")
+    (found,) = [
+        f for f in check(host)["found"] if f["where"] == "etc/cron.d/hygiene.bak:1"
+    ]
+    assert found["enabled"] is False
