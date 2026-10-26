@@ -234,12 +234,12 @@ def redact(command):
     )
 
 
-# A token is a whole word of a command: after a path separator, a space
-# or a quote, and before a space, a quote, `;`, `&`, `|` or `>`. That finds
+# A token is a whole word of a command: after a path separator, and with
+# a space, a quote, a backtick or one of ;&|()<> on each side. That finds
 # it inside `sh -c "..."` and before a redirect, and not inside a longer
 # name.
 TOKEN_RES = {
-    tok: re.compile(r"(^|[/\s'\"])" + re.escape(tok) + r"($|[\s;&|>'\"])")
+    tok: re.compile(r"(^|[/\s'\"`;&|()<>])" + re.escape(tok) + r"($|[\s'\"`;&|()<>])")
     for _repo, _entry, tokens in RETIRE_LIST
     for tok in tokens
 }
