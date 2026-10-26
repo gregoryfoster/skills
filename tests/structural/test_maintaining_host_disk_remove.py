@@ -160,7 +160,9 @@ def test_a_remove_interrupted_after_its_rm_loop_can_be_finished(tmp_path, host):
     result = rig.run(REMOVE, "--root", host, "--systemctl", stub, "--approve")
     assert result.returncode == 1, result.stdout
     assert not (host / rig.UNIT_DIR / "cannobserv-disk-gc.timer").exists()
+    first = len(rig.calls(stub))  # one log for both runs
     result, stub = remove(tmp_path, host, "--approve")
     assert result.returncode == 0, (result.stdout, result.stderr)
     assert not (host / rig.GC_DIR / "MANIFEST").exists()
-    assert not [c for c in rig.calls(stub) if c.startswith(("disable", "stop"))]
+    rerun = rig.calls(stub)[first:]
+    assert not [c for c in rerun if c.startswith(("disable", "stop"))], rerun

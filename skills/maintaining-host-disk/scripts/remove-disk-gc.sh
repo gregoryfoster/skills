@@ -13,7 +13,8 @@ Removes the canonical disk GC the installed MANIFEST describes. Without
 
   1. systemctl disable --now cannobserv-disk-gc.timer
      cannobserv-disk-headroom.timer, then systemctl stop of both services,
-     so a run in progress doesn't outlive its files
+     so a run in progress doesn't outlive its files; a unit whose file is
+     already gone (a re-run) is skipped, since systemctl refuses it
   2. each file MANIFEST lists
   3. systemctl daemon-reload, and systemctl restart systemd-journald when
      a journald.conf.d drop-in went
@@ -110,6 +111,17 @@ elif [ ${#REFUSED[@]} -eq 0 ]; then
   fi
 fi
 
+# Only units whose file is still there: a re-run after the rm loop finds
+# them gone, and real systemctl refuses to disable or stop a unit it has no
+# file for, which would leave the remove unfinishable.
+TIMERS_LEFT=() SERVICES_LEFT=()
+for u in $TIMERS; do
+  [ ! -f "$R/usr/local/lib/systemd/system/$u" ] || TIMERS_LEFT+=("$u")
+done
+for u in $SERVICES; do
+  [ ! -f "$R/usr/local/lib/systemd/system/$u" ] || SERVICES_LEFT+=("$u")
+done
+
 emit() {
   local ok=true ran=false
   [ ${#REFUSED[@]} -eq 0 ] && [ -z "$FAILED_WHY" ] || ok=false
@@ -137,7 +149,9 @@ if [ "$ACTION" = absent ]; then
   exit 0
 fi
 if [ "$APPROVE" = 0 ]; then
-  SYSTEMCTL_CALLS=("disable --now $TIMERS" "stop $SERVICES" daemon-reload)
+  [ ${#TIMERS_LEFT[@]} -eq 0 ] || SYSTEMCTL_CALLS+=("disable --now ${TIMERS_LEFT[*]}")
+  [ ${#SERVICES_LEFT[@]} -eq 0 ] || SYSTEMCTL_CALLS+=("stop ${SERVICES_LEFT[*]}")
+  SYSTEMCTL_CALLS+=(daemon-reload)
   [ "$JRESTART" = 0 ] || SYSTEMCTL_CALLS+=("restart systemd-journald")
   emit
   exit 0
@@ -151,12 +165,12 @@ failed() {
 }
 
 APPLIED=true
-# $TIMERS is the two timer names, split into two arguments on purpose.
-# shellcheck disable=SC2086
-run_systemctl disable --now $TIMERS || failed "systemctl disable --now failed; nothing removed"
-# $SERVICES is the two service names, split into two arguments on purpose.
-# shellcheck disable=SC2086
-run_systemctl stop $SERVICES || failed "systemctl stop failed; nothing removed"
+if [ ${#TIMERS_LEFT[@]} -gt 0 ]; then
+  run_systemctl disable --now "${TIMERS_LEFT[@]}" || failed "systemctl disable --now failed; nothing removed"
+fi
+if [ ${#SERVICES_LEFT[@]} -gt 0 ]; then
+  run_systemctl stop "${SERVICES_LEFT[@]}" || failed "systemctl stop failed; nothing removed"
+fi
 for p in "${PATHS[@]}"; do
   rm -f "$R/$p" || failed "couldn't remove $p"
 done
