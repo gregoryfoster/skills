@@ -879,3 +879,38 @@ def test_554g_the_gcs_json_is_capped(tmp_path):
 def test_554g_a_gc_timeout_must_be_positive(seconds):
     result = rig.run(RETIRE, "--root", "/", "--run-gc-report", "--gc-timeout", seconds)
     assert result.returncode == 2
+
+
+# --- CR 560: a file it can't read is unreadable, not empty -----------------
+
+
+def test_560_a_file_it_cannot_read_is_reported_unreadable():
+    """A root-only wrapper in cron.daily, or a crontab nobody else may read,
+    read as an empty file would report the host clean."""
+    base = Path(tempfile.mkdtemp(prefix="retire-560."))
+    try:
+        base.chmod(0o755)
+        root = base / "root"
+        write(root, "etc/cron.daily/nightly", "#!/bin/sh\n/srv/av/disk-hygiene.sh\n")
+        write(root, "etc/cron.d/powermap", "0 3 * * * root /opt/pm/prune_disk.py\n")
+        for d in [root, *root.rglob("*")]:
+            if d.is_dir():
+                d.chmod(0o755)
+        (root / "etc/cron.daily/nightly").chmod(0o300)
+        (root / "etc/cron.d/powermap").chmod(0o000)
+        out = check_as_unprivileged(root)
+        assert {"etc/cron.daily/nightly", "etc/cron.d/powermap"} <= set(
+            out["unreadable"]
+        ), out["unreadable"]
+        assert any("root" in n for n in out["next"])
+    finally:
+        shutil.rmtree(base)
+
+
+def test_560_a_wrapper_past_64_kib_is_read_up_to_64_kib(host):
+    path = host / "etc/cron.daily/big"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("#!/bin/sh\n/srv/av/disk-hygiene.sh\n" + "# padding\n" * 8000)
+    path.chmod(0o755)
+    found = [f for f in check(host)["found"] if f["where"] == "etc/cron.daily/big:2"]
+    assert [f["entry"] for f in found] == ["disk-hygiene.sh"]

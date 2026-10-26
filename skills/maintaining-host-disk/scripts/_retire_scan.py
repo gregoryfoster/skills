@@ -151,10 +151,16 @@ def listdir(path):
         return []
 
 
-def read(path):
+def read(path, limit=-1):
+    """A file's text, or None. One it may not open is recorded in
+    UNREADABLE, never taken for empty: a root-only wrapper read as empty
+    reports the host clean."""
     try:
         with open(path, encoding="utf-8", errors="replace") as f:
-            return f.read()
+            return f.read(limit)
+    except PermissionError:
+        UNREADABLE.append(path)
+        return None
     except OSError:
         return None
 
@@ -456,8 +462,10 @@ def scan_cron(root):
             runs = bool(RUN_PARTS_NAME.match(n)) and executable(real)
             out.append(("cron", f"{d}/{n}", command, runs))
             # A wrapper script: what it runs is in its lines, not its name.
-            if os.path.isfile(real) and os.path.getsize(real) <= WRAPPER_BYTES:
-                for lineno, line in enumerate((read(real) or "").splitlines(), 1):
+            # Its first WRAPPER_BYTES are read, however long it is.
+            if os.path.isfile(real):
+                text = read(real, WRAPPER_BYTES) or ""
+                for lineno, line in enumerate(text.splitlines(), 1):
                     line = line.strip()
                     if line and not line.startswith("#"):
                         out.append(("cron", f"{d}/{n}:{lineno}", line, runs))
@@ -650,7 +658,7 @@ def main():
         )
     if UNREADABLE:
         nxt.append(
-            "run it as root: some unit or cron directories couldn't be read (unreadable)"
+            "run it as root: some unit or cron paths couldn't be read (unreadable)"
         )
     if found or candidates:
         nxt.append(
