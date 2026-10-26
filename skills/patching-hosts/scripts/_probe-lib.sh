@@ -717,8 +717,10 @@ space_gate() {  # <the step, as the messages name it>
   fi
   jadd _sp_o filesystems "[$_sp_a]"
   # The GC's headroom line: today's use, plus the download where it lands on
-  # the sensor's mount, plus the install growth where that does, must stay
-  # under alert_at_percent, as df reckons use: Used over Used + Available.
+  # the sensor's mount, plus the install growth where that does, must read
+  # under alert_at_percent as the sensor reads it. VERSION 2's usage() is
+  # df's Use%: used over used plus available, rounded up, and it pages at
+  # percent >= alert_at_percent (CR 581).
   disk_gc_conf
   case $GC_STATE in
     absent) jadd _sp_o headroom null ;;
@@ -745,7 +747,7 @@ space_gate() {  # <the step, as the messages name it>
         jaddn _sp_e add_kib "$_sp_add"
         jaddn _sp_e projected_percent "$_sp_pct"
         jadd _sp_o headroom "{$_sp_e}"
-        if [ "$_sp_add" -gt 0 ] && [ $(((FS_USED + _sp_add) * 100)) -ge $((GC_ALERT * _sp_den)) ]; then
+        if [ "$_sp_add" -gt 0 ] && [ "$_sp_pct" -ge "$GC_ALERT" ]; then
           space_short risk space:headroom "$_sp_w would take $GC_MOUNT to ${_sp_pct}% used, $_sp_add KiB more, at or past the disk GC's alert_at_percent of $GC_ALERT ($GC_PATH): a patch run must not push the host into a headroom page. Free space there first"
         fi
       fi ;;

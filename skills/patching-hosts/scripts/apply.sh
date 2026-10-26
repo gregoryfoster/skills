@@ -101,8 +101,9 @@ clean; when what the step writes wouldn't fit (#390): its download in
 apt's cache, and its install growth plus its largest upgrade, unpacked
 beside the files it replaces, on /, each filesystem keeping 131072 KiB
 free, or a step that would take the disk GC's [sensor] mount to its
-alert_at_percent or past it, where /etc/cannobserv/disk-gc/disk-gc.conf is
-there, or that file can't be read or parsed (the bulk reads these after
+alert_at_percent or past it, as its sensor reads use (df's Use%, rounded
+up), where /etc/cannobserv/disk-gc/disk-gc.conf is there, or that file
+can't be read or parsed (the bulk reads these after
 its list refresh, and stops there with nothing held: exit 1); when the
 step's span, from now to now plus its expected duration,
 isn't wholly inside one window or overlaps a quiet range (the bulk's span is
