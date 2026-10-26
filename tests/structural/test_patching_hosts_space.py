@@ -255,15 +255,10 @@ def test_without_the_gcs_config_there_is_no_headroom_line(host):
         # The GC's own VERSION 2 defaults, for keys it leaves out.
         ("[gc]\ntiers = uv\n[sensor]\nmonitor_id =\n", "85", "/"),
         ("[gc]\n", "85", "/"),
-        # configparser folds keys' case, takes : as well as =, and lets a
-        # [DEFAULT] key stand in for one a section leaves out.
+        # configparser folds keys' case, and takes : as well as =.
         ("[sensor]\nAlert_At_Percent: 90\n", "90", "/"),
-        ("[DEFAULT]\nalert_at_percent = 70\n[sensor]\n", "70", "/"),
-        (
-            "[DEFAULT]\nalert_at_percent = 70\n[sensor]\nalert_at_percent = 75\n",
-            "75",
-            "/",
-        ),
+        # CR 582: the GC parses with interpolation=None, so a % is literal.
+        ("[sensor]\nmount = /data%(x)s\n", "85", "/data%(x)s"),
         ("[sensor]\r\nalert_at_percent = 88\r\n", "88", "/"),
         ("[sensor]\nalert_at_percent = 085\n", "85", "/"),
     ],
@@ -307,10 +302,17 @@ def test_the_gcs_config_gives_its_headroom_line(host, text, alert, mount):
             "line 3 continues [sensor] alert_at_percent",
         ),
         ("[sensor]\nmount = data\n", 'mount is "data", not an absolute path'),
-        ("[sensor]\nmount = /data%(x)s\n", 'mount is "/data%(x)s"'),
+        # CR 582: VERSION 2 parses with default_section="\\0none", so
+        # [DEFAULT] is a section like any other, and it refuses every section
+        # but [gc] and [sensor], and every [sensor] key outside its _KEYS.
         (
-            "[DEFAULT]\nalert_at_percent = high\n[sensor]\n",
-            'alert_at_percent is "high"',
+            "[DEFAULT]\nalert_at_percent = 70\n[sensor]\n",
+            "line 1 has an unknown section [DEFAULT]",
+        ),
+        ("[gc]\n[sensors]\n", "line 2 has an unknown section [sensors]"),
+        (
+            "[sensor]\nalert_at_percnt = 70\n",
+            "line 2 has an unknown key [sensor] alert_at_percnt",
         ),
     ],
 )
