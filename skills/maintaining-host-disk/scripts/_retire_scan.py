@@ -298,6 +298,19 @@ def scan_units(root):
                 "text": read(full),
                 "masked": (scope, name) in masked,
             }
+    # A user's manager reads /etc/systemd/user between ~/.config and
+    # ~/.local/share: a user's drop-in on a unit there is that user's unit.
+    etc_user = dirs.get("user", [])
+    for scope in [s for s in dirs if s.startswith("user:")]:
+        own = dirs[scope]
+        config = [d for d in own if d[1].endswith(USER_UNIT_DIRS[0])]
+        rest = [d for d in own if d not in config]
+        dirs[scope] = config + etc_user + rest
+        for (s_, name), unit in list(units.items()):
+            if s_ != "user" or (scope, name) in units:
+                continue
+            if any(os.path.isdir(os.path.join(a, f"{name}.d")) for a, _r in own):
+                units[(scope, name)] = dict(unit, scope=scope)
     for (scope, name), unit in units.items():
         chosen = {}
         for absdir, reldir in dirs[scope]:
