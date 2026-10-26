@@ -594,3 +594,12 @@ def test_nothing_is_extracted_before_the_member_checks(tmp_path, registry):
     assert "link" in refused(result, "members")
     assert list(sentinel.iterdir()) == []
     assert not into.exists()
+
+
+def test_into_whose_parent_is_missing_is_a_usage_error(tmp_path, registry):
+    """CR 538: exit 2, before any request, as for an --into that exists."""
+    digest = registry.publish(rig.Image())
+    scripts = rig.copy_scripts(tmp_path / "s", registry.url, digest)
+    result = rig.run(scripts / "pull-disk-gc.sh", "--into", tmp_path / "no" / "staging")
+    assert result.returncode == 2, result.stdout
+    assert not registry.requests
