@@ -16,8 +16,10 @@ Removes the canonical disk GC the installed MANIFEST describes. Without
      its files; a unit whose file is already gone (a re-run) is skipped,
      since systemctl refuses it
   2. each file MANIFEST lists
-  3. systemctl daemon-reload, and systemctl restart systemd-journald when
-     a journald.conf.d drop-in went
+  3. systemctl daemon-reload, systemctl reset-failed of every service
+     MANIFEST lists (a stopped run leaves its unit failed; a refusal here
+     is ignored), and systemctl restart systemd-journald when a
+     journald.conf.d drop-in went
   4. MANIFEST, last, then the GC's directory if that leaves it empty. Until
      MANIFEST goes, a re-run finds what is left and finishes the job
 
@@ -136,8 +138,9 @@ fi
 # file is still there: a re-run after the rm loop finds them gone, and real
 # systemctl refuses to disable or stop a unit it has no file for, which
 # would leave the remove unfinishable.
-TIMERS_LEFT=() SERVICES_LEFT=()
+TIMERS_LEFT=() SERVICES_LEFT=() SERVICES_ALL=()
 for p in ${PATHS[@]+"${PATHS[@]}"}; do
+  case "$p" in usr/local/lib/systemd/system/*.service) SERVICES_ALL+=("${p##*/}") ;; esac
   [ -f "$R/$p" ] || continue
   case "$p" in
     usr/local/lib/systemd/system/*.timer) TIMERS_LEFT+=("${p##*/}") ;;
@@ -176,6 +179,7 @@ if [ "$APPROVE" = 0 ]; then
   [ ${#TIMERS_LEFT[@]} -eq 0 ] || SYSTEMCTL_CALLS+=("disable --now ${TIMERS_LEFT[*]}")
   [ ${#SERVICES_LEFT[@]} -eq 0 ] || SYSTEMCTL_CALLS+=("stop ${SERVICES_LEFT[*]}")
   SYSTEMCTL_CALLS+=(daemon-reload)
+  [ ${#SERVICES_ALL[@]} -eq 0 ] || SYSTEMCTL_CALLS+=("reset-failed ${SERVICES_ALL[*]}")
   [ "$JRESTART" = 0 ] || SYSTEMCTL_CALLS+=("restart systemd-journald")
   emit
   exit 0
@@ -199,6 +203,13 @@ for p in "${PATHS[@]}"; do
   rm -f "$R/$p" || failed "couldn't remove $p"
 done
 run_systemctl daemon-reload || failed "systemctl daemon-reload failed"
+# A run the stop above ended leaves its service failed, in `systemctl
+# --failed` until a reboot, a reinstall included. A unit that isn't loaded
+# has no state to reset, so its refusal is no failure.
+if [ ${#SERVICES_ALL[@]} -gt 0 ]; then
+  run_systemctl reset-failed "${SERVICES_ALL[@]}" ||
+    echo "remove-disk-gc: reset-failed refused (no failed state to clear); continuing" >&2
+fi
 if [ "$JRESTART" = 1 ]; then
   run_systemctl restart systemd-journald || failed "systemctl restart systemd-journald failed"
 fi

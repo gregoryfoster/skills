@@ -64,6 +64,7 @@ def test_removes_manifest_files_and_keeps_the_hosts(tmp_path, host):
         "disable --now cannobserv-disk-gc.timer cannobserv-disk-headroom.timer",
         "stop cannobserv-disk-gc.service cannobserv-disk-headroom.service",
         "daemon-reload",
+        "reset-failed cannobserv-disk-gc.service cannobserv-disk-headroom.service",
         "restart systemd-journald",
     ]
     assert "etc/cannobserv/disk-gc" in " ".join(out["kept"])
@@ -231,3 +232,28 @@ def test_564_every_unit_manifest_lists_is_disabled_and_stopped(tmp_path, host):
     assert "cannobserv-disk-extra.timer" in disable.split()
     assert "cannobserv-disk-extra.service" in stop.split()
     assert called.index(disable) < called.index(stop)
+
+
+# --- CR 566: a stopped run doesn't leave a failed unit behind ---------------
+
+
+def test_566_the_plan_and_the_run_reset_the_failed_state(tmp_path, host):
+    """Stopping an active GC run leaves its service `failed`, which shows in
+    `systemctl --failed` and survives a later reinstall."""
+    rig.stage(host, rig.gc_files())
+    result, _ = remove(tmp_path, host)
+    assert (
+        "reset-failed cannobserv-disk-gc.service cannobserv-disk-headroom.service"
+        in rig.stdout_json(result)["systemctl"]
+    )
+
+
+def test_566_a_reset_failed_that_fails_is_not_a_failure(tmp_path, host):
+    """reset-failed on a unit that isn't loaded exits non-zero: there was
+    no failed state to clear."""
+    rig.stage(host, rig.gc_files())
+    stub = rig.stub_systemctl(tmp_path / "bin", root=host)
+    rig.fail_once(stub, "reset-failed")
+    result = rig.run(REMOVE, "--root", host, "--systemctl", stub, "--approve")
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert not (host / rig.GC_DIR / "MANIFEST").exists()
