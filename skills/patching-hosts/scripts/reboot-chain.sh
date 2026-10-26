@@ -31,7 +31,12 @@ The chain, logged to the run's reboot-chain.log, root's only:
   5. copy the volatile journal into the run, last, so it holds every stop
      line, and read it back: it's the only record of the shutdown. A
      persistent journal survives the boot, so it isn't copied: a copy would
-     land on the disk the data stores boot from;
+     land on the disk the data stores boot from. Each source is copied only
+     where it fits: its du -sk, plus a 131072 KiB floor, within the free
+     space under the run's directory (df -Pk). Otherwise, or where either
+     can't be read, the chain logs why and copies nothing of it, and a copy
+     that fails part-way is removed, so no partial copy fills the disk the
+     host boots from;
   6. sync, then systemctl reboot. In-guest only: a platform restart is a
      hard reset.
 After a stop, nothing aborts it: the host comes back with what it stopped.
@@ -537,14 +542,32 @@ write_chain() {
   c '# 5. The volatile journal, last, so it holds every stop line, readable by'
   c '# root only. A persistent one, in /var/log/journal, survives the boot, and'
   c '# a copy of it would land on the disk the data stores boot from.'
+  c "# Each is copied only where it fits with $SPACE_FLOOR_KIB KiB left free, and a"
+  c '# copy that fails is removed: a partial one would fill the disk the host'
+  c '# boots from.'
+  c "FLOOR=$SPACE_FLOOR_KIB"
   c 'install -d -m 700 "$JOURNAL"'
   c 'for d in $JOURNAL_DIRS; do'
   c '  if [ -z "$(ls -A "$d" 2>/dev/null)" ]; then say "$d holds no journal: a persistent one survives the boot"; continue; fi'
   c '  t=$JOURNAL/$(printf %s "$d" | tr / _)'
+  c '  need=$(du -sk "$d" 2>/dev/null) || need=""'
+  c '  set -- $need'
+  c '  need=${1-}'
+  c '  free=$(df -Pk "$JOURNAL" 2>/dev/null | sed -n 2p) || free=""'
+  c '  set -- $free'
+  c '  free=${4-}'
+  c '  case "${need:-x}:${free:-x}" in'
+  c '    *[!0-9:]*) say "the size of $d, or the free space under $JOURNAL, couldn'"'"'t be read: not copied, so no copy fills the disk the host boots from"; continue ;;'
+  c '  esac'
+  c '  if [ $((need + FLOOR)) -gt "$free" ]; then'
+  c '    say "$d holds $need KiB, and $JOURNAL has $free KiB free: not copied, so the boot keeps $FLOOR KiB"'
+  c '    continue'
+  c '  fi'
   c '  if install -d -m 700 "$t" && cp -a "$d/." "$t/" && chmod -R go-rwx "$t" && journalctl -D "$t" -n 5 --no-pager; then'
   c '    say "journal $d copied to $t, and read back"'
   c '  else'
-  c '    say "the copy of $d failed: the shutdown has no record of its own"'
+  c '    rm -rf -- "$t"'
+  c '    say "the copy of $d failed, and what it copied is removed: the shutdown has no record of its own"'
   c '  fi'
   c 'done'
   c ''

@@ -53,6 +53,8 @@ The primitives these scripts reach a host through:
   rss_of VAR TEXT           VAR := the max RSS a TIMER file's TEXT holds
   APT_SIM_PHASED            the apt-get option that shows phased updates in a
                             simulation: unattended-upgrade takes them all
+  SPACE_FLOOR_KIB           the KiB every filesystem a patch run writes keeps
+                            free, beyond what the run counts it needs
   unit_disk_state VAR UNIT  masked, masked-runtime, enabled, disabled, static
                             or not-found, read from the unit files under ROOT
   tmp_rule                  TMP_CLEARED := 1 when the boot empties /tmp, 0
@@ -382,6 +384,10 @@ origin_split() {  # <keep var> <skip var> <|names|> <sim output>
   printf -v "$1" '%s' "${_os_k# }"
   printf -v "$2" '%s' "${_os_s# }"
 }
+
+# What every filesystem a patch run writes keeps free, beyond what the run
+# counts it needs: 128 MiB (#390). Why that much is with the apply's gate.
+SPACE_FLOOR_KIB=131072
 
 # apt's resolver defers a phased update on a machine outside its phase, so
 # apt-get -s leaves it out. unattended-upgrade 2.9.1 takes it whatever the
