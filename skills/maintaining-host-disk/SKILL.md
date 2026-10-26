@@ -10,7 +10,7 @@ metadata:
 
 # Maintaining Host Disk
 
-Gets a host onto the cohort's one disk GC and headroom sensor, and off its own. The GC is Provisioner's (CannObserv/provisioner#61): it ships in the public image `ghcr.io/cannobserv/co-image-base` as one dedicated layer, so a new VM has it at birth, off. Every other host adopts the same files through this skill. Built from [#425](https://github.com/gregoryfoster/skills/issues/425), with [#482](https://github.com/gregoryfoster/skills/issues/482)'s editor builds bundled in.
+Gets a host onto the cohort's one disk GC and headroom sensor, and off its own. The GC is Provisioner's (CannObserv/provisioner#61, a private repo; its public account is #425's [contract comment](https://github.com/gregoryfoster/skills/issues/425#issuecomment-6371095613)): it ships in the public image `ghcr.io/cannobserv/co-image-base` as one dedicated layer, so a new VM has it at birth, off. Every other host adopts the same files through this skill. Built from [#425](https://github.com/gregoryfoster/skills/issues/425), with [#482](https://github.com/gregoryfoster/skills/issues/482)'s editor builds bundled in.
 
 **Status: new.** No host has adopted it through this skill yet.
 
