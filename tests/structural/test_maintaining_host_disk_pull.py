@@ -732,3 +732,38 @@ def test_a_file_bigger_than_declared_is_refused_before_it_is_read(
         module.fetch("https://x.example/blob", str(out), "blob", size=100)
     assert "200" in e.value.why
     assert str(out) not in opened
+
+
+# --- CR 557: a signal between the outcome and the ignore --------------------
+
+
+def test_a_signal_landing_between_the_ignores_still_ends_in_json(
+    tmp_path, capsys, monkeypatch
+):
+    """A SIGINT sent as the first SIG_IGN returns is delivered while the
+    others are still armed; it must not escape as a traceback."""
+    module = load_pull()
+    real_signal = signal.signal
+    sent = []
+
+    def signal_then_interrupt(signum, handler):
+        previous = real_signal(signum, handler)
+        if handler is signal.SIG_IGN and not sent:
+            sent.append(signum)
+            os.kill(os.getpid(), signal.SIGINT)
+        return previous
+
+    monkeypatch.setattr(module.signal, "signal", signal_then_interrupt)
+
+    def fails():
+        raise OSError("the pull failed")
+
+    previous = guarded(signal.SIGINT)
+    try:
+        rc, out, into = run_main(module, tmp_path, capsys, fails)
+    finally:
+        real_signal(signal.SIGINT, previous)
+    assert sent
+    assert rc == 3
+    assert out["refused"]["step"] == "internal"
+    assert not into.exists()
