@@ -8,6 +8,7 @@ import argparse
 import json
 import os
 import re
+import stat
 import subprocess
 import sys
 
@@ -94,7 +95,27 @@ def unit_dirs(root):
         for sub in USER_UNIT_DIRS:
             rel = f"{home}/{sub}"
             out.append((f"user:{user}", os.path.join(root, rel), rel, True))
-    return [d for d in out if os.path.isdir(d[1])]
+    return [d for d in out if present(root, d[1])]
+
+
+def present(root, path):
+    """Whether path is a directory; one it can't reach for permission is
+    recorded in UNREADABLE (its nearest ancestor the caller can't enter),
+    never taken for absent: a 0700 home read as non-root otherwise reads as
+    a home with no units."""
+    try:
+        return stat.S_ISDIR(os.stat(path).st_mode)
+    except PermissionError:
+        blocked = path
+        parent = os.path.dirname(path)
+        while parent.startswith(root) and parent != root:
+            if os.path.isdir(parent) and not os.access(parent, os.R_OK | os.X_OK):
+                blocked = parent
+            parent = os.path.dirname(parent)
+        UNREADABLE.append(blocked)
+        return False
+    except OSError:
+        return False
 
 
 def listdir(path):
