@@ -655,6 +655,12 @@ def check_as_unprivileged(root):
 
 @pytest.mark.parametrize("mode", [0o700, 0o000], ids=["0700", "0000"])
 def test_a_home_it_cannot_enter_is_reported_unreadable(mode):
+    if mode == 0o700 and os.geteuid() != 0:
+        pytest.skip(
+            "a 0700 home made here is this user's own, which it can enter; "
+            "only root can make one owned by someone else (the 0000 case "
+            "covers a non-root run)"
+        )
     # Somewhere nobody can reach: pytest's own tmp_path is root's 0700.
     base = Path(tempfile.mkdtemp(prefix="retire-544."))
     try:
