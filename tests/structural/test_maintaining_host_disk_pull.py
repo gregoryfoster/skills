@@ -604,3 +604,60 @@ def test_into_whose_parent_is_missing_is_a_usage_error(tmp_path, registry):
     result = rig.run(scripts / "pull-disk-gc.sh", "--into", tmp_path / "no" / "staging")
     assert result.returncode == 2, result.stdout
     assert not registry.requests
+
+
+# --- CR 547: no signal escapes the cleanup, or the mkdir-to-append gap ------
+
+
+def guarded(signum):
+    """A handler for the test process, so a puller that lets a signal
+    through fails the test instead of killing pytest."""
+
+    def unhandled(_signum, _frame):
+        raise RuntimeError(f"the puller let signal {signum} through")
+
+    return signal.signal(signum, unhandled)
+
+
+def test_a_second_signal_during_cleanup_is_ignored(tmp_path, capsys, monkeypatch):
+    module = load_pull()
+    real = module.remove_tree
+
+    def remove_tree(path):
+        os.kill(os.getpid(), signal.SIGTERM)  # a second TERM, mid-cleanup
+        return real(path)
+
+    monkeypatch.setattr(module, "remove_tree", remove_tree)
+    previous = guarded(signal.SIGTERM)
+    try:
+        rc, out, into = run_main(
+            module, tmp_path, capsys, lambda: os.kill(os.getpid(), signal.SIGTERM)
+        )
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+    assert rc == 3
+    assert out["refused"]["step"] == "internal"
+    assert not into.exists()
+
+
+def test_a_signal_between_mkdir_and_its_record_still_removes_staging(
+    tmp_path, monkeypatch
+):
+    """The signal lands right after os.mkdir returns: staging must already
+    be in `made`, or nothing removes it."""
+    module = load_pull()
+    real_mkdir = os.mkdir
+
+    def mkdir(path, *a, **k):
+        real_mkdir(path, *a, **k)
+        os.kill(os.getpid(), signal.SIGTERM)
+
+    monkeypatch.setattr(module.os, "mkdir", mkdir)
+    staging, made = str(tmp_path / "staging"), []
+    previous = signal.signal(signal.SIGTERM, module.on_signal)
+    try:
+        with pytest.raises(module.Refused):
+            module.make_staging(staging, made)
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+    assert made == [staging]
