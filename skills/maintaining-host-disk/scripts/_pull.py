@@ -330,7 +330,9 @@ def check_staging(staging, version, manifest_sha):
         got = f.read().strip()
     if got != str(version):
         raise Refused("staging", f"VERSION is {got!r}, and the pin says {version}")
-    return sorted(found)
+    # The files MANIFEST lists, as install-disk-gc.sh and remove-disk-gc.sh
+    # report "files": MANIFEST itself is the marker, not one of them.
+    return sorted(found - {MANIFEST})
 
 
 def pull(pin, staging, work, made):

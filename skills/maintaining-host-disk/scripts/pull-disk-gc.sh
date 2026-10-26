@@ -40,7 +40,9 @@ and the layer by the size the manifest declares for each (a different
 length refuses at that step), anything else by 16 MiB.
 
 Output (stdout, JSON): {"ok": true, "staging", "pin", "config_digest",
-"layer": {index, digest, diff_id, bytes}, "version", "files"}, or
+"layer": {index, digest, diff_id, bytes}, "version" (the staged VERSION,
+which step 8 holds to the pin's), "files" (the files MANIFEST lists, as the
+installer and remover report them: MANIFEST itself isn't one)}, or
 {"ok": false, "refused": {"step", "why"}}. Any other failure, and a signal
 (TERM, HUP, INT), is a refusal at step "internal"; a staging directory it
 made but couldn't remove is named in "staging_left". curl's and sha256sum's own

@@ -80,7 +80,8 @@ def test_stages_the_layer(tmp_path, registry):
     assert set(staged) == set(want) | {f"{rig.GC_DIR}/MANIFEST"}
     for path, (data, mode) in want.items():
         assert staged[path] == (data, mode), path
-    assert sorted(out["files"]) == sorted(staged)
+    # CR 576: the files MANIFEST lists, as install and remove report them.
+    assert sorted(out["files"]) == sorted(want)
 
 
 def test_layer_is_found_by_history_not_position(tmp_path, registry):
