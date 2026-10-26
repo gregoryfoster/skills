@@ -6,7 +6,7 @@ set -euo pipefail
 usage() {
   cat <<'USAGE'
 Usage: bash retire-check.sh [--root DIR] [--gc-report FILE | --run-gc-report]
-                            [--python CMD]
+                            [--python CMD] [--gc-timeout SEC]
 
 Finds what on this host runs an implementation the canonical GC replaces
 (references/retiring.md has the list): a systemd service (system, or per
@@ -32,7 +32,8 @@ JSON says which entries are by hand only.
   by_hand     retire-list entries with no fixed name to match
   canonical   whether the GC is installed, its VERSION, and each timer:
               enabled, disabled or absent
-  gc_report   the report's lines, or null
+  gc_report   the report: exit, json (from --run-gc-report), lines,
+              truncated and total_lines (at most 500 lines), or null
   unreadable  directories it couldn't read: run it as root
   next        what to do with it
 
@@ -42,11 +43,17 @@ Options:
   --gc-report FILE  the output of a report-only run you took:
                     sudo /usr/bin/python3 -I \
                       /usr/local/lib/cannobserv/disk-gc/disk-gc gc
-  --run-gc-report   take that run here: `<python> -I <root>/usr/local/lib/
-                    cannobserv/disk-gc/disk-gc gc`. It removes nothing (the
-                    contract's step 2), and needs root to read every home
+  --run-gc-report   take that run here, as `<python> -I /usr/local/lib/
+                    cannobserv/disk-gc/disk-gc gc --json`, and carry its
+                    JSON. It removes nothing: without --prune the GC never
+                    removes. Only with --root / (the GC reads the live
+                    config and /proc whatever --root says), and needs root
+                    to read every home. Not with --gc-report
+  --gc-timeout SEC  how long that run may take (default 900); past it,
+                    gc_report.exit is "timeout"
   --python CMD      the interpreter for --run-gc-report (default
-                    /usr/bin/python3, the one the GC's units run)
+                    /usr/bin/python3, the one the GC's units run); one that
+                    can't be run is a usage error
   -h, --help        show this help
 
 Every command is printed redacted, since the JSON is meant for the host's
@@ -54,7 +61,9 @@ adoption issue: NAME=value and --name value where the name says token, key,
 secret, pass or auth, an Authorization header, and a URL's userinfo, path
 and query (its host stays) all read <redacted>.
 
-Output: one JSON document on stdout. Exit codes: 0 read, 2 usage.
+Output: one JSON document on stdout. Exit codes: 0 read, 2 usage (a bad
+or conflicting flag, --run-gc-report off /, a report or interpreter that
+can't be read or run).
 USAGE
 }
 

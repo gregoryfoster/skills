@@ -355,41 +355,64 @@ def canonical(root):
     }
 
 
+def cut(lines):
+    """At most REPORT_LINES lines, saying when it cut."""
+    return {
+        "lines": lines[:REPORT_LINES],
+        "truncated": len(lines) > REPORT_LINES,
+        "total_lines": len(lines),
+    }
+
+
 def gc_report(args, root):
     if args.gc_report:
         text = read(args.gc_report)
         if text is None:
-            print(f"retire-check: can't read {args.gc_report}", file=sys.stderr)
-            sys.exit(2)
-        return {
-            "file": args.gc_report,
-            "exit": None,
-            "lines": text.splitlines()[:REPORT_LINES],
-        }
-    if args.run_gc_report:
-        gc = os.path.join(root, GC_DIR, "disk-gc")
+            usage(f"can't read {args.gc_report}")
+        return {"file": args.gc_report, "exit": None, **cut(text.splitlines())}
+    if not args.run_gc_report:
+        return None
+    gc = os.path.join(root, GC_DIR, "disk-gc")
+    try:
         run = subprocess.run(
-            [args.python, "-I", gc, "gc"],
+            [args.python, "-I", gc, "gc", "--json"],
             stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
+            stderr=subprocess.PIPE,
             text=True,
+            timeout=args.gc_timeout,
         )
-        return {
-            "file": None,
-            "exit": run.returncode,
-            "lines": run.stdout.splitlines()[:REPORT_LINES],
-        }
-    return None
+    except subprocess.TimeoutExpired:
+        return {"file": None, "exit": "timeout", "json": None, **cut([])}
+    except OSError as e:
+        usage(f"can't run {args.python}: {e.strerror}")
+    try:
+        doc = json.loads(run.stdout)
+    except ValueError:
+        doc = None
+    lines = (run.stdout if doc is None else "").splitlines() + run.stderr.splitlines()
+    return {"file": None, "exit": run.returncode, "json": doc, **cut(lines)}
+
+
+def usage(why):
+    print(f"retire-check: {why}", file=sys.stderr)
+    sys.exit(2)
 
 
 def main():
     ap = argparse.ArgumentParser(prog="_retire_scan.py")
     ap.add_argument("--root", default="/")
-    ap.add_argument("--gc-report")
-    ap.add_argument("--run-gc-report", action="store_true")
+    report = ap.add_mutually_exclusive_group()
+    report.add_argument("--gc-report")
+    report.add_argument("--run-gc-report", action="store_true")
     ap.add_argument("--python", default="/usr/bin/python3")
+    ap.add_argument("--gc-timeout", type=int, default=900)
     args = ap.parse_args()
     root = os.path.abspath(args.root)
+    if args.run_gc_report and os.path.realpath(root) != "/":
+        usage(
+            "--run-gc-report runs the live GC, which reads the live config and "
+            "/proc whatever --root says; run it with --root / (the default)"
+        )
 
     units = scan_units(root)
     found, candidates, matched = [], [], set()
