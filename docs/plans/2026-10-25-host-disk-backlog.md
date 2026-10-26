@@ -59,6 +59,15 @@ skill's default rubric. Q1 makes correctness the tiebreaker.
   aborts having changed nothing. It needs root and the dpkg lock. Recorded on
   #390.
 
+  *Corrected after Batch B (2026-10-26):* that holds for `upgrade`, which
+  always prompts, but not for an install of exactly the packages named.
+  There `apt-get --assume-no install --only-upgrade liblzma5` asked nothing,
+  so it **upgraded** the package and exited 0 (reproduced on `ubuntu:24.04`).
+  The gate reads apt's metadata instead (`apt-get -s`, `apt-cache show`,
+  `dpkg-query`), which needs neither root nor the lock. This was found by the
+  Batch B worker (#485, its round-2 report), and #390's measurement comment
+  says so at its top.
+
 ## Conflict zones
 
 None. The footprints are disjoint:
@@ -71,6 +80,13 @@ None. The footprints are disjoint:
   `_gate-lib.sh` if the gate lands there), `references/run.md` §3 (line 68's
   by-hand "free disk" line), `references/readings.md` line 50,
   `test_patching_hosts_{apply,probe,reboot}.py` and `patching_hosts_rig.py`.
+
+  *As built (2026-10-26):* the shared code went into `_probe-lib.sh`, not
+  `_gate-lib.sh`, because `probe.sh` doesn't source the latter. The
+  footprint also took in `recovery-point.sh` (CR 587), `SKILL.md` (CR 588),
+  `run.md` §2 and §5, and a new `test_patching_hosts_space.py`, plus
+  `test_patching_hosts_recovery.py`. The rig was left unchanged. Line
+  numbers above are as of the plan's writing.
 
 No test pins either rewritten string. No chain or generated artifact is
 involved, and every token-gated file has room: `run.md` ≈6.2k of 10k,
