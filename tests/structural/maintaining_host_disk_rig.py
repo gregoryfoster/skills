@@ -407,3 +407,38 @@ def stub_systemctl(bindir: Path) -> Path:
 def calls(stub: Path) -> list:
     log = stub.parent / "systemctl.log"
     return log.read_text().splitlines() if log.exists() else []
+
+
+def make_host(root: Path) -> Path:
+    """A scratch root with the host's own files in /etc and /var/lib, and
+    the GC timer enabled."""
+    conf = root / "etc/cannobserv/disk-gc"
+    conf.mkdir(parents=True)
+    (conf / "disk-gc.conf").write_text("[sensor]\nalert_at_percent = 80\n")
+    (conf / "checkin.key").write_text("secret\n")
+    (conf / "checkin.key").chmod(0o600)
+    state = root / "var/lib/cannobserv-disk-gc"
+    state.mkdir(parents=True)
+    (state / "state.json").write_text("{}\n")
+    wants = root / "etc/systemd/system/timers.target.wants"
+    wants.mkdir(parents=True)
+    os.symlink(
+        "/usr/local/lib/systemd/system/cannobserv-disk-gc.timer",
+        wants / "cannobserv-disk-gc.timer",
+    )
+    return root
+
+
+def host_files(root: Path) -> dict:
+    """What a host owns, which no script here may change."""
+    keep = {}
+    for rel in (
+        "etc/cannobserv/disk-gc/disk-gc.conf",
+        "etc/cannobserv/disk-gc/checkin.key",
+        "var/lib/cannobserv-disk-gc/state.json",
+    ):
+        p = root / rel
+        keep[rel] = (p.read_bytes(), oct(p.stat().st_mode))
+    link = root / "etc/systemd/system/timers.target.wants/cannobserv-disk-gc.timer"
+    keep["wants"] = os.readlink(link)
+    return keep

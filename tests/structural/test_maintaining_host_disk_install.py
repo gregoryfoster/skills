@@ -1,0 +1,294 @@
+"""#425 — install-disk-gc.sh installs or updates the GC from a staging tree.
+
+The contract's install, on a scratch root prefix: each MANIFEST file with its
+staged mode, then MANIFEST, then `sha256sum --strict -c` from the root, then
+`daemon-reload`. An update copies the installed MANIFEST aside before
+installing, and removes only the paths the old MANIFEST lists that the new
+one doesn't. journald restarts only when its drop-in changed. Nothing touches
+`/etc/cannobserv/disk-gc/`, and no timer is enabled or disabled.
+
+No test touches the real `/`: every run takes `--root` under tmp_path, and
+systemctl is a stub that logs its argv (`maintaining_host_disk_rig.py`).
+"""
+
+import os
+
+import pytest
+
+from tests.structural import maintaining_host_disk_rig as rig
+
+pytestmark = pytest.mark.usefixtures("linux_tools")
+
+INSTALL = rig.SCRIPTS / "install-disk-gc.sh"
+OLD_HELPER = f"{rig.GC_DIR}/old-helper"
+
+
+@pytest.fixture
+def linux_tools():
+    rig.require_linux_tools()
+
+
+@pytest.fixture
+def host(tmp_path):
+    return rig.make_host(tmp_path / "root")
+
+
+host_files = rig.host_files
+
+
+def v1_files(**changes):
+    files = rig.gc_files(version=1, disk_gc=b"#!/usr/bin/python3 -I\n# v1\n")
+    files[OLD_HELPER] = (b"retired in v2\n", 0o644)
+    for path, value in changes.items():
+        files[path] = value
+    return files
+
+
+def staged(tmp_path, files=None, manifest=None, name="staging"):
+    return rig.stage(tmp_path / name, files, manifest)
+
+
+def install(tmp_path, root, staging, *extra, systemctl=True):
+    args = ["--staging", staging, "--root", root, "--aside", tmp_path / "aside", *extra]
+    stub = None
+    if systemctl:
+        stub = rig.stub_systemctl(tmp_path / "bin")
+        args += ["--systemctl", stub]
+    result = rig.run(INSTALL, *args)
+    return result, stub
+
+
+def ok(result):
+    assert result.returncode == 0, (result.returncode, result.stdout, result.stderr)
+    out = rig.stdout_json(result)
+    assert out["ok"] is True, out
+    return out
+
+
+def refused(result, says):
+    assert result.returncode == 3, (result.returncode, result.stdout, result.stderr)
+    out = rig.stdout_json(result)
+    assert out["ok"] is False
+    assert any(says in r for r in out["refused"]), out["refused"]
+    return out
+
+
+def installed(root):
+    return {p: v for p, v in rig.tree(root).items() if p.startswith("usr/")}
+
+
+def want_tree(files):
+    out = dict(files)
+    out[f"{rig.GC_DIR}/MANIFEST"] = (rig.manifest_text(files), 0o644)
+    return out
+
+
+# --- a fresh install ---------------------------------------------------------
+
+
+def test_plan_changes_nothing(tmp_path, host):
+    before = rig.tree(host)
+    result, stub = install(tmp_path, host, staged(tmp_path))
+    out = ok(result)
+    assert out["action"] == "install" and out["applied"] is False
+    assert out["journald_restart"] is True
+    assert rig.tree(host) == before
+    assert rig.calls(stub) == []
+
+
+def test_fresh_install(tmp_path, host):
+    keep = host_files(host)
+    result, stub = install(tmp_path, host, staged(tmp_path), "--approve")
+    out = ok(result)
+    assert out["action"] == "install" and out["applied"] is True
+    assert installed(host) == want_tree(rig.gc_files())
+    assert rig.calls(stub) == ["daemon-reload", "restart systemd-journald"]
+    assert host_files(host) == keep
+    assert out["installed_version"] is None and out["staged_version"] == 2
+
+
+def test_scratch_root_without_systemctl_runs_none(tmp_path, host):
+    result, _ = install(tmp_path, host, staged(tmp_path), "--approve", systemctl=False)
+    out = ok(result)
+    assert out["systemctl_ran"] is False
+    assert out["systemctl"] == ["daemon-reload", "restart systemd-journald"]
+
+
+# --- an update ---------------------------------------------------------------
+
+
+def test_update_copies_old_manifest_aside_and_removes_only_what_it_dropped(
+    tmp_path, host
+):
+    rig.stage(host, v1_files())
+    old_manifest = (host / rig.GC_DIR / "MANIFEST").read_bytes()
+    stray = host / rig.GC_DIR / "host-notes"
+    stray.write_text("the host's own\n")
+    keep = host_files(host)
+    result, stub = install(tmp_path, host, staged(tmp_path), "--approve")
+    out = ok(result)
+    assert out["action"] == "update"
+    assert (out["installed_version"], out["staged_version"]) == (1, 2)
+    assert out["removed"] == [OLD_HELPER]
+    assert not (host / OLD_HELPER).exists()
+    assert stray.read_text() == "the host's own\n"
+    aside = tmp_path / "aside" / "MANIFEST"
+    assert out["aside"] == str(aside)
+    assert aside.read_bytes() == old_manifest
+    got = installed(host)
+    got.pop(f"{rig.GC_DIR}/host-notes")
+    assert got == want_tree(rig.gc_files())
+    assert host_files(host) == keep
+
+
+def test_update_with_journald_unchanged_does_not_restart_it(tmp_path, host):
+    rig.stage(host, v1_files())
+    result, stub = install(tmp_path, host, staged(tmp_path), "--approve")
+    out = ok(result)
+    assert out["journald_restart"] is False
+    assert rig.calls(stub) == ["daemon-reload"]
+
+
+def test_update_with_journald_changed_restarts_it(tmp_path, host):
+    rig.stage(
+        host, v1_files(**{rig.JOURNALD: (b"[Journal]\nSystemMaxUse=1G\n", 0o644)})
+    )
+    result, stub = install(tmp_path, host, staged(tmp_path), "--approve")
+    assert ok(result)["journald_restart"] is True
+    assert rig.calls(stub) == ["daemon-reload", "restart systemd-journald"]
+
+
+def test_update_that_drops_the_journald_conf_removes_it_and_restarts(tmp_path, host):
+    rig.stage(host, v1_files())
+    new = rig.gc_files(zz_cannobserv_journal_conf=None)
+    result, stub = install(tmp_path, host, staged(tmp_path, new), "--approve")
+    out = ok(result)
+    assert rig.JOURNALD in out["removed"]
+    assert not (host / rig.JOURNALD).exists()
+    assert rig.calls(stub) == ["daemon-reload", "restart systemd-journald"]
+
+
+def test_update_never_touches_a_timer(tmp_path, host):
+    rig.stage(host, v1_files())
+    result, stub = install(tmp_path, host, staged(tmp_path), "--approve")
+    ok(result)
+    assert not [
+        c for c in rig.calls(stub) if "enable" in c or "disable" in c or "timer" in c
+    ]
+    link = host / "etc/systemd/system/timers.target.wants/cannobserv-disk-gc.timer"
+    assert link.is_symlink()
+
+
+def test_same_version_is_current_and_changes_nothing(tmp_path, host):
+    rig.stage(host, rig.gc_files())
+    before = rig.tree(host)
+    result, stub = install(tmp_path, host, staged(tmp_path), "--approve")
+    out = ok(result)
+    assert out["action"] == "current" and out["applied"] is False
+    assert rig.tree(host) == before
+    assert rig.calls(stub) == []
+
+
+def test_same_version_with_drift_refuses_until_reinstall(tmp_path, host):
+    rig.stage(host, rig.gc_files())
+    (host / rig.GC_DIR / "disk-gc").write_text("edited on the host\n")
+    result, _ = install(tmp_path, host, staged(tmp_path), "--approve")
+    refused(result, "--reinstall")
+    assert (host / rig.GC_DIR / "disk-gc").read_text() == "edited on the host\n"
+    result, _ = install(
+        tmp_path, host, staged(tmp_path, name="again"), "--approve", "--reinstall"
+    )
+    assert ok(result)["action"] == "reinstall"
+    assert installed(host) == want_tree(rig.gc_files())
+
+
+def test_downgrade_is_refused(tmp_path, host):
+    rig.stage(host, rig.gc_files(version=3))
+    before = rig.tree(host)
+    result, _ = install(tmp_path, host, staged(tmp_path), "--approve")
+    refused(result, "older")
+    assert rig.tree(host) == before
+
+
+# --- refusals before anything changes ----------------------------------------
+
+
+def test_staging_that_fails_its_manifest(tmp_path, host):
+    manifest = rig.manifest_text(rig.gc_files())
+    files = rig.gc_files(disk_gc=b"tampered\n")
+    before = rig.tree(host)
+    result, stub = install(
+        tmp_path, host, staged(tmp_path, files, manifest), "--approve"
+    )
+    refused(result, "sha256sum")
+    assert rig.tree(host) == before
+    assert rig.calls(stub) == []
+
+
+def test_staging_with_an_extra_file(tmp_path, host):
+    staging = staged(tmp_path)
+    (staging / rig.GC_DIR / "stowaway").write_text("x")
+    result, _ = install(tmp_path, host, staging, "--approve")
+    refused(result, "stowaway")
+    assert not (host / "usr").exists()
+
+
+def test_staging_with_a_symlink(tmp_path, host):
+    staging = staged(tmp_path)
+    os.symlink("/etc/shadow", staging / rig.GC_DIR / "link")
+    result, _ = install(tmp_path, host, staging, "--approve")
+    refused(result, "link")
+    assert not (host / "usr").exists()
+
+
+def test_staging_manifest_naming_etc(tmp_path, host):
+    files = rig.gc_files()
+    files["etc/cannobserv/disk-gc/disk-gc.conf"] = (b"overwritten\n", 0o644)
+    keep = host_files(host)
+    result, _ = install(tmp_path, host, staged(tmp_path, files), "--approve")
+    refused(result, "outside usr/local/lib/")
+    assert host_files(host) == keep
+
+
+def test_installed_manifest_naming_etc_is_refused(tmp_path, host):
+    """An update removes what the old MANIFEST listed: one that names the
+    host's config would delete it."""
+    old = v1_files()
+    manifest = rig.manifest_text(old) + (
+        b"%s  etc/cannobserv/disk-gc/disk-gc.conf\n" % (b"0" * 64)
+    )
+    rig.stage(host, old, manifest)
+    keep = host_files(host)
+    result, _ = install(tmp_path, host, staged(tmp_path), "--approve")
+    refused(result, "outside usr/local/lib/")
+    assert host_files(host) == keep
+
+
+def test_target_that_is_a_symlink_is_refused(tmp_path, host):
+    target = host / rig.GC_DIR / "disk-gc"
+    target.parent.mkdir(parents=True)
+    os.symlink(host / "etc/cannobserv/disk-gc/disk-gc.conf", target)
+    keep = host_files(host)
+    result, _ = install(tmp_path, host, staged(tmp_path), "--approve")
+    refused(result, "symlink")
+    assert host_files(host) == keep
+
+
+def test_installed_version_unreadable_is_refused(tmp_path, host):
+    rig.stage(host, rig.gc_files())
+    (host / rig.GC_DIR / "VERSION").write_text("two\n")
+    result, _ = install(tmp_path, host, staged(tmp_path), "--approve")
+    refused(result, "VERSION")
+
+
+def test_real_root_needs_root(tmp_path):
+    if os.geteuid() == 0:
+        pytest.skip("runs as root, so the refusal for a non-root caller can't arise")
+    result = rig.run(INSTALL, "--staging", staged(tmp_path), "--approve")
+    refused(result, "root")
+
+
+def test_staging_is_required():
+    result = rig.run(INSTALL)
+    assert result.returncode == 2
+    assert "--staging" in result.stderr
