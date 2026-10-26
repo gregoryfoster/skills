@@ -24,13 +24,14 @@ HEX40 = re.compile(r"[0-9a-f]{40}\Z")
 DIGEST = re.compile(r"sha256:[0-9a-f]{64}\Z")
 REGISTRY = re.compile(r"https?://[A-Za-z0-9.-]+(:[0-9]+)?\Z")
 REPOSITORY = re.compile(r"[a-z0-9]+([._/-][a-z0-9]+)*\Z")
-PIN_LINE = re.compile(r"^(DISK_GC_[A-Z_]+)=(.*)$", re.M)
+PIN_LINE = re.compile(r"^(DISK_GC_[A-Z0-9_]+)=(.*)$", re.M)
 PIN_KEYS = (
     "DISK_GC_REGISTRY",
     "DISK_GC_REPOSITORY",
     "DISK_GC_TAG",
     "DISK_GC_MANIFEST_DIGEST",
     "DISK_GC_VERSION",
+    "DISK_GC_MANIFEST_SHA256",
 )
 
 MANIFEST_TYPES = (
@@ -86,6 +87,7 @@ def read_pin(path):
         ("DISK_GC_TAG", HEX40, "a released tag, 40 hex (never :latest)"),
         ("DISK_GC_MANIFEST_DIGEST", DIGEST, "sha256:<64 hex>"),
         ("DISK_GC_VERSION", re.compile(r"[1-9][0-9]*\Z"), "a positive integer"),
+        ("DISK_GC_MANIFEST_SHA256", re.compile(r"[0-9a-f]{64}\Z"), "64 hex"),
     )
     for key, pattern, shape in checks:
         if not pattern.match(found[key]):
@@ -229,7 +231,11 @@ def check_members(tar_data):
     for m in members:
         raw = m.name[2:] if m.name.startswith("./") else m.name
         if m.isdir() and raw.rstrip("/") in ("", "."):
-            continue  # the archive's own root, which some writers emit as ./
+            # The archive's own root, which some writers emit as ./; tar -p
+            # applies its mode to the staging directory itself.
+            if m.mode != 0o755:
+                raise Refused("members", f"the root entry has mode {m.mode:o}, not 755")
+            continue
         name = safe_path(raw.rstrip("/") if m.isdir() else raw, "members")
         if m.issym() or m.islnk():
             raise Refused("members", f"{name!r} is a link")
@@ -240,11 +246,9 @@ def check_members(tar_data):
         inside = name.startswith(PREFIX) or (m.isdir() and name in PREFIX_PARENTS)
         if not inside:
             raise Refused("members", f"{name!r} is outside {PREFIX}")
-        if m.mode & 0o7000 or m.mode & 0o002:
-            raise Refused(
-                "members",
-                f"{name!r} has mode {m.mode:o} (setid, sticky or world-writable)",
-            )
+        if m.mode not in ((0o755,) if m.isdir() else (0o644, 0o755)):
+            want = "755" if m.isdir() else "644 or 755"
+            raise Refused("members", f"{name!r} has mode {m.mode:o}, not {want}")
         if name in seen:
             raise Refused("members", f"{name!r} is in the layer twice")
         seen.add(name)
@@ -268,20 +272,31 @@ def manifest_paths(text):
     return paths
 
 
-def check_staging(staging, version):
-    """Step 8, after extracting: MANIFEST checks, and is the whole file set."""
+def walk_error(e):
+    raise Refused("staging", f"can't read {e.filename}: {e.strerror}")
+
+
+def check_staging(staging, version, manifest_sha):
+    """Step 8, after extracting: MANIFEST is the pinned one, checks, and is
+    the whole file set."""
     for need in (MANIFEST, VERSION):
         if not os.path.isfile(os.path.join(staging, need)):
             raise Refused("staging", f"{need} is not in the layer")
-    with open(os.path.join(staging, MANIFEST), encoding="utf-8", errors="replace") as f:
-        listed = manifest_paths(f.read())
+    with open(os.path.join(staging, MANIFEST), "rb") as f:
+        manifest = f.read()
+    listed = manifest_paths(manifest.decode("utf-8", errors="replace"))
+    got = hashlib.sha256(manifest).hexdigest()
+    if got != manifest_sha:
+        raise Refused(
+            "staging", f"MANIFEST's sha256 is {got}, not the pin's {manifest_sha}"
+        )
     rc = subprocess.run(
         ["sha256sum", "--strict", "-c", MANIFEST], cwd=staging, stdout=sys.stderr
     ).returncode
     if rc != 0:
         raise Refused("staging", f"sha256sum --strict -c MANIFEST failed (exit {rc})")
     found = set()
-    for root, _dirs, files in os.walk(staging):
+    for root, _dirs, files in os.walk(staging, onerror=walk_error):
         for name in files:
             found.add(os.path.relpath(os.path.join(root, name), staging))
     want = set(listed) | {MANIFEST}
@@ -355,12 +370,15 @@ def pull(pin, staging, work, made):
     except OSError as e:
         raise Refused("staging", f"can't make {staging}: {e.strerror}") from e
     made.append(staging)
+    os.chmod(staging, 0o755)  # mkdir's mode is masked by the umask
     rc = subprocess.run(
         ["tar", "-xpf", tar_path, "-C", staging, "--no-same-owner"], stdout=sys.stderr
     ).returncode
     if rc != 0:
         raise Refused("staging", f"tar couldn't extract the layer (exit {rc})")
-    files = check_staging(staging, int(pin["DISK_GC_VERSION"]))
+    files = check_staging(
+        staging, int(pin["DISK_GC_VERSION"]), pin["DISK_GC_MANIFEST_SHA256"]
+    )
     return {
         "ok": True,
         "staging": staging,

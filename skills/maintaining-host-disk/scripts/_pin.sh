@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # _pin.sh — the one home of the canonical disk GC release this skill installs.
-# Read by _pull.py as data, through pull-disk-gc.sh; running it does nothing.
+# Read by _pull.py as data, and sourced by install-disk-gc.sh; running it
+# does nothing.
 # A new GC release is a commit here, never a host's own setting (#425).
 # The DISK_GC_* variables are its output.
 # shellcheck disable=SC2034
@@ -8,7 +9,8 @@ set -euo pipefail
 
 pin_usage() {
   cat <<'USAGE'
-Usage: . _pin.sh    (read as data by _pull.py; running it does nothing)
+Usage: . _pin.sh    (read as data by _pull.py, sourced by install-disk-gc.sh;
+                    running it does nothing)
 
 The release of ghcr.io/cannobserv/co-image-base whose disk-gc layer this
 skill installs: a released tag (40 hex, never :latest) and the sha256 of its
@@ -20,6 +22,9 @@ the integer the layer's own VERSION file must hold.
   DISK_GC_TAG              the released tag
   DISK_GC_MANIFEST_DIGEST  sha256:<hex> of that tag's manifest
   DISK_GC_VERSION          the layer's VERSION at that tag
+  DISK_GC_MANIFEST_SHA256  the sha256 of that layer's own MANIFEST, which
+                           the puller and the installer both check, so a
+                           staged tree is bound to the release
 
 Each is one KEY=value line with nothing else on it: _pull.py reads this
 file as data and refuses one it can't parse.
@@ -37,3 +42,5 @@ DISK_GC_REPOSITORY=cannobserv/co-image-base
 DISK_GC_TAG=4ac2cc21bcf5b4ab863776a37d2f718713662580
 DISK_GC_MANIFEST_DIGEST=sha256:0e230e4dfb255a0e27ae43367e823bd65b4c5156f51cd071a4c1c1c8f83e624f
 DISK_GC_VERSION=2
+# From the digest-verified layer, read by the #485 orchestrator (CR 520).
+DISK_GC_MANIFEST_SHA256=066a9f3ad4e59bec523a0476ee81d4e87534cca82e50356a116043d8716d208c

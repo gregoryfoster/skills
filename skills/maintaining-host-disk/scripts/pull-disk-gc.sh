@@ -27,12 +27,13 @@ DIR. Every check refuses, and a refusal leaves no DIR behind:
   7. members   before anything is extracted: every member is a directory or
                a regular file under usr/local/lib/ (or one of that path's own
                parent directories), with no '..', no .wh. whiteout, no link,
-               no control character, no setid, sticky or world-writable mode,
-               and no name twice
+               no control character, no name twice, and exact modes: a file
+               0644 or 0755, a directory (the ./ root entry too) 0755
   8. staging   after extracting: MANIFEST and VERSION exist, MANIFEST lists
-               only paths under usr/local/lib/, `sha256sum --strict -c
-               MANIFEST` passes from DIR, the files there are exactly
-               MANIFEST's plus MANIFEST, and VERSION is the pin's
+               only paths under usr/local/lib/, its sha256 is the pin's,
+               `sha256sum --strict -c MANIFEST` passes from DIR, the files
+               there are exactly MANIFEST's plus MANIFEST (a directory it
+               can't read refuses), and VERSION is the pin's
 
 Output (stdout, JSON): {"ok": true, "staging", "pin", "config_digest",
 "layer": {index, digest, diff_id, bytes}, "version", "files"}, or

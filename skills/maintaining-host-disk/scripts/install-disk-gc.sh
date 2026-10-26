@@ -11,6 +11,12 @@ Usage: bash install-disk-gc.sh --staging DIR [--approve] [--reinstall]
 Installs the files a staging tree's MANIFEST lists, from pull-disk-gc.sh's
 --into DIR. Without --approve it prints the plan and changes nothing.
 
+The staging tree belongs to whoever pulled it, so nothing in it is trusted
+as it stands: it is copied into a new private directory (root-owned, under
+sudo) and every check below reads that copy, which is what gets installed.
+Its MANIFEST must have the sha256 that _pin.sh names, which binds every
+file it lists to the pinned release.
+
 It decides from the installed VERSION, read beside the installed MANIFEST:
   install    nothing installed yet
   update     the staged VERSION is higher
@@ -35,10 +41,11 @@ checkin.key), the GC's state under /var/lib, or a timer: an enabled timer
 stays enabled, and a new install leaves both off.
 
 Before anything changes it refuses (exit 3), with every reason in refused:
-  - staging: MANIFEST missing, a line not in sha256sum's format, a path
-    outside usr/local/lib/, a link or special file, a file MANIFEST doesn't
-    list, `sha256sum --strict -c` failing, or a VERSION that isn't an
-    integer
+  - staging: MANIFEST missing or not the pinned one, a line not in
+    sha256sum's format, a path outside usr/local/lib/, a link or special
+    file, a file MANIFEST doesn't list, a file mode other than 0644 or 0755
+    or a directory mode other than 0755, `sha256sum --strict -c` failing,
+    or a VERSION that isn't an integer
   - the installed copy: a MANIFEST that names a path outside
     usr/local/lib/ (an update would remove it), an unreadable VERSION, or,
     at the same VERSION, files that differ from it (--reinstall replaces
@@ -76,6 +83,8 @@ USAGE
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=_manifest-lib.sh
 . "$HERE/_manifest-lib.sh"
+# shellcheck source=_pin.sh
+. "$HERE/_pin.sh"
 
 STAGING="" ROOT=/ ASIDE="" APPROVE=0 REINSTALL=0 SYSTEMCTL="" RUN_SYSTEMCTL=0
 usage_error() { echo "install-disk-gc: $1" >&2; exit 2; }
@@ -120,23 +129,43 @@ contains() {
 
 # --- the staging tree ---------------------------------------------------------
 
+# A private copy, so nothing the staging tree's owner does after this point
+# reaches what is checked and installed. Under sudo, mktemp's 0700 directory
+# and cp's new files are root's.
+COPY=$(mktemp -d "${TMPDIR:-/tmp}/disk-gc-install.XXXXXX") || {
+  echo "install-disk-gc: couldn't make a private directory under ${TMPDIR:-/tmp}" >&2
+  exit 1
+}
+trap 'rm -rf "$COPY"' EXIT
+CP_OK=1
+cp -R --preserve=mode "$STAGING" "$COPY/stage" || CP_OK=0
+STAGED=$COPY/stage
+
 S_PATHS=() S_HASHES=() S_VER=""
-S_MAN=$STAGING/$MANIFEST_REL
-if [ ! -f "$S_MAN" ] || [ -L "$S_MAN" ]; then
+S_MAN=$STAGED/$MANIFEST_REL
+if [ "$CP_OK" = 0 ]; then
+  refuse "couldn't copy the staging tree into a private directory"
+elif [ ! -f "$S_MAN" ] || [ -L "$S_MAN" ]; then
   refuse "staging has no $MANIFEST_REL"
 else
   read_manifest "$S_MAN" staged
   S_PATHS=(${M_PATHS[@]+"${M_PATHS[@]}"}) S_HASHES=(${M_HASHES[@]+"${M_HASHES[@]}"})
-  odd=$(cd "$STAGING" && find . ! -type f ! -type d | sed 's|^\./||' | sort)
+  got=$(hash_of "$S_MAN")
+  [ "$got" = "$DISK_GC_MANIFEST_SHA256" ] || refuse "staging's MANIFEST has sha256 $got, not the pin's $DISK_GC_MANIFEST_SHA256"
+  odd=$(cd "$STAGED" && find . ! -type f ! -type d | sed 's|^\./||' | sort)
   [ -z "$odd" ] || refuse "staging holds a link or special file: $(echo "$odd" | tr '\n' ' ')"
-  have=$(cd "$STAGING" && find . -type f | sed 's|^\./||' | sort)
+  badf=$(cd "$STAGED" && find . -type f ! -perm 0644 ! -perm 0755 | sed 's|^\./||' | sort | tr '\n' ' ')
+  [ -z "$badf" ] || refuse "staging holds a file whose mode is not 0644 or 0755: $badf"
+  badd=$(cd "$STAGED" && find . -type d ! -perm 0755 | sed 's|^\./||' | sort | tr '\n' ' ')
+  [ -z "$badd" ] || refuse "staging holds a directory whose mode is not 0755: $badd"
+  have=$(cd "$STAGED" && find . -type f | sed 's|^\./||' | sort)
   want=$(printf '%s\n' "$MANIFEST_REL" ${S_PATHS[@]+"${S_PATHS[@]}"} | sort)
   extra=$(comm -23 <(printf '%s\n' "$have") <(printf '%s\n' "$want") | tr '\n' ' ')
   [ -z "$extra" ] || refuse "staging holds files MANIFEST doesn't list: $extra"
-  if [ ${#REFUSED[@]} -eq 0 ] && ! (cd "$STAGING" && sha256sum --strict --quiet -c "$MANIFEST_REL") >&2; then
+  if [ ${#REFUSED[@]} -eq 0 ] && ! (cd "$STAGED" && sha256sum --strict --quiet -c "$MANIFEST_REL") >&2; then
     refuse "staging fails sha256sum --strict -c MANIFEST"
   fi
-  if [ -f "$STAGING/$VERSION_REL" ]; then S_VER=$(tr -d '[:space:]' <"$STAGING/$VERSION_REL"); fi
+  if [ -f "$STAGED/$VERSION_REL" ]; then S_VER=$(tr -d '[:space:]' <"$STAGED/$VERSION_REL"); fi
   [[ $S_VER =~ ^[0-9]+$ ]] || refuse "staging's VERSION is not an integer"
 fi
 
@@ -249,8 +278,8 @@ fi
 OWN=()
 [ "$(id -u)" != 0 ] || OWN=(-o root -g root)
 for p in "${S_PATHS[@]}"; do
-  mode=$(stat -c %a "$STAGING/$p") || failed "couldn't read $p's staged mode"
-  install -D ${OWN[@]+"${OWN[@]}"} -m "$mode" "$STAGING/$p" "$R/$p" || failed "install of $p failed"
+  mode=$(stat -c %a "$STAGED/$p") || failed "couldn't read $p's staged mode"
+  install -D ${OWN[@]+"${OWN[@]}"} -m "$mode" "$STAGED/$p" "$R/$p" || failed "install of $p failed"
 done
 install ${OWN[@]+"${OWN[@]}"} -m 644 "$S_MAN" "$I_MAN" || failed "install of MANIFEST failed"
 APPLIED=true

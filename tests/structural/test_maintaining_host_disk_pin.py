@@ -24,7 +24,9 @@ MANIFEST_SHA256 = "066a9f3ad4e59bec523a0476ee81d4e87534cca82e50356a116043d8716d2
 
 
 def pin_values() -> dict:
-    return dict(re.findall(r"^(DISK_GC_[A-Z_]+)=(\S+)$", PIN.read_text(), flags=re.M))
+    return dict(
+        re.findall(r"^(DISK_GC_[A-Z0-9_]+)=(\S+)$", PIN.read_text(), flags=re.M)
+    )
 
 
 def test_pin_is_version_2():
@@ -45,7 +47,7 @@ def test_pin_is_a_released_tag_and_its_digest():
 
 
 def test_each_key_is_set_once():
-    keys = re.findall(r"^(DISK_GC_[A-Z_]+)=", PIN.read_text(), flags=re.M)
+    keys = re.findall(r"^(DISK_GC_[A-Z0-9_]+)=", PIN.read_text(), flags=re.M)
     assert sorted(keys) == sorted(set(keys))
 
 
