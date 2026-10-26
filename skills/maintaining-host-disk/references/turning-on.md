@@ -43,7 +43,7 @@ Check-ins carry `host`, `kind` and `body`. The faults are `low-headroom`, `gc-fa
 
 ## 4. The key
 
-The tenant's key (keys are per tenant, status#48) goes in `/etc/cannobserv/disk-gc/checkin.key`, owned by root, mode `0600`. The units load it with `LoadCredential=`, so the GC never reads the file itself.
+The tenant's key (keys are per tenant, status#48) goes in `/etc/cannobserv/disk-gc/checkin.key`, owned by root, mode `0600`. The units load it with `LoadCredential=`.
 
 ## 5. The timers
 

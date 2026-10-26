@@ -228,6 +228,8 @@ def check_members(tar_data):
     seen = set()
     for m in members:
         raw = m.name[2:] if m.name.startswith("./") else m.name
+        if m.isdir() and raw.rstrip("/") in ("", "."):
+            continue  # the archive's own root, which some writers emit as ./
         name = safe_path(raw.rstrip("/") if m.isdir() else raw, "members")
         if m.issym() or m.islnk():
             raise Refused("members", f"{name!r} is a link")

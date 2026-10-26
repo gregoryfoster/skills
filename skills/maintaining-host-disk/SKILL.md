@@ -25,7 +25,7 @@ NO RETIREMENT BEFORE THE RETIRE CHECK HAS READ WHAT THE OLD TOOL REMOVED
 NO INSTALL, ENABLE, RETIREMENT OR REMOVAL WITHOUT THE OWNER'S APPROVAL, GIVEN IN THE HOST'S OWN SESSION
 ```
 
-The GC's tiers, keep rules and sensor are Provisioner's. Where the GC does something a host wants done differently, the change is raised there, never patched into the installed copy: `install-disk-gc.sh` refuses a copy that no longer matches its MANIFEST.
+The GC's tiers, keep rules and sensor are Provisioner's. Where the GC does something a host wants done differently, the change is raised there, never patched into the installed copy: at the same `VERSION`, `install-disk-gc.sh` refuses a copy that no longer matches its MANIFEST, and an update overwrites it.
 
 ## Rationalization prevention
 
