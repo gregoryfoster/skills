@@ -29,7 +29,10 @@ from it, and from the installed VERSION it records:
              still runs daemon-reload, in case a run stopped after its
              MANIFEST but its reload didn't take
   reinstall  the same VERSION again, with --reinstall
-A staged VERSION lower than the installed one refuses: no downgrade.
+A staged VERSION lower than the installed one refuses: no downgrade. So
+does a VERSION on disk that is neither the marker's nor the staged one: an
+update that stopped part-way before the pin moved. Finish it with the skill
+at the old pin, then update.
 
 The install, as root:
   1. each MANIFEST file but MANIFEST: install -D -o root -g root -m <its
@@ -262,7 +265,7 @@ if [ -f "$I_MAN" ] && [ ! -L "$I_MAN" ]; then
     # run stopped before writing its MANIFEST.
     ACTION=update INTERRUPTED=true
   else
-    refuse "the installed VERSION is not the one its MANIFEST records, or not an integer; read it by hand"
+    refuse "the installed VERSION ($I_VER) is neither the one its MANIFEST records nor the staged one: an earlier update most likely stopped part-way, and the pin has moved since. Finish it with this skill at the old pin, the release whose VERSION is on disk (a skills-vendor checkout of that commit), then update; otherwise read it by hand"
   fi
 fi
 
