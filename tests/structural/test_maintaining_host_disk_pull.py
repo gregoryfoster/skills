@@ -681,3 +681,17 @@ def test_a_signal_between_mkdir_and_its_record_still_removes_staging(
     finally:
         signal.signal(signal.SIGTERM, previous)
     assert made == [staging]
+
+
+# --- CR 552: curl reads no curlrc, and a file too big is never read in ------
+
+
+def test_a_curlrc_is_never_read(tmp_path, registry):
+    """-q first: ~/.curlrc could add a header, a proxy, or --insecure."""
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / ".curlrc").write_text('header = "X-From-Curlrc: read"\n')
+    result, _ = pull(tmp_path, registry, rig.Image(), env={"HOME": str(home)})
+    assert result.returncode == 0, result.stderr
+    assert registry.requests
+    assert not [h for _, h in registry.requests if "X-From-Curlrc" in h]
