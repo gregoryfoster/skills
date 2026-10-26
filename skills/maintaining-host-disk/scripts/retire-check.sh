@@ -29,10 +29,10 @@ can't do is read an arbitrary script and say what it removed that the GC
 keeps: that stays the by-hand checklist in references/retiring.md, and its
 JSON says which entries are by hand only.
 
-  found       each retire-list match: repo, entry, kind (systemd or cron),
-              scope (system, user, user:<name> or cron), unit, timer,
-              enabled, masked (a link to /dev/null shadows it, so it
-              never runs, and enabled is false), match (the word that
+  found       each retire-list match: repo, entry, kind (systemd, cron or
+              anacron), scope (system, user, user:<name> or cron), unit,
+              timer, enabled, masked (a link to /dev/null shadows it, so
+              it never runs, and enabled is false), match (the word that
               matched), where (file:line) and command
   candidates  host-local units and cron lines that look like disk tooling
               but match no entry: read each one; packaged units under lib/
@@ -41,8 +41,10 @@ JSON says which entries are by hand only.
   canonical   whether the GC is installed, its VERSION, and each timer:
               enabled, disabled, masked (it never runs, whatever links
               remain) or absent
-  gc_report   the report: exit, json (from --run-gc-report), lines,
-              truncated and total_lines (at most 500 lines), or null
+  gc_report   the report: file (the --gc-report path, else null), exit
+              (null for a file), json (from --run-gc-report, else null),
+              lines, truncated and total_lines (at most 500 lines); or
+              null when neither flag was given
   unreadable  directories and files it couldn't read: run it as root
   next        what to do with it
 

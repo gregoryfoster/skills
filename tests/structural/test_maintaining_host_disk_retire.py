@@ -1015,3 +1015,28 @@ def test_568_a_masked_canonical_timer_reads_masked(host):
     timers = check(host)["canonical"]["timers"]
     assert timers["cannobserv-disk-gc.timer"] == "masked"
     assert timers["cannobserv-disk-headroom.timer"] == "disabled"
+
+
+# --- CR 577: one gc_report shape, and every kind documented ----------------
+
+
+def test_577_both_report_paths_have_the_same_keys(host, tmp_path):
+    report = tmp_path / "r.txt"
+    report.write_text("<6>ok\n")
+    from_file = check(host, "--gc-report", report)["gc_report"]
+    stub, _ = stub_python(tmp_path, "echo '{}'")
+    result = rig.run(RETIRE, "--root", "/", "--run-gc-report", "--python", stub)
+    ran = rig.stdout_json(result)["gc_report"]
+    assert set(from_file) == set(ran)
+    assert from_file["json"] is None and from_file["file"] == str(report)
+
+
+def test_577_the_help_names_every_kind_and_report_key(host):
+    write(host, "etc/anacrontab", "1 5 tidy /srv/watcher/cleanup.sh\n")
+    kinds = {f["kind"] for f in check(host)["found"]}
+    help_text = rig.run(RETIRE, "--help").stdout
+    for kind in kinds:
+        assert kind in help_text.split("kind (", 1)[1].split(")", 1)[0], kind
+    report_doc = help_text.split("gc_report", 1)[1].split("unreadable", 1)[0]
+    for key in ("file", "exit", "json", "lines", "truncated", "total_lines"):
+        assert key in report_doc, key

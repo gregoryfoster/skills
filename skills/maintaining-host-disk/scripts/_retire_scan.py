@@ -584,7 +584,12 @@ def gc_report(args, root):
         text = read(args.gc_report)
         if text is None:
             usage(f"can't read {args.gc_report}")
-        return {"file": args.gc_report, "exit": None, **cut(text.splitlines())}
+        return {
+            "file": args.gc_report,
+            "exit": None,
+            "json": None,
+            **cut(text.splitlines()),
+        }
     if not args.run_gc_report:
         return None
     gc = os.path.join(root, GC_DIR, "disk-gc")
