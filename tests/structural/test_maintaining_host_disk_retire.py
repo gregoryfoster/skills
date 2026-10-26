@@ -791,3 +791,21 @@ def test_554c_run_parts_executable_is_judged_by_mode_not_the_caller():
         assert found and found[0]["enabled"] is True, out["found"]
     finally:
         shutil.rmtree(base)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "/bin/sh -c '(cd /srv && ./cleanup.sh)'",
+        "/bin/sh -c 'x=`/srv/cleanup.sh`'",
+        "/bin/sh -c 'true;cleanup.sh'",
+        "/bin/sh -c 'true&&cleanup.sh'",
+        "/bin/sh -c 'cleanup.sh<input'",
+        "/bin/sh -c '$(/srv/cleanup.sh)'",
+    ],
+)
+def test_554d_shell_punctuation_bounds_a_token(host, command):
+    write(host, "etc/systemd/system/punct.service", f"[Service]\nExecStart={command}\n")
+    assert [f["entry"] for f in units_found(check(host), "punct.service")] == [
+        "cleanup.sh"
+    ]
