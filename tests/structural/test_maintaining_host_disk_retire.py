@@ -11,7 +11,6 @@ It only reads. A scratch root stands in for the host.
 """
 
 import os
-import sys
 
 import pytest
 
@@ -213,17 +212,79 @@ def test_without_a_report_it_says_how_to_get_one(host):
     assert any("disk-gc gc" in n for n in out["next"])
 
 
-def test_run_gc_report_runs_gc_and_nothing_else(host, tmp_path):
+def stub_python(tmp_path, body):
+    """An interpreter that records its argv and runs `body` instead of the
+    GC, so --run-gc-report can be tested on / without running anything."""
     argv = tmp_path / "argv"
-    write(
-        host,
-        f"{rig.GC_DIR}/disk-gc",
-        f"import sys\nopen({str(argv)!r}, 'w').write(' '.join(sys.argv[1:]))\nprint('<6>report line')\n",
+    stub = tmp_path / "python-stub"
+    stub.write_text(f'#!/usr/bin/env bash\nprintf "%s\\n" "$@" >"{argv}"\n{body}\n')
+    stub.chmod(0o755)
+    return stub, argv
+
+
+def test_run_gc_report_runs_gc_json_and_nothing_else(tmp_path):
+    """CR 526: on / only, with the GC's --json. The stub stands in for the
+    interpreter, so nothing runs; the scan of / only reads."""
+    stub, argv = stub_python(
+        tmp_path, """echo '{"tiers": {"uv": {"would_remove": 0}}}'"""
     )
-    out = check(host, "--run-gc-report", "--python", sys.executable)
-    assert argv.read_text() == "gc"
-    assert out["gc_report"]["lines"] == ["<6>report line"]
+    result = rig.run(RETIRE, "--root", "/", "--run-gc-report", "--python", stub)
+    assert result.returncode == 0, result.stderr
+    out = rig.stdout_json(result)
+    assert argv.read_text().split() == [
+        "-I",
+        "/usr/local/lib/cannobserv/disk-gc/disk-gc",
+        "gc",
+        "--json",
+    ]
+    assert out["gc_report"]["json"] == {"tiers": {"uv": {"would_remove": 0}}}
     assert out["gc_report"]["exit"] == 0
+
+
+def test_run_gc_report_refuses_a_root_other_than_slash(host, tmp_path):
+    """The GC reads the live config and /proc, whatever --root says."""
+    stub, argv = stub_python(tmp_path, "echo '{}'")
+    result = rig.run(RETIRE, "--root", host, "--run-gc-report", "--python", stub)
+    assert result.returncode == 2
+    assert "--root" in result.stderr
+    assert not argv.exists()
+
+
+def test_run_gc_report_times_out(tmp_path):
+    stub, _ = stub_python(tmp_path, "sleep 5")
+    result = rig.run(
+        RETIRE, "--root", "/", "--run-gc-report", "--python", stub, "--gc-timeout", "1"
+    )
+    assert result.returncode == 0, result.stderr
+    assert rig.stdout_json(result)["gc_report"]["exit"] == "timeout"
+
+
+def test_run_gc_report_with_a_missing_interpreter_is_a_usage_error(tmp_path):
+    result = rig.run(
+        RETIRE,
+        "--root",
+        "/",
+        "--run-gc-report",
+        "--python",
+        tmp_path / "no-such-python",
+    )
+    assert result.returncode == 2
+    assert "Traceback" not in result.stderr
+
+
+def test_report_flags_are_mutually_exclusive(host, tmp_path):
+    report = tmp_path / "r.txt"
+    report.write_text("<6>ok\n")
+    result = rig.run(RETIRE, "--root", host, "--gc-report", report, "--run-gc-report")
+    assert result.returncode == 2
+
+
+def test_a_long_report_says_it_was_cut(host, tmp_path):
+    report = tmp_path / "long.txt"
+    report.write_text("".join(f"<6>line {i}\n" for i in range(600)))
+    gc = check(host, "--gc-report", report)["gc_report"]
+    assert len(gc["lines"]) == 500
+    assert gc["truncated"] is True and gc["total_lines"] == 600
 
 
 def test_only_reads(host):
