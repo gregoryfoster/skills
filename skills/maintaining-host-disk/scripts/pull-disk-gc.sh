@@ -35,6 +35,10 @@ DIR. Every check refuses, and a refusal leaves no DIR behind:
                there are exactly MANIFEST's plus MANIFEST (a directory it
                can't read refuses), and VERSION is the pin's
 
+Every fetch is https only, redirects included, and bounded: the config
+and the layer by the size the manifest declares for each (a different
+length refuses at that step), anything else by 16 MiB.
+
 Output (stdout, JSON): {"ok": true, "staging", "pin", "config_digest",
 "layer": {index, digest, diff_id, bytes}, "version", "files"}, or
 {"ok": false, "refused": {"step", "why"}}. Any other failure, and a signal

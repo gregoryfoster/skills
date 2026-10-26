@@ -166,8 +166,11 @@ def test_index_is_refused(tmp_path, registry):
 
 def test_config_digest_mismatch(tmp_path, registry):
     image = rig.Image()
-    _, _, _, manifest = image.serialize()
-    registry.served[manifest["config"]["digest"]] = b'{"history": [], "rootfs": {}}'
+    _, blobs, _, manifest = image.serialize()
+    digest = manifest["config"]["digest"]
+    # The same length, one byte different: the size passes, the digest doesn't.
+    real = blobs[digest]
+    registry.served[digest] = real[:-1] + (b" " if real[-1:] != b" " else b"\n")
     result, _ = pull(tmp_path, registry, image)
     assert "digest" in refused(result, "config")
 
@@ -232,9 +235,11 @@ def test_layer_that_is_not_gzip_is_refused(tmp_path, registry):
 
 def test_blob_digest_mismatch(tmp_path, registry):
     image = rig.Image()
-    _, _, _, manifest = image.serialize()
-    other = rig.gz(rig.tar_bytes(rig.gc_members(rig.gc_files(disk_gc=b"tampered\n"))))
-    registry.served[manifest["layers"][1]["digest"]] = other
+    _, blobs, _, manifest = image.serialize()
+    digest = manifest["layers"][1]["digest"]
+    real = blobs[digest]
+    # The same length, one byte flipped: the size passes, the digest doesn't.
+    registry.served[digest] = real[:20] + bytes([real[20] ^ 0xFF]) + real[21:]
     result, into = pull(tmp_path, registry, image)
     assert "digest" in refused(result, "blob")
     assert not into.exists()

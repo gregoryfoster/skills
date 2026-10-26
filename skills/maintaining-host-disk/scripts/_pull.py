@@ -23,7 +23,7 @@ import tempfile
 
 HEX40 = re.compile(r"[0-9a-f]{40}\Z")
 DIGEST = re.compile(r"sha256:[0-9a-f]{64}\Z")
-REGISTRY = re.compile(r"https?://[A-Za-z0-9.-]+(:[0-9]+)?\Z")
+REGISTRY = re.compile(r"https://[A-Za-z0-9.-]+(:[0-9]+)?\Z")
 REPOSITORY = re.compile(r"[a-z0-9]+([._/-][a-z0-9]+)*\Z")
 PIN_LINE = re.compile(r"^(DISK_GC_[A-Z0-9_]+)=(.*)$", re.M)
 PIN_KEYS = (
@@ -83,7 +83,7 @@ def read_pin(path):
     if missing:
         raise Refused("pin", f"missing {', '.join(missing)}")
     checks = (
-        ("DISK_GC_REGISTRY", REGISTRY, "a scheme and a host"),
+        ("DISK_GC_REGISTRY", REGISTRY, "https:// and a host"),
         ("DISK_GC_REPOSITORY", REPOSITORY, "a repository name"),
         ("DISK_GC_TAG", HEX40, "a released tag, 40 hex (never :latest)"),
         ("DISK_GC_MANIFEST_DIGEST", DIGEST, "sha256:<64 hex>"),
@@ -96,32 +96,46 @@ def read_pin(path):
     return found
 
 
-def fetch(url, out, step, headers=()):
-    """GET url into out with curl; its stderr is ours, unswallowed."""
-    cmd = [
-        "curl",
-        "-fsSL",
-        "--proto",
-        "=https,http",
-        "--max-redirs",
-        "3",
-        "--retry",
-        "2",
-        "--connect-timeout",
-        "20",
-        "-m",
-        "120",
-        "-o",
-        out,
-    ]
+# What a response may weigh before its size is known from the manifest.
+MAX_DOC_BYTES = 16 * 1024 * 1024
+
+
+def fetch(url, out, step, headers=(), size=None):
+    """GET url into out with curl, https only, redirects included, and its
+    stderr ours, unswallowed. With `size`, the manifest's declared size: curl
+    stops past it, and any other length refuses; without, MAX_DOC_BYTES."""
+    cmd = ["curl", "-fsSL", "--proto", "=https", "--proto-redir", "=https"]
+    cmd += ["--max-redirs", "3", "--retry", "2", "--connect-timeout", "20"]
+    cmd += ["-m", "120", "--max-filesize", str(size or MAX_DOC_BYTES), "-o", out]
     for h in headers:
         cmd += ["-H", h]
     cmd.append(url)
     rc = subprocess.run(cmd, stdout=sys.stderr).returncode
+    where = url.split("?")[0]
+    if rc == 63:
+        raise Refused(
+            step, f"GET {where} is bigger than its size, {size or MAX_DOC_BYTES} bytes"
+        )
     if rc != 0:
-        raise Refused(step, f"GET {url.split('?')[0]} failed (curl exit {rc})")
+        raise Refused(step, f"GET {where} failed (curl exit {rc})")
     with open(out, "rb") as f:
-        return f.read()
+        data = f.read()
+    if size is not None and len(data) != size:
+        raise Refused(step, f"GET {where} is {len(data)} bytes, not its size {size}")
+    return data
+
+
+def declared_size(desc, what):
+    size = desc.get("size")
+    if (
+        not isinstance(size, int)
+        or isinstance(size, bool)
+        or not 0 < size <= MAX_LAYER_BYTES
+    ):
+        raise Refused(
+            "manifest", f"{what} has no size, or one past {MAX_LAYER_BYTES} bytes"
+        )
+    return size
 
 
 def load_json(data, step, what):
@@ -341,7 +355,11 @@ def pull(pin, staging, work, made):
 
     config_digest = manifest["config"]["digest"]
     config_data = fetch(
-        f"{base}/blobs/{config_digest}", f"{work}/config", "config", auth
+        f"{base}/blobs/{config_digest}",
+        f"{work}/config",
+        "config",
+        auth,
+        declared_size(manifest["config"], "the config"),
     )
     got = sha256_of(config_data)
     if got != config_digest:
@@ -350,7 +368,13 @@ def pull(pin, staging, work, made):
 
     n, layer_digest, diff_id = find_layer(manifest, config)
 
-    blob = fetch(f"{base}/blobs/{layer_digest}", f"{work}/layer.tar.gz", "blob", auth)
+    blob = fetch(
+        f"{base}/blobs/{layer_digest}",
+        f"{work}/layer.tar.gz",
+        "blob",
+        auth,
+        declared_size(manifest["layers"][n], f"layer {n}"),
+    )
     got = sha256_of(blob)
     if got != layer_digest:
         raise Refused("blob", f"its digest is {got}, not {layer_digest}")
