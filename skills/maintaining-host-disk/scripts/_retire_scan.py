@@ -512,8 +512,10 @@ def main():
         for (repo, entry), (word, where, cmd) in sorted(hits.items()):
             timer = timer_for(units, scope, name) if name.endswith(".service") else None
             dirs = scope_dirs(root, scope)
+            # A masked timer starts nothing, whatever wants links remain.
+            timer_live = bool(timer) and not units[(scope, timer)]["masked"]
             enabled = not unit["masked"] and (
-                wanted(root, dirs, name) or bool(timer and wanted(root, dirs, timer))
+                wanted(root, dirs, name) or (timer_live and wanted(root, dirs, timer))
             )
             found.append(
                 {
