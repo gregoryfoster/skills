@@ -740,3 +740,19 @@ def test_a_run_parts_wrapper_script_is_read(host):
     assert [(f["where"], f["entry"], f["enabled"]) for f in found] == [
         ("etc/cron.daily/powermap:3", "check_disk_headroom.py", True)
     ]
+
+
+# --- CR 554: smaller fixes ---------------------------------------------------
+
+
+def test_554a_a_masked_timer_does_not_enable_its_service(host):
+    write(
+        host,
+        "etc/systemd/system/sweep.service",
+        "[Service]\nExecStart=/srv/watcher/cleanup.sh\n",
+    )
+    write(host, "lib/systemd/system/sweep.timer", "[Timer]\nOnCalendar=daily\n")
+    os.symlink("/dev/null", host / "etc/systemd/system/sweep.timer")
+    enable(host, "sweep.timer")
+    (found,) = units_found(check(host), "sweep.service")
+    assert found["enabled"] is False
