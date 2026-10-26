@@ -722,3 +722,21 @@ def test_a_mysql_flag_on_another_command_is_kept(host):
     )
     (found,) = [f for f in check(host)["found"] if f["where"] == "etc/cron.d/mk:1"]
     assert "mkdir -p /var/x" in found["command"]
+
+
+# --- CR 546: a wrapper script in cron.<period> is read ------------------------
+
+
+def test_a_run_parts_wrapper_script_is_read(host):
+    path = host / "etc/cron.daily/powermap"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("#!/bin/sh\nset -e\n/opt/pm/check_disk_headroom.py --apply\n")
+    path.chmod(0o755)
+    found = [
+        f
+        for f in check(host)["found"]
+        if f["where"].startswith("etc/cron.daily/powermap")
+    ]
+    assert [(f["where"], f["entry"], f["enabled"]) for f in found] == [
+        ("etc/cron.daily/powermap:3", "check_disk_headroom.py", True)
+    ]
