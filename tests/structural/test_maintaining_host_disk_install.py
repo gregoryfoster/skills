@@ -571,3 +571,19 @@ def test_reinstall_over_a_drifted_drop_in_restarts_journald(tmp_path, host):
     plan = ok(result)
     assert plan["journald_restart"] is True
     assert "restart systemd-journald" in plan["systemctl"]
+
+
+# --- CR 551: an interrupted update once the pin has moved -------------------
+
+
+def test_an_update_interrupted_before_the_pin_moved_names_its_recovery(tmp_path, host):
+    """VERSION 1's marker, VERSION 2's files from an update that stopped,
+    and now the skill pins VERSION 3: neither marker nor staging explains
+    the disk, and the refusal says how to get out."""
+    rig.stage(host, v1_files())
+    (host / rig.GC_DIR / "VERSION").write_text("2\n")
+    result, _ = install(
+        tmp_path, host, staged(tmp_path, rig.gc_files(version=3)), "--approve"
+    )
+    out = refused(result, "old pin")
+    assert any("then update" in r for r in out["refused"])
