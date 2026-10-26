@@ -1,7 +1,8 @@
 """#425 — remove-disk-gc.sh takes the GC off a host, as the contract says.
 
-Disable both timers, remove MANIFEST's files and MANIFEST, then
-`daemon-reload` and restart journald. The host's own `/etc/cannobserv/disk-gc/`
+Disable every timer and stop every service MANIFEST lists, remove its
+files, `daemon-reload`, reset the services' failed state, restart journald
+where a drop-in went, and remove MANIFEST last, the commit marker. The host's own `/etc/cannobserv/disk-gc/`
 and the GC's state stay, and so does anything MANIFEST doesn't list. A file
 that no longer matches MANIFEST is someone's edit, so it refuses without
 `--even-modified`. Scratch root and stub systemctl only.

@@ -4,9 +4,10 @@ The contract's install, on a scratch root prefix: each MANIFEST file with its
 staged mode, `sha256sum --strict -c` from the root against the staged
 MANIFEST, the removals, `daemon-reload`, and only then MANIFEST itself, the
 commit marker a re-run reads (CR 521). An update removes only the paths the
-old MANIFEST lists that the new one doesn't. journald restarts only when its
-drop-in changed. Nothing touches
-`/etc/cannobserv/disk-gc/`, and no timer is enabled or disabled.
+old MANIFEST lists that the new one doesn't. journald restarts when its
+drop-in changed, or on a reinstall or a resumed update that may owe the
+restart. Nothing touches `/etc/cannobserv/disk-gc/`, and no timer is
+enabled; only a unit the new MANIFEST drops is disabled, before it goes.
 
 No test touches the real `/`: every run takes `--root` under tmp_path, and
 systemctl is a stub that logs its argv (`maintaining_host_disk_rig.py`).
