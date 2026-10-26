@@ -563,16 +563,20 @@ step_space() {  # <package>...: SS_DOWNLOAD, SS_GROWTH, SS_PEAK in KiB, SS_N; 1 
 }
 
 # The canonical GC's config, read as strictly as the GC reads it: an
-# unreadable file, or one whose syntax or headroom keys it would reject, is
-# never read as absent. INI as Python's configparser parses it by default:
+# unreadable file, or one whose syntax, sections or [sensor] keys it would
+# reject, is never read as absent. VERSION 2's load_config parses it with
+# configparser.ConfigParser(interpolation=None, default_section="\0none"):
 # [section] headers, each once; "key = value" or "key: value" lines, keys
-# case-folded, each once per section; # and ; comments on their own line;
-# an indented line continuing the value above; a [DEFAULT] key standing in
-# for one a section leaves out. Other sections' keys aren't judged here:
-# their values are the GC's to refuse.
+# case-folded, each once per section; # and ; comments on their own line; an
+# indented line continuing the value above; a % as itself. [DEFAULT] is no
+# fallback there but a section like any other, and its _KEYS know [gc] and
+# [sensor] alone, so any other section is refused, and so is any [sensor]
+# key but these six (CR 582). [gc]'s keys aren't judged here: they're the
+# GC's to refuse.
+DISK_GC_SENSOR_KEYS="mount alert_at_percent clear_at_percent gc_stale_hours status_url monitor_id"
 disk_gc_conf() {  # GC_STATE := absent, ok or bad; GC_ALERT and GC_MOUNT when ok; GC_WHY when bad
   local _gc_t _gc_l _gc_s _gc_n=0 _gc_k _gc_v _gc_sect="" _gc_last="" _gc_sects=" " _gc_keys=" "
-  local _gc_a="" _gc_ha=0 _gc_m="" _gc_hm=0 _gc_da="" _gc_hda=0 _gc_dm="" _gc_hdm=0
+  local _gc_a="" _gc_ha=0 _gc_m="" _gc_hm=0
   GC_PATH=$P_ROOT$DISK_GC_CONF GC_STATE=absent GC_ALERT="" GC_MOUNT="" GC_WHY=""
   if [ ! -e "$GC_PATH" ] && [ ! -L "$GC_PATH" ]; then return 0; fi
   GC_STATE=bad
@@ -594,8 +598,8 @@ disk_gc_conf() {  # GC_STATE := absent, ok or bad; GC_ALERT and GC_MOUNT when ok
       [[:space:]]*)
         if [ -n "$_gc_last" ]; then
           case $_gc_last in
-            sensor.alert_at_percent | sensor.mount | DEFAULT.alert_at_percent | DEFAULT.mount)
-              GC_WHY="line $_gc_n continues [${_gc_last%%.*}] ${_gc_last#*.} onto a second line"
+            sensor.alert_at_percent | sensor.mount)
+              GC_WHY="line $_gc_n continues [sensor] ${_gc_last#*.} onto a second line"
               return 0 ;;
           esac
           continue
@@ -612,6 +616,12 @@ disk_gc_conf() {  # GC_STATE := absent, ok or bad; GC_ALERT and GC_MOUNT when ok
         case $_gc_sects in *" $_gc_k "*)
           GC_WHY="line $_gc_n repeats the section [$_gc_k]"
           return 0 ;;
+        esac
+        case $_gc_k in
+          gc | sensor) ;;
+          *)
+            GC_WHY="line $_gc_n has an unknown section [$_gc_k]: the GC knows [gc] and [sensor] alone"
+            return 0 ;;
         esac
         _gc_sects="$_gc_sects$_gc_k " _gc_sect=$_gc_k _gc_last=""
         continue ;;
@@ -640,16 +650,16 @@ disk_gc_conf() {  # GC_STATE := absent, ok or bad; GC_ALERT and GC_MOUNT when ok
       GC_WHY="line $_gc_n repeats $_gc_k in [$_gc_sect]"
       return 0 ;;
     esac
+    if [ "$_gc_sect" = sensor ] && ! in_words "$_gc_k" "$DISK_GC_SENSOR_KEYS"; then
+      GC_WHY="line $_gc_n has an unknown key [sensor] $_gc_k: the GC's VERSION 2 knows $DISK_GC_SENSOR_KEYS"
+      return 0
+    fi
     _gc_keys="$_gc_keys$_gc_sect.$_gc_k " _gc_last=$_gc_sect.$_gc_k
     case $_gc_last in
       sensor.alert_at_percent) _gc_a=$_gc_v _gc_ha=1 ;;
       sensor.mount) _gc_m=$_gc_v _gc_hm=1 ;;
-      DEFAULT.alert_at_percent) _gc_da=$_gc_v _gc_hda=1 ;;
-      DEFAULT.mount) _gc_dm=$_gc_v _gc_hdm=1 ;;
     esac
   done <<<"$_gc_t"
-  if [ "$_gc_ha" -eq 0 ] && [ "$_gc_hda" -eq 1 ]; then _gc_a=$_gc_da _gc_ha=1; fi
-  if [ "$_gc_hm" -eq 0 ] && [ "$_gc_hdm" -eq 1 ]; then _gc_m=$_gc_dm _gc_hm=1; fi
   if [ "$_gc_ha" -eq 0 ]; then
     _gc_a=$DISK_GC_ALERT_DEFAULT
   elif ! [[ $_gc_a =~ ^[0-9]{1,3}$ ]] || [ $((10#$_gc_a)) -gt 100 ]; then
@@ -660,7 +670,7 @@ disk_gc_conf() {  # GC_STATE := absent, ok or bad; GC_ALERT and GC_MOUNT when ok
     _gc_m=$DISK_GC_MOUNT_DEFAULT
   else
     case $_gc_m in
-      /*[[:cntrl:]%]* | /*%*) GC_WHY="[sensor] mount is \"$_gc_m\", which the GC can't read as a path"; return 0 ;;
+      /*[[:cntrl:]]*) GC_WHY="[sensor] mount is \"$_gc_m\", which holds a control character"; return 0 ;;
       /*) ;;
       *) GC_WHY="[sensor] mount is \"$_gc_m\", not an absolute path"; return 0 ;;
     esac
