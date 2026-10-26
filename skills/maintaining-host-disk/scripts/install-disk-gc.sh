@@ -32,7 +32,8 @@ from it, and from the installed VERSION it records:
 A staged VERSION lower than the installed one refuses: no downgrade. So
 does a VERSION on disk that is neither the marker's nor the staged one: an
 update that stopped part-way before the pin moved. Finish it with the skill
-at the old pin, then update.
+at the old pin, then update. A MANIFEST whose VERSION is gone is a remove
+that stopped part-way: finish it with remove-disk-gc.sh, then install.
 
 The install, as root:
   1. each MANIFEST file but MANIFEST: install -D -o root -g root -m <its
@@ -265,6 +266,10 @@ if [ -f "$I_MAN" ] && [ ! -L "$I_MAN" ]; then
     # This release's VERSION is on disk, under the old marker: an earlier
     # run stopped before writing its MANIFEST.
     ACTION=update INTERRUPTED=true
+  elif [ "$on_disk" = absent ]; then
+    # MANIFEST outlives its files only in a remove that stopped part-way:
+    # remove deletes MANIFEST last.
+    refuse "the installed MANIFEST is there but its VERSION is gone: a remove stopped part-way. Finish it with remove-disk-gc.sh, then install"
   else
     refuse "the installed VERSION ($I_VER) is neither the one its MANIFEST records nor the staged one: an earlier update most likely stopped part-way, and the pin has moved since. Finish it with this skill at the old pin, the release whose VERSION is on disk (a skills-vendor checkout of that commit), then update; otherwise read it by hand"
   fi

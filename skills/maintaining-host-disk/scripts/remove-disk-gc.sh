@@ -30,7 +30,8 @@ After an install that stopped before writing MANIFEST there is nothing
 for it to read: it reports absent, with a note to finish the install by
 running install-disk-gc.sh again. After an update that stopped the same
 way (the VERSION on disk isn't the one MANIFEST records), it refuses until
-install-disk-gc.sh has finished the update.
+install-disk-gc.sh has finished the update; if the pin has moved since,
+that takes the skill at the old pin.
 
 It refuses (exit 3) before anything changes when MANIFEST names a path
 outside usr/local/lib/ or isn't in sha256sum's format, when a path it would
@@ -124,7 +125,7 @@ elif [ ${#REFUSED[@]} -eq 0 ]; then
   done
   on_disk=$(hash_of "$R/$VERSION_REL")
   if [ "$on_disk" != absent ] && [ -n "$marked" ] && [ "$on_disk" != "$marked" ]; then
-    refuse "an update was interrupted (the VERSION on disk isn't the one MANIFEST records); finish it with install-disk-gc.sh first, then remove"
+    refuse "an update was interrupted (the VERSION on disk isn't the one MANIFEST records); finish it with install-disk-gc.sh first, then remove. If the pin has moved since, finish it with this skill at the old pin, the release whose VERSION is on disk, then remove or update"
   elif [ ${#MODIFIED[@]} -gt 0 ] && [ "$EVEN_MODIFIED" = 0 ]; then
     refuse "edited since install: ${MODIFIED[*]}; --even-modified removes them anyway"
   fi
