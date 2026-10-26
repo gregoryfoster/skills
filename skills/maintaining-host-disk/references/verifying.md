@@ -19,7 +19,7 @@ journalctl -u cannobserv-disk-gc.service -p warning --since -1d       # warnings
 systemctl list-timers 'cannobserv-disk-*'                             # next and last runs
 ```
 
-A healthy sensor run reads like `ok: <host>: / is 48% used, 12.2G available (alert at 80%, clears at 75%)`, then `checked in ok (ok): HTTP 202`. The first `ok` after a hold says `recovered: alerting since <time>`. Each held run checks in `low-headroom` again and exits 3, so a monitor's *missing* means what it did before. `low-headroom`, held or not, takes precedence over `gc-failed` and `gc-stale`.
+A healthy sensor run reads like `ok: <host>: / is 48% used, 12.2G available (alert at 80%, clears at 75%)`, then `checked in ok (ok): HTTP 202`. The second line is the one that counts: `ok:` is logged before the check-in, which with no `monitor_id`, no key or no reachable co-status only warns (`not checking in`, `not sent`) while the unit still succeeds. The first `ok` after a hold says `recovered: alerting since <time>`. Each held run checks in `low-headroom` again and exits 3, so a monitor's *missing* means what it did before. `low-headroom`, held or not, takes precedence over `gc-failed` and `gc-stale`.
 
 ## A host's own scripts
 

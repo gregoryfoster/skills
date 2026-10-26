@@ -14,7 +14,7 @@ Copy `/usr/local/lib/cannobserv/disk-gc/disk-gc.conf.example` to `/etc/cannobser
 - `worktree_repos`: the repos whose orphaned worktree directories may go. The template has neither half of the `worktrees` tier: to turn it on, add `worktrees` to `tiers` **and** name the repo here. Either one alone does nothing;
 - `uv_clean_above_mb`: the cache size above which `uv cache clean --force` runs too;
 - `alert_at_percent` and `clear_at_percent`. **The template sets 85/80:** keep `clear_at_percent` below your alert line, or delete it to take the default (below);
-- `monitor_id`.
+- `monitor_id`: leave it empty until step 3's monitor exists, then set it before the timers (step 5). While it's empty, each sensor run logs `no [sensor] monitor_id: not checking in` and checks in nothing.
 
 Anything unknown or malformed fails the run, which is what you want: a typo is never a silent default.
 
@@ -55,11 +55,11 @@ Enable them in the same change that retires the host's own disk tooling, once it
 
 **A host whose own probe already reports its free space** enables only the GC timer, and sets `gc_stale_hours = 0`, as the contract says. With the sensor timer off, nothing reports for the GC: `gc_stale_hours = 0` matters only when the sensor runs at all (the rehearsal, or the sensor timer enabled later), where it turns the `gc-stale` fault off. A failed GC run (`gc-failed`) then goes unreported unless the host's own probe reads the GC's `/var/lib/cannobserv-disk-gc/state.json`.
 
-## 6. The first `ok`, then the monitor, then the rehearsal
+## 6. The first check-in, then the monitor, then the rehearsal
 
 In this order, and only this one:
 
-1. **The first `ok`:** wait for a sensor run from the timer to log `ok` ([verifying.md](verifying.md#the-gcs-and-the-sensors-runs)).
+1. **The first check-in:** wait for a sensor run from the timer to log `checked in ok (ok): HTTP 202` ([verifying.md](verifying.md#the-gcs-and-the-sensors-runs)). **`ok` alone proves nothing:** every run logs `ok: …` before it checks in, and with no `monitor_id`, no key or no reachable co-status it then only warns (`not checking in`, `not sent`) and still exits 0. Enabling the monitor on that pages *has stopped reporting*. If the run logs `gc-stale` with "No disk GC run is recorded" instead, the config is older than `gc_stale_hours` and no GC run has written `state.json` yet (a report-only run never does): wait for the GC timer's first run, at 05:15 UTC, and the sensor run after it.
 2. **Enable the monitor** on co-status.
 3. **Rehearse:**
 
