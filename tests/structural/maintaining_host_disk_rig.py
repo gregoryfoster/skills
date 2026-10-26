@@ -2,10 +2,12 @@
 
 A fixture co-image-base release, built here byte by byte: the canonical disk
 GC's layer as a gzipped tar, filler layers either side of it, and the config
-and manifest JSON that name them. A stub registry serves it on 127.0.0.1 the
-way ghcr.io does: an anonymous token, the manifest by tag, and each blob by
-digest behind a 307 to another path (ghcr.io redirects to
-pkg-containers.githubusercontent.com). Nothing here reaches the network.
+and manifest JSON that name them. A stub registry serves it over TLS on
+127.0.0.1 the way ghcr.io does: an anonymous token, the manifest by tag, and
+each blob by digest behind a 307 (ghcr.io redirects to
+pkg-containers.githubusercontent.com). Its certificate is made here with
+openssl, and curl trusts it through CURL_CA_BUNDLE, since the puller speaks
+https only (CR 528). Nothing here reaches the network.
 
 The scripts under test are copied into the test's own directory, and the copy
 of `_pin.sh` is rewritten to pin the fixture release on the stub registry.
@@ -24,9 +26,11 @@ import json
 import os
 import re
 import shutil
+import ssl
 import stat
 import subprocess
 import tarfile
+import tempfile
 import threading
 from pathlib import Path
 
@@ -177,20 +181,24 @@ class Image:
         # Hooks a test sets to break one digest after the rest are computed.
         self.diff_ids_override = None
         self.extra_layers = []
+        # Declared sizes a test sets to disagree with the bytes: {index: n}
+        # for layers, and an int for the config.
+        self.layer_size_override = {}
+        self.config_size_override = None
 
     def serialize(self):
         """(manifest bytes, {digest: blob bytes}, config dict, manifest dict)."""
         blobs = {}
         layers = []
         diff_ids = []
-        for tar in self.layer_tars:
+        for i, tar in enumerate(self.layer_tars):
             blob = gz(tar)
             digest = sha256(blob)
             blobs[digest] = blob
             layers.append(
                 {
                     "mediaType": self.layer_media_type,
-                    "size": len(blob),
+                    "size": self.layer_size_override.get(i, len(blob)),
                     "digest": digest,
                 }
             )
@@ -212,7 +220,7 @@ class Image:
             "mediaType": self.manifest_media_type,
             "config": {
                 "mediaType": DOCKER_CONFIG,
-                "size": len(config_bytes),
+                "size": self.config_size_override or len(config_bytes),
                 "digest": config_digest,
             },
             "layers": layers,
@@ -220,12 +228,37 @@ class Image:
         return json.dumps(manifest, indent=3).encode(), blobs, config, manifest
 
 
+_CERT = {}
+
+
+def tls_cert() -> str:
+    """A self-signed certificate for 127.0.0.1 and localhost, made once per
+    test process; the path curl is told to trust."""
+    if "cert" not in _CERT:
+        d = tempfile.mkdtemp(prefix="disk-gc-tls.")
+        cert, key = os.path.join(d, "cert.pem"), os.path.join(d, "key.pem")
+        made = subprocess.run(
+            ["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "2"]
+            + ["-keyout", key, "-out", cert, "-subj", "/CN=127.0.0.1"]
+            + ["-addext", "subjectAltName=IP:127.0.0.1,DNS:localhost"],
+            capture_output=True,
+            text=True,
+        )
+        if made.returncode != 0:
+            pytest.skip(
+                f"openssl couldn't make a test certificate: {made.stderr[-300:]}"
+            )
+        _CERT.update(cert=cert, key=key)
+    return _CERT["cert"]
+
+
 class Registry:
-    """ghcr.io's three endpoints, for one repository and one tag.
+    """ghcr.io's three endpoints, for one repository and one tag, over TLS.
 
     `served` overrides the bytes a blob's digest answers with, so a test can
     serve bytes that don't match the digest the manifest names. `requests`
-    records each path and the headers it came with.
+    records each path and the headers it came with. `redirect_scheme` and
+    `redirect_host` say where a blob's 307 points.
     """
 
     def __init__(self):
@@ -234,6 +267,8 @@ class Registry:
         self.blobs = {}
         self.served = {}
         self.requests = []
+        self.redirect_scheme = "https"
+        self.redirect_host = "127.0.0.1"
         registry = self
 
         class Handler(http.server.BaseHTTPRequestHandler):
@@ -266,9 +301,11 @@ class Registry:
                     if not authed:
                         return self._send(401)
                     digest = path.rsplit("/", 1)[1]
-                    return self._send(
-                        307, extra=[("Location", f"/storage/{digest}?sig=x")]
+                    where = (
+                        f"{registry.redirect_scheme}://{registry.redirect_host}:"
+                        f"{registry.ports[registry.redirect_scheme]}/storage/{digest}?sig=x"
                     )
+                    return self._send(307, extra=[("Location", where)])
                 if path.startswith("/storage/"):
                     digest = path[len("/storage/") :].split("?", 1)[0]
                     body = registry.served.get(digest, registry.blobs.get(digest))
@@ -278,9 +315,18 @@ class Registry:
                 return self._send(404)
 
         self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-        self.url = f"http://127.0.0.1:{self.server.server_address[1]}"
-        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
-        self.thread.start()
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.load_cert_chain(tls_cert(), _CERT["key"])
+        self.server.socket = context.wrap_socket(self.server.socket, server_side=True)
+        self.port = self.server.server_address[1]
+        self.url = f"https://127.0.0.1:{self.port}"
+        # A plain-http twin, so a redirect that downgrades has somewhere real
+        # to land: refusing it must be the puller's doing, not a failed
+        # handshake.
+        self.plain = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.ports = {"https": self.port, "http": self.plain.server_address[1]}
+        for server in (self.server, self.plain):
+            threading.Thread(target=server.serve_forever, daemon=True).start()
 
     def publish(self, image: Image) -> str:
         """Serve the image, and return its manifest digest: the pin."""
@@ -291,8 +337,9 @@ class Registry:
         return sha256(manifest)
 
     def close(self):
-        self.server.shutdown()
-        self.server.server_close()
+        for server in (self.server, self.plain):
+            server.shutdown()
+            server.server_close()
 
 
 def clean_env(extra: dict | None = None) -> dict:
@@ -305,6 +352,8 @@ def clean_env(extra: dict | None = None) -> dict:
     }
     env["NO_PROXY"] = env["no_proxy"] = "127.0.0.1,localhost"
     env["LC_ALL"] = "C"
+    if "cert" in _CERT:
+        env["CURL_CA_BUNDLE"] = _CERT["cert"]
     env.update(extra or {})
     return env
 

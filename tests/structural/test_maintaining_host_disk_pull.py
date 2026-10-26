@@ -520,3 +520,37 @@ def test_staging_it_cannot_remove_is_reported(tmp_path, capsys):
     rc, out, into = run_main(module, tmp_path, capsys, boom)
     assert rc == 3
     assert out["staging_left"] == str(into)
+
+
+# --- CR 528: https only, and nothing bigger than the manifest says ---------
+
+
+def test_a_pin_on_an_http_registry_is_refused(tmp_path, registry):
+    digest = registry.publish(rig.Image())
+    scripts = rig.copy_scripts(tmp_path / "s", "http://127.0.0.1:1", digest)
+    result = rig.run(scripts / "pull-disk-gc.sh", "--into", tmp_path / "staging")
+    assert "https" in refused(result, "pin")
+
+
+def test_a_redirect_to_http_is_refused(tmp_path, registry):
+    registry.redirect_scheme = "http"
+    result, into = pull(tmp_path, registry, rig.Image())
+    refused(result, "config")
+    assert not into.exists()
+    assert not [p for p, _ in registry.requests if p.startswith("/storage/")]
+
+
+def test_a_layer_bigger_than_its_declared_size_is_refused(tmp_path, registry):
+    image = rig.Image()
+    image.layer_size_override = {1: 100}
+    result, into = pull(tmp_path, registry, image)
+    assert "size" in refused(result, "blob")
+    assert not into.exists()
+
+
+def test_a_config_smaller_than_its_declared_size_is_refused(tmp_path, registry):
+    image = rig.Image()
+    _, _, _, manifest = image.serialize()
+    image.config_size_override = manifest["config"]["size"] + 10
+    result, _ = pull(tmp_path, registry, image)
+    assert "size" in refused(result, "config")
