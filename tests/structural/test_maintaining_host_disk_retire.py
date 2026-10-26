@@ -343,3 +343,26 @@ def test_drop_ins_apply_in_filename_order_across_directories(host):
         "[Service]\nExecStart=\nExecStart=/bin/true\n",
     )
     assert units_found(check(host), "order.service") == []
+
+
+# --- CR 523: a timer's drop-ins count too -----------------------------------
+
+
+def test_timer_whose_drop_in_names_its_service(host):
+    """An enabled timer whose drop-in sets Unit=: the service it starts is
+    scheduled, and must not read as off."""
+    write(
+        host,
+        "etc/systemd/system/hygiene-job.service",
+        "[Service]\nExecStart=/srv/address-validator/disk-hygiene.sh\n",
+    )
+    write(host, "etc/systemd/system/nightly.timer", "[Timer]\nOnCalendar=daily\n")
+    write(
+        host,
+        "etc/systemd/system/nightly.timer.d/unit.conf",
+        "[Timer]\nUnit=hygiene-job.service\n",
+    )
+    enable(host, "nightly.timer")
+    (found,) = units_found(check(host), "hygiene-job.service")
+    assert found["timer"] == "nightly.timer"
+    assert found["enabled"] is True
