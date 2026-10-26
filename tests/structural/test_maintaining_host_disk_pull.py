@@ -695,3 +695,34 @@ def test_a_curlrc_is_never_read(tmp_path, registry):
     assert result.returncode == 0, result.stderr
     assert registry.requests
     assert not [h for _, h in registry.requests if "X-From-Curlrc" in h]
+
+
+def test_a_file_bigger_than_declared_is_refused_before_it_is_read(
+    tmp_path, monkeypatch
+):
+    """CR 552b: an older curl may not apply --max-filesize to a chunked
+    response, so the size on disk is checked before the bytes are read."""
+    module = load_pull()
+    bindir = tmp_path / "shim"
+    bindir.mkdir()
+    # A curl that "downloads" 200 bytes wherever -o points, and succeeds.
+    (bindir / "curl").write_text(
+        "#!/usr/bin/env bash\\n"
+        'while [ $# -gt 0 ]; do [ "$1" = -o ] && out=$2; shift; done\\n'
+        'head -c 200 /dev/zero >"$out"\\n'
+    )
+    (bindir / "curl").chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bindir}:{os.environ['PATH']}")
+    out = tmp_path / "blob"
+    opened = []
+    real_open = open
+
+    def watching_open(path, *a, **k):
+        opened.append(str(path))
+        return real_open(path, *a, **k)
+
+    monkeypatch.setattr(module, "open", watching_open, raising=False)
+    with pytest.raises(module.Refused) as e:
+        module.fetch("https://x.example/blob", str(out), "blob", size=100)
+    assert "200" in e.value.why
+    assert str(out) not in opened
