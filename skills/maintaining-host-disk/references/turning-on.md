@@ -77,11 +77,14 @@ In this order, and only this one:
 3. **Rehearse:**
 
    ```bash
-   sudo systemd-run --wait -p LoadCredential=checkin-key:/etc/cannobserv/disk-gc/checkin.key \
+   sudo systemd-run --wait --collect --pipe -u cannobserv-disk-rehearsal \
+     -p LoadCredential=checkin-key:/etc/cannobserv/disk-gc/checkin.key \
      /usr/bin/python3 -I /usr/local/lib/cannobserv/disk-gc/disk-gc sensor --test-alert
    ```
 
    **It is a real page.** Tell whoever gets it first. The next `ok` clears it.
+
+   **It exits 3, like any alert,** so `systemd-run` reports a failure: that's expected. Success is the line `checked in alert (test): HTTP 202` (`--pipe` shows it, and so does `sudo journalctl -u cannobserv-disk-rehearsal`). `check-in alert (test) not sent` means no page went out. `--collect` unloads the unit afterwards, so the expected failure isn't left in `systemctl --failed`.
 
 ## Picking the lines
 
