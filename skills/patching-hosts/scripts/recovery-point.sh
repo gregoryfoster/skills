@@ -92,9 +92,10 @@ key file can't be read as root; when a Qdrant's container isn't running, its
 storage's size can't be read, its key file can't be read, or its collections
 can't be listed; when a backup line names a datastore no datastore line
 declares; and when the run's filesystem has less free space than the data it
-would dump, or its free space can't be read. A Qdrant snapshot is written
-under Docker's root first, then copied out: on one filesystem it counts
-twice, and on two, Docker's must hold it too.
+would dump plus 131072 KiB, the floor every filesystem a patch run writes
+keeps free (#390), or its free space can't be read. A Qdrant snapshot is
+written under Docker's root first, then copied out: on one filesystem it
+counts twice, and on two, Docker's must hold it too, with the floor kept.
 
 The record, one line each (run.md section 2):
   began <epoch seconds>    retain <date>
@@ -607,19 +608,21 @@ gate_datastores() {
       need=$((need + qsnap))
     else
       jaddb e docker_root_shares_run_disk 0
-      if [ "$dfree" -lt $(((qsnap + 1023) / 1024)) ]; then
-        refuse "$droot has $dfree KiB free, and the snapshot is written there first, up to $(((qsnap + 1023) / 1024)) KiB: a full disk mid-snapshot can stop Qdrant"
+      if [ "$dfree" -lt $(((qsnap + 1023) / 1024 + SPACE_FLOOR_KIB)) ]; then
+        refuse "$droot has $dfree KiB free, and the snapshot is written there first, up to $(((qsnap + 1023) / 1024)) KiB, with $SPACE_FLOOR_KIB KiB kept free besides: a full disk mid-snapshot can stop Qdrant"
       fi
     fi
   fi
   jaddn e need_kib "$(((need + 1023) / 1024))"
+  jaddn e floor_kib "$SPACE_FLOOR_KIB"
   jaddn e free_kib "$avail"
   jadds e on "$dir"
   jadd J_GATE space "{$e}"
   if [ -z "$avail" ]; then
     refuse "the free space under $dir couldn't be read"
-  elif [ "$avail" -lt $(((need + 1023) / 1024)) ]; then
-    refuse "$dir has $avail KiB free, and the data would take up to $(((need + 1023) / 1024)) KiB: a full disk mid-dump can stop a data store on it"
+  # The floor every filesystem a patch run writes keeps (CR 587).
+  elif [ "$avail" -lt $(((need + 1023) / 1024 + SPACE_FLOOR_KIB)) ]; then
+    refuse "$dir has $avail KiB free, and the data would take up to $(((need + 1023) / 1024)) KiB, with $SPACE_FLOOR_KIB KiB kept free besides: a full disk mid-dump can stop a data store on it"
   fi
 }
 

@@ -53,6 +53,18 @@ The primitives these scripts reach a host through:
   rss_of VAR TEXT           VAR := the max RSS a TIMER file's TEXT holds
   APT_SIM_PHASED            the apt-get option that shows phased updates in a
                             simulation: unattended-upgrade takes them all
+  SPACE_FLOOR_KIB           the KiB every filesystem a patch run writes keeps
+                            free, beyond what the run counts it needs
+  fs_reading PATH           FS_FREE, FS_USED (KiB) and FS_MOUNT from df -Pk,
+                            at PATH's nearest existing directory; 1 when unread
+  step_space PKG...         SS_DOWNLOAD, SS_GROWTH, SS_PEAK (KiB) and SS_N: what
+                            upgrading PKGs writes, from apt's metadata, through
+                            SS_APT_GET, SS_APT_CACHE and SS_DPKGQ; 1 with SS_WHY
+  disk_gc_conf              GC_STATE (absent, ok or bad), GC_ALERT, GC_MOUNT and
+                            GC_WHY, from the canonical disk GC's config
+  space_gate WHAT           SPACE_WHY, SPACE_KIND and SPACE_ID: where the SS_*
+                            figures don't fit, or cross the GC's headroom line;
+                            SPACE_JSON: what was read
   unit_disk_state VAR UNIT  masked, masked-runtime, enabled, disabled, static
                             or not-found, read from the unit files under ROOT
   tmp_rule                  TMP_CLEARED := 1 when the boot empties /tmp, 0
@@ -389,6 +401,390 @@ origin_split() {  # <keep var> <skip var> <|names|> <sim output>
 # package for 3, and unattended-upgrade for all 40 (2026-10-06, #354). So a
 # simulation that stands for what a lane takes shows them all.
 APT_SIM_PHASED=(-o APT::Get::Always-Include-Phased-Updates=true)
+
+# --- free space (#390) -----------------------------------------------------
+# What a step writes, against the free space where it lands. The figures are
+# apt's own, read from its metadata: each candidate's Size, less one already
+# in apt's cache at that size, is the download, and its Installed-Size
+# against the installed version's is the install growth. Summed, they are
+# what `apt-get --assume-no` prints as "Need to get" and "After this
+# operation" (noble, apt 2.8.3: 2379 kB and 280 kB both ways, 2026-10-26).
+# --assume-no itself is no dry run: it answers a prompt, and an install of
+# exactly the packages named asks none, so it installs them.
+#
+# The floor every filesystem a step writes keeps, beyond what apt counts:
+# an initramfs rebuild, dpkg's and apt's logs and records. A kernel install
+# took 47124 KiB more than apt's "After this operation" (114116 KiB used
+# for 68.6 MB; its initrd alone 19165 KiB, gzip, linux-image-virtual on
+# noble, 2026-10-26), and a generic kernel's initrd is larger: 128 MiB.
+SPACE_FLOOR_KIB=131072
+APT_ARCHIVES=/var/cache/apt/archives
+# The canonical disk GC's config (maintaining-host-disk). Its sensor pages
+# at [sensor] alert_at_percent of [sensor] mount; a key it leaves out takes
+# the GC's own default in VERSION 2 (load_config): 85 and /.
+DISK_GC_CONF=/etc/cannobserv/disk-gc/disk-gc.conf
+DISK_GC_ALERT_DEFAULT=85
+DISK_GC_MOUNT_DEFAULT=/
+# The commands step_space reads apt and dpkg with: a caller may prefix them
+# (as_root, apt_env) or add options (a scratch copy of the lists).
+SS_APT_GET=(apt-get -s)
+SS_APT_CACHE=(apt-cache)
+SS_DPKGQ=(dpkg-query)
+# dpkg-query's format: the expansions are its own.
+# shellcheck disable=SC2016
+DPKG_SIZES='${Package}:${Architecture} ${Installed-Size}\n'
+
+trim() {  # <var> <text>: VAR := TEXT without leading or trailing blanks
+  local _tr=$2
+  _tr=${_tr#"${_tr%%[![:space:]]*}"}
+  _tr=${_tr%"${_tr##*[![:space:]]}"}
+  printf -v "$1" '%s' "$_tr"
+}
+
+# A path that isn't there yet is read where it would be made: its nearest
+# directory that is, as recovery-point.sh reads the run's.
+fs_reading() {  # <path>: FS_FREE and FS_USED in KiB, and FS_MOUNT; 1 when df can't say
+  local _fr_d=$1 _fr_out _fr_l _fr_n=0
+  local -a _fr_f=()
+  FS_FREE="" FS_USED="" FS_MOUNT=""
+  while [ ! -d "$_fr_d" ] && [ "$_fr_d" != / ] && [ -n "$_fr_d" ]; do _fr_d=$(dirname "$_fr_d"); done
+  capture _fr_out df -Pk -- "$_fr_d"
+  [ "$CAP_RC" -eq 0 ] || return 1
+  while IFS= read -r _fr_l; do
+    _fr_n=$((_fr_n + 1))
+    if [ "$_fr_n" -eq 2 ]; then read -r -a _fr_f <<<"$_fr_l" || true; fi
+  done <<<"$_fr_out"
+  # Filesystem, 1024-blocks, Used, Available, Capacity, then the mount.
+  [ "${#_fr_f[@]}" -ge 6 ] || return 1
+  case ${_fr_f[2]}:${_fr_f[3]} in *[!0-9:]* | :* | *:) return 1 ;; esac
+  FS_USED=${_fr_f[2]} FS_FREE=${_fr_f[3]} FS_MOUNT=${_fr_f[*]:5}
+}
+
+# The step's change set comes from apt's own resolution of its packages:
+# `apt-get -s install --only-upgrade`, which adds what they pull in, and
+# simulates a held package's upgrade as the step that releases it takes it.
+step_space() {  # <package>...: SS_DOWNLOAD, SS_GROWTH, SS_PEAK in KiB, SS_N; 1 with SS_WHY when unread
+  local _ss_out _ss_l _ss_r _ss_n _ss_b _ss_a _ss_o _ss_v _ss_k _ss_x _ss_want=" " _ss_up=" "
+  local _ss_db=" " _ss_p="" _ss_pa="" _ss_pv="" _ss_sz="" _ss_is="" _ss_got=" " _ss_f _ss_bytes=0
+  local -a _ss_q=() _ss_keys=()
+  SS_DOWNLOAD=0 SS_GROWTH=0 SS_PEAK=0 SS_N=0 SS_WHY=""
+  [ "$#" -gt 0 ] || return 0
+  capture _ss_out "${SS_APT_GET[@]}" "${APT_SIM_PHASED[@]}" install --only-upgrade "$@"
+  if [ "$CAP_RC" -ne 0 ]; then
+    SS_WHY="apt-get -s install --only-upgrade exited $CAP_RC${CAP_ERR:+: $CAP_ERR}"
+    return 1
+  fi
+  # "Inst <name> [<installed>] (<candidate> <origins> [<arch>])": the
+  # installed version only for an upgrade, and <name> with :<arch> for a
+  # foreign one.
+  while IFS= read -r _ss_l; do
+    case $_ss_l in "Inst "*) ;; *) continue ;; esac
+    _ss_r=${_ss_l#Inst }
+    _ss_n=${_ss_r%% *}
+    _ss_r=${_ss_r#"$_ss_n"}
+    _ss_o=""
+    case $_ss_r in " ["*) _ss_o=${_ss_r# \[} _ss_o=${_ss_o%%\]*} ;; esac
+    _ss_v=${_ss_r#*(}
+    _ss_a=${_ss_v%)*}
+    _ss_a=${_ss_a##*\[}
+    _ss_a=${_ss_a%%\]*}
+    _ss_v=${_ss_v%% *}
+    _ss_b=${_ss_n%%:*}
+    if [ -z "$_ss_v" ] || [ -z "$_ss_a" ] || [ "$_ss_v" = "$_ss_r" ]; then
+      SS_WHY="apt-get -s printed an Inst line it doesn't read: $_ss_l"
+      return 1
+    fi
+    _ss_k="$_ss_b:$_ss_a=$_ss_v"
+    in_words "$_ss_k" "$_ss_want" && continue
+    _ss_want="$_ss_want$_ss_k "
+    _ss_keys+=("$_ss_k")
+    if [ -n "$_ss_o" ]; then _ss_up="$_ss_up$_ss_k "; fi
+    _ss_q+=("$_ss_n=$_ss_v")
+  done <<<"$_ss_out"
+  SS_N=${#_ss_keys[@]}
+  [ "$SS_N" -gt 0 ] || return 0
+  capture _ss_out "${SS_APT_CACHE[@]}" show "${_ss_q[@]}"
+  if [ "$CAP_RC" -ne 0 ]; then
+    SS_WHY="apt-cache show exited $CAP_RC${CAP_ERR:+: $CAP_ERR}"
+    return 1
+  fi
+  # Exit 1 is a package dpkg doesn't have: a new one, which grows by all of
+  # its Installed-Size.
+  capture _ss_x "${SS_DPKGQ[@]}" -W -f "$DPKG_SIZES" "${_ss_keys[@]%%=*}"
+  if [ "$CAP_RC" -gt 1 ]; then
+    SS_WHY="dpkg-query -W exited $CAP_RC${CAP_ERR:+: $CAP_ERR}"
+    return 1
+  fi
+  while read -r _ss_k _ss_l; do
+    if [ -n "$_ss_k" ]; then _ss_db="$_ss_db$_ss_k=${_ss_l:-0} "; fi
+  done <<<"$_ss_x"
+  # A stanza per version: the blank line after each closes it.
+  while IFS= read -r _ss_l; do
+    case $_ss_l in
+      "Package: "*) _ss_p=${_ss_l#Package: } ;;
+      "Architecture: "*) _ss_pa=${_ss_l#Architecture: } ;;
+      "Version: "*) _ss_pv=${_ss_l#Version: } ;;
+      "Size: "*) _ss_sz=${_ss_l#Size: } ;;
+      "Installed-Size: "*) _ss_is=${_ss_l#Installed-Size: } ;;
+      "")
+        _ss_k="$_ss_p:$_ss_pa=$_ss_pv"
+        if [ -n "$_ss_p" ] && in_words "$_ss_k" "$_ss_want" && ! in_words "$_ss_k" "$_ss_got"; then
+          case $_ss_sz:$_ss_is in
+            *[!0-9:]* | :* | *:)
+              SS_WHY="apt-cache show gave $_ss_k no Size or Installed-Size"
+              return 1 ;;
+          esac
+          _ss_got="$_ss_got$_ss_k "
+          # Already in the cache at its size: apt fetches nothing for it.
+          _ss_f="$P_ROOT$APT_ARCHIVES/${_ss_p}_${_ss_pv//:/%3a}_$_ss_pa.deb"
+          _ss_x=""
+          if [ -f "$_ss_f" ]; then _ss_x=$(wc -c <"$_ss_f" 2>/dev/null) || _ss_x=""; fi
+          trim _ss_x "$_ss_x"
+          if [ "$_ss_x" != "$_ss_sz" ]; then _ss_bytes=$((_ss_bytes + _ss_sz)); fi
+          _ss_x=${_ss_db#*" $_ss_p:$_ss_pa="}
+          if [ "$_ss_x" = "$_ss_db" ]; then _ss_x=0; else _ss_x=${_ss_x%% *}; fi
+          case $_ss_x in '' | *[!0-9]*) _ss_x=0 ;; esac
+          SS_GROWTH=$((SS_GROWTH + _ss_is - _ss_x))
+          # An upgrade unpacks beside the files it replaces, then renames
+          # them over: for a moment both are on disk. A 195313 KiB package
+          # took 196508 KiB more at its peak, and nothing after (dpkg 1.22,
+          # noble, 2026-10-26).
+          if in_words "$_ss_k" "$_ss_up" && [ "$_ss_is" -gt "$SS_PEAK" ]; then SS_PEAK=$_ss_is; fi
+        fi
+        _ss_p="" _ss_pa="" _ss_pv="" _ss_sz="" _ss_is="" ;;
+    esac
+  done <<<"$_ss_out"$'\n'
+  for _ss_k in "${_ss_keys[@]}"; do
+    in_words "$_ss_k" "$_ss_got" && continue
+    SS_WHY="apt-cache show printed no record of $_ss_k"
+    return 1
+  done
+  SS_DOWNLOAD=$(((_ss_bytes + 1023) / 1024))
+}
+
+# The canonical GC's config, read as strictly as the GC reads it: an
+# unreadable file, or one whose syntax, sections or [sensor] keys it would
+# reject, is never read as absent. VERSION 2's load_config parses it with
+# configparser.ConfigParser(interpolation=None, default_section="\0none"):
+# [section] headers, each once; "key = value" or "key: value" lines, keys
+# case-folded, each once per section; # and ; comments on their own line; an
+# indented line continuing the value above; a % as itself. [DEFAULT] is no
+# fallback there but a section like any other, and its _KEYS know [gc] and
+# [sensor] alone, so any other section is refused, and so is any [sensor]
+# key but these six (CR 582). [gc]'s keys aren't judged here: they're the
+# GC's to refuse.
+DISK_GC_SENSOR_KEYS="mount alert_at_percent clear_at_percent gc_stale_hours status_url monitor_id"
+disk_gc_conf() {  # GC_STATE := absent, ok or bad; GC_ALERT and GC_MOUNT when ok; GC_WHY when bad
+  local _gc_t _gc_l _gc_s _gc_n=0 _gc_k _gc_v _gc_sect="" _gc_last="" _gc_sects=" " _gc_keys=" "
+  local _gc_a="" _gc_ha=0 _gc_m="" _gc_hm=0
+  GC_PATH=$P_ROOT$DISK_GC_CONF GC_STATE=absent GC_ALERT="" GC_MOUNT="" GC_WHY=""
+  if [ ! -e "$GC_PATH" ] && [ ! -L "$GC_PATH" ]; then return 0; fi
+  GC_STATE=bad
+  if [ ! -f "$GC_PATH" ]; then
+    GC_WHY="it isn't a regular file"
+    return 0
+  fi
+  capture _gc_t as_reader cat -- "$GC_PATH"
+  if [ "$CAP_RC" -ne 0 ]; then
+    GC_WHY="it couldn't be read${CAP_ERR:+ ($CAP_ERR)}"
+    return 0
+  fi
+  while IFS= read -r _gc_l || [ -n "$_gc_l" ]; do
+    _gc_n=$((_gc_n + 1))
+    _gc_l=${_gc_l%$'\r'}
+    trim _gc_s "$_gc_l"
+    case $_gc_s in '' | '#'* | ';'*) continue ;; esac
+    case $_gc_l in
+      [[:space:]]*)
+        if [ -n "$_gc_last" ]; then
+          case $_gc_last in
+            sensor.alert_at_percent | sensor.mount)
+              GC_WHY="line $_gc_n continues [sensor] ${_gc_last#*.} onto a second line"
+              return 0 ;;
+          esac
+          continue
+        fi ;;
+    esac
+    case $_gc_s in
+      \[*\])
+        _gc_k=${_gc_s#\[}
+        _gc_k=${_gc_k%\]}
+        if [ -z "$_gc_k" ]; then
+          GC_WHY="line $_gc_n is an empty section header"
+          return 0
+        fi
+        case $_gc_sects in *" $_gc_k "*)
+          GC_WHY="line $_gc_n repeats the section [$_gc_k]"
+          return 0 ;;
+        esac
+        case $_gc_k in
+          gc | sensor) ;;
+          *)
+            GC_WHY="line $_gc_n has an unknown section [$_gc_k]: the GC knows [gc] and [sensor] alone"
+            return 0 ;;
+        esac
+        _gc_sects="$_gc_sects$_gc_k " _gc_sect=$_gc_k _gc_last=""
+        continue ;;
+      \[*)
+        GC_WHY="line $_gc_n is no section header, key = value line or comment"
+        return 0 ;;
+    esac
+    if [ -z "$_gc_sect" ]; then
+      GC_WHY="line $_gc_n comes before any [section] header"
+      return 0
+    fi
+    _gc_k=${_gc_s%%[=:]*}
+    if [ "$_gc_k" = "$_gc_s" ]; then
+      GC_WHY="line $_gc_n is no section header, key = value line or comment"
+      return 0
+    fi
+    _gc_v=${_gc_s:${#_gc_k}+1}
+    trim _gc_k "$_gc_k"
+    trim _gc_v "$_gc_v"
+    _gc_k=$(printf '%s' "$_gc_k" | tr '[:upper:]' '[:lower:]')
+    if [ -z "$_gc_k" ]; then
+      GC_WHY="line $_gc_n has no key before its ${_gc_s:0:1}"
+      return 0
+    fi
+    case $_gc_keys in *" $_gc_sect.$_gc_k "*)
+      GC_WHY="line $_gc_n repeats $_gc_k in [$_gc_sect]"
+      return 0 ;;
+    esac
+    if [ "$_gc_sect" = sensor ] && ! in_words "$_gc_k" "$DISK_GC_SENSOR_KEYS"; then
+      GC_WHY="line $_gc_n has an unknown key [sensor] $_gc_k: the GC's VERSION 2 knows $DISK_GC_SENSOR_KEYS"
+      return 0
+    fi
+    _gc_keys="$_gc_keys$_gc_sect.$_gc_k " _gc_last=$_gc_sect.$_gc_k
+    case $_gc_last in
+      sensor.alert_at_percent) _gc_a=$_gc_v _gc_ha=1 ;;
+      sensor.mount) _gc_m=$_gc_v _gc_hm=1 ;;
+    esac
+  done <<<"$_gc_t"
+  # VERSION 2's _int: digits alone (^[0-9]+$), from 1 to 100 (CR 583). The
+  # leading zeros go first, so a long run of them can't overflow the test.
+  if [ "$_gc_ha" -eq 0 ]; then
+    _gc_a=$DISK_GC_ALERT_DEFAULT
+  else
+    _gc_v=$_gc_a
+    while [ "${#_gc_v}" -gt 1 ] && [ "${_gc_v#0}" != "$_gc_v" ]; do _gc_v=${_gc_v#0}; done
+    if ! [[ $_gc_v =~ ^[0-9]{1,3}$ ]] || [ "$_gc_v" -lt 1 ] || [ "$_gc_v" -gt 100 ]; then
+      GC_WHY="[sensor] alert_at_percent is \"$_gc_a\", not a whole percent from 1 to 100"
+      return 0
+    fi
+    _gc_a=$_gc_v
+  fi
+  if [ "$_gc_hm" -eq 0 ]; then
+    _gc_m=$DISK_GC_MOUNT_DEFAULT
+  else
+    case $_gc_m in
+      /*[[:cntrl:]]*) GC_WHY="[sensor] mount is \"$_gc_m\", which holds a control character"; return 0 ;;
+      /*) ;;
+      *) GC_WHY="[sensor] mount is \"$_gc_m\", not an absolute path"; return 0 ;;
+    esac
+  fi
+  GC_STATE=ok GC_ALERT=$_gc_a GC_MOUNT=$_gc_m
+}
+
+# Whether a step's SS_* figures fit where they land, and stay under the
+# disk GC's headroom line where a host has adopted it. Each filesystem keeps
+# the floor: apt's cache takes the download, and / the install growth plus
+# the largest upgrade's unpack beside its old files (one need where the two
+# share a filesystem). SPACE_WHY, SPACE_KIND (risk or unknown) and SPACE_ID
+# := each shortfall, and SPACE_JSON := what was read.
+space_gate() {  # <the step, as the messages name it>
+  local _sp_w=$1 _sp_g=$SS_GROWTH _sp_cf="" _sp_cm="" _sp_cu="" _sp_rf="" _sp_rm="" _sp_ru=""
+  local _sp_o="" _sp_a="" _sp_e="" _sp_n _sp_add=0 _sp_den _sp_pct
+  SPACE_WHY=() SPACE_KIND=() SPACE_ID=() SPACE_JSON=""
+  [ "$_sp_g" -gt 0 ] || _sp_g=0
+  if fs_reading "$P_ROOT$APT_ARCHIVES"; then
+    _sp_cf=$FS_FREE _sp_cm=$FS_MOUNT _sp_cu=$FS_USED
+  else
+    space_short unknown space:apt-cache "the free space under $APT_ARCHIVES couldn't be read (df -Pk), so whether $_sp_w's download fits is unknown"
+  fi
+  if fs_reading "$P_ROOT/"; then
+    _sp_rf=$FS_FREE _sp_rm=$FS_MOUNT _sp_ru=$FS_USED
+  else
+    space_short unknown space:root "the free space under / couldn't be read (df -Pk), so whether $_sp_w's install fits is unknown"
+  fi
+  jaddn _sp_o download_kib "$SS_DOWNLOAD"
+  jaddn _sp_o growth_kib "$SS_GROWTH"
+  jaddn _sp_o peak_kib "$SS_PEAK"
+  jaddn _sp_o floor_kib "$SPACE_FLOOR_KIB"
+  if [ -n "$_sp_cf" ] && [ -n "$_sp_rf" ] && [ "$_sp_cm" = "$_sp_rm" ]; then
+    _sp_n=$((SS_DOWNLOAD + _sp_g + SS_PEAK + SPACE_FLOOR_KIB))
+    space_fs _sp_a "$_sp_rm" "$APT_ARCHIVES /" "$_sp_rf" "$_sp_n"
+    if [ "$_sp_rf" -lt "$_sp_n" ]; then
+      space_short risk space:disk "$_sp_w needs $_sp_n KiB free on $_sp_rm, which holds apt's cache and /, and it has $_sp_rf: $SS_DOWNLOAD to download, $_sp_g of install growth, $SS_PEAK for the largest upgrade unpacked beside its old files, and the $SPACE_FLOOR_KIB KiB floor. Free space there first"
+    fi
+  else
+    if [ -n "$_sp_cf" ]; then
+      _sp_n=$((SS_DOWNLOAD + SPACE_FLOOR_KIB))
+      space_fs _sp_a "$_sp_cm" "$APT_ARCHIVES" "$_sp_cf" "$_sp_n"
+      if [ "$_sp_cf" -lt "$_sp_n" ]; then
+        space_short risk space:apt-cache "$_sp_w needs $_sp_n KiB free on $_sp_cm, which holds apt's cache, and it has $_sp_cf: $SS_DOWNLOAD to download, and the $SPACE_FLOOR_KIB KiB floor. Free space there first"
+      fi
+    fi
+    if [ -n "$_sp_rf" ]; then
+      _sp_n=$((_sp_g + SS_PEAK + SPACE_FLOOR_KIB))
+      space_fs _sp_a "$_sp_rm" "/" "$_sp_rf" "$_sp_n"
+      if [ "$_sp_rf" -lt "$_sp_n" ]; then
+        space_short risk space:root "$_sp_w needs $_sp_n KiB free on $_sp_rm, which holds /, and it has $_sp_rf: $_sp_g of install growth, $SS_PEAK for the largest upgrade unpacked beside its old files, and the $SPACE_FLOOR_KIB KiB floor. Free space there first"
+      fi
+    fi
+  fi
+  jadd _sp_o filesystems "[$_sp_a]"
+  # The GC's headroom line: today's use, plus the download where it lands on
+  # the sensor's mount, plus the install growth where that does, must read
+  # under alert_at_percent as the sensor reads it. VERSION 2's usage() is
+  # df's Use%: used over used plus available, rounded up, and it pages at
+  # percent >= alert_at_percent (CR 581).
+  disk_gc_conf
+  case $GC_STATE in
+    absent) jadd _sp_o headroom null ;;
+    bad)
+      jadds _sp_e config "$GC_PATH"
+      jaddsn _sp_e error "$GC_WHY"
+      jadd _sp_o headroom "{$_sp_e}"
+      space_short unknown space:disk-gc-conf "$GC_PATH: $GC_WHY. The disk GC refuses such a file too, and whether $_sp_w crosses its headroom line is unknown: fix it first" ;;
+    ok)
+      jadds _sp_e config "$GC_PATH"
+      jadds _sp_e mount "$GC_MOUNT"
+      jaddn _sp_e alert_at_percent "$GC_ALERT"
+      if ! fs_reading "$P_ROOT$GC_MOUNT"; then
+        jadd _sp_o headroom "{$_sp_e}"
+        space_short unknown space:headroom "the free space under $GC_MOUNT, the disk GC's [sensor] mount, couldn't be read (df -Pk), so whether $_sp_w crosses its headroom line is unknown"
+      else
+        if [ -n "$_sp_cm" ] && [ "$_sp_cm" = "$FS_MOUNT" ]; then _sp_add=$((_sp_add + SS_DOWNLOAD)); fi
+        if [ -n "$_sp_rm" ] && [ "$_sp_rm" = "$FS_MOUNT" ]; then _sp_add=$((_sp_add + SS_GROWTH)); fi
+        _sp_den=$((FS_USED + FS_FREE))
+        _sp_pct=0
+        if [ "$_sp_den" -gt 0 ]; then _sp_pct=$((((FS_USED + _sp_add) * 100 + _sp_den - 1) / _sp_den)); fi
+        jaddn _sp_e used_kib "$FS_USED"
+        jaddn _sp_e free_kib "$FS_FREE"
+        jaddn _sp_e add_kib "$_sp_add"
+        jaddn _sp_e projected_percent "$_sp_pct"
+        jadd _sp_o headroom "{$_sp_e}"
+        if [ "$_sp_add" -gt 0 ] && [ "$_sp_pct" -ge "$GC_ALERT" ]; then
+          space_short risk space:headroom "$_sp_w would take $GC_MOUNT to ${_sp_pct}% used, $_sp_add KiB more, at or past the disk GC's alert_at_percent of $GC_ALERT ($GC_PATH): a patch run must not push the host into a headroom page. Free space there first"
+        fi
+      fi ;;
+  esac
+  SPACE_JSON="{$_sp_o}"
+}
+
+space_short() {  # <risk or unknown> <id> <why>
+  SPACE_KIND+=("$1") SPACE_ID+=("$2") SPACE_WHY+=("$3")
+}
+
+space_fs() {  # <var> <mount> <paths> <free KiB> <need KiB>: appends a filesystem's JSON to VAR's array body
+  local _sf="" _sf_w="" _sf_p
+  for _sf_p in $3; do jpushs _sf_w "$_sf_p"; done
+  jadds _sf mount "$2"
+  jadd _sf paths "[$_sf_w]"
+  jaddn _sf free_kib "$4"
+  jaddn _sf need_kib "$5"
+  jpush "$1" "{$_sf}"
+}
 
 # --- units on disk ---------------------------------------------------------
 # Read from the files, so the answer holds offline, in an image no systemd

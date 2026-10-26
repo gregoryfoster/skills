@@ -48,7 +48,14 @@ Options:
                       leave, and the version it counted of each package a
                       hold group takes, which apply.sh --dry-run reads; its
                       download size, memory and free disk are in the JSON. An earlier
-                      summary is removed first. A dry run that doesn't run
+                      summary is removed first. What the run would write is
+                      sized from apt's metadata, as apply.sh gates each step
+                      (#390), under pending.dry_run.space, with the free
+                      space on / and on /var/backups beside it: a finding
+                      when it wouldn't fit with 131072 KiB left on each
+                      filesystem, when it would take the disk GC's [sensor]
+                      mount to its alert_at_percent, or when the GC's
+                      config can't be read or parsed. A dry run that doesn't run
                       (no root, a lane the knob doesn't resolve, an
                       unsimulated set, an origin's site unread) still exits
                       0: it's a finding with id dry-run, and leaves no
@@ -2141,6 +2148,14 @@ read_dry_run() {
   jaddn o max_rss_kib "$rss"
   jaddn o download_kib "$dlk"
   jaddn o free_kib_apt_cache "$free"
+  # Beside it, the free space on / and under the run's default directory,
+  # where the recovery point and the journal copy go (#390).
+  w=""
+  if fs_reading "$P_ROOT/"; then w=$FS_FREE; fi
+  jaddn o free_kib_root "$w"
+  w=""
+  if fs_reading "$P_ROOT/var/backups"; then w=$FS_FREE; fi
+  jaddn o free_kib_run_dir "$w"
   jadds o log "$dryrun/dry-run.log"
   jadds o cache "$dryrun/archives, root-owned: remove it when done"
   # The selection is whatever the host's unattended-upgrades origins take:
@@ -2219,6 +2234,27 @@ read_dry_run() {
     printf 'held_versions=%s\n' "$hv"
   } >"$dryrun/summary"
   jadds o summary "$dryrun/summary"
+  # What the run would write, sized as apply.sh sizes each step (#390),
+  # against the lists the dry run counted with.
+  if [ "$sel" -eq 1 ]; then
+    SS_APT_GET=(apt_env apt-get -s -o Debug::NoLocking=1 "${APT_OPTS[@]}" ${LISTS_OPT[@]+"${LISTS_OPT[@]}"})
+    SS_APT_CACHE=(apt_env apt-cache "${APT_OPTS[@]}" ${LISTS_OPT[@]+"${LISTS_OPT[@]}"})
+    SS_DPKGQ=(dpkgq)
+    if step_space ${words[@]+"${words[@]}"}; then
+      space_gate "the run"
+      jadd o space "$SPACE_JSON"
+      for i in ${SPACE_WHY[@]+"${!SPACE_WHY[@]}"}; do
+        w=${SPACE_WHY[$i]}
+        w="$(printf '%s' "${w:0:1}" | tr '[:lower:]' '[:upper:]')${w:1}"
+        finding "${SPACE_KIND[$i]}" "dry-run:${SPACE_ID[$i]}" "" "$w (apply.sh won't run such a step)."
+      done
+    else
+      jadd o space null
+      finding unknown dry-run:space "" "The sizes the run would write couldn't be read ($SS_WHY), so whether it fits, and stays under the disk GC's headroom line, is unknown."
+    fi
+  else
+    jadd o space null
+  fi
   R_DRY="{$o}"
   i=0
   for p in $prompts; do

@@ -97,7 +97,15 @@ than its bulk did, or origin:<origin> names one the knob doesn't follow;
 for the bulk, without --dry-run, or when its summary is missing, failed, is
 more than 24 hours old, or counted another lane, or in the one-origin lane,
 nothing or not all of the origin's upgrades; when dpkg --audit isn't
-clean; when the step's span, from now to now plus its expected duration,
+clean; when what the step writes wouldn't fit (#390): its download in
+apt's cache, and its install growth plus its largest upgrade, unpacked
+beside the files it replaces, on /, each filesystem keeping 131072 KiB
+free, or a step that would take the disk GC's [sensor] mount to its
+alert_at_percent or past it, as its sensor reads use (df's Use%, rounded
+up), where /etc/cannobserv/disk-gc/disk-gc.conf is there, or that file
+can't be read or parsed (the bulk reads these after
+its list refresh, and stops there with nothing held: exit 1); when the
+step's span, from now to now plus its expected duration,
 isn't wholly inside one window or overlaps a quiet range (the bulk's span is
 the rest of the run: itself, each held step its selection reaches, and the
 reboot chain's 720 s wherever a kernel or a package owning a file PID 1 maps
@@ -134,7 +142,9 @@ The run's directory is root-only: 0700, and each file 0600.
   probe-after-<step>.json and .err
 
 Output: one JSON object on stdout, for exits 0, 1 and 3. Keys: apply,
-refused, gate, then what the step did: holds (the bulk's with each held
+refused, gate (gate.space: the step's download, growth and peak in KiB from
+apt's metadata, each filesystem's free and need, and the GC's headroom line,
+null without its config), then what the step did: holds (the bulk's with each held
 package's candidate against the dry run's version), installed (what a held
 step installed of its group), upgrade, health, qdrant
 (each Qdrant datastore, and for one the held step restarted, its counts
@@ -147,7 +157,8 @@ a line for the owner, never a refusal), abort, next and reprobe.
 Exit codes:
   0  the step ran, and its verdict is green
   1  the step failed. Before its upgrade (a refresh, a record, a release
-     or a stop that failed), abort.instructions says so: nothing was
+     or a stop that failed, or a bulk that wouldn't fit once its lists
+     were refreshed), abort.instructions says so: nothing was
      upgraded and the step isn't recorded, so fix what failed and run it
      again. After it: stop. Its abort says what to do, and lists the holds
      the run left and any restarters still stopped. With nothing on
@@ -301,6 +312,9 @@ if [ "$step" != bulk ] && [ "$P_PRIV" != none ] && root_read _o "$run/dry-run"; 
   done <<<"$_o"
 fi
 case $LANE in security | maintenance | origin:?*) ;; *) LANE=unknown ;; esac
+
+# What a step writes is read as root, as its other simulations are.
+SS_APT_GET=(as_root apt-get -s)
 
 # --- the gate -------------------------------------------------------------------
 # _gate-lib.sh holds refuse and fail, the root-only records, the span and the
@@ -649,6 +663,8 @@ gate_dry() {
 # at three. A held step takes a group's few packages, and keeps the whole dry
 # run's wall time as its own.
 BULK_FACTOR=3
+# What the dry run selected: the bulk sizes it, less what its holds take.
+DRY_SEL=""
 # reboot-chain.sh's default span: its 120 s delay and 600 s for the boot and
 # the post-boot checks.
 CHAIN_SPAN=720
@@ -735,6 +751,7 @@ gate_step_span() {
   while IFS= read -r line; do
     case $line in *"Packages that will be upgraded:"*) sel=${line#*Packages that will be upgraded:} ;; esac
   done <"$dryrun/dry-run.log"
+  DRY_SEL=$sel
   x=$((EXPECT * BULK_FACTOR + h))
   jaddn o bulk_seconds "$x"
   for p in $sel; do
@@ -985,6 +1002,37 @@ gate_recovery() {
   jadd J_GATE recovery_point "{$o}"
 }
 
+# Whether what a step writes fits, and stays under the disk GC's headroom
+# line (#390): _probe-lib.sh's step_space and space_gate. A held step reads
+# the lists its bulk refreshed, so it's gated here; the bulk's figures are
+# right only once it has refreshed them, so do_bulk reads its own after.
+SPACE_REASONS=()
+space_check() {  # <the step> <package>...: SPACE_REASONS := why it can't run
+  local what=$1
+  shift
+  SPACE_REASONS=()
+  if ! step_space "$@"; then
+    SPACE_REASONS+=("the sizes $what would write couldn't be read: $SS_WHY")
+    jadd J_GATE space null
+    return 0
+  fi
+  space_gate "$what"
+  jadd J_GATE space "$SPACE_JSON"
+  SPACE_REASONS=(${SPACE_WHY[@]+"${SPACE_WHY[@]}"})
+}
+
+gate_space() {
+  local i r
+  local -a pk=()
+  [ "$step" != bulk ] || return 0
+  [ "$P_PRIV" != none ] || return 0
+  for i in ${RUN_HOLD_STEP[@]+"${!RUN_HOLD_STEP[@]}"}; do
+    [ "${RUN_HOLD_STEP[$i]}" != "$step" ] || pk+=("${RUN_HOLD_PKG[$i]}")
+  done
+  space_check "step $step" ${pk[@]+"${pk[@]}"}
+  for r in ${SPACE_REASONS[@]+"${SPACE_REASONS[@]}"}; do refuse "$r"; done
+}
+
 # Each restarter's state, read and recorded before the step. A held step
 # stops the active ones around its restart.
 R_UNIT=() R_BEFORE=()
@@ -1051,6 +1099,7 @@ gate_step_span
 gate_apt
 gate_recovery
 gate_restarters
+gate_space
 # Last, so its reading is the freshest.
 gate_inflight
 
@@ -1487,6 +1536,22 @@ do_bulk() {
   # The bulk takes the origin's packages no group holds; each held step, its
   # own (do_held).
   for p in $LANE_KEEP; do in_words "$p" "$names" || LANE_TAKE="$LANE_TAKE $p"; done
+  # What it writes, against the lists just refreshed (#390): the dry run's
+  # selection, or the one origin's packages, less what a hold takes, the
+  # run's or the owner's. A shortfall stops it here, with nothing held.
+  w=()
+  case $LANE in
+    origin:*) for p in $LANE_TAKE; do w+=("$p"); done ;;
+    *)
+      for p in $DRY_SEL; do
+        in_words "$p" "$names" || in_words "$p" "$BEFORE_HOLDS" || w+=("$p")
+      done ;;
+  esac
+  space_check "the bulk" ${w[@]+"${w[@]}"}
+  if [ "${#SPACE_REASONS[@]}" -gt 0 ]; then
+    for r in "${SPACE_REASONS[@]}"; do fail "$r"; done
+    return 0
+  fi
   # Written before the hold, so a hold that half-works is still on record.
   if ! printf '%s' "$out" | root_write "$run/holds"; then
     fail "$run/holds couldn't be written: nothing was held or upgraded"

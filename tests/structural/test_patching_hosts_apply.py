@@ -58,6 +58,15 @@ selection reaches, and the reboot chain wherever a kernel or a package
 owning a file PID 1 maps makes a reboot certain, or PID 1's files can't be
 read (#362).
 
+#390, free space: each step is gated on what it writes, read from apt's
+metadata (test_patching_hosts_space.py has the reckoning), against apt's
+cache and / with a 131072 KiB floor, and against the disk GC's headroom line
+where its config is there. A held step is refused before it changes
+anything; the bulk, whose figures are right only once it has refreshed the
+host's lists, fails after the refresh with nothing held or upgraded, and can
+run again. An unreadable or malformed GC config stops a step, and its
+absence leaves the space alone to gate.
+
 Each case runs apply.sh from a copy of the skill's scripts, with probe.sh
 replaced by a stub that logs its arguments, so the re-probe after a step
 never reads the machine running the tests. `date +%s` answers a fixed time.
@@ -65,6 +74,7 @@ never reads the machine running the tests. `date +%s` answers a fixed time.
 
 import calendar
 import json
+import os
 import shutil
 import subprocess
 import time
@@ -75,6 +85,7 @@ import pytest
 from tests.structural.patching_hosts_rig import SKILL, dispatcher
 from tests.structural.patching_hosts_rig import Host as RigHost
 from tests.structural.patching_hosts_rig import clean_env as _clean_env
+from tests.structural.test_patching_hosts_space import df_row
 
 APPLY = SKILL / "scripts" / "apply.sh"
 TODAY = "2026-09-29"
@@ -114,17 +125,35 @@ def _dispatcher(tmp_path_factory):
 
 # apply.sh shows phased updates: unattended-upgrade takes them all (#354).
 SIM_ARGS = "-s -o APT::Get::Always-Include-Phased-Updates=true dist-upgrade"
+# A step's own change set, which its free-space gate sizes (#390).
+SPACE_ARGS = (
+    "-s -o APT::Get::Always-Include-Phased-Updates=true install --only-upgrade "
+)
+SPACE_SIM = (
+    "Inst libc6 [2.39-0ubuntu8.5] (2.39-0ubuntu8.6 Ubuntu:24.04/noble-updates, "
+    "Ubuntu:24.04/noble-security [arm64])\n"
+)
+SPACE_SHOW = (
+    "Package: libc6\nInstalled-Size: 12867\nArchitecture: arm64\n"
+    "Version: 2.39-0ubuntu8.6\nSize: 2797364\n\n"
+)
+SPACE_DPKG = "libc6:arm64 12867\n"
+# libc6's download, rounded up to KiB; its growth is 0, and its peak all of it.
+SPACE_NEED = (2797364 + 1023) // 1024 + 12867 + 131072
 
 
 class Host(RigHost):
     # The commands a run must never reach, stubbed so a call is seen, and
     # never the machine's own.
     NEVER = ("shutdown", "reboot", "poweroff", "halt", "systemd-run")
-    STUBBED = (*RigHost.STUBBED, "date", "sleep", "busctl", *NEVER)
+    STUBBED = (*RigHost.STUBBED, "date", "sleep", "busctl", "df", *NEVER)
     FALLBACKS = {
         **RigHost.FALLBACKS,
         "date": 'exec /bin/date "$@"',
         "sleep": "exit 0",
+        # Plenty free, on one filesystem, unless a case says otherwise: a
+        # fallback, so a case a test sets always wins (#390).
+        "df": "printf '%s' '" + df_row(1000000, 10**8) + "'; exit 0",
     }
 
     def __init__(self, tmp_path: Path, **kw):
@@ -143,6 +172,13 @@ class Host(RigHost):
                 "\nPID1_MAPS=/proc/1/maps\n", f"\nPID1_MAPS='{self.pid1_maps}'\n"
             )
         )
+        # The disk GC's config, from a fixture: absent unless a test writes it.
+        self.gc_conf = tmp_path / "disk-gc.conf"
+        lib = self.scripts / "_probe-lib.sh"
+        text = lib.read_text()
+        line = "\nDISK_GC_CONF=/etc/cannobserv/disk-gc/disk-gc.conf\n"
+        assert text.count(line) == 1
+        lib.write_text(text.replace(line, f"\nDISK_GC_CONF='{self.gc_conf}'\n"))
         self.run_dir = tmp_path / "run"
         self.dry = tmp_path / "dry"
         self.dry.mkdir()
@@ -255,6 +291,17 @@ def _ready(host: Host) -> Host:
     host.uu("Packages that will be upgraded: libc6\nAll upgrades installed\n")
     host.on("curl", "*", "")
     host.unit("app-healthcheck.timer")
+    host.on("apt-get", SPACE_ARGS + "*", SPACE_SIM)
+    host.on("apt-cache", "show *", SPACE_SHOW)
+    host.on(
+        "dpkg-query", "-W -f ${Package}:${Architecture} ${Installed-Size}*", SPACE_DPKG
+    )
+    return host
+
+
+def space(host: Host, free: int, used: int = 1000000, mount: str = "/") -> Host:
+    """FREE KiB on one filesystem holding apt's cache and / (#390)."""
+    host.cases["df"] = [("-Pk -- *", df_row(used, free, mount), 0, "", None)]
     return host
 
 
@@ -943,6 +990,179 @@ def test_a_held_step_the_bulk_held_nothing_for_is_refused(host):
     host.run()
     out = host.run(step="web", rc=3)
     assert any("the run holds nothing for web" in r for r in out["refused"])
+
+
+# --- free space (#390) -----------------------------------------------------------
+
+
+def test_help_says_what_the_free_space_gate_checks():
+    r = subprocess.run(
+        ["bash", str(APPLY), "--help"], capture_output=True, text=True, env=_clean_env()
+    )
+    text = " ".join(r.stdout.split())
+    for words in (
+        "131072 KiB free",
+        "/etc/cannobserv/disk-gc/disk-gc.conf",
+        "alert_at_percent",
+        "gate.space",
+        "a bulk that wouldn't fit",
+    ):
+        assert words in text, words
+
+
+def test_the_bulk_sizes_what_it_takes_and_records_it_in_the_gate(host):
+    out = host.run()
+    assert out["verdict"]["ok"] is True
+    # The dry run's selection, less what a hold group takes: postgresql-16 is
+    # the postgres step's.
+    sizes = [a for _, a, _ in host.calls("apt-get") if a.startswith(SPACE_ARGS)]
+    assert sizes == [SPACE_ARGS + "libc6 libxml2 libssl3t64"]
+    space_ = out["gate"]["space"]
+    assert space_["peak_kib"] == 12867
+    assert space_["floor_kib"] == 131072
+    assert space_["filesystems"] == [
+        {
+            "mount": "/",
+            "paths": ["/var/cache/apt/archives", "/"],
+            "free_kib": 10**8,
+            "need_kib": SPACE_NEED,
+        }
+    ]
+    assert space_["headroom"] is None
+    # After the refresh: the host's own lists, which the figures come from.
+    seq = [f"{n} {a}" for n, a, _ in host.calls("apt-get")]
+    assert seq.index("apt-get update") < seq.index("apt-get " + sizes[0])
+
+
+def test_a_bulk_that_wouldnt_fit_holds_nothing_upgrades_nothing_and_can_run_again(
+    host,
+):
+    space(host, free=SPACE_NEED - 1)
+    out = host.run(rc=1)
+    assert any(
+        f"the bulk needs {SPACE_NEED} KiB free on /" in w for w in out["verdict"]["why"]
+    ), out["verdict"]["why"]
+    assert out["abort"]["instructions"] == [
+        "Nothing was held or upgraded: fix what failed, then run this step again."
+    ]
+    assert not [a for _, a, _ in host.calls("apt-mark") if a.startswith("hold")]
+    assert not host.calls("unattended-upgrade")
+    assert not (host.run_dir / "holds").exists()
+    space(host, free=SPACE_NEED)
+    assert host.run()["verdict"]["ok"] is True
+
+
+def test_a_held_step_that_wouldnt_fit_is_refused_and_changes_nothing(host):
+    host.run()
+    host.log.write_text("")
+    space(host, free=SPACE_NEED - 1)
+    out = host.run(step="postgres", rc=3)
+    assert any(
+        f"step postgres needs {SPACE_NEED} KiB free on /" in r for r in out["refused"]
+    ), out["refused"]
+    assert _changed(host) == []
+    # It sizes its own group, as the bulk held it.
+    sizes = [a for _, a, _ in host.calls("apt-get") if a.startswith(SPACE_ARGS)]
+    assert sizes == [SPACE_ARGS + "postgresql-16 libpq5"]
+    space(host, free=SPACE_NEED)
+    assert host.run(step="postgres")["verdict"]["ok"] is True
+
+
+def test_a_step_whose_sizes_cant_be_read_is_refused(host):
+    host.run()
+    host.log.write_text("")
+    host.cases["apt-cache"].insert(0, ("show *", "", 100, "E: no such version\n", None))
+    out = host.run(step="postgres", rc=3)
+    assert any(
+        "the sizes step postgres would write couldn't be read" in r
+        and "apt-cache show exited 100" in r
+        for r in out["refused"]
+    ), out["refused"]
+    assert _changed(host) == []
+
+
+def test_a_held_step_whose_free_space_cant_be_read_is_refused(host):
+    host.run()
+    host.log.write_text("")
+    host.cases["df"] = [("*", "", 1, "df: cannot read\n", None)]
+    out = host.run(step="postgres", rc=3)
+    assert any("couldn't be read (df -Pk)" in r for r in out["refused"])
+    assert _changed(host) == []
+
+
+# The disk GC's config: absent, the space alone is gated (every test above).
+# 80% of / used today, at 8000000 KiB of 10000000.
+
+
+def test_a_step_that_would_cross_the_gcs_headroom_line_is_refused(host):
+    host.run()
+    host.log.write_text("")
+    host.gc_conf.write_text("[sensor]\nalert_at_percent = 80\n")
+    space(host, free=2000000, used=8000000)
+    out = host.run(step="postgres", rc=3)
+    assert any(
+        "step postgres would take / to 81% used" in r
+        and f"alert_at_percent of 80 ({host.gc_conf})" in r
+        for r in out["refused"]
+    ), out["refused"]
+    assert out["gate"]["space"]["headroom"]["alert_at_percent"] == 80
+    assert _changed(host) == []
+
+
+def test_a_step_under_the_gcs_headroom_line_runs(host):
+    host.run()
+    host.log.write_text("")
+    host.gc_conf.write_text("[gc]\ntiers = uv\n[sensor]\nalert_at_percent = 85\n")
+    space(host, free=2000000, used=8000000)
+    out = host.run(step="postgres")
+    assert out["verdict"]["ok"] is True
+    assert out["gate"]["space"]["headroom"]["projected_percent"] == 81
+
+
+def test_a_bulk_that_would_cross_the_gcs_headroom_line_holds_nothing(host):
+    host.gc_conf.write_text("[sensor]\nalert_at_percent = 80\n")
+    space(host, free=2000000, used=8000000)
+    out = host.run(rc=1)
+    assert any("the bulk would take / to 81% used" in w for w in out["verdict"]["why"])
+    assert not [a for _, a, _ in host.calls("apt-mark") if a.startswith("hold")]
+    assert not host.calls("unattended-upgrade")
+
+
+@pytest.mark.parametrize(
+    "conf, why",
+    [
+        ("[sensor]\nalert_at_percent = 80 # tighter\n", "alert_at_percent is"),
+        ("alert_at_percent = 80\n", "before any [section] header"),
+        (None, "it isn't a regular file"),
+    ],
+    ids=["a-malformed-value", "no-section", "unreadable"],
+)
+def test_a_gc_config_that_cant_be_read_refuses_a_step(host, conf, why):
+    host.run()
+    host.log.write_text("")
+    if conf is None:
+        host.gc_conf.mkdir()
+    else:
+        host.gc_conf.write_text(conf)
+    out = host.run(step="postgres", rc=3)
+    assert any(
+        r.startswith(f"{host.gc_conf}: ") and why in r for r in out["refused"]
+    ), out["refused"]
+    assert _changed(host) == []
+
+
+@pytest.mark.skipif(
+    os.geteuid() == 0,
+    reason="chmod 000 does not restrict root, so the unreadable file is readable",
+)
+def test_a_gc_config_the_step_cant_read_refuses_it(tmp_path):
+    host = _ready(Host(tmp_path))
+    host.run()
+    host.log.write_text("")
+    host.gc_conf.write_text("[sensor]\n")
+    host.gc_conf.chmod(0)
+    out = host.run(step="postgres", rc=3)
+    assert any("it couldn't be read" in r for r in out["refused"]), out["refused"]
 
 
 # --- the bulk ---------------------------------------------------------------------
