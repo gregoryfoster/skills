@@ -10,7 +10,12 @@ says so rather than guessing.
 It only reads. A scratch root stands in for the host.
 """
 
+import json
 import os
+import shutil
+import subprocess
+import tempfile
+from pathlib import Path
 
 import pytest
 
@@ -630,3 +635,44 @@ def test_a_masked_unit_is_reported_masked_not_enabled(host):
     (found,) = units_found(check(host), "legacy-clean.service")
     assert found["masked"] is True
     assert found["enabled"] is False
+
+
+# --- CR 544: a home the caller can't enter is unreadable, not empty --------
+
+
+def check_as_unprivileged(root):
+    """retire-check as a caller who can't read a 0700 home: this process
+    if it isn't root, else `nobody` through runuser."""
+    cmd = ["bash", str(RETIRE), "--root", str(root)]
+    if os.geteuid() == 0:
+        if not shutil.which("runuser"):
+            pytest.skip("runs as root with no runuser to drop to nobody")
+        cmd = ["runuser", "-u", "nobody", "--"] + cmd
+    result = subprocess.run(cmd, capture_output=True, text=True, env=rig.clean_env())
+    assert result.returncode == 0, result.stderr
+    return json.loads(result.stdout)
+
+
+@pytest.mark.parametrize("mode", [0o700, 0o000], ids=["0700", "0000"])
+def test_a_home_it_cannot_enter_is_reported_unreadable(mode):
+    # Somewhere nobody can reach: pytest's own tmp_path is root's 0700.
+    base = Path(tempfile.mkdtemp(prefix="retire-544."))
+    try:
+        base.chmod(0o755)
+        root = base / "root"
+        write(root, "etc/passwd", "svc:x:998:998::/var/lib/svc:/usr/sbin/nologin\n")
+        write(
+            root,
+            "var/lib/svc/.config/systemd/user/tidy.service",
+            "[Service]\nExecStart=/srv/watcher/cleanup.sh\n",
+        )
+        for d in [root, *root.rglob("*")]:
+            if d.is_dir():
+                d.chmod(0o755)
+        (root / "var/lib/svc").chmod(mode)
+        out = check_as_unprivileged(root)
+        assert "var/lib/svc" in out["unreadable"], out["unreadable"]
+        assert any("root" in n for n in out["next"])
+    finally:
+        (base / "root/var/lib/svc").chmod(0o755)
+        shutil.rmtree(base)
