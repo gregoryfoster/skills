@@ -1,0 +1,261 @@
+"""#425 — retire-check.sh lists a host's own disk tooling beside the GC's report.
+
+The retire check is a hypothesis (#485's plan, Key decisions): what can
+honestly be mechanised is finding the units, timers and cron lines that run a
+retire-list implementation, and pairing them with the GC's report-only `gc`
+run. What each old implementation removed that the GC keeps can't be read
+from an arbitrary script, so that stays a by-hand checklist, and the script
+says so rather than guessing.
+
+It only reads. A scratch root stands in for the host.
+"""
+
+import os
+import sys
+
+import pytest
+
+from tests.structural import maintaining_host_disk_rig as rig
+
+RETIRE = rig.SCRIPTS / "retire-check.sh"
+
+
+@pytest.fixture(autouse=True)
+def tools():
+    missing = rig.missing_tools("python3")
+    if missing:
+        pytest.skip(f"needs {missing}")
+
+
+def write(root, rel, text):
+    p = root / rel
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(text)
+    return p
+
+
+def enable(root, unit, wants="timers.target.wants", base="etc/systemd/system"):
+    d = root / base / wants
+    d.mkdir(parents=True, exist_ok=True)
+    os.symlink(f"/{base}/{unit}", d / unit)
+
+
+@pytest.fixture
+def host(tmp_path):
+    root = tmp_path / "root"
+    sysd = "etc/systemd/system"
+    # power-map's two, one timer enabled and one not
+    write(
+        root,
+        f"{sysd}/prune-disk.service",
+        "[Service]\nType=oneshot\nExecStart=/home/exedev/power-map/.venv/bin/python "
+        "/home/exedev/power-map/scripts/prune_disk.py --apply\n",
+    )
+    write(root, f"{sysd}/prune-disk.timer", "[Timer]\nOnCalendar=daily\n")
+    enable(root, "prune-disk.timer")
+    write(
+        root,
+        f"{sysd}/headroom-check.service",
+        "[Service]\nExecStart=/usr/bin/python3 /opt/pm/check_disk_headroom.py\n",
+    )
+    write(
+        root, f"{sysd}/headroom-check.timer", "[Timer]\nUnit=headroom-check.service\n"
+    )
+    # broker's, as a user unit
+    write(
+        root,
+        "home/exedev/.config/systemd/user/editors.service",
+        "[Service]\nExecStart=%h/broker/scripts/prune_editor_builds.sh --apply\n",
+    )
+    # address-validator's docker-prune, matched by its unit's name
+    write(
+        root,
+        f"{sysd}/docker-prune.service",
+        "[Service]\nExecStart=/usr/bin/docker system prune -f\n",
+    )
+    write(root, f"{sysd}/docker-prune.timer", "[Timer]\nOnCalendar=weekly\n")
+    enable(root, "docker-prune.timer")
+    # watcher's, through a drop-in that replaces ExecStart
+    write(root, f"{sysd}/maint.service", "[Service]\nExecStart=/bin/true\n")
+    write(
+        root,
+        f"{sysd}/maint.service.d/override.conf",
+        "[Service]\nExecStart=\nExecStart=/srv/watcher/cleanup.sh\n",
+    )
+    # wslcb's, from cron
+    write(
+        root,
+        "etc/cron.d/wslcb",
+        "# disk\n15 4 * * * exedev /home/exedev/wslcb/.venv/bin/python /home/exedev/wslcb/scripts/disk_hygiene.py\n",
+    )
+    # the canonical GC: installed, its GC timer enabled; never a match or a candidate
+    for path, (data, _mode) in rig.gc_files().items():
+        write(root, path, data.decode())
+    write(
+        root,
+        f"{rig.UNIT_DIR}/cannobserv-disk-gc.service",
+        "[Service]\nExecStart=/usr/bin/python3 -I /usr/local/lib/cannobserv/disk-gc/disk-gc gc --apply\n",
+    )
+    enable(root, "cannobserv-disk-gc.timer")
+    # a host-local unit that only looks like disk tooling
+    write(
+        root,
+        f"{sysd}/cache-cleanup.service",
+        "[Service]\nExecStart=/opt/observo/bin/clear-caches\n",
+    )
+    write(root, f"{sysd}/cache-cleanup.timer", "[Timer]\nOnCalendar=hourly\n")
+    # packaged and unrelated units: neither
+    write(root, "lib/systemd/system/systemd-tmpfiles-clean.timer", "[Timer]\n")
+    write(
+        root,
+        "lib/systemd/system/systemd-tmpfiles-clean.service",
+        "[Service]\nExecStart=/bin/systemd-tmpfiles --clean\n",
+    )
+    write(root, f"{sysd}/app.service", "[Service]\nExecStart=/srv/app/run\n")
+    return root
+
+
+def check(root, *extra):
+    result = rig.run(RETIRE, "--root", root, *extra)
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    return rig.stdout_json(result)
+
+
+def by_entry(out):
+    return {(f["repo"], f["entry"]): f for f in out["found"]}
+
+
+def test_finds_each_retire_list_implementation(host):
+    found = by_entry(check(host))
+    assert set(found) == {
+        ("power-map", "prune_disk.py"),
+        ("power-map", "check_disk_headroom.py"),
+        ("broker", "prune_editor_builds.sh"),
+        ("address-validator", "docker-prune"),
+        ("watcher", "cleanup.sh"),
+        ("wslcb", "disk_hygiene.py"),
+    }
+
+
+def test_reports_where_and_whether_it_runs(host):
+    found = by_entry(check(host))
+    prune = found[("power-map", "prune_disk.py")]
+    assert prune["kind"] == "systemd"
+    assert prune["unit"] == "prune-disk.service"
+    assert prune["timer"] == "prune-disk.timer"
+    assert prune["enabled"] is True
+    assert "prune_disk.py --apply" in prune["command"]
+    headroom = found[("power-map", "check_disk_headroom.py")]
+    assert headroom["timer"] == "headroom-check.timer"
+    assert headroom["enabled"] is False
+    assert found[("broker", "prune_editor_builds.sh")]["scope"] == "user:exedev"
+    assert found[("watcher", "cleanup.sh")]["where"].endswith(
+        "maint.service.d/override.conf"
+    )
+    cron = found[("wslcb", "disk_hygiene.py")]
+    assert cron["kind"] == "cron" and cron["where"] == "etc/cron.d/wslcb"
+
+
+def test_canonical_gc_is_neither_found_nor_a_candidate(host):
+    out = check(host)
+    units = [f.get("unit") for f in out["found"]] + [
+        c.get("unit") for c in out["candidates"]
+    ]
+    assert not [u for u in units if u and u.startswith("cannobserv-")]
+    assert out["canonical"]["installed"] is True
+    assert out["canonical"]["version"] == 2
+    assert out["canonical"]["timers"] == {
+        "cannobserv-disk-gc.timer": "enabled",
+        "cannobserv-disk-headroom.timer": "disabled",
+    }
+
+
+def test_usa_wa_disk_gc_sh_is_not_the_canonical_disk_gc(host):
+    found = by_entry(check(host))
+    assert ("usa-wa", "disk-gc.sh") not in found
+    write(
+        host,
+        "etc/systemd/system/gc.service",
+        "[Service]\nExecStart=/srv/usa-wa/scripts/disk-gc.sh\n",
+    )
+    assert ("usa-wa", "disk-gc.sh") in by_entry(check(host))
+
+
+def test_candidates_are_host_local_lookalikes_only(host):
+    out = check(host)
+    names = {c.get("unit") for c in out["candidates"]}
+    assert "cache-cleanup.service" in names or "cache-cleanup.timer" in names
+    assert not [n for n in names if n and "tmpfiles" in n]
+    assert "app.service" not in names
+    found_units = {f.get("unit") for f in out["found"]}
+    assert not names & found_units
+
+
+def test_observo_is_by_hand(host):
+    out = check(host)
+    assert [b for b in out["by_hand"] if b["repo"] == "observo"]
+
+
+def test_gc_report_from_a_file(host, tmp_path):
+    report = tmp_path / "gc-report.txt"
+    report.write_text("<6>vscode-servers: would remove 2 builds, 1.3G\n<6>ok\n")
+    out = check(host, "--gc-report", report)
+    assert out["gc_report"]["lines"] == [
+        "<6>vscode-servers: would remove 2 builds, 1.3G",
+        "<6>ok",
+    ]
+
+
+def test_without_a_report_it_says_how_to_get_one(host):
+    out = check(host)
+    assert out["gc_report"] is None
+    assert any("disk-gc gc" in n for n in out["next"])
+
+
+def test_run_gc_report_runs_gc_and_nothing_else(host, tmp_path):
+    argv = tmp_path / "argv"
+    write(
+        host,
+        f"{rig.GC_DIR}/disk-gc",
+        f"import sys\nopen({str(argv)!r}, 'w').write(' '.join(sys.argv[1:]))\nprint('<6>report line')\n",
+    )
+    out = check(host, "--run-gc-report", "--python", sys.executable)
+    assert argv.read_text() == "gc"
+    assert out["gc_report"]["lines"] == ["<6>report line"]
+    assert out["gc_report"]["exit"] == 0
+
+
+def test_only_reads(host):
+    before = {
+        p: (p.stat().st_mtime_ns, p.read_bytes())
+        for p in host.rglob("*")
+        if p.is_file()
+    }
+    check(host)
+    after = {
+        p: (p.stat().st_mtime_ns, p.read_bytes())
+        for p in host.rglob("*")
+        if p.is_file()
+    }
+    assert before == after
+
+
+def test_empty_host(tmp_path):
+    root = tmp_path / "empty"
+    root.mkdir()
+    out = check(root)
+    assert out["found"] == [] and out["candidates"] == []
+    assert out["canonical"]["installed"] is False
+
+
+def test_unreadable_home_is_reported_not_fatal(host):
+    if os.geteuid() == 0:
+        pytest.skip("root reads a mode-000 directory, so the case can't arise")
+    locked = host / "home/exedev/.config/systemd/user"
+    locked.chmod(0o000)
+    try:
+        out = check(host)
+    finally:
+        locked.chmod(0o755)
+    assert "home/exedev/.config/systemd/user" in out["unreadable"]
+    assert any("root" in n for n in out["next"])
