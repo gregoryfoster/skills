@@ -124,6 +124,18 @@ import pytest
 from tests.structural.patching_hosts_rig import DAY, SKILL, dispatcher
 from tests.structural.patching_hosts_rig import Host as RigHost
 from tests.structural.patching_hosts_rig import clean_env as _clean_env
+from tests.structural.test_patching_hosts_space import (
+    CONF as GC_CONF,
+)
+from tests.structural.test_patching_hosts_space import (
+    DOWNLOAD,
+    DPKG,
+    GROWTH,
+    PEAK,
+    SHOW,
+    SIM,
+    df_row,
+)
 
 PROBE = SKILL / "scripts" / "probe.sh"
 TODAY = "2026-09-30"
@@ -137,7 +149,27 @@ def _dispatcher(tmp_path_factory):
 
 
 class Host(RigHost):
+    # df answers as the system's own unless a case says otherwise (#390).
+    STUBBED = (*RigHost.STUBBED, "df")
+    FALLBACKS = {
+        **RigHost.FALLBACKS,
+        "df": 'for d in /bin /usr/bin; do [ -x "$d/df" ] && exec "$d/df" "$@"; done; exit 127',
+    }
+
     def run(self, *args: str, rc: int = 0, root: bool = True):
+        # What the dry run's selection would write (#390): noble's real
+        # output for tzdata, age and bison, after every case a test set.
+        for cmd, glob, out in (
+            ("apt-get", "-s *install --only-upgrade *", SIM),
+            ("apt-cache", "* show *", SHOW),
+            (
+                "dpkg-query",
+                "*-W -f ${Package}:${Architecture} ${Installed-Size}*",
+                DPKG,
+            ),
+        ):
+            if not any(c[0] == glob for c in self.cases[cmd]):
+                self.on(cmd, glob, out)
         cmd = ["bash", str(PROBE)]
         if root:
             cmd += ["--root", str(self.root)]
@@ -654,6 +686,99 @@ def test_the_dry_run_counts_security_exactly_into_its_scratch_cache(host):
     assert f'Dir::Cache::archives "{scratch.resolve()}/archives/";' in conf
     assert f'Dir "{host.root.resolve()}/";' in conf
     assert [c for c in host.calls("choom") if "-n 0" in c[1]]
+
+
+# --- the dry run's free space (#390) ------------------------------------------
+
+
+def _counted(host: Host) -> Host:
+    host.on(
+        "unattended-upgrade",
+        "--dry-run -d",
+        "Packages that will be upgraded: tzdata age bison\n",
+    )
+    return host
+
+
+def test_help_says_what_the_dry_runs_space_reads():
+    r = subprocess.run(
+        ["bash", str(PROBE), "--help"], capture_output=True, text=True, env=_clean_env()
+    )
+    text = " ".join(r.stdout.split())
+    for words in (
+        "pending.dry_run.space",
+        "131072 KiB",
+        "/var/backups",
+        "alert_at_percent",
+    ):
+        assert words in text, words
+
+
+def test_the_dry_run_sizes_what_the_run_writes_and_the_free_space_beside_it(host):
+    out = _counted(host).run("--dry-run-into", str(host.tmp / "dry"))
+    d = out["pending"]["dry_run"]
+    assert (d["space"]["download_kib"], d["space"]["growth_kib"]) == (DOWNLOAD, GROWTH)
+    assert d["space"]["peak_kib"] == PEAK
+    assert d["space"]["headroom"] is None
+    assert isinstance(d["free_kib_root"], int)
+    assert isinstance(d["free_kib_run_dir"], int)
+    assert not [i for i in _ids(out) if i.startswith("dry-run:space")]
+    # Sized from the selection, against the tree's own apt and dpkg.
+    [sim] = [a for _, a, _ in host.calls("apt-get") if "--only-upgrade" in a]
+    assert sim.endswith("install --only-upgrade tzdata age bison")
+    assert "-o Debug::NoLocking=1" in sim
+    [q] = [a for _, a, _ in host.calls("dpkg-query") if "Installed-Size" in a]
+    assert q.startswith(f"--admindir={host.root}/var/lib/dpkg -W ")
+
+
+def test_a_run_that_wouldnt_fit_is_a_finding(host):
+    _counted(host)
+    host.on("df", "-Pk -- *", df_row(9000000, 1000))
+    out = host.run("--dry-run-into", str(host.tmp / "dry"))
+    f = _finding(out, "dry-run:space:disk")
+    assert f["kind"] == "risk"
+    assert f["message"].startswith("The run needs ")
+    assert "131072 KiB floor" in f["message"]
+    assert out["pending"]["dry_run"]["free_kib_root"] == 1000
+
+
+def test_a_run_that_would_cross_the_gcs_headroom_line_is_a_finding(host):
+    _counted(host)
+    host.write(GC_CONF, "[sensor]\nalert_at_percent = 80\n")
+    # 80% used less 1 KiB: the run's 2599 KiB and 281 KiB cross the line.
+    host.on("df", "-Pk -- *", df_row(7999999, 2000001))
+    out = host.run("--dry-run-into", str(host.tmp / "dry"))
+    f = _finding(out, "dry-run:space:headroom")
+    assert f["kind"] == "risk"
+    assert "alert_at_percent of 80" in f["message"]
+    assert out["pending"]["dry_run"]["space"]["headroom"]["mount"] == "/"
+
+
+@pytest.mark.parametrize(
+    "conf",
+    ["[sensor]\nalert_at_percent = 80 # tighter\n", None],
+    ids=["malformed", "unreadable"],
+)
+def test_a_gc_config_that_cant_be_read_is_a_finding(host, conf):
+    _counted(host)
+    if conf is None:
+        (host.root / GC_CONF).mkdir(parents=True)
+    else:
+        host.write(GC_CONF, conf)
+    out = host.run("--dry-run-into", str(host.tmp / "dry"))
+    f = _finding(out, "dry-run:space:disk-gc-conf")
+    assert f["kind"] == "unknown"
+    assert f["message"].startswith(str(host.root / GC_CONF) + ": ")
+
+
+def test_sizes_the_dry_run_cant_read_are_a_finding(host):
+    _counted(host)
+    host.on("apt-cache", "* show *", "", rc=100, stderr="E: no such version\n")
+    out = host.run("--dry-run-into", str(host.tmp / "dry"))
+    f = _finding(out, "dry-run:space")
+    assert f["kind"] == "unknown"
+    assert "apt-cache show exited 100" in f["message"]
+    assert out["pending"]["dry_run"]["space"] is None
 
 
 def test_the_dry_run_records_the_version_it_counted_of_each_held_package(host):
