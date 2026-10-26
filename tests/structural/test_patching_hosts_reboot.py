@@ -41,7 +41,8 @@ Beyond that list:
   started, and one whose size or free space can't be read is skipped too
   (#390): a partial copy would fill the disk the host boots from;
 - a copy that fails part-way is removed, so no partial copy is left to
-  fill the disk before the boot (#390);
+  fill the disk before the boot (#390), and one that was made but couldn't
+  be read back is kept: it's the shutdown's only record (CR 585);
 - only the volatile journal is copied: a persistent one survives the boot;
 - Redis is saved first only where its file sets no save points and no
   appendonly, or can't say, and its password stays in its own config file;
@@ -716,6 +717,22 @@ def test_a_journal_whose_size_or_free_space_cant_be_read_isnt_copied(host, unrea
     assert not _copied(host)
     assert host.sequence()[-1] == "systemctl reboot"
     assert "couldn't be read: not copied" in host.record("reboot-chain.log")
+
+
+def test_a_copy_whose_read_back_fails_is_kept(host):
+    # CR 585: the copy is the only record of the shutdown. A read-back that
+    # fails says nothing about what was copied, so the copy stays.
+    host.reboot()
+    journals = _journals(host)
+    host.cases["journalctl"].insert(0, ("-D *", "", 1, "journalctl: bad file\n", None))
+    r = host.fire(journals)
+    assert r.returncode == 0, r.stderr
+    target = host.run_dir / "journal" / journals[0].replace("/", "_")
+    assert (target / "abc123" / "system.journal").read_text() == "journal"
+    log = host.record("reboot-chain.log")
+    assert "couldn't be read back: kept" in log
+    assert "has no record of its own" not in log
+    assert host.sequence()[-1] == "systemctl reboot"
 
 
 def test_a_journal_copy_that_fails_part_way_is_removed(host):
