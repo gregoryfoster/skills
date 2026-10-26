@@ -625,3 +625,28 @@ def test_install_after_an_interrupted_remove_says_to_finish_the_remove(tmp_path,
     result, _ = install(tmp_path, host, staged(tmp_path), "--approve")
     out = refused(result, "remove-disk-gc.sh")
     assert not any("pin has moved" in r for r in out["refused"])
+
+
+# --- CR 570: a dropped timer goes before the service it triggers ------------
+
+
+def test_570_dropped_timers_are_disabled_before_dropped_services(tmp_path, host):
+    """In MANIFEST's order a service sorts before its timer; disabling the
+    service first leaves the still-active timer able to start it again, and
+    real systemd warns that its triggering units are still active."""
+    old_service = f"{rig.UNIT_DIR}/cannobserv-disk-old.service"
+    rig.stage(
+        host,
+        v1_files(
+            **{
+                OLD_TIMER: (b"[Timer]\n", 0o644),
+                old_service: (b"[Service]\n", 0o644),
+            }
+        ),
+    )
+    result, _ = install(tmp_path, host, staged(tmp_path))
+    assert ok(result)["systemctl"] == [
+        "disable --now cannobserv-disk-old.timer",
+        "disable --now cannobserv-disk-old.service",
+        "daemon-reload",
+    ]

@@ -40,7 +40,7 @@ The install, as root:
   2. sha256sum --strict -c of the staged MANIFEST, from the root
   3. an update removes each path the installed MANIFEST lists that the new
      one doesn't, and nothing else; a unit among them is first
-     `systemctl disable --now`
+     `systemctl disable --now`, its timers before its services
   4. systemctl daemon-reload, and systemctl restart systemd-journald only
      when a journald.conf.d drop-in differs from what the installed
      MANIFEST records or from the file on disk, it lists one the new
@@ -285,16 +285,19 @@ for p in ${S_PATHS[@]+"${S_PATHS[@]}"} ${REMOVED[@]+"${REMOVED[@]}"}; do
 done
 
 # A unit the new MANIFEST drops is disabled (and stopped) before its file
-# goes, so no enabled timer is left as a dangling wants link. One already
-# gone, after a run that stopped part-way, has nothing left to disable.
-DROPPED_UNITS=()
+# goes, so no enabled timer is left as a dangling wants link. Timers first:
+# a service disabled while its timer is active can be started again by it.
+# One already gone, after a run that stopped part-way, has nothing left to
+# disable.
+DROPPED_TIMERS=() DROPPED_SERVICES=()
 for p in ${REMOVED[@]+"${REMOVED[@]}"}; do
+  [ -f "$R/$p" ] || continue
   case "$p" in
-    usr/local/lib/systemd/system/*.service | usr/local/lib/systemd/system/*.timer)
-      [ ! -f "$R/$p" ] || DROPPED_UNITS+=("${p##*/}")
-      ;;
+    usr/local/lib/systemd/system/*.timer) DROPPED_TIMERS+=("${p##*/}") ;;
+    usr/local/lib/systemd/system/*.service) DROPPED_SERVICES+=("${p##*/}") ;;
   esac
 done
+DROPPED_UNITS=(${DROPPED_TIMERS[@]+"${DROPPED_TIMERS[@]}"} ${DROPPED_SERVICES[@]+"${DROPPED_SERVICES[@]}"})
 
 # journald restarts when a drop-in differs from what the installed MANIFEST
 # records, not from the bytes on disk: a run that stopped after writing the
