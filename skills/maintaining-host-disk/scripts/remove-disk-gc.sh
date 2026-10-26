@@ -12,7 +12,8 @@ Removes the canonical disk GC the installed MANIFEST describes. Without
 --approve it prints the plan and changes nothing. With it, as root:
 
   1. systemctl disable --now cannobserv-disk-gc.timer
-     cannobserv-disk-headroom.timer
+     cannobserv-disk-headroom.timer, then systemctl stop of both services,
+     so a run in progress doesn't outlive its files
   2. each file MANIFEST lists
   3. systemctl daemon-reload, and systemctl restart systemd-journald when
      a journald.conf.d drop-in went
@@ -136,7 +137,7 @@ if [ "$ACTION" = absent ]; then
   exit 0
 fi
 if [ "$APPROVE" = 0 ]; then
-  SYSTEMCTL_CALLS=("disable --now $TIMERS" daemon-reload)
+  SYSTEMCTL_CALLS=("disable --now $TIMERS" "stop $SERVICES" daemon-reload)
   [ "$JRESTART" = 0 ] || SYSTEMCTL_CALLS+=("restart systemd-journald")
   emit
   exit 0
@@ -153,6 +154,9 @@ APPLIED=true
 # $TIMERS is the two timer names, split into two arguments on purpose.
 # shellcheck disable=SC2086
 run_systemctl disable --now $TIMERS || failed "systemctl disable --now failed; nothing removed"
+# $SERVICES is the two service names, split into two arguments on purpose.
+# shellcheck disable=SC2086
+run_systemctl stop $SERVICES || failed "systemctl stop failed; nothing removed"
 for p in "${PATHS[@]}"; do
   rm -f "$R/$p" || failed "couldn't remove $p"
 done

@@ -67,7 +67,7 @@ The release this skill installs is pinned in `scripts/_pin.sh`, and only there: 
 5. **Verify** the first runs, then turn the monitor on: [verifying.md](references/verifying.md).
 6. **Record** what was installed (the pin's `VERSION`), the config's lines and tiers, what was retired and why it was safe to, on the host's adoption issue.
 
-**Removing it:** `bash "<remove-disk-gc.sh>"` prints the plan; with `--approve`, as root, it disables both timers, removes MANIFEST's files and MANIFEST, reloads, and restarts journald. It keeps the host's config and key, the GC's state, and anything MANIFEST doesn't list. Ask for the monitor to be disabled with it, or it pages *has stopped reporting*.
+**Removing it:** `bash "<remove-disk-gc.sh>"` prints the plan; with `--approve`, as root, it disables both timers and stops both services, removes MANIFEST's files, reloads, restarts journald, and removes MANIFEST last. It keeps the host's config and key, the GC's state, and anything MANIFEST doesn't list. Ask for the monitor to be disabled with it, or it pages *has stopped reporting*.
 
 ## Beyond the host
 

@@ -38,6 +38,7 @@ MANIFEST_REL=$GC_DIR/MANIFEST
 VERSION_REL=$GC_DIR/VERSION
 JOURNALD_DIR=usr/local/lib/systemd/journald.conf.d/
 TIMERS="cannobserv-disk-gc.timer cannobserv-disk-headroom.timer"
+SERVICES="cannobserv-disk-gc.service cannobserv-disk-headroom.service"
 REFUSED=()
 SYSTEMCTL_CALLS=()
 

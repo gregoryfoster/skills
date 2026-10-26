@@ -36,7 +36,8 @@ The install, as root:
      staged mode>
   2. sha256sum --strict -c of the staged MANIFEST, from the root
   3. an update removes each path the installed MANIFEST lists that the new
-     one doesn't, and nothing else
+     one doesn't, and nothing else; a unit among them is first
+     `systemctl disable --now`
   4. systemctl daemon-reload, and systemctl restart systemd-journald only
      when a journald.conf.d drop-in differs from what the installed
      MANIFEST records (or it lists one the new MANIFEST drops)
@@ -45,8 +46,9 @@ A run that fails before step 5 leaves the old MANIFEST (or none) in place,
 so a re-run sees the same plan and finishes it.
 
 It never touches /etc/cannobserv/disk-gc/ (the host's disk-gc.conf and
-checkin.key), the GC's state under /var/lib, or a timer: an enabled timer
-stays enabled, and a new install leaves both off.
+checkin.key), the GC's state under /var/lib, or a timer it keeps: an
+enabled timer stays enabled, and a new install leaves both off. Only a unit
+the new MANIFEST drops is disabled, before it goes.
 
 Before anything changes it refuses (exit 3), with every reason in refused:
   - staging: MANIFEST missing or not the pinned one, a line not in
@@ -234,6 +236,18 @@ for p in ${S_PATHS[@]+"${S_PATHS[@]}"} ${REMOVED[@]+"${REMOVED[@]}"}; do
   if [ -e "$R/$p" ] && [ ! -L "$R/$p" ] && [ ! -f "$R/$p" ]; then refuse "$p is not a regular file on the root"; fi
 done
 
+# A unit the new MANIFEST drops is disabled (and stopped) before its file
+# goes, so no enabled timer is left as a dangling wants link. One already
+# gone, after a run that stopped part-way, has nothing left to disable.
+DROPPED_UNITS=()
+for p in ${REMOVED[@]+"${REMOVED[@]}"}; do
+  case "$p" in
+    usr/local/lib/systemd/system/*.service | usr/local/lib/systemd/system/*.timer)
+      [ ! -f "$R/$p" ] || DROPPED_UNITS+=("${p##*/}")
+      ;;
+  esac
+done
+
 # journald restarts when a drop-in differs from what the installed MANIFEST
 # records, not from the bytes on disk: a run that stopped after writing the
 # drop-in but before the restart left them already equal.
@@ -282,7 +296,8 @@ if [ ${#REFUSED[@]} -gt 0 ]; then
 fi
 if [ "$APPROVE" = 0 ]; then
   if [ "$ACTION" != current ]; then
-    SYSTEMCTL_CALLS=(daemon-reload)
+    for u in ${DROPPED_UNITS[@]+"${DROPPED_UNITS[@]}"}; do SYSTEMCTL_CALLS+=("disable --now $u"); done
+    SYSTEMCTL_CALLS+=(daemon-reload)
     [ "$JRESTART" = 0 ] || SYSTEMCTL_CALLS+=("restart systemd-journald")
   fi
   emit
@@ -311,6 +326,9 @@ for p in "${S_PATHS[@]}"; do
   APPLIED=true
 done
 (cd "$ROOT" && sha256sum --strict --quiet -c "$S_MAN") >&2 || failed "the installed files fail sha256sum --strict -c of the staged MANIFEST"
+for u in ${DROPPED_UNITS[@]+"${DROPPED_UNITS[@]}"}; do
+  run_systemctl disable --now "$u" || failed "systemctl disable --now $u failed; nothing removed"
+done
 for p in ${REMOVED[@]+"${REMOVED[@]}"}; do
   rm -f "$R/$p" || failed "couldn't remove $p, which the new MANIFEST dropped"
 done
