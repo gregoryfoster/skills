@@ -90,7 +90,7 @@ In this order, and only this one:
 
 - **`alert_at_percent`:** pick it as before, from the host's baseline. Where a repo's gate leaves a large tree behind, size it from the baseline **plus** one gate's basetemp ([repo-knobs.md](repo-knobs.md#pytest-basetemps)).
 - **`clear_at_percent`:** `low-headroom` alerts at the alert line and clears only at or below the clear line; between the two it keeps the previous state. Without the key, it is `alert_at_percent − 5`, floored at 0, so a config from VERSION 1 needs no edit. **The template sets 85/80:** keep `clear_at_percent` below your alert line, or delete it to take the default. A clear line at or above the alert line fails at config load, so a template copied with `alert_at_percent = 80` and its `clear_at_percent = 80` left in refuses.
-- **patching-hosts reads both lines as a floor** (#390). A patch run refuses a step whose download and install growth would take `[sensor] mount` to `alert_at_percent` or past it, and a config it can't parse stops the run, as it stops the GC.
+- **patching-hosts reads `[sensor] alert_at_percent` and `mount` as a floor** (#390). A patch run refuses a step whose download and install growth would take `[sensor] mount` to `alert_at_percent` or past it, and a config it can't parse stops the run, as it stops the GC.
 - **A "prove it fires" test** that lowers the alert line must lower or remove any explicit `clear_at_percent` too, or the config refuses. A change to either line judges the next reading afresh, so putting the lines back clears the test's hold on the next run.
 - The hold lives in `/var/lib/cannobserv-disk-gc/sensor.json`, beside the GC's `state.json`. A missing or unrecognised file reads as not held. No script here touches either.
 
