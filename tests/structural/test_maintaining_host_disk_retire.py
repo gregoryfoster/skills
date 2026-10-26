@@ -582,3 +582,35 @@ def test_anacrontab_is_read(host):
     )
     found = [f for f in check(host)["found"] if f["where"] == "etc/anacrontab:3"]
     assert [(f["kind"], f["entry"]) for f in found] == [("anacron", "prune_disk.py")]
+
+
+# --- CR 537c: Unit= by a different name, and a blanking drop-in ------------
+
+
+def test_a_timer_named_unlike_its_service_still_schedules_it(host):
+    write(
+        host,
+        "etc/systemd/system/pm-prune.service",
+        "[Service]\nExecStart=/opt/pm/prune_disk.py\n",
+    )
+    write(
+        host, "etc/systemd/system/gc-nightly.timer", "[Timer]\nUnit=pm-prune.service\n"
+    )
+    enable(host, "gc-nightly.timer")
+    (found,) = units_found(check(host), "pm-prune.service")
+    assert found["timer"] == "gc-nightly.timer"
+    assert found["enabled"] is True
+
+
+def test_a_drop_in_that_blanks_the_command_unfinds_it(host):
+    write(
+        host,
+        "etc/systemd/system/old-hygiene.service",
+        "[Service]\nExecStart=/srv/wslcb/disk_hygiene.py\n",
+    )
+    write(
+        host,
+        "etc/systemd/system/old-hygiene.service.d/retired.conf",
+        "[Service]\nExecStart=\nExecStart=/bin/true\n",
+    )
+    assert units_found(check(host), "old-hygiene.service") == []
