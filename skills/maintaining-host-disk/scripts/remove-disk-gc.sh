@@ -11,10 +11,10 @@ Usage: bash remove-disk-gc.sh [--approve] [--even-modified] [--root DIR]
 Removes the canonical disk GC the installed MANIFEST describes. Without
 --approve it prints the plan and changes nothing. With it, as root:
 
-  1. systemctl disable --now cannobserv-disk-gc.timer
-     cannobserv-disk-headroom.timer, then systemctl stop of both services,
-     so a run in progress doesn't outlive its files; a unit whose file is
-     already gone (a re-run) is skipped, since systemctl refuses it
+  1. systemctl disable --now of every timer MANIFEST lists, then systemctl
+     stop of every service it lists, so a run in progress doesn't outlive
+     its files; a unit whose file is already gone (a re-run) is skipped,
+     since systemctl refuses it
   2. each file MANIFEST lists
   3. systemctl daemon-reload, and systemctl restart systemd-journald when
      a journald.conf.d drop-in went
@@ -131,15 +131,18 @@ elif [ ${#REFUSED[@]} -eq 0 ]; then
   fi
 fi
 
-# Only units whose file is still there: a re-run after the rm loop finds
-# them gone, and real systemctl refuses to disable or stop a unit it has no
-# file for, which would leave the remove unfinishable.
+# Every unit MANIFEST lists, as the installer reads them, so a release that
+# adds one doesn't leave it enabled with its file gone. Only units whose
+# file is still there: a re-run after the rm loop finds them gone, and real
+# systemctl refuses to disable or stop a unit it has no file for, which
+# would leave the remove unfinishable.
 TIMERS_LEFT=() SERVICES_LEFT=()
-for u in $TIMERS; do
-  [ ! -f "$R/usr/local/lib/systemd/system/$u" ] || TIMERS_LEFT+=("$u")
-done
-for u in $SERVICES; do
-  [ ! -f "$R/usr/local/lib/systemd/system/$u" ] || SERVICES_LEFT+=("$u")
+for p in ${PATHS[@]+"${PATHS[@]}"}; do
+  [ -f "$R/$p" ] || continue
+  case "$p" in
+    usr/local/lib/systemd/system/*.timer) TIMERS_LEFT+=("${p##*/}") ;;
+    usr/local/lib/systemd/system/*.service) SERVICES_LEFT+=("${p##*/}") ;;
+  esac
 done
 
 emit() {

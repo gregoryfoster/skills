@@ -211,3 +211,23 @@ def test_an_interrupted_update_names_the_old_pin_recovery(tmp_path, host):
     result, _ = remove(tmp_path, host, "--approve")
     assert result.returncode == 3, result.stdout
     assert "old pin" in " ".join(rig.stdout_json(result)["refused"])
+
+
+# --- CR 564: the units to stop come from MANIFEST, as install's do -----------
+
+
+def test_564_every_unit_manifest_lists_is_disabled_and_stopped(tmp_path, host):
+    """A release that adds a unit: remove must not delete its file and
+    leave it enabled."""
+    files = rig.gc_files()
+    files[f"{rig.UNIT_DIR}/cannobserv-disk-extra.timer"] = (b"[Timer]\n", 0o644)
+    files[f"{rig.UNIT_DIR}/cannobserv-disk-extra.service"] = (b"[Service]\n", 0o644)
+    rig.stage(host, files)
+    result, stub = remove(tmp_path, host, "--approve")
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    called = rig.calls(stub)
+    disable = next(c for c in called if c.startswith("disable --now"))
+    stop = next(c for c in called if c.startswith("stop "))
+    assert "cannobserv-disk-extra.timer" in disable.split()
+    assert "cannobserv-disk-extra.service" in stop.split()
+    assert called.index(disable) < called.index(stop)
