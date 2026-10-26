@@ -324,22 +324,45 @@ def require_linux_tools():
 
 
 def copy_scripts(
-    dest: Path, registry_url: str, digest: str, version: int = 2, tag: str = TAG
+    dest: Path,
+    registry_url: str,
+    digest: str,
+    version: int = 2,
+    tag: str = TAG,
+    manifest_sha: str | None = None,
 ) -> Path:
-    """The skill's scripts in `dest`, their pin rewritten to the fixture's."""
+    """The skill's scripts in `dest`, their pin rewritten to the fixture's.
+
+    `manifest_sha` pins the layer's MANIFEST; by default, the sha256 of the
+    standard fixture's (`gc_files()`)."""
     shutil.copytree(SCRIPTS, dest, ignore=shutil.ignore_patterns("__pycache__"))
     pin = dest / "_pin.sh"
     text = pin.read_text()
+    if manifest_sha is None:
+        manifest_sha = hashlib.sha256(manifest_text(gc_files())).hexdigest()
     for key, value in (
         ("DISK_GC_REGISTRY", registry_url),
         ("DISK_GC_TAG", tag),
         ("DISK_GC_MANIFEST_DIGEST", digest),
         ("DISK_GC_VERSION", str(version)),
+        ("DISK_GC_MANIFEST_SHA256", manifest_sha),
     ):
         text, n = re.subn(rf"^{key}=.*$", f"{key}={value}", text, flags=re.M)
         assert n == 1, f"_pin.sh must set {key} exactly once"
     pin.write_text(text)
     return dest
+
+
+def pinned_scripts(dest: Path, staging: Path) -> Path:
+    """The skill's scripts with the pin's MANIFEST sha256 set to the one in
+    `staging`, for install tests that stage a MANIFEST of their own."""
+    manifest = (staging / GC_DIR / "MANIFEST").read_bytes()
+    return copy_scripts(
+        dest,
+        "https://ghcr.io",
+        "sha256:" + "0" * 64,
+        manifest_sha=hashlib.sha256(manifest).hexdigest(),
+    )
 
 
 def run(script: Path, *args, env=None, cwd=None) -> subprocess.CompletedProcess:
@@ -375,6 +398,9 @@ def stage(dest: Path, files: dict | None = None, manifest: bytes | None = None) 
     m.parent.mkdir(parents=True, exist_ok=True)
     m.write_bytes(manifest)
     m.chmod(0o644)
+    # The layer's directories are 0755 whatever this process's umask is.
+    for d in [dest, *(p for p in dest.rglob("*") if p.is_dir() and not p.is_symlink())]:
+        d.chmod(0o755)
     return dest
 
 

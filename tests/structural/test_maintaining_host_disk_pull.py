@@ -14,6 +14,7 @@ Offline: the release is a fixture and the registry is a loopback stub
 [#425's contract comment]: https://github.com/gregoryfoster/skills/issues/425#issuecomment-6371095613
 """
 
+import hashlib
 import tarfile
 
 import pytest
@@ -35,11 +36,15 @@ def registry():
     r.close()
 
 
-def pull(tmp_path, registry, image, digest=None, version=2):
+def pull(tmp_path, registry, image, digest=None, version=2, manifest_sha=None):
     """Publish image, pin it (or `digest`), and run the copied puller."""
     published = registry.publish(image)
     scripts = rig.copy_scripts(
-        tmp_path / "scripts", registry.url, digest or published, version=version
+        tmp_path / "scripts",
+        registry.url,
+        digest or published,
+        version=version,
+        manifest_sha=manifest_sha,
     )
     into = tmp_path / "staging"
     result = rig.run(scripts / "pull-disk-gc.sh", "--into", into)
@@ -337,8 +342,78 @@ def test_manifest_path_outside_the_prefix(tmp_path, registry):
 def test_version_other_than_the_pin(tmp_path, registry):
     files = rig.gc_files(version=3)
     image = rig.Image(gc_layer_tar=rig.tar_bytes(rig.gc_members(files)))
-    result, _ = pull(tmp_path, registry, image)
+    sha = hashlib.sha256(rig.manifest_text(files)).hexdigest()
+    result, _ = pull(tmp_path, registry, image, manifest_sha=sha)
     assert "VERSION" in refused(result, "staging")
+
+
+# --- CR 520: modes, and MANIFEST bound to the pin --------------------------------
+
+
+def test_manifest_other_than_the_pinned_one_is_refused(tmp_path, registry):
+    """A layer whose files and MANIFEST agree, but whose MANIFEST isn't the
+    one the pin names: sha256sum -c alone would pass it."""
+    files = rig.gc_files(disk_gc=b"#!/bin/sh\n# not the release\n")
+    image = rig.Image(gc_layer_tar=rig.tar_bytes(rig.gc_members(files)))
+    result, into = pull(tmp_path, registry, image)
+    assert "pin" in refused(result, "staging")
+    assert not into.exists()
+
+
+def test_root_entry_mode_other_than_0755_is_refused(tmp_path, registry):
+    members = [rig.Member("./", kind=tarfile.DIRTYPE, mode=0o777)] + rig.gc_members()
+    result, into = pull(
+        tmp_path, registry, rig.Image(gc_layer_tar=rig.tar_bytes(members))
+    )
+    assert "mode" in refused(result, "members")
+    assert not into.exists()
+
+
+@pytest.mark.parametrize(
+    "member",
+    [
+        rig.Member(
+            "usr/local/lib/cannobserv/hidden/", kind=tarfile.DIRTYPE, mode=0o000
+        ),
+        rig.Member("usr/local/lib/cannobserv/open/", kind=tarfile.DIRTYPE, mode=0o775),
+        rig.Member("usr/local/lib/cannobserv/disk-gc/x", b"x", mode=0o600),
+        rig.Member("usr/local/lib/cannobserv/disk-gc/y", b"x", mode=0o750),
+    ],
+    ids=lambda m: f"{m.name.rstrip('/').rsplit('/', 1)[1]}-{m.mode:o}",
+)
+def test_member_modes_are_0644_0755_or_a_0755_dir(tmp_path, registry, member):
+    result, into = pull(tmp_path, registry, layer_with(member))
+    assert "mode" in refused(result, "members")
+    assert not into.exists()
+
+
+def test_an_unreadable_staging_directory_refuses_rather_than_hides(tmp_path):
+    """os.walk skips a directory it can't list unless told otherwise, which
+    would hide its files from the exact-file-set check."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("_pull", rig.SCRIPTS / "_pull.py")
+    pull_mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(pull_mod)
+    staging = rig.stage(tmp_path / "staging")
+    sha = hashlib.sha256((staging / rig.GC_DIR / "MANIFEST").read_bytes()).hexdigest()
+    calls = []
+
+    def walk(top, onerror=None, **kw):
+        calls.append(onerror)
+        if onerror is not None:
+            onerror(PermissionError(13, "Permission denied", str(top)))
+        return iter(())
+
+    real = pull_mod.os.walk
+    pull_mod.os.walk = walk
+    try:
+        with pytest.raises(pull_mod.Refused) as e:
+            pull_mod.check_staging(str(staging), 2, sha)
+    finally:
+        pull_mod.os.walk = real
+    assert calls and calls[0] is not None
+    assert e.value.step == "staging"
 
 
 # --- usage -------------------------------------------------------------------

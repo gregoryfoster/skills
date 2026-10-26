@@ -17,6 +17,10 @@ PIN = rig.SCRIPTS / "_pin.sh"
 # https://github.com/gregoryfoster/skills/issues/425#issuecomment-6387455753
 TAG = "4ac2cc21bcf5b4ab863776a37d2f718713662580"
 DIGEST = "sha256:0e230e4dfb255a0e27ae43367e823bd65b4c5156f51cd071a4c1c1c8f83e624f"
+# The layer's own MANIFEST, from the digest-verified layer
+# sha256:6f719bd2…48ca4 (CR 520, read by the orchestrator: this session's
+# network can't reach the blob host).
+MANIFEST_SHA256 = "066a9f3ad4e59bec523a0476ee81d4e87534cca82e50356a116043d8716d208c"
 
 
 def pin_values() -> dict:
@@ -28,6 +32,7 @@ def test_pin_is_version_2():
     assert values["DISK_GC_TAG"] == TAG
     assert values["DISK_GC_MANIFEST_DIGEST"] == DIGEST
     assert values["DISK_GC_VERSION"] == "2"
+    assert values["DISK_GC_MANIFEST_SHA256"] == MANIFEST_SHA256
     assert values["DISK_GC_REGISTRY"] == "https://ghcr.io"
     assert values["DISK_GC_REPOSITORY"] == "cannobserv/co-image-base"
 
@@ -36,6 +41,7 @@ def test_pin_is_a_released_tag_and_its_digest():
     values = pin_values()
     assert re.fullmatch(r"[0-9a-f]{40}", values["DISK_GC_TAG"])
     assert re.fullmatch(r"sha256:[0-9a-f]{64}", values["DISK_GC_MANIFEST_DIGEST"])
+    assert re.fullmatch(r"[0-9a-f]{64}", values["DISK_GC_MANIFEST_SHA256"])
 
 
 def test_each_key_is_set_once():
@@ -46,12 +52,12 @@ def test_each_key_is_set_once():
 def test_no_other_file_in_skills_carries_the_pin():
     """Short prefixes too: a doc that quotes `4ac2cc2…` is a second copy that
     a release bump would leave behind."""
-    tag_head, digest_head = TAG[:7], DIGEST.split(":")[1][:7]
+    heads = (TAG[:7], DIGEST.split(":")[1][:7], MANIFEST_SHA256[:7])
     hits = []
     for path in sorted(rig.REPO_ROOT.glob("skills/**/*")):
         if not path.is_file() or path == PIN or "__pycache__" in path.parts:
             continue
         text = path.read_text(errors="replace")
-        if tag_head in text or digest_head in text:
+        if any(h in text for h in heads):
             hits.append(str(path.relative_to(rig.REPO_ROOT)))
     assert not hits, f"the pin must live only in {PIN.name}; also found in {hits}"

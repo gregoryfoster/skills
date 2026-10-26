@@ -48,13 +48,19 @@ def staged(tmp_path, files=None, manifest=None, name="staging"):
     return rig.stage(tmp_path / name, files, manifest)
 
 
-def install(tmp_path, root, staging, *extra, systemctl=True):
+def install(tmp_path, root, staging, *extra, systemctl=True, pin_from=None):
+    """Run a copy of the installer whose pin names the MANIFEST in
+    `pin_from` (default: the staging tree's own)."""
+    copies = sorted(tmp_path.glob("scripts-*"))
+    scripts = rig.pinned_scripts(
+        tmp_path / f"scripts-{len(copies)}", pin_from or staging
+    )
     args = ["--staging", staging, "--root", root, "--aside", tmp_path / "aside", *extra]
     stub = None
     if systemctl:
         stub = rig.stub_systemctl(tmp_path / "bin")
         args += ["--systemctl", stub]
-    result = rig.run(INSTALL, *args)
+    result = rig.run(scripts / INSTALL.name, *args)
     return result, stub
 
 
@@ -279,6 +285,36 @@ def test_installed_version_unreadable_is_refused(tmp_path, host):
     (host / rig.GC_DIR / "VERSION").write_text("two\n")
     result, _ = install(tmp_path, host, staged(tmp_path), "--approve")
     refused(result, "VERSION")
+
+
+# --- CR 520: the root install trusts only what the pin names ------------------
+
+
+def test_staged_mode_changed_after_the_pull_is_refused(tmp_path, host):
+    staging = staged(tmp_path)
+    (staging / rig.UNIT_DIR / "cannobserv-disk-gc.service").chmod(0o666)
+    result, stub = install(tmp_path, host, staging, "--approve")
+    refused(result, "mode")
+    assert not (host / "usr").exists()
+    assert rig.calls(stub) == []
+
+
+def test_staged_directory_mode_other_than_0755_is_refused(tmp_path, host):
+    staging = staged(tmp_path)
+    (staging / rig.UNIT_DIR).chmod(0o777)
+    result, _ = install(tmp_path, host, staging, "--approve")
+    refused(result, "mode")
+    assert not (host / "usr").exists()
+
+
+def test_content_and_manifest_swapped_together_is_refused(tmp_path, host):
+    """Both changed in step, so sha256sum -c passes; the pin still doesn't."""
+    files = rig.gc_files(disk_gc=b"#!/bin/sh\nrm -rf /\n")
+    staging = staged(tmp_path, files)
+    pin_from = staged(tmp_path, name="the-real-release")
+    result, _ = install(tmp_path, host, staging, "--approve", pin_from=pin_from)
+    refused(result, "pin")
+    assert not (host / "usr").exists()
 
 
 def test_real_root_needs_root(tmp_path):
