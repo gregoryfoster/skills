@@ -119,11 +119,15 @@ def fetch(url, out, step, headers=(), size=None):
         )
     if rc != 0:
         raise Refused(step, f"GET {where} failed (curl exit {rc})")
+    # The size on disk first, before a byte is read in: an older curl may
+    # not apply --max-filesize to a chunked response.
+    got = os.path.getsize(out)
+    if size is not None and got != size:
+        raise Refused(step, f"GET {where} is {got} bytes, not its size {size}")
+    if got > MAX_DOC_BYTES:
+        raise Refused(step, f"GET {where} is {got} bytes, past {MAX_DOC_BYTES}")
     with open(out, "rb") as f:
-        data = f.read()
-    if size is not None and len(data) != size:
-        raise Refused(step, f"GET {where} is {len(data)} bytes, not its size {size}")
-    return data
+        return f.read()
 
 
 def declared_size(desc, what):
