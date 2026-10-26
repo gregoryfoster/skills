@@ -400,7 +400,9 @@ def test_member_modes_are_0644_0755_or_a_0755_dir(tmp_path, registry, member):
     assert not into.exists()
 
 
-def test_an_unreadable_staging_directory_refuses_rather_than_hides(tmp_path):
+def test_an_unreadable_staging_directory_refuses_rather_than_hides(
+    tmp_path, monkeypatch
+):
     """os.walk skips a directory it can't list unless told otherwise, which
     would hide its files from the exact-file-set check."""
     import importlib.util
@@ -418,13 +420,10 @@ def test_an_unreadable_staging_directory_refuses_rather_than_hides(tmp_path):
             onerror(PermissionError(13, "Permission denied", str(top)))
         return iter(())
 
-    real = pull_mod.os.walk
-    pull_mod.os.walk = walk
-    try:
-        with pytest.raises(pull_mod.Refused) as e:
-            pull_mod.check_staging(str(staging), 2, sha)
-    finally:
-        pull_mod.os.walk = real
+    # pull_mod.os is the process's own os: monkeypatch puts walk back.
+    monkeypatch.setattr(pull_mod.os, "walk", walk)
+    with pytest.raises(pull_mod.Refused) as e:
+        pull_mod.check_staging(str(staging), 2, sha)
     assert calls and calls[0] is not None
     assert e.value.step == "staging"
 
@@ -522,8 +521,15 @@ def test_a_signal_after_staging_is_made_still_removes_it(tmp_path, capsys):
 
 def test_staging_it_cannot_remove_is_reported(tmp_path, capsys, monkeypatch):
     module = load_pull()
+    into = tmp_path / "staging"
+    real_rmtree = shutil.rmtree
+
+    def rmtree(path, *a, **k):  # fails on the staging tree only
+        if str(path) != str(into):
+            real_rmtree(path, *a, **k)
+
     # module.shutil is the process's own shutil: patch it so it's put back.
-    monkeypatch.setattr(module.shutil, "rmtree", lambda *a, **k: None)
+    monkeypatch.setattr(module.shutil, "rmtree", rmtree)
 
     def boom():
         raise OSError("no")

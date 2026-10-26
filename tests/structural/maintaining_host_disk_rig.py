@@ -18,6 +18,7 @@ that logs its argv.
 
 from __future__ import annotations
 
+import atexit
 import gzip
 import hashlib
 import http.server
@@ -236,6 +237,8 @@ def tls_cert() -> str:
     test process; the path curl is told to trust."""
     if "cert" not in _CERT:
         d = tempfile.mkdtemp(prefix="disk-gc-tls.")
+        # It holds a private key: gone when the test process ends.
+        atexit.register(shutil.rmtree, d, True)
         cert, key = os.path.join(d, "cert.pem"), os.path.join(d, "key.pem")
         made = subprocess.run(
             ["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "2"]
