@@ -53,7 +53,7 @@ sudo systemctl enable --now cannobserv-disk-gc.timer cannobserv-disk-headroom.ti
 
 Enable them in the same change that retires the host's own disk tooling, once its retire check has been read ([retiring.md](retiring.md)), so the host never runs two GCs. The GC runs daily at 05:15 UTC plus up to 30 minutes, with no catch-up at boot. The sensor runs every 10 minutes.
 
-**A host whose own probe already reports its free space** enables only the GC timer, and sets `gc_stale_hours = 0`, as the contract says. With the sensor timer off, nothing reports for the GC: `gc_stale_hours = 0` matters only when the sensor runs at all (the rehearsal, or the sensor timer enabled later), where it turns the `gc-stale` fault off. A failed GC run (`gc-failed`) then goes unreported unless the host's own probe reads the GC's `/var/lib/cannobserv-disk-gc/state.json`.
+**A host whose own probe already reports its free space** enables only the GC timer, and sets `gc_stale_hours = 0`, as the contract says. It skips steps 3, 4 and 6: no monitor, no key, no rehearsal. With the sensor timer off, nothing reports for the GC, and `gc_stale_hours = 0` matters only if the sensor ever runs (the timer enabled later, say). There it turns off **both** GC faults, `gc-stale` and `gc-failed`: the GC checks either only while `gc_stale_hours` is non-zero. A failed GC run then goes unreported unless the host's own probe reads the GC's `/var/lib/cannobserv-disk-gc/state.json`.
 
 ## 6. The first check-in, then the monitor, then the rehearsal
 
