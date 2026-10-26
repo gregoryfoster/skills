@@ -118,6 +118,27 @@ def present(root, path):
         return False
 
 
+def in_root(root, path, hops=8):
+    """path with its links followed as they would be with `root` as /: an
+    absolute target is taken under the root, and one that climbs out of it
+    is not followed (None). Under --root / that is ordinary resolution."""
+    root = os.path.abspath(root)
+    for _ in range(hops):
+        if not os.path.islink(path):
+            break
+        target = os.readlink(path)
+        if target.startswith("/"):
+            path = os.path.join(root, target.lstrip("/"))
+        else:
+            path = os.path.join(os.path.dirname(path), target)
+        path = os.path.normpath(path)
+        if root != "/" and not (path == root or path.startswith(root + os.sep)):
+            return None
+    else:
+        return None
+    return path
+
+
 def listdir(path):
     """A directory's names, sorted, or none where it can't be read: a home
     unreadable to a non-root caller is skipped, and `unreadable` says so."""
@@ -288,7 +309,8 @@ def scan_units(root):
             if os.path.islink(full) and os.readlink(full) == "/dev/null":
                 masked.add((scope, name))
                 continue
-            if not os.path.isfile(full):
+            full = in_root(root, full)
+            if full is None or not os.path.isfile(full):
                 continue
             units[(scope, name)] = {
                 "scope": scope,
@@ -319,9 +341,10 @@ def scan_units(root):
                 continue
             for conf in listdir(dropdir):
                 if conf.endswith(".conf") and conf not in chosen:
+                    real = in_root(root, os.path.join(dropdir, conf))
                     chosen[conf] = (
                         f"{reldir}/{name}.d/{conf}",
-                        read(os.path.join(dropdir, conf)),
+                        read(real) if real else None,
                     )
         unit["dropins"] = [chosen[c] for c in sorted(chosen)]
     return units
@@ -379,10 +402,7 @@ RUN_PARTS_NAME = re.compile(r"[A-Za-z0-9_-]+\Z")
 
 def inside(root, path):
     """Where a symlink at path points, resolved inside the root."""
-    target = os.readlink(path)
-    if target.startswith("/"):
-        return os.path.join(root, target.lstrip("/"))
-    return os.path.join(os.path.dirname(path), target)
+    return in_root(root, path) or os.path.join(root, ".no-such-path")
 
 
 def executable(path):
@@ -410,7 +430,8 @@ def scan_cron(root):
             files += [f"{d}/{n}" for n in listdir(full)]
     for kind, rels in (("cron", files), ("anacron", ["etc/anacrontab"])):
         for rel in rels:
-            text = read(os.path.join(root, rel))
+            real = in_root(root, os.path.join(root, rel))
+            text = read(real) if real else None
             # Debian's cron reads /etc/cron.d by run-parts' naming rule too.
             runs = not rel.startswith("etc/cron.d/") or bool(
                 RUN_PARTS_NAME.match(os.path.basename(rel))
