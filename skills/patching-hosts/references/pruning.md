@@ -4,6 +4,8 @@ A component the probe calls `dormant` is patch surface, disk and attack surface 
 
 Where the component shipped with the image on every host, the prune belongs in the base image instead, so provisioning stays reproducible. Until it gets there, a prune on one host is drift from that image, and the knob declares it.
 
+Tooling files under a home directory, such as VS Code's server builds, aren't a dormant component and have no class here: the canonical disk GC prunes them, and [`maintaining-host-disk`](../../maintaining-host-disk/SKILL.md) installs it.
+
 ## The calendar
 
 A prune runs **disable → remove → purge**, each stage after the last one's soak:
