@@ -50,8 +50,10 @@ skill's default rubric. Q1 makes correctness the tiebreaker.
 
 - **The canonical GC.** VERSION 2's layer was pulled anonymously and its digests
   matched the pin. Its VS Code tiers judge liveness from `/proc` and apply the
-  60-minute grace, and four details differ from #482's ask. They are listed in
-  #425's step 4 and on #482.
+  60-minute grace. They differ from #482's ask in seven ways: four found at
+  the gate, and three more found in Batch A's review (no keep-newest rule on an
+  idle host, removal as root, and a timer with no per-run approval). They are
+  listed in #425's step 4, on #482, and in the skill's `editor-builds.md`.
 - **apt on noble** (`ubuntu:24.04`). `apt-get -s` prints neither "Need to get"
   nor "After this operation". `apt-get --assume-no <op>` prints both, then
   aborts having changed nothing. It needs root and the dpkg lock. Recorded on
@@ -104,6 +106,11 @@ pushed branch is the review unit: `425-maintaining-host-disk` for A and
 3. The `SKILL.md` and references.
 4. The patching-hosts pointer (#482).
 5. README and registries.
+
+*Corrected after Batch A (2026-10-26):* this order couldn't be green at step
+1, because `test_skill_self_budget.py` fails on a skill directory without a
+`SKILL.md`. `SKILL.md` landed in the first green that shipped the scripts it
+names (#485, the worker's round-1 report).
 
 ## Key decisions
 
