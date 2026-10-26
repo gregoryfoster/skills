@@ -201,3 +201,13 @@ def test_remove_after_an_interrupted_fresh_install_points_at_install(tmp_path, h
     assert out["action"] == "absent"
     assert "install-disk-gc.sh" in out["note"]
     assert rig.calls(stub) == []
+
+
+def test_an_interrupted_update_names_the_old_pin_recovery(tmp_path, host):
+    """CR 559: once the pin has moved, finishing the update takes the skill
+    at the old pin; the refusal says so."""
+    rig.stage(host, rig.gc_files(version=1, disk_gc=b"#!/usr/bin/python3 -I\n# v1\n"))
+    v2_payload_over(host)
+    result, _ = remove(tmp_path, host, "--approve")
+    assert result.returncode == 3, result.stdout
+    assert "old pin" in " ".join(rig.stdout_json(result)["refused"])

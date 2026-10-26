@@ -610,3 +610,16 @@ def test_an_interrupted_reinstall_still_restarts_journald(tmp_path, host):
     out = ok(result)
     assert out["journald_restart"] is True
     assert "restart systemd-journald" in rig.calls(stub)[first:]
+
+
+# --- CR 559: a resumed remove isn't a moved pin -------------------------------
+
+
+def test_install_after_an_interrupted_remove_says_to_finish_the_remove(tmp_path, host):
+    """VERSION already gone, MANIFEST still the marker: a remove stopped
+    part-way, and the way out is to finish it, not the old pin."""
+    rig.stage(host, v1_files())
+    (host / rig.GC_DIR / "VERSION").unlink()
+    result, _ = install(tmp_path, host, staged(tmp_path), "--approve")
+    out = refused(result, "remove-disk-gc.sh")
+    assert not any("pin has moved" in r for r in out["refused"])
