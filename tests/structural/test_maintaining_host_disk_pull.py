@@ -767,3 +767,31 @@ def test_a_signal_landing_between_the_ignores_still_ends_in_json(
     assert rc == 3
     assert out["refused"]["step"] == "internal"
     assert not into.exists()
+
+
+# --- CR 558: make_staging never leaves the signals blocked ------------------
+
+
+def test_make_staging_restores_the_mask_when_the_block_itself_is_interrupted(
+    tmp_path, monkeypatch
+):
+    """A signal raised as pthread_sigmask(SIG_BLOCK) returns must still be
+    followed by the mask's restore."""
+    module = load_pull()
+    real_mask = signal.pthread_sigmask
+    before = real_mask(signal.SIG_BLOCK, [])
+
+    def mask(how, sigs):
+        old = real_mask(how, sigs)
+        if how == signal.SIG_BLOCK and sigs:
+            raise module.Refused("internal", "interrupted by signal 15")
+        return old
+
+    monkeypatch.setattr(module.signal, "pthread_sigmask", mask)
+    try:
+        with pytest.raises(module.Refused):
+            module.make_staging(str(tmp_path / "staging"), [])
+        after = real_mask(signal.SIG_BLOCK, [])
+    finally:
+        real_mask(signal.SIG_SETMASK, before)
+    assert after == before
