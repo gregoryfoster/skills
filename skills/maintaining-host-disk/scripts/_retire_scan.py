@@ -5,7 +5,6 @@ reads unit files, drop-ins and crontabs under a root and changes nothing.
 """
 
 import argparse
-import fnmatch
 import json
 import os
 import re
@@ -132,35 +131,40 @@ def wanted(root, scope_dirs, unit):
 
 
 def scan_units(root):
-    """Each service and timer, with its effective Exec lines and where from."""
-    units = {}
+    """Each service and timer, per scope: the file from the first directory
+    that has it, then its drop-ins from every directory of that scope, in
+    filename order, the first directory winning a name clash. That is
+    systemd's own merge, so an /etc override (`systemctl edit`) applies to a
+    unit that ships lower down, and a lower drop-in to a unit in /etc."""
+    units, dirs = {}, {}
     for scope, absdir, reldir, local in unit_dirs(root):
+        dirs.setdefault(scope, []).append((absdir, reldir))
         for name in listdir(absdir):
-            full = os.path.join(absdir, name)
-            if fnmatch.fnmatch(name, "*.service") or fnmatch.fnmatch(name, "*.timer"):
-                if not os.path.isfile(full):
-                    continue
-                key = (scope, name)
-                if key in units:
-                    continue  # an earlier directory wins, as systemd's order does
-                units[key] = {
-                    "scope": scope,
-                    "unit": name,
-                    "where": f"{reldir}/{name}",
-                    "local": local,
-                    "text": read(full),
-                    "dirs": [absdir],
-                }
-        for name in listdir(absdir):
-            if not name.endswith((".service.d", ".timer.d")):
+            if not name.endswith((".service", ".timer")):
                 continue
-            unit = name[: -len(".d")]
-            dropdir = os.path.join(absdir, name)
+            full = os.path.join(absdir, name)
+            if (scope, name) in units or not os.path.isfile(full):
+                continue
+            units[(scope, name)] = {
+                "scope": scope,
+                "unit": name,
+                "where": f"{reldir}/{name}",
+                "local": local,
+                "text": read(full),
+            }
+    for (scope, name), unit in units.items():
+        chosen = {}
+        for absdir, reldir in dirs[scope]:
+            dropdir = os.path.join(absdir, f"{name}.d")
+            if not os.path.isdir(dropdir):
+                continue
             for conf in listdir(dropdir):
-                if conf.endswith(".conf") and (scope, unit) in units:
-                    units[(scope, unit)].setdefault("dropins", []).append(
-                        (f"{reldir}/{name}/{conf}", read(os.path.join(dropdir, conf)))
+                if conf.endswith(".conf") and conf not in chosen:
+                    chosen[conf] = (
+                        f"{reldir}/{name}.d/{conf}",
+                        read(os.path.join(dropdir, conf)),
                     )
+        unit["dropins"] = [chosen[c] for c in sorted(chosen)]
     return units
 
 
