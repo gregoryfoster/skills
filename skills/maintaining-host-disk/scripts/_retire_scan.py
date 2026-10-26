@@ -360,6 +360,7 @@ def timer_for(units, scope, service):
     return None
 
 
+WRAPPER_BYTES = 64 * 1024  # a cron.<period> script read for what it runs
 RUN_PARTS_NAME = re.compile(r"[A-Za-z0-9_-]+\Z")
 
 
@@ -409,6 +410,12 @@ def scan_cron(root):
                 and os.access(real, os.X_OK)
             )
             out.append(("cron", f"{d}/{n}", command, runs))
+            # A wrapper script: what it runs is in its lines, not its name.
+            if os.path.isfile(real) and os.path.getsize(real) <= WRAPPER_BYTES:
+                for lineno, line in enumerate((read(real) or "").splitlines(), 1):
+                    line = line.strip()
+                    if line and not line.startswith("#"):
+                        out.append(("cron", f"{d}/{n}:{lineno}", line, runs))
     return out
 
 

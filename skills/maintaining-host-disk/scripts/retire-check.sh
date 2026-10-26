@@ -12,7 +12,8 @@ Finds what on this host runs an implementation the canonical GC replaces
 (references/retiring.md has the list): a systemd service (system, or per
 user from each etc/passwd home), with its drop-ins from every directory
 merged as systemd merges them, its timer, or a crontab, anacrontab or
-cron.<period> entry. A match is a whole word of a command (inside sh -c
+cron.<period> entry, whose script's own lines (up to 64 KiB) are read
+too. A match is a whole word of a command (inside sh -c
 too) or the unit's own name; enabled follows the wants links, and for
 cron.<period>, run-parts' own rules. Then puts the GC's report-only
 `gc` run beside it, so the two can be read together before anything retires.
