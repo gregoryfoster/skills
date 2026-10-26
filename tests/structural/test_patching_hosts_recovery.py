@@ -32,7 +32,9 @@ Beyond that list:
   redis and root can open is reached too, and its password, where the file
   sets one, never reaches an argv or the output;
 - a run's filesystem with less free space than the data refuses: a full
-  disk mid-dump can stop the data store it shares the disk with;
+  disk mid-dump can stop the data store it shares the disk with. Each
+  filesystem it writes keeps SPACE_FLOOR_KIB, 131072 KiB, free besides, as
+  every patch run's write does (CR 587);
 - a BGSAVE Redis refuses fails at once, with Redis's reply;
 - an attempt that fails leaves no record, not even an earlier attempt's;
 - a Redis is dumped only where what redis-cli reaches is the unit's own
@@ -1218,6 +1220,55 @@ def test_a_docker_root_on_another_disk_without_room_is_refused(tmp_path):
         for r in out["refused"]
     ), out["refused"]
     assert out["gate"]["space"]["docker_root_shares_run_disk"] is False
+
+
+# --- the floor (CR 587) ----------------------------------------------------------
+
+FLOOR = 131072
+DF_HEAD = "Filesystem 1024-blocks Used Available Capacity Mounted on\n"
+
+
+@pytest.mark.parametrize("avail, ok", [(1024 + FLOOR, True), (1024 + FLOOR - 1, False)])
+def test_the_run_disk_keeps_the_floor_besides_the_data(host, avail, ok):
+    # The cluster's 1048576 bytes: 1024 KiB of dump, plus the floor.
+    _first(host, "df", "-Pk -- *", DF_HEAD + f"/dev/vda1 9999999 1 {avail} 1% /\n")
+    if ok:
+        out = host.recover()
+        assert out["refused"] == []
+        assert out["gate"]["space"]["floor_kib"] == FLOOR
+        return
+    out = host.recover(rc=3)
+    assert any(
+        f"has {avail} KiB free" in r
+        and "the data would take up to 1024 KiB" in r
+        and f"{FLOOR} KiB kept free" in r
+        for r in out["refused"]
+    ), out["refused"]
+    assert not host.calls("pg_dump")
+
+
+@pytest.mark.parametrize("short", [0, 1])
+def test_a_docker_root_on_another_disk_keeps_the_floor_besides_the_snapshot(
+    tmp_path, short
+):
+    host = _qdrant(_ready(Host(tmp_path)))
+    root = host.tmp / "docker-root"
+    [ds] = [d for d in host.recover(approve=False, rc=3)["gate"]["datastores"]]
+    snap = (ds["bytes"] + 1023) // 1024
+    _first(
+        host,
+        "df",
+        f"-Pk -- {root}",
+        DF_HEAD + f"/dev/vdb 99999999 1 {snap + FLOOR - short} 1% /var/lib/docker\n",
+    )
+    if not short:
+        assert host.recover()["refused"] == []
+        return
+    out = host.recover(rc=3)
+    assert any(
+        f"{root} has {snap + FLOOR - 1} KiB free" in r and f"{FLOOR} KiB kept free" in r
+        for r in out["refused"]
+    ), out["refused"]
 
 
 def test_a_qdrant_snapshot_that_times_out_says_one_may_still_land_inside(tmp_path):
