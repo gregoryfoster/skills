@@ -259,3 +259,87 @@ def test_unreadable_home_is_reported_not_fatal(host):
         locked.chmod(0o755)
     assert "home/exedev/.config/systemd/user" in out["unreadable"]
     assert any("root" in n for n in out["next"])
+
+
+# --- CR 522: drop-ins from every directory, merged as systemd merges them ---
+
+
+def units_found(out, unit):
+    return [f for f in out["found"] if f.get("unit") == unit]
+
+
+def test_etc_drop_in_on_a_unit_lower_down_is_read(host):
+    """`systemctl edit` writes /etc/systemd/system/<unit>.d/ even when the
+    unit itself ships in /usr/local/lib or /lib."""
+    write(
+        host, "lib/systemd/system/hygiene.service", "[Service]\nExecStart=/bin/true\n"
+    )
+    write(
+        host,
+        "etc/systemd/system/hygiene.service.d/override.conf",
+        "[Service]\nExecStart=\nExecStart=/srv/address-validator/disk-hygiene.sh\n",
+    )
+    found = units_found(check(host), "hygiene.service")
+    assert [(f["repo"], f["entry"]) for f in found] == [
+        ("address-validator", "disk-hygiene.sh")
+    ]
+    assert found[0]["where"].startswith(
+        "etc/systemd/system/hygiene.service.d/override.conf"
+    )
+
+
+def test_etc_drop_in_that_blanks_a_lower_units_command_unfinds_it(host):
+    write(
+        host,
+        "usr/local/lib/systemd/system/legacy-prune.service",
+        "[Service]\nExecStart=/opt/pm/prune_disk.py\n",
+    )
+    write(
+        host,
+        "etc/systemd/system/legacy-prune.service.d/off.conf",
+        "[Service]\nExecStart=\nExecStart=/bin/true\n",
+    )
+    assert units_found(check(host), "legacy-prune.service") == []
+
+
+def test_lower_drop_in_on_an_etc_unit_is_read(host):
+    write(
+        host, "etc/systemd/system/wslcb-gc.service", "[Service]\nExecStart=/bin/true\n"
+    )
+    write(
+        host,
+        "usr/local/lib/systemd/system/wslcb-gc.service.d/10-run.conf",
+        "[Service]\nExecStart=\nExecStart=/srv/wslcb/scripts/disk_hygiene.py\n",
+    )
+    found = units_found(check(host), "wslcb-gc.service")
+    assert [(f["repo"], f["entry"]) for f in found] == [("wslcb", "disk_hygiene.py")]
+
+
+def test_same_named_drop_in_in_etc_wins(host):
+    write(host, "lib/systemd/system/sweep.service", "[Service]\nExecStart=/bin/true\n")
+    write(
+        host,
+        "lib/systemd/system/sweep.service.d/override.conf",
+        "[Service]\nExecStart=\nExecStart=/srv/watcher/cleanup.sh\n",
+    )
+    write(
+        host,
+        "etc/systemd/system/sweep.service.d/override.conf",
+        "[Service]\nExecStart=\nExecStart=/bin/true\n",
+    )
+    assert units_found(check(host), "sweep.service") == []
+
+
+def test_drop_ins_apply_in_filename_order_across_directories(host):
+    write(host, "lib/systemd/system/order.service", "[Service]\nExecStart=/bin/true\n")
+    write(
+        host,
+        "etc/systemd/system/order.service.d/10-run.conf",
+        "[Service]\nExecStart=\nExecStart=/srv/watcher/cleanup.sh\n",
+    )
+    write(
+        host,
+        "lib/systemd/system/order.service.d/20-off.conf",
+        "[Service]\nExecStart=\nExecStart=/bin/true\n",
+    )
+    assert units_found(check(host), "order.service") == []
