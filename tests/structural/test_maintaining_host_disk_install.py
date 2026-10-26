@@ -13,6 +13,7 @@ systemctl is a stub that logs its argv (`maintaining_host_disk_rig.py`).
 """
 
 import os
+import subprocess
 
 import pytest
 
@@ -456,3 +457,41 @@ def test_no_private_directory_is_a_json_failure_with_applied_false(tmp_path, hos
     assert "private directory" in out["failed"]
     assert out["applied"] is False
     assert not (host / "usr").exists()
+
+
+# --- CR 537b: a symlinked parent, not just the last component ----------------
+
+
+def test_a_symlinked_parent_directory_is_refused(tmp_path, host):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (host / "usr/local/lib").mkdir(parents=True)
+    os.symlink(outside, host / "usr/local/lib/systemd")
+    result, stub = install(tmp_path, host, staged(tmp_path), "--approve")
+    refused(result, "symlink")
+    assert list(outside.iterdir()) == []
+    assert rig.calls(stub) == []
+
+
+@pytest.mark.parametrize(
+    "path, ok",
+    [
+        ("usr/local/lib/x", True),
+        ("usr/local/lib/./x", False),
+        ("./usr/local/lib/x", False),
+        ("usr/local/lib/x//y", False),
+        ("usr/local/lib/x/", False),
+        ("usr/local/lib/../lib/x", False),
+        ("usr/local/lib/.wh.x", False),
+        ("usr/local/libx", False),
+        ("usr/local/lib/x y", False),
+    ],
+)
+def test_safe_rel(path, ok):
+    lib = rig.SCRIPTS / "_manifest-lib.sh"
+    result = subprocess.run(
+        ["bash", "-c", '. "$1"; safe_rel "$2"', "_", str(lib), path],
+        capture_output=True,
+        text=True,
+    )
+    assert (result.returncode == 0) is ok, (path, result.stderr)

@@ -7,6 +7,8 @@ that no longer matches MANIFEST is someone's edit, so it refuses without
 `--even-modified`. Scratch root and stub systemctl only.
 """
 
+import os
+
 import pytest
 
 from tests.structural import maintaining_host_disk_rig as rig
@@ -133,3 +135,17 @@ def test_double_slash_root_is_root():
     result = rig.run(REMOVE, "--root", "//")
     assert result.returncode == 0, result.stderr
     assert rig.stdout_json(result)["root"] == "/"
+
+
+def test_a_symlinked_parent_directory_is_refused(tmp_path, host):
+    """CR 537b: the parent check, not just the last component."""
+    rig.stage(host, rig.gc_files())
+    outside = tmp_path / "outside"
+    (host / "usr/local/lib/systemd").rename(outside)
+    os.symlink(outside, host / "usr/local/lib/systemd")
+    before = sorted(p.name for p in outside.rglob("*"))
+    result, stub = remove(tmp_path, host, "--approve")
+    assert result.returncode == 3, result.stdout
+    assert "symlink" in " ".join(rig.stdout_json(result)["refused"])
+    assert sorted(p.name for p in outside.rglob("*")) == before
+    assert rig.calls(stub) == []
