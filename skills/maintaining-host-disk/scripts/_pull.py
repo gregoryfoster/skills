@@ -390,11 +390,7 @@ def pull(pin, staging, work, made):
     tar_path = f"{work}/layer.tar"
     with open(tar_path, "wb") as f:
         f.write(tar_data)
-    try:
-        os.mkdir(staging, 0o755)
-    except OSError as e:
-        raise Refused("staging", f"can't make {staging}: {e.strerror}") from e
-    made.append(staging)
+    make_staging(staging, made)
     os.chmod(staging, 0o755)  # mkdir's mode is masked by the umask
     rc = subprocess.run(
         ["tar", "-xpf", tar_path, "-C", staging, "--no-same-owner"], stdout=sys.stderr
@@ -424,6 +420,24 @@ def pull(pin, staging, work, made):
     }
 
 
+SIGNALS = (signal.SIGTERM, signal.SIGHUP, signal.SIGINT)
+
+
+def make_staging(staging, made):
+    """mkdir and its record in `made` as one step: the signals are blocked
+    between them, so one that lands there is delivered (and refuses) only
+    once `made` names the directory it must remove."""
+    signal.pthread_sigmask(signal.SIG_BLOCK, SIGNALS)
+    try:
+        try:
+            os.mkdir(staging, 0o755)
+        except OSError as e:
+            raise Refused("staging", f"can't make {staging}: {e.strerror}") from e
+        made.append(staging)
+    finally:
+        signal.pthread_sigmask(signal.SIG_UNBLOCK, SIGNALS)
+
+
 def on_signal(signum, _frame):
     raise Refused("internal", f"interrupted by signal {signum}")
 
@@ -451,8 +465,7 @@ def main(argv=None):
     args = ap.parse_args(argv)
     staging = os.path.abspath(args.into)
     made = []
-    signals = (signal.SIGTERM, signal.SIGHUP, signal.SIGINT)
-    previous = {s: signal.signal(s, on_signal) for s in signals}
+    previous = {s: signal.signal(s, on_signal) for s in SIGNALS}
     try:
         work = tempfile.mkdtemp(prefix="disk-gc-pull.")
         try:
@@ -464,6 +477,10 @@ def main(argv=None):
                 refusal = Refused("internal", f"{type(e).__name__}: {e}")
             else:
                 refusal = None
+            # From here on, cleanup and the report run to the end: a second
+            # signal is ignored rather than raised out of them.
+            for s in SIGNALS:
+                signal.signal(s, signal.SIG_IGN)
         finally:
             remove_tree(work)
         if refusal is None:
