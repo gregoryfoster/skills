@@ -119,7 +119,7 @@ done
 [ -d "$STAGING" ] || usage_error "$STAGING is not a directory"
 [ -d "$ROOT" ] || usage_error "$ROOT is not a directory"
 STAGING=$(cd "$STAGING" && pwd)
-ROOT=$(cd "$ROOT" && pwd)
+ROOT=$(canon_dir "$ROOT")
 R=${ROOT%/}
 if [ "$ROOT" = / ] && [ -z "$SYSTEMCTL" ]; then SYSTEMCTL=systemctl RUN_SYSTEMCTL=1; fi
 if [ "$APPROVE" = 1 ] && [ "$ROOT" = / ] && [ "$(id -u)" != 0 ]; then

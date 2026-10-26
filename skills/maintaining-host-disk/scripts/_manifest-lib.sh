@@ -19,6 +19,8 @@ Usage: . _manifest-lib.sh    (sourced by install-disk-gc.sh and
                             or empty component and no .wh. whiteout
   no_symlink_under ROOT P   refuses when P, or a directory between ROOT and
                             it, is a symlink
+  canon_dir DIR             DIR's physical path, with every run of slashes
+                            one slash: // is /, so --root // is the real root
   hash_of FILE              FILE's sha256 hex, or "absent"
   refuse WHY                add WHY to REFUSED
   json_str S / json_list    a JSON string; a JSON array of the arguments
@@ -91,6 +93,13 @@ no_symlink_under() {
     fi
   done
   return 0
+}
+
+canon_dir() {
+  local d
+  d=$(cd "$1" && pwd -P) || return 1
+  while [[ $d == *//* ]]; do d=${d//\/\//\/}; done
+  printf '%s\n' "$d"
 }
 
 hash_of() {

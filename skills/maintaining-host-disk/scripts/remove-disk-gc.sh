@@ -73,7 +73,7 @@ for v in "$ROOT" "$SYSTEMCTL"; do
   [[ $v =~ ^[A-Za-z0-9._+@/-]*$ ]] || usage_error "$v: paths may hold only [A-Za-z0-9._+@/-]"
 done
 [ -d "$ROOT" ] || usage_error "$ROOT is not a directory"
-ROOT=$(cd "$ROOT" && pwd)
+ROOT=$(canon_dir "$ROOT")
 R=${ROOT%/}
 if [ "$ROOT" = / ] && [ -z "$SYSTEMCTL" ]; then SYSTEMCTL=systemctl RUN_SYSTEMCTL=1; fi
 if [ "$APPROVE" = 1 ] && [ "$ROOT" = / ] && [ "$(id -u)" != 0 ]; then
