@@ -372,6 +372,16 @@ def inside(root, path):
     return os.path.join(os.path.dirname(path), target)
 
 
+def executable(path):
+    """Whether run-parts, as root, would run it: a regular file with any
+    execute bit. The mode, not os.access, which asks about the caller."""
+    try:
+        st = os.stat(path)
+    except OSError:
+        return False
+    return stat.S_ISREG(st.st_mode) and bool(st.st_mode & 0o111)
+
+
 def assignment(line):
     return "=" in line.split()[0] and not line.split()[0].startswith(("/", "@"))
 
@@ -408,11 +418,7 @@ def scan_cron(root):
                 command = f"{d}/{n} -> {os.readlink(path)}"
                 real = inside(root, path)
             # run-parts runs only executables named [A-Za-z0-9_-]+.
-            runs = (
-                bool(RUN_PARTS_NAME.match(n))
-                and os.path.isfile(real)
-                and os.access(real, os.X_OK)
-            )
+            runs = bool(RUN_PARTS_NAME.match(n)) and executable(real)
             out.append(("cron", f"{d}/{n}", command, runs))
             # A wrapper script: what it runs is in its lines, not its name.
             if os.path.isfile(real) and os.path.getsize(real) <= WRAPPER_BYTES:
