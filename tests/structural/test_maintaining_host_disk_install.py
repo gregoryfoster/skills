@@ -527,3 +527,29 @@ def test_a_symlinked_staging_tree_is_copied_not_followed(tmp_path, host):
     ok(result)
     assert flag.exists(), "the shim must have run"
     assert installed(host) == want_tree(rig.gc_files())
+
+
+# --- CR 542: as root, the private directory never sits in the user's TMPDIR -
+
+
+def test_as_root_the_private_directory_ignores_tmpdir(tmp_path, host):
+    """sudo can keep a user's TMPDIR, whose owner can rename the directory
+    away and put their own in its place."""
+    if os.geteuid() != 0:
+        pytest.skip("needs root: TMPDIR is honoured for a non-root run")
+    user_tmp = tmp_path / "user-tmp"
+    user_tmp.mkdir()
+    bindir = tmp_path / "shim"
+    bindir.mkdir()
+    log = bindir / "mktemp.log"
+    shim = bindir / "mktemp"
+    shim.write_text(
+        f'#!/usr/bin/env bash\nprintf "%s\\n" "$*" >>"{log}"\nexec /usr/bin/mktemp "$@"\n'
+    )
+    shim.chmod(0o755)
+    env = {"PATH": f"{bindir}:{os.environ['PATH']}", "TMPDIR": str(user_tmp)}
+    result, _ = install(tmp_path, host, staged(tmp_path), "--approve", env=env)
+    ok(result)
+    calls = log.read_text()
+    assert str(user_tmp) not in calls, calls
+    assert list(user_tmp.iterdir()) == []
