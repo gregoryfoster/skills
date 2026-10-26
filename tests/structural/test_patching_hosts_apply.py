@@ -151,6 +151,9 @@ class Host(RigHost):
         **RigHost.FALLBACKS,
         "date": 'exec /bin/date "$@"',
         "sleep": "exit 0",
+        # Plenty free, on one filesystem, unless a case says otherwise: a
+        # fallback, so a case a test sets always wins (#390).
+        "df": "printf '%s' '" + df_row(1000000, 10**8) + "'; exit 0",
     }
 
     def __init__(self, tmp_path: Path, **kw):
@@ -288,19 +291,17 @@ def _ready(host: Host) -> Host:
     host.uu("Packages that will be upgraded: libc6\nAll upgrades installed\n")
     host.on("curl", "*", "")
     host.unit("app-healthcheck.timer")
-    space(host, free=10**8)
-    return host
-
-
-def space(host: Host, free: int, used: int = 1000000, mount: str = "/") -> Host:
-    """The step's sizes, and FREE KiB on one filesystem holding apt's cache
-    and / (#390)."""
-    host.cases["df"] = [("-Pk -- *", df_row(used, free, mount), 0, "", None)]
     host.on("apt-get", SPACE_ARGS + "*", SPACE_SIM)
     host.on("apt-cache", "show *", SPACE_SHOW)
     host.on(
         "dpkg-query", "-W -f ${Package}:${Architecture} ${Installed-Size}*", SPACE_DPKG
     )
+    return host
+
+
+def space(host: Host, free: int, used: int = 1000000, mount: str = "/") -> Host:
+    """FREE KiB on one filesystem holding apt's cache and / (#390)."""
+    host.cases["df"] = [("-Pk -- *", df_row(used, free, mount), 0, "", None)]
     return host
 
 
