@@ -660,11 +660,18 @@ disk_gc_conf() {  # GC_STATE := absent, ok or bad; GC_ALERT and GC_MOUNT when ok
       sensor.mount) _gc_m=$_gc_v _gc_hm=1 ;;
     esac
   done <<<"$_gc_t"
+  # VERSION 2's _int: digits alone (^[0-9]+$), from 1 to 100 (CR 583). The
+  # leading zeros go first, so a long run of them can't overflow the test.
   if [ "$_gc_ha" -eq 0 ]; then
     _gc_a=$DISK_GC_ALERT_DEFAULT
-  elif ! [[ $_gc_a =~ ^[0-9]{1,3}$ ]] || [ $((10#$_gc_a)) -gt 100 ]; then
-    GC_WHY="[sensor] alert_at_percent is \"$_gc_a\", not a whole percent from 0 to 100"
-    return 0
+  else
+    _gc_v=$_gc_a
+    while [ "${#_gc_v}" -gt 1 ] && [ "${_gc_v#0}" != "$_gc_v" ]; do _gc_v=${_gc_v#0}; done
+    if ! [[ $_gc_v =~ ^[0-9]{1,3}$ ]] || [ "$_gc_v" -lt 1 ] || [ "$_gc_v" -gt 100 ]; then
+      GC_WHY="[sensor] alert_at_percent is \"$_gc_a\", not a whole percent from 1 to 100"
+      return 0
+    fi
+    _gc_a=$_gc_v
   fi
   if [ "$_gc_hm" -eq 0 ]; then
     _gc_m=$DISK_GC_MOUNT_DEFAULT
@@ -675,7 +682,7 @@ disk_gc_conf() {  # GC_STATE := absent, ok or bad; GC_ALERT and GC_MOUNT when ok
       *) GC_WHY="[sensor] mount is \"$_gc_m\", not an absolute path"; return 0 ;;
     esac
   fi
-  GC_STATE=ok GC_ALERT=$((10#$_gc_a)) GC_MOUNT=$_gc_m
+  GC_STATE=ok GC_ALERT=$_gc_a GC_MOUNT=$_gc_m
 }
 
 # Whether a step's SS_* figures fit where they land, and stay under the
