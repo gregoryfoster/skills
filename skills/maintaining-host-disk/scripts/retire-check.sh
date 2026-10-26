@@ -9,9 +9,12 @@ Usage: bash retire-check.sh [--root DIR] [--gc-report FILE | --run-gc-report]
                             [--python CMD]
 
 Finds what on this host runs an implementation the canonical GC replaces
-(references/retiring.md has the list): a systemd service, its timer, a
-drop-in's ExecStart, or a cron line, matched by the script's basename or the
-unit's own name, with whether it is enabled. Then puts the GC's report-only
+(references/retiring.md has the list): a systemd service (system, or per
+user from each etc/passwd home), with its drop-ins from every directory
+merged as systemd merges them, its timer, or a crontab, anacrontab or
+cron.<period> entry. A match is a whole word of a command (inside sh -c
+too) or the unit's own name; enabled follows the wants links, and for
+cron.<period>, run-parts' own rules. Then puts the GC's report-only
 `gc` run beside it, so the two can be read together before anything retires.
 
 It reads unit files, drop-ins and crontabs, and changes nothing. What it

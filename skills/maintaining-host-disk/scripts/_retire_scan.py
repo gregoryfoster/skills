@@ -8,7 +8,6 @@ import argparse
 import json
 import os
 import re
-import shlex
 import subprocess
 import sys
 
@@ -25,7 +24,6 @@ RETIRE_LIST = (
     ("power-map", "check_disk_headroom.py", ("check_disk_headroom.py",)),
     ("broker", "prune_editor_builds.sh", ("prune_editor_builds.sh",)),
 )
-TOKENS = {(repo, entry): tokens for repo, entry, tokens in RETIRE_LIST}
 BY_HAND = (
     (
         "observo",
@@ -55,21 +53,47 @@ REPORT_LINES = 500
 UNREADABLE = []
 
 
+HOMES = {}  # user -> home, relative to the root
+
+
+def homes(root):
+    """(user, home relative to the root) for each account in the root's
+    etc/passwd whose home is a directory there; /root and home/* when it has
+    no passwd. A service account's home outside /home counts."""
+    text = read(os.path.join(root, "etc/passwd"))
+    if text is None:
+        found = [("root", "root")]
+        if os.path.isdir(os.path.join(root, "home")):
+            found += [(n, f"home/{n}") for n in listdir(os.path.join(root, "home"))]
+        return [(u, h) for u, h in found if os.path.isdir(os.path.join(root, h))]
+    found = []
+    for line in text.splitlines():
+        fields = line.split(":")
+        if len(fields) < 6 or not fields[5].startswith("/") or fields[5] == "/":
+            continue
+        home = os.path.normpath(fields[5]).lstrip("/")
+        if os.path.isdir(os.path.join(root, home)) and fields[0] not in dict(found):
+            found.append((fields[0], home))
+    return found
+
+
+USER_UNIT_DIRS = (".config/systemd/user", ".local/share/systemd/user")
+
+
 def unit_dirs(root):
-    """(scope, absolute dir, relative dir, local) for every unit directory."""
+    """(scope, absolute dir, relative dir, local) for every unit directory,
+    in systemd's order within each scope."""
     out = []
     for rel in SYSTEM_DIRS:
         out.append(("system", os.path.join(root, rel), rel, rel in LOCAL_DIRS))
     out.append(
         ("user", os.path.join(root, "etc/systemd/user"), "etc/systemd/user", True)
     )
-    homes = [("root", "root")]
-    home_base = os.path.join(root, "home")
-    if os.path.isdir(home_base):
-        homes += [(name, f"home/{name}") for name in listdir(home_base)]
-    for user, home in homes:
-        rel = f"{home}/.config/systemd/user"
-        out.append((f"user:{user}", os.path.join(root, rel), rel, True))
+    for user, home in homes(root):
+        HOMES[user] = home
+        for sub in USER_UNIT_DIRS:
+            rel = f"{home}/{sub}"
+            out.append((f"user:{user}", os.path.join(root, rel), rel, True))
     return [d for d in out if os.path.isdir(d[1])]
 
 
@@ -143,16 +167,26 @@ def redact(command):
     )
 
 
-def basenames(command):
-    try:
-        words = shlex.split(command)
-    except ValueError:
-        words = command.split()
-    return {os.path.basename(w.lstrip("@-:+!")) for w in words}
+# A token is a whole word of a command: after a path separator, a space
+# or a quote, and before a space, a quote, `;`, `&`, `|` or `>`. That finds
+# it inside `sh -c "..."` and before a redirect, and not inside a longer
+# name.
+TOKEN_RES = {
+    tok: re.compile(r"(^|[/\s'\"])" + re.escape(tok) + r"($|[\s;&|>'\"])")
+    for _repo, _entry, tokens in RETIRE_LIST
+    for tok in tokens
+}
 
 
-def match(names):
-    return [(repo, entry) for repo, entry, tokens in RETIRE_LIST if set(tokens) & names]
+def match(command, stem=None):
+    """(repo, entry, word) for each entry a command, or a unit's own name
+    `stem`, matches."""
+    hits = []
+    for repo, entry, tokens in RETIRE_LIST:
+        words = [t for t in tokens if TOKEN_RES[t].search(command) or t == stem]
+        if words:
+            hits.append((repo, entry, words[0]))
+    return hits
 
 
 def wanted(root, scope_dirs, unit):
@@ -226,9 +260,8 @@ def scope_dirs(root, scope):
         return [os.path.join(root, "etc/systemd/system")]
     if scope == "user":
         return [os.path.join(root, "etc/systemd/user")]
-    user = scope.split(":", 1)[1]
-    home = "root" if user == "root" else f"home/{user}"
-    return [os.path.join(root, home, ".config/systemd/user")]
+    home = HOMES[scope.split(":", 1)[1]]
+    return [os.path.join(root, home, sub) for sub in USER_UNIT_DIRS]
 
 
 def setting(unit, key):
@@ -253,28 +286,55 @@ def timer_for(units, scope, service):
     return None
 
 
+RUN_PARTS_NAME = re.compile(r"[A-Za-z0-9_-]+\Z")
+
+
+def inside(root, path):
+    """Where a symlink at path points, resolved inside the root."""
+    target = os.readlink(path)
+    if target.startswith("/"):
+        return os.path.join(root, target.lstrip("/"))
+    return os.path.join(os.path.dirname(path), target)
+
+
+def assignment(line):
+    return "=" in line.split()[0] and not line.split()[0].startswith(("/", "@"))
+
+
 def scan_cron(root):
-    """(where, command) for each cron line and each run-parts script."""
+    """(kind, where, command, enabled) for each crontab and anacrontab line,
+    and each run-parts entry, judged by run-parts' own rules."""
     out = []
     files = ["etc/crontab"]
     for d in ("etc/cron.d", "var/spool/cron/crontabs"):
         full = os.path.join(root, d)
         if os.path.isdir(full):
             files += [f"{d}/{n}" for n in listdir(full)]
-    for rel in files:
-        text = read(os.path.join(root, rel))
-        for lineno, line in enumerate((text or "").splitlines(), 1):
-            if (
-                line.strip()
-                and not line.lstrip().startswith("#")
-                and "=" not in line.split()[0]
-            ):
-                out.append((f"{rel}:{lineno}", line.strip()))
+    for kind, rels in (("cron", files), ("anacron", ["etc/anacrontab"])):
+        for rel in rels:
+            text = read(os.path.join(root, rel))
+            for lineno, line in enumerate((text or "").splitlines(), 1):
+                line = line.strip()
+                if line and not line.startswith("#") and not assignment(line):
+                    out.append((kind, f"{rel}:{lineno}", line, True))
     for period in ("hourly", "daily", "weekly", "monthly"):
         d = f"etc/cron.{period}"
         full = os.path.join(root, d)
-        if os.path.isdir(full):
-            out += [(f"{d}/{n}", f"{d}/{n}") for n in listdir(full)]
+        if not os.path.isdir(full):
+            continue
+        for n in listdir(full):
+            path = os.path.join(full, n)
+            command, real = f"{d}/{n}", path
+            if os.path.islink(path):
+                command = f"{d}/{n} -> {os.readlink(path)}"
+                real = inside(root, path)
+            # run-parts runs only executables named [A-Za-z0-9_-]+.
+            runs = (
+                bool(RUN_PARTS_NAME.match(n))
+                and os.path.isfile(real)
+                and os.access(real, os.X_OK)
+            )
+            out.append(("cron", f"{d}/{n}", command, runs))
     return out
 
 
@@ -337,17 +397,15 @@ def main():
         if name.startswith(CANONICAL):
             continue
         commands = exec_lines(unit) if name.endswith(".service") else []
-        names = {name.rsplit(".", 1)[0]}
-        for _where, cmd in commands:
-            names |= basenames(cmd)
-        hits = match(names)
-        for repo, entry in hits:
-            tokens = set(TOKENS[(repo, entry)])
-            where, cmd = next(
-                ((w, c) for w, c in commands if tokens & basenames(c)),
-                commands[0] if commands else (unit["where"], ""),
-            )
-            word = sorted(tokens & (basenames(cmd) | {name.rsplit(".", 1)[0]}))[0]
+        stem = name.rsplit(".", 1)[0]
+        hits = {}
+        for where, cmd in commands:
+            for repo, entry, word in match(cmd):
+                hits.setdefault((repo, entry), (word, where, cmd))
+        for repo, entry, word in match("", stem):
+            first = commands[0] if commands else (unit["where"], "")
+            hits.setdefault((repo, entry), (word, *first))
+        for (repo, entry), (word, where, cmd) in sorted(hits.items()):
             timer = timer_for(units, scope, name) if name.endswith(".service") else None
             dirs = scope_dirs(root, scope)
             enabled = wanted(root, dirs, name) or bool(
@@ -386,19 +444,18 @@ def main():
                     "why": "its name or command looks like disk tooling; read what it removes",
                 }
             )
-    for where, line in scan_cron(root):
-        hits = match(basenames(line))
-        for repo, entry in hits:
-            word = sorted(set(TOKENS[(repo, entry)]) & basenames(line))[0]
+    for kind, where, line, runs in scan_cron(root):
+        hits = match(line)
+        for repo, entry, word in hits:
             found.append(
                 {
                     "repo": repo,
                     "entry": entry,
-                    "kind": "cron",
+                    "kind": kind,
                     "scope": "cron",
                     "unit": None,
                     "timer": None,
-                    "enabled": True,
+                    "enabled": runs,
                     "match": word,
                     "where": where,
                     "command": redact(line),
@@ -407,7 +464,7 @@ def main():
         if not hits and LOOKALIKE.search(line):
             candidates.append(
                 {
-                    "kind": "cron",
+                    "kind": kind,
                     "scope": "cron",
                     "unit": None,
                     "where": where,
