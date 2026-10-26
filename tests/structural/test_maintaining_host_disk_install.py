@@ -650,3 +650,21 @@ def test_570_dropped_timers_are_disabled_before_dropped_services(tmp_path, host)
         "disable --now cannobserv-disk-old.service",
         "daemon-reload",
     ]
+
+
+# --- CR 571: an interrupted update is told apart before drift ---------------
+
+
+def test_571_the_old_pin_over_an_interrupted_update_says_so(tmp_path, host):
+    """An update 2 -> 3 stopped after writing VERSION 3, then the installer
+    is run at VERSION 2's pin. The marker is VERSION 2's, so this isn't
+    drift on an installed VERSION 3, and --reinstall would quietly leave
+    VERSION 3's own files behind."""
+    rig.stage(host, rig.gc_files())
+    (host / rig.GC_DIR / "VERSION").write_text("3\n")
+    before = rig.tree(host)
+    result, stub = install(tmp_path, host, staged(tmp_path), "--approve")
+    out = refused(result, "interrupted")
+    assert not any("--reinstall" in r for r in out["refused"]), out["refused"]
+    assert rig.tree(host) == before
+    assert rig.calls(stub) == []

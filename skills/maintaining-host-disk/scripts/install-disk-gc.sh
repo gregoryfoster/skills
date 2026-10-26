@@ -238,7 +238,19 @@ if [ -f "$I_MAN" ] && [ ! -L "$I_MAN" ]; then
   for i in ${S_PATHS[@]+"${!S_PATHS[@]}"}; do
     [ "${S_PATHS[$i]}" != "$VERSION_REL" ] || staged_v=${S_HASHES[$i]}
   done
-  if [ -f "$S_MAN" ] && cmp -s "$I_MAN" "$S_MAN"; then
+  # First, whether an update stopped part-way: a VERSION on disk that isn't
+  # the marker's. Before the current and drift checks, which would read it
+  # as drift on an installed VERSION and offer --reinstall: a quiet
+  # downgrade that leaves the newer release's own files behind.
+  if [ -n "$marked" ] && [ "$on_disk" != absent ] && [ "$on_disk" != "$marked" ]; then
+    if [ -n "$staged_v" ] && [ "$on_disk" = "$staged_v" ]; then
+      # This release's VERSION is on disk, under the old marker: an
+      # earlier run stopped before writing its MANIFEST.
+      ACTION=update INTERRUPTED=true
+    else
+      refuse "an update was interrupted: the installed VERSION ($I_VER) is neither the one its MANIFEST records nor the staged one, so the pin has moved since it stopped. Finish it with this skill at the old pin, the one whose VERSION is $I_VER (a skills-vendor checkout of that commit), then update. Reinstalling the staged release would not finish it"
+    fi
+  elif [ -f "$S_MAN" ] && cmp -s "$I_MAN" "$S_MAN"; then
     if [ "$REINSTALL" = 1 ]; then
       ACTION=reinstall
     else
@@ -261,16 +273,12 @@ if [ -f "$I_MAN" ] && [ ! -L "$I_MAN" ]; then
     else
       refuse "VERSION $I_VER is installed with a different MANIFEST from the staged one; --reinstall replaces it"
     fi
-  elif [ -n "$staged_v" ] && [ "$on_disk" = "$staged_v" ]; then
-    # This release's VERSION is on disk, under the old marker: an earlier
-    # run stopped before writing its MANIFEST.
-    ACTION=update INTERRUPTED=true
   elif [ "$on_disk" = absent ]; then
     # MANIFEST outlives its files only in a remove that stopped part-way:
     # remove deletes MANIFEST last.
     refuse "the installed MANIFEST is there but its VERSION is gone: a remove stopped part-way. Finish it with remove-disk-gc.sh, then install"
   else
-    refuse "the installed VERSION ($I_VER) is neither the one its MANIFEST records nor the staged one: an earlier update most likely stopped part-way, and the pin has moved since. Finish it with this skill at the old pin, the release whose VERSION is on disk (a skills-vendor checkout of that commit), then update; otherwise read it by hand"
+    refuse "the installed MANIFEST records no VERSION, or an unreadable one: read it by hand"
   fi
 fi
 
