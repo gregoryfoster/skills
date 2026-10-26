@@ -32,7 +32,7 @@ host_files = rig.host_files
 
 
 def remove(tmp_path, root, *extra):
-    stub = rig.stub_systemctl(tmp_path / "bin")
+    stub = rig.stub_systemctl(tmp_path / "bin", root=root)
     result = rig.run(REMOVE, "--root", root, "--systemctl", stub, *extra)
     return result, stub
 
@@ -149,3 +149,18 @@ def test_a_symlinked_parent_directory_is_refused(tmp_path, host):
     assert "symlink" in " ".join(rig.stdout_json(result)["refused"])
     assert sorted(p.name for p in outside.rglob("*")) == before
     assert rig.calls(stub) == []
+
+
+def test_a_remove_interrupted_after_its_rm_loop_can_be_finished(tmp_path, host):
+    """CR 541: with the unit files gone, real systemctl refuses to disable
+    or stop them; a re-run must skip what is already gone, not fail on it."""
+    rig.stage(host, rig.gc_files())
+    stub = rig.stub_systemctl(tmp_path / "bin", root=host)
+    rig.fail_once(stub, "daemon-reload")
+    result = rig.run(REMOVE, "--root", host, "--systemctl", stub, "--approve")
+    assert result.returncode == 1, result.stdout
+    assert not (host / rig.UNIT_DIR / "cannobserv-disk-gc.timer").exists()
+    result, stub = remove(tmp_path, host, "--approve")
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert not (host / rig.GC_DIR / "MANIFEST").exists()
+    assert not [c for c in rig.calls(stub) if c.startswith(("disable", "stop"))]

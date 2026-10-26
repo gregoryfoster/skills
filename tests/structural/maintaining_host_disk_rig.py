@@ -467,19 +467,43 @@ def tree(root: Path) -> dict:
     return out
 
 
-def stub_systemctl(bindir: Path) -> Path:
+def stub_systemctl(bindir: Path, root: Path | None = None) -> Path:
     """A systemctl that appends its argv, one call per line, to its log.
 
     `fail_once(stub, verb)` makes its next call with that first argument
-    exit 1 (still logged), and every later one succeed."""
+    exit 1 (still logged), and every later one succeed. With `root`, it
+    also fails as real systemd does on a unit whose file is gone (systemd
+    255, per the #485 review): `disable` exits 1 with "Unit file <u> does
+    not exist.", and `stop` exits 5 with "Unit <u> not loaded."."""
     bindir.mkdir(parents=True, exist_ok=True)
     log = bindir / "systemctl.log"
     stub = bindir / "systemctl"
     fail = bindir / "fail-once"
+    real = ""
+    if root is not None:
+        dirs = " ".join(
+            f'"{root}/{d}"'
+            for d in ("usr/local/lib/systemd/system", "etc/systemd/system")
+        )
+        real = (
+            'case "$1" in disable | stop)\n'
+            '  for u in "$@"; do\n'
+            '    case "$u" in disable | stop | -*) continue ;; esac\n'
+            "    found=0\n"
+            f'    for d in {dirs}; do [ -e "$d/$u" ] && found=1; done\n'
+            '    if [ "$found" = 0 ]; then\n'
+            '      if [ "$1" = disable ]; then\n'
+            '        echo "Failed to disable unit: Unit file $u does not exist." >&2; exit 1\n'
+            "      fi\n"
+            '      echo "Failed to stop $u: Unit $u not loaded." >&2; exit 5\n'
+            "    fi\n"
+            "  done ;;\n"
+            "esac\n"
+        )
     stub.write_text(
         "#!/usr/bin/env bash\n"
         f'printf "%s\\n" "$*" >>"{log}"\n'
-        f'if [ -f "{fail}/$1" ]; then rm -f "{fail}/$1"; exit 1; fi\n'
+        f'if [ -f "{fail}/$1" ]; then rm -f "{fail}/$1"; exit 1; fi\n' + real
     )
     stub.chmod(0o755)
     return stub
