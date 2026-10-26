@@ -72,3 +72,59 @@ There was nothing to geometrise. The session's output was five GitHub
 write-backs (a body rewrite, a title, three comments) and two measurements:
 the GC layer, and apt on noble, where `apt-get -s` prints no size line and
 `--assume-no` prints both.
+
+*Corrected 2026-10-26:* `--assume-no` doesn't always abort. It installs when
+an install of exactly the packages named needs no prompt (lesson 7).
+
+## Execution (2026-10-25 to 2026-10-26)
+
+| Batch | Worker rounds | Review | Outcome |
+|---|---|---|---|
+| A (#425 + #482) | 4 | CR 520–559 across the worker rounds, then the owner's own `CR --fix` over the 97 merged commits (CR 560–580) | merged `--no-ff`, pushed `5f3a3dd0`; #425 and #482 closed |
+| B (#390) | 3: a preflight block, the build, then CR 581–588 | one orchestrator review; 586 filed as #499 | merged `--no-ff` as `1d90f342` |
+
+Batch B ran from 16:55 to 22:06 UTC. Plan usage isn't readable from the
+orchestrator, so spend is given in rounds.
+
+### 7. The orchestrator's own measurement was the most dangerous error
+
+At the gate, `apt-get --assume-no` was measured on `upgrade` and on an
+install that pulled in other packages. Both prompted, so both aborted. The
+plan and #390 then generalised that to "prints both figures and changes
+nothing". But an install of exactly the packages named asks nothing, so
+`--assume-no` has nothing to refuse, and it **installs**. Batch B's worker had
+been told the brief was "proposals, not specifications", so it re-measured on
+the step's own shape, and caught it. Rule: a measurement transfers only to the
+invocation measured. When a brief prescribes a tool on the strength of the
+gate's measurement, say which invocation was measured.
+
+### 8. A strict baseline caught a latent race the local gate never could
+
+The brief said "stop on any other difference", and the cloud's baseline had
+one extra failure: one of Batch A's tests asserted that a killed child was
+gone. The cloud container's PID 1 reaps lazily, so the child sat as a zombie,
+and `kill(pid, 0)` succeeds on a zombie. macOS and systemd reap fast enough to
+win the race. The fix was test-only and landed on `main` before the
+re-baseline. It cost one round of about 30 minutes. Verification-mode
+asymmetry is wider than root against non-root: PID 1's behaviour differs too.
+
+### 9. Don't predict the direction of a skip delta
+
+Batch A's pilot had more skips in the cloud than on macOS, from root. By
+Batch B, Linux-only tests outnumbered the root skips (228 in the cloud against
+326 on macOS). The plan's "re-measure, don't carry over" was right. The
+brief's "more skips than macOS" wasn't.
+
+### 10. Quote the upstream code into the round when the worker can't reach it
+
+The cloud session couldn't pull the GC layer (403 from the blob host through
+its proxy), so the worker read the GC's config as configparser's defaults. The
+orchestrator had the layer locally, and three findings (the rounded-up Use%,
+`[DEFAULT]` not being a fallback, and the 1–100 range) came from reading it.
+Round 3 quoted the relevant lines into its comment, and the worker fixed all
+three against them.
+
+### 11. `gh api -f body=@file` posts the path
+
+`-f` takes the value raw; only `-F` reads `@file`. One round comment went up
+as a path, and was patched before the worker was woken.
