@@ -392,3 +392,14 @@ def test_staging_is_required():
     result = rig.run(INSTALL)
     assert result.returncode == 2
     assert "--staging" in result.stderr
+
+
+# --- CR 529: --root // is / ---------------------------------------------------
+
+
+@pytest.mark.parametrize("spelling", ["//", "///", "/./"])
+def test_slashes_that_name_root_are_root(tmp_path, spelling):
+    """A plan only (no --approve), so it reads / and changes nothing."""
+    result, _ = install(tmp_path, spelling, staged(tmp_path), systemctl=False)
+    out = rig.stdout_json(result)
+    assert out["root"] == "/"

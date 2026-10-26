@@ -125,3 +125,10 @@ def test_installed_manifest_naming_etc_is_refused(tmp_path, host):
     result, _ = remove(tmp_path, host, "--approve", "--even-modified")
     assert result.returncode == 3, result.stdout
     assert host_files(host) == keep
+
+
+def test_double_slash_root_is_root():
+    """CR 529: a plan only, so it reads / and changes nothing."""
+    result = rig.run(REMOVE, "--root", "//")
+    assert result.returncode == 0, result.stderr
+    assert rig.stdout_json(result)["root"] == "/"
