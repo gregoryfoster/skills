@@ -135,21 +135,51 @@ contains() {
   return 1
 }
 
+# --- the report ----------------------------------------------------------------
+
+# Everything emit reads, set before anything can fail.
+S_PATHS=() S_HASHES=() S_VER="" I_PATHS=() I_HASHES=() I_VER=""
+ACTION=install INTERRUPTED=false REMOVED=() JRESTART=0
+APPLIED=false FAILED_WHY=""
+emit() {
+  local ok=true iv=null sv=null ran=false
+  [ ${#REFUSED[@]} -eq 0 ] && [ -z "$FAILED_WHY" ] || ok=false
+  if [[ $I_VER =~ ^[0-9]+$ ]]; then iv=$I_VER; fi
+  if [[ $S_VER =~ ^[0-9]+$ ]]; then sv=$S_VER; fi
+  [ "$RUN_SYSTEMCTL" = 0 ] || [ "$APPROVE" = 0 ] || [ ${#SYSTEMCTL_CALLS[@]} -eq 0 ] || ran=true
+  printf '{\n  "ok": %s,\n  "action": "%s",\n  "applied": %s,\n' "$ok" "$ACTION" "$APPLIED"
+  printf '  "root": %s,\n  "staging": %s,\n' "$(json_str "$ROOT")" "$(json_str "$STAGING")"
+  printf '  "installed_version": %s,\n  "staged_version": %s,\n' "$iv" "$sv"
+  printf '  "interrupted": %s,\n' "$INTERRUPTED"
+  printf '  "files": %s,\n' "$(json_list ${S_PATHS[@]+"${S_PATHS[@]}"})"
+  printf '  "removed": %s,\n' "$(json_list ${REMOVED[@]+"${REMOVED[@]}"})"
+  printf '  "journald_restart": %s,\n' "$([ "$JRESTART" = 1 ] && echo true || echo false)"
+  printf '  "systemctl": %s,\n  "systemctl_ran": %s,\n' "$(json_list ${SYSTEMCTL_CALLS[@]+"${SYSTEMCTL_CALLS[@]}"})" "$ran"
+  printf '  "refused": %s,\n' "$(json_list ${REFUSED[@]+"${REFUSED[@]}"})"
+  if [ -n "$FAILED_WHY" ]; then printf '  "failed": %s\n}\n' "$(json_str "$FAILED_WHY")"; else printf '  "failed": null\n}\n'; fi
+}
+
+# APPLIED turns true at the first file installed, and only there: a failure
+# before it changed nothing.
+failed() {
+  FAILED_WHY=$1
+  echo "install-disk-gc: failed: $1" >&2
+  emit
+  exit 1
+}
+
 # --- the staging tree ---------------------------------------------------------
 
 # A private copy, so nothing the staging tree's owner does after this point
 # reaches what is checked and installed. Under sudo, mktemp's 0700 directory
 # and cp's new files are root's.
-COPY=$(mktemp -d "${TMPDIR:-/tmp}/disk-gc-install.XXXXXX") || {
-  echo "install-disk-gc: couldn't make a private directory under ${TMPDIR:-/tmp}" >&2
-  exit 1
-}
+COPY=$(mktemp -d "${TMPDIR:-/tmp}/disk-gc-install.XXXXXX") ||
+  failed "couldn't make a private directory under ${TMPDIR:-/tmp}; nothing installed"
 trap 'rm -rf "$COPY"' EXIT
 CP_OK=1
 cp -R --preserve=mode "$STAGING" "$COPY/stage" || CP_OK=0
 STAGED=$COPY/stage
 
-S_PATHS=() S_HASHES=() S_VER=""
 S_MAN=$STAGED/$MANIFEST_REL
 if [ "$CP_OK" = 0 ]; then
   refuse "couldn't copy the staging tree into a private directory"
@@ -179,7 +209,6 @@ fi
 
 # --- what's installed ---------------------------------------------------------
 
-I_PATHS=() I_HASHES=() I_VER="" ACTION=install INTERRUPTED=false
 I_MAN=$R/$MANIFEST_REL
 no_symlink_under "$R" "$MANIFEST_REL"
 if [ -f "$I_MAN" ] && [ ! -L "$I_MAN" ]; then
@@ -227,7 +256,6 @@ fi
 
 # --- what it would write and remove -------------------------------------------
 
-REMOVED=()
 for p in ${I_PATHS[@]+"${I_PATHS[@]}"}; do
   contains "$p" ${S_PATHS[@]+"${S_PATHS[@]}"} || REMOVED+=("$p")
 done
@@ -258,7 +286,6 @@ marked_hash() {
   done
   printf 'absent\n'
 }
-JRESTART=0
 for i in ${S_PATHS[@]+"${!S_PATHS[@]}"}; do
   case "${S_PATHS[$i]}" in
     "$JOURNALD_DIR"*) [ "$(marked_hash "${S_PATHS[$i]}")" = "${S_HASHES[$i]}" ] || JRESTART=1 ;;
@@ -270,24 +297,6 @@ done
 
 # --- report, and act ------------------------------------------------------------
 
-APPLIED=false FAILED_WHY=""
-emit() {
-  local ok=true iv=null sv=null ran=false
-  [ ${#REFUSED[@]} -eq 0 ] && [ -z "$FAILED_WHY" ] || ok=false
-  if [[ $I_VER =~ ^[0-9]+$ ]]; then iv=$I_VER; fi
-  if [[ $S_VER =~ ^[0-9]+$ ]]; then sv=$S_VER; fi
-  [ "$RUN_SYSTEMCTL" = 0 ] || [ "$APPROVE" = 0 ] || [ ${#SYSTEMCTL_CALLS[@]} -eq 0 ] || ran=true
-  printf '{\n  "ok": %s,\n  "action": "%s",\n  "applied": %s,\n' "$ok" "$ACTION" "$APPLIED"
-  printf '  "root": %s,\n  "staging": %s,\n' "$(json_str "$ROOT")" "$(json_str "$STAGING")"
-  printf '  "installed_version": %s,\n  "staged_version": %s,\n' "$iv" "$sv"
-  printf '  "interrupted": %s,\n' "$INTERRUPTED"
-  printf '  "files": %s,\n' "$(json_list ${S_PATHS[@]+"${S_PATHS[@]}"})"
-  printf '  "removed": %s,\n' "$(json_list ${REMOVED[@]+"${REMOVED[@]}"})"
-  printf '  "journald_restart": %s,\n' "$([ "$JRESTART" = 1 ] && echo true || echo false)"
-  printf '  "systemctl": %s,\n  "systemctl_ran": %s,\n' "$(json_list ${SYSTEMCTL_CALLS[@]+"${SYSTEMCTL_CALLS[@]}"})" "$ran"
-  printf '  "refused": %s,\n' "$(json_list ${REFUSED[@]+"${REFUSED[@]}"})"
-  if [ -n "$FAILED_WHY" ]; then printf '  "failed": %s\n}\n' "$(json_str "$FAILED_WHY")"; else printf '  "failed": null\n}\n'; fi
-}
 
 if [ ${#REFUSED[@]} -gt 0 ]; then
   for why in "${REFUSED[@]}"; do echo "install-disk-gc: refused: $why" >&2; done
@@ -304,13 +313,6 @@ if [ "$APPROVE" = 0 ]; then
   exit 0
 fi
 
-failed() {
-  FAILED_WHY=$1
-  APPLIED=true
-  echo "install-disk-gc: failed: $1" >&2
-  emit
-  exit 1
-}
 
 if [ "$ACTION" = current ]; then
   run_systemctl daemon-reload || failed "systemctl daemon-reload failed"
