@@ -17,6 +17,7 @@ Offline: the release is a fixture and the registry is a loopback stub
 import hashlib
 import json
 import os
+import shutil
 import signal
 import tarfile
 
@@ -39,7 +40,9 @@ def registry():
     r.close()
 
 
-def pull(tmp_path, registry, image, digest=None, version=2, manifest_sha=None):
+def pull(
+    tmp_path, registry, image, digest=None, version=2, manifest_sha=None, env=None
+):
     """Publish image, pin it (or `digest`), and run the copied puller."""
     published = registry.publish(image)
     scripts = rig.copy_scripts(
@@ -50,7 +53,7 @@ def pull(tmp_path, registry, image, digest=None, version=2, manifest_sha=None):
         manifest_sha=manifest_sha,
     )
     into = tmp_path / "staging"
-    result = rig.run(scripts / "pull-disk-gc.sh", "--into", into)
+    result = rig.run(scripts / "pull-disk-gc.sh", "--into", into, env=env)
     return result, into
 
 
@@ -576,25 +579,42 @@ def test_the_token_never_follows_the_redirect_to_another_host(tmp_path, registry
     assert all(h.get("Host", "").startswith("localhost") for h in storage)
 
 
+def tar_shim(tmp_path):
+    """A tar on PATH that logs each call, then runs the real one."""
+    bindir = tmp_path / "shim"
+    bindir.mkdir()
+    log = bindir / "tar.log"
+    real = shutil.which("tar")
+    (bindir / "tar").write_text(
+        f'#!/usr/bin/env bash\nprintf "%s\\n" "$*" >>"{log}"\nexec "{real}" "$@"\n'
+    )
+    (bindir / "tar").chmod(0o755)
+    return {"PATH": f"{bindir}:{os.environ['PATH']}"}, log
+
+
 def test_nothing_is_extracted_before_the_member_checks(tmp_path, registry):
-    """A link out of the tree, then a file through it: extracting first
-    would write into the sentinel directory."""
-    sentinel = tmp_path / "sentinel"
-    sentinel.mkdir()
+    """CR 549: GNU tar wouldn't write through an escaping link anyway, so a
+    sentinel proved nothing. The shim proves tar never runs at all."""
+    env, log = tar_shim(tmp_path)
     members = rig.gc_members() + [
         rig.Member(
-            "usr/local/lib/cannobserv/escape",
-            kind=tarfile.SYMTYPE,
-            linkname=str(sentinel),
+            "usr/local/lib/cannobserv/escape", kind=tarfile.SYMTYPE, linkname="/etc"
         ),
-        rig.Member("usr/local/lib/cannobserv/escape/evil", b"written through the link"),
     ]
     result, into = pull(
-        tmp_path, registry, rig.Image(gc_layer_tar=rig.tar_bytes(members))
+        tmp_path, registry, rig.Image(gc_layer_tar=rig.tar_bytes(members)), env=env
     )
     assert "link" in refused(result, "members")
-    assert list(sentinel.iterdir()) == []
+    assert not log.exists(), log.read_text()
     assert not into.exists()
+
+
+def test_the_tar_shim_sees_a_passing_pull(tmp_path, registry):
+    """The control: the same shim does see the extraction of a good layer."""
+    env, log = tar_shim(tmp_path)
+    result, _ = pull(tmp_path, registry, rig.Image(), env=env)
+    assert result.returncode == 0, result.stderr
+    assert "-xpf" in log.read_text()
 
 
 def test_into_whose_parent_is_missing_is_a_usage_error(tmp_path, registry):
