@@ -443,8 +443,21 @@ def test_a_step_that_would_cross_the_gcs_alert_line_is_refused(host):
 def test_a_step_that_stays_under_the_gcs_alert_line_passes(host):
     host.write(CONF, HEADROOM)
     host.disk("var/cache/apt/archives", 8000000, 2000000).disk("/", 8000000, 2000000)
-    out = gate(host, 300000, 199999, 0)
+    # 8400000 of 10000000: 84% exactly, which the sensor reads as 84.
+    out = gate(host, 300000, 100000, 0)
     assert out["short"] == []
+    assert out["space"]["headroom"]["projected_percent"] == 84
+
+
+def test_a_step_the_sensor_would_round_up_to_its_line_is_refused(host):
+    # CR 581: the sensor's usage() is df's Use%, rounded up, and it pages at
+    # percent >= alert_at_percent. 84.00001% reads as 85, so a step that
+    # lands there would page, though it stays under 85% exactly.
+    host.write(CONF, HEADROOM)
+    host.disk("var/cache/apt/archives", 8000000, 2000000).disk("/", 8000000, 2000000)
+    out = gate(host, 300000, 100001, 0)
+    [short] = out["short"]
+    assert short.startswith("risk space:headroom the step would take / to 85% used")
     assert out["space"]["headroom"]["projected_percent"] == 85
 
 
