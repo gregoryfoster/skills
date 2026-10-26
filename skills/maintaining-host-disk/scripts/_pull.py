@@ -432,15 +432,19 @@ def make_staging(staging, made):
     """mkdir and its record in `made` as one step: the signals are blocked
     between them, so one that lands there is delivered (and refuses) only
     once `made` names the directory it must remove."""
-    signal.pthread_sigmask(signal.SIG_BLOCK, SIGNALS)
+    # The mask as it was, read first (an empty SIG_BLOCK changes nothing),
+    # so the finally can put it back even when a signal pending as the
+    # block returns raises before anything else runs.
+    old = signal.pthread_sigmask(signal.SIG_BLOCK, [])
     try:
+        signal.pthread_sigmask(signal.SIG_BLOCK, SIGNALS)
         try:
             os.mkdir(staging, 0o755)
         except OSError as e:
             raise Refused("staging", f"can't make {staging}: {e.strerror}") from e
         made.append(staging)
     finally:
-        signal.pthread_sigmask(signal.SIG_UNBLOCK, SIGNALS)
+        signal.pthread_sigmask(signal.SIG_SETMASK, old)
 
 
 def on_signal(signum, _frame):
