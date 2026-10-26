@@ -36,6 +36,12 @@ Beyond that list:
 - the chain refuses to start while a package manager runs, since a reboot
   then could cut dpkg off mid-run;
 - a journal copy that fails still reboots: by then the services are down;
+- a journal copy that wouldn't fit, by `du -sk` of its source against the
+  run directory's free space less the floor, is logged and skipped, never
+  started, and one whose size or free space can't be read is skipped too
+  (#390): a partial copy would fill the disk the host boots from;
+- a copy that fails part-way is removed, so no partial copy is left to
+  fill the disk before the boot (#390);
 - only the volatile journal is copied: a persistent one survives the boot;
 - Redis is saved first only where its file sets no save points and no
   appendonly, or can't say, and its password stays in its own config file;
@@ -81,9 +87,12 @@ def _dispatcher(tmp_path_factory):
 
 
 class Host(ApplyHost):
-    STUBBED = (*ApplyHost.STUBBED, "pgrep", "cp", "sync")
+    STUBBED = (*ApplyHost.STUBBED, "pgrep", "cp", "sync", "du", "df")
     FALLBACKS = {
         **ApplyHost.FALLBACKS,
+        # The system's own, unless a case says otherwise (#390).
+        "du": 'for d in /usr/bin /bin; do [ -x "$d/du" ] && exec "$d/du" "$@"; done; exit 127',
+        "df": 'for d in /bin /usr/bin; do [ -x "$d/df" ] && exec "$d/df" "$@"; done; exit 127',
         "runuser": 'while [ "$#" -gt 0 ] && [ "$1" != -- ]; do shift; done; shift; exec "$@"',
         # Nothing is running, unless a case says so.
         "pgrep": "exit 1",
@@ -648,6 +657,83 @@ def test_a_journal_copy_that_fails_still_reboots(host):
     assert r.returncode == 0
     assert host.sequence()[-1] == "systemctl reboot"
     assert "has no record of its own" in host.record("reboot-chain.log")
+
+
+# --- the journal copy's free space (#390) -----------------------------------------
+
+# df -P as coreutils 9.4 prints it on noble, with the run directory's
+# filesystem's available KiB in the fourth column.
+DF_HEAD = "Filesystem     1024-blocks    Used Available Capacity Mounted on\n"
+
+
+def _df(avail: int) -> str:
+    return DF_HEAD + f"/dev/vda1         30298176 9000000 {avail}      30% /\n"
+
+
+def _copied(host: Host) -> bool:
+    return any(c.startswith("cp -a ") for c in host.sequence())
+
+
+def test_a_journal_copy_that_wouldnt_fit_is_skipped_and_still_reboots(host):
+    host.reboot()
+    journals = _journals(host)
+    host.on("du", f"-sk {journals[0]}", f"524288\t{journals[0]}\n")
+    # 524288 KiB to copy, and 600000 free: it fits, but not with the
+    # 131072 KiB floor kept, so the boot would start with under 128 MiB.
+    host.on("df", "-Pk *", _df(600000))
+    r = host.fire(journals)
+    assert r.returncode == 0, r.stderr
+    assert not _copied(host)
+    assert host.sequence()[-1] == "systemctl reboot"
+    log = host.record("reboot-chain.log")
+    assert f"{journals[0]} holds 524288 KiB" in log
+    assert "600000 KiB free" in log
+    assert "not copied" in log
+    assert "and read back" not in log
+
+
+def test_a_journal_copy_that_fits_with_the_floor_kept_is_copied(host):
+    host.reboot()
+    journals = _journals(host)
+    host.on("du", f"-sk {journals[0]}", f"524288\t{journals[0]}\n")
+    host.on("df", "-Pk *", _df(524288 + 131072))
+    r = host.fire(journals)
+    assert r.returncode == 0, r.stderr
+    assert _copied(host)
+    assert "and read back" in host.record("reboot-chain.log")
+
+
+@pytest.mark.parametrize("unread", ["du", "df"])
+def test_a_journal_whose_size_or_free_space_cant_be_read_isnt_copied(host, unread):
+    host.reboot()
+    journals = _journals(host)
+    host.on("du", f"-sk {journals[0]}", f"16\t{journals[0]}\n")
+    host.on("df", "-Pk *", _df(10_000_000))
+    # A reading that can't be taken: no output, and a failing exit.
+    host.cases[unread].insert(0, ("*", "", 1, f"{unread}: cannot read\n", None))
+    r = host.fire(journals)
+    assert r.returncode == 0, r.stderr
+    assert not _copied(host)
+    assert host.sequence()[-1] == "systemctl reboot"
+    assert "couldn't be read: not copied" in host.record("reboot-chain.log")
+
+
+def test_a_journal_copy_that_fails_part_way_is_removed(host):
+    host.reboot()
+    journals = _journals(host)
+    # The copy writes part of the journal, then fails, as a disk filled by
+    # something else mid-copy would.
+    host.on(
+        "cp",
+        "*",
+        script='for a; do t=$a; done; mkdir -p "$t/abc123"; echo par > "$t/abc123/system.journal"; exit 1',
+    )
+    r = host.fire(journals)
+    assert r.returncode == 0, r.stderr
+    target = host.run_dir / "journal" / journals[0].replace("/", "_")
+    assert not target.exists()
+    assert "has no record of its own" in host.record("reboot-chain.log")
+    assert host.sequence()[-1] == "systemctl reboot"
 
 
 @pytest.mark.parametrize(
