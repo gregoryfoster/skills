@@ -1,0 +1,349 @@
+"""#425 — pull-disk-gc.sh stages the canonical GC's layer, or refuses.
+
+The pull contract's steps 1–8 ([#425's contract comment]), each a refusal:
+the pinned manifest digest, an index refused, the config digest, exactly one
+`COPY disk-gc/ / # buildkit` layer found by `.history`, the layer counts
+agreeing, the blob and diff_id digests, every member checked before anything
+is extracted, and MANIFEST's exact file set checked by `sha256sum --strict
+-c` in staging. A refusal exits 3, says which step on stdout as JSON, and
+leaves no staging directory behind for an install to pick up.
+
+Offline: the release is a fixture and the registry is a loopback stub
+(`maintaining_host_disk_rig.py`).
+
+[#425's contract comment]: https://github.com/gregoryfoster/skills/issues/425#issuecomment-6371095613
+"""
+
+import tarfile
+
+import pytest
+
+from tests.structural import maintaining_host_disk_rig as rig
+
+pytestmark = pytest.mark.usefixtures("linux_tools")
+
+
+@pytest.fixture
+def linux_tools():
+    rig.require_linux_tools()
+
+
+@pytest.fixture
+def registry():
+    r = rig.Registry()
+    yield r
+    r.close()
+
+
+def pull(tmp_path, registry, image, digest=None, version=2):
+    """Publish image, pin it (or `digest`), and run the copied puller."""
+    published = registry.publish(image)
+    scripts = rig.copy_scripts(
+        tmp_path / "scripts", registry.url, digest or published, version=version
+    )
+    into = tmp_path / "staging"
+    result = rig.run(scripts / "pull-disk-gc.sh", "--into", into)
+    return result, into
+
+
+def refused(result, step):
+    assert result.returncode == 3, (result.returncode, result.stdout, result.stderr)
+    out = rig.stdout_json(result)
+    assert out["ok"] is False
+    assert out["refused"]["step"] == step, out
+    return out["refused"]["why"]
+
+
+# --- the pass ----------------------------------------------------------------
+
+
+def test_stages_the_layer(tmp_path, registry):
+    result, into = pull(tmp_path, registry, rig.Image())
+    assert result.returncode == 0, result.stderr
+    out = rig.stdout_json(result)
+    assert out["ok"] is True
+    assert out["version"] == 2
+    assert out["layer"]["index"] == 1
+    want = rig.gc_files()
+    staged = rig.tree(into)
+    assert set(staged) == set(want) | {f"{rig.GC_DIR}/MANIFEST"}
+    for path, (data, mode) in want.items():
+        assert staged[path] == (data, mode), path
+    assert sorted(out["files"]) == sorted(staged)
+
+
+def test_layer_is_found_by_history_not_position(tmp_path, registry):
+    """The n-th non-empty history entry made the n-th layer. Here the GC's
+    layer is the middle one of three, behind two empty-layer entries."""
+    result, _ = pull(tmp_path, registry, rig.Image())
+    assert result.returncode == 0, result.stderr
+    out = rig.stdout_json(result)
+    manifest, _, _, m = rig.Image().serialize()
+    assert out["layer"]["digest"] == m["layers"][1]["digest"]
+
+
+def test_manifest_request_names_both_manifest_types(tmp_path, registry):
+    result, _ = pull(tmp_path, registry, rig.Image())
+    assert result.returncode == 0, result.stderr
+    (path, headers), *_ = [r for r in registry.requests if "/manifests/" in r[0]]
+    assert path.endswith(f"/manifests/{rig.TAG}")
+    accept = headers.get("Accept", "")
+    assert rig.OCI_MANIFEST in accept and rig.DOCKER_MANIFEST in accept
+
+
+def test_an_oci_manifest_passes_too(tmp_path, registry):
+    image = rig.Image()
+    image.manifest_media_type = rig.OCI_MANIFEST
+    image.layer_media_type = "application/vnd.oci.image.layer.v1.tar+gzip"
+    result, _ = pull(tmp_path, registry, image)
+    assert result.returncode == 0, result.stderr
+
+
+def test_never_asks_for_latest(tmp_path, registry):
+    pull(tmp_path, registry, rig.Image())
+    assert not [p for p, _ in registry.requests if "latest" in p]
+
+
+# --- step 1: the pin ---------------------------------------------------------
+
+
+def test_pin_of_latest_is_refused(tmp_path, registry):
+    digest = registry.publish(rig.Image())
+    scripts = rig.copy_scripts(tmp_path / "s", registry.url, digest, tag="latest")
+    result = rig.run(scripts / "pull-disk-gc.sh", "--into", tmp_path / "staging")
+    refused(result, "pin")
+    assert not registry.requests
+
+
+# --- step 3: the manifest ----------------------------------------------------
+
+
+def test_wrong_manifest_digest(tmp_path, registry):
+    result, into = pull(tmp_path, registry, rig.Image(), digest="sha256:" + "0" * 64)
+    why = refused(result, "manifest")
+    assert "digest" in why
+    assert not into.exists()
+
+
+def test_index_is_refused(tmp_path, registry):
+    """An index pinned by its own digest passes the digest check and still
+    refuses: the contract wants a single-platform manifest."""
+    index = (
+        b'{"schemaVersion": 2, "mediaType": "%s", "manifests": []}'
+        % rig.OCI_INDEX.encode()
+    )
+    registry.publish(rig.Image())
+    registry.manifest = index
+    registry.manifest_type = rig.OCI_INDEX
+    scripts = rig.copy_scripts(tmp_path / "s", registry.url, rig.sha256(index))
+    result = rig.run(scripts / "pull-disk-gc.sh", "--into", tmp_path / "staging")
+    assert "index" in refused(result, "manifest")
+
+
+# --- step 4: the config ------------------------------------------------------
+
+
+def test_config_digest_mismatch(tmp_path, registry):
+    image = rig.Image()
+    _, _, _, manifest = image.serialize()
+    registry.served[manifest["config"]["digest"]] = b'{"history": [], "rootfs": {}}'
+    result, _ = pull(tmp_path, registry, image)
+    assert "digest" in refused(result, "config")
+
+
+# --- step 5: the layer, by history ------------------------------------------
+
+
+def test_no_copy_entry(tmp_path, registry):
+    image = rig.Image()
+    image.history[3]["created_by"] = "COPY other/ / # buildkit"
+    result, _ = pull(tmp_path, registry, image)
+    assert "0" in refused(result, "layer")
+
+
+def test_two_copy_entries(tmp_path, registry):
+    image = rig.Image()
+    image.history[4]["created_by"] = rig.COPY_LINE
+    result, _ = pull(tmp_path, registry, image)
+    assert "2" in refused(result, "layer")
+
+
+def test_copy_entry_marked_empty_does_not_count(tmp_path, registry):
+    image = rig.Image()
+    image.history.append({"created_by": rig.COPY_LINE, "empty_layer": True})
+    result, _ = pull(tmp_path, registry, image)
+    assert result.returncode == 0, result.stdout
+
+
+def test_layer_count_mismatch_history(tmp_path, registry):
+    image = rig.Image()
+    image.history.append({"created_by": "RUN /bin/sh -c late # buildkit"})
+    result, _ = pull(tmp_path, registry, image)
+    assert "count" in refused(result, "layer")
+
+
+def test_layer_count_mismatch_manifest(tmp_path, registry):
+    image = rig.Image()
+    image.extra_layers = [
+        {"mediaType": rig.DOCKER_LAYER, "size": 1, "digest": "sha256:" + "1" * 64}
+    ]
+    result, _ = pull(tmp_path, registry, image)
+    assert "count" in refused(result, "layer")
+
+
+def test_layer_count_mismatch_diff_ids(tmp_path, registry):
+    image = rig.Image()
+    image.diff_ids_override = lambda ids: ids + ["sha256:" + "2" * 64]
+    result, _ = pull(tmp_path, registry, image)
+    assert "count" in refused(result, "layer")
+
+
+def test_layer_that_is_not_gzip_is_refused(tmp_path, registry):
+    image = rig.Image()
+    image.layer_media_type = "application/vnd.oci.image.layer.v1.tar+zstd"
+    image.manifest_media_type = rig.OCI_MANIFEST
+    result, _ = pull(tmp_path, registry, image)
+    assert "mediaType" in refused(result, "layer")
+
+
+# --- step 6: the blob --------------------------------------------------------
+
+
+def test_blob_digest_mismatch(tmp_path, registry):
+    image = rig.Image()
+    _, _, _, manifest = image.serialize()
+    other = rig.gz(rig.tar_bytes(rig.gc_members(rig.gc_files(disk_gc=b"tampered\n"))))
+    registry.served[manifest["layers"][1]["digest"]] = other
+    result, into = pull(tmp_path, registry, image)
+    assert "digest" in refused(result, "blob")
+    assert not into.exists()
+
+
+def test_diff_id_mismatch(tmp_path, registry):
+    image = rig.Image()
+
+    def swap(ids):
+        ids = list(ids)
+        ids[1] = "sha256:" + "3" * 64
+        return ids
+
+    image.diff_ids_override = swap
+    result, _ = pull(tmp_path, registry, image)
+    assert "diff_id" in refused(result, "blob")
+
+
+# --- step 7: the members, before anything is extracted -----------------------
+
+
+def layer_with(extra):
+    return rig.Image(gc_layer_tar=rig.tar_bytes(rig.gc_members() + [extra]))
+
+
+@pytest.mark.parametrize(
+    "member, says",
+    [
+        (rig.Member("usr/local/lib/cannobserv/../../../etc/passwd", b"x"), ".."),
+        (rig.Member("usr/local/lib/cannobserv/disk-gc/.wh.disk-gc"), "whiteout"),
+        (rig.Member("usr/local/lib/.wh..wh..opq"), "whiteout"),
+        (
+            rig.Member(
+                "usr/local/lib/cannobserv/disk-gc/run",
+                kind=tarfile.SYMTYPE,
+                linkname="/etc/shadow",
+            ),
+            "link",
+        ),
+        (
+            rig.Member(
+                "usr/local/lib/cannobserv/disk-gc/hard",
+                kind=tarfile.LNKTYPE,
+                linkname="usr/local/lib/cannobserv/disk-gc/disk-gc",
+            ),
+            "link",
+        ),
+        (rig.Member("etc/cannobserv/disk-gc/disk-gc.conf", b"x"), "outside"),
+        (rig.Member("usr/local/bin/disk-gc", b"x", mode=0o755), "outside"),
+        (rig.Member("usr/local/lib", b"x"), "outside"),
+        (rig.Member("/usr/local/lib/abs", b"x"), "absolute"),
+        (rig.Member("usr/local/lib/fifo", kind=tarfile.FIFOTYPE), "type"),
+        (rig.Member("usr/local/lib/cannobserv/s", b"x", mode=0o4755), "mode"),
+        (rig.Member("usr/local/lib/cannobserv/w", b"x", mode=0o666), "mode"),
+        (rig.Member("usr/local/lib/cannobserv/disk-gc/disk-gc", b"again"), "twice"),
+        (rig.Member("usr/local/lib/cannobserv/a\nb", b"x"), "control"),
+    ],
+    ids=lambda v: v.name if isinstance(v, rig.Member) else v,
+)
+def test_member_refusals(tmp_path, registry, member, says):
+    result, into = pull(tmp_path, registry, layer_with(member))
+    assert says in refused(result, "members")
+    assert not into.exists(), "a refused member must leave nothing extracted"
+
+
+# --- step 8: MANIFEST in staging ---------------------------------------------
+
+
+def test_manifest_check_failure(tmp_path, registry):
+    files = rig.gc_files()
+    manifest = rig.manifest_text(files)
+    files = rig.gc_files(disk_gc=b"not what MANIFEST hashed\n")
+    image = rig.Image(gc_layer_tar=rig.tar_bytes(rig.gc_members(files, manifest)))
+    result, into = pull(tmp_path, registry, image)
+    assert "sha256sum" in refused(result, "staging")
+    assert not into.exists()
+
+
+def test_extra_file(tmp_path, registry):
+    extra = rig.Member(f"{rig.GC_DIR}/stowaway", b"x")
+    result, into = pull(tmp_path, registry, layer_with(extra))
+    why = refused(result, "staging")
+    assert "stowaway" in why
+    assert not into.exists()
+
+
+def test_missing_manifest(tmp_path, registry):
+    members = [m for m in rig.gc_members() if not m.name.endswith("/MANIFEST")]
+    result, _ = pull(tmp_path, registry, rig.Image(gc_layer_tar=rig.tar_bytes(members)))
+    assert "MANIFEST" in refused(result, "staging")
+
+
+def test_missing_version(tmp_path, registry):
+    files = rig.gc_files(VERSION=None)
+    image = rig.Image(gc_layer_tar=rig.tar_bytes(rig.gc_members(files)))
+    result, _ = pull(tmp_path, registry, image)
+    assert "VERSION" in refused(result, "staging")
+
+
+def test_manifest_path_outside_the_prefix(tmp_path, registry):
+    files = rig.gc_files()
+    manifest = rig.manifest_text(files) + b"%s  etc/passwd\n" % (b"0" * 64)
+    image = rig.Image(gc_layer_tar=rig.tar_bytes(rig.gc_members(files, manifest)))
+    result, _ = pull(tmp_path, registry, image)
+    assert "etc/passwd" in refused(result, "staging")
+
+
+def test_version_other_than_the_pin(tmp_path, registry):
+    files = rig.gc_files(version=3)
+    image = rig.Image(gc_layer_tar=rig.tar_bytes(rig.gc_members(files)))
+    result, _ = pull(tmp_path, registry, image)
+    assert "VERSION" in refused(result, "staging")
+
+
+# --- usage -------------------------------------------------------------------
+
+
+def test_into_must_not_exist(tmp_path, registry):
+    into = tmp_path / "staging"
+    into.mkdir()
+    (into / "keep").write_text("mine")
+    digest = registry.publish(rig.Image())
+    scripts = rig.copy_scripts(tmp_path / "s", registry.url, digest)
+    result = rig.run(scripts / "pull-disk-gc.sh", "--into", into)
+    assert result.returncode == 2
+    assert (into / "keep").read_text() == "mine"
+    assert not registry.requests
+
+
+def test_into_is_required(tmp_path):
+    result = rig.run(rig.SCRIPTS / "pull-disk-gc.sh")
+    assert result.returncode == 2
+    assert "--into" in result.stderr
