@@ -15,7 +15,9 @@ merged as systemd merges them, its timer, or a crontab, anacrontab or
 cron.<period> entry, whose script's own lines (its first 64 KiB) are
 read too. A match is a whole word of a command (inside sh -c
 too) or the unit's own name; enabled follows the wants links, and for
-cron.<period>, run-parts' own rules. Then puts the GC's report-only
+cron.<period>, run-parts' own rules. A unit in /etc/systemd/user is
+also reported as user:<name> once that user's directories enable,
+mask or extend it, judged by their links and /etc/systemd/user's. Then puts the GC's report-only
 `gc` run beside it, so the two can be read together before anything retires.
 
 It reads unit files, drop-ins and crontabs, and changes nothing. What it

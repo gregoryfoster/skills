@@ -914,3 +914,48 @@ def test_560_a_wrapper_past_64_kib_is_read_up_to_64_kib(host):
     path.chmod(0o755)
     found = [f for f in check(host)["found"] if f["where"] == "etc/cron.daily/big:2"]
     assert [f["entry"] for f in found] == ["disk-hygiene.sh"]
+
+
+# --- CR 561: a user's own links and masks on an /etc/systemd/user unit ------
+
+
+def etc_user_sweeper(host):
+    write(
+        host,
+        "etc/systemd/user/hyg.service",
+        "[Service]\nExecStart=/srv/watcher/cleanup.sh\n",
+    )
+    write(host, "etc/systemd/user/hyg.timer", "[Timer]\nOnCalendar=daily\n")
+
+
+def test_561_a_timer_only_the_user_enabled_reads_as_enabled_for_them(host):
+    etc_user_sweeper(host)
+    enable(host, "hyg.timer", base="home/exedev/.config/systemd/user")
+    found = {f["scope"]: f for f in units_found(check(host), "hyg.service")}
+    assert found["user:exedev"]["enabled"] is True, found
+    assert found["user"]["enabled"] is False
+
+
+def test_561_a_global_enable_holds_for_a_user_with_a_drop_in(host):
+    etc_user_sweeper(host)
+    enable(host, "hyg.timer", base="etc/systemd/user")
+    write(
+        host,
+        "home/exedev/.config/systemd/user/hyg.service.d/nice.conf",
+        "[Service]\nNice=10\n",
+    )
+    found = units_found(check(host), "hyg.service")
+    assert {f["scope"] for f in found} == {"user", "user:exedev"}
+    assert all(f["enabled"] for f in found), found
+
+
+def test_561_a_users_own_mask_masks_it_for_them(host):
+    etc_user_sweeper(host)
+    enable(host, "hyg.timer", base="etc/systemd/user")
+    d = host / "home/exedev/.config/systemd/user"
+    d.mkdir(parents=True, exist_ok=True)
+    os.symlink("/dev/null", d / "hyg.service")
+    found = {f["scope"]: f for f in units_found(check(host), "hyg.service")}
+    assert found["user:exedev"]["masked"] is True
+    assert found["user:exedev"]["enabled"] is False
+    assert found["user"]["enabled"] is True

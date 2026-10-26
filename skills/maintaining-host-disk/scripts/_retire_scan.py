@@ -328,19 +328,17 @@ def scan_units(root):
                 "masked": (scope, name) in masked,
             }
     # A user's manager reads /etc/systemd/user between ~/.config and
-    # ~/.local/share: a user's drop-in on a unit there is that user's unit.
+    # ~/.local/share.
     etc_user = dirs.get("user", [])
+    own_dirs = {}
     for scope in [s for s in dirs if s.startswith("user:")]:
         own = dirs[scope]
+        own_dirs[scope] = [a for a, _r in own]
         config = [d for d in own if d[1].endswith(USER_UNIT_DIRS[0])]
         rest = [d for d in own if d not in config]
         dirs[scope] = config + etc_user + rest
-        for (s_, name), unit in list(units.items()):
-            if s_ != "user" or (scope, name) in units:
-                continue
-            if any(os.path.isdir(os.path.join(a, f"{name}.d")) for a, _r in own):
-                units[(scope, name)] = dict(unit, scope=scope)
-    for (scope, name), unit in units.items():
+
+    def merge_dropins(scope, name, unit):
         chosen = {}
         for absdir, reldir in dirs[scope]:
             dropdir = os.path.join(absdir, f"{name}.d")
@@ -354,6 +352,38 @@ def scan_units(root):
                         read(real) if real else None,
                     )
         unit["dropins"] = [chosen[c] for c in sorted(chosen)]
+
+    for (scope, name), unit in units.items():
+        merge_dropins(scope, name, unit)
+    # A unit in /etc/systemd/user becomes a user's own once their
+    # directories touch it or its timer: a drop-in, an enable link, or a
+    # mask. Its enabled and masked are then judged in their scope. Run
+    # after the merge, so a timer's Unit= from a drop-in counts.
+    for scope, own_abs in own_dirs.items():
+
+        def touches(name, scope=scope, own_abs=own_abs):
+            return (
+                (scope, name) in masked
+                or any(os.path.isdir(os.path.join(a, f"{name}.d")) for a in own_abs)
+                or wanted(root, own_abs, name)
+            )
+
+        for s_, name in list(units):
+            if s_ != "user" or not name.endswith(".service"):
+                continue
+            timer = timer_for(units, "user", name)
+            family = [name] + ([timer] if timer else [])
+            if not any(touches(n) for n in family):
+                continue
+            for n in family:
+                if (scope, n) in units:
+                    continue
+                base = units[("user", n)]
+                copy = dict(
+                    base, scope=scope, masked=(scope, n) in masked or base["masked"]
+                )
+                merge_dropins(scope, n, copy)
+                units[(scope, n)] = copy
     return units
 
 
@@ -377,8 +407,11 @@ def scope_dirs(root, scope):
         return [os.path.join(root, "etc/systemd/system")]
     if scope == "user":
         return [os.path.join(root, "etc/systemd/user")]
+    # A global enable in /etc/systemd/user holds for every user's manager.
     home = HOMES[scope.split(":", 1)[1]]
-    return [os.path.join(root, home, sub) for sub in USER_UNIT_DIRS]
+    return [os.path.join(root, home, sub) for sub in USER_UNIT_DIRS] + [
+        os.path.join(root, "etc/systemd/user")
+    ]
 
 
 def setting(unit, key):
