@@ -15,6 +15,9 @@ Offline: the release is a fixture and the registry is a loopback stub
 """
 
 import hashlib
+import json
+import os
+import signal
 import tarfile
 
 import pytest
@@ -435,3 +438,85 @@ def test_into_is_required(tmp_path):
     result = rig.run(rig.SCRIPTS / "pull-disk-gc.sh")
     assert result.returncode == 2
     assert "--into" in result.stderr
+
+
+# --- CR 527: any failure is a refusal, and staging is never left behind ----
+
+
+def load_pull():
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("_pull_527", rig.SCRIPTS / "_pull.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def run_main(module, tmp_path, capsys, fake_pull):
+    """main() with a stand-in for pull() that makes the staging directory
+    and then fails its own way."""
+    into = tmp_path / "staging"
+    pin = (
+        rig.copy_scripts(tmp_path / "s", "https://ghcr.io", "sha256:" + "0" * 64)
+        / "_pin.sh"
+    )
+
+    def pull(pin_values, staging, work, made):
+        os.mkdir(staging)
+        made.append(staging)
+        locked = os.path.join(staging, "usr")
+        os.mkdir(locked)
+        open(os.path.join(locked, "f"), "w").close()
+        os.chmod(locked, 0o500)
+        fake_pull()
+
+    module.pull = pull
+    rc = module.main(["--pin", str(pin), "--into", str(into)])
+    out = json.loads(capsys.readouterr().out)
+    return rc, out, into
+
+
+def test_an_unexpected_error_is_a_refusal_with_json(tmp_path, capsys):
+    module = load_pull()
+
+    def boom():
+        raise PermissionError(13, "Permission denied", "MANIFEST")
+
+    rc, out, into = run_main(module, tmp_path, capsys, boom)
+    assert rc == 3
+    assert out["refused"]["step"] == "internal"
+    assert "Permission denied" in out["refused"]["why"]
+    assert not into.exists(), "a read-only directory inside staging still goes"
+
+
+def test_a_signal_after_staging_is_made_still_removes_it(tmp_path, capsys):
+    module = load_pull()
+
+    def unhandled(signum, frame):  # so a puller without a handler can't kill pytest
+        raise RuntimeError("the puller didn't handle SIGTERM")
+
+    previous = signal.signal(signal.SIGTERM, unhandled)
+    try:
+        rc, out, into = run_main(
+            module, tmp_path, capsys, lambda: os.kill(os.getpid(), signal.SIGTERM)
+        )
+        restored = signal.getsignal(signal.SIGTERM)
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+    assert restored is unhandled
+    assert rc == 3
+    assert out["refused"]["step"] == "internal"
+    assert "signal" in out["refused"]["why"]
+    assert not into.exists()
+
+
+def test_staging_it_cannot_remove_is_reported(tmp_path, capsys):
+    module = load_pull()
+    module.shutil.rmtree = lambda *a, **k: None
+
+    def boom():
+        raise OSError("no")
+
+    rc, out, into = run_main(module, tmp_path, capsys, boom)
+    assert rc == 3
+    assert out["staging_left"] == str(into)
