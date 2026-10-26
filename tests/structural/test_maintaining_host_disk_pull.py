@@ -707,9 +707,9 @@ def test_a_file_bigger_than_declared_is_refused_before_it_is_read(
     bindir.mkdir()
     # A curl that "downloads" 200 bytes wherever -o points, and succeeds.
     (bindir / "curl").write_text(
-        "#!/usr/bin/env bash\\n"
-        'while [ $# -gt 0 ]; do [ "$1" = -o ] && out=$2; shift; done\\n'
-        'head -c 200 /dev/zero >"$out"\\n'
+        "#!/usr/bin/env bash\n"
+        'while [ $# -gt 0 ]; do [ "$1" = -o ] && out=$2; shift; done\n'
+        'head -c 200 /dev/zero >"$out"\n'
     )
     (bindir / "curl").chmod(0o755)
     monkeypatch.setenv("PATH", f"{bindir}:{os.environ['PATH']}")
