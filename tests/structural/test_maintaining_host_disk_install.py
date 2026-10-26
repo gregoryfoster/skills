@@ -558,3 +558,16 @@ def test_as_root_the_private_directory_ignores_tmpdir(tmp_path, host):
     calls = log.read_text()
     assert str(user_tmp) not in calls, calls
     assert list(user_tmp.iterdir()) == []
+
+
+# --- CR 550: --reinstall over a drifted drop-in restarts journald ------------
+
+
+def test_reinstall_over_a_drifted_drop_in_restarts_journald(tmp_path, host):
+    rig.stage(host, rig.gc_files())
+    with open(host / rig.JOURNALD, "a") as f:
+        f.write("SystemMaxUse=8G\n")
+    result, stub = install(tmp_path, host, staged(tmp_path), "--reinstall")
+    plan = ok(result)
+    assert plan["journald_restart"] is True
+    assert "restart systemd-journald" in plan["systemctl"]
