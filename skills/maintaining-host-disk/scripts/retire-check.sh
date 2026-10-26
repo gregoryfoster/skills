@@ -57,10 +57,14 @@ Options:
                     can't be run is a usage error
   -h, --help        show this help
 
-Every command is printed redacted, since the JSON is meant for the host's
-adoption issue: NAME=value and --name value where the name says token, key,
-secret, pass or auth, an Authorization header, and a URL's userinfo, path
-and query (its host stays) all read <redacted>.
+Every command is printed redacted, best-effort, since the JSON is meant
+for the host's adoption issue: NAME=value and --name value where the name
+says token, key, secret, pass or auth; any header so named, Authorization
+included; curl's -u/--user user:pass; a JSON "token": "..."; mysql*'s
+-pPASS and redis-cli's -a PASS; and a URL's userinfo, path and query (its
+host stays). Read every command before pasting: a shape these don't know
+prints as written. gc_report is not redacted, and holds paths and user
+names.
 
 Output: one JSON document on stdout. Exit codes: 0 read, 2 usage (a bad
 or conflicting flag, --run-gc-report off /, a report or interpreter that

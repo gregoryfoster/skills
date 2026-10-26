@@ -170,16 +170,62 @@ REDACTIONS = (
         r"\1 <redacted>",
     ),
     (re.compile(r"(?i)(authorization:\s*)[^'\"\n]*"), r"\1<redacted>"),
+    # Any other header whose name says it: X-Api-Key, X-Auth-Token, ...
+    (
+        re.compile(
+            r"(?i)(?<![A-Za-z0-9_-])([A-Za-z0-9_-]*(?:token|key|secret|auth|pass)"
+            r"[A-Za-z0-9_-]*:\s*)[^'\"\n]+"
+        ),
+        r"\1<redacted>",
+    ),
+    # curl -u / --user user:pass
+    (
+        re.compile(
+            r"(?<![\w-])(-u|--user)(=|\s+)(\"[^\"]*:[^\"]*\"|'[^']*:[^']*'"
+            r"|[^\s'\";&|]*:[^\s'\";&|]*)"
+        ),
+        r"\1\2<redacted>",
+    ),
+    # A JSON body's "token": "..." and the like
+    (
+        re.compile(rf'(?i)("{SECRET_WORD}"\s*:\s*)"[^"]*"'),
+        r'\1"<redacted>"',
+    ),
 )
+# Flags that are a password only to their own command: mysql*'s -pPASS
+# and redis-cli's -a PASS.
+BY_COMMAND = (
+    (
+        re.compile(r"mysql\w*\Z"),
+        re.compile(r"(?<=\s)-p(?=[^\s'\"])[^\s'\"]+"),
+        "-p<redacted>",
+    ),
+    (re.compile(r"redis-cli\Z"), re.compile(r"(?<=\s)-a\s+[^\s'\"]+"), "-a <redacted>"),
+)
+
+
+def redact_by_command(command):
+    parts = re.split(r"([;&|]+)", command)
+    for i, part in enumerate(parts):
+        names = {os.path.basename(w.strip("'\"")) for w in part.split()}
+        for name_re, flag_re, repl in BY_COMMAND:
+            if any(name_re.match(n) for n in names):
+                parts[i] = flag_re.sub(repl, parts[i])
+    return "".join(parts)
+
+
 URL = re.compile(
     r"(?i)\b([a-z][a-z0-9+.-]*://)(?:[^/@\s'\"]*@)?([^/\s'\"?#]+)([^\s'\"]*)"
 )
 
 
 def redact(command):
-    """The command with secrets masked: NAME=value and --name value where the
-    name says token, key, secret, pass or auth; an Authorization header; and
-    a URL's userinfo, path and query (its host stays, to say what it was)."""
+    """The command with secrets masked, best-effort: NAME=value and --name
+    value where the name says token, key, secret, pass or auth; any header
+    so named, Authorization included; curl's -u/--user user:pass; a JSON
+    "token": "..."; mysql*'s -pPASS and redis-cli's -a PASS; and a URL's
+    userinfo, path and query (its host stays, to say what it was)."""
+    command = redact_by_command(command)
     for pattern, repl in REDACTIONS:
         command = pattern.sub(repl, command)
     return URL.sub(
