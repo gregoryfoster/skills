@@ -36,4 +36,4 @@ A host that needs one of Provisioner's kept differently files it there, with the
 
 ## broker's script
 
-broker's `scripts/prune_editor_builds.sh` is on the retire list ([retiring.md](retiring.md)). It keeps a staged newer build and the running CLI binary, and its first run removed only two idle CLI binaries (69,110,208 bytes). Retiring it trades difference 1 above for one GC: check the next GC report for a staged build before retiring it.
+broker's `scripts/prune_editor_builds.sh` is on the retire list ([retiring.md](retiring.md)). As #482 described it (observed 2026-10-25, not re-verified: `gh api repos/CannObserv/broker/contents/scripts/prune_editor_builds.sh`), it kept a staged newer build and the running CLI binary, and its first run that day removed only two idle CLI binaries (69,110,208 bytes). Retiring it trades difference 1 above for one GC: check the next GC report for a staged build before retiring it.

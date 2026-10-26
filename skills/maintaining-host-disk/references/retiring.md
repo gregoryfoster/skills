@@ -34,7 +34,7 @@ Six hosts built their own GC before the canonical one existed (inventory in Cann
 The check finds where an old tool runs. It can't read an arbitrary script and say what it removed, so this part is a checklist, read against the old tool's own source and the GC's report:
 
 1. **Which paths did it remove that no GC tier covers,** or that a tier covers but this host's config leaves off (`worktrees` not in `tiers` or with an empty `worktree_repos`, `docker` off)?
-2. **Did it remove anything the GC deliberately keeps?** Containers, volumes, unused tagged images unless `docker_unused_images_days` opts in, a VS Code build still in use or touched within the grace window, a tree with any entry newer than 60 minutes.
+2. **Did it remove anything the GC deliberately keeps?** Containers, volumes, unused tagged images unless `docker_unused_images_days` opts in, a VS Code build still in use or touched within the grace window, a tree with any entry newer than `grace_minutes` (default 60).
 3. **Did it keep anything the GC removes?** A staged newer VS Code build and the VSIX cache are the known ones ([editor-builds.md](editor-builds.md)).
 4. **Does anything else depend on it?** A monitor reading its journal lines, a state file, a health check calling it.
 5. **Is its cadence faster than daily?** Then the canonical timer needs a drop-in, timer first and monitor second ([turning-on.md](turning-on.md#the-cadence)).
@@ -62,7 +62,7 @@ address-validator#326's nine rules are implemented in the GC. The skill doesn't 
 The GC's `docker` tier is off in the template; a host turns it on where Docker builds. Its keys, in `[gc]`:
 
 - `docker_cache_hours` (168): build cache older than this goes, and 0 means all of it. Dangling images go once they're older than `grace_minutes`.
-- `docker_builders`: buildx builders whose cache goes too, as `<user>:<builder>`, pruned as that user. buildx keeps a builder in its creator's `~/.docker`; observo's `observo-worker0` is one.
+- `docker_builders`: buildx builders whose cache goes too, as `<user>:<builder>`, pruned as that user. buildx keeps a builder in its creator's `~/.docker`. The contract named observo's `observo-worker0` as one (observed 2026-10-23, not re-verified: `docker buildx ls`, as that user, on that host).
 - `docker_unused_images_days` (0, off): tagged images no container uses, older than this. It's opt-in because a pull restores whatever an image was slimmed to drop, as with usa-wa's ollama.
 
 **It never removes a container or a volume.** SocratiCode's qdrant and ollama indexes live in volumes, and some stopped containers are kept on purpose. A host's own `docker-prune` that removed either is doing something the GC won't, and the owner decides whether that stays.

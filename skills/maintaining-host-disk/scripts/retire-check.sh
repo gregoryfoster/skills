@@ -24,8 +24,9 @@ JSON says which entries are by hand only.
 
   found       each retire-list match: repo, entry, kind (systemd or cron),
               scope (system, user, user:<name> or cron), unit, timer,
-              enabled, match (the word that matched), where (file:line)
-              and command
+              enabled, masked (a link to /dev/null shadows it, so it
+              never runs, and enabled is false), match (the word that
+              matched), where (file:line) and command
   candidates  host-local units and cron lines that look like disk tooling
               but match no entry: read each one; packaged units under lib/
               are never offered

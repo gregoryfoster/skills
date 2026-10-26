@@ -208,14 +208,20 @@ def scan_units(root):
     filename order, the first directory winning a name clash. That is
     systemd's own merge, so an /etc override (`systemctl edit`) applies to a
     unit that ships lower down, and a lower drop-in to a unit in /etc."""
-    units, dirs = {}, {}
+    units, dirs, masked = {}, {}, set()
     for scope, absdir, reldir, local in unit_dirs(root):
         dirs.setdefault(scope, []).append((absdir, reldir))
         for name in listdir(absdir):
             if not name.endswith((".service", ".timer")):
                 continue
             full = os.path.join(absdir, name)
-            if (scope, name) in units or not os.path.isfile(full):
+            if (scope, name) in units:
+                continue
+            # A link to /dev/null masks the unit for every directory below.
+            if os.path.islink(full) and os.readlink(full) == "/dev/null":
+                masked.add((scope, name))
+                continue
+            if not os.path.isfile(full):
                 continue
             units[(scope, name)] = {
                 "scope": scope,
@@ -223,6 +229,7 @@ def scan_units(root):
                 "where": f"{reldir}/{name}",
                 "local": local,
                 "text": read(full),
+                "masked": (scope, name) in masked,
             }
     for (scope, name), unit in units.items():
         chosen = {}
@@ -431,8 +438,8 @@ def main():
         for (repo, entry), (word, where, cmd) in sorted(hits.items()):
             timer = timer_for(units, scope, name) if name.endswith(".service") else None
             dirs = scope_dirs(root, scope)
-            enabled = wanted(root, dirs, name) or bool(
-                timer and wanted(root, dirs, timer)
+            enabled = not unit["masked"] and (
+                wanted(root, dirs, name) or bool(timer and wanted(root, dirs, timer))
             )
             found.append(
                 {
@@ -443,6 +450,7 @@ def main():
                     "unit": name,
                     "timer": timer,
                     "enabled": enabled,
+                    "masked": unit["masked"],
                     "match": word,
                     "where": where,
                     "command": redact(cmd),
@@ -479,6 +487,7 @@ def main():
                     "unit": None,
                     "timer": None,
                     "enabled": runs,
+                    "masked": False,
                     "match": word,
                     "where": where,
                     "command": redact(line),
