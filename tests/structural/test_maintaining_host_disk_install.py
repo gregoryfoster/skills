@@ -50,7 +50,7 @@ def staged(tmp_path, files=None, manifest=None, name="staging"):
     return rig.stage(tmp_path / name, files, manifest)
 
 
-def install(tmp_path, root, staging, *extra, systemctl=True, pin_from=None):
+def install(tmp_path, root, staging, *extra, systemctl=True, pin_from=None, env=None):
     """Run a copy of the installer whose pin names the MANIFEST in
     `pin_from` (default: the staging tree's own)."""
     copies = sorted(tmp_path.glob("scripts-*"))
@@ -62,7 +62,7 @@ def install(tmp_path, root, staging, *extra, systemctl=True, pin_from=None):
     if systemctl:
         stub = rig.stub_systemctl(tmp_path / "bin")
         args += ["--systemctl", stub]
-    result = rig.run(scripts / INSTALL.name, *args)
+    result = rig.run(scripts / INSTALL.name, *args, env=env)
     return result, stub
 
 
@@ -495,3 +495,35 @@ def test_safe_rel(path, ok):
         text=True,
     )
     assert (result.returncode == 0) is ok, (path, result.stderr)
+
+
+# --- CR 540: a symlinked --staging is copied as the tree it names ------------
+
+
+def test_a_symlinked_staging_tree_is_copied_not_followed(tmp_path, host):
+    """An `install` shim plants a file in the user's tree after the first
+    install call, as a user racing the root install would. A private copy
+    made through the link already holds the real bytes; a copy that is
+    itself the link reads the planted one."""
+    real = staged(tmp_path)
+    link = tmp_path / "staging-link"
+    os.symlink(real, link)
+    planted = real / rig.GC_DIR / "disk-gc"
+    bindir = tmp_path / "shim"
+    bindir.mkdir()
+    flag = bindir / "planted"
+    shim = bindir / "install"
+    shim.write_text(
+        "#!/usr/bin/env bash\n"
+        f'if [ ! -e "{flag}" ]; then : >"{flag}"; '
+        f'printf "#!/bin/sh\\necho planted\\n" >"{planted}"; fi\n'
+        'exec /usr/bin/install "$@"\n'
+    )
+    shim.chmod(0o755)
+    path = f"{bindir}:{os.environ['PATH']}"
+    result, _ = install(
+        tmp_path, host, link, "--approve", pin_from=real, env={"PATH": path}
+    )
+    ok(result)
+    assert flag.exists(), "the shim must have run"
+    assert installed(host) == want_tree(rig.gc_files())
