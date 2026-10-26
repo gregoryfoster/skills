@@ -809,3 +809,17 @@ def test_554d_shell_punctuation_bounds_a_token(host, command):
     assert [f["entry"] for f in units_found(check(host), "punct.service")] == [
         "cleanup.sh"
     ]
+
+
+def test_554e_a_user_drop_in_on_an_etc_user_unit_is_merged(host):
+    write(host, "etc/systemd/user/sweep.service", "[Service]\nExecStart=/bin/true\n")
+    write(
+        host,
+        "home/exedev/.config/systemd/user/sweep.service.d/run.conf",
+        "[Service]\nExecStart=\nExecStart=/srv/watcher/cleanup.sh\n",
+    )
+    found = units_found(check(host), "sweep.service")
+    assert [(f["scope"], f["entry"]) for f in found] == [("user:exedev", "cleanup.sh")]
+    assert found[0]["where"].startswith(
+        "home/exedev/.config/systemd/user/sweep.service.d/"
+    )
