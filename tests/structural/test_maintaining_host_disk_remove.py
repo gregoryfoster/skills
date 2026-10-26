@@ -166,3 +166,38 @@ def test_a_remove_interrupted_after_its_rm_loop_can_be_finished(tmp_path, host):
     assert not (host / rig.GC_DIR / "MANIFEST").exists()
     rerun = rig.calls(stub)[first:]
     assert not [c for c in rerun if c.startswith(("disable", "stop"))], rerun
+
+
+# --- CR 543: remove after an interrupted install or update -------------------
+
+
+def v2_payload_over(host):
+    """An update to VERSION 2 that stopped before its MANIFEST: the new
+    files on disk, VERSION 1's MANIFEST still the marker."""
+    for path, (data, mode) in rig.gc_files().items():
+        p = host / path
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_bytes(data)
+        p.chmod(mode)
+
+
+def test_remove_after_an_interrupted_update_says_to_finish_it(tmp_path, host):
+    rig.stage(host, rig.gc_files(version=1, disk_gc=b"#!/usr/bin/python3 -I\n# v1\n"))
+    v2_payload_over(host)
+    before = rig.tree(host)
+    result, stub = remove(tmp_path, host, "--approve")
+    assert result.returncode == 3, result.stdout
+    why = " ".join(rig.stdout_json(result)["refused"])
+    assert "interrupted" in why and "install-disk-gc.sh" in why
+    assert rig.tree(host) == before
+    assert rig.calls(stub) == []
+
+
+def test_remove_after_an_interrupted_fresh_install_points_at_install(tmp_path, host):
+    v2_payload_over(host)
+    result, stub = remove(tmp_path, host, "--approve")
+    assert result.returncode == 0, result.stderr
+    out = rig.stdout_json(result)
+    assert out["action"] == "absent"
+    assert "install-disk-gc.sh" in out["note"]
+    assert rig.calls(stub) == []
