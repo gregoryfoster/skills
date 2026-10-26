@@ -84,7 +84,9 @@ for v in "$ROOT" "$SYSTEMCTL"; do
   [[ $v =~ ^[A-Za-z0-9._+@/-]*$ ]] || usage_error "$v: paths may hold only [A-Za-z0-9._+@/-]"
 done
 [ -d "$ROOT" ] || usage_error "$ROOT is not a directory"
-ROOT=$(canon_dir "$ROOT")
+ROOT=$(canon_dir "$ROOT") || usage_error "can't resolve $ROOT"
+# Again on the resolved path: a clean name can link to one that isn't.
+[[ $ROOT =~ ^[A-Za-z0-9._+@/-]*$ ]] || usage_error "$ROOT (resolved): paths may hold only [A-Za-z0-9._+@/-]"
 R=${ROOT%/}
 if [ "$ROOT" = / ] && [ -z "$SYSTEMCTL" ]; then SYSTEMCTL=systemctl RUN_SYSTEMCTL=1; fi
 if [ "$APPROVE" = 1 ] && [ "$ROOT" = / ] && [ "$(id -u)" != 0 ]; then

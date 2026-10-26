@@ -125,8 +125,12 @@ for v in "$STAGING" "$ROOT" "$SYSTEMCTL"; do
 done
 [ -d "$STAGING" ] || usage_error "$STAGING is not a directory"
 [ -d "$ROOT" ] || usage_error "$ROOT is not a directory"
-STAGING=$(canon_dir "$STAGING")
-ROOT=$(canon_dir "$ROOT")
+STAGING=$(canon_dir "$STAGING") || usage_error "can't resolve $STAGING"
+ROOT=$(canon_dir "$ROOT") || usage_error "can't resolve $ROOT"
+# Again on the resolved paths: a clean name can link to one that isn't.
+for v in "$STAGING" "$ROOT"; do
+  [[ $v =~ ^[A-Za-z0-9._+@/-]*$ ]] || usage_error "$v (resolved): paths may hold only [A-Za-z0-9._+@/-]"
+done
 R=${ROOT%/}
 if [ "$ROOT" = / ] && [ -z "$SYSTEMCTL" ]; then SYSTEMCTL=systemctl RUN_SYSTEMCTL=1; fi
 if [ "$APPROVE" = 1 ] && [ "$ROOT" = / ] && [ "$(id -u)" != 0 ]; then

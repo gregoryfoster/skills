@@ -668,3 +668,31 @@ def test_571_the_old_pin_over_an_interrupted_update_says_so(tmp_path, host):
     assert not any("--reinstall" in r for r in out["refused"]), out["refused"]
     assert rig.tree(host) == before
     assert rig.calls(stub) == []
+
+
+# --- CR 574: the allowlist holds for the resolved path -----------------------
+
+
+def test_574_a_clean_link_to_an_unclean_directory_is_a_usage_error(tmp_path):
+    odd = tmp_path / "bad\nname"
+    odd.mkdir()
+    (tmp_path / "clean").symlink_to(odd)
+    result, _ = install(tmp_path, tmp_path / "clean", staged(tmp_path), systemctl=False)
+    assert result.returncode == 2, (result.stdout, result.stderr)
+    assert "may hold only" in result.stderr
+    assert result.stdout == ""
+
+
+def test_574_a_root_it_cannot_resolve_is_a_usage_error(tmp_path):
+    if os.geteuid() == 0:
+        pytest.skip("root can enter any directory, so cd never fails")
+    # A directory it can stat (so -d passes) but not enter (so cd fails).
+    shut = tmp_path / "shut"
+    shut.mkdir()
+    shut.chmod(0o600)
+    try:
+        result, _ = install(tmp_path, shut, staged(tmp_path), systemctl=False)
+    finally:
+        shut.chmod(0o755)
+    assert result.returncode == 2, (result.returncode, result.stdout, result.stderr)
+    assert "can't resolve" in result.stderr

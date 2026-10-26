@@ -257,3 +257,16 @@ def test_566_a_reset_failed_that_fails_is_not_a_failure(tmp_path, host):
     result = rig.run(REMOVE, "--root", host, "--systemctl", stub, "--approve")
     assert result.returncode == 0, (result.stdout, result.stderr)
     assert not (host / rig.GC_DIR / "MANIFEST").exists()
+
+
+# --- CR 574: the allowlist holds for the resolved path -----------------------
+
+
+def test_574_a_clean_link_to_an_unclean_root_is_a_usage_error(tmp_path):
+    odd = tmp_path / "bad\nname"
+    odd.mkdir()
+    (tmp_path / "clean").symlink_to(odd)
+    result = rig.run(REMOVE, "--root", tmp_path / "clean")
+    assert result.returncode == 2, (result.stdout, result.stderr)
+    assert "may hold only" in result.stderr
+    assert result.stdout == ""
