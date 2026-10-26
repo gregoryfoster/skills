@@ -587,3 +587,25 @@ def test_an_update_interrupted_before_the_pin_moved_names_its_recovery(tmp_path,
     )
     out = refused(result, "old pin")
     assert any("then update" in r for r in out["refused"])
+
+
+# --- CR 556: an interrupted --reinstall keeps its journald restart ----------
+
+
+def test_an_interrupted_reinstall_still_restarts_journald(tmp_path, host):
+    """Run 1 puts the drop-in back and fails its restart; on disk it now
+    matches, so only the action can say the restart is still owed."""
+    rig.stage(host, rig.gc_files())
+    with open(host / rig.JOURNALD, "a") as f:
+        f.write("SystemMaxUse=8G\n")
+    staging = staged(tmp_path)
+    stub = rig.stub_systemctl(tmp_path / "bin")
+    rig.fail_once(stub, "restart")
+    result, _ = install(tmp_path, host, staging, "--reinstall", "--approve")
+    assert result.returncode == 1, result.stdout
+    assert rig.stdout_json(result)["journald_restart"] is True
+    first = len(rig.calls(stub))
+    result, stub = install(tmp_path, host, staging, "--reinstall", "--approve")
+    out = ok(result)
+    assert out["journald_restart"] is True
+    assert "restart systemd-journald" in rig.calls(stub)[first:]
