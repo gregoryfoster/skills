@@ -40,7 +40,8 @@ The install, as root:
      `systemctl disable --now`
   4. systemctl daemon-reload, and systemctl restart systemd-journald only
      when a journald.conf.d drop-in differs from what the installed
-     MANIFEST records (or it lists one the new MANIFEST drops)
+     MANIFEST records or from the file on disk (or it lists one the new
+     MANIFEST drops)
   5. MANIFEST, mode 644: the commit marker
 A run that fails before step 5 leaves the old MANIFEST (or none) in place,
 so a re-run sees the same plan and finishes it.
@@ -299,7 +300,12 @@ marked_hash() {
 }
 for i in ${S_PATHS[@]+"${!S_PATHS[@]}"}; do
   case "${S_PATHS[$i]}" in
-    "$JOURNALD_DIR"*) [ "$(marked_hash "${S_PATHS[$i]}")" = "${S_HASHES[$i]}" ] || JRESTART=1 ;;
+    "$JOURNALD_DIR"*)
+      # Against the marker (a run that stopped before its restart), and
+      # against the disk (a drop-in edited since, which --reinstall puts back).
+      [ "$(marked_hash "${S_PATHS[$i]}")" = "${S_HASHES[$i]}" ] || JRESTART=1
+      [ "$(hash_of "$R/${S_PATHS[$i]}")" = "${S_HASHES[$i]}" ] || JRESTART=1
+      ;;
   esac
 done
 for p in ${REMOVED[@]+"${REMOVED[@]}"}; do
