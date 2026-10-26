@@ -36,7 +36,8 @@ The chain, logged to the run's reboot-chain.log, root's only:
      space under the run's directory (df -Pk). Otherwise, or where either
      can't be read, the chain logs why and copies nothing of it, and a copy
      that fails part-way is removed, so no partial copy fills the disk the
-     host boots from;
+     host boots from. One made whole but not read back is kept, and logged
+     so;
   6. sync, then systemctl reboot. In-guest only: a platform restart is a
      hard reset.
 After a stop, nothing aborts it: the host comes back with what it stopped.
@@ -544,7 +545,8 @@ write_chain() {
   c '# a copy of it would land on the disk the data stores boot from.'
   c "# Each is copied only where it fits with $SPACE_FLOOR_KIB KiB left free, and a"
   c '# copy that fails is removed: a partial one would fill the disk the host'
-  c '# boots from.'
+  c '# boots from. One made whole but not read back is kept: it is still the'
+  c '# only record of the stops.'
   c "FLOOR=$SPACE_FLOOR_KIB"
   c 'install -d -m 700 "$JOURNAL"'
   c 'for d in $JOURNAL_DIRS; do'
@@ -563,8 +565,12 @@ write_chain() {
   c '    say "$d holds $need KiB, and $JOURNAL has $free KiB free: not copied, so the boot keeps $FLOOR KiB"'
   c '    continue'
   c '  fi'
-  c '  if install -d -m 700 "$t" && cp -a "$d/." "$t/" && chmod -R go-rwx "$t" && journalctl -D "$t" -n 5 --no-pager; then'
-  c '    say "journal $d copied to $t, and read back"'
+  c '  if install -d -m 700 "$t" && cp -a "$d/." "$t/" && chmod -R go-rwx "$t"; then'
+  c '    if journalctl -D "$t" -n 5 --no-pager; then'
+  c '      say "journal $d copied to $t, and read back"'
+  c '    else'
+  c '      say "journal $d copied to $t, but it couldn'"'"'t be read back: kept, as the shutdown'"'"'s only record"'
+  c '    fi'
   c '  else'
   c '    rm -rf -- "$t"'
   c '    say "the copy of $d failed, and what it copied is removed: the shutdown has no record of its own"'

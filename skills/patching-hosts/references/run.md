@@ -161,7 +161,7 @@ sudo systemd-run --unit=patching-hosts-reboot-<utc> --on-active=120 --timer-prop
    journalctl -D <run>/journal/_run_log_journal -n 5                   # the read-back
    ```
 
-   That's where `reboot-chain.sh` puts it, and where `probe.sh --post-boot` looks for it (#356). It copies a source only where it fits, its `du -sk` plus §3's 128 MiB within the free space under `<run>/journal` (#390). Otherwise, or where either can't be read, the chain logs why and copies nothing of it, and it removes a copy that fails part-way: a partial one would fill the disk the host boots from.
+   That's where `reboot-chain.sh` puts it, and where `probe.sh --post-boot` looks for it (#356). It copies a source only where it fits, its `du -sk` plus §3's 128 MiB within the free space under `<run>/journal` (#390). Otherwise, or where either can't be read, the chain logs why and copies nothing of it, and it removes a copy that fails part-way: a partial one would fill the disk the host boots from. One copied whole but not read back is kept, and logged so.
 
    `cp -a` alone keeps the source's `systemd-journal` group and its 2755 mode, so the copy would stay readable by that group. A journal can hold secrets: archiver's setup-script key was in its journal. The copy is a recovery-point file, so it gets a stated retention (§2). A persistent journal, in `/var/log/journal`, survives the boot, so it isn't copied: a copy of one, up to journald's 4 GiB cap, would land on the disk the data stores boot from.
 6. `sync`, then `systemctl reboot`. **In-guest only**: a platform restart is a hard reset.
