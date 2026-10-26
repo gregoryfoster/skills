@@ -261,6 +261,10 @@ def test_without_the_gcs_config_there_is_no_headroom_line(host):
         ("[sensor]\nmount = /data%(x)s\n", "85", "/data%(x)s"),
         ("[sensor]\r\nalert_at_percent = 88\r\n", "88", "/"),
         ("[sensor]\nalert_at_percent = 085\n", "85", "/"),
+        # CR 583: VERSION 2's _int takes any run of digits, ^[0-9]+$, in 1..100.
+        ("[sensor]\nalert_at_percent = 0085\n", "85", "/"),
+        ("[sensor]\nalert_at_percent = 1\n", "1", "/"),
+        ("[sensor]\nalert_at_percent = 100\n", "100", "/"),
     ],
 )
 def test_the_gcs_config_gives_its_headroom_line(host, text, alert, mount):
@@ -296,6 +300,11 @@ def test_the_gcs_config_gives_its_headroom_line(host, text, alert, mount):
         ),
         ("[sensor]\nalert_at_percent = 85.5\n", 'alert_at_percent is "85.5"'),
         ("[sensor]\nalert_at_percent = 101\n", 'alert_at_percent is "101"'),
+        (
+            "[sensor]\nalert_at_percent = 0\n",
+            'alert_at_percent is "0", not a whole percent from 1 to 100',
+        ),
+        ("[sensor]\nalert_at_percent = 000\n", 'alert_at_percent is "000"'),
         ("[sensor]\nalert_at_percent =\n", 'alert_at_percent is ""'),
         (
             "[sensor]\nalert_at_percent = 80\n  90\n",
