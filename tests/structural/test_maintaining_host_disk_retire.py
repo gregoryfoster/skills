@@ -366,3 +366,50 @@ def test_timer_whose_drop_in_names_its_service(host):
     (found,) = units_found(check(host), "hygiene-job.service")
     assert found["timer"] == "nightly.timer"
     assert found["enabled"] is True
+
+
+# --- CR 524: the JSON is pasted onto an issue, so no secret reaches it -------
+
+SECRETS = (
+    "ghp_unitsecret",
+    "uuid-secret-1",
+    "cronsecret",
+    "abcsecret",
+    "keysecret",
+    "hunter2secret",
+    "userinfo-secret",
+)
+
+
+def test_secrets_in_commands_never_reach_stdout(host):
+    write(
+        host,
+        "etc/systemd/system/watch-clean.service",
+        "[Service]\nExecStart=/usr/bin/env GH_TOKEN=ghp_unitsecret "
+        "/srv/watcher/cleanup.sh --ping https://hc-ping.com/uuid-secret-1\n",
+    )
+    write(
+        host,
+        "etc/cron.d/hygiene",
+        '0 3 * * * root curl -H "Authorization: Bearer cronsecret" '
+        "https://example.com/ping/abcsecret; /srv/wslcb/disk_hygiene.py "
+        "--api-key=keysecret\n",
+    )
+    write(
+        host,
+        "etc/systemd/system/cache-clean2.service",
+        "[Service]\nExecStart=/opt/x/clear-cache --password hunter2secret "
+        "--to https://bob:userinfo-secret@backup.example.com/x\n",
+    )
+    result = rig.run(RETIRE, "--root", host)
+    assert result.returncode == 0, result.stderr
+    leaked = [s for s in SECRETS if s in result.stdout]
+    assert not leaked, leaked
+    out = rig.stdout_json(result)
+    (unit,) = units_found(out, "watch-clean.service")
+    assert unit["match"] == "cleanup.sh"
+    assert unit["where"] == "etc/systemd/system/watch-clean.service:2"
+    assert "hc-ping.com" in unit["command"]
+    (cron,) = [f for f in out["found"] if f["where"].startswith("etc/cron.d/hygiene")]
+    assert cron["where"] == "etc/cron.d/hygiene:1"
+    assert cron["match"] == "disk_hygiene.py"
