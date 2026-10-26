@@ -425,3 +425,34 @@ def test_a_dropped_unit_is_disabled_before_it_is_removed(tmp_path, host):
         "daemon-reload",
     ]
     assert not (host / OLD_TIMER).exists()
+
+
+# --- CR 531: applied only once something is installed -----------------------
+
+
+def test_a_failure_before_any_install_says_applied_false(tmp_path, host):
+    rig.stage(host, rig.gc_files())
+    stub = rig.stub_systemctl(tmp_path / "bin")
+    rig.fail_once(stub, "daemon-reload")
+    result, _ = install(tmp_path, host, staged(tmp_path), "--approve")
+    assert result.returncode == 1, result.stdout
+    out = rig.stdout_json(result)
+    assert out["failed"] and out["applied"] is False
+
+
+def test_no_private_directory_is_a_json_failure_with_applied_false(tmp_path, host):
+    scripts = rig.pinned_scripts(tmp_path / "s", staged(tmp_path))
+    result = rig.run(
+        scripts / INSTALL.name,
+        "--staging",
+        tmp_path / "staging",
+        "--root",
+        host,
+        "--approve",
+        env={"TMPDIR": str(tmp_path / "no-such-dir")},
+    )
+    assert result.returncode == 1, result.stdout
+    out = rig.stdout_json(result)
+    assert "private directory" in out["failed"]
+    assert out["applied"] is False
+    assert not (host / "usr").exists()
