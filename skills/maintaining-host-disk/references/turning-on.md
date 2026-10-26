@@ -13,7 +13,7 @@ Copy `/usr/local/lib/cannobserv/disk-gc/disk-gc.conf.example` to `/etc/cannobser
 - `npx_spec_files`: the repo's `.claude/settings.json`, so the pinned SocratiCode tree is kept ([repo-knobs.md](repo-knobs.md));
 - `worktree_repos`: the repos whose orphaned worktree directories may go. The template has neither half of the `worktrees` tier: to turn it on, add `worktrees` to `tiers` **and** name the repo here. Either one alone does nothing;
 - `uv_clean_above_mb`: the cache size above which `uv cache clean --force` runs too;
-- `alert_at_percent`, and `clear_at_percent` only where it's needed (below);
+- `alert_at_percent` and `clear_at_percent`. **The template sets 85/80:** keep `clear_at_percent` below your alert line, or delete it to take the default (below);
 - `monitor_id`.
 
 Anything unknown or malformed fails the run, which is what you want: a typo is never a silent default.
@@ -67,7 +67,7 @@ sudo systemd-run --wait -p LoadCredential=checkin-key:/etc/cannobserv/disk-gc/ch
 ## Picking the lines
 
 - **`alert_at_percent`:** pick it as before, from the host's baseline. Where a repo's gate leaves a large tree behind, size it from the baseline **plus** one gate's basetemp ([repo-knobs.md](repo-knobs.md#pytest-basetemps)).
-- **`clear_at_percent`:** `low-headroom` alerts at the alert line and clears only at or below the clear line; between the two it keeps the previous state. The default is `alert_at_percent − 5`, floored at 0, so a config from VERSION 1 needs no edit. Set it only where 5 points is the wrong band. A clear line at or above the alert line fails at config load.
+- **`clear_at_percent`:** `low-headroom` alerts at the alert line and clears only at or below the clear line; between the two it keeps the previous state. Without the key, it is `alert_at_percent − 5`, floored at 0, so a config from VERSION 1 needs no edit. **The template sets 85/80:** keep `clear_at_percent` below your alert line, or delete it to take the default. A clear line at or above the alert line fails at config load, so a template copied with `alert_at_percent = 80` (co-provisioner's line) and its `clear_at_percent = 80` left in refuses.
 - **A "prove it fires" test** that lowers the alert line must lower or remove any explicit `clear_at_percent` too, or the config refuses. A change to either line judges the next reading afresh, so putting the lines back clears the test's hold on the next run.
 - The hold lives in `/var/lib/cannobserv-disk-gc/sensor.json`, beside the GC's `state.json`. A missing or unrecognised file reads as not held. No script here touches either.
 
