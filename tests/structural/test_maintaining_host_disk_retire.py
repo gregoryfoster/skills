@@ -414,3 +414,110 @@ def test_secrets_in_commands_never_reach_stdout(host):
     (cron,) = [f for f in out["found"] if f["where"].startswith("etc/cron.d/hygiene")]
     assert cron["where"] == "etc/cron.d/hygiene:1"
     assert cron["match"] == "disk_hygiene.py"
+
+
+# --- CR 525: more ways discovery missed a tool -------------------------------
+
+
+def test_homes_come_from_passwd(host):
+    write(
+        host,
+        "etc/passwd",
+        "root:x:0:0:root:/root:/bin/bash\nsvc:x:998:998::/srv/svc:/usr/sbin/nologin\n",
+    )
+    write(
+        host,
+        "srv/svc/.config/systemd/user/tidy.service",
+        "[Service]\nExecStart=/srv/svc/watcher/cleanup.sh\n",
+    )
+    (found,) = units_found(check(host), "tidy.service")
+    assert found["scope"] == "user:svc"
+
+
+def test_local_share_user_units_are_scanned(host):
+    write(
+        host,
+        "home/exedev/.local/share/systemd/user/pm.service",
+        "[Service]\nExecStart=/home/exedev/power-map/scripts/prune_disk.py\n",
+    )
+    (found,) = units_found(check(host), "pm.service")
+    assert found["scope"] == "user:exedev"
+
+
+def run_parts(host, name, target=None, mode=0o755):
+    path = host / "etc/cron.daily" / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if target:
+        os.symlink(target, path)
+    else:
+        path.write_text("#!/bin/sh\n")
+        path.chmod(mode)
+    return path
+
+
+def cron_found(out, where):
+    return [f for f in out["found"] if f["where"] == where]
+
+
+def test_run_parts_symlink_is_matched_by_its_target(host):
+    run_parts(host, "pm-prune", target="/home/exedev/power-map/scripts/prune_disk.py")
+    (found,) = cron_found(check(host), "etc/cron.daily/pm-prune")
+    assert (found["repo"], found["entry"]) == ("power-map", "prune_disk.py")
+
+
+def test_run_parts_skips_a_name_with_a_dot(host):
+    """run-parts runs only names of letters, digits, _ and -: cleanup.sh in
+    cron.daily never runs, so it is found but not enabled."""
+    run_parts(host, "cleanup.sh")
+    (found,) = cron_found(check(host), "etc/cron.daily/cleanup.sh")
+    assert found["enabled"] is False
+
+
+def test_run_parts_skips_a_file_that_is_not_executable(host):
+    """A run-parts entry runs only when executable; a link's target is
+    judged inside the root, not on the machine running the check."""
+    target = host / "opt/pm/prune_disk.py"
+    target.parent.mkdir(parents=True)
+    target.write_text("#!/usr/bin/python3\n")
+    target.chmod(0o644)
+    run_parts(host, "pm-prune", target="/opt/pm/prune_disk.py")
+    (found,) = cron_found(check(host), "etc/cron.daily/pm-prune")
+    assert found["enabled"] is False
+    target.chmod(0o755)
+    (found,) = cron_found(check(host), "etc/cron.daily/pm-prune")
+    assert found["enabled"] is True
+
+
+@pytest.mark.parametrize(
+    "command, entry",
+    [
+        ('/bin/sh -c "/srv/watcher/cleanup.sh --apply"', "cleanup.sh"),
+        ("/usr/bin/python3 /opt/pm/prune_disk.py>/dev/null 2>&1", "prune_disk.py"),
+        ("/bin/bash -c '/srv/b/prune_editor_builds.sh;true'", "prune_editor_builds.sh"),
+    ],
+)
+def test_tokens_match_on_word_boundaries_inside_a_command(host, command, entry):
+    write(
+        host, "etc/systemd/system/wrapped.service", f"[Service]\nExecStart={command}\n"
+    )
+    found = units_found(check(host), "wrapped.service")
+    assert [f["entry"] for f in found] == [entry]
+
+
+def test_a_longer_name_is_not_a_match(host):
+    write(
+        host,
+        "etc/systemd/system/other.service",
+        "[Service]\nExecStart=/srv/x/my-cleanup.sh.bak /srv/x/notprune_disk.py\n",
+    )
+    assert units_found(check(host), "other.service") == []
+
+
+def test_anacrontab_is_read(host):
+    write(
+        host,
+        "etc/anacrontab",
+        "SHELL=/bin/sh\n# period delay job command\n1 5 pm.prune /opt/pm/prune_disk.py --apply\n",
+    )
+    found = [f for f in check(host)["found"] if f["where"] == "etc/anacrontab:3"]
+    assert [(f["kind"], f["entry"]) for f in found] == [("anacron", "prune_disk.py")]
