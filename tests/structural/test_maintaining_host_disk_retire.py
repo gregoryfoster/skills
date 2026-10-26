@@ -1040,3 +1040,30 @@ def test_577_the_help_names_every_kind_and_report_key(host):
     report_doc = help_text.split("gc_report", 1)[1].split("unreadable", 1)[0]
     for key in ("file", "exit", "json", "lines", "truncated", "total_lines"):
         assert key in report_doc, key
+
+
+# --- CR 578: a timed-out GC run takes its children with it ------------------
+
+
+def test_578_a_timeout_kills_the_gcs_children_and_returns(tmp_path):
+    """The GC's report mode runs children (docker system df, uv). Killing
+    only the interpreter left them running, holding the pipes open, so the
+    check waited for them too."""
+    import time
+
+    pidfile = tmp_path / "child.pid"
+    stub, _ = stub_python(
+        tmp_path, f"sleep 20 & echo $! >{pidfile}; echo '<4>partial' >&2; wait"
+    )
+    started = time.monotonic()
+    result = rig.run(
+        RETIRE, "--root", "/", "--run-gc-report", "--python", stub, "--gc-timeout", "1"
+    )
+    elapsed = time.monotonic() - started
+    assert result.returncode == 0, result.stderr
+    gc = rig.stdout_json(result)["gc_report"]
+    assert gc["exit"] == "timeout" and "<4>partial" in gc["lines"]
+    assert elapsed < 10, elapsed
+    pid = int(pidfile.read_text())
+    with pytest.raises(ProcessLookupError):
+        os.kill(pid, 0)

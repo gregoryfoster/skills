@@ -8,6 +8,7 @@ import argparse
 import json
 import os
 import re
+import signal
 import stat
 import subprocess
 import sys
@@ -594,35 +595,41 @@ def gc_report(args, root):
         return None
     gc = os.path.join(root, GC_DIR, "disk-gc")
     try:
-        run = subprocess.run(
+        # Its own session, so a timeout can kill the GC's children too
+        # (docker system df, uv): they would otherwise outlive it.
+        proc = subprocess.Popen(
             [args.python, "-I", gc, "gc", "--json"],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
-            timeout=args.gc_timeout,
+            start_new_session=True,
         )
-    except subprocess.TimeoutExpired as e:
-        said = (
-            (e.stderr or "")
-            if isinstance(e.stderr, str)
-            else (e.stderr or b"").decode(errors="replace")
-        )
-        return {"file": None, "exit": "timeout", "json": None, **cut(said.splitlines())}
     except OSError as e:
         usage(f"can't run {args.python}: {e.strerror}")
-    if len(run.stdout) > MAX_GC_JSON:
+    try:
+        stdout, stderr = proc.communicate(timeout=args.gc_timeout)
+    except subprocess.TimeoutExpired:
+        os.killpg(proc.pid, signal.SIGKILL)
+        _stdout, said = proc.communicate()
+        return {
+            "file": None,
+            "exit": "timeout",
+            "json": None,
+            **cut((said or "").splitlines()),
+        }
+    if len(stdout) > MAX_GC_JSON:
         doc = None
         lines = [
-            f"<{len(run.stdout)} bytes of stdout, past the {MAX_GC_JSON}-byte cap: not kept>"
+            f"<{len(stdout)} bytes of stdout, past the {MAX_GC_JSON}-byte cap: not kept>"
         ]
     else:
         try:
-            doc = json.loads(run.stdout)
+            doc = json.loads(stdout)
         except ValueError:
             doc = None
-        lines = (run.stdout if doc is None else "").splitlines()
-    lines += run.stderr.splitlines()
-    return {"file": None, "exit": run.returncode, "json": doc, **cut(lines)}
+        lines = (stdout if doc is None else "").splitlines()
+    lines += stderr.splitlines()
+    return {"file": None, "exit": proc.returncode, "json": doc, **cut(lines)}
 
 
 def usage(why):

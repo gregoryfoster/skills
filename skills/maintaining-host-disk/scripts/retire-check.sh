@@ -61,7 +61,8 @@ Options:
                     config and /proc whatever --root says), and needs root
                     to read every home. Not with --gc-report
   --gc-timeout SEC  how long that run may take, a positive number of
-                    seconds (default 900); past it, gc_report.exit is
+                    seconds (default 900); past it, the run and every
+                    process it started are killed, gc_report.exit is
                     "timeout" and lines keep what it wrote to stderr. Its
                     JSON is kept up to 4 MiB
   --python CMD      the interpreter for --run-gc-report (default
