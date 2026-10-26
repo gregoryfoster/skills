@@ -54,7 +54,7 @@ address-validator#326's nine rules are implemented in the GC. The skill doesn't 
 | 5 | the grace is the newest entry anywhere, 60 min; a walk error keeps the tree | the mtime or ctime of any entry. npx reinstalls a moved spec into the same directory, so the top level's mtime can be old |
 | 6 | warnings at warning priority | sd-daemon `<4>` prefixes |
 | 7 | VS Code: the 2 newest by `lru.json`, plus running | **differs:** liveness only. `lru.json` omitted the live build on co-provisioner, observo and co-replicator, and named builds no longer on disk |
-| 8 | orphaned worktrees, unregistered, older than 30 min | yes, once `tiers` lists `worktrees` and `worktree_repos` names the repo; the template has neither |
+| 8 | orphaned worktrees, unregistered, older than 30 min | yes, untouched for `grace_minutes` but never less than 30 min (60 by default), once `tiers` lists `worktrees` and `worktree_repos` names the repo; the template has neither |
 | 9 | the timer's quiet window | daily 05:15 UTC plus up to 30 min; a host overrides `OnCalendar=` with a drop-in |
 
 ### Docker
