@@ -51,6 +51,7 @@ LOOKALIKE = re.compile(
 )
 EXEC_KEYS = ("ExecStart", "ExecStartPre", "ExecStartPost", "ExecStop")
 REPORT_LINES = 500
+MAX_GC_JSON = 4 * 1024 * 1024
 UNREADABLE = []
 
 
@@ -506,15 +507,27 @@ def gc_report(args, root):
             text=True,
             timeout=args.gc_timeout,
         )
-    except subprocess.TimeoutExpired:
-        return {"file": None, "exit": "timeout", "json": None, **cut([])}
+    except subprocess.TimeoutExpired as e:
+        said = (
+            (e.stderr or "")
+            if isinstance(e.stderr, str)
+            else (e.stderr or b"").decode(errors="replace")
+        )
+        return {"file": None, "exit": "timeout", "json": None, **cut(said.splitlines())}
     except OSError as e:
         usage(f"can't run {args.python}: {e.strerror}")
-    try:
-        doc = json.loads(run.stdout)
-    except ValueError:
+    if len(run.stdout) > MAX_GC_JSON:
         doc = None
-    lines = (run.stdout if doc is None else "").splitlines() + run.stderr.splitlines()
+        lines = [
+            f"<{len(run.stdout)} bytes of stdout, past the {MAX_GC_JSON}-byte cap: not kept>"
+        ]
+    else:
+        try:
+            doc = json.loads(run.stdout)
+        except ValueError:
+            doc = None
+        lines = (run.stdout if doc is None else "").splitlines()
+    lines += run.stderr.splitlines()
     return {"file": None, "exit": run.returncode, "json": doc, **cut(lines)}
 
 
@@ -533,6 +546,8 @@ def main():
     ap.add_argument("--gc-timeout", type=int, default=900)
     args = ap.parse_args()
     root = os.path.abspath(args.root)
+    if args.gc_timeout <= 0:
+        usage("--gc-timeout must be a positive number of seconds")
     if args.run_gc_report and os.path.realpath(root) != "/":
         usage(
             "--run-gc-report runs the live GC, which reads the live config and "

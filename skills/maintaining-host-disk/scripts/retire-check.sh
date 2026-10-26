@@ -51,8 +51,10 @@ Options:
                     removes. Only with --root / (the GC reads the live
                     config and /proc whatever --root says), and needs root
                     to read every home. Not with --gc-report
-  --gc-timeout SEC  how long that run may take (default 900); past it,
-                    gc_report.exit is "timeout"
+  --gc-timeout SEC  how long that run may take, a positive number of
+                    seconds (default 900); past it, gc_report.exit is
+                    "timeout" and lines keep what it wrote to stderr. Its
+                    JSON is kept up to 4 MiB
   --python CMD      the interpreter for --run-gc-report (default
                     /usr/bin/python3, the one the GC's units run); one that
                     can't be run is a usage error
