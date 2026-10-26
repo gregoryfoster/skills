@@ -843,3 +843,33 @@ def test_554f_a_link_out_of_the_scratch_root_is_not_followed(host, tmp_path):
     rel = os.path.relpath(outside, host / "etc/systemd/system")
     os.symlink(rel, host / "etc/systemd/system/escape.service")
     assert units_found(check(host), "escape.service") == []
+
+
+def test_554g_a_timed_out_gc_keeps_what_it_said(tmp_path):
+    stub, _ = stub_python(tmp_path, "echo '<4>partial: still walking' >&2; sleep 5")
+    result = rig.run(
+        RETIRE, "--root", "/", "--run-gc-report", "--python", stub, "--gc-timeout", "1"
+    )
+    assert result.returncode == 0, result.stderr
+    gc = rig.stdout_json(result)["gc_report"]
+    assert gc["exit"] == "timeout"
+    assert "<4>partial: still walking" in gc["lines"]
+
+
+def test_554g_the_gcs_json_is_capped(tmp_path):
+    stub, _ = stub_python(
+        tmp_path,
+        "printf '{\"x\": \"'; head -c 5000000 /dev/zero | tr '\\0' a; printf '\"}'",
+    )
+    result = rig.run(RETIRE, "--root", "/", "--run-gc-report", "--python", stub)
+    assert result.returncode == 0, result.stderr
+    gc = rig.stdout_json(result)["gc_report"]
+    assert gc["json"] is None
+    assert any("cap" in line for line in gc["lines"])
+    assert len(result.stdout) < 100_000
+
+
+@pytest.mark.parametrize("seconds", ["0", "-5"])
+def test_554g_a_gc_timeout_must_be_positive(seconds):
+    result = rig.run(RETIRE, "--root", "/", "--run-gc-report", "--gc-timeout", seconds)
+    assert result.returncode == 2
