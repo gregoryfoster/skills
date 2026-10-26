@@ -6,7 +6,15 @@ The host's own files live in `/etc/cannobserv/disk-gc/` and never ship in the la
 
 ## 1. The config
 
-Copy `/usr/local/lib/cannobserv/disk-gc/disk-gc.conf.example` to `/etc/cannobserv/disk-gc/disk-gc.conf`, then edit:
+Create it from the template, owned by root and mode `0644`. `/etc/cannobserv/disk-gc/` doesn't exist on a host the image didn't make, and a plain `cp` fails there, so `install -D` creates it:
+
+```bash
+sudo install -D -m 0644 -o root -g root \
+  /usr/local/lib/cannobserv/disk-gc/disk-gc.conf.example /etc/cannobserv/disk-gc/disk-gc.conf
+sudoedit /etc/cannobserv/disk-gc/disk-gc.conf
+```
+
+Then set:
 
 - `homes`: whose trees the GC walks;
 - `tiers`: which tiers run. The `docker` tier is off in the template; turn it on only where Docker builds ([retiring.md](retiring.md#docker));
@@ -43,7 +51,12 @@ Check-ins carry `host`, `kind` and `body`. The faults are `low-headroom`, `gc-fa
 
 ## 4. The key
 
-The tenant's key (keys are per tenant, status#48) goes in `/etc/cannobserv/disk-gc/checkin.key`, owned by root, mode `0600`. The units load it with `LoadCredential=`.
+The tenant's key (keys are per tenant, status#48) goes in `/etc/cannobserv/disk-gc/checkin.key`, owned by root, mode `0600`. The units load it with `LoadCredential=`. Create the file empty, then put the key in with an editor, so it never appears in a command line or the shell's history:
+
+```bash
+sudo install -m 0600 -o root -g root /dev/null /etc/cannobserv/disk-gc/checkin.key
+sudoedit /etc/cannobserv/disk-gc/checkin.key
+```
 
 ## 5. The timers
 
