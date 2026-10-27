@@ -28,8 +28,8 @@ The channel URL is never an argument. MAYFLY_URL_FILE names a mode-600 file
 that holds it; create writes that file, every other command reads it.
 
 A wake filter never skips: every message read since --last comes back in
-"messages". --text prints messages as "--- ID TS "FROM"" blocks after one
-JSON line of the other fields.
+"messages". --text prints one JSON line of the other fields, then each
+message as a --- ID TS "FROM" SRC header and its text indented two spaces.
 
 Exit codes:
   0  success (stdout)

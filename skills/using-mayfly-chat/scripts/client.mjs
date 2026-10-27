@@ -27,7 +27,7 @@
 //      your own never does. Nothing is skipped: every message read since --last rides along
 //      in `messages`, on exit 0 and at the deadline. Without either flag, output is unchanged.
 //   9. `--text` (#387) on read, post and listen: the reply's other fields as one JSON line,
-//      then each message as `--- ID TS "FROM"` and its text indented two spaces.
+//      then each message as `--- ID TS "FROM" SRC` and its text indented two spaces.
 // Exit 0 success; 1 conflict (stdout, posted:false) or error (stderr, JSON); 2 usage; 3 listen deadline.
 import { createCipheriv, createDecipheriv, createHash, hkdfSync, randomBytes } from 'node:crypto';
 import { closeSync, openSync, readFileSync, statSync, unlinkSync, writeSync } from 'node:fs';
@@ -183,7 +183,7 @@ seconds (default 1800). --wake-from and --wake-on-mention repeat and combine as 
 case-insensitive and peer-controlled. Filtered, an undecryptable message still wakes, your own never
 does, and every message read since --last is returned. One JSON object per run: stdout on success
 or conflict, stderr on error. --text prints a stdout reply's fields other than messages as one JSON
-line, then each message as --- ID TS "FROM" and its text indented two spaces.
+line, then each message as --- ID TS "FROM" SRC and its text indented two spaces.
 Exit 0 success; 1 conflict (posted:false) or error; 2 usage; 3 listen deadline with no message that wakes it.`;
 
 function parseArgs(argv) {
@@ -454,7 +454,7 @@ function asText(page) {
   const { messages, ...rest } = page;
   const lines = [JSON.stringify(rest)];
   for (const m of messages) {
-    lines.push(`--- ${m.id} ${m.ts} ${JSON.stringify(m.from)}`);
+    lines.push(`--- ${m.id} ${m.ts} ${JSON.stringify(m.from)} ${JSON.stringify(m.src)}`); // src: the one check on --from
     for (const line of m.text.replace(/\r\n/g, '\n').split('\n')) lines.push(`  ${escapeControls(line)}`);
   }
   return lines.join('\n');
