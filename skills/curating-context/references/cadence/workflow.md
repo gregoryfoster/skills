@@ -73,11 +73,11 @@ jobs:
       # fetch-depth: 0 because the push path rebases when a human commit lands
       # during the measurement, and rebasing on a depth-1 clone lacks the history
       # to replay onto.
-      # @v5, not @v4: v4 targets Node 20, which runners now force onto Node 24
-      # with a deprecation warning on every run. Twelve repos are about to adopt
-      # this template, and sweeping twelve for a warning we could have not
-      # written is the avoidable version of the problem (#163).
-      - uses: actions/checkout@v5
+      # Never below @v5: v4 targets Node 20, which runners force onto Node 24
+      # with a deprecation warning on every run (#163). Dependabot bumps an
+      # installed copy of this line, and a re-render writes this pin back over
+      # it, so move this one in the same change (#373).
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
           fetch-depth: 0
