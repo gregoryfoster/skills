@@ -340,3 +340,43 @@ def test_a_grouped_actions_block_needs_only_its_batch(tmp_path):
     assert proc.returncode == 0, proc.stdout
     root = _dependabot_repo(tmp_path / "one", grouped.replace("limit: 2", "limit: 1"))
     assert _pytest(root, "tests/ci/test_dependabot.py").returncode == 1
+
+
+PIP_BLOCK = UV_BLOCK.replace('"uv"', '"pip"').replace('      - "/clients/python"\n', "")
+
+
+def _pip_repo(tmp_path: Path, config: str, files: dict[str, str]) -> Path:
+    root = _dependabot_repo(tmp_path, config)
+    _write(root, files)
+    test = root / "tests/ci/test_dependabot.py"
+    test.write_text(
+        _adapt(
+            test.read_text(),
+            ENABLED='{"github-actions", "pip"}',
+            IGNORED='{"co-core": "lockstep"}',
+        )
+    )
+    return root
+
+
+def test_a_pyproject_only_pip_repo_is_covered(tmp_path):
+    """CR 602: a pip repo with no requirements file was vacuously covered."""
+    files = {
+        "svc/pyproject.toml": '[project]\nname = "s"\nversion = "0"\ndependencies = ["a"]\n'
+    }
+    root = _pip_repo(tmp_path, ACTIONS_WITH_COMPOSITE + PIP_BLOCK, files)
+    proc = _pytest(root, "tests/ci/test_dependabot.py")
+    assert proc.returncode == 1 and "/svc" in proc.stdout, proc.stdout
+    fixed = PIP_BLOCK.replace('      - "/"\n', '      - "/svc"\n')
+    root = _pip_repo(tmp_path / "fixed", ACTIONS_WITH_COMPOSITE + fixed, files)
+    assert _pytest(root, "tests/ci/test_dependabot.py").returncode == 0
+
+
+def test_requirements_lines_count_toward_the_limit(tmp_path):
+    """CR 602: with no [project] table, runtime counted 0 and any limit passed."""
+    reqs = "-r base.txt\n# pinned\n" + "".join(f"p{n}==1\n" for n in range(12))
+    root = _pip_repo(
+        tmp_path, ACTIONS_WITH_COMPOSITE + PIP_BLOCK, {"requirements.txt": reqs}
+    )
+    proc = _pytest(root, "tests/ci/test_dependabot.py")
+    assert proc.returncode == 1 and "12 runtime PRs" in proc.stdout, proc.stdout

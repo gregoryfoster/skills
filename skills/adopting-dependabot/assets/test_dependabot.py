@@ -133,15 +133,47 @@ def _uses_lines() -> list[tuple[str, int, str, str]]:
     ]
 
 
+_REQUIREMENTS = re.compile(r"requirements[\w.-]*\.(txt|in)")
+
+
 def _lock_dirs(ecosystem: str) -> set[str]:
-    """Where the repo keeps this ecosystem's manifests, in Dependabot's form."""
+    """Where the repo keeps this ecosystem's manifests, in Dependabot's form.
+
+    pip reads requirements files, a Pipfile, poetry.lock, and a pyproject.toml
+    that no uv.lock sits beside (one that does is uv's), as inventory.sh does.
+    """
+    tracked = _tracked()
     if ecosystem == "uv":
-        return {_dir(f) for f in _tracked() if PurePosixPath(f).name == "uv.lock"}
-    return {
-        _dir(f)
-        for f in _tracked()
-        if re.fullmatch(r"requirements[\w.-]*\.(txt|in)", PurePosixPath(f).name)
-    }
+        return {_dir(f) for f in tracked if PurePosixPath(f).name == "uv.lock"}
+    present = set(tracked)
+    found = set()
+    for f in tracked:
+        p = PurePosixPath(f)
+        uv_beside = (p.parent / "uv.lock").as_posix() in present
+        if (
+            _REQUIREMENTS.fullmatch(p.name)
+            or p.name in {"Pipfile", "poetry.lock"}
+            or (p.name == "pyproject.toml" and not uv_beside)
+        ):
+            found.add(_dir(f))
+    return found
+
+
+def _runtime_count(directory: str) -> int:
+    """Runtime requirements in a directory: [project.dependencies], or else the
+    requirement lines of its requirements files (not -r/-f options, comments)."""
+    base = REPO_ROOT / directory.lstrip("/")
+    table = base / "pyproject.toml"
+    if table.is_file():
+        project = tomllib.loads(table.read_text(encoding="utf-8")).get("project", {})
+        if "dependencies" in project:
+            return len(project["dependencies"])
+    return sum(
+        1
+        for path in sorted(base.glob("requirements*.txt"))
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.lstrip().startswith(("#", "-"))
+    )
 
 
 def test_config_exists() -> None:
@@ -289,15 +321,7 @@ def test_lockstep_pins_are_ignored(block: dict) -> None:
 )
 def test_package_open_pr_limit_outlasts_a_full_backlog(block: dict) -> None:
     """Each runtime dependency is its own PR and each group one more per directory."""
-    runtime = 0
-    for directory in _directories(block):
-        table = REPO_ROOT / directory.lstrip("/") / "pyproject.toml"
-        if table.is_file():
-            runtime += len(
-                tomllib.loads(table.read_text(encoding="utf-8"))
-                .get("project", {})
-                .get("dependencies", [])
-            )
+    runtime = sum(_runtime_count(d) for d in _directories(block))
     grouped = len(block.get("groups") or {}) * len(_directories(block))
     limit = block.get("open-pull-requests-limit", 5)
     assert limit > runtime + grouped, (
