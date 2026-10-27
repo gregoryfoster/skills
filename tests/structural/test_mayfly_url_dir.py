@@ -146,6 +146,31 @@ class TestCreateWarning:
         assert result.returncode == 0, result.stderr
         assert result.stderr == ""
 
+    def test_cdpath_does_not_change_the_check(
+        self, home: Path, tmp_path: Path, origin: str
+    ) -> None:
+        """CR 627: under CDPATH, `cd` prints the directory it found, so the
+        captured value spans two lines, and a relative path can resolve to a
+        decoy directory that CDPATH names."""
+        decoy = tmp_path / "decoy" / ".mayfly"
+        decoy.mkdir(parents=True)
+        result = subprocess.run(
+            ["bash", str(WRAPPER), "create", origin],
+            env={
+                **os.environ,
+                "HOME": str(home),
+                "CDPATH": str(tmp_path / "decoy"),
+                "MAYFLY_URL_FILE": ".mayfly/status-67",
+            },
+            cwd=home,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        assert result.returncode == 0, result.stderr
+        assert result.stderr == ""
+        assert (home / ".mayfly" / "status-67").is_file()
+
     def test_a_file_elsewhere_warns_and_still_creates(
         self, home: Path, tmp_path: Path, origin: str
     ) -> None:

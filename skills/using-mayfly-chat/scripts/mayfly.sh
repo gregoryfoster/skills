@@ -65,7 +65,7 @@ fi
 
 # Resolved before anything else, from the path as invoked: the client ships
 # beside this script and a project that copies one must copy both.
-SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
+SCRIPT_DIR=$(CDPATH='' cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
 CLIENT="${SCRIPT_DIR}/client.mjs"
 if [[ ! -f "$CLIENT" ]]; then
   echo "ERROR: ${CLIENT} is missing; a project that copies mayfly.sh copies the whole scripts/ directory." >&2
@@ -104,8 +104,8 @@ fi
 rc=0
 node "$CLIENT" "$@" || rc=$?
 if [[ $rc -eq 0 ]]; then
-  file_dir=$(cd "$(dirname -- "$MAYFLY_URL_FILE")" 2>/dev/null && pwd -P) || file_dir=
-  want_dir=$(cd "${HOME:-}/.mayfly" 2>/dev/null && pwd -P) || want_dir=
+  file_dir=$(CDPATH='' cd "$(dirname -- "$MAYFLY_URL_FILE")" 2>/dev/null && pwd -P) || file_dir=
+  want_dir=$(CDPATH='' cd "${HOME:-}/.mayfly" 2>/dev/null && pwd -P) || want_dir=
   if [[ -z "$want_dir" || "$file_dir" != "$want_dir" ]]; then
     echo "WARNING: the URL file is outside \$HOME/.mayfly/; the channel was created all the same." >&2
     echo "  Keep every channel's URL file there (install -d -m 700 \"\$HOME/.mayfly\"), so the path" >&2
