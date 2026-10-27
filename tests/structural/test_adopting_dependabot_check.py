@@ -393,3 +393,24 @@ def test_a_failed_run_for_a_dropped_ecosystem_is_not_this_configs(tmp_path):
     rc, out, _ = _check(tmp_path, table)
     assert rc == 0
     assert "npm" not in _by_name(out)["update-runs"]["detail"]
+
+
+def test_the_default_branch_is_url_encoded(tmp_path):
+    """CR 598: a branch name with # or & would read another ref unencoded."""
+    table = healthy()
+    table[f"repos/{REPO}"]["body"]["default_branch"] = "rel/1#a"
+    for old, new in [
+        (
+            f"repos/{REPO}/contents/.github/dependabot.yml?ref=main",
+            f"repos/{REPO}/contents/.github/dependabot.yml?ref=rel%2F1%23a",
+        ),
+        (
+            f"repos/{REPO}/git/trees/main?recursive=1",
+            f"repos/{REPO}/git/trees/rel%2F1%23a?recursive=1",
+        ),
+    ]:
+        table[new] = table.pop(old)
+    rc, out, err = _check(tmp_path, table)
+    assert rc == 0, err
+    assert _by_name(out)["config"]["status"] == "pass"
+    assert _by_name(out)["graph"]["status"] == "pass"

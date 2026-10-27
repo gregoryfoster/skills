@@ -15,6 +15,7 @@ import subprocess
 import sys
 from datetime import UTC, datetime
 from pathlib import PurePosixPath
+from urllib.parse import quote
 
 import yaml
 
@@ -85,7 +86,7 @@ def check(name: str, status: str, detail: str, **extra: object) -> dict:
 
 def read_config(repo: str, branch: str) -> tuple[dict | None, list[dict]]:
     for path in (".github/dependabot.yml", ".github/dependabot.yaml"):
-        status, body = gh(f"repos/{repo}/contents/{path}?ref={branch}")
+        status, body = gh(f"repos/{repo}/contents/{path}?ref={quote(branch, safe='')}")
         if status == 200 and isinstance(body, dict):
             break
         if status != 404:
@@ -262,7 +263,7 @@ def last_pr(repo: str) -> list[dict]:
 
 
 def graph(repo: str, branch: str) -> list[dict]:
-    status, tree = gh(f"repos/{repo}/git/trees/{branch}?recursive=1")
+    status, tree = gh(f"repos/{repo}/git/trees/{quote(branch, safe='')}?recursive=1")
     if status != 200 or not isinstance(tree, dict):
         return [check("graph", "unread", f"tree: HTTP {status} {message(tree)}")]
     if tree.get("truncated"):
