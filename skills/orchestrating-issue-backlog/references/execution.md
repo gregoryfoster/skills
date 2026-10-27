@@ -1,13 +1,9 @@
 # Executing the plan
 
-Loaded from [`SKILL.md`](../SKILL.md) at Step 8, whose design doc records the
-batch→main merge strategy this file asks for, and before any batch launches.
-Step and Q numbers refer to `SKILL.md`; Rule, Orchestrator-step and Worker-step
-numbers refer to this file.
-
-Demoted from the body in the #285 curation. A planning run cites Rules 1 and 6 at
-Step 1–2 and Rule 5 at Step 7, and needs the whole protocol from Step 8; a batch
-launch needs all of it.
+Loaded from [`SKILL.md`](../SKILL.md) for Rule 1 at Step 0, whole at Step 8,
+whose design doc records the batch→main merge strategy this file asks for, and
+before any batch launches. Step and Q numbers refer to `SKILL.md`; Rule,
+Orchestrator-step and Worker-step numbers refer to this file.
 
 **Where Q4 chose cloud sessions for a batch**, its workers follow
 [`cloud-workers.md`](cloud-workers.md) instead for Worker steps 1–3, the launch,
@@ -35,7 +31,7 @@ Ask the user their preferred **batch→main** merge strategy (regular, squash, r
 
 The orchestrator reads the batch plan and manages progression. It:
 1. **Sync before every batch launch** — Rule 1's fetch and fast-forward, in the orchestrator's worktree. The fetch advances `origin/main`, which is the ref agents' worktrees are actually cut from (Rule 3).
-2. **Create the batch branch before spawning agents** — `git branch batch/<X> orchestrate/<topic>` after step 1, then `git switch batch/<X>` in the orchestrator's worktree, where integration happens; the main checkout's branch never moves (Rule 1). This makes it the merge target only — workers still branch from `origin/main` and must merge it in themselves (Rule 3). **Where the host repo deploys from the main checkout, take the same care at wrap-up:** run `systemctl is-enabled` and `systemctl cat` before any repo-documented restart, because a unit that is inactive *and* disabled while its preset is enabled is a deliberate hold, not a fault (process-log 2026-08-13 usa-wa: checking a batch branch out there stopped production across three separate batches; a documented restart then resurrected a held daemon 94 seconds into an incident).
+2. **Create the batch branch before spawning agents** — `git branch batch/<X> orchestrate/<topic>` after step 1, then `git switch batch/<X>` in the orchestrator's worktree, where integration happens; the main checkout's branch never moves (Rule 1). This makes it the merge target only — workers still branch from `origin/main` and must merge it in themselves (Rule 3). **Where the host repo deploys from the main checkout, take the same care at wrap-up:** run `systemctl is-enabled` and `systemctl cat` before any repo-documented restart, because a unit that is inactive *and* disabled while its preset is enabled is a deliberate hold, not a fault (process-log 2026-08-13 usa-wa: a batch branch checked out there stopped production three times, and a documented restart resurrected a held daemon mid-incident).
 3. **Verify worktree slot availability** — before launching, check that consumed slots + planned agents ≤ project ceiling (Rule 5). Prefer the host project's own slot-status command (e.g. `dev.sh worktree status`, or listing the port-pool directory) — it reports **actual** resource consumption. Otherwise use `bash skills/using-git-worktrees/scripts/worktree-list.sh --porcelain | grep -c '^worktree '` (minus 2: the main checkout and the orchestrator's) as a **lower-bound** proxy, with a safety margin of `ceiling - 1` to absorb port leaks from destroys whose project-side cleanup didn't run.
 4. Takes Rule 6's snapshot before the first launch, then launches all worker agents whose batch gate is currently satisfied simultaneously
 5. **On each worker signal — a `failed` one takes the same path as a `completed` one** (reconcile, then merge — do not assume auto-merge; Rule 3). A killed agent is not an empty worktree, and from outside it "died" and "fell through" are indistinguishable, so run this procedure before concluding anything; then **resume that agent rather than spawning a fresh one**, or you discard both a coherent phase and the context that produced it (2026-08-14 observo: a mid-TDD kill left four modified test files at 6 failed / 15 passed, every failure describing intended behaviour):
@@ -106,7 +102,7 @@ If `--ff-only` fails, the branches have diverged — stop and investigate before
 
 ### Rule 2 — Advance main only by a fast-forward push, rebased on a fresh fetch
 
-`origin/main` moves under the orchestrator (2026-10-27 skills: 17 commits landed during two 13-minute commit hooks, and the push was refused), so fetch immediately before every push, and never force:
+`origin/main` moves under the orchestrator (2026-10-27 skills: 17 commits during two commit hooks), so fetch immediately before every push, and never force:
 ```bash
 git fetch origin
 git rebase --rebase-merges origin/main   # the plan commit, or a batch's merge, on orchestrate/<topic>
@@ -122,7 +118,7 @@ The `isolation: "worktree"` parameter runs the agent in a temporary worktree. It
 **The base, by contrast, does not vary: worktrees are cut from `origin/main`, independent of the orchestrator's checked-out branch.** Sub-wave 1 hides this — `batch/<X>` still equals `main` — and by sub-wave 2 the batch branch carries everything merged since, so the gap widens with batch depth. Rule 1 does not cover it: local `main` can be current and the agent's tree still wrong. Two obligations follow, both the orchestrator's:
 - **Brief every worker to `git merge batch/<X>`** — worker protocol step 3, immediately after the isolation pre-flight. Expect a fast-forward.
 - **Give every worker prompt the expected test count on `batch/<X>`**, plus "stop if it does not match" — the only detector that has caught this. In #144 Batch A two of four agents found it because a briefed `1740 passed` read `1644` in their tree; one had been told to trim a file to a target measured on a version it lacked, and the other two would have edited a tree missing eight merged issues. Give a number, not an exhortation to "verify your assumptions" — that gets confirmation.
-  - **Measure that number in a tree cut the way the workers' are** — not in the orchestrator's checkout, and not by adjusting its count for the causes you know of — **at the commit the plan lands on**, after the Step 8 push (2026-10-27 skills: 7871 / 326 before it, 8030 / 332 after) — **and name any expected delta and its cause in the brief**; at the gate, run the suite in a tree cut the same way where you can, so the arithmetic needs no delta (observo did, and every gate closed exactly), and otherwise reconcile the difference by file (`pytest -rs`), not by a number carried from the baseline. A worktree can differ from the main checkout structurally, not by drift (uninitialised submodules, absent build artifacts), and a number carried across trees makes this stop condition fire on every worker it exists to protect (process-log 2026-09-16 observo: 4550 passed / 27 skipped in the main checkout; the brief's 4548 / 29 was inferred from the two known submodule skips, and both Batch A workers measured 4547 / 30 — a third test skips wherever no frontend bundle has been built). The skipped tests are a finder as well as a correction: [`batch-design.md`](batch-design.md).
+  - **Measure that number in a tree cut the way the workers' are** — not in the orchestrator's checkout, and not by adjusting its count for the causes you know of — **at the commit the plan lands on**, after the Step 8 push (2026-10-27 skills) — **and name any expected delta and its cause in the brief**; at the gate, run the suite in a tree cut the same way where you can, so the arithmetic needs no delta (observo did, and every gate closed exactly), and otherwise reconcile the difference by file (`pytest -rs`), not by a number carried from the baseline. A worktree can differ from the main checkout structurally, not by drift (uninitialised submodules, absent build artifacts), and a number carried across trees makes this stop condition fire on every worker it exists to protect (process-log 2026-09-16 observo: 4550 passed / 27 skipped in the main checkout; the brief's 4548 / 29 was inferred from the two known submodule skips, and both Batch A workers measured 4547 / 30 — a third test skips wherever no frontend bundle has been built). The skipped tests are a finder as well as a correction: [`batch-design.md`](batch-design.md).
 
 **Operating rule: the orchestrator owns the merge** — reconcile, then merge explicitly, on every completion signal. The runtime checklist is **Orchestrator step 5**, the single authoritative copy; follow it there rather than duplicating it here — Rule 1 carries the sync and the orchestrator's own worktree, Orchestrator step 2 the branch creation and the deploying-checkout caveat.
 
