@@ -487,19 +487,22 @@ class TestWakeFilter:
         assert "--me" in result.stderr
 
     @pytest.mark.parametrize(
-        "args",
+        ("args", "reason"),
         [
-            pytest.param(["listen", "--last", "-1", "--wake-from", "x"], id="me-still-required"),
-            pytest.param(["listen", "--last", "-1", "--me", "r3", "--wake-from", "a,,b"], id="empty-name"),
-            pytest.param(["listen", "--last", "-1", "--me", "r3", "--wake-on-mention", " "], id="blank-token"),
-            pytest.param(["read", "--last", "-1", "--wake-from", "x"], id="read"),
-            pytest.param(["post", "--from", "a", "--last", "-1", "--body", "b", "--wake-on-mention", "x"], id="post"),
-            pytest.param(["delete", "--text"], id="text-on-delete"),
+            pytest.param(["listen", "--last", "-1", "--wake-from", "x"], "listen requires --me", id="me-still-required"),
+            pytest.param(["listen", "--last", "-1", "--me", "r3", "--wake-from", "a,,b"], "--wake-from: each", id="empty-name"),
+            pytest.param(["listen", "--last", "-1", "--me", "r3", "--wake-on-mention", " "], "--wake-on-mention: TOKEN", id="blank-token"),
+            pytest.param(["read", "--last", "-1", "--wake-from", "x"], "apply only to listen", id="read"),
+            pytest.param(["post", "--from", "a", "--last", "-1", "--body", "b", "--wake-on-mention", "x"], "apply only to listen", id="post"),
+            pytest.param(["delete", "--text"], "--text applies to", id="text-on-delete"),
         ],
     )  # fmt: skip
-    def test_usage_errors(self, channel: Channel, args) -> None:
+    def test_usage_errors(self, channel: Channel, args, reason) -> None:
+        """Exit 2 alone is not enough: a client without these flags exits 2 on
+        "unrecognized argument" for every case, so each names its refusal."""
         result = channel.run(*args)
         assert result.returncode == 2, result.stdout + result.stderr
+        assert reason in result.stderr, result.stderr
 
 
 # --- 3. --text -------------------------------------------------------------------
