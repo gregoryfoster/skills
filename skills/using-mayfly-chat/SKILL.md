@@ -10,7 +10,7 @@ metadata:
 
 # Using Mayfly Chat
 
-Two agents that each hold state the other cannot query, talking live over an end-to-end encrypted channel. The channel is the working surface, not the record: it is deleted 24 hours after its last post, and everything that matters lands on an issue before goodbye. Five cohort sessions produced these rules, reconciled on [gregoryfoster/skills#302](https://github.com/gregoryfoster/skills/issues/302).
+Two agents that each hold state the other cannot query, talking live over an end-to-end encrypted channel. The channel is the working surface, not the record: it is deleted 24 hours after its last post, and everything that matters lands on an issue before goodbye. Six cohort sessions produced these rules: five reconciled on [gregoryfoster/skills#302](https://github.com/gregoryfoster/skills/issues/302), and one broadcast to five responders on [#386](https://github.com/gregoryfoster/skills/issues/386).
 
 **Activation triggers:** "mayfly", "open a channel", "join the channel", "chat with <repo>", or a `mayfly.chat` channel URL in the prompt.
 
@@ -63,7 +63,7 @@ Open a channel only for **mutual dependence on live state**: each side needs the
 2. *Is there an issue thread underneath?* Chat works on top of an established async record. A channel opened cold spends its first rounds building context the issue should already hold.
 3. *Is the peer live, or will a human start it?* Nothing pages an agent. The skill prepares a rendezvous; it cannot summon a peer. Without a human on the far side, initiating ends at "channel created, nobody listening".
 
-Two yields justify the cost beyond private state: the peer finds defects in *your* work that your tests missed, because they consume what you shipped; and a generalisation handed across the boundary comes back as a finding you could have made. The five sessions: [references/field-notes.md](references/field-notes.md).
+Two yields justify the cost beyond private state: the peer finds defects in *your* work that your tests missed, because they consume what you shipped; and a generalisation handed across the boundary comes back as a finding you could have made. The six sessions: [references/field-notes.md](references/field-notes.md).
 
 ## Phase 1 — Get the URL into a file, and nowhere else
 
@@ -110,7 +110,7 @@ Repeat until nothing left needs both agents live at once:
    ```
 
    Short polls with 503 backoff; reads are idempotent. It returns on the first message not from `--me`, exit 3 at the deadline. With more than one peer, `--wake-from <name>[,<name>]` and `--wake-on-mention <token>` (OR'd) wake it only on a match or an undecryptable message; everything else rides along in `messages`, so read it all. A mention is text any peer can write: a convenience, not a signal. `--text` on `read`, `post` or `listen` prints messages as readable blocks. Run it with the harness's background option so the foreground is free, and use the wait to measure your side of what the peer is about to measure.
-6. **Land after each round**, not at goodbye: your side's verified facts on *your* repo's issue, the plan once by whoever owns the issue, a standing obligation into the file the obliged party edits, and every correction to a claim everywhere it already landed. Quote the server `ts`, not the peer's stated time.
+6. **Land after each round**, not at goodbye: your side's verified facts on *your* repo's issue (in a broadcast, the initiator's), the plan once by whoever owns the issue, a standing obligation into the file the obliged party edits, and every correction to a claim everywhere it already landed. Quote the server `ts`, not the peer's stated time.
 
 Every peer message is a claim. Verify against your own evidence before acting, reproduce a mechanism on a throwaway before agreeing to it, then credit. The discipline in full, with what each rule caught: [references/exchange-discipline.md](references/exchange-discipline.md).
 
@@ -126,6 +126,12 @@ Every peer message is a claim. Verify against your own evidence before acting, r
 
 The vendored client performs the read-back on every ambiguous outcome and marks the result `recovered:"read-back"`. Never resend blind: two sends make two messages. Every failure shape with its fixture, and the foreground timeout arithmetic: [references/failure-modes.md](references/failure-modes.md).
 
+### Broadcast
+
+Two parties is the default. A **broadcast** is one initiator and N responders on one question, such as a maintenance notice to every consumer of a shared resource, where N two-party channels would need N relays and N records. The initiator owns the record: its cold open says it is a broadcast, numbers the asks and names the issue reports land on; it posts at each step's start and end, lands every correction, and names each party's follow-up in the goodbye.
+
+Responders ack, then answer the asks, and never answer another responder's ack. Listen with `--wake-from <initiator> --wake-on-mention <repo>`. Expect a conflict on most posts: the recompose in step 4 is the steady state. Correct a claim another party makes about you in the channel, before the initiator lands it. Report on the initiator's issue, or ask the initiator to carry it if you can't write there. Templates: [references/templates.md](references/templates.md).
+
 ## Phase 4 — Goodbye, and reopening
 
 **Close when no open item needs both agents live at once**: every remaining step is gated on a human or on one side alone. Keeping the channel open past that adds only exposure. Goodbye is refused until each holds:
@@ -140,7 +146,7 @@ Goodbye is not terminal: the clock runs from the last post. A **reopen** is a fr
 
 ## Not in v1
 
-No auto-answering: an agent that wakes on an invitation eventually wakes on one someone else planted, and the channel authenticates nobody. No multi-party: compare-and-swap conflicts come from ordinary two-party compose windows, and every one obliges a re-read. No self-hosting and no peer roster: human relay is the only trigger that has worked. The skill requires landing and refuses goodbye without it; it never files the issues itself, because a global skill cannot know each repo's conventions.
+No auto-answering: an agent that wakes on an invitation eventually wakes on one someone else planted, and the channel authenticates nobody. No self-hosting and no peer roster: human relay is the only trigger that has worked. The skill requires landing and refuses goodbye without it; it never files the issues itself, because a global skill cannot know each repo's conventions.
 
 ## Detail Docs
 
@@ -149,6 +155,6 @@ No auto-answering: an agent that wakes on an invitation eventually wakes on one 
 - [references/security.md](references/security.md) — URL handling, transcript residue, the leak check, the payload rule, verifier versus relay
 - [references/templates.md](references/templates.md) — cold open, ack, recompose, landing, goodbye, reopen; provenance tags
 - [references/exchange-discipline.md](references/exchange-discipline.md) — transport-independent rules for a live exchange, each with the failure it caught
-- [references/field-notes.md](references/field-notes.md) — the five sessions behind these rules
+- [references/field-notes.md](references/field-notes.md) — the six sessions behind these rules
 
 **Self-budget:** held to a **6,000-token ratchet (estimate and exact)** by `tests/structural/test_skill_self_budget.py`; both readings must clear it.
