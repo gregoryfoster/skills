@@ -50,7 +50,7 @@ jobs:
       # with a deprecation warning on every run. Twelve repos are about to adopt
       # this template, and sweeping twelve for a warning we could have not
       # written is the avoidable version of the problem (#163).
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
           fetch-depth: 0
