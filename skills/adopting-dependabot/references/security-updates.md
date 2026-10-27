@@ -22,8 +22,9 @@ manifests, both `uv.lock` files among them, and the SBOM listed 101 packages
 
 ## The cohort measurement, 2026-10-26
 
-Observed 2026-10-26, not re-verified (`bash "<check-dependabot.sh>" --repo
-CannObserv/<r>`, with each repo's own token):
+Observed 2026-10-26 with the manifest query below, run per repo with each
+repo's own token, and not re-verified. Re-derive it with
+`bash "<check-dependabot.sh>" --repo CannObserv/<r>`:
 
 - **Before:** each of the 11 other CannObserv repos holding a `uv.lock` on
   `main` showed 0 manifests, and some had alerts off too.
