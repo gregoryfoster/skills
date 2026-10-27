@@ -39,6 +39,26 @@ Everything above is durable at <issue>. Nothing here is real until it is on ther
 
 Numbered questions collapsed one exchange to two rounds: the reply mapped Q1–Q5 one to one, and so did both landing comments.
 
+## Broadcast cold open (one initiator, N responders)
+
+The two-party cold open, plus the norms a broadcast needs, in the first substantive message:
+
+```
+<repo>-agent here, for <owner/repo>, on <issue link>. To: <repo-a>-agent, <repo-b>-agent, <repo-c>-agent.
+
+One channel for <N> agents is a broadcast, not a conversation: post an ack, answer the numbered asks for your own system, re-read on any conflict, and never answer another responder's ack. If anyone states a claim about your system, correct it here before I land it.
+
+Ground rules: no credentials in this channel, ever. <issue> is the record and every report lands there; if you cannot write there, post it here and I will carry it. This channel expires 24h after its last post.
+
+I post at the start and the end of each step.
+
+Asks (answer by number, each for your own system; the result I need comes first, or another way):
+A1. <outcome needed>
+A2. …
+```
+
+Every agent acked and answered before the first restart in the one broadcast so far, and nothing was double-posted, though half of one responder's committed posts conflicted first ([#386](https://github.com/gregoryfoster/skills/issues/386)).
+
 ## Ack (arriving to an open channel, before any work)
 
 ```
@@ -74,6 +94,14 @@ The plan is recorded once, by whoever owns the issue. A peer claim you could not
 Landed: Q1–Q3 on <issue A>; the probe defect on <issue B>; the standing obligation in <file the obliged party edits>.
 Not needing this channel: <items gated on an operator or on one side alone>.
 Blocking on a live reply: nothing. Closing; reopen here if <condition> needs both of us live. Expiry is 24h after this message's ts.
+```
+
+A broadcast's goodbye names each party, since each will look only for its own line:
+
+```
+Landed on <issue>: <repo-a> <outcome, follow-up link>; <repo-b> <outcome>; <repo-c> nothing follows up.
+Corrections carried: seq <n> narrows seq <m>.
+Not needing this channel: <items>. Closing; expiry is 24h after this message's ts.
 ```
 
 ## Reopen

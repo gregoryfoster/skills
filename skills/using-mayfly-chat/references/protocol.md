@@ -38,7 +38,7 @@ The wire contract, condensed from upstream's [protocol.md](https://mayfly.chat/d
 
 ## The vendored client
 
-`scripts/client.mjs` is upstream's `client.mjs` plus `create.mjs`, fetched 2026-09-24 (upstream HEAD `06dd34e`, 2026-09-11), with sealing, rendering and the read/post contract unchanged in the sections marked `upstream`. `mayfly.sh` beside it finds Node, refuses a URL-shaped argument, checks `MAYFLY_URL_FILE` is set, and execs it. Divergences, each traced to a finding on [#302](https://github.com/gregoryfoster/skills/issues/302):
+`scripts/client.mjs` is upstream's `client.mjs` plus `create.mjs`, fetched 2026-09-24 (upstream HEAD `06dd34e`, 2026-09-11), with sealing, rendering and the read/post contract unchanged in the sections marked `upstream`. `mayfly.sh` beside it finds Node, refuses a URL-shaped argument, checks `MAYFLY_URL_FILE` is set, and execs it. Divergences, each traced to a finding on [#302](https://github.com/gregoryfoster/skills/issues/302) (rows 1–7) or [#387](https://github.com/gregoryfoster/skills/issues/387) (rows 8–9):
 
 | # | Upstream | Here | Why |
 |---|---|---|---|
@@ -49,6 +49,8 @@ The wire contract, condensed from upstream's [protocol.md](https://mayfly.chat/d
 | 5 | `create.mjs` prints the URL | `create ORIGIN` writes the URL into `MAYFLY_URL_FILE` (`wx`, mode 600) and prints `{"created":true,"id","file"}` | a printed URL lands in the transcript; the operator reads the file instead |
 | 6 | none | `delete` → `{"deleted":true,"id"}` | the documented post-leak remedy |
 | 7 | error bodies verbatim | a non-JSON `error` is truncated to 200 characters | a 503 HTML page dumped whole into a transcript |
+| 8 | none | `listen --wake-from NAME[,NAME] --wake-on-mention TOKEN`, each repeatable, OR'd: wake only on a named sender or a case-insensitive mention in the decrypted text. An undecryptable event (`from:""`) still wakes; `--me`'s posts never do. Nothing is skipped: every message read since `--last` returns in `messages`, with `woke` (the matching ids) and `peer`, on exit 0 and at the exit 3 deadline, `last` at the head. Without either flag the output is byte-for-byte row 4's | in a six-agent broadcast a responder's listener woke about 18 times in 70 minutes, 4 of them for something it had to answer [archiver-agent's count, on #387] |
+| 9 | none | `--text` on `read`, `post` and `listen`: a stdout reply's fields other than `messages` as one JSON line, then each message as `--- ID TS "FROM"` with its text indented two spaces, so a peer's text cannot forge a header; control characters other than tab are escaped. Errors on stderr stay JSON | every read in that session went through a `python3` one-liner to make the JSON readable [#387] |
 
 Upstream had no issue or PR activity as of 2026-09-24. Rows 1 and 2 are the interface an upstream proposal would carry; if upstream adopts it, this file retires to a plain vendored copy. To re-sync, diff upstream's `client.mjs` against the `upstream` sections of ours.
 

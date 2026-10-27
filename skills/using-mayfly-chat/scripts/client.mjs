@@ -4,7 +4,8 @@
 // Upstream: https://github.com/josharian/mayfly — srv/static/client.mjs and create.mjs, fetched
 // 2026-09-24 from https://mayfly.chat/static/ (upstream HEAD 06dd34e, 2026-09-11, MIT). The wire
 // format, sealing, rendering and the read/post reply contract are upstream's, unchanged, in the
-// sections marked "upstream". What differs, and the gregoryfoster/skills#302 finding behind each:
+// sections marked "upstream". What differs, and the gregoryfoster/skills finding behind each
+// (#302 unless another issue is named):
 //   1. The channel URL is never an argument. It is read from the mode-600 file named by
 //      MAYFLY_URL_FILE, and an argument shaped like a channel URL is refused before any request.
 //      argv (/proc/<pid>/cmdline) is world-readable for the life of every call; a file is not.
@@ -21,6 +22,12 @@
 //      must not exist) and prints only the channel id, so the URL never crosses stdout.
 //   6. `delete`: the post-leak remedy; upstream's CLIs have none.
 //   7. A non-JSON error body (an HTML 503 page) is truncated to 200 characters.
+//   8. `listen --wake-from NAME[,NAME] --wake-on-mention TOKEN` (#387): wake only on a named
+//      sender or a case-insensitive mention, OR'd; an undecryptable event always wakes and
+//      your own never does. Nothing is skipped: every message read since --last rides along
+//      in `messages`, on exit 0 and at the deadline. Without either flag, output is unchanged.
+//   9. `--text` (#387) on read, post and listen: the reply's other fields as one JSON line,
+//      then each message as `--- ID TS "FROM"` and its text indented two spaces.
 // Exit 0 success; 1 conflict (stdout, posted:false) or error (stderr, JSON); 2 usage; 3 listen deadline.
 import { createCipheriv, createDecipheriv, createHash, hkdfSync, randomBytes } from 'node:crypto';
 import { closeSync, openSync, readFileSync, statSync, unlinkSync, writeSync } from 'node:fs';
@@ -163,29 +170,41 @@ function readBody(path) {
 }
 
 const usage = `usage: node client.mjs COMMAND [options]      (Node 18+, nothing to install)
-  read   --last N [--wait S]                       one page; re-read with the returned last while "more" is true
-  post   --from NAME --last N --body PATH [--wait S]
-  listen --last N --me NAME [--slot S] [--max S]   short polls; returns on the first message not from NAME
+  read   --last N [--wait S] [--text]              one page; re-read with the returned last while "more" is true
+  post   --from NAME --last N --body PATH [--wait S] [--text]
+  listen --last N --me NAME [--slot S] [--max S]   short polls; returns on the first message not from NAME,
+         [--wake-from NAME[,NAME]] [--wake-on-mention TOKEN] [--text]    or, filtered, the first that matches
   create ORIGIN                                    mint a channel; writes its URL into MAYFLY_URL_FILE
   delete                                           destroy the channel (the post-leak remedy; no undo)
 The channel URL is never an argument: MAYFLY_URL_FILE names a mode-600 file that holds it, which
 create writes (it must not already exist) and every other command reads. --last starts at -1; read
 all pages before posting. --slot is 1-300 seconds (default 60); --max is the listen deadline in
-seconds (default 1800). One JSON object per run: stdout on success or conflict, stderr on error.
-Exit 0 success; 1 conflict (posted:false) or error; 2 usage; 3 listen deadline with no peer message.`;
+seconds (default 1800). --wake-from and --wake-on-mention repeat and combine as OR; the mention is
+case-insensitive and peer-controlled. Filtered, an undecryptable message still wakes, your own never
+does, and every message read since --last is returned. One JSON object per run: stdout on success
+or conflict, stderr on error. --text prints a stdout reply's fields other than messages as one JSON
+line, then each message as --- ID TS "FROM" and its text indented two spaces.
+Exit 0 success; 1 conflict (posted:false) or error; 2 usage; 3 listen deadline with no message that wakes it.`;
 
 function parseArgs(argv) {
-  const opts = { wait: '0', slot: '60', max: '1800' }, positional = [];
+  const opts = { wait: '0', slot: '60', max: '1800' }, positional = [], wakeFrom = [], mentions = [];
+  let text = false;
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === '-h' || arg === '--help') return null;
     if (looksLikeChannelUrl(arg)) throw new Error(REFUSAL);
-    const m = /^--(last|wait|from|body|me|slot|max)(?:=([^]*))?$/.exec(arg);
+    if (arg === '--text') {
+      text = true;
+      continue;
+    }
+    const m = /^--(last|wait|from|body|me|slot|max|wake-from|wake-on-mention)(?:=([^]*))?$/.exec(arg);
     if (m) {
       const value = m[2] ?? argv[++i];
       if (value === undefined) throw new Error(`--${m[1]} requires a value`);
       if (looksLikeChannelUrl(value)) throw new Error(REFUSAL);
-      opts[m[1]] = value;
+      if (m[1] === 'wake-from') wakeFrom.push(...value.split(','));
+      else if (m[1] === 'wake-on-mention') mentions.push(value);
+      else opts[m[1]] = value;
     } else if (arg.startsWith('-')) {
       throw new Error(`unrecognized argument: ${arg}`);
     } else {
@@ -195,6 +214,11 @@ function parseArgs(argv) {
   const [command, ...extra] = positional;
   const commands = ['read', 'post', 'listen', 'create', 'delete'];
   if (!commands.includes(command)) throw new Error(`command must be one of ${commands.join('|')}`);
+  // New flags are refused where they do nothing, so a misplaced one is never silently ignored.
+  if ((wakeFrom.length || mentions.length) && command !== 'listen') {
+    throw new Error('--wake-from and --wake-on-mention apply only to listen');
+  }
+  if (text && !['read', 'post', 'listen'].includes(command)) throw new Error('--text applies to read, post and listen');
   if (command === 'create') {
     if (extra.length !== 1) throw new Error('create takes exactly one ORIGIN, such as https://mayfly.chat');
     return { command, origin: extra[0] };
@@ -206,17 +230,26 @@ function parseArgs(argv) {
     if (!/^[+-]?\d+$/.test(opts[name])) throw new Error(`--${name}: invalid int value: ${JSON.stringify(opts[name])}`);
     opts[name] = String(BigInt(opts[name])); // Exact decimal; the server, not the client, decides the range.
   }
-  if (command === 'read') return { command, last: opts.last, wait: opts.wait };
+  if (command === 'read') return { command, last: opts.last, wait: opts.wait, text };
   if (command === 'post') {
     if (!validFrom(opts.from)) throw new Error('post requires --from: nonempty, trimmed, no control characters');
     if (!opts.body) throw new Error('post requires --body PATH (stdin is never read)');
-    return { command, name: opts.from, last: opts.last, wait: opts.wait, body: opts.body };
+    return { command, name: opts.from, last: opts.last, wait: opts.wait, body: opts.body, text };
   }
   if (!validFrom(opts.me)) throw new Error('listen requires --me NAME: your own --from, so your posts are skipped');
   const slot = Number(opts.slot), max = Number(opts.max);
   if (!Number.isInteger(slot) || slot < 1 || slot > 300) throw new Error('--slot must be an integer from 1 to 300 seconds');
   if (!Number.isInteger(max) || max < 1) throw new Error('--max must be a positive integer of seconds');
-  return { command, last: opts.last, me: opts.me, slot, max };
+  let wake = null;
+  if (wakeFrom.length || mentions.length) {
+    if (!wakeFrom.every(validFrom)) throw new Error('--wake-from: each comma-separated NAME must be nonempty, trimmed, no control characters');
+    if (wakeFrom.includes(opts.me)) throw new Error('--wake-from names --me: your own posts never wake you');
+    if (!mentions.every(t => validText(t) && !blank.test(t) && !/\p{Cc}/u.test(t))) {
+      throw new Error('--wake-on-mention: TOKEN must be nonblank, with no control characters');
+    }
+    wake = { from: new Set(wakeFrom), mentions: mentions.map(t => t.toLowerCase()) };
+  }
+  return { command, last: opts.last, me: opts.me, slot, max, wake, text };
 }
 
 // ---- derivative: one request, one reply, and the commands built on them --------------------
@@ -315,11 +348,29 @@ async function doPost(chan, name, last, text, wait) {
   return readBack(chan, name, last, text, reply); // any other reply after the request went out
 }
 
-async function doListen(chan, last, me, slot, max) {
+// Filtered listen (#387): your own posts never wake; an undecryptable or invalid event (from:"")
+// always does, since nobody can tell whom it was for; otherwise a named sender or a mention.
+// The mention is peer-controlled text, so it is a convenience, never an authenticated signal.
+const wakes = (m, me, wake) => m.from !== me && (m.from === '' || wake.from.has(m.from) ||
+  wake.mentions.some(token => m.text.toLowerCase().includes(token)));
+
+async function doListen(chan, last, me, slot, max, wake) {
   const deadline = Date.now() + max * 1000;
   let cursor = last, backoff = 10;
+  const seen = []; // filtered only: every message since --last, so a filter never skips one
+  const peers = () => seen.filter(m => m.from !== me).length;
   for (;;) {
     const remaining = Math.ceil((deadline - Date.now()) / 1000);
+    if (remaining <= 0 && wake) {
+      return {
+        page: {
+          last: cursor, messages: seen, timeout: true, peer: peers(), woke: [],
+          hint: `No message matched the wake filter within ${max}s; all ${seen.length} read since --last are in messages, and the cursor is ${cursor}.`,
+        },
+        exit: 3,
+        stream: 'stdout',
+      };
+    }
     if (remaining <= 0) {
       return {
         page: { last: cursor, messages: [], timeout: true, hint: `No peer message within ${max}s; the cursor is ${cursor}.` },
@@ -342,6 +393,13 @@ async function doListen(chan, last, me, slot, max) {
       continue;
     }
     backoff = 10;
+    if (wake) {
+      seen.push(...messages);
+      const woke = messages.filter(m => wakes(m, me, wake)).map(m => m.id);
+      if (woke.length) return { page: { last: head.last, more: false, messages: seen, peer: peers(), woke }, exit: 0, stream: 'stdout' };
+      cursor = head.last;
+      continue;
+    }
     const peer = messages.filter(m => m.from !== me).length;
     if (peer > 0) return { page: { last: head.last, more: false, messages, peer }, exit: 0, stream: 'stdout' };
     cursor = head.last;
@@ -386,6 +444,22 @@ async function doDelete(chan) {
   return { page: { deleted: true, id: chan.ident }, exit: 0, stream: 'stdout' };
 }
 
+// --text (#387): the page's other fields as one JSON line, then one block per message. Every
+// text line is indented two spaces, so only a header starts with "--- ": a peer's text cannot
+// forge one. Control characters other than tab, and the Unicode line separators, are escaped.
+const escapeControls = s => s.replace(/[\p{Cc}\u2028\u2029]/gu,
+  c => (c === '\t' ? c : `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`));
+
+function asText(page) {
+  const { messages, ...rest } = page;
+  const lines = [JSON.stringify(rest)];
+  for (const m of messages) {
+    lines.push(`--- ${m.id} ${m.ts} ${JSON.stringify(m.from)}`);
+    for (const line of m.text.replace(/\r\n/g, '\n').split('\n')) lines.push(`  ${escapeControls(line)}`);
+  }
+  return lines.join('\n');
+}
+
 async function main() {
   let args;
   try { args = parseArgs(process.argv.slice(2)); } catch (error) {
@@ -405,11 +479,12 @@ async function main() {
       switch (args.command) {
         case 'read': result = { page: await doRead(chan, args.last, args.wait), exit: 0, stream: 'stdout' }; break;
         case 'post': result = await doPost(chan, args.name, args.last, readBody(args.body), args.wait); break;
-        case 'listen': result = await doListen(chan, args.last, args.me, args.slot, args.max); break;
+        case 'listen': result = await doListen(chan, args.last, args.me, args.slot, args.max, args.wake); break;
         default: result = await doDelete(chan);
       }
     }
-    (result.stream === 'stdout' ? process.stdout : process.stderr).write(`${JSON.stringify(result.page)}\n`);
+    const asked = args.text && result.stream === 'stdout' && Array.isArray(result.page.messages);
+    (result.stream === 'stdout' ? process.stdout : process.stderr).write(`${asked ? asText(result.page) : JSON.stringify(result.page)}\n`);
     return result.exit;
   } catch (error) {
     const reply = error instanceof ReplyError ? error.reply : { error: error.message };

@@ -1,6 +1,6 @@
 # Exchange discipline
 
-Transport-independent rules for a live two-agent exchange, each with the failure it caught in the sessions in [field-notes.md](field-notes.md). They hold for issue comments too; a channel only compresses the time in which they bite.
+Transport-independent rules for a live exchange between two agents, or one initiator and several responders, each with the failure it caught in the sessions in [field-notes.md](field-notes.md). They hold for issue comments too; a channel only compresses the time in which they bite.
 
 ## Inbound: verify, then credit
 
@@ -9,6 +9,7 @@ Transport-independent rules for a live two-agent exchange, each with the failure
 - **Some claims are about the peer's system, and your repo cannot confirm them.** Ask for a pointer you can check from your side (an unauthenticated `openapi.json`, a line reference). When you assert something about your own system, give the peer that pointer unasked.
 - **A quotation of your own repo is still a claim.** The quote was exact; its scope was one stream class, and the peer applied it to five. Context is what a quote strips.
 - **An issue body is a claim,** including one the peer wrote days earlier. Re-validate its inputs before the exchange builds on them: one premise multiplied thresholds that capped nothing, and the outcome flipped.
+- **A claim about you can be made to someone else.** With more than two parties, one responder answering the initiator stated a mechanism of a third agent's system. It held for one of that agent's two streams and not the other. The party named is the one who can check it, so the correction is yours, in the channel, before the initiator lands the claim in its record: corrected at seq 14, accepted at seq 15, landed narrowed ([#386](https://github.com/gregoryfoster/skills/issues/386), [broker#67](https://github.com/CannObserv/broker/issues/67)).
 - **A human's report is a claim.** "Steps 1–3 completed" was false twice; the two agents reading their own production state established the truth. Tag it `[operator]`. Errors enter through the relay chain behind the peer, not only from the peer.
 
 ## Outbound: label, report, and stay stable
@@ -38,7 +39,7 @@ Transport-independent rules for a live two-agent exchange, each with the failure
 ## Landing
 
 - **Land after each round.** The channel may fail or the session may end at any point; a round mirrored as it happened costs one comment and makes the channel evaporating free.
-- **File on your own repo, never the peer's.** Cross-repo work stops at issues. The channel makes overreach feel natural because you hold the peer's reasoning and often their exact fix.
+- **File on your own repo, never the peer's.** Cross-repo work stops at issues. The channel makes overreach feel natural because you hold the peer's reasoning and often their exact fix. A broadcast's report is the exception the initiator asks for: a comment on its issue, which needs write access there, or carried by the initiator when you have none.
 - **Each side records its own side's facts; the plan is recorded once, by the issue's owner.** Two recordings of one plan drift.
 - **An outcome goes to the issue; an ongoing obligation goes into the file the obliged party edits.** A note in a runbook an operator reads beats an agreement in a channel that dies tomorrow. An issue comment is a record, not a control.
 - **Correct a claim everywhere it already landed.** The channel correction is the courtesy; the issue correction is the one the next reader finds. Ephemerality otherwise preserves the error.
