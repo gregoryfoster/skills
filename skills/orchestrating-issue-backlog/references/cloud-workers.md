@@ -208,8 +208,10 @@ Orchestrator step 5, adapted:
 1. `git ls-remote origin main` must equal the last SHA the orchestrator
    recorded for it: `main` at launch, updated each time the orchestrator itself
    pushes `main` (Orchestrator step 10, between batches). Any other difference
-   halts the batch: someone other than the orchestrator pushed `main`, and a
-   worker is the first suspect.
+   halts the batch until `git log <recorded>..origin/main` accounts for every
+   commit: another session's push is routine (Rule 2 in
+   [`execution.md`](execution.md)), but for one nobody claims, a worker is the
+   first suspect.
 2. `git fetch`, then find the worker's branch: the briefed name, or
    `git branch -r --no-merged <base>`.
 3. **Check the red/green ordering per pair.** A worker that developed in a
