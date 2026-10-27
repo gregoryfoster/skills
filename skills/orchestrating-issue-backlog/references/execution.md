@@ -92,7 +92,7 @@ git fetch origin
 git branch orchestrate/<topic> origin/main   # not --new below, which cuts from the main checkout's HEAD
 bash <main>/skills/using-git-worktrees/scripts/worktree-create.sh orchestrate/<topic>   # prints the path
 ```
-Run skill scripts by absolute path from the main checkout (Worker step 1). A fresh tree has no stray to sweep, and its hooks lock nothing the user stands in: in the main checkout, 2026-10-27 skills moved the user's branch and failed the plan's commit on an *ignored* stray.
+Where the host has its own create script (Q5), use it instead: step 6's suite runs here, and the tree holds a slot of Rule 5's ceiling. Run skill scripts by absolute path from the main checkout (Worker step 1). A fresh tree has no stray to sweep, and its hooks lock nothing the user stands in (2026-10-27 skills).
 
 Any push advances `origin/main` without moving this tree, and a stale tree corrupts the *plan*, less visibly: it produces a conflict map of a repo layout that no longer exists, and every downstream instruction inherits the fiction (process-log 2026-08-10: three workers were assigned an ownership boundary in a file that two merged PRs had already split apart; it surfaced only because a worker said so in its report). **So sync at Step 1–2 as well** — by launch time the plan is written and the tracking issue is filed.
 
