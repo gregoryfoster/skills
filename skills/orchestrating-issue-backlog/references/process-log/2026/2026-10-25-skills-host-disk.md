@@ -128,3 +128,13 @@ three against them.
 
 `-f` takes the value raw; only `-F` reads `@file`. One round comment went up
 as a path, and was patched before the worker was woken.
+
+### 12. The adoption tail was a read of each host, not a template
+
+The owner approved filing the adoption issues for "the cohort of 14 VMs". That's the host cohort in Provisioner's inventory, not the 13 skill-vendoring repos. Mapping VM to repo added index, status and processor, and showed that co-provisioner already had the GC. Seven of the thirteen hosts left already had an open disk or adoption issue, so they got a comment, not a duplicate.
+
+Reading each host before writing turned up two blockers that a template would have hidden:
+- wslcb's VM isn't on the tailnet, and the sensor's default `status_url` is `http://status:9000`;
+- co-status would watch its own disk.
+
+Reading Provisioner's README against the layer, while drafting its issues, found that the reference puller already allows the parent directories that step 7's text refuses. Without that read, a code bug would have been filed where the fix is only to the docs.
