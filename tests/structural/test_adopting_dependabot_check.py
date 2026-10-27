@@ -379,3 +379,17 @@ def test_the_limit_is_never_said_to_stop_security_updates():
     for path in [*skill.rglob("*.md"), *skill.rglob("*.py"), *skill.rglob("*.sh")]:
         text = " ".join(path.read_text().split())
         assert "security updates included" not in text, path
+
+
+def test_a_failed_run_for_a_dropped_ecosystem_is_not_this_configs(tmp_path):
+    """CR 597: npm left the config; its last run failing must not fail the check forever."""
+    table = healthy()
+    runs = table[f"repos/{REPO}/actions/runs?event=dynamic&per_page=100"]["body"][
+        "workflow_runs"
+    ]
+    runs.insert(
+        0, _run("npm_and_yarn in / - Update #9", "failure", "2026-10-27T00:00:00Z")
+    )
+    rc, out, _ = _check(tmp_path, table)
+    assert rc == 0
+    assert "npm" not in _by_name(out)["update-runs"]["detail"]

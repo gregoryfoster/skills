@@ -183,7 +183,7 @@ def limits(repo: str, doc: dict) -> list[dict]:
     return out
 
 
-def runs(repo: str, per_page: int) -> list[dict]:
+def runs(repo: str, per_page: int, doc: dict) -> list[dict]:
     status, body = gh(f"repos/{repo}/actions/runs?event=dynamic&per_page={per_page}")
     if status != 200 or not isinstance(body, dict):
         return [check("update-runs", "unread", f"runs: HTTP {status} {message(body)}")]
@@ -200,9 +200,16 @@ def runs(repo: str, per_page: int) -> list[dict]:
                 f"no Dependabot Updates run among the last {per_page} dynamic runs",
             )
         ]
+    # A run for an ecosystem since dropped from the config isn't this config's.
+    configured = {
+        BRANCH_SEGMENT.get(e, e.replace("-", "_"))
+        for e in (b.get("package-ecosystem", "") for b in doc.get("updates") or [])
+    }
     latest: dict[str, dict] = {}
     for run in updates:  # newest first
         m = RUN_KEY.match(run.get("display_title", ""))
+        if m and m.group(1) not in configured:
+            continue
         key = f"{m.group(1)} in {m.group(2)}" if m else run.get("display_title", "?")
         latest.setdefault(key, run)
     failed = {k: r for k, r in latest.items() if r.get("conclusion") == "failure"}
@@ -411,7 +418,7 @@ def main() -> int:
         doc, checks = read_config(args.repo, branch)
         if doc is not None and checks[0]["status"] == "pass":
             checks += limits(args.repo, doc)
-            checks += runs(args.repo, args.runs)
+            checks += runs(args.repo, args.runs, doc)
         checks += last_pr(args.repo)
         checks += graph(args.repo, branch)
         checks += alerts(args.repo)
