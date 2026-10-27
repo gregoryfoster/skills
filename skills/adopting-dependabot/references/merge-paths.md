@@ -28,7 +28,7 @@ GitHub marked each one merged:
 # Read the release notes, not just the diff: a major bump can change inputs.
 gh pr view <N> --json headRefOid -q .headRefOid          # note the head SHA
 gh pr comment <N> --body "@dependabot rebase"            # only if main moved
-# wait until headRefOid changes, then:
+# if you asked for a rebase, wait until headRefOid changes; then:
 gh pr checks <N> --watch                                 # every job, on the new head
 git fetch origin "$(gh pr view <N> --json headRefName -q .headRefName)"
 git merge --ff-only FETCH_HEAD
