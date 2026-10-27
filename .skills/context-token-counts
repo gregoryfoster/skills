@@ -5,10 +5,10 @@
 # file never counted exactly or since drifted far from the size recorded here.
 15600 5993 AGENTS.md
 3182 1220 docs/BUDGETS.md
-19096 6710 docs/CONVENTIONS.md
-7742 2900 docs/KNOBS.md
+20896 7406 docs/CONVENTIONS.md
+8155 3069 docs/KNOBS.md
 4782 1784 docs/SKILLS.md
-25319 9323 docs/STYLE.md
+25495 9394 docs/STYLE.md
 11125 4282 skills/adopting-dependabot/SKILL.md
 3929 1486 skills/adopting-dependabot/references/config-keys.md
 2836 1107 skills/adopting-dependabot/references/credential-context.md
