@@ -38,7 +38,7 @@ The wire contract, condensed from upstream's [protocol.md](https://mayfly.chat/d
 
 ## The vendored client
 
-`scripts/client.mjs` is upstream's `client.mjs` plus `create.mjs`, fetched 2026-09-24 (upstream HEAD `06dd34e`, 2026-09-11), with sealing, rendering and the read/post contract unchanged in the sections marked `upstream`. `mayfly.sh` beside it finds Node, refuses a URL-shaped argument, checks `MAYFLY_URL_FILE` is set, and execs it; after a successful `create` it warns on stderr, without refusing, when the file is outside `~/.mayfly/` ([#509](https://github.com/gregoryfoster/skills/issues/509)). Divergences, each traced to a finding on [#302](https://github.com/gregoryfoster/skills/issues/302) (rows 1–7) or [#387](https://github.com/gregoryfoster/skills/issues/387) (rows 8–9):
+`scripts/client.mjs` is upstream's `client.mjs` plus `create.mjs`, fetched 2026-09-24 (upstream HEAD `06dd34e`, 2026-09-11), with sealing, rendering and the read/post contract unchanged in the sections marked `upstream`. `mayfly.sh` beside it finds Node, refuses a URL-shaped argument, checks `MAYFLY_URL_FILE` is set, and execs it. It runs `create` as a child instead, so that afterwards it can warn on stderr, without refusing, when the file is outside `~/.mayfly/` ([#509](https://github.com/gregoryfoster/skills/issues/509)). Divergences, each traced to a finding on [#302](https://github.com/gregoryfoster/skills/issues/302) (rows 1–7) or [#387](https://github.com/gregoryfoster/skills/issues/387) (rows 8–9):
 
 | # | Upstream | Here | Why |
 |---|---|---|---|
