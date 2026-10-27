@@ -204,7 +204,7 @@ def test_a_healthy_repo_passes(tmp_path):
 
 
 def test_a_full_pr_limit_fails(tmp_path):
-    """notifier#103: three open of three, and nothing more opens, security updates included."""
+    """notifier#103: three open of three, and no more version updates open."""
     table = healthy()
     table[f"repos/{REPO}/pulls?state=open&per_page=100"]["body"] = [
         _pr(n, f"dependabot/uv/p{n}") for n in range(3)
@@ -367,3 +367,12 @@ def test_usage_errors_exit_2(tmp_path):
     assert rc == 2 and "acme/gone" in err
     proc = subprocess.run(["bash", str(CHECK)], capture_output=True, text=True)
     assert proc.returncode == 2 and "--repo" in proc.stderr
+
+
+def test_the_limit_is_never_said_to_stop_security_updates():
+    """GitHub's options reference: security updates have a separate, fixed limit
+    of 10, which open-pull-requests-limit doesn't govern (CR 590)."""
+    skill = SKILLS_DIR / "adopting-dependabot"
+    for path in [*skill.rglob("*.md"), *skill.rglob("*.py"), *skill.rglob("*.sh")]:
+        text = " ".join(path.read_text().split())
+        assert "security updates included" not in text, path

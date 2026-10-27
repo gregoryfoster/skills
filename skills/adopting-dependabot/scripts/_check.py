@@ -153,7 +153,8 @@ def limits(repo: str, doc: dict) -> list[dict]:
         by_eco.setdefault(block.get("package-ecosystem", "?"), []).append(block)
     for eco, blocks in sorted(by_eco.items()):
         segment = BRANCH_SEGMENT.get(eco, eco.replace("-", "_"))
-        # The limit holds per block; open PRs are told apart by ecosystem only.
+        # The limit holds per block; open PRs are told apart by ecosystem only,
+        # and a security-update PR's branch looks like a version update's.
         limit = sum(b.get("open-pull-requests-limit", 5) for b in blocks)
         count = open_by_segment.get(segment, 0)
         note = "" if len(blocks) == 1 else f" (summed over {len(blocks)} blocks)"
@@ -162,8 +163,9 @@ def limits(repo: str, doc: dict) -> list[dict]:
                 check(
                     f"limit:{eco}",
                     "fail",
-                    f"{count} open of a limit of {limit}{note}: Dependabot opens nothing more, security "
-                    "updates included, and says so nowhere. Land or close PRs, or raise the limit",
+                    f"{count} open of a limit of {limit}{note}: Dependabot opens no more version "
+                    "updates, and says so nowhere. Land or close PRs, or raise the limit. The count "
+                    "may include security-update PRs, which have their own fixed limit of 10",
                     open=count,
                     limit=limit,
                 )

@@ -10,7 +10,7 @@ failure it prevents. The guard test pins each one.
 | `package-ecosystem` | A typo (`github_actions`, `python`) opens nothing, and reads as "no updates available" | notifier#33 |
 | `directory` / `directories` | `/` is what scans `.github/workflows/`. `/.github/workflows` is silence. An `action.yml` elsewhere (a composite action) needs its own directory listed | notifier#33 |
 | `schedule.interval` | Missing, and Dependabot rejects the block, visibly only in its own tab | notifier#33 |
-| `open-pull-requests-limit` | Defaults to **5**. Past the limit Dependabot opens **nothing**, security updates included, and says so nowhere. notifier's dev-tools group and SDK table went silent for **five weeks** | notifier#103 |
+| `open-pull-requests-limit` | Defaults to **5**. Past the limit Dependabot opens **no more version updates**, and says so nowhere. Security updates aren't governed by it: they have a separate, fixed limit of 10 open PRs (GitHub's options reference). notifier's dev-tools group and SDK table went silent for **five weeks** | notifier#103 |
 | `versioning-strategy` | uv/pip: the default `auto` resolves to `widen` for a library, which uv doesn't support (dependabot-core#15290). Pin `increase-if-necessary`. Even that raised floors on in-range bumps under uv, so read a library's floor before merging | notifier#33, #103 |
 | `commit-message.prefix` | The default subject, `Bump x from a to b`, matches no `type:` convention. `prefix: chore` gives `chore: bump …` | watcher#354–#357 |
 | `groups` | Without a dev group, dev tooling (ruff alone ships minors about monthly) buries runtime bumps. Runtime dependencies stay individual PRs | notifier#33 |
@@ -45,8 +45,8 @@ updates:
     directory: "/" # scans .github/workflows/
     schedule:
       interval: "weekly"
-    # The default is 5, and past it Dependabot opens nothing and says so
-    # nowhere. One PR per action; the test derives the bound.
+    # The default is 5, and past it no version update opens, and nothing
+    # says so. One PR per action; the test derives the bound.
     open-pull-requests-limit: 10
     # The PR's commit lands as-is, so it takes the repo's form.
     commit-message:

@@ -15,8 +15,10 @@ pass, fail, unread (this token can't read it) or info:
                     is version 2, and every block names an ecosystem, a
                     directory and schedule.interval
   limit:<eco>       open Dependabot PRs against open-pull-requests-limit
-                    (default 5). Full means nothing more opens, security
-                    updates included, and nothing says so
+                    (default 5). Full means no more version updates open,
+                    and nothing says so. Security updates have their own
+                    fixed limit of 10, but their PRs can't be told apart by
+                    branch, so the count may include them
   update-runs       the latest "Dependabot Updates" run per ecosystem and
                     directory didn't fail; none at all fails too
   last-pr           the newest Dependabot PR and its age (info)

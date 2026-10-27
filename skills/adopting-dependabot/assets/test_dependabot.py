@@ -7,8 +7,8 @@ repo, so it stays true as the repo changes.
 Dependabot's config fails silently. A mistyped ecosystem, a wrong directory
 or a missing ``schedule.interval`` produces no PRs and no error anywhere a
 person looks, and a quiet bot reads as "no updates available". Past
-``open-pull-requests-limit`` (default 5) it opens nothing at all, security
-updates included, and says so nowhere: notifier's dev-tools group and SDK
+``open-pull-requests-limit`` (default 5) it opens no more version updates,
+and says so nowhere (security updates have their own fixed limit of 10): notifier's dev-tools group and SDK
 table went silent for five weeks that way (CannObserv/notifier#103).
 
 Pure file reads plus ``git ls-files``: no network.
@@ -206,7 +206,7 @@ def test_actions_open_pr_limit_outlasts_a_full_batch() -> None:
         limit = block.get("open-pull-requests-limit", 5)
         assert limit > len(actions), (
             f"limit {limit} can be filled by {len(actions)} action PRs; past it Dependabot "
-            "opens nothing and says so nowhere. Raise open-pull-requests-limit"
+            "opens no more version updates and says so nowhere. Raise open-pull-requests-limit"
         )
 
 

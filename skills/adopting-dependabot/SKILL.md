@@ -35,7 +35,7 @@ Pushing the config is outward-facing: PRs open within a minute. Turning on repos
 | Thought | Reality |
 |---|---|
 | "No PRs, so nothing's out of date" | Or the limit is full, the ecosystem is mistyped, the directory is wrong, or the update run fails on a private index. Each reads the same. Run the check. |
-| "The defaults are fine" | `open-pull-requests-limit` defaults to 5, then nothing opens. `versioning-strategy: auto` is `widen` for a library, which uv doesn't support. |
+| "The defaults are fine" | `open-pull-requests-limit` defaults to 5, then no version update opens. `versioning-strategy: auto` is `widen` for a library, which uv doesn't support. |
 | "Version PRs arrive, so security updates work" | They're separate paths. With the dependency graph off, alerts match nothing, and transitive advisories arrive only as a red audit. |
 | "`ignore:` the private package and turn uv on" | The updater still has to resolve it, and can't. Every run fails. That ecosystem is blocked; file it. |
 | "Dependabot proposed v7, so v7 is newest" | A major-form pin stops at the last floating major tag. `setup-uv` was at v10.2.0. Read upstream's releases. |
