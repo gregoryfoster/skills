@@ -12,6 +12,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -414,3 +415,27 @@ def test_the_default_branch_is_url_encoded(tmp_path):
     assert rc == 0, err
     assert _by_name(out)["config"]["status"] == "pass"
     assert _by_name(out)["graph"]["status"] == "pass"
+
+
+# `gh run view --json` / `gh run list --json` fields, read from gh's own error
+# listing them (gh 2.x, 2026-10-26). run list lacks `jobs`.
+_RUN_FIELDS = {
+    "attempt", "conclusion", "createdAt", "databaseId", "displayTitle", "event", "headBranch",
+    "headSha", "name", "number", "startedAt", "status", "updatedAt", "url",
+    "workflowDatabaseId", "workflowName",
+}  # fmt: skip
+_GH_RUN_JSON = re.compile(r"gh run (view|list)\b[^\n]*?--json ([\w,]+)")
+
+
+def test_every_documented_gh_run_json_field_exists():
+    """CR 600: `--json jobs,actor` named a field gh doesn't have, so the step errored."""
+    found = 0
+    for path in (SKILLS_DIR / "adopting-dependabot").rglob("*.md"):
+        for verb, fields in _GH_RUN_JSON.findall(path.read_text()):
+            allowed = _RUN_FIELDS | ({"jobs"} if verb == "view" else set())
+            unknown = set(fields.split(",")) - allowed
+            assert not unknown, (
+                f"{path.name}: gh run {verb} has no --json field {sorted(unknown)}"
+            )
+            found += 1
+    assert found, "matched no `gh run ... --json`: the scan broke"

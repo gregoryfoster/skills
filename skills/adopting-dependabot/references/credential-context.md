@@ -17,7 +17,8 @@ not the bump. Per job, check that the actor is `dependabot[bot]` and the auth
 steps succeeded:
 
 ```bash
-gh run view <run-id> --json jobs,actor -q '.actor.login, (.jobs[] | "\(.name)\t\(.conclusion)")'
+gh api repos/{owner}/{repo}/actions/runs/<run-id> -q '.actor.login, .triggering_actor.login'
+gh run view <run-id> --json jobs -q '.jobs[] | "\(.name)\t\(.conclusion)"'
 gh run view <run-id> --log | grep -n -i -E 'auth|token|credential' | head -40
 ```
 
