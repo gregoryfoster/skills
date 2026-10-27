@@ -198,6 +198,6 @@ Post the before and after readings where the knob's `records` says:
 - auto-removals;
 - the downtime;
 - what's left pending, by class ([policy.md](policy.md)), language dependencies included;
-- for each tree with a repo as its owner, that repo's own update mechanism, read with `gh`: an audit gate in CI, a Dependabot or Renovate config, the date of its last PR, and its open PRs against `open-pull-requests-limit`. A config alone reads "on" while the bot is silent behind a full PR limit, as notifier's was for five weeks (#366).
+- for each tree with a repo as its owner, that repo's own update mechanism: an audit gate in CI, and whether its bot is working, not just configured. A config alone reads "on" while the bot is silent behind a full PR limit, as notifier's was for five weeks (#366), or while the dependency graph is off and no advisory opens a PR (CannObserv/notifier#140). `adopting-dependabot`'s `check-dependabot.sh --repo <owner/name>` reads both; read a Renovate config by hand.
 
 A record that lists pending security updates is published only after they're applied, and gives counts and families, not versions.

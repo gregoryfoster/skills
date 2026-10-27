@@ -103,6 +103,7 @@ SHIPPING = [
 PUBLISHERS = sorted(
     SHIPPING
     + [
+        "adopting-dependabot",
         "auditing-ci-cost",
         "coordinating-epics",
         "curating-context",
