@@ -43,7 +43,7 @@ The procedure assumes you have already halted further completion signals for the
 
 7. **Re-run** the agent's verification (full test suite, linter) on the salvaged branch before signaling complete. **The agent's pre-salvage test pass is invalid** — those tests ran against the main checkout's working tree, which contained the modifications themselves plus whatever unrelated state the orchestrator or other agents had left in `main`. Trust only fresh post-salvage results.
 
-8. **Return the main checkout to the branch Rule 6's launch snapshot recorded** — not to `main`, which it may never have held:
+8. **Return the main checkout to the branch Rule 6's launch snapshot recorded** (its snapshot HEAD, if it was detached) — not to `main`, which it may never have held:
    ```bash
    git -C <main> checkout <snapshot branch>
    ```
