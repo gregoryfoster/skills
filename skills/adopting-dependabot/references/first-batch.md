@@ -8,15 +8,16 @@ everything the inventory couldn't read.
 ## Watch it land
 
 ```bash
-gh run list --event dynamic --limit 10 \
-  --json name,displayTitle,conclusion,createdAt -q '.[] | [.displayTitle, .conclusion, .createdAt] | @tsv'
+gh run list --event dynamic --limit 30 --json displayTitle,conclusion,createdAt -q '.[] | select(.displayTitle | test(" - Update #")) | [.displayTitle, .conclusion, .createdAt] | @tsv'
 gh pr list --author app/dependabot --json number,title,headRefName,createdAt
 ```
 
 - **`Dependabot Updates` runs** are the updater itself, one per ecosystem and
-  directory. A failed one opens no PR and reads as "no updates available"
-  everywhere else. Its log names the resolution error (a private index, a
-  wrong directory).
+  directory; their titles end ` - Update #<n>`. The same listing holds
+  `Configured Graph Update` runs, which refresh the dependency graph and open
+  no PR: the filter above leaves them out. A failed updater run opens no PR,
+  and reads as "no updates available" everywhere else. Its log names the
+  resolution error (a private index, a wrong directory).
 - **Each PR's CI**: per job, the actor is `dependabot[bot]`, and the auth steps
   succeeded ([credential-context.md](credential-context.md)).
 - **Expect one PR per moved dependency, all at once.** Grouped dev tooling is
