@@ -160,7 +160,7 @@ git -C <main checkout> status --porcelain
 
 **Read the exit code, not only stdout.** A linked worktree *shares* `.git/config` with the main checkout, so a worker's stray `git config` — or a bare `git init --bare` whose path mis-resolves — can set `core.bare = true` there, and that makes `git status` **fail** with empty stdout. To a caller reading output alone, that is indistinguishable from "clean": the corruption **disables** this detector rather than tripping it, and keeps answering "clean" forever (#189, twice in one four-agent batch). Hence the canary above, and hence a non-zero exit is as much a halt as any output. Brief workers to give every repo-creating git command an explicit path (`git -C <tmpdir> init`).
 
-**Snapshot both, and the main checkout's HEAD and branch (`rev-parse HEAD`, `branch --show-current`), before the first launch**: the main checkout may hold the user's own work (Rule 1), so the signal is any line or HEAD that differs from the snapshot.
+**Snapshot both, and the main checkout's HEAD and branch (`rev-parse HEAD`, `branch --show-current`), before the first launch**: the main checkout may hold the user's own work (Rule 1), so the signal is any line or HEAD that differs from the snapshot — but a change the user made is not one: ask before salvaging.
 
 A difference indicates a worker fell through and is modifying files in the main checkout. Stop processing further completion signals from this batch until the salvage completes and `git -C <main> status --porcelain` matches the snapshot again. Identify the responsible agent (most recently signaled, or — if commits ended up on the wrong branch — via `git -C <main> log <snapshot HEAD>..HEAD`), and salvage per the Recovery procedure in [`references/recovery.md`](recovery.md).
 
