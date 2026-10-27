@@ -112,7 +112,10 @@ review unit. **Baseline: 8030 passed, 332 skipped** (`bash
 scripts/structural-tests.sh`, 13m25s), measured in a fresh detached worktree
 of `origin/main` at `93bce812`, the commit this plan sits on. The plan commit
 adds no tests. The worker stops and reports if its tree disagrees. (The first
-measurement, 7871/326 at `a695c02e`, came before #376 landed.)
+measurement, 7871/326 at `a695c02e`, came before #376 landed.) The worker,
+cut from `aa2bf76f`, measured **8035/332**: the 5 extra tests are the
+link and heading checks on this run's own journal entry, committed after
+this measurement (2026-10-27).
 
 Commit sequence:
 
@@ -121,13 +124,13 @@ Commit sequence:
 2. `#387 feat:` green: `client.mjs` + `mayfly.sh`.
 3. `#387 docs:` SKILL.md Phase 3 step 5, `protocol.md`, `failure-modes.md`.
 4. Live validation against a local upstream Mayfly server (`josharian/mayfly`
-   at `06dd34e`, the commit the client was vendored from; Go 1.26 is on the
-   host), with two named senders exercising each flag. If that server cannot be
+   at `06dd34e`, the commit the client was vendored from; its `go.mod`
+   needs Go 1.27.1, which the host's Go downloaded by itself), with two named senders exercising each flag. If that server cannot be
    stood up: one temporary mayfly.chat channel, deleted afterwards. Reported,
    not committed.
 5. `#386 docs:` Broadcast subsection, Phase 3 step 6 landing exception, five →
-   six sessions, exchange-discipline / templates / field-notes,
-   `metadata.version` 1.1.
+   six sessions, exchange-discipline / templates / field-notes. The
+   `metadata.version` bump to 1.1 goes in step 3, as Conflict zones has it.
 
 ## Key decisions
 
@@ -143,11 +146,13 @@ Commit sequence:
 - **No live URL reaches a durable store during live validation either**: it goes
   in a mode-600 file outside the repo (the skill's own Phase 1), and the
   validation log in the report carries counts and sequence numbers, not URLs.
-- **The exact token count is unavailable until 2026-11-01** (API usage limit,
+- **The exact token count was unavailable until 2026-11-01** (API usage limit,
   as for #376). Editing SKILL.md lapses its anchor in
   `.skills/context-token-counts`, which warns rather than fails. The worker
   keeps the *worst-case* estimate under the 6,000 ratchet (current anchored
-  exact: 5,238), and the re-anchor is in the tail.
+  exact: 5,238), and the re-anchor is in the tail. *Superseded the same day:*
+  the limit was raised, the worker anchored all seven rows exact (SKILL.md
+  5,671), and the CR round re-anchored the rows it changed.
 - **Red commit with `--no-verify`.** The pre-commit hook runs the 13-minute
   suite, which a red phase cannot pass (Worker step 6).
 
@@ -164,7 +169,7 @@ them, and report any that do not hold.
 | Item | Owner |
 |---|---|
 | Comment the merge on #386, #387 and the tracking issue; close all three | orchestrator |
-| Exact re-anchor of `skills/using-mayfly-chat/SKILL.md` (`docs/BUDGETS.md` anchor loop) after 2026-11-01 | orchestrator |
+| ~~Exact re-anchor of `skills/using-mayfly-chat/SKILL.md` after 2026-11-01~~ done in the batch itself (2026-10-27) | — |
 | Field validation of `--wake-from` in the next real broadcast | no owner until one runs; whoever initiates it reports on the tracking issue or a new one |
 
 ## Deferred items
