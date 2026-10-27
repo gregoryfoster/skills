@@ -50,7 +50,7 @@ The orchestrator reads the batch plan and manages progression. It:
 8. Notifies the user: "Batch X ready for review: `batch/<X>`, N issues, tests passing"
 9. Waits for merge confirmation before proceeding
 10. **On confirmation**, merges `batch/<X>` onto `orchestrate/<topic>` and pushes it per Rule 2, **comments the merge on the tracking issue**, then syncs (Rule 1) before launching the next batch. The comment is not optional: across context compactions the tracking issue is the run's only complete account, and a run that skipped two had to rebuild them from `gh pr view` (2026-09-16/21 wordpress)
-11. **Close the run on the tracking issue** once the last batch and the tail are done — a closing comment giving every held review finding its final disposition: applied, filed, or dropped with the reason. "Held" names no owner, and one finding sat there three days (2026-09-16/21 wordpress)
+11. **Close the run on the tracking issue** once the last batch and the tail are done — a closing comment giving every held review finding its final disposition: applied, filed, or dropped with the reason. "Held" names no owner, and one finding sat there three days (2026-09-16/21 wordpress). Then, from the main checkout, `worktree-destroy.sh orchestrate/<topic>` (its Iron Law waits for `origin/main`) and `git branch -d orchestrate/<topic>`
 
 Never writes implementation code itself.
 
