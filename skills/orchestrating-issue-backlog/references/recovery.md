@@ -17,7 +17,7 @@ The procedure assumes you have already halted further completion signals for the
    git -C <main> status                                        # confirm what's modified
    git -C <main> stash push -u -m "salvage from <agent-id>"
    ```
-   The `-u` flag includes untracked files — critical, since the worker may have created new files.
+   The `-u` flag includes untracked files — critical, since the worker may have created new files. Where Rule 6's launch snapshot was not clean, the user's own work is in that checkout too: stash only the paths that differ from the snapshot (`stash push -u -m ... -- <paths>`).
 
 3. **Switch to the agent's feature branch.** Do NOT use `git checkout -B` here — uppercase `-B` resets an existing branch to current HEAD and discards any commits already on it.
 
@@ -26,7 +26,7 @@ The procedure assumes you have already halted further completion signals for the
    git -C <main> checkout <agent-branch>
 
    # If the branch does not yet exist:
-   git -C <main> checkout -b <agent-branch> main
+   git -C <main> checkout -b <agent-branch> origin/main
    ```
 
    Verify with `git log <agent-branch>` afterward: any commits present are the worker's prior work and must be preserved through the pop in step 4.
@@ -43,11 +43,11 @@ The procedure assumes you have already halted further completion signals for the
 
 7. **Re-run** the agent's verification (full test suite, linter) on the salvaged branch before signaling complete. **The agent's pre-salvage test pass is invalid** — those tests ran against the main checkout's working tree, which contained the modifications themselves plus whatever unrelated state the orchestrator or other agents had left in `main`. Trust only fresh post-salvage results.
 
-8. **Return to main** in the orchestrator's working directory:
+8. **Return the main checkout to the branch Rule 6's launch snapshot recorded** — not to `main`, which it may never have held:
    ```bash
-   git -C <main> checkout main
+   git -C <main> checkout <snapshot branch>
    ```
-   Confirm `git -C <main> status --porcelain` is now clean (Rule 6 invariant). If it isn't, another worker has fallen through during salvage — repeat from step 1.
+   Confirm `git -C <main> status --porcelain` now matches the snapshot (Rule 6 invariant). If it isn't, another worker has fallen through during salvage — repeat from step 1.
 
 9. **Halt the affected wave** until the worktree ceiling root cause is resolved. Options:
    - Free a slot by destroying a completed worktree (`bash skills/using-git-worktrees/scripts/worktree-destroy.sh <branch>` — refuses unmerged work).

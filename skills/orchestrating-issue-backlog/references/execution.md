@@ -17,11 +17,11 @@ coordination and Orchestrator step 5. Everything else here still applies.
 
 ### Branch strategy
 
-Each **multi-agent batch** gets a shared integration branch (e.g. `batch/a`, `batch/f`), created **before any agent is spawned** (Orchestrator step 2, which also says when it may not be checked out). It is the merge *target* for every worker, **not the base their worktrees are cut from**, and worker output does not reliably auto-merge back (Rule 3) — the orchestrator reconciles and merges each worker explicitly (Orchestrator step 5).
+Each **multi-agent batch** gets a shared integration branch (e.g. `batch/a`, `batch/f`), created **before any agent is spawned** (Orchestrator step 2, which also says where it is checked out). It is the merge *target* for every worker, **not the base their worktrees are cut from**, and worker output does not reliably auto-merge back (Rule 3) — the orchestrator reconciles and merges each worker explicitly (Orchestrator step 5).
 
 **Single-agent batches** do not need a separate batch branch — the agent's feature branch serves directly.
 
-The human review happens against the **batch branch**: run tests, inspect the combined diff, then merge to `main`. After merge, the orchestrator checks `main` back out, pulls to sync, and uses it as the base for the next batch branch.
+The human review happens against the **batch branch**: run tests, inspect the combined diff, then merge to `main`. After merge, the orchestrator syncs its own worktree (Rule 1) and cuts the next batch branch from it.
 
 **Where the host ships one PR per work item, that answer is already taken.** `batch/<X>` then becomes a throwaway *verification* artifact — it assembles the combined suite before any PR merges — rather than a review unit, and the merge-strategy question below has a third answer to record. The intra-batch rule still governs it: FF-or-regular is a property of `worktree-destroy.sh --base`, not of who reviews what (process-log 2026-09-16 wordpress).
 
@@ -34,22 +34,22 @@ Ask the user their preferred **batch→main** merge strategy (regular, squash, r
 ### Orchestrator agent
 
 The orchestrator reads the batch plan and manages progression. It:
-1. **Sync local main before every batch launch** — `git checkout main && git pull --ff-only`. The pull advances `origin/main` too, which is the ref agents' worktrees are actually cut from (Rule 3).
-2. **Create the batch branch before spawning agents** — `git checkout -b batch/<X>`. This makes it the merge target only — workers still branch from `origin/main` and must merge it in themselves (Rule 3). **But where the host repo deploys from the main checkout, that checkout's branch must never move.** Grep the deploy units for a checkout guard (`ExecStartPre=.*assert.*main`) before Batch A; where one exists, `git branch batch/<X> main` *without* checking out and integrate in a worktree, and give a single-agent batch no local branch at all — push the worker's own branch as the feature branch. Same caution at wrap-up: run `systemctl is-enabled` and `systemctl cat` before any repo-documented restart, because a unit that is inactive *and* disabled while its preset is enabled is a deliberate hold, not a fault (process-log 2026-08-13 usa-wa: this step stopped production across three separate batches; a documented restart then resurrected a held daemon 94 seconds into an incident).
-3. **Verify worktree slot availability** — before launching, check that consumed slots + planned agents ≤ project ceiling (Rule 5). Prefer the host project's own slot-status command (e.g. `dev.sh worktree status`, or listing the port-pool directory) — it reports **actual** resource consumption. Otherwise use `bash skills/using-git-worktrees/scripts/worktree-list.sh --porcelain | grep -c '^worktree '` (minus 1 for the main checkout) as a **lower-bound** proxy, with a safety margin of `ceiling - 1` to absorb port leaks from destroys whose project-side cleanup didn't run.
+1. **Sync before every batch launch** — Rule 1's fetch and fast-forward, in the orchestrator's worktree. The fetch advances `origin/main`, which is the ref agents' worktrees are actually cut from (Rule 3).
+2. **Create the batch branch before spawning agents** — `git branch batch/<X> orchestrate/<topic>` after step 1, then `git switch batch/<X>` in the orchestrator's worktree, where integration happens; the main checkout's branch never moves (Rule 1). This makes it the merge target only — workers still branch from `origin/main` and must merge it in themselves (Rule 3). **Where the host repo deploys from the main checkout, take the same care at wrap-up:** run `systemctl is-enabled` and `systemctl cat` before any repo-documented restart, because a unit that is inactive *and* disabled while its preset is enabled is a deliberate hold, not a fault (process-log 2026-08-13 usa-wa: checking a batch branch out there stopped production across three separate batches; a documented restart then resurrected a held daemon 94 seconds into an incident).
+3. **Verify worktree slot availability** — before launching, check that consumed slots + planned agents ≤ project ceiling (Rule 5). Prefer the host project's own slot-status command (e.g. `dev.sh worktree status`, or listing the port-pool directory) — it reports **actual** resource consumption. Otherwise use `bash skills/using-git-worktrees/scripts/worktree-list.sh --porcelain | grep -c '^worktree '` (minus 2: the main checkout and the orchestrator's) as a **lower-bound** proxy, with a safety margin of `ceiling - 1` to absorb port leaks from destroys whose project-side cleanup didn't run.
 4. Launches all worker agents whose batch gate is currently satisfied simultaneously
 5. **On each worker signal — a `failed` one takes the same path as a `completed` one** (reconcile, then merge — do not assume auto-merge; Rule 3). A killed agent is not an empty worktree, and from outside it "died" and "fell through" are indistinguishable, so run this procedure before concluding anything; then **resume that agent rather than spawning a fresh one**, or you discard both a coherent phase and the context that produced it (2026-08-14 observo: a mid-TDD kill left four modified test files at 6 failed / 15 passed, every failure describing intended behaviour):
-   - Run `git -C <main> status --porcelain` (Rule 6). Any output — **or a non-zero exit** → halt the batch and salvage.
+   - Run `git -C <main> status --porcelain` (Rule 6). Any output beyond Rule 6's launch snapshot — **or a non-zero exit** → halt the batch and salvage.
    - Locate the worker's work: run `git branch --no-merged batch/<X>` to surface every local branch carrying commits not yet on the batch branch — this catches both `worktree-agent-*` and custom-named branches regardless of the orchestrator's current checkout (don't rely on `git log batch/<X>..HEAD`, which only sees a branch if the workspace shifted onto it). **Snapshot `--no-merged` when the batch branch is cut and diff against that**, because the command also lists pre-existing unmerged branches belonging to no worker; do *not* filter on `worktree-agent-*` instead, which reinstates the false negative this command exists to remove (2026-09-14/15 observo: a dormant `test/*` branch surfaced as a worker's). Also check `git branch --show-current` (the workspace may have shifted off `batch/<X>`) and the worktree directory (e.g. `.claude/worktrees/agent-<id>/`) for uncommitted changes; if work was left uncommitted, commit it on the worker's branch with the prescribed message format first.
    - Merge the worker's branch into `batch/<X>` if it isn't already an ancestor (`git merge --no-ff <agent-branch>`), respecting any intra-batch ordering; merge conflicts return to the responsible worker agent to resolve.
    - Destroy the merged worker's worktree: `bash skills/using-git-worktrees/scripts/worktree-destroy.sh <agent-branch> --base batch/<X>`. `--base` verifies the merge against the batch branch rather than `main`, since the human batch→main merge hasn't happened yet (it would otherwise refuse). Frees the slot for a chunked sub-wave.
-   - Drop the now-unused ref: `git branch -d <agent-branch>`. The lowercase `-d` refuses if the branch isn't merged into HEAD, providing a second guard against the same merge-safety class as the destroy script's Iron Law. **Run it where HEAD is the batch branch** — `git -C <integration worktree>` whenever step 2's deploy guard kept `batch/<X>` out of the main checkout, whose HEAD is then `main` and refuses every worker branch, teaching the orchestrator to reach for `-D`, which is this guard's whole failure mode (2026-09-14/15 observo). If `-d` refuses where HEAD *is* the batch branch, the worker's commits are not actually on it — escalate before forcing.
+   - Drop the now-unused ref: `git branch -d <agent-branch>`. The lowercase `-d` refuses if the branch isn't merged into HEAD, providing a second guard against the same merge-safety class as the destroy script's Iron Law. **Run it in the orchestrator's worktree, where HEAD is the batch branch** — never from the main checkout, whose HEAD is not and refuses every worker branch, teaching the orchestrator to reach for `-D`, which is this guard's whole failure mode (2026-09-14/15 observo). If `-d` refuses where HEAD *is* the batch branch, the worker's commits are not actually on it — escalate before forcing.
    - **Harvest the handoffs.** From the report's list of what the worker left alone as outside its window, route anything its fix made stale — a docstring or doc sentence still describing the closed gap as open — into the *next* owner's brief as a "Handoff from #N" section. Six such cases cleared with no extra agents (2026-09-14/15 observo); the alternatives are a follow-up issue apiece, or stale prose shipping inside a green batch.
 6. When all workers are merged, runs the full test suite against `batch/<X>`
 7. **Between sub-waves of a chunked batch** — after destroying completed workers' worktrees in sub-wave Aₙ, re-verify slot availability (step 3) before launching Aₙ₊₁
 8. Notifies the user: "Batch X ready for review: `batch/<X>`, N issues, tests passing"
 9. Waits for merge confirmation before proceeding
-10. **On confirmation**, checks out `main`, merges `batch/<X>`, pushes, **comments the merge on the tracking issue**, then syncs local main before launching the next batch. The comment is not optional: across context compactions the tracking issue is the run's only complete account, and a run that skipped two had to rebuild them from `gh pr view` (2026-09-16/21 wordpress)
+10. **On confirmation**, merges `batch/<X>` onto `orchestrate/<topic>` and pushes it per Rule 2, **comments the merge on the tracking issue**, then syncs (Rule 1) before launching the next batch. The comment is not optional: across context compactions the tracking issue is the run's only complete account, and a run that skipped two had to rebuild them from `gh pr view` (2026-09-16/21 wordpress)
 11. **Close the run on the tracking issue** once the last batch and the tail are done — a closing comment giving every held review finding its final disposition: applied, filed, or dropped with the reason. "Held" names no owner, and one finding sat there three days (2026-09-16/21 wordpress)
 
 Never writes implementation code itself.
@@ -84,30 +84,36 @@ Each worker agent follows this protocol before signaling completion:
 
 These rules prevent the class of failures that produced the Batch B→C conflict:
 
-### Rule 1 — Sync local main before conflict analysis AND before every agent launch
+### Rule 1 — Work in your own worktree, synced before conflict analysis AND before every agent launch
 
-`git push origin HEAD:main` from a feature branch advances `origin/main` but does **not** move local `main`. The orchestrator then analyses, plans, and merges against a tree that is behind. (Agents branch from `origin/main`, not local `main` — Rule 3.)
-
-The same staleness corrupts the *plan*, one step earlier and less visibly: a stale checkout produces a conflict map of a repo layout that no longer exists, and every downstream instruction inherits the fiction (process-log 2026-08-10: three workers were assigned an ownership boundary in a file that two merged PRs had already split apart; it surfaced only because a worker said so in its report). **So sync at Step 1–2 as well** — by launch time the plan is written and the tracking issue is filed.
-
-**Before analysing the backlog, and before launching any batch:**
+**Never check out a branch in the main checkout** — it may be the user's, mid-work, and shared with other sessions. Cut a worktree from a freshly fetched `origin/main` (agents branch from `origin/main`, not local `main` — Rule 3), whose branch, `orchestrate/<topic>`, stands in for local `main` throughout.
 ```bash
-git checkout main
-git pull --ff-only   # or: git fetch origin && git merge --ff-only origin/main
+git fetch origin
+git branch orchestrate/<topic> origin/main   # not --new below, which cuts from the main checkout's HEAD
+bash <main>/skills/using-git-worktrees/scripts/worktree-create.sh orchestrate/<topic>   # prints the path
+```
+Run skill scripts by absolute path from the main checkout (Worker step 1). A fresh tree has no stray to sweep, and its hooks lock nothing the user stands in: in the main checkout, 2026-10-27 skills moved the user's branch and failed the plan's commit on an *ignored* stray.
+
+Any push advances `origin/main` without moving this tree, and a stale tree corrupts the *plan*, less visibly: it produces a conflict map of a repo layout that no longer exists, and every downstream instruction inherits the fiction (process-log 2026-08-10: three workers were assigned an ownership boundary in a file that two merged PRs had already split apart; it surfaced only because a worker said so in its report). **So sync at Step 1–2 as well** — by launch time the plan is written and the tracking issue is filed.
+
+**Before analysing the backlog, and before launching any batch**, in the orchestrator's worktree:
+```bash
+git fetch origin
+git switch orchestrate/<topic> && git merge --ff-only origin/main
 ```
 
-If `--ff-only` fails, the branches have diverged — stop and investigate before proceeding.
+If `--ff-only` fails, the branches have diverged — stop and investigate before proceeding. Fast-forward local `main` only where the main checkout is already on `main` and clean (`git -C <main> merge --ff-only origin/main`); otherwise leave it alone — nothing here reads it.
 
-### Rule 2 — Never use `git push origin HEAD:main` to advance main
+### Rule 2 — Advance main only by a fast-forward push, rebased on a fresh fetch
 
-This is the root cause of Rule 1 violations. Always push from local `main`:
+`origin/main` moves under the orchestrator (2026-10-27 skills: 17 commits landed during two 13-minute commit hooks, and the push was refused), so fetch immediately before every push, and never force:
 ```bash
-git checkout main
-git merge --ff-only batch/x   # or rebase; whatever the agreed strategy is
-git push origin main
+git fetch origin
+git rebase --rebase-merges origin/main   # the plan commit, or a batch's merge, on orchestrate/<topic>
+git push origin orchestrate/<topic>:main # refused unless a fast-forward: repeat
 ```
 
-Where local `main` already carries the merged batch (the human merged `batch/<X>` → `main` per Rule 3), the push alone is the whole sequence.
+If the rebase moved the tip, what was measured on the old one is stale: re-run a batch's gate before the push, and re-measure the baseline after it (Rule 3). Where the human merges and pushes the batch themselves, Rule 1's sync is the whole sequence.
 
 ### Rule 3 — Do not assume `isolation: "worktree"` auto-merges; verify and merge per worker
 
@@ -116,9 +122,9 @@ The `isolation: "worktree"` parameter runs the agent in a temporary worktree. It
 **The base, by contrast, does not vary: worktrees are cut from `origin/main`, independent of the orchestrator's checked-out branch.** Sub-wave 1 hides this — `batch/<X>` still equals `main` — and by sub-wave 2 the batch branch carries everything merged since, so the gap widens with batch depth. Rule 1 does not cover it: local `main` can be current and the agent's tree still wrong. Two obligations follow, both the orchestrator's:
 - **Brief every worker to `git merge batch/<X>`** — worker protocol step 3, immediately after the isolation pre-flight. Expect a fast-forward.
 - **Give every worker prompt the expected test count on `batch/<X>`**, plus "stop if it does not match" — the only detector that has caught this. In #144 Batch A two of four agents found it because a briefed `1740 passed` read `1644` in their tree; one had been told to trim a file to a target measured on a version it lacked, and the other two would have edited a tree missing eight merged issues. Give a number, not an exhortation to "verify your assumptions" — that gets confirmation.
-  - **Measure that number in a tree cut the way the workers' are** — not in the orchestrator's checkout, and not by adjusting its count for the causes you know of — **and name any expected delta and its cause in the brief**; at the gate, run the suite in a tree cut the same way where you can, so the arithmetic needs no delta (observo did, and every gate closed exactly), and otherwise reconcile the difference by file (`pytest -rs`), not by a number carried from the baseline. A worktree can differ from the main checkout structurally, not by drift (uninitialised submodules, absent build artifacts), and a number carried across trees makes this stop condition fire on every worker it exists to protect (process-log 2026-09-16 observo: 4550 passed / 27 skipped in the main checkout; the brief's 4548 / 29 was inferred from the two known submodule skips, and both Batch A workers measured 4547 / 30 — a third test skips wherever no frontend bundle has been built). The skipped tests are a finder as well as a correction: [`batch-design.md`](batch-design.md).
+  - **Measure that number in a tree cut the way the workers' are** — not in the orchestrator's checkout, and not by adjusting its count for the causes you know of — **at the commit the plan lands on**, after the Step 8 push (2026-10-27 skills: 7871 / 326 before it, 8030 / 332 after) — **and name any expected delta and its cause in the brief**; at the gate, run the suite in a tree cut the same way where you can, so the arithmetic needs no delta (observo did, and every gate closed exactly), and otherwise reconcile the difference by file (`pytest -rs`), not by a number carried from the baseline. A worktree can differ from the main checkout structurally, not by drift (uninitialised submodules, absent build artifacts), and a number carried across trees makes this stop condition fire on every worker it exists to protect (process-log 2026-09-16 observo: 4550 passed / 27 skipped in the main checkout; the brief's 4548 / 29 was inferred from the two known submodule skips, and both Batch A workers measured 4547 / 30 — a third test skips wherever no frontend bundle has been built). The skipped tests are a finder as well as a correction: [`batch-design.md`](batch-design.md).
 
-**Operating rule: the orchestrator owns the merge** — reconcile, then merge explicitly, on every completion signal. The runtime checklist is **Orchestrator step 5**, the single authoritative copy; follow it there rather than duplicating it here — Rule 1 carries the sync, Orchestrator step 2 the branch creation and the never-move-a-deploying-checkout caveat.
+**Operating rule: the orchestrator owns the merge** — reconcile, then merge explicitly, on every completion signal. The runtime checklist is **Orchestrator step 5**, the single authoritative copy; follow it there rather than duplicating it here — Rule 1 carries the sync and the orchestrator's own worktree, Orchestrator step 2 the branch creation and the deploying-checkout caveat.
 
 *Batch work* moves `main` only when the human merges the batch branch, via Rule 2's push sequence. The one thing the orchestrator pushes on its own authority is the Step 8 design doc, before any batch branch exists — and it must, since worktrees are cut from `origin/main` and an unpushed plan reaches no worker.
 
@@ -154,7 +160,9 @@ git -C <main checkout> status --porcelain
 
 **Read the exit code, not only stdout.** A linked worktree *shares* `.git/config` with the main checkout, so a worker's stray `git config` — or a bare `git init --bare` whose path mis-resolves — can set `core.bare = true` there, and that makes `git status` **fail** with empty stdout. To a caller reading output alone, that is indistinguishable from "clean": the corruption **disables** this detector rather than tripping it, and keeps answering "clean" forever (#189, twice in one four-agent batch). Hence the canary above, and hence a non-zero exit is as much a halt as any output. Brief workers to give every repo-creating git command an explicit path (`git -C <tmpdir> init`).
 
-Any output indicates a worker fell through and is modifying files in the main checkout. Stop processing further completion signals from this batch until the salvage completes and `git -C <main> status --porcelain` is clean again. Identify the responsible agent (most recently signaled, or — if commits ended up on the wrong branch — via `git log main..HEAD` on the main checkout), and salvage per the Recovery procedure in [`references/recovery.md`](recovery.md).
+**Snapshot both, and the main checkout's HEAD and branch (`rev-parse HEAD`, `branch --show-current`), before the first launch**: the main checkout may hold the user's own work (Rule 1), so the signal is any line or HEAD that differs from the snapshot.
+
+A difference indicates a worker fell through and is modifying files in the main checkout. Stop processing further completion signals from this batch until the salvage completes and `git -C <main> status --porcelain` matches the snapshot again. Identify the responsible agent (most recently signaled, or — if commits ended up on the wrong branch — via `git -C <main> log <snapshot HEAD>..HEAD`), and salvage per the Recovery procedure in [`references/recovery.md`](recovery.md).
 
 This check is cheap and runs on the orchestrator's host, not in any agent's worktree. Do it on every signal, not just on suspicion.
 

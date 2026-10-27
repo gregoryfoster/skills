@@ -22,7 +22,7 @@ Create a task for each item and complete them in order. Item numbers match the `
 
 Rule and Worker-step numbers cited in this file refer to [references/execution.md](references/execution.md).
 
-0. **Sync local main** — `git checkout main && git pull --ff-only`; clear any untracked stray from the checkout (Rule 1)
+0. **Cut your own worktree** — `orchestrate/<topic>` from a fresh `origin/main`; never move the main checkout (Rule 1)
 1. **Fetch all open issues** — `gh issue list --state open --limit 50 --json number,title,labels,body`
 2. **Explore project context** — read AGENTS.md, recent commits, existing design docs
 3. **Interview user** — establish rubrics and constraints (one question at a time)
@@ -40,7 +40,7 @@ Rule and Worker-step numbers cited in this file refer to [references/execution.m
 
 ### Step 1–2: Context gathering
 
-**Sync `main` before analysing, not just before launching** (Rule 1 has the commands and why a stale checkout corrupts the plan), then clear any untracked stray from the main checkout — Rule 6's fall-through detection assumes a clean baseline, or reports a dirty tree on every completion signal.
+**Work in your worktree, synced before analysing, not just before launching** (Rule 1 has the commands and why a stale tree corrupts the plan). Leave the main checkout alone — it may be someone's work in progress, and it is Rule 6's fall-through detector.
 
 Then fetch issues and read project context before asking any questions. Go into the interview knowing:
 - Rough categories of issues (architectural, bug, feature, infra)
@@ -172,7 +172,7 @@ Sections:
 - **Deferred items** — what was explicitly excluded and why
 - **Out of scope** — anything that came up but was ruled out
 
-**Where to commit, and when to push.** Default: commit on `main` and **push before launching** — worker worktrees are cut from `origin/main` (Rule 3), so an unpushed doc reaches no worker; push from local `main` per Rule 2, never `git push origin HEAD:main`. The push is cheaper than a feature branch's merge gate. Use a feature branch + PR when the host project enforces filesystem isolation for plan creation (e.g. a workspace-isolation pre-commit hook naming "spec/plan creation" as an in-worktree activity), or when the user wants a review checkpoint first; ask if the conventions aren't already clear. The three routes for that case — merge-then-launch, plan-in-the-prompt, and the docs-only worktree — are in [`references/design-doc-authoring.md`](references/design-doc-authoring.md).
+**Where to commit, and when to push.** Default: commit in your worktree and **push before launching** — worker worktrees are cut from `origin/main` (Rule 3), so an unpushed doc reaches no worker; push per Rule 2, then measure Rule 3's baseline where it landed. The push is cheaper than a feature branch's merge gate. Use a feature branch + PR when the host project enforces filesystem isolation for plan creation (e.g. a workspace-isolation pre-commit hook naming "spec/plan creation" as an in-worktree activity), or when the user wants a review checkpoint first; ask if the conventions aren't already clear. The three routes for that case — merge-then-launch, plan-in-the-prompt, and the docs-only worktree — are in [`references/design-doc-authoring.md`](references/design-doc-authoring.md).
 
 **Commit format:** `#<n> docs: add <topic> backlog orchestration plan`, where `#<n>` is the Step 9 tracking issue — open it first, or commit unprefixed; don't block on the number.
 

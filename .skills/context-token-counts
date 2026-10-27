@@ -100,13 +100,13 @@
 20311 7161 skills/managing-skills/references/local-overrides.md
 2763 987 skills/managing-skills/references/pinning-submodules.md
 9884 3539 skills/managing-skills/references/the-doctor.md
-26564 9196 skills/orchestrating-issue-backlog/SKILL.md
-12852 4358 skills/orchestrating-issue-backlog/references/batch-design.md
+26524 9186 skills/orchestrating-issue-backlog/SKILL.md
+12812 4346 skills/orchestrating-issue-backlog/references/batch-design.md
 11968 4566 skills/orchestrating-issue-backlog/references/cloud-workers.md
-2796 1009 skills/orchestrating-issue-backlog/references/design-doc-authoring.md
-27009 9368 skills/orchestrating-issue-backlog/references/execution.md
+2886 1051 skills/orchestrating-issue-backlog/references/design-doc-authoring.md
+28423 9942 skills/orchestrating-issue-backlog/references/execution.md
 7717 2630 skills/orchestrating-issue-backlog/references/issue-audit.md
-12770 5076 skills/orchestrating-issue-backlog/references/process-log.md
+12983 5154 skills/orchestrating-issue-backlog/references/process-log.md
 4861 1726 skills/orchestrating-issue-backlog/references/process-log/2026/2026-03-23-skills.md
 5689 2075 skills/orchestrating-issue-backlog/references/process-log/2026/2026-05-09-power-map.md
 10475 3759 skills/orchestrating-issue-backlog/references/process-log/2026/2026-05-11-power-map.md
@@ -164,7 +164,7 @@
 7743 2822 skills/orchestrating-issue-backlog/references/process-log/2026/2026-10-25-skills-host-disk.md
 4531 1653 skills/orchestrating-issue-backlog/references/process-log/2026/2026-10-27-skills-mayfly.md
 24881 9520 skills/orchestrating-issue-backlog/references/process-log/2026/index.md
-4693 1608 skills/orchestrating-issue-backlog/references/recovery.md
+4970 1712 skills/orchestrating-issue-backlog/references/recovery.md
 5751 2169 skills/orchestrating-issue-backlog/references/shared-backing-services.md
 4771 1596 skills/orchestrating-issue-backlog/references/shared-files.md
 10966 4073 skills/patching-hosts/SKILL.md

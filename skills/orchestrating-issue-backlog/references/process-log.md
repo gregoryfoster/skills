@@ -23,7 +23,7 @@ Step and Q numbers refer to `SKILL.md`; Rule and Worker-step numbers to
 [`execution.md`](execution.md).
 
 - Rules 5/6 (per-batch ceiling, runtime fall-through detection) — 2026-05-22 port-pool incident; Rule 5 slot-reclaim semantics + cheap ceiling re-verification — 2026-06-09
-- Rule 3 revision (verify-and-merge per worker; reconciliation checklist) — 2026-05-09, 2026-05-11; **the main checkout's branch never moves where the repo deploys from it** — 2026-08-13 usa-wa
+- Rule 3 revision (verify-and-merge per worker; reconciliation checklist) — 2026-05-09, 2026-05-11; **the main checkout's branch never moves where the repo deploys from it** — 2026-08-13 usa-wa; generalised by Rules 1–2 to **the orchestrator works in its own worktree, never the main checkout, and pushes a fast-forward rebased on a fresh fetch**, with the baseline measured where the plan lands — 2026-10-27 skills (#505)
 - Step 1–2 closed-in-fact grep per issue (**zero hits is ambiguous, not exculpatory**), closed-prerequisite check, rescope-to-residual with its defer branch, generated-artifact read — 2026-05-09, 2026-05-11, 2026-08-10, 2026-08-11, 2026-08-12, 2026-08-13 observo, 2026-08-13 power-map
 - Step 5: footprint grep, bidirectional (bodies understate *and*, in partial-fix backlogs, overstate); test-surface grep and line-window ownership, generalized to any large shared file then to function/region granularity; the no-file-overlap dependency edge; the shared-fixture-*escape* grep (hard conflict zone, vs. 2026-07-08's soft one); stated-*relationships*-are-hypotheses; grep-sizes-surface-not-behaviour; sweep enumeration; an issue body's own hedge as a grep target — 2026-05-09, 2026-06-28, 2026-07-08, 2026-08-09, 2026-08-10, 2026-08-11, 2026-08-12, 2026-08-13 cli
 - Step 5/6 backlog-provenance geometry (CR-surfaced, AR-surfaced, feature-followup, adoption-feedback) — 2026-05-09, 2026-05-11, 2026-06-28, 2026-08-07, 2026-08-09, 2026-08-11
@@ -63,7 +63,7 @@ submodule, the entry does **not** go in the vendored copy — draft it locally a
 file it upstream as an issue against the skill's own repo. Writing it in place
 leaves the host's main checkout reporting a modified submodule pointer, which is
 output from Rule 6's `git status --porcelain` and therefore a fall-through
-signal, and it survives into the next session's Step 1–2 stray sweep. The
+signal unless the launch snapshot already holds it. The
 upstream maintainer adds the entry and adjudicates the promotions in one pass
 (2026-09-14 observo, 2026-09-15 observo, 2026-09-16 wordpress — all three filed
 this way).
