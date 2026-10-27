@@ -67,6 +67,10 @@ this ([#373](https://github.com/gregoryfoster/skills/issues/373)).
 Until the generator never writes an older pin than the one installed:
 
 - take the bump;
+- where the generator is in the same repo and a test holds the file to its
+  render, the bump itself fails the gate. Move the generator's pin in a commit
+  on top of the PR's head, and land both: the fast-forward still marks the PR
+  merged (this repo's #507, 2026-10-27);
 - after any regeneration, compare the `uses:` lines with `git diff` and restore
   any that went backwards before committing. With `SHA_PINS` on, the guard test
   fails a re-rendered tag pin, so it can't slip through;
