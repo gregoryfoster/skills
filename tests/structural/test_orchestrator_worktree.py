@@ -194,7 +194,13 @@ def test_rule_6_diffs_against_a_launch_snapshot(execution, refs):
         "Rule 6 must snapshot the main checkout's status and HEAD at launch "
         "and treat a difference from it as the signal (#505)."
     )
-    step_4 = next(ln for ln in execution.splitlines() if ln.startswith("4. Takes"))
+    # Select by step NUMBER within the Orchestrator section, not by the text
+    # under test: Worker step 4 also starts "4. ", and keying on "4. Takes"
+    # turned a revert into a bare StopIteration that hid the message below.
+    orchestrator = execution[
+        execution.index("### Orchestrator agent") : execution.index("### Worker agents")
+    ]
+    step_4 = next(ln for ln in orchestrator.splitlines() if ln.startswith("4. "))
     assert "Rule 6's snapshot" in step_4, (
         "Orchestrator step 4 must take Rule 6's snapshot before the first "
         "launch: step 5 and recovery.md both compare against it (CR 612)."
