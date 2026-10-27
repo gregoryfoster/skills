@@ -380,3 +380,13 @@ def test_requirements_lines_count_toward_the_limit(tmp_path):
     )
     proc = _pytest(root, "tests/ci/test_dependabot.py")
     assert proc.returncode == 1 and "12 runtime PRs" in proc.stdout, proc.stdout
+
+
+def test_a_source_dir_with_no_third_party_import_fails_its_own_check(tmp_path):
+    """CR 605: the per-directory guard checked the union, so one empty dir hid."""
+    root = _imports_repo(tmp_path)
+    _write(root, {"scripts/tool.py": "import json\n"})  # stdlib only
+    test = root / "tests/ci/test_dependency_imports.py"
+    test.write_text(_adapt(test.read_text(), SOURCE_DIRS='("src", "scripts")'))
+    proc = _pytest(root, "tests/ci/test_dependency_imports.py")
+    assert proc.returncode == 1 and "under scripts/" in proc.stdout, proc.stdout

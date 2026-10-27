@@ -118,25 +118,30 @@ def _imported_modules(path: Path) -> list[str]:
 
 
 @cache
-def _imported_distributions() -> frozenset[str]:
-    """Every distribution a third-party import under SOURCE_DIRS resolves to."""
+def _imported_from(directory: str) -> frozenset[str]:
+    """Every distribution a third-party import under *directory* resolves to."""
     first_party = _first_party()
     found: set[str] = set()
-    for directory in SOURCE_DIRS:
-        for path in sorted((REPO_ROOT / directory).rglob("*.py")):
-            for module in _imported_modules(path):
-                top = module.partition(".")[0]
-                if top in sys.stdlib_module_names or top in first_party:
-                    continue
-                found |= _owning_distributions(module)
+    for path in sorted((REPO_ROOT / directory).rglob("*.py")):
+        for module in _imported_modules(path):
+            top = module.partition(".")[0]
+            if top in sys.stdlib_module_names or top in first_party:
+                continue
+            found |= _owning_distributions(module)
     return frozenset(found)
+
+
+@cache
+def _imported_distributions() -> frozenset[str]:
+    """Every distribution a third-party import under SOURCE_DIRS resolves to."""
+    return frozenset().union(*(_imported_from(d) for d in SOURCE_DIRS))
 
 
 @pytest.mark.parametrize("directory", SOURCE_DIRS)
 def test_sweep_finds_imports(directory: str) -> None:
     """Guard the guard: a directory yielding no imports is vacuously clean."""
     assert any((REPO_ROOT / directory).rglob("*.py")), f"no Python under {directory}/"
-    assert _imported_distributions(), "swept no third-party import: the sweep broke"
+    assert _imported_from(directory), f"swept no third-party import under {directory}/"
 
 
 def test_every_runtime_dependency_is_imported() -> None:
