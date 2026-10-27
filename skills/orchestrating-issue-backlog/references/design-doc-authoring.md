@@ -3,10 +3,10 @@
 Step 8 of [`SKILL.md`](../SKILL.md) commits the backlog design doc in the
 orchestrator's worktree and pushes it to `main` before launching workers, by default. This file carries why the
 push is not optional, and the alternatives for when a feature branch + PR is
-forced instead — a host project that enforces filesystem isolation for plan
-creation (a workspace-isolation pre-commit hook naming "spec/plan creation" as
-an in-worktree activity), or a user who wants a review checkpoint before agents
-launch.
+forced instead — a user who wants a review checkpoint before agents launch, or
+a host that protects `main`. A hook that requires plan creation in a worktree
+no longer forces one: the default already writes the plan in the
+orchestrator's worktree.
 
 Demoted from the body in #161: every run reaches the *decision*, but only a run
 that answers it "feature branch" needs the routes.
