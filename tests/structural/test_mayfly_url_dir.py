@@ -68,6 +68,20 @@ def test_every_shown_url_file_is_under_dot_mayfly(path: Path) -> None:
     assert not stray, f"{path.name}: MAYFLY_URL_FILE outside $HOME/.mayfly/: {stray}"
 
 
+def test_joining_refuses_a_name_already_taken() -> None:
+    """CR 625: `install` overwrites, and ~/.mayfly/ is shared by every session.
+
+    Overwriting another session's URL file sends its next post into this
+    channel, so the join step guards the create with `test ! -e`.
+    """
+    text = SKILL_MD.read_text()
+    guarded = (
+        'test ! -e "$MAYFLY_URL_FILE" && install -m 600 /dev/null "$MAYFLY_URL_FILE"'
+    )
+    assert guarded in text
+    assert text.count('install -m 600 /dev/null "$MAYFLY_URL_FILE"') == 1
+
+
 # --- 2. the wrapper warns after create ------------------------------------------
 
 
