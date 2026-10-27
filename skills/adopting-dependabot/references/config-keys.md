@@ -8,7 +8,7 @@ failure it prevents. The guard test pins each one.
 |---|---|---|
 | `version: 2` | Version 1 configs are ignored without an error | |
 | `package-ecosystem` | A typo (`github_actions`, `python`) opens nothing, and reads as "no updates available" | notifier#33 |
-| `directory` / `directories` | `/` is what scans `.github/workflows/`. `/.github/workflows` is silence. An `action.yml` elsewhere (a composite action) needs its own directory listed | notifier#33 |
+| `directory` / `directories` | `/` is what scans `.github/workflows/`, and the `action.yml` at the root. `/.github/workflows` is silence. An `action.yml` in any other directory (a composite action under `.github/actions/`) needs that directory listed | notifier#33 |
 | `schedule.interval` | Missing, and Dependabot rejects the block, visibly only in its own tab | notifier#33 |
 | `open-pull-requests-limit` | Defaults to **5**. Past the limit Dependabot opens **no more version updates**, and says so nowhere. Security updates aren't governed by it: they have a separate, fixed limit of 10 open PRs (GitHub's options reference). notifier's dev-tools group and SDK table went silent for **five weeks** | notifier#103 |
 | `versioning-strategy` | uv/pip: the default `auto` resolves to `widen` for a library, which uv doesn't support (dependabot-core#15290). Pin `increase-if-necessary`. Even that raised floors on in-range bumps under uv, so read a library's floor before merging | notifier#33, #103 |

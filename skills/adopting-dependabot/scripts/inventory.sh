@@ -13,7 +13,10 @@ committed files only (git ls-files). It changes nothing.
 Output (stdout, JSON):
   dependabot_config   the config's path, or null
   ecosystems          [{ecosystem, directory, evidence}]: every manifest
-                      found, in Dependabot's directory form ("/", "/sub")
+                      found, in Dependabot's directory form ("/", "/sub").
+                      A row is a manifest found, not an ecosystem known to
+                      be configurable as named: check Dependabot's own list
+                      before writing a block for it
   workflows           per workflow: triggers, gates_pull_request,
                       scheduled_only (a bump there runs in no PR's CI), the
                       generated-file marker if any, and per job: needs

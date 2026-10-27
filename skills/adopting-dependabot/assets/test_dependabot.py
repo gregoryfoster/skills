@@ -185,7 +185,7 @@ def test_commits_follow_the_repo_convention(block: dict) -> None:
 
 
 def test_actions_block_covers_every_workflow_and_action() -> None:
-    """``/`` scans .github/workflows/; an action.yml elsewhere needs its own directory."""
+    """``/`` scans .github/workflows/ and a root action.yml; any other action.yml needs its directory."""
     if "github-actions" not in ENABLED:
         pytest.skip("github-actions isn't enabled")
     expected = {"/"} | {
