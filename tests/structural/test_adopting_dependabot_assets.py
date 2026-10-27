@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import os
 import re
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -325,9 +324,8 @@ def test_an_allowlist_entry_no_longer_declared_fails(tmp_path):
     assert proc.returncode == 1 and "no longer declared" in proc.stdout
 
 
-def test_assets_are_copied_not_imported():
-    """Neither asset is collected here: each is a template for another repo."""
-    assert shutil.which("git")
+def test_each_asset_has_an_adapt_block():
+    """An adopter edits only the ADAPT block; every other line is derived."""
     for asset in ASSETS.glob("*.py"):
         assert "ADAPT" in asset.read_text(), f"{asset.name} has no ADAPT block"
 
