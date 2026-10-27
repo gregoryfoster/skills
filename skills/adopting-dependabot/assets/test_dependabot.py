@@ -14,6 +14,7 @@ table went silent for five weeks that way (CannObserv/notifier#103).
 Pure file reads plus ``git ls-files``: no network.
 """
 
+import fnmatch
 import re
 import subprocess
 import tomllib
@@ -197,6 +198,26 @@ def test_actions_block_covers_every_workflow_and_action() -> None:
     assert expected <= covered, f"not scanned: {sorted(expected - covered)}"
 
 
+def _batch(block: dict, names: set[str]) -> int:
+    """How many PRs one batch can open: one per group that matches anything,
+    plus one per dependency no group matches. A group with no ``patterns``
+    matches everything its ``exclude-patterns`` leaves."""
+    grouped: set[str] = set()
+    groups = 0
+    for group in (block.get("groups") or {}).values():
+        matched = {
+            n
+            for n in names
+            if any(fnmatch.fnmatch(n, p) for p in group.get("patterns", ["*"]))
+            and not any(
+                fnmatch.fnmatch(n, p) for p in group.get("exclude-patterns", [])
+            )
+        }
+        groups += bool(matched - grouped)
+        grouped |= matched
+    return groups + len(names - grouped)
+
+
 def test_actions_open_pr_limit_outlasts_a_full_batch() -> None:
     if "github-actions" not in ENABLED:
         pytest.skip("github-actions isn't enabled")
@@ -204,10 +225,20 @@ def test_actions_open_pr_limit_outlasts_a_full_batch() -> None:
     assert actions, "found no `uses:` under .github/workflows/: the derivation broke"
     for block in _blocks("github-actions"):
         limit = block.get("open-pull-requests-limit", 5)
-        assert limit > len(actions), (
-            f"limit {limit} can be filled by {len(actions)} action PRs; past it Dependabot "
+        batch = _batch(block, actions)
+        assert limit > batch, (
+            f"limit {limit} can be filled by {batch} action PRs; past it Dependabot "
             "opens no more version updates and says so nowhere. Raise open-pull-requests-limit"
         )
+
+
+def test_the_batch_counts_groups_once():
+    """Guard the guard: a grouped block's batch is its groups, not its actions."""
+    names = {"actions/checkout", "actions/setup-python", "astral-sh/setup-uv"}
+    assert _batch({}, names) == 3
+    assert _batch({"groups": {"all": {"patterns": ["*"]}}}, names) == 1
+    assert _batch({"groups": {"gh": {"patterns": ["actions/*"]}}}, names) == 2
+    assert _batch({"groups": {"a": {"exclude-patterns": ["astral-sh/*"]}}}, names) == 2
 
 
 @pytest.mark.parametrize("ecosystem", sorted(ENABLED & PACKAGE_ECOSYSTEMS))

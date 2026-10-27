@@ -330,3 +330,15 @@ def test_assets_are_copied_not_imported():
     assert shutil.which("git")
     for asset in ASSETS.glob("*.py"):
         assert "ADAPT" in asset.read_text(), f"{asset.name} has no ADAPT block"
+
+
+def test_a_grouped_actions_block_needs_only_its_batch(tmp_path):
+    """CR 593: config-keys.md offers grouping; the guard must not punish it."""
+    grouped = ACTIONS_WITH_COMPOSITE.replace("limit: 10", "limit: 2") + (
+        '    groups:\n      actions:\n        patterns: ["*"]\n'
+    )
+    root = _dependabot_repo(tmp_path, grouped)
+    proc = _pytest(root, "tests/ci/test_dependabot.py")
+    assert proc.returncode == 0, proc.stdout
+    root = _dependabot_repo(tmp_path / "one", grouped.replace("limit: 2", "limit: 1"))
+    assert _pytest(root, "tests/ci/test_dependabot.py").returncode == 1

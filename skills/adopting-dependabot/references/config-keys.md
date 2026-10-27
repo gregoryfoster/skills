@@ -22,7 +22,8 @@ The limit must exceed what one batch can open at once. The guard test derives
 it from the repo, so it stays true as the repo changes:
 
 - `github-actions`: one PR per distinct action (`inventory.sh`'s
-  `actions.count`), unless they're grouped.
+  `actions.count`). Grouped, it's one PR per group that matches an action,
+  plus one per action no group's `patterns` match.
 - uv/pip: every runtime dependency (each is its own PR), plus each group once
   per directory.
 
