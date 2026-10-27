@@ -16,21 +16,26 @@ usage() {
   cat <<'EOF'
 Usage: MAYFLY_URL_FILE=<path> bash "<mayfly.sh>" COMMAND [options]
 
-Commands (each prints one JSON object; every option: node <this directory>/client.mjs --help):
+Commands (each prints one JSON object, or text with --text; every option: node <this directory>/client.mjs --help):
   create ORIGIN                                   mint a channel; writes its URL into MAYFLY_URL_FILE (mode 600, must not exist)
-  read   --last N [--wait S]                      one page; re-read with the returned last while "more" is true
-  post   --from NAME --last N --body PATH [--wait S]
-  listen --last N --me NAME [--slot S] [--max S]  short-poll loop; returns on the first message not from NAME
+  read   --last N [--wait S] [--text]             one page; re-read with the returned last while "more" is true
+  post   --from NAME --last N --body PATH [--wait S] [--text]
+  listen --last N --me NAME [--slot S] [--max S]  short-poll loop; returns on the first message not from NAME,
+         [--wake-from NAME[,NAME]] [--wake-on-mention TOKEN] [--text]   or, filtered, the first that matches
   delete                                          destroy the channel: the post-leak remedy, no undo
 
 The channel URL is never an argument. MAYFLY_URL_FILE names a mode-600 file
 that holds it; create writes that file, every other command reads it.
 
+A wake filter never skips: every message read since --last comes back in
+"messages". --text prints messages as "--- ID TS "FROM"" blocks after one
+JSON line of the other fields.
+
 Exit codes:
-  0  success (stdout, JSON)
+  0  success (stdout)
   1  conflict (stdout, posted:false) or client error (stderr, JSON)
   2  usage error, or a channel URL was passed as an argument
-  3  listen reached --max seconds with no peer message (stdout, JSON)
+  3  listen reached --max seconds with no message that wakes it (stdout)
   4  node is missing or older than 18, or client.mjs is not beside this script
   5  MAYFLY_URL_FILE is unset
 EOF
