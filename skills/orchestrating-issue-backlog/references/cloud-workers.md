@@ -211,7 +211,7 @@ Orchestrator step 5, adapted:
    halts the batch until `git log <recorded>..origin/main` accounts for every
    commit: another session's push is routine (Rule 2 in
    [`execution.md`](execution.md)), but for one nobody claims, a worker is the
-   first suspect.
+   first suspect. Once all are accounted for, record the new tip.
 2. `git fetch`, then find the worker's branch: the briefed name, or
    `git branch -r --no-merged <base>`.
 3. **Check the red/green ordering per pair.** A worker that developed in a
