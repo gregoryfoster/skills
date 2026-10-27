@@ -38,6 +38,7 @@ Step and Q numbers refer to `SKILL.md`; Rule and Worker-step numbers to
 - Step 5 item 2 ([`shared-files.md`](shared-files.md)) where a shared fixture hides — `conftest.py`, module-local fixtures, test fakes of a protocol the backlog changes — 2026-07-08, 2026-08-13 power-map, 2026-09-14 observo
 - Step 7 ([`batch-design.md`](batch-design.md)) a budget-tight file is single-writer — 2026-08-16, 2026-08-18, 2026-09-14 observo, 2026-09-16/21 wordpress execution
 - Step 7 ([`batch-design.md`](batch-design.md)) exclusion groups plus a queue as the chunking form past a small ceiling, and the longest chain as the critical path — 2026-09-14 observo (held, pre-registered), 2026-09-15 observo execution (confirmed)
+- Steps 5–7 ([`batch-design.md`](batch-design.md)) on a backlog of two or three issues, the value is in the gates' write-backs and the brief's hazards, not the geometry — 2026-10-25, 2026-10-27 skills
 - Q5 ([`shared-backing-services.md`](shared-backing-services.md)) the **capacity** half — what hardware runs the verification — plus the Rule 5 clause that the cheap re-verification confirms only the provisioning pool — 2026-08-12, 2026-09-14 observo, 2026-09-16 wordpress
 - Step 5 item 2 ([`shared-files.md`](shared-files.md)) an assertion vacuous **as filed**, by layer rather than by a moved column — 2026-08-14 observo, 2026-08-21, 2026-09-16 wordpress
 - Steps 1–2 ([`issue-audit.md`](issue-audit.md)) where the issue names no contract doc, the policy file does, and it is newer than the thread's last word — 2026-08-13 observo, 2026-09-16 wordpress
