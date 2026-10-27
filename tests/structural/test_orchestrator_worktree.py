@@ -167,6 +167,22 @@ def test_baseline_is_measured_where_the_plan_lands(execution):
     )
 
 
+def test_step_8_writes_the_plan_in_the_orchestrators_worktree(s):
+    """resolve-plans-dir.sh re-roots to the primary checkout from a linked
+    worktree (its `--git-common-dir` block), so run from the orchestrator's
+    worktree it prints the MAIN checkout's `docs/plans`. Followed literally,
+    Step 8 then writes the plan into the checkout #505 says never to touch,
+    and the worktree's commit leaves it out (CR 611).
+    """
+    body = s.body
+    step_8 = body[body.index("### Step 8") : body.index("### Step 9")]
+    assert "repo-relative path in your worktree" in step_8, (
+        "Step 8 must say the plans-dir resolver answers with the main "
+        "checkout's path, and that the doc goes at that repo-relative path "
+        "in the orchestrator's worktree (CR 611)."
+    )
+
+
 def test_rule_6_diffs_against_a_launch_snapshot(execution, refs):
     """The detector compares against a snapshot, because it is not ours.
 
