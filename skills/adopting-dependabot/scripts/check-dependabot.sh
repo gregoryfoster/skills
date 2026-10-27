@@ -41,7 +41,7 @@ Options:
   --runs N            dynamic runs to read for update-runs (default 100)
   -h, --help          show this help
 
-Needs gh (authenticated), and python3 with PyYAML or uv.
+Needs gh (authenticated), and python3 3.11+ with PyYAML, or uv.
 
 Exit codes:
   0  no check failed

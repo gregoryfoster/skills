@@ -385,3 +385,17 @@ def test_an_unreadable_upstream_is_unread_never_current(inv_mod, monkeypatch):
     )
     up = inv_mod.upstream("nobody/nothing", 5)
     assert inv_mod.assess(_ref(inv_mod, "nobody/nothing@v1"), up)["status"] == "unread"
+
+
+def test_a_python_without_tomllib_and_no_uv_exits_2_with_its_reason(tmp_path):
+    """CR 591: on a 3.10 python3 with PyYAML, the helpers would die in a traceback."""
+    stub = tmp_path / "bin"
+    stub.mkdir()
+    (stub / "python3").write_text("#!/bin/sh\nexit 1\n")  # every import probe fails
+    (stub / "python3").chmod(0o755)
+    env = {**_env(), "PATH": f"{stub}{os.pathsep}/usr/bin{os.pathsep}/bin"}
+    proc = subprocess.run(
+        ["bash", str(INVENTORY)], capture_output=True, text=True, env=env, timeout=60
+    )
+    assert proc.returncode == 2
+    assert "3.11+" in proc.stderr and "Traceback" not in proc.stderr

@@ -46,7 +46,7 @@ Options:
   --timeout N       seconds per git ls-remote (default 20)
   -h, --help        show this help
 
-Needs git, and python3 with PyYAML or uv (which supplies it, pinned).
+Needs git, and python3 3.11+ with PyYAML, or uv (which supplies it, pinned).
 
 Exit codes:
   0  read
