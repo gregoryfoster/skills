@@ -38,7 +38,8 @@ detail, ...}], summary: {status: count}}. gh's own errors go to stderr.
 
 Options:
   --repo OWNER/REPO   the repo to read
-  --runs N            dynamic runs to read for update-runs (default 100)
+  --runs N            dynamic runs to read for update-runs, 1-100 (one
+                      page; default 100)
   -h, --help          show this help
 
 Needs gh (authenticated), and python3 3.11+ with PyYAML, or uv.

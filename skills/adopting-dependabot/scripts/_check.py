@@ -395,6 +395,10 @@ def main() -> int:
             file=sys.stderr,
         )
         return 2
+    if not 1 <= args.runs <= 100:
+        # GitHub serves at most 100 per page; more would read 100 and claim more.
+        print(f"check-dependabot: --runs takes 1-100, not {args.runs}", file=sys.stderr)
+        return 2
     try:
         status, meta = gh(f"repos/{args.repo}")
         if status != 200 or not isinstance(meta, dict):

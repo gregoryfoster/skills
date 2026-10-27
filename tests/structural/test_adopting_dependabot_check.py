@@ -365,6 +365,9 @@ def test_usage_errors_exit_2(tmp_path):
     assert rc == 2 and "OWNER/REPO" in err
     rc, _, err = _check(tmp_path, {}, "--repo", "acme/gone")
     assert rc == 2 and "acme/gone" in err
+    for runs in ("0", "200"):
+        rc, _, err = _check(tmp_path, healthy(), "--repo", REPO, "--runs", runs)
+        assert rc == 2 and "1-100" in err, "CR 594: a page holds at most 100"
     proc = subprocess.run(["bash", str(CHECK)], capture_output=True, text=True)
     assert proc.returncode == 2 and "--repo" in proc.stderr
 
