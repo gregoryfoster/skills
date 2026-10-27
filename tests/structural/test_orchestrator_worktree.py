@@ -194,6 +194,11 @@ def test_rule_6_diffs_against_a_launch_snapshot(execution, refs):
         "Rule 6 must snapshot the main checkout's status and HEAD at launch "
         "and treat a difference from it as the signal (#505)."
     )
+    step_4 = next(ln for ln in execution.splitlines() if ln.startswith("4. Takes"))
+    assert "Rule 6's snapshot" in step_4, (
+        "Orchestrator step 4 must take Rule 6's snapshot before the first "
+        "launch: step 5 and recovery.md both compare against it (CR 612)."
+    )
     recovery = (refs / "recovery.md").read_text()
     assert "launch snapshot" in recovery, (
         "recovery.md must return the main checkout to the branch Rule 6's "
