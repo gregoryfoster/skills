@@ -428,11 +428,20 @@ class TestWakeFilter:
         assert page["messages"][-1]["from"] == ""
         assert page["messages"][-1]["text"] == "(undecryptable message)"
 
-    def test_the_mention_match_is_case_insensitive(self, channel: Channel) -> None:
+    @pytest.mark.parametrize(
+        ("token", "text"),
+        [
+            pytest.param("archiver", "A claim about ARCHIVER's reaper.", id="upper-text"),
+            pytest.param("ARCHIVER", "a claim about archiver's reaper.", id="upper-token"),
+        ],
+    )  # fmt: skip
+    def test_the_mention_match_is_case_insensitive(
+        self, channel: Channel, token, text
+    ) -> None:
         channel.say("r1", "an ack")
-        hit = channel.say("r2", "A claim about ARCHIVER's reaper.")
+        hit = channel.say("r2", text)
         result = channel.listen(
-            "--wake-on-mention", "archiver", "--max", "10", me="archiver-agent"
+            "--wake-on-mention", token, "--max", "10", me="archiver-agent"
         )
         assert result.returncode == 0, result.stdout + result.stderr
         assert json.loads(result.stdout)["woke"] == [hit]
