@@ -12,7 +12,7 @@ failure it prevents. The guard test pins each one.
 | `schedule.interval` | Missing, and Dependabot rejects the block, visibly only in its own tab | notifier#33 |
 | `open-pull-requests-limit` | Defaults to **5**. Past the limit Dependabot opens **no more version updates**, and says so nowhere. Security updates aren't governed by it: they have a separate, fixed limit of 10 open PRs (GitHub's options reference). notifier's dev-tools group and SDK table went silent for **five weeks** | notifier#103 |
 | `versioning-strategy` | uv/pip: the default `auto` resolves to `widen` for a library, which uv doesn't support (dependabot-core#15290). Pin `increase-if-necessary`. Even that raised floors on in-range bumps under uv, so read a library's floor before merging | notifier#33, #103 |
-| `commit-message.prefix` | The default subject, `Bump x from a to b`, matches no `type:` convention. `prefix: chore` gives `chore: bump …` | watcher#354–#357 |
+| `commit-message.prefix` | The default subject, `Bump x from a to b`, matches no `type:` convention. `prefix: chore` gives `chore: bump …` or `chore: Bump …`. The case isn't the prefix's: identical configs gave each, and it appears to follow the repo's recent subjects. Either reads as `type:`, so guard the prefix, not the case | watcher#354–#357 (`bump`); gregoryfoster/skills#506, #507 (`Bump`, 2026-10-27) |
 | `groups` | Without a dev group, dev tooling (ruff alone ships minors about monthly) buries runtime bumps. Runtime dependencies stay individual PRs | notifier#33 |
 | `ignore` | Lockstep pins, which move with another repo, need one, or the bot proposes moves nobody should take | watcher#358 |
 
