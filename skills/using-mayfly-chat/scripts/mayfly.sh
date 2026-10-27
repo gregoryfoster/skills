@@ -7,14 +7,15 @@
 # client with the arguments as given. The client reads the channel URL from the
 # mode-600 file MAYFLY_URL_FILE names, so /proc/<pid>/cmdline — mode 444,
 # world-readable for the life of every call — holds only that file's path
-# (gregoryfoster/skills#302, findings 16 and 19).
+# (gregoryfoster/skills#302, findings 16 and 19). After a successful create it
+# warns, without refusing, when that file is outside $HOME/.mayfly/ (#509).
 #
-# Usage: MAYFLY_URL_FILE=<path> bash "<mayfly.sh>" COMMAND [options]
+# Usage: MAYFLY_URL_FILE=$HOME/.mayfly/<name> bash "<mayfly.sh>" COMMAND [options]
 set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: MAYFLY_URL_FILE=<path> bash "<mayfly.sh>" COMMAND [options]
+Usage: MAYFLY_URL_FILE=$HOME/.mayfly/<name> bash "<mayfly.sh>" COMMAND [options]
 
 Commands (each prints one JSON object, or text with --text; every option: node <this directory>/client.mjs --help):
   create ORIGIN                                   mint a channel; writes its URL into MAYFLY_URL_FILE (mode 600, must not exist)
@@ -25,7 +26,9 @@ Commands (each prints one JSON object, or text with --text; every option: node <
   delete                                          destroy the channel: the post-leak remedy, no undo
 
 The channel URL is never an argument. MAYFLY_URL_FILE names a mode-600 file
-that holds it; create writes that file, every other command reads it.
+that holds it; create writes that file, every other command reads it. Every
+channel's file belongs in $HOME/.mayfly/ (mode 700), one per channel: create
+warns on stderr, after it succeeds, when the file it wrote is anywhere else.
 
 A wake filter never skips: every message read since --last comes back in
 "messages". --text prints one JSON line of the other fields, then each
@@ -84,8 +87,29 @@ fi
 if [[ -z "${MAYFLY_URL_FILE:-}" ]]; then
   echo "ERROR: MAYFLY_URL_FILE is unset. It must name a mode-600 file holding the channel URL" >&2
   echo "  (for create: the path to write it to). Set it on this command, for example" >&2
-  echo "  MAYFLY_URL_FILE=\$HOME/.mayfly/<topic>.url bash \"<mayfly.sh>\" COMMAND ..." >&2
+  echo "  MAYFLY_URL_FILE=\$HOME/.mayfly/<name> bash \"<mayfly.sh>\" COMMAND ..." >&2
   exit 5
 fi
 
-exec node "$CLIENT" "$@"
+if [[ "$1" != create ]]; then
+  exec node "$CLIENT" "$@"
+fi
+
+# create is the one command that chooses where a URL file lives, so it is the
+# one that checks the place. Every channel's file belongs in $HOME/.mayfly/:
+# the path the operator relays stays short, and a leftover takes one ls to find
+# where a session scratchpad hides it (#509). The check runs only after the
+# client succeeds, so a failed create's stderr is still the client's one JSON
+# object, and it warns without refusing: the channel already exists.
+rc=0
+node "$CLIENT" "$@" || rc=$?
+if [[ $rc -eq 0 ]]; then
+  file_dir=$(cd "$(dirname -- "$MAYFLY_URL_FILE")" 2>/dev/null && pwd -P) || file_dir=
+  want_dir=$(cd "${HOME:-}/.mayfly" 2>/dev/null && pwd -P) || want_dir=
+  if [[ -z "$want_dir" || "$file_dir" != "$want_dir" ]]; then
+    echo "WARNING: the URL file is outside \$HOME/.mayfly/; the channel was created all the same." >&2
+    echo "  Keep every channel's URL file there (install -d -m 700 \"\$HOME/.mayfly\"), so the path" >&2
+    echo "  the operator relays is short and a leftover takes one ls to find." >&2
+  fi
+fi
+exit "$rc"

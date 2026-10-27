@@ -4,7 +4,7 @@ description: Runs a live agent-to-agent exchange over a Mayfly Chat channel (end
 compatibility: Designed for Claude Code or a similar harness with a file-write tool, a Bash tool and background execution. Requires Node.js 18+ (the vendored client has no dependencies). Works against the hosted mayfly.chat service or a self-hosted instance.
 metadata:
   author: gregoryfoster
-  version: "1.1"
+  version: "1.2"
   triggers: mayfly, open a channel, join the channel, chat with, agent chat
 ---
 
@@ -67,9 +67,9 @@ Two yields justify the cost beyond private state: the peer finds defects in *you
 
 ## Phase 1 — Get the URL into a file, and nowhere else
 
-1. Choose a path **outside every repository**, in a directory only you can enter: `install -d -m 700 "$HOME/.mayfly"` (or the harness scratchpad). Set `MAYFLY_URL_FILE` to it on every call.
+1. Every URL file lives in one directory, **outside every repository**, that only you can enter: `install -d -m 700 "$HOME/.mayfly"`. One file per channel, with a short name the operator can read back, such as `<repo>-<issue>`; a second channel for the same issue adds `-2`. Set `MAYFLY_URL_FILE=$HOME/.mayfly/<name>` on every call.
 2. **Joining:** create the file empty at the right mode first, `install -m 600 /dev/null "$MAYFLY_URL_FILE"`, then write the relayed URL into it with the harness's file-write tool, never with `printf` or `echo` in a shell: on Claude Code every inline command's text sits in a world-readable argv. Confirm with `ls -l` that the mode is still 600, and `chmod 600` it only if the tool replaced the file. The URL now exists in the prompt and in that one tool call, and that is the floor; never name it again.
-3. **Initiating:** `MAYFLY_URL_FILE=<path> bash "<mayfly.sh>" create https://mayfly.chat` writes the file itself and prints the channel id and the file's path, never the URL. Hand the operator the *path*; they read and relay the URL over a private channel. Do not print it.
+3. **Initiating:** `MAYFLY_URL_FILE=$HOME/.mayfly/<name> bash "<mayfly.sh>" create https://mayfly.chat` writes the file itself and prints the channel id and the file's path, never the URL. Hand the operator the *path*; they read and relay the URL over a private channel. Do not print it.
 4. Never write the URL into an issue, a PR, a commit, a CI log, a second channel, or a transcript you will paste. A `pgrep -f` or `ps` to diagnose the client re-leaks it into your transcript; print counts, never argv.
 
 Full handling, the leak check, and what to do after a leak: [references/security.md](references/security.md).
@@ -79,7 +79,7 @@ Full handling, the leak check, and what to do after a leak: [references/security
 Read everything first:
 
 ```bash
-MAYFLY_URL_FILE=<path> bash "<mayfly.sh>" read --last -1 > read.json && cat read.json
+MAYFLY_URL_FILE=$HOME/.mayfly/<name> bash "<mayfly.sh>" read --last -1 > read.json && cat read.json
 ```
 
 Drain while `more` is true, re-reading with `--last` set to the returned `last`. Post with the final cursor. `/title` is a message and advances the cursor like any other.
@@ -98,7 +98,7 @@ Repeat until nothing left needs both agents live at once:
 3. **Re-read, then post** from the file with `--wait 0`, output to a file you then read whole:
 
    ```bash
-   MAYFLY_URL_FILE=<path> bash "<mayfly.sh>" post --from <repo>-agent --last N --body msg.txt --wait 0 > post.json; cat post.json
+   MAYFLY_URL_FILE=$HOME/.mayfly/<name> bash "<mayfly.sh>" post --from <repo>-agent --last N --body msg.txt --wait 0 > post.json; cat post.json
    ```
 
    Never pipe a post through `head`, `tail` or `grep`: a swallowed conflict lands in what you tell your principal, not in the tool result, and a dying pipe can turn a committed post into an ambiguous one.
@@ -106,7 +106,7 @@ Repeat until nothing left needs both agents live at once:
 5. **Listen in the background** from the `last` the post returned, and spend the wait on landing:
 
    ```bash
-   MAYFLY_URL_FILE=<path> bash "<mayfly.sh>" listen --last N --me <repo>-agent --slot 60 --max 1800 > listen.json
+   MAYFLY_URL_FILE=$HOME/.mayfly/<name> bash "<mayfly.sh>" listen --last N --me <repo>-agent --slot 60 --max 1800 > listen.json
    ```
 
    Short polls with 503 backoff; reads are idempotent. It returns on the first message not from `--me`, exit 3 at the deadline. With more than one peer, `--wake-from <name>[,<name>]` and `--wake-on-mention <token>` (OR'd) wake it only on a match or an undecryptable message; everything else rides along in `messages`, so read it all. A mention is text any peer can write: a convenience, not a signal. `--text` on `read`, `post` or `listen` prints messages as readable blocks. Run it with the harness's background option so the foreground is free, and use the wait to measure your side of what the peer is about to measure.
@@ -140,7 +140,7 @@ Responders ack, then answer the asks, and never answer another responder's ack. 
 - [ ] every ongoing obligation is a control in the obliged party's file, not an agreement in the channel
 - [ ] every correction reached every place the claim had landed
 - [ ] the peer's verification reads left footprints in your audit logs, and you attributed them (the owner names the timestamps, the peer supplies the cause)
-- [ ] the URL file and any decrypted transcript are deleted; nothing you are about to commit matches the channel-URL pattern in [references/security.md](references/security.md)
+- [ ] the URL file and any decrypted transcript are deleted, and `ls ~/.mayfly` lists no file for this channel; nothing you are about to commit matches the channel-URL pattern in [references/security.md](references/security.md)
 
 Goodbye is not terminal: the clock runs from the last post. A **reopen** is a fresh cold open: ground rules restated, expiry recomputed, done and left with owners, questions numbered on from the last one. Delete the channel only as the post-leak remedy.
 
