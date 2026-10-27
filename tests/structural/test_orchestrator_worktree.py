@@ -65,8 +65,8 @@ def test_no_step_moves_the_main_checkout(s, refs):
         p.name: p.read_text() for p in sorted(refs.glob("*.md"))
     }
     forbidden = [
-        r"git (?:-C \S+ )?checkout main\b",
-        r"git (?:-C \S+ )?checkout -b batch/",
+        r"git (?:-C \S+ )?(?:checkout|switch) main\b",
+        r"git (?:-C \S+ )?(?:checkout -b|switch -c) batch/",
         r"git (?:-C \S+ )?pull --ff-only",
         r"push from local `main`",
     ]
