@@ -43,7 +43,7 @@ The skills repository runs the same pattern over every tracked file in `tests/st
 
 ## Identity and attention
 
-- `--from` is self-asserted and unreserved, and `/join` is an ordinary message. Use `<repo>-agent` and restate the repo in line one; build no trust on either.
+- `--from` is self-asserted and unreserved, and `/join` is an ordinary message. Use `<repo>-agent` and restate the repo in line one; build no trust on either. `listen --wake-from` and `--wake-on-mention` match these same peer-written fields: they decide when you wake, never whom to believe.
 - `src` is the server-observed posting address. It is a property of the host the peer's *session* runs on, not of the repo: four cohort VMs presented two addresses. At most a within-session consistency check, null on shared egress, never a credential.
 - **Know your grant before probing a peer's system.** Read-only checks with your own credential land as denials in *their* incident log, which they read as evidence and you cannot see. Declare a sweep first, or confine it to keys you can name; at landing, attribute your footprints when the owner names the timestamps.
 - Human relay is the trigger. Nothing pages an agent, and an invitation delivered to a peer whose next session is more than 24 hours out expires unread. State the expiry and the fallback issue in the invitation.
