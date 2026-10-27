@@ -407,3 +407,30 @@ def test_a_branch_or_bare_ref_is_named_for_what_it_is(inv_mod, upstream):
     assert branch["status"] == "branch" and "None" not in branch["why"]
     bare = inv_mod.assess(_ref(inv_mod, "astral-sh/setup-uv"), upstream)
     assert bare["status"] == "unpinned" and "None" not in bare["why"]
+
+
+def test_a_job_calling_a_reusable_workflow_needs_what_it_calls(tmp_path):
+    """CR 601: the caller declares nothing; the called workflow needs OIDC."""
+    caller = (
+        "on: pull_request\njobs:\n"
+        "  local:\n    uses: ./.github/workflows/deploy.yml\n"
+        "  remote:\n    uses: acme/shared/.github/workflows/ci.yml@v1\n"
+        "  plain:\n    runs-on: x\n    steps: [{run: 'true'}]\n"
+    )
+    called = (
+        "on: workflow_call\njobs:\n"
+        "  auth:\n    runs-on: x\n    permissions:\n      id-token: write\n    steps: [{run: 'true'}]\n"
+    )
+    inv = _inventory(
+        _repo(
+            tmp_path,
+            {
+                ".github/workflows/ci.yml": caller,
+                ".github/workflows/deploy.yml": called,
+            },
+        )
+    )
+    assert _job(inv, "ci.yml", "local")["needs"] == "oidc"
+    assert _job(inv, "ci.yml", "local")["calls"] == "./.github/workflows/deploy.yml"
+    assert _job(inv, "ci.yml", "remote")["needs"] == "unknown"
+    assert _job(inv, "ci.yml", "plain")["needs"] == "nothing"

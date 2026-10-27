@@ -365,6 +365,8 @@ def workflow(root: Path, f: str) -> tuple[dict, list[dict]]:
             {
                 "id": job_id,
                 "needs": "oidc" if oidc else "secret" if secrets else "nothing",
+                # A reusable workflow's credentials are in the workflow it calls.
+                "calls": job.get("uses") if isinstance(job.get("uses"), str) else None,
                 "secrets": secrets,
                 "vars": sorted(set(VAR_REF.findall(body))),
                 "write_permissions": writes,
@@ -385,6 +387,42 @@ def workflow(root: Path, f: str) -> tuple[dict, list[dict]]:
         "generated": generated,
         "jobs": jobs,
     }, uses
+
+
+NEEDS_RANK = ["nothing", "secret", "oidc"]
+
+
+def resolve_calls(workflows: list[dict]) -> None:
+    """A job calling a reusable workflow needs what the called one's jobs need.
+
+    A local call (``./.github/workflows/x.yml``) takes the strongest ``needs``
+    among that workflow's jobs, and its own; a call to another repo reads
+    ``unknown``, since its credentials can't be read from here.
+    """
+    by_file = {w["file"]: w for w in workflows}
+
+    def needs_of(job: dict, seen: frozenset[str]) -> str:
+        call = job.get("calls")
+        if not call:
+            return job["needs"]
+        if not call.startswith("./"):
+            return "unknown"
+        target = by_file.get(call.removeprefix("./").partition("@")[0])
+        if target is None or target["file"] in seen:
+            return "unknown"
+        found = [needs_of(j, seen | {target["file"]}) for j in target.get("jobs", [])]
+        if "unknown" in found:
+            return "unknown"
+        return max([job["needs"], *found], key=NEEDS_RANK.index)
+
+    resolved = {
+        (w["file"], j["id"]): needs_of(j, frozenset({w["file"]}))
+        for w in workflows
+        for j in w.get("jobs", [])
+    }
+    for w in workflows:
+        for j in w.get("jobs", []):
+            j["needs"] = resolved[(w["file"], j["id"])]
 
 
 def pin_form(ref: str) -> tuple[str, str | None, str | None]:
@@ -546,6 +584,7 @@ def main() -> int:
             refs.extend(uses)
     for r in refs:
         r["form"], r["action"], r["version"] = pin_form(r["ref"])
+    resolve_calls(workflows)
 
     actions = sorted({r["action"] for r in refs if r["action"]})
     if args.upstream:

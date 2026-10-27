@@ -14,6 +14,7 @@ that gates `pull_request`, job by job (`workflows[].jobs[]`):
 | `nothing` | Passes regardless. watcher's `css` job was one |
 | `secret` | Fails unless the secret is also stored as a **Dependabot** secret. A step that needs it only to publish should be skipped on `github.actor == 'dependabot[bot]'`, not fed the secret |
 | `oidc` | Depends on GitHub granting the OIDC token to the run. Not spelled out in GitHub's docs: [credential-context.md](credential-context.md) |
+| `unknown` | The job calls a reusable workflow in another repo (`calls`), whose credentials can't be read from here. Read that workflow. A local one lends its jobs' `needs` to the caller |
 
 Also read `vars` (whether `vars.` resolves on a Dependabot run is stated
 nowhere either; on watcher, 2026-10-09, it did), `write_permissions` (a

@@ -20,7 +20,10 @@ Output (stdout, JSON):
   workflows           per workflow: triggers, gates_pull_request,
                       scheduled_only (a bump there runs in no PR's CI), the
                       generated-file marker if any, and per job: needs
-                      (nothing | secret | oidc), secrets, vars,
+                      (nothing | secret | oidc | unknown), calls (the
+                      reusable workflow it calls: a local one lends its
+                      jobs' needs, another repo's reads unknown), secrets,
+                      vars,
                       write_permissions (a Dependabot run's token is
                       read-only), private_index_steps, runs_on
   actions             distinct owner/repo actions, their count (the
