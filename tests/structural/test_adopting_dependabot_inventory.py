@@ -399,3 +399,11 @@ def test_a_python_without_tomllib_and_no_uv_exits_2_with_its_reason(tmp_path):
     )
     assert proc.returncode == 2
     assert "3.11+" in proc.stderr and "Traceback" not in proc.stderr
+
+
+def test_a_branch_or_bare_ref_is_named_for_what_it_is(inv_mod, upstream):
+    """CR 592: neither is a missing tag; neither has a version to compare."""
+    branch = inv_mod.assess(_ref(inv_mod, "astral-sh/setup-uv@main"), upstream)
+    assert branch["status"] == "branch" and "None" not in branch["why"]
+    bare = inv_mod.assess(_ref(inv_mod, "astral-sh/setup-uv"), upstream)
+    assert bare["status"] == "unpinned" and "None" not in bare["why"]

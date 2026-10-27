@@ -35,7 +35,8 @@ Output (stdout, JSON):
   upstream            null, or with --upstream, per action: newest
                       vX.Y.Z, the floating vN tags; and each ref gains
                       status: current | behind | frozen | missing |
-                      mismatch | unknown | unread, with why
+                      mismatch | branch | unpinned | unknown | unread,
+                      with why
 
 Options:
   --repo-root DIR   the repo to read (default: .)

@@ -462,6 +462,14 @@ def assess(ref: dict, up: dict) -> dict:
     if not newest:
         return {"status": "unread", "why": "upstream publishes no vX.Y.Z tag"}
     form, version = ref["form"], ref.get("version")
+    if form in {"branch", "unpinned"}:
+        # No version to compare, and nothing for Dependabot to propose.
+        return {
+            "status": form,
+            "why": "a branch moves on its own; pin a tag or a SHA"
+            if form == "branch"
+            else "no @ref at all; pin a tag or a SHA",
+        }
     if form == "sha":
         sha = ref["ref"].partition("@")[2]
         tagged = sorted(

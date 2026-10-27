@@ -48,7 +48,9 @@ gives every `uses:` ref a `status`:
   `@v5` went to `@v7` and stopped, while the current release was v10.2.0
   (watcher#360, 2026-10-09).
 - `behind`, `current`, `missing` (no such tag upstream), `mismatch` (a SHA
-  whose `# vX.Y.Z` comment names another commit), `unknown`, `unread`.
+  whose `# vX.Y.Z` comment names another commit), `branch` or `unpinned` (no
+  version to compare, and nothing for Dependabot to propose: pin a tag or a
+  SHA), `unknown`, `unread`.
 
 A `frozen` action moves to an immutable tag or to a SHA with its version
 comment, `@<sha> # vX.Y.Z`, which Dependabot updates both halves of. SHA-pinning
