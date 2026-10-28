@@ -48,9 +48,9 @@ fi
 # The bare skill's pre-ship.sh exits HERE. Everything below is scaffolding
 # downstream overrides inherit when they delete this exit block (and the
 # file-wide shellcheck directive above `set`) and replace it with a real
-# test-runner invocation. Until then, the stub does no work
-# (no audit, no npm gates) so its "you must override" message is the first
-# and only thing the operator sees.
+# test-runner invocation. Until then, the stub does no work (no audit, no npm
+# gates) so its "you must override" message is the first and only thing the
+# operator sees.
 echo "ERROR: pre-ship.sh is a stub. This project has not supplied a ship gate." >&2
 echo "       Write scripts/pre-ship.sh at your repo root and put your test" >&2
 echo "       runner in it (e.g. uv run pytest). Step 1 resolves each script" >&2

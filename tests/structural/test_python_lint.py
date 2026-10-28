@@ -18,10 +18,10 @@ on the theory that a linter's rules only accumulate, until a newer release
 reported 13 findings on a tree the floor passed and it was pinned too (#481).
 `ruff format` is the stronger case: its output is defined by the version that
 produced it, and 0.8.0 and 0.16.6 disagree by some three thousand lines on
-this very tree. A floor would therefore let a newer
-build report a tree that is already committed-clean as needing reformatting,
-which is a gate failing for a reason the author cannot act on. Bumping the pin
-is a deliberate commit that carries the reformat with it.
+this very tree. A floor would therefore let a newer build report a tree that
+is already committed-clean as needing reformatting, which is a gate failing for
+a reason the author cannot act on. Bumping the pin is a deliberate commit that
+carries the reformat with it.
 
 No API calls. Requires `ruff` on PATH — `requirements-test.txt` installs the
 pinned build into `.venv`, and its absence is a loud skip, not a silent pass.
