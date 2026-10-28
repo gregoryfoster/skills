@@ -61,7 +61,7 @@ def sha256(data: bytes) -> str:
 
 
 def gc_files(version: int = 2, **changes) -> dict:
-    """The layer's files, path -> (bytes, mode): VERSION 2's shape.
+    """The layer's files, path -> (bytes, mode): VERSION 2's and 3's shape.
 
     A keyword names a file by its basename with `-` and `.` as `_`, and
     replaces its bytes; None drops it.
