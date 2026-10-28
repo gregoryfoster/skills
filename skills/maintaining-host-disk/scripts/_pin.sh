@@ -2,10 +2,10 @@
 # _pin.sh — the one home of the canonical disk GC release this skill installs.
 # Read by _pull.py as data, and sourced by install-disk-gc.sh; running it
 # does nothing.
-# A new GC release is a commit here, never a host's own setting (#425).
-# The DISK_GC_* variables are its output.
-# A new release re-checks patching-hosts' _probe-lib.sh too, which mirrors
-# the release's config reader and usage() and names the VERSIONs it matches.
+# A new GC release is a commit here, never a host's own setting (#425), and
+# it re-checks patching-hosts' _probe-lib.sh too, which mirrors the release's
+# config reader and usage() and names the VERSIONs it matches.
+# The DISK_GC_* variables are this file's output.
 # shellcheck disable=SC2034
 set -euo pipefail
 
