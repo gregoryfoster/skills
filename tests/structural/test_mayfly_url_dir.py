@@ -76,10 +76,41 @@ def test_joining_refuses_a_name_already_taken() -> None:
     """
     text = SKILL_MD.read_text()
     guarded = (
-        'test ! -e "$MAYFLY_URL_FILE" && install -m 600 /dev/null "$MAYFLY_URL_FILE"'
+        '{ test ! -e "$MAYFLY_URL_FILE" || { echo "taken: choose another name" >&2;'
+        ' false; }; } && install -m 600 /dev/null "$MAYFLY_URL_FILE"'
     )
     assert guarded in text
     assert text.count('install -m 600 /dev/null "$MAYFLY_URL_FILE"') == 1
+    # CR 631: a silent exit 1 is easy to miss, and the file-write step after
+    # it would overwrite the other session's file all the same.
+    assert "never into one that already existed" in text
+
+
+def test_the_join_guard_says_why_it_refused(tmp_path: Path) -> None:
+    """CR 631: the guard, run as SKILL.md shows it, refuses loudly."""
+    line = re.search(r"`(\{ test ! -e [^`]+)`", SKILL_MD.read_text())
+    assert line, "the join guard is not shown in a code span"
+    taken = tmp_path / "status-67"
+    taken.write_text("another session's channel\n")
+    result = subprocess.run(
+        ["bash", "-c", line.group(1)],
+        env={**os.environ, "MAYFLY_URL_FILE": str(taken)},
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode != 0
+    assert "taken" in result.stderr
+    assert taken.read_text() == "another session's channel\n"
+
+    fresh = tmp_path / "status-67-2"
+    result = subprocess.run(
+        ["bash", "-c", line.group(1)],
+        env={**os.environ, "MAYFLY_URL_FILE": str(fresh)},
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert (fresh.stat().st_mode & 0o777) == 0o600
 
 
 # --- 2. the wrapper warns after create ------------------------------------------
