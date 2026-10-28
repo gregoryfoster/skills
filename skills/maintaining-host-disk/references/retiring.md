@@ -34,7 +34,7 @@ Six hosts built their own GC before the canonical one existed (inventoried in Ca
 The check finds where an old tool runs. It can't read an arbitrary script and say what it removed, so this part is a checklist, read against the old tool's own source and the GC's report:
 
 1. **Which paths did it remove that no GC tier covers,** or that a tier covers but this host's config leaves off (`worktrees` not in `tiers` or with an empty `worktree_repos`, `docker` off)?
-2. **Did it remove anything the GC deliberately keeps?** Containers, volumes, unused tagged images unless `docker_unused_images_days` opts in, a VS Code build still in use or touched within the grace window, a server build newer than the newest live one (or the newest, with none live), a tree with any entry newer than `grace_minutes` (default 60).
+2. **Did it remove anything the GC deliberately keeps?** Containers, volumes, unused tagged images unless `docker_unused_images_days` opts in, a VS Code build still in use or touched within the grace window, a server build newer than the newest live one (or the newest, with none live) or whose version can't be read, a tree with any entry newer than `grace_minutes` (default 60).
 3. **Did it keep anything the GC removes?** The VSIX cache is the known one ([editor-builds.md](editor-builds.md)).
 4. **Does anything else depend on it?** A monitor reading its journal lines, a state file, a health check calling it.
 5. **Is its cadence faster than daily?** Then the canonical timer needs a drop-in, timer first and monitor second ([turning-on.md](turning-on.md#the-cadence)).
