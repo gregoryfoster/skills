@@ -35,7 +35,7 @@ REPO_ROOT = Path(__file__).parent.parent.parent
 # — executable bit, `set -euo pipefail`, a `--help` that exits 0 with output —
 # are AGENTS.md's script conventions, stated for every script the repo ships,
 # but the parametrization was built from `all_skills()` and so stopped at
-# `skills/*/scripts/`. `SHELL_SCRIPT_GLOBS` above already covered repo-root
+# `skills/*/scripts/`. `SHELL_SCRIPT_GLOBS` below already covered repo-root
 # scripts for shellcheck, which made the gap easy to miss: the surface looked
 # gated because half of it was.
 #
