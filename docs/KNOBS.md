@@ -2,9 +2,9 @@
 
 The complete inventory of paths these skills read or write under a consuming
 repo's `.skills/` directory. [AGENTS.md](../AGENTS.md) states the resolution
-*shape* that three of them share; this is the list, which is the question a
-maintainer actually asks — *what may my repo put here, and what does each one
-do?*
+*shape* that many of them share, and the "Replaces or extends" column below
+says which; this is the list, which is the question a maintainer actually
+asks — *what may my repo put here, and what does each one do?*
 
 Until [#264](https://github.com/gregoryfoster/skills/issues/264) there was no
 such list. Six paths were documented in AGENTS.md or `docs/`, and the other
