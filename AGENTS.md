@@ -152,16 +152,14 @@ These carry a full template and a rationale in
 ## Resolution knobs
 
 A project configures a skill by committing a file under `.skills/` instead of
-forking it. Three of those resolve through the same three-step lookup —
-`<NAME>` env var, then the file, then a built-in default: `WORKTREE_ROOT` /
-`.skills/worktree_root` and `PLANS_DIR` / `.skills/plans_dir` (each a single-line
-path), and `SKILLS_PIN_FILE` / `.skills/skills-pin` (one `<submodule-path>
-<commit-ish>` per line). That is the shared *shape*, not the inventory — the
+forking it. Many resolve through one lookup — `<NAME>` env var, then the
+file, then a built-in default, as `WORKTREE_ROOT` / `.skills/worktree_root`
+does. That is a shared *shape*, not the inventory — the
 rest use their own, and reading this section as the list is how
 [#261](https://github.com/gregoryfoster/skills/issues/261) left a repo able to
 tailor a gate's watch list but not its advice. Every `.skills/` file a
-project may commit, what replaces or extends a default, and what each absence
-means: [docs/KNOBS.md](docs/KNOBS.md), held complete by
+project may commit, any env var that outranks it, what replaces or extends a
+default, and what each absence means: [docs/KNOBS.md](docs/KNOBS.md), held complete by
 [tests/structural/test_skills_knob_inventory.py](tests/structural/test_skills_knob_inventory.py).
 The per-skill defaults and resolver helpers: [docs/CONVENTIONS.md](docs/CONVENTIONS.md).
 
