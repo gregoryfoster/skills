@@ -35,12 +35,12 @@ case "${0##*/}" in
   _pin.sh) case "${1-}" in -h | --help) pin_usage; exit 0 ;; esac ;;
 esac
 
-# VERSION 2: the headroom sensor's clear line (CannObserv/provisioner#85,
-# merged in provisioner#87, 2026-10-24).
+# VERSION 3: VS Code server builds kept by version, newer than the newest
+# live one, or the newest when none is live (2026-10-27, #510).
 DISK_GC_REGISTRY=https://ghcr.io
 DISK_GC_REPOSITORY=cannobserv/co-image-base
-DISK_GC_TAG=4ac2cc21bcf5b4ab863776a37d2f718713662580
-DISK_GC_MANIFEST_DIGEST=sha256:0e230e4dfb255a0e27ae43367e823bd65b4c5156f51cd071a4c1c1c8f83e624f
-DISK_GC_VERSION=2
-# From the digest-verified layer, read by the #485 orchestrator (CR 520).
-DISK_GC_MANIFEST_SHA256=066a9f3ad4e59bec523a0476ee81d4e87534cca82e50356a116043d8716d208c
+DISK_GC_TAG=a4857ac9332f0aa368ae427d39d2e8df0cee0bb5
+DISK_GC_MANIFEST_DIGEST=sha256:7cbad644d2ece3e163bd3087727d710b05beceff1d935bf64813f2fd3fa23168
+DISK_GC_VERSION=3
+# From the release (#510); the puller's step 8 matched it, 2026-10-28.
+DISK_GC_MANIFEST_SHA256=9347ffff2ff66e3925efa25d2cc5d4e5b70d83d512619de6a6ac96cb5abfe258

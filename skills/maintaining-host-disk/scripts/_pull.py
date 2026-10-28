@@ -53,7 +53,7 @@ PREFIX_PARENTS = ("usr", "usr/local", "usr/local/lib")
 GC_DIR = "usr/local/lib/cannobserv/disk-gc/"
 MANIFEST = GC_DIR + "MANIFEST"
 VERSION = GC_DIR + "VERSION"
-# The layer is ~22 KB gzipped (VERSION 2); anything near this is not it.
+# The layer is ~23 KB gzipped (VERSION 3); anything near this is not it.
 MAX_LAYER_BYTES = 16 * 1024 * 1024
 MANIFEST_LINE = re.compile(r"([0-9a-f]{64})  (.+)\Z")
 

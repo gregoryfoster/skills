@@ -13,14 +13,14 @@ from tests.structural import maintaining_host_disk_rig as rig
 
 PIN = rig.SCRIPTS / "_pin.sh"
 
-# VERSION 2 (CannObserv/provisioner#85, merged in provisioner#87), from
-# https://github.com/gregoryfoster/skills/issues/425#issuecomment-6387455753
-TAG = "4ac2cc21bcf5b4ab863776a37d2f718713662580"
-DIGEST = "sha256:0e230e4dfb255a0e27ae43367e823bd65b4c5156f51cd071a4c1c1c8f83e624f"
-# The layer's own MANIFEST, from the digest-verified layer
-# sha256:6f719bd2…48ca4 (CR 520, read by the orchestrator: this session's
-# network can't reach the blob host).
-MANIFEST_SHA256 = "066a9f3ad4e59bec523a0476ee81d4e87534cca82e50356a116043d8716d208c"
+# VERSION 3 (2026-10-27), from
+# https://github.com/gregoryfoster/skills/issues/510
+TAG = "a4857ac9332f0aa368ae427d39d2e8df0cee0bb5"
+DIGEST = "sha256:7cbad644d2ece3e163bd3087727d710b05beceff1d935bf64813f2fd3fa23168"
+# The layer's own MANIFEST, from the same issue. pull-disk-gc.sh at this pin
+# staged layer sha256:9a5bbd46…9d030 (23,039 bytes) and its step 8 matched
+# this, 2026-10-28.
+MANIFEST_SHA256 = "9347ffff2ff66e3925efa25d2cc5d4e5b70d83d512619de6a6ac96cb5abfe258"
 
 
 def pin_values() -> dict:
@@ -29,11 +29,11 @@ def pin_values() -> dict:
     )
 
 
-def test_pin_is_version_2():
+def test_pin_is_version_3():
     values = pin_values()
     assert values["DISK_GC_TAG"] == TAG
     assert values["DISK_GC_MANIFEST_DIGEST"] == DIGEST
-    assert values["DISK_GC_VERSION"] == "2"
+    assert values["DISK_GC_VERSION"] == "3"
     assert values["DISK_GC_MANIFEST_SHA256"] == MANIFEST_SHA256
     assert values["DISK_GC_REGISTRY"] == "https://ghcr.io"
     assert values["DISK_GC_REPOSITORY"] == "cannobserv/co-image-base"
