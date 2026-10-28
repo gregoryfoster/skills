@@ -17,7 +17,7 @@ The canonical GC already prunes this scope, so this skill owns it, and patching-
 - every build newer than the newest live one;
 - with nothing live, the newest.
 
-"Newer" is by `server/product.json`'s `version`, never by the `Stable-<commit>` name, mtime (VS Code restores the archive's, usa-wa#512) or ctime (a re-download resets it). A build whose version can't be read as `<major>.<minor>.<patch>` is kept (`version unread: …`), and with no live build's version read, every idle build is. Live is the `/proc` evidence alone: a build that's only settling doesn't count. Older builds are judged as below.
+"Newer" is by `server/product.json`'s `version`, never by the `Stable-<commit>` name, mtime (VS Code restores the archive's, usa-wa#512) or ctime (a re-download resets it). A build whose version can't be read as `<major>.<minor>.<patch>` is kept (`version unread: …`), and when builds are live but none of their versions can be read, every idle build is. Live is the `/proc` evidence alone: a build that's only settling doesn't count. Older builds are judged as below.
 
 `vscode-clis` keeps anything in use.
 
