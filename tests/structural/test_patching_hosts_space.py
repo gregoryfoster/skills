@@ -24,7 +24,7 @@ this file pins:
   is the space alone; present, a step whose download and growth would take
   the sensor's mount to its alert_at_percent or past it is refused; and an
   unreadable or malformed file is a finding, never a silent pass. A key it
-  leaves out takes the GC's own VERSION 2 default (load_config): 85, and /.
+  leaves out takes the GC's own VERSION 2 and 3 default (load_config): 85, and /.
 """
 
 import os
@@ -252,7 +252,7 @@ def test_without_the_gcs_config_there_is_no_headroom_line(host):
     "text, alert, mount",
     [
         (VALID, "80", "/data"),
-        # The GC's own VERSION 2 defaults, for keys it leaves out.
+        # The GC's own VERSION 2 and 3 defaults, for keys it leaves out.
         ("[gc]\ntiers = uv\n[sensor]\nmonitor_id =\n", "85", "/"),
         ("[gc]\n", "85", "/"),
         # configparser folds keys' case, and takes : as well as =.
@@ -261,7 +261,7 @@ def test_without_the_gcs_config_there_is_no_headroom_line(host):
         ("[sensor]\nmount = /data%(x)s\n", "85", "/data%(x)s"),
         ("[sensor]\r\nalert_at_percent = 88\r\n", "88", "/"),
         ("[sensor]\nalert_at_percent = 085\n", "85", "/"),
-        # CR 583: VERSION 2's _int takes any run of digits, ^[0-9]+$, in 1..100.
+        # CR 583: VERSION 2's and 3's _int takes any run of digits, ^[0-9]+$, in 1..100.
         ("[sensor]\nalert_at_percent = 0085\n", "85", "/"),
         ("[sensor]\nalert_at_percent = 1\n", "1", "/"),
         ("[sensor]\nalert_at_percent = 100\n", "100", "/"),
@@ -311,7 +311,7 @@ def test_the_gcs_config_gives_its_headroom_line(host, text, alert, mount):
             "line 3 continues [sensor] alert_at_percent",
         ),
         ("[sensor]\nmount = data\n", 'mount is "data", not an absolute path'),
-        # CR 582: VERSION 2 parses with default_section="\\0none", so
+        # CR 582: VERSION 2 and 3 parse with default_section="\\0none", so
         # [DEFAULT] is a section like any other, and it refuses every section
         # but [gc] and [sensor], and every [sensor] key outside its _KEYS.
         (

@@ -421,7 +421,7 @@ SPACE_FLOOR_KIB=131072
 APT_ARCHIVES=/var/cache/apt/archives
 # The canonical disk GC's config (maintaining-host-disk). Its sensor pages
 # at [sensor] alert_at_percent of [sensor] mount; a key it leaves out takes
-# the GC's own default in VERSION 2 (load_config): 85 and /.
+# the GC's own default in VERSION 2 and 3 (load_config): 85 and /.
 DISK_GC_CONF=/etc/cannobserv/disk-gc/disk-gc.conf
 DISK_GC_ALERT_DEFAULT=85
 DISK_GC_MOUNT_DEFAULT=/
@@ -564,7 +564,7 @@ step_space() {  # <package>...: SS_DOWNLOAD, SS_GROWTH, SS_PEAK in KiB, SS_N; 1 
 
 # The canonical GC's config, read as strictly as the GC reads it: an
 # unreadable file, or one whose syntax, sections or [sensor] keys it would
-# reject, is never read as absent. VERSION 2's load_config parses it with
+# reject, is never read as absent. VERSION 2's and 3's load_config parses it with
 # configparser.ConfigParser(interpolation=None, default_section="\0none"):
 # [section] headers, each once; "key = value" or "key: value" lines, keys
 # case-folded, each once per section; # and ; comments on their own line; an
@@ -651,7 +651,7 @@ disk_gc_conf() {  # GC_STATE := absent, ok or bad; GC_ALERT and GC_MOUNT when ok
       return 0 ;;
     esac
     if [ "$_gc_sect" = sensor ] && ! in_words "$_gc_k" "$DISK_GC_SENSOR_KEYS"; then
-      GC_WHY="line $_gc_n has an unknown key [sensor] $_gc_k: the GC's VERSION 2 knows $DISK_GC_SENSOR_KEYS"
+      GC_WHY="line $_gc_n has an unknown key [sensor] $_gc_k: the GC (VERSION 2 and 3) knows $DISK_GC_SENSOR_KEYS"
       return 0
     fi
     _gc_keys="$_gc_keys$_gc_sect.$_gc_k " _gc_last=$_gc_sect.$_gc_k
@@ -660,7 +660,7 @@ disk_gc_conf() {  # GC_STATE := absent, ok or bad; GC_ALERT and GC_MOUNT when ok
       sensor.mount) _gc_m=$_gc_v _gc_hm=1 ;;
     esac
   done <<<"$_gc_t"
-  # VERSION 2's _int: digits alone (^[0-9]+$), from 1 to 100 (CR 583). The
+  # VERSION 2's and 3's _int: digits alone (^[0-9]+$), from 1 to 100 (CR 583). The
   # leading zeros go first, so a long run of them can't overflow the test.
   if [ "$_gc_ha" -eq 0 ]; then
     _gc_a=$DISK_GC_ALERT_DEFAULT
@@ -735,7 +735,7 @@ space_gate() {  # <the step, as the messages name it>
   jadd _sp_o filesystems "[$_sp_a]"
   # The GC's headroom line: today's use, plus the download where it lands on
   # the sensor's mount, plus the install growth where that does, must read
-  # under alert_at_percent as the sensor reads it. VERSION 2's usage() is
+  # under alert_at_percent as the sensor reads it. VERSION 2's and 3's usage() is
   # df's Use%: used over used plus available, rounded up, and it pages at
   # percent >= alert_at_percent (CR 581).
   disk_gc_conf
