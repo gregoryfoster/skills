@@ -221,6 +221,8 @@ class TestCreateWarning:
         result = _create(home, nested / "67", origin)
         assert result.returncode == 0, result.stderr
         assert result.stderr.startswith("WARNING:"), result.stderr
+        # CR 632: the file is inside ~/.mayfly, so "outside" would be false.
+        assert "not directly in $HOME/.mayfly/" in result.stderr
 
     def test_no_dot_mayfly_at_all_warns(self, tmp_path: Path, origin: str) -> None:
         bare_home = tmp_path / "bare"

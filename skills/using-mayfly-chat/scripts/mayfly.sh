@@ -8,7 +8,7 @@
 # mode-600 file MAYFLY_URL_FILE names, so /proc/<pid>/cmdline — mode 444,
 # world-readable for the life of every call — holds only that file's path
 # (gregoryfoster/skills#302, findings 16 and 19). After a successful create it
-# warns, without refusing, when that file is outside $HOME/.mayfly/ (#509).
+# warns, without refusing, when that file is not directly in $HOME/.mayfly/ (#509).
 #
 # Usage: MAYFLY_URL_FILE=$HOME/.mayfly/<name> bash "<mayfly.sh>" COMMAND [options]
 set -euo pipefail
@@ -28,7 +28,8 @@ Commands (each prints one JSON object, or text with --text; every option: node <
 The channel URL is never an argument. MAYFLY_URL_FILE names a mode-600 file
 that holds it; create writes that file, every other command reads it. Every
 channel's file belongs in $HOME/.mayfly/ (mode 700), one per channel: create
-warns on stderr, after it succeeds, when the file it wrote is anywhere else.
+warns on stderr, after it succeeds, when the file it wrote is anywhere else,
+a subdirectory included.
 
 A wake filter never skips: every message read since --last comes back in
 "messages". --text prints one JSON line of the other fields, then each
@@ -107,9 +108,9 @@ if [[ $rc -eq 0 ]]; then
   file_dir=$(CDPATH='' cd "$(dirname -- "$MAYFLY_URL_FILE")" 2>/dev/null && pwd -P) || file_dir=
   want_dir=$(CDPATH='' cd "${HOME:-}/.mayfly" 2>/dev/null && pwd -P) || want_dir=
   if [[ -z "$want_dir" || "$file_dir" != "$want_dir" ]]; then
-    echo "WARNING: the URL file is outside \$HOME/.mayfly/; the channel was created all the same." >&2
-    echo "  Keep every channel's URL file there (install -d -m 700 \"\$HOME/.mayfly\"), so the path" >&2
-    echo "  the operator relays is short and a leftover takes one ls to find." >&2
+    echo "WARNING: the URL file is not directly in \$HOME/.mayfly/; the channel was created all the same." >&2
+    echo "  Keep every channel's URL file there, not in a subdirectory (install -d -m 700 \"\$HOME/.mayfly\")," >&2
+    echo "  so the path the operator relays is short and a leftover takes one ls to find." >&2
   fi
 fi
 exit "$rc"
