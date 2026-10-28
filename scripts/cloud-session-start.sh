@@ -17,9 +17,12 @@
 # requirements-test.txt's blob hash, kept inside .venv, makes a resume on a
 # live VM cost one comparison.
 #
-# System tools (shellcheck, zsh) are the environment's setup script's job, not
-# this hook's: the setup script runs as root and is cached. This hook only
-# reports which are missing, on stdout, which reaches the session's context.
+# System tools (zsh) are the environment's setup script's job, not this
+# hook's: the setup script runs as root and is cached. shellcheck is not one
+# of them since #481: requirements-test.txt pins it as shellcheck-py, so the
+# install above puts the gate's own build in .venv/bin, which is where the
+# check below looks. This hook only reports what is missing, on stdout, which
+# reaches the session's context.
 #
 # Usage: bash scripts/cloud-session-start.sh [--help]
 set -euo pipefail
@@ -78,10 +81,11 @@ fi
 .venv/bin/pre-commit install >/dev/null
 echo "cloud session: pre-commit hook installed"
 
+# Not `command -v shellcheck`: this hook never activates .venv, so that would
+# find an apt build the gate rejects, or nothing, whatever .venv holds.
 missing=()
-for tool in shellcheck zsh; do
-  command -v "$tool" >/dev/null || missing+=("$tool")
-done
+[ -x .venv/bin/shellcheck ] || missing+=(".venv/bin/shellcheck (from requirements-test.txt)")
+command -v zsh >/dev/null || missing+=("zsh (the environment's setup script)")
 if [ "${#missing[@]}" -gt 0 ]; then
-  echo "cloud session: MISSING ${missing[*]} — the environment's setup script should apt-get install them; *_REQUIRED=1 tests will fail"
+  echo "cloud session: MISSING ${missing[*]}; *_REQUIRED=1 tests will fail"
 fi

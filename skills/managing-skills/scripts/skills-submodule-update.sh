@@ -40,6 +40,8 @@ set -euo pipefail
 # where it fires and exits 0 in the subshell — measured, the checked
 # `$(git status …) || STATUS_RC=$?` below then reads rc 0, and a failed status
 # becomes "nothing to commit".
+# Called by the ERR trap below; shellcheck does not count a trap as a call.
+# shellcheck disable=SC2329
 _hook_panic() {
   local rc=$?
   echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] unexpected hook error (rc=$rc)" \
@@ -429,6 +431,8 @@ _install_doctor() {
   DOCTOR_INSTALL_FAILED=1
   return 0
 }
+# Called by the EXIT trap below; shellcheck does not count a trap as a call.
+# shellcheck disable=SC2329
 _report_doctor_install() {
   [ "$DOCTOR_INSTALL_FAILED" = "1" ] || return 0
   echo "skills update: could not install .skills/doctor.sh — every vendored installer failed, so it was left as it was (see $LOG)" >&2 || true

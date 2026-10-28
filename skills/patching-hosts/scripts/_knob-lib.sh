@@ -381,13 +381,13 @@ _knob_match_sections() {
   local -a matched=() specs=()
   for j in ${_KS_GLOB[@]+"${!_KS_GLOB[@]}"}; do
     if [ "${_KS_EXACT[$j]}" -eq 1 ]; then
-      [ "${_KS_GLOB[$j]}" != "$KNOB_HOST" ] || _KS_RANK[$j]=$KNOB_RANK_EXACT
+      [ "${_KS_GLOB[$j]}" != "$KNOB_HOST" ] || _KS_RANK[j]=$KNOB_RANK_EXACT
     else
       # Unquoted on purpose: the header is a glob, matched as a pattern.
       # shellcheck disable=SC2053
       if [[ $KNOB_HOST == ${_KS_GLOB[$j]} ]]; then
         spec=${_KS_GLOB[$j]//[*?]/}
-        _KS_RANK[$j]=$((KNOB_RANK_GLOB + ${#spec}))
+        _KS_RANK[j]=$((KNOB_RANK_GLOB + ${#spec}))
         matched+=("$j") specs+=("${#spec}")
       fi
     fi
@@ -520,7 +520,7 @@ _knob_resolve() {
     if [ "$found" -eq -1 ]; then
       du+=("${f[1]}") de+=("${f[0]}") dd+=("${f[2]:-}") dl+=("${_KP_LINE[$i]}")
     elif [ -n "${f[2]:-}" ]; then
-      dd[$found]="${dd[$found]:+${dd[$found]} }${f[2]}"
+      dd[found]="${dd[$found]:+${dd[$found]} }${f[2]}"
     fi
   done
   for k in ${du[@]+"${!du[@]}"}; do

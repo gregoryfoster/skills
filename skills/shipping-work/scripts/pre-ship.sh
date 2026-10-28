@@ -8,6 +8,12 @@
 # fork of shipping-work/ into the project's own skills/; see --help.
 #
 # Usage: bash "<pre-ship.sh>" [--help]
+
+# File-wide, so it must precede the first command. The stub exits 1 by
+# design, which leaves the scaffolding after that exit unreachable (SC2317)
+# and its has_script never called (SC2329). An override that deletes the
+# exit deletes this directive with it, so its own gate is linted in full.
+# shellcheck disable=SC2317,SC2329
 set -euo pipefail
 
 if [[ "${1:-}" == "--help" ]]; then
@@ -40,8 +46,9 @@ fi
 
 # === STUB EARLY EXIT =========================================================
 # The bare skill's pre-ship.sh exits HERE. Everything below is scaffolding
-# downstream overrides inherit when they delete this exit block and replace
-# it with a real test-runner invocation. Until then, the stub does no work
+# downstream overrides inherit when they delete this exit block (and the
+# file-wide shellcheck directive above `set`) and replace it with a real
+# test-runner invocation. Until then, the stub does no work
 # (no audit, no npm gates) so its "you must override" message is the first
 # and only thing the operator sees.
 echo "ERROR: pre-ship.sh is a stub. This project has not supplied a ship gate." >&2

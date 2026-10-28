@@ -430,6 +430,8 @@ covered() {  # <unit>
 # A database's size, as postgres. psql substitutes a variable only in what
 # it reads, never in -c's string (measured on 16), so the query comes in on
 # stdin, with the name quoted by psql itself.
+# Called as `capture out pg_size …`, an argument shellcheck can't follow.
+# shellcheck disable=SC2329
 pg_size() {  # <port> <database>
   printf '%s\n' "select pg_database_size(datname) from pg_database where datname = :'db';" |
     as_user postgres psql -XAtq -p "$1" -d postgres -v "db=$2"

@@ -17,6 +17,7 @@ import re
 import shlex
 import shutil
 import subprocess
+import sys
 import warnings
 from functools import lru_cache
 from pathlib import Path
@@ -65,15 +66,22 @@ _all_scripts += [
 # caller of the shared library reports SC1091, which is a resolution
 # limitation, not a defect — 8 of the 27 findings this gate started from.
 #
-# Version floor (#140): `--source-path` and its `SCRIPTDIR` keyword landed in
-# shellcheck 0.7.0. `--severity` landed in 0.6.0 and `--external-sources` in
-# 0.4.7, so 0.7.0 is the binding floor for the invocation below. An older
-# binary does not silently ignore the flag — it exits 3 with a usage dump and
-# lints nothing, so every script "fails" for a reason that has nothing to do
-# with the script. Below the floor the gate therefore degrades exactly as it
-# does when the binary is absent: a loud skip, or a failure under
-# SHELLCHECK_REQUIRED=1.
-SHELLCHECK_MIN_VERSION = (0, 7, 0)
+# Version pin (#481): exact, the way ruff's is (#246), and installed by
+# requirements-test.txt as `shellcheck-py`, which ships the binary as a wheel.
+# This was a floor (#140), on the theory that a linter's rules only accumulate.
+# They do, and that is the trouble: 0.9.0 added SC2317 and a later release
+# SC2329, so the same commit passed on a developer's 0.8.0 and failed 5 tests
+# on the cloud VM's 0.9.0, and 0.11.0 reported 13 findings 0.8.0 passed. Any
+# version but the pin therefore degrades exactly as an absent binary does: a
+# loud skip, or a failure under SHELLCHECK_REQUIRED=1.
+#
+# The floor survives as a constraint on the pin. `--source-path` and its
+# `SCRIPTDIR` keyword landed in 0.7.0 (`--severity` in 0.6.0,
+# `--external-sources` in 0.4.7), and an older binary does not ignore the flag
+# — it exits 3 with a usage dump and lints nothing, so every script "fails" for
+# a reason that has nothing to do with the script.
+SHELLCHECK_PIN = (0, 11, 0)
+SHELLCHECK_INVOCATION_FLOOR = (0, 7, 0)
 SHELLCHECK_SEVERITY = "style"
 SHELLCHECK_ARGS = [
     "--external-sources",
@@ -81,6 +89,9 @@ SHELLCHECK_ARGS = [
     f"--severity={SHELLCHECK_SEVERITY}",
     "--format=gcc",
 ]
+REQUIREMENTS = REPO_ROOT / "requirements-test.txt"
+# shellcheck-py versions the binary's X.Y.Z plus its own packaging revision.
+_REQUIREMENTS_PIN_RE = re.compile(r"^shellcheck-py==(\d+)\.(\d+)\.(\d+)\.(\d+)\s*$")
 
 # Globs covering every shell script the repo ships. `.claude/hooks/` is a
 # symlink farm pointing back into skills/, so the list is deduplicated by real
@@ -88,14 +99,35 @@ SHELLCHECK_ARGS = [
 # missing from a directory that never holds it.
 SHELL_SCRIPT_GLOBS = ("skills/*/scripts/*.sh", "scripts/*.sh", ".claude/hooks/*.sh")
 
-_SHELLCHECK_BIN = shutil.which("shellcheck")
-_SHELLCHECK_MISSING = (
-    "shellcheck is not on PATH, so the shell lint gate DID NOT RUN. "
-    "Install it (`brew install shellcheck` / `apt install shellcheck`) to get "
-    "the coverage this suite claims. Set SHELLCHECK_REQUIRED=1 to make its "
-    "absence a failure instead of a skip."
-)
+
+def _find_shellcheck() -> str | None:
+    """The running interpreter's own shellcheck first, then PATH.
+
+    For the reason `_find_ruff` gives in test_python_lint.py: a bare
+    `.venv/bin/pytest` does not put the venv's bin directory on PATH, so
+    `shutil.which` alone finds a system build — Homebrew's, apt's — and the
+    pin either rejects it or, if PATH order ever favoured the right one by
+    accident, the pin is decorative.
+    """
+    candidate = Path(sys.executable).parent / "shellcheck"
+    if candidate.is_file() and os.access(candidate, os.X_OK):
+        return str(candidate)
+    return shutil.which("shellcheck")
+
+
+_SHELLCHECK_BIN = _find_shellcheck()
 _SHELLCHECK_REQUIRED = os.environ.get("SHELLCHECK_REQUIRED", "") not in ("", "0")
+
+_HOW_TO_INSTALL = (
+    "Install the pinned build into the repo venv — `source .venv/bin/activate "
+    "&& pip install -r requirements-test.txt` — or run that file's own line: "
+    '`uvx --from "$(grep ^shellcheck-py requirements-test.txt)" shellcheck`. '
+    "Set SHELLCHECK_REQUIRED=1 to make this a failure instead of a skip."
+)
+_SHELLCHECK_MISSING = (
+    "shellcheck is neither beside this interpreter nor on PATH, so the shell "
+    f"lint gate DID NOT RUN. {_HOW_TO_INSTALL}"
+)
 
 # `shellcheck --version` prints a `version: 0.8.0` line; the patch component is
 # optional so a hypothetical `0.9` still parses rather than reading as unknown.
@@ -157,41 +189,44 @@ def _version_str(version: tuple[int, int, int]) -> str:
     return ".".join(str(part) for part in version)
 
 
-def _shellcheck_below_floor(found: tuple[int, int, int] | None) -> str:
-    """Message for a binary that is present but unusable.
+def _wrong_version(binary: str, found: tuple[int, int, int] | None) -> str:
+    """Message for a binary that is present but is not the pinned build.
 
-    A version the probe could not read is treated as below the floor: a gate
-    that cannot prove it is running the invocation it documents should say so
-    rather than report a pass it did not earn.
+    A version the probe could not read is treated as wrong: a gate that cannot
+    prove it is running the build it documents should say so rather than
+    report a pass it did not earn. The message names the binary, so a skip
+    says which one this machine found.
     """
-    floor = _version_str(SHELLCHECK_MIN_VERSION)
+    pin = _version_str(SHELLCHECK_PIN)
     if found is None:
         lead = (
-            "shellcheck on PATH did not report a parseable version, so the gate "
-            f"cannot confirm it is at least {floor}"
+            f"shellcheck at {binary} did not report a parseable version, so the "
+            f"gate cannot confirm it is the pinned {pin}"
         )
     else:
-        lead = (
-            f"shellcheck on PATH is {_version_str(found)}, below the {floor} this "
-            "gate needs"
+        lead = f"shellcheck at {binary} is {_version_str(found)}, not the pinned {pin}"
+    floor = ""
+    if found is not None and found < SHELLCHECK_INVOCATION_FLOOR:
+        floor = (
+            f" Below {_version_str(SHELLCHECK_INVOCATION_FLOOR)} it would reject "
+            "the gate's `--source-path=SCRIPTDIR` outright (exit 3 plus a usage "
+            "dump) and lint nothing."
         )
     return (
-        f"{lead}, so the shell lint gate DID NOT RUN. `--source-path=SCRIPTDIR` "
-        f"landed in {floor}; an older binary rejects the whole invocation (exit 3 "
-        "plus a usage dump) instead of linting, which reads as every script being "
-        "broken. Upgrade it (`brew upgrade shellcheck` / `apt install "
-        "shellcheck`) to get the coverage this suite claims. Set "
-        "SHELLCHECK_REQUIRED=1 to make a too-old build a failure instead of a skip."
+        f"{lead}, so the shell lint gate DID NOT RUN. The pin is exact because "
+        "each release adds rules: a newer build reports findings on a "
+        "committed-clean tree, and an older one passes code a current release "
+        f"flags.{floor} {_HOW_TO_INSTALL}"
     )
 
 
 def _shellcheck_problem() -> str | None:
-    """Why the gate cannot run, or None when it can — absent and too-old alike."""
+    """Why the gate cannot run, or None when it can — absent and wrong alike."""
     if not _SHELLCHECK_BIN:
         return _SHELLCHECK_MISSING
     version = _shellcheck_version(_SHELLCHECK_BIN)
-    if version is None or version < SHELLCHECK_MIN_VERSION:
-        return _shellcheck_below_floor(version)
+    if version != SHELLCHECK_PIN:
+        return _wrong_version(_SHELLCHECK_BIN, version)
     return None
 
 
@@ -208,10 +243,10 @@ class TestShellcheck:
     """Lint every shell script the repo ships.
 
     Skips (loudly) rather than fails when the binary is absent — or is present
-    but older than SHELLCHECK_MIN_VERSION — so a contributor without a usable
-    shellcheck can still run the suite. Either way the skip carries a warning,
-    so a permanently-skipped gate is visible in the summary rather than lost
-    among the other skips.
+    but is not SHELLCHECK_PIN — so a contributor without the pinned build can
+    still run the suite. Either way the skip carries a warning, so a
+    permanently-skipped gate is visible in the summary rather than lost among
+    the other skips.
     """
 
     def test_shellcheck_is_available(self):
@@ -233,7 +268,8 @@ class TestShellcheck:
             cwd=REPO_ROOT,
         )
         assert result.returncode == 0, (
-            f"shellcheck (severity={SHELLCHECK_SEVERITY}) findings in "
+            f"shellcheck {_version_str(SHELLCHECK_PIN)} "
+            f"(severity={SHELLCHECK_SEVERITY}) findings in "
             f"{_rel(shell_script)}:\n{result.stdout}{result.stderr}\n"
             "Fix the defect, or add '# shellcheck disable=SCxxxx' with a reason "
             "comment on the line above (AGENTS.md script convention)."
@@ -251,9 +287,9 @@ _FAKE_VERSION_OUTPUT = (
 def _shellcheck_stub(tmp_path: Path, stdout: str, exit_code: int = 0) -> str:
     """A fake `shellcheck` whose only job is to answer `--version`.
 
-    The local build is 0.8.0, so the below-floor branch is unreachable without
-    faking the version output; the stub exercises the real subprocess call
-    rather than the parser in isolation.
+    A correct checkout has the pinned build, so every wrong-version branch is
+    unreachable without faking the version output; the stub exercises the real
+    subprocess call rather than the parser in isolation.
     """
     stub = tmp_path / "shellcheck"
     stub.write_text(f"#!/bin/sh\nprintf '%s' {shlex.quote(stdout)}\nexit {exit_code}\n")
@@ -262,21 +298,20 @@ def _shellcheck_stub(tmp_path: Path, stdout: str, exit_code: int = 0) -> str:
     return str(stub)
 
 
-class TestShellcheckVersionFloor:
-    """A too-old shellcheck must degrade exactly as an absent one does.
+class TestShellcheckVersionPin:
+    """Any shellcheck but the pinned build must degrade exactly as an absent one does.
 
-    Below 0.7.0 the binary does not ignore `--source-path=SCRIPTDIR` — it
-    rejects the invocation (exit 3 + usage dump) and lints nothing, so every
-    script "fails" for a reason that has nothing to do with the script. Both
-    causes therefore route through the same skip/warn/`SHELLCHECK_REQUIRED`
-    path.
+    Newer and older alike (#481): a floor let a developer's 0.8.0 pass what the
+    cloud VM's 0.9.0 failed. Below the invocation floor the reason is starker —
+    the binary rejects `--source-path=SCRIPTDIR` and lints nothing (#140) — but
+    the route is the same skip/warn/`SHELLCHECK_REQUIRED` path.
     """
 
     @pytest.mark.parametrize(
         "output,expected",
         [
+            (_FAKE_VERSION_OUTPUT.format(version="0.11.0"), (0, 11, 0)),
             (_FAKE_VERSION_OUTPUT.format(version="0.8.0"), (0, 8, 0)),
-            (_FAKE_VERSION_OUTPUT.format(version="0.7.0"), (0, 7, 0)),
             (_FAKE_VERSION_OUTPUT.format(version="0.6.0"), (0, 6, 0)),
             (_FAKE_VERSION_OUTPUT.format(version="0.10.1"), (0, 10, 1)),
             (_FAKE_VERSION_OUTPUT.format(version="1.0"), (1, 0, 0)),
@@ -291,12 +326,43 @@ class TestShellcheckVersionFloor:
     def test_real_binary_version_is_parseable(self):
         """Guards the regex against drift in shellcheck's own `--version` output."""
         if _SHELLCHECK_BIN is None:
-            pytest.skip("shellcheck is not on PATH")
+            pytest.skip("shellcheck is neither beside this interpreter nor on PATH")
         assert _shellcheck_version(_SHELLCHECK_BIN) is not None, (
-            "could not parse `shellcheck --version` — the floor check is inert"
+            "could not parse `shellcheck --version` — the pin check is inert"
         )
 
-    def test_below_floor_skips_loudly(self, tmp_path, monkeypatch):
+    @pytest.mark.parametrize(
+        "version",
+        ["0.6.0", "0.8.0", "0.10.0", "0.11.1", "0.12.0", "1.0.0"],
+        ids=[
+            "below-floor",
+            "older",
+            "one-minor-older",
+            "patch-newer",
+            "newer",
+            "major-newer",
+        ],
+    )
+    def test_any_other_version_skips_loudly(self, tmp_path, monkeypatch, version):
+        """Asserts the comparison, not just the wording: a `>=` in place of the
+        `!=` would let the three newer ids through and lint under an unknown
+        build, which is the #481 failure turned around."""
+        binary = _shellcheck_stub(
+            tmp_path, _FAKE_VERSION_OUTPUT.format(version=version)
+        )
+        monkeypatch.setattr(f"{__name__}._SHELLCHECK_BIN", binary)
+        monkeypatch.setattr(f"{__name__}._SHELLCHECK_REQUIRED", False)
+        with pytest.raises(pytest.skip.Exception) as excinfo:
+            _require_shellcheck()
+        message = str(excinfo.value)
+        assert version in message, "the skip must name the version actually found"
+        assert binary in message, "the skip must name the binary it found"
+        assert _version_str(SHELLCHECK_PIN) in message, "the skip must name the pin"
+        assert "SHELLCHECK_REQUIRED" in message
+
+    def test_below_the_invocation_floor_says_why_it_cannot_lint(
+        self, tmp_path, monkeypatch
+    ):
         monkeypatch.setattr(
             f"{__name__}._SHELLCHECK_BIN",
             _shellcheck_stub(tmp_path, _FAKE_VERSION_OUTPUT.format(version="0.6.0")),
@@ -304,29 +370,32 @@ class TestShellcheckVersionFloor:
         monkeypatch.setattr(f"{__name__}._SHELLCHECK_REQUIRED", False)
         with pytest.raises(pytest.skip.Exception) as excinfo:
             _require_shellcheck()
-        message = str(excinfo.value)
-        assert "0.6.0" in message, "the skip must name the version actually found"
-        assert "0.7.0" in message, "the skip must name the version required"
-        assert "SHELLCHECK_REQUIRED" in message
+        assert _version_str(SHELLCHECK_INVOCATION_FLOOR) in str(excinfo.value)
 
-    def test_below_floor_fails_when_required(self, tmp_path, monkeypatch):
+    def test_wrong_version_fails_when_required(self, tmp_path, monkeypatch):
         monkeypatch.setattr(
             f"{__name__}._SHELLCHECK_BIN",
-            _shellcheck_stub(tmp_path, _FAKE_VERSION_OUTPUT.format(version="0.6.0")),
+            _shellcheck_stub(tmp_path, _FAKE_VERSION_OUTPUT.format(version="0.8.0")),
         )
         monkeypatch.setattr(f"{__name__}._SHELLCHECK_REQUIRED", True)
         with pytest.raises(pytest.fail.Exception) as excinfo:
             _require_shellcheck()
-        assert "0.7.0" in str(excinfo.value)
+        assert _version_str(SHELLCHECK_PIN) in str(excinfo.value)
 
-    @pytest.mark.parametrize("version", ["0.7.0", "0.8.0", "0.10.1"])
-    def test_at_or_above_floor_runs(self, tmp_path, monkeypatch, version):
+    def test_the_pinned_version_runs(self, tmp_path, monkeypatch):
+        """The other direction: a gate nothing can satisfy is not a gate."""
         binary = _shellcheck_stub(
-            tmp_path, _FAKE_VERSION_OUTPUT.format(version=version)
+            tmp_path,
+            _FAKE_VERSION_OUTPUT.format(version=_version_str(SHELLCHECK_PIN)),
         )
         monkeypatch.setattr(f"{__name__}._SHELLCHECK_BIN", binary)
         monkeypatch.setattr(f"{__name__}._SHELLCHECK_REQUIRED", False)
         assert _require_shellcheck() == binary
+
+    def test_the_pin_clears_the_invocation_floor(self):
+        """The floor test's old job, kept: a pin below 0.7.0 is a gate that
+        rejects its own invocation on every script."""
+        assert SHELLCHECK_PIN >= SHELLCHECK_INVOCATION_FLOOR
 
     def test_unparseable_version_skips(self, tmp_path, monkeypatch):
         monkeypatch.setattr(
@@ -336,7 +405,7 @@ class TestShellcheckVersionFloor:
         monkeypatch.setattr(f"{__name__}._SHELLCHECK_REQUIRED", False)
         with pytest.raises(pytest.skip.Exception) as excinfo:
             _require_shellcheck()
-        assert "0.7.0" in str(excinfo.value)
+        assert "cannot confirm" in str(excinfo.value)
 
     def test_unparseable_version_fails_when_required(self, tmp_path, monkeypatch):
         monkeypatch.setattr(
@@ -363,10 +432,78 @@ class TestShellcheckVersionFloor:
         monkeypatch.setattr(f"{__name__}._SHELLCHECK_REQUIRED", False)
         with pytest.raises(pytest.skip.Exception) as skipped:
             _require_shellcheck()
-        assert "not on PATH" in str(skipped.value)
+        assert "DID NOT RUN" in str(skipped.value)
         monkeypatch.setattr(f"{__name__}._SHELLCHECK_REQUIRED", True)
         with pytest.raises(pytest.fail.Exception):
             _require_shellcheck()
+
+
+class TestShellcheckIsTheVenvsBuild:
+    """The binary is resolved beside `sys.executable` first, PATH second.
+
+    Without the first step the pin depends on PATH order: a bare
+    `.venv/bin/pytest` leaves the venv off PATH, and Homebrew's or apt's build
+    is what `shutil.which` returns.
+    """
+
+    def _stub_at(self, directory: Path) -> Path:
+        directory.mkdir(parents=True)
+        stub = directory / "shellcheck"
+        stub.write_text("#!/bin/sh\nexit 0\n")
+        stub.chmod(0o755)
+        return stub
+
+    def test_the_interpreter_s_own_copy_beats_path(self, tmp_path, monkeypatch):
+        venv_copy = self._stub_at(tmp_path / "venv" / "bin")
+        self._stub_at(tmp_path / "system")
+        monkeypatch.setattr(
+            sys, "executable", str(tmp_path / "venv" / "bin" / "python")
+        )
+        monkeypatch.setenv("PATH", str(tmp_path / "system"))
+        assert _find_shellcheck() == str(venv_copy)
+
+    def test_path_is_the_fallback(self, tmp_path, monkeypatch):
+        (tmp_path / "venv" / "bin").mkdir(parents=True)
+        system_copy = self._stub_at(tmp_path / "system")
+        monkeypatch.setattr(
+            sys, "executable", str(tmp_path / "venv" / "bin" / "python")
+        )
+        monkeypatch.setenv("PATH", str(tmp_path / "system"))
+        assert _find_shellcheck() == str(system_copy)
+
+
+class TestShellcheckPinIsSingleSourced:
+    """The gate's pin and the venv's pin are one decision, in two files.
+
+    The same contract `TestThePinIsSingleSourced` holds for ruff: a test cannot
+    install anything and pip cannot read a Python constant, so without this the
+    venv installs one shellcheck, the gate demands another, and every
+    contributor gets a permanent loud skip in a repo that believes itself gated.
+    """
+
+    def test_the_pin_matches_requirements(self):
+        lines = [
+            line
+            for line in REQUIREMENTS.read_text().splitlines()
+            if line.startswith("shellcheck-py")
+        ]
+        assert len(lines) == 1, (
+            f"requirements-test.txt has {len(lines)} `shellcheck-py` lines; the "
+            "gate needs exactly one."
+        )
+        match = _REQUIREMENTS_PIN_RE.match(lines[0])
+        assert match is not None, (
+            f"requirements-test.txt pins shellcheck as {lines[0]!r}, which is not "
+            "the exact `shellcheck-py==X.Y.Z.N` form. The gate needs one specific "
+            "build; a range makes it unenforceable."
+        )
+        found = tuple(int(part) for part in match.groups()[:3])
+        assert found == SHELLCHECK_PIN, (
+            f"requirements-test.txt installs shellcheck {_version_str(found)} but "
+            f"{Path(__file__).name} expects {_version_str(SHELLCHECK_PIN)}. A bump "
+            "changes both, and fixes what the new build reports in the same "
+            "commit."
+        )
 
 
 class TestShellcheckSuppressionsCarryReasons:

@@ -13,10 +13,12 @@ already has exactly this gate for the other half of its script surface —
 `TestShellcheck` in `test_scripts.py` — so a contributor who knows one knows
 both.
 
-The version is pinned **exactly**, not floored. A lint floor is the right
-shape for shellcheck because rules only accumulate, but `ruff format`'s output
-is defined by the version that produced it: 0.8.0 and 0.16.6 disagree by some
-three thousand lines on this very tree. A floor would therefore let a newer
+The version is pinned **exactly**, not floored. shellcheck once had a floor,
+on the theory that a linter's rules only accumulate, until a newer release
+reported 13 findings on a tree the floor passed and it was pinned too (#481).
+`ruff format` is the stronger case: its output is defined by the version that
+produced it, and 0.8.0 and 0.16.6 disagree by some three thousand lines on
+this very tree. A floor would therefore let a newer
 build report a tree that is already committed-clean as needing reformatting,
 which is a gate failing for a reason the author cannot act on. Bumping the pin
 is a deliberate commit that carries the reformat with it.
@@ -414,7 +416,7 @@ class TestVersionProbe:
 
     The version the gate wants is the version a correct checkout has, so the
     only way to exercise the degradation path is to fake the probe's output —
-    the same reason `TestShellcheckVersionFloor` uses a stub. These cover the
+    the same reason `TestShellcheckVersionPin` uses a stub. These cover the
     parser rather than the subprocess, which is where the branch actually
     decides.
     """

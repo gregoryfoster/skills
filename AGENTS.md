@@ -122,9 +122,9 @@ pip install "git+https://github.com/agentskills/agentskills#subdirectory=skills-
   repo's own Python gate uses, kept in `requirements-test.txt`)
 - Must pass `shellcheck --external-sources --source-path=SCRIPTDIR --severity=style`
   (shellcheck's own default floor — no level is exempt). `TestShellcheck` runs it
-  over `skills/*/scripts/`, `scripts/` and `.claude/hooks/`, and skips loudly when
-  the binary is absent or older than 0.7.0
-  ([#140](https://github.com/gregoryfoster/skills/issues/140)).
+  over `skills/*/scripts/`, `scripts/` and `.claude/hooks/` with the build
+  `requirements-test.txt` pins, and skips loudly when it is absent or another
+  version ([#481](https://github.com/gregoryfoster/skills/issues/481)).
   `SHELLCHECK_REQUIRED=1` turns either skip into a failure.
 - A `# shellcheck disable=SCxxxx` **must** carry a reason comment on the line
   directly above it. `TestShellcheckSuppressionsCarryReasons` enforces the

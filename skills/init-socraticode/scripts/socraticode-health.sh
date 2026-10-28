@@ -23,6 +23,8 @@ set -E
 
 # Backstop: any unhandled error must exit 0. A SessionStart hook that fails
 # closed takes the session with it.
+# Called by the ERR trap below; shellcheck does not count a trap as a call.
+# shellcheck disable=SC2329
 _hook_panic() {
   local rc=$?
   echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] unexpected hook error (rc=$rc)" \

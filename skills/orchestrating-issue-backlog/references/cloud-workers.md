@@ -70,7 +70,8 @@ needs a host. Record it in the design doc's *Approved approach*.
 - the full suite's `N failed, N passed, N skipped`, with every skip reason.
 
 Its count is Rule 3's baseline. Name each known failure by test id in the
-brief: here, a newer shellcheck than the local one, which became #481.
+brief. The pilot's was a newer shellcheck than the local one; #481 pinned it
+in `requirements-test.txt`, and there has been none since.
 
 ## What differs from a worktree worker
 
@@ -80,7 +81,7 @@ brief: here, a newer shellcheck than the local one, which became #481.
   The reverse holds too: Linux-only tests run in the cloud and skip on macOS.
   The pilot's counts reconciled exactly: 7743 collected on both sides, a net
   35 more skips in the cloud (its root skips, less the Linux-only tests macOS
-  skips), and 5 failures from a newer shellcheck.
+  skips), and 5 failures from a newer shellcheck (none since #481).
 - **`gh issue` and `gh pr` fail**, because the GitHub proxy rejects GraphQL.
   `gh api` (REST) works.
 - **The proxy lets a push update any branch**, `main` included, and it pushes

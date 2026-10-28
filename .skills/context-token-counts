@@ -3,7 +3,7 @@
 # The offline estimators prefer a file's own last exact measurement to the
 # repo-wide figure in .skills/context-token-ratio, falling back to it for a
 # file never counted exactly or since drifted far from the size recorded here.
-15453 5917 AGENTS.md
+15488 5924 AGENTS.md
 3182 1220 docs/BUDGETS.md
 20896 7406 docs/CONVENTIONS.md
 8178 3088 docs/KNOBS.md
@@ -102,7 +102,7 @@
 9884 3539 skills/managing-skills/references/the-doctor.md
 26504 9171 skills/orchestrating-issue-backlog/SKILL.md
 12812 4346 skills/orchestrating-issue-backlog/references/batch-design.md
-12138 4627 skills/orchestrating-issue-backlog/references/cloud-workers.md
+12221 4658 skills/orchestrating-issue-backlog/references/cloud-workers.md
 2890 1046 skills/orchestrating-issue-backlog/references/design-doc-authoring.md
 28442 9946 skills/orchestrating-issue-backlog/references/execution.md
 7717 2630 skills/orchestrating-issue-backlog/references/issue-audit.md
