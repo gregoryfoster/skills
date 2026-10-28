@@ -3,6 +3,8 @@
 # Read by _pull.py as data, and sourced by install-disk-gc.sh; running it
 # does nothing.
 # A new GC release is a commit here, never a host's own setting (#425).
+# That commit re-checks patching-hosts' _probe-lib.sh too, which mirrors the
+# release's config reader and usage() and names the VERSIONs it matches.
 # The DISK_GC_* variables are its output.
 # shellcheck disable=SC2034
 set -euo pipefail
