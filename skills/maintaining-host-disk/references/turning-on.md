@@ -1,6 +1,6 @@
 # Turning it on, per host
 
-A first install leaves both timers off. Turning the GC on is per host, because its config, its lines and its monitor are. Each step here follows the contract's "Turning it on" ([#425's contract comment](https://github.com/gregoryfoster/skills/issues/425#issuecomment-6371095613)), with VERSION 2's changes ([release comment](https://github.com/gregoryfoster/skills/issues/425#issuecomment-6387455753)). Every step that changes the host needs the owner's approval, given in the host's own session.
+A first install leaves both timers off. Turning the GC on is per host, because its config, its lines and its monitor are. Each step here follows the contract's "Turning it on" ([#425's contract comment](https://github.com/gregoryfoster/skills/issues/425#issuecomment-6371095613)), with VERSION 2's changes ([release comment](https://github.com/gregoryfoster/skills/issues/425#issuecomment-6387455753)) and VERSION 3's ([#510](https://github.com/gregoryfoster/skills/issues/510): the `vscode-servers` tier only, no config key changed). Every step that changes the host needs the owner's approval, given in the host's own session.
 
 The host's own files live in `/etc/cannobserv/disk-gc/` and never ship in the layer: `disk-gc.conf` and `checkin.key`. No script in this skill writes them.
 
