@@ -37,7 +37,8 @@ UNIT_DOC = SKILL / "references" / "systemd-deploy.md"
 # Running an env file as shell code: `. file`, `source file`, after a line
 # start or a command separator. `>> ./.env` and `grep … ./.env` do not match.
 _SOURCES_AN_ENV_FILE = re.compile(r"(?:^|[;&|(`\s])(?:\.|source)\s+\S*\.env\b")
-_ENVIRONMENT_FILE = re.compile(r"EnvironmentFile=-?(\S+?)[`\s]")
+# A path, not the bare `EnvironmentFile=` that prose names (private-wheelhouse.md).
+_ENVIRONMENT_FILE = re.compile(r"EnvironmentFile=-?([^`\s]+)")
 # The only places a production unit may read env from.
 _UNIT_ENV_PREFIXES = ("/etc/<PROJECT_NAME>/", "/run/<PROJECT_NAME>/")
 
@@ -108,6 +109,12 @@ class TestTheUnitReadsOnlyEtc:
         assert _ENVIRONMENT_FILE.findall("EnvironmentFile=-<DEPLOY_HOME>/.env\n") == [
             "<DEPLOY_HOME>/.env"
         ]
+        assert _ENVIRONMENT_FILE.findall("`EnvironmentFile=-%h/app/.env`") == [
+            "%h/app/.env"
+        ]
+
+    def test_the_detector_skips_a_bare_mention(self):
+        assert _ENVIRONMENT_FILE.findall("from an `EnvironmentFile=` that") == []
 
     def test_the_unit_template_names_its_two_env_files(self):
         unit = UNIT_DOC.read_text().split("```ini", 1)[1].split("```", 1)[0]
