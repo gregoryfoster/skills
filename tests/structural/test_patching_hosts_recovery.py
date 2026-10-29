@@ -1083,6 +1083,134 @@ def test_a_backup_regime_whose_last_run_failed_isnt_relied_on(host):
     assert [d["ok"] for d in out["dumps"]] == [True]
 
 
+# --- a backup regime after a boot (#459) -------------------------------------------
+# A boot resets a unit's state to systemd's initial values: Result=success and
+# no ExecMainExitTimestamp. host 6's second run of 2026-10-20 read that as
+# "ended in success, so it isn't one to rely on", and dumped Postgres itself,
+# though the journal held that morning's successful run.
+
+DEACTIVATED = "7ad2d189f7e94e70a38c781354912448"  # "Deactivated successfully."
+FAILED = "d9b373ed55a64feb8242e02dbe79a49c"  # "Failed with result '...'."
+EXITED = "98e322203f7a4ed290d09fe03c09fe15"  # "Main process exited, ..."
+
+
+def _entry(mid: str, ago: int, **fields: str) -> str:
+    """One line of systemd's own journal for app-backup.service, AGO seconds
+    before the clock."""
+    return (
+        json.dumps(
+            {
+                "__REALTIME_TIMESTAMP": str((TUE_1530 - ago) * 10**6),
+                "MESSAGE_ID": mid,
+                "UNIT": "app-backup.service",
+                "_PID": "1",
+                **fields,
+            }
+        )
+        + "\n"
+    )
+
+
+def _booted(host: Host, journal: str = "", rc: int = 0) -> Host:
+    """The regime, on a host booted since its last run: systemd's state for
+    it is reset, and the journal, newest first, is JOURNAL."""
+    _regime(host)
+    (host.state / "backup").write_text(
+        "LoadState=loaded\nResult=success\nExecMainStartTimestamp=\nExecMainExitTimestamp=\n"
+    )
+    stderr = "Failed to open journal: Permission denied\n" if rc else ""
+    host.on("journalctl", "*UNIT=app-backup.service*", journal, rc=rc, stderr=stderr)
+    return host
+
+
+def _regime_row(out: dict) -> dict:
+    [b] = out["gate"]["backup_regime"]["backups"]
+    return b
+
+
+def test_after_a_boot_the_journal_says_the_regime_has_worked(host):
+    _booted(host, _entry(DEACTIVATED, 7 * 3600) + _entry(DEACTIVATED, 31 * 3600))
+    out = host.recover()
+    b = _regime_row(out)
+    assert (b["not_used"], b["last_run_from"]) == (None, "journal")
+    assert out["backup"][0]["ok"] is True
+    assert not host.calls("pg_dump")
+    # Only systemd's own lines about the unit: a service can write any
+    # MESSAGE_ID it likes, never _PID=1.
+    [(_, args, _)] = host.calls("journalctl")
+    assert "UNIT=app-backup.service" in args.split() and "_PID=1" in args.split()
+
+
+@pytest.mark.parametrize(
+    "journal, said",
+    [
+        (
+            _entry(FAILED, 7 * 3600, UNIT_RESULT="exit-code")
+            + _entry(EXITED, 7 * 3600 + 1, EXIT_CODE="exited", EXIT_STATUS="1")
+            + _entry(DEACTIVATED, 31 * 3600),
+            "and its last run before it, in the journal, ended in exit-code",
+        ),
+        (
+            _entry(EXITED, 7 * 3600, EXIT_CODE="killed", EXIT_STATUS="TERM")
+            + _entry(DEACTIVATED, 31 * 3600),
+            "ended in code=killed, status=TERM",
+        ),
+    ],
+    ids=["failed", "killed"],
+)
+def test_after_a_boot_a_last_run_that_failed_isnt_relied_on(host, journal, said):
+    _booted(host, journal)
+    out = host.recover()
+    why = _regime_row(out)["not_used"]
+    assert "since this boot (systemd's state resets at boot)" in why and said in why
+    assert "ended in success" not in why
+    assert [d["ok"] for d in out["dumps"]] == [True]
+
+
+@pytest.mark.parametrize(
+    "journal, rc, said",
+    [
+        ("", 0, "and the journal holds none of its runs"),
+        # The process line of a run that exited 0 isn't a success: systemd's
+        # "Deactivated successfully." is.
+        (
+            _entry(EXITED, 3600, EXIT_CODE="exited", EXIT_STATUS="0"),
+            0,
+            "and the journal holds none of its runs",
+        ),
+        ("", 1, "and its journal couldn't be read (Failed to open journal"),
+    ],
+    ids=["none", "exit-line-only", "unread"],
+)
+def test_after_a_boot_no_journal_record_isnt_a_run_to_rely_on(host, journal, rc, said):
+    _booted(host, journal, rc)
+    # A timer's last trigger alone says it started, not that it worked.
+    host.cases["systemctl"].insert(
+        0,
+        (
+            "show*-- app-backup.timer",
+            f"Triggers=app-backup.service\nLastTriggerUSec=@{TUE_1530 - 3600}\n",
+            0,
+            "",
+            None,
+        ),
+    )
+    out = host.recover()
+    why = _regime_row(out)["not_used"]
+    assert why.startswith(
+        "app-backup.service's last run isn't recorded since this boot (systemd's state resets at boot)"
+    ), why
+    assert said in why
+    assert [d["ok"] for d in out["dumps"]] == [True]
+
+
+def test_a_run_since_the_boot_is_read_from_systemd_not_the_journal(host):
+    _regime(host)
+    out = host.recover()
+    assert _regime_row(out)["last_run_from"] == "systemd"
+    assert not host.calls("journalctl")
+
+
 def test_an_rdb_copy_redis_check_rdb_cant_read_records_nothing(tmp_path):
     host = _redis(_ready(Host(tmp_path)), check=1)
     out = host.recover(rc=1)
