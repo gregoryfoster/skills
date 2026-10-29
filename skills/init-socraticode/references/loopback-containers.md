@@ -42,9 +42,11 @@ native Ollama answers on `localhost:11434`.
 
 ## Create them first
 
-Phase 1 runs this once preflight passes, before anything calls a `codebase_*`
-tool. Preflight prints the exact command, with only the targets that run
-locally and any non-default port in front:
+Run this in Phase 1, before anything calls a `codebase_*` tool, whenever
+preflight prints it. That happens when a container is missing, and on a
+socket-activated host whose daemon is down, where preflight inspects nothing.
+The command has only the targets that run locally, with any non-default port
+in front:
 
 ```bash
 bash "<SKILL_DIR>/scripts/loopback-containers.sh" qdrant ollama

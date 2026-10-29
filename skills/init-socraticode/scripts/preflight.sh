@@ -980,7 +980,11 @@ LOOPBACK_REF="init-socraticode's references/loopback-containers.md"
 if [ "${#LOCAL_TARGETS[@]}" -eq 0 ]; then
   : # nothing runs in a container here, so there is nothing to publish
 elif [ -n "$DOCKER_IDLE" ]; then
-  warn "SocratiCode's containers were not inspected — any docker command would start the idle daemon. The daily health hook checks their listeners without one"
+  # Still named (CR 789): on this host the create would otherwise never run,
+  # and SocratiCode's first call — the health hook's own, perhaps — starts
+  # the daemon anyway and creates whatever is missing on every interface.
+  warn "SocratiCode's containers were not inspected — any docker command would start the idle daemon. If they do not exist yet, create them on loopback first; that starts the daemon, as SocratiCode's first codebase_* call would"
+  hint "$LOOPBACK_CMD"
 elif [ -n "$DOCKER_UP" ]; then
   LB_OUT="" LB_RC=0
   LB_OUT="$(QDRANT_PORT="${Q_PORT:-16333}" QDRANT_GRPC_PORT="${Q_GRPC_PORT:-16334}" \

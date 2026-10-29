@@ -500,6 +500,8 @@ class TestPreflightReadsTheContainers:
             "a docker command ran against an idle socket"
         )
         assert "•" in _line(result, "SocratiCode's containers were not inspected")
+        # CR 789: named anyway, or the create never runs on this host.
+        assert f'bash "{SCRIPT}" qdrant ollama' in result.stdout, result.stdout
 
 
 # ── The daily hook ───────────────────────────────────────────────────────────
@@ -681,6 +683,7 @@ class TestTheContractIsWritten:
         text = SKILL_MD.read_text()
         assert "loopback-containers.sh" in text
         assert "before any `codebase_*` call" in text
+        assert "idle daemon" in text, "CR 789: the idle-socket case runs the create too"
         assert "references/loopback-containers.md" in text
 
     def test_the_reference_holds_the_mitigations_traps(self):

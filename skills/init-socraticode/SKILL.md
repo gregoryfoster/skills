@@ -95,10 +95,11 @@ dry-run.
 
 **A managed stack's containers come first.** SocratiCode's own `docker run`
 publishes Qdrant (no API key, every chunk's source text) and Ollama on every
-interface, and it reuses an existing container by name. So preflight fails a
-missing container, naming `loopback-containers.sh`'s create command: run that
-before any `codebase_*` call. It also fails one already wide; the manual
-recreate is in [`references/loopback-containers.md`](references/loopback-containers.md).
+interface, and it reuses an existing container by name. Wherever preflight
+names `loopback-containers.sh`'s create command (a missing container, or an
+idle daemon it would not wake), run that before any `codebase_*` call.
+Preflight also fails a container that is already wide; the manual recreate is
+in [`references/loopback-containers.md`](references/loopback-containers.md).
 
 If `EMBEDDING_BACKEND` is a cloud/native backend, export its env (see
 [`references/embedding-backends.md`](references/embedding-backends.md)) in the
