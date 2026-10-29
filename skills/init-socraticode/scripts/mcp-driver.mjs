@@ -1045,6 +1045,34 @@ function listHasProjects(text) {
   return /\S/.test(text) && !/^No projects have been indexed/m.test(text);
 }
 
+// codebase_update (#483). Synchronous: the counts arrive in the reply —
+// "Updated project index: <path>", then "Added: N", "Updated: N", "Removed: N",
+// "New chunks: N" — or null when any is missing.
+function parseUpdateCounts(text) {
+  const count = (label) => {
+    const m = new RegExp(`^${label}:\\s*(\\d+)\\s*$`, 'm').exec(text);
+    return m ? Number(m[1]) : null;
+  };
+  const counts = {
+    added: count('Added'), updated: count('Updated'),
+    removed: count('Removed'), chunksCreated: count('New chunks'),
+  };
+  return Object.values(counts).includes(null) ? null : counts;
+}
+
+function updateRan(text) {
+  return /^Updated project index:/m.test(text);
+}
+
+// The update did NOT run, and the reply does not say so in its headline. 1.16.1
+// takes the index lock non-reentrantly; under another process's lock
+// updateProjectIndex returns zero counts, and index-tools still prints
+// "Updated project index", with this sentence only among the progress lines
+// (or as "Index update skipped: …" on a git-targeted run).
+function updateLockHeld(text) {
+  return /Another process is already indexing this project/i.test(text);
+}
+
 function parseArtifacts(text) {
   // Two known shapes:
   //   "Context artifacts: 2/7 indexed"          → {done:2, total:7}
@@ -2869,6 +2897,39 @@ async function cmdStatus(projectPath) {
   }, { project: projectPath });
 }
 
+// codebase_update through the driver's own launch (#483): the pinned server,
+// with the driver's terms for it (see withClient), in whatever cap the caller
+// runs this under — the capped path to an update outside a session, after a
+// manifest description edit say, that a host otherwise had to shim. Exits 1
+// when the update did not run: another process held the lock, a run was already
+// in progress, or the server refused. JSON on stdout, prose on stderr.
+async function cmdUpdate(projectPath) {
+  guardStore(projectPath);
+  await withClient(async (client) => {
+    console.error(`[driver] updating ${projectPath} (incremental; blocks until the server replies)`);
+    const bomb = setTimeout(() => die(`update did not complete within ${Math.round(INDEX_TIMEOUT_MS / 60000)} min`), INDEX_TIMEOUT_MS);
+    bomb.unref();
+    const reply = await client.callTool('codebase_update', { projectPath });
+    clearTimeout(bomb);
+    const counts = parseUpdateCounts(reply);
+    let refused = null;
+    if (indexAlreadyRunning(reply)) refused = 'an index of this project is already in progress in the server';
+    else if (updateLockHeld(reply)) refused = "another process holds this project's index lock — a session's server, or a concurrent index";
+    else if (!updateRan(reply) || !counts) refused = `the server did not run it. It replied:\n${reply}`;
+    process.stdout.write(JSON.stringify(
+      refused ? { projectPath, ran: false } : { projectPath, ran: true, ...counts }, null, 2) + '\n');
+    if (refused) {
+      console.error(`[driver] update did NOT run: ${refused}`);
+      process.exitCode = 1;
+      return;
+    }
+    console.error(
+      `[driver] updated: ${counts.added} added, ${counts.updated} updated, ${counts.removed} removed, `
+      + `${counts.chunksCreated} new chunk(s)`
+    );
+  }, { project: projectPath });
+}
+
 async function cmdIndex(projectPath) {
   guardStore(projectPath);
   // Authoritative expected artifact count (null when there's no manifest). This
@@ -3749,6 +3810,11 @@ Commands:
   index    run a full fresh index; block until the run reports complete, the
            graph is READY, and context artifacts are all indexed
   status   print codebase_status once and exit
+  update   run codebase_update (incremental: re-embeds changed files and
+           artifacts) and print its counts as JSON; exit 1 when it did not
+           run — another process held the project's index lock, a run was in
+           progress, or the server refused. The capped path outside a session
+           (#483): run it under the cap as you would index.
   verify   sample codebase_search + graph_status + list_projects + a check that
            the last recorded operation did not FAIL, and on an external store
            that codebase_health reports Qdrant mode: external; exit 0/1.
@@ -3815,7 +3881,7 @@ Commands:
            declare that this environment does not carry, or carries with
            another value (from a worktree, one only the main checkout's
            settings.local.json holds); a project settings file that does not
-           parse. index, status and verify refuse to launch a server on any of
+           parse. index, update, status and verify refuse to launch a server on any of
            them, and health-check reports them and skips its server checks — a
            launch is itself a write. A linked project's invalid projectId, or
            two linked projects on one id, is reported and blocks nothing.
@@ -3872,8 +3938,8 @@ Exit codes:
   0  clean — the command ran and found nothing to report
   1  the command ran and found a defect (health-check, verify,
      validate-store, validate-manifest), or refused to launch a server into
-     the wrong store or collections (index, status, verify; see
-     validate-store)
+     the wrong store or collections (index, update, status, verify; see
+     validate-store), or update did not run
   2  usage
   3  the command DID NOT COMPLETE — it threw, or health-check hit its
      timeout. Nothing was measured, so this is not a clean result and it is
@@ -3953,6 +4019,7 @@ async function runCli() {
   switch (cmd) {
     case 'index': await cmdIndex(projectPath); break;
     case 'status': await cmdStatus(projectPath); break;
+    case 'update': await cmdUpdate(projectPath); break;
     case 'verify': await cmdVerify(projectPath); break;
     case 'health-check': {
       // Hard ceiling: a server that never answers must cost a bounded wait.
@@ -4065,6 +4132,7 @@ export {
   pluginServerFromVersionDir, expandVars,
   // tool-reply predicates (gotcha M)
   indexStarted, indexAlreadyRunning, runningOperationIsFullIndex,
+  parseUpdateCounts, updateRan, updateLockHeld,
   contextIndexComplete, indexedZeroChunks,
   searchHasHits, listHasProjects,
 };
