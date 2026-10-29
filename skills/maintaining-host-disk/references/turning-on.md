@@ -77,7 +77,7 @@ Enable them in the same change that retires the host's own disk tooling, once it
   ```
 
 - **(b) The host's probe reads `/var/lib/cannobserv-disk-gc/state.json`**, which the GC writes after every `--prune` run: alert on a non-zero `exit`, and on a `finished_at` more than about 25 hours old, since a run killed at its timeout may write nothing. A host down at 05:15 misses that day's run (there's no catch-up), so a stale `finished_at` after a reboot is expected once.
-- **(c) Take both timers after all,** with steps 3, 4 and 6: the sensor's `gc-failed` and `gc-stale` then cover it.
+- **(c) Take both timers after all,** with steps 3, 4 and 6, and set `gc_stale_hours` back to non-zero: at 0 it turns off both GC faults. The sensor's `gc-failed` and `gc-stale` then cover it.
 
 **A host retiring tooling that had a failure net** (an `OnFailure=`, a dead-man, a probe on its output) takes this path only with (a), (b) or (c) in the same change; otherwise the retirement removes a net the host had ([retiring.md](retiring.md#what-stays-by-hand), question 4). Whether the canonical unit should ship a hook a host can wire to its own notifier is the GC owner's call (CannObserv/provisioner#61), not this skill's.
 
