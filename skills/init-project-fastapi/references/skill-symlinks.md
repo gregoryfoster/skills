@@ -57,7 +57,7 @@ Substitutions in local overrides:
 
 **Optional thin overrides** (only when the project genuinely needs them):
 - `skills/writing-plans/` — fork only if the project ships project-specific narrative content (e.g., `plan-document-reviewer-prompt.md`). The plans directory itself is configurable via `.skills/plans_dir`; do not fork just to repoint it. The forked `SKILL.md` needs `overrides: gregoryfoster-skills/writing-plans` + `override-reason:`.
-- `skills/shipping-work-python-fastapi/scripts/pre-ship.sh` — fork only if the project requires `/etc/<project>/.env` loading before tests (e.g., archiver, notifier, watcher). Keep the auto-derived stamp prefix. The forked `SKILL.md` needs `overrides: gregoryfoster-skills/shipping-work-python-fastapi` + `override-reason:` (e.g., `"Adds /etc/<project>/.env loading before pytest"`).
+- `skills/shipping-work-python-fastapi/scripts/pre-ship.sh` — never fork it. A project that needs `/etc/<project>/.env` loaded before tests (e.g., archiver, notifier, watcher) commits a project-root `scripts/pre-ship.sh` wrapper that parses the env files and `exec`s the vendored gate; the wrapper recipe is in that script's header. A wrapper isn't a skill, so it needs no override frontmatter.
 - Step 2.5 worktree-aware merge path — fork the relevant `shipping-work-python-fastapi/SKILL.md` step if the project deploys via a worktree layout that needs a specific `cd /home/.../<project>` step. Same frontmatter requirement.
 
 ## Phase 11 — `.claude/skills/` discovery symlinks

@@ -94,10 +94,10 @@ deploy/         — Systemd unit + deployment config
 | After editing `deploy/<PROJECT_NAME>.service` | `sudo systemctl daemon-reload && sudo systemctl restart <PROJECT_NAME>` |
 | After DB model changes [DB_BACKED=yes] | `uv run alembic upgrade head` then restart |
 
-**Dev server workflow.** Run on port `<API_PORT_DEV>` so the live service stays up. Load env first:
+**Dev server workflow.** Run on port `<API_PORT_DEV>` so the live service stays up. Load env first (`load_env`: § Environment Variables):
 
 ​```bash
-set -a; . /etc/<PROJECT_NAME>/.env 2>/dev/null; . .env 2>/dev/null; set +a
+load_env /etc/<PROJECT_NAME>/.env; load_env .env
 uv run uvicorn src.api.main:app --host 0.0.0.0 --port <API_PORT_DEV> --reload --log-config src/core/log_config.json
 ​```
 
@@ -121,21 +121,21 @@ uv run uvicorn src.api.main:app --host 0.0.0.0 --port <API_PORT> --reload --log-
 > Include when DEPLOY_TARGET=systemd:
 Two env files, loaded in order (later values override):
 
-1. **`/etc/<PROJECT_NAME>/.env`** — production secrets (`DATABASE_URL`, etc.). Survives repo resets and worktree switches. Managed manually on the VM.
-2. **`.env`** (repo root, git-ignored) — dev/agent secrets (`GH_TOKEN`, `TEST_DATABASE_URL`). Never commit.
+1. **`/etc/<PROJECT_NAME>/.env`** — production secrets (`DATABASE_URL`, etc.). Survives repo resets and worktree switches. Managed manually on the VM. The only env file the systemd service loads.
+2. **`.env`** (repo root, git-ignored) — dev/agent secrets (`GH_TOKEN`, `TEST_DATABASE_URL`). Never commit. Production never reads it.
 
-The systemd service loads both automatically. For shell commands:
+For shell commands, **parse the files, never source them**: sourcing runs a file as shell code, and exporting all of it hands every secret in it to every child process. Define `load_env` once per shell from the recipe in `skills/shipping-work-python-fastapi/scripts/pre-ship.sh`'s header (in a linked worktree, its `ENV_FILE` lines find the primary checkout's `.env`), then:
 
 ​```bash
-set -a; . /etc/<PROJECT_NAME>/.env 2>/dev/null; . .env 2>/dev/null; set +a
+load_env /etc/<PROJECT_NAME>/.env; load_env .env
 ​```
 > end include
 
 > Include when DEPLOY_TARGET=none:
-**`.env`** (repo root, git-ignored): all secrets. Never commit.
+**`.env`** (repo root, git-ignored): all secrets. Never commit. **Parse it, never source it**: define `load_env` once per shell from the recipe in `skills/shipping-work-python-fastapi/scripts/pre-ship.sh`'s header, then:
 
 ​```bash
-set -a; . .env; set +a
+load_env .env
 ​```
 > end include
 
@@ -163,9 +163,9 @@ Currently defined:
 # Install dependencies
 uv sync
 
-# Load environment (required before running server, migrations, or gh)
-set -a; . /etc/<PROJECT_NAME>/.env 2>/dev/null; . .env 2>/dev/null; set +a   # DEPLOY_TARGET=systemd
-# set -a; . .env; set +a                                       # DEPLOY_TARGET=none
+# Load environment (required before running server, migrations, or gh; load_env: § Environment Variables)
+load_env /etc/<PROJECT_NAME>/.env; load_env .env   # DEPLOY_TARGET=systemd
+# load_env .env                                    # DEPLOY_TARGET=none
 
 # Run tests
 uv run pytest
