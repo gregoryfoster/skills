@@ -195,8 +195,19 @@ class TestTheBudgetBase:
         git(tmp_path, "clone", "-q", str(remote), str(other))
         _commit(other, "b.md", "theirs\n")
         git(other, "push", "-q", "origin", "main")
-        git(clone, "remote", "set-head", "origin", "-d")
         git(clone, "fetch", "-q", "origin")
+        # After the fetch, and checked: from git 2.48 `fetch` recreates
+        # origin/HEAD (remote.<name>.followRemoteHEAD defaults to `create`), so
+        # deleting it first left this test running with origin/HEAD present
+        # and passing vacuously (CR 701).
+        git(clone, "remote", "set-head", "origin", "-d")
+        has_head = subprocess.run(
+            ["git", "symbolic-ref", "-q", "refs/remotes/origin/HEAD"],
+            cwd=str(clone),
+            capture_output=True,
+            env=_clean_env(),
+        )
+        assert has_head.returncode != 0, "origin/HEAD survived; the case is vacuous"
         tip = git(clone, "rev-parse", "origin/main")
         assert git(clone, "rev-parse", "main") != tip  # local main is stale
         git(clone, "checkout", "-q", "-b", "feat", "origin/main")
