@@ -82,15 +82,19 @@ Options:
                      --check-credential probes with — entitlement is per model,
                      so the preflight answers for the one the run will use.
                      Default: claude-opus-5
-  --no-env-file      Never read a credential from a repo-root secrets file. Use
-                     when the key must come only from the environment.
+  --no-env-file      Never read a credential from a secrets file — the repo
+                     root's, or in a linked worktree the primary checkout's.
+                     Use when the key must come only from the environment.
   --env-file NAMES   Space-separated secrets-file names to search, relative to
                      the repo root. Default: ".env env" (bare `env` is the name
                      this cohort used before 2026-08-05). Only
                      ANTHROPIC_API_KEY is read, by parsing — never by sourcing.
                      The root is `git rev-parse --show-toplevel`, which in a
-                     linked worktree is the worktree, not the main checkout; a
-                     name may climb out of it (../../.env). An absolute path is
+                     linked worktree is the worktree, not the main checkout, so
+                     the DEFAULT names are then tried in the primary checkout
+                     too, and a WARN names every path tried (#525). Names
+                     passed here mean those files only; one may climb out of
+                     the root (../../.env). An absolute path is
                      refused, since it can never match, and the error names the
                      relative spelling that reaches the same file. When no
                      credential resolves, or only an `ant auth` profile does,
@@ -374,6 +378,18 @@ _libdir="$(cd "$(dirname "$_self")" 2>/dev/null && pwd -P)" || _libdir=""
 ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 cd "$ROOT" || { echo "ERROR cannot cd to $ROOT" >&2; exit 2; }
 
+# The primary checkout, when this is a linked worktree: a gitignored .env lives
+# only there, so the default lookup falls back to it after the root (#525), as
+# #497's recipe does in shipping-work*. --git-common-dir names the primary's
+# .git from any worktree; empty in the primary itself, outside a repo, and in a
+# bare repo's worktrees, whose common dir is no checkout.
+PRIMARY=""
+_common="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || _common=""
+case "$_common" in
+  */.git)
+    if [ ! "${_common%/.git}" -ef "$ROOT" ]; then PRIMARY="${_common%/.git}"; fi ;;
+esac
+
 # --- --env-file names are relative to the root (#296) ----------------------
 # ctx_api_key_from_env_file joins each name to the root as "$root/$f", so an
 # absolute name expands to <root>//Users/... and is skipped exactly as a missing
@@ -485,7 +501,11 @@ fi
 # oauth branches call this too, with <suffix> saying what answered instead.
 env_file_misses() {
   local f out=""
-  if [ "$ENV_FILE_EXPLICIT" -eq 0 ] || [ "$NO_ENV_FILE" -eq 1 ]; then
+  if [ "$NO_ENV_FILE" -eq 1 ]; then
+    return 0
+  fi
+  if [ "$ENV_FILE_EXPLICIT" -eq 0 ]; then
+    env_file_tried "$@"
     return 0
   fi
   for f in $ENV_FILES; do
@@ -500,6 +520,20 @@ env_file_misses() {
     "$1" "$ROOT" "$out" "${2:-}" >&2
 }
 OAUTH_INSTEAD="; none was used, so the \`ant auth\` profile answered instead"
+
+# The default names, in a linked worktree only: every path the lookup tried,
+# the primary checkout's included, and where --env-file comes in (#525). In the
+# primary itself the convention needs no roll-call: the generic line says .env.
+# Paths only, never a value.
+env_file_tried() {
+  local f out=""
+  [ -n "$PRIMARY" ] || return 0
+  for f in $ENV_FILES; do out="${out:+$out, }$ROOT/$f"; done
+  for f in $ENV_FILES; do out="${out:+$out, }$PRIMARY/$f"; done
+  printf '%sno usable ANTHROPIC_API_KEY in this linked worktree or its primary checkout: tried %s%s\n' \
+    "$1" "$out" "${2:-}" >&2
+  printf '%sa file elsewhere: --env-file NAMES, relative to %s\n' "$1" "$ROOT" >&2
+}
 
 # The budgets, through the SAME chain as context-budget-guard.sh and
 # context-delta.sh: flag, then CONTEXT_BUDGET, then .skills/context-budget, then
@@ -562,6 +596,20 @@ ctx_resolve_credential() {
       CRED_SOURCE="env-file"
       CRED_DESC="ANTHROPIC_API_KEY from a repo-root secrets file ($ENV_FILES)"
       return 0
+    fi
+    # The default names only: an explicit --env-file names files under the
+    # root and means them (#525). One name at a time, so the file is named.
+    if [ "$ENV_FILE_EXPLICIT" -eq 0 ] && [ -n "$PRIMARY" ]; then
+      local _name
+      for _name in $ENV_FILES; do
+        if ANTHROPIC_API_KEY="$(ctx_api_key_from_env_file "$PRIMARY" "$_name")" \
+          && [ -n "$ANTHROPIC_API_KEY" ]; then
+          export ANTHROPIC_API_KEY
+          CRED_SOURCE="env-file"
+          CRED_DESC="ANTHROPIC_API_KEY from the primary checkout's secrets file ($PRIMARY/$_name)"
+          return 0
+        fi
+      done
     fi
     # A failed lookup leaves the name set to the empty string. The request
     # builder treats empty as absent, so nothing breaks today — but an exported
@@ -940,7 +988,7 @@ if [ "$EXACT" -eq 1 ]; then
         # Claude Code session exports no key and usually has no `ant` CLI, so
         # without this the interactive path writes an estimate row into a ledger
         # of exact rows and every delta afterwards is null.
-        echo "INFO --exact read ANTHROPIC_API_KEY from a repo-root secrets file ($ENV_FILES); pass --no-env-file to refuse" >&2 ;;
+        echo "INFO --exact read $CRED_DESC; pass --no-env-file to refuse" >&2 ;;
       oauth)
         # Announced rather than presented as a working choice: OAuth tokens go
         # on `Authorization: Bearer` with the oauth beta header, and the endpoint

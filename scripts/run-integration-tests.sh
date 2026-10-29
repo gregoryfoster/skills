@@ -12,9 +12,11 @@ usage() {
   echo ""
   echo "Runs tests/integration/ with -m integration. BILLED (~\$0.16 for a full"
   echo "run). It exports every NAME=VALUE in .env at the repo root (or a legacy"
-  echo "bare 'env' file), parsed line by line. Each test skips without its own"
-  echo "key: ANTHROPIC_API_KEY for the skill-routing tests, TYPESAFE_API_KEY for"
-  echo "the TypeSafe client's one live call. Each test needs only its own key."
+  echo "bare 'env' file), parsed line by line; in a linked worktree with neither,"
+  echo "the primary checkout's, with a WARN naming every path when none exists."
+  echo "Each test skips without its own key: ANTHROPIC_API_KEY for the"
+  echo "skill-routing tests, TYPESAFE_API_KEY for the TypeSafe client's one live"
+  echo "call. Each test needs only its own key."
   echo ""
   echo "Options:"
   echo "  --help   Show this text and exit 0, spending nothing."
@@ -56,8 +58,22 @@ cd "$REPO_ROOT"
 # word-split every value, so a key containing a space or a `#` comment on the line
 # silently exported the wrong thing — and sourcing would execute whatever the file
 # contained.
-for _envfile in .env env; do
+# In a linked worktree a gitignored .env lives only in the primary checkout, so
+# its names are tried after the root's (#525), as #497's recipe does in
+# shipping-work*: --git-common-dir names the primary's .git from any worktree.
+# With none found there, a WARN names every path tried — paths, never a value.
+_primary=""
+_common="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || _common=""
+case "$_common" in
+  */.git) if [ ! "${_common%/.git}" -ef "$REPO_ROOT" ]; then _primary="${_common%/.git}"; fi ;;
+esac
+_tried=""
+_found=""
+for _envfile in "$REPO_ROOT/.env" "$REPO_ROOT/env" \
+                ${_primary:+"$_primary/.env" "$_primary/env"}; do
+  _tried="${_tried:+$_tried, }$_envfile"
   [ -f "$_envfile" ] || continue
+  _found="$_envfile"
   while IFS= read -r _line || [ -n "$_line" ]; do
     case "$_line" in
       ''|\#*) continue ;;
@@ -82,6 +98,10 @@ for _envfile in .env env; do
   done <"$_envfile"
   break
 done
+if [ -z "$_found" ] && [ -n "$_primary" ]; then
+  echo "WARN: no secrets file in this linked worktree or its primary checkout:" >&2
+  echo "      tried $_tried; tests that need a key will skip" >&2
+fi
 
 if [[ ! -e ".venv/bin/activate" ]]; then
   echo "ERROR: no usable .venv at the repo root — the suite cannot run." >&2
