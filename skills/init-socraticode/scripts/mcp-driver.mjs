@@ -2956,9 +2956,10 @@ async function cmdIndex(projectPath) {
     // polling a status that would never move until INDEX_TIMEOUT_MS.
     //
     // Three outcomes, not two: "already in progress" is the concurrency guard,
-    // meaning the work we want is underway (started by the watcher, or by a
-    // concurrent run). That is a reason to poll, not to abort — the loop below
-    // already knows how to wait for someone else's run.
+    // meaning the work we want is underway in this server (with auto-resume
+    // off and the watcher on manual, #349, nothing of ours should be). That is
+    // a reason to poll, not to abort — the loop below already knows how to
+    // wait for someone else's run.
     const startResponse = await client.callTool('codebase_index', { projectPath });
     // Set when the guard fired for an INCREMENTAL update: that run won't produce
     // the full-index completion we gate on, so the real index is issued below,
