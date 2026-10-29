@@ -92,19 +92,33 @@ fi
 TMP="$(mktemp -d)" || { echo "ERROR mktemp failed" >&2; exit 2; }
 trap 'rm -rf "$TMP"' EXIT
 
-emit() { printf '%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" "$5"; }
+# Each field with any tab, CR or newline folded to a space, so a row is always
+# the five fields the header promises (#462): a tab inside a claim split its
+# row into six, and a consumer holding rows to five refused the whole file.
+# check_commands already made its claims TSV-safe; this holds every class.
+emit() {
+  local out="" field
+  for field in "$1" "$2" "$3" "$4" "$5"; do
+    field="${field//$'\t'/ }"
+    field="${field//$'\r'/ }"
+    field="${field//$'\n'/ }"
+    out="${out:+$out$'\t'}$field"
+  done
+  printf '%s\n' "$out"
+}
 
 # --- path claims ----------------------------------------------------------
 # A backticked token is a path claim when it contains a slash or ends in a known
-# source extension. Tokens with shell metacharacters, spaces, or placeholder
-# brackets are prose, not paths.
+# source extension. Tokens with shell metacharacters, whitespace of any kind
+# (a tab or a CR as well as a space, #462), or placeholder brackets are prose,
+# not paths.
 check_paths() {
   local f="$1" line tok
   # The backticks are regex literals — this greps Markdown code spans out of a
   # doc — so single quotes are correct and expansion is not wanted.
   # shellcheck disable=SC2016
   grep -oE '`[^`]+`' "$f" 2>/dev/null | sed -e 's/^`//' -e 's/`$//' | sort -u \
-    | grep -vE '[ <>*$|(){}]' \
+    | grep -vE '[[:space:]<>*$|(){}]' \
     | grep -E '/|\.(py|js|ts|tsx|php|go|rb|sh|json|toml|yaml|yml|md|service|timer|sql)$' \
     >"$TMP/paths" || true
   while IFS= read -r tok; do
