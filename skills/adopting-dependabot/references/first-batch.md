@@ -5,6 +5,11 @@ seconds after the push and four PRs opened within about a minute, all green
 (watcher#354–#357, 2026-10-09). So the first batch *is* the step-1 test of
 everything the inventory couldn't read.
 
+**Before the push, list the open Dependabot PRs.** A security PR opened before
+the config can't be rebased once it lands, and closing it gives up the fix:
+land each first, or by hand
+([merge-paths.md](merge-paths.md#security-prs-opened-before-the-config)).
+
 ## Watch it land
 
 ```bash
