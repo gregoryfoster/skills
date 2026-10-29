@@ -2193,6 +2193,13 @@ def test_an_inline_command_names_every_script_that_matches(host):
         ("/usr/bin/node -e 'run()'", False, "node -e, code the scan doesn't read"),
         # perl's -c only checks the syntax: the script after it is read.
         ("/usr/bin/perl -c ./r.sh", True, ""),
+        # CR 888: perl's and ruby's -x take a directory attached, never the
+        # next word, which is the script.
+        ("/usr/bin/perl -x ./r.sh", True, ""),
+        ("/usr/bin/ruby -x ./r.sh", True, ""),
+        # CR 891: bash's --rcfile and --init-file take a file.
+        ("/bin/bash --rcfile /etc/app.rc ./r.sh", True, ""),
+        ("/bin/bash --init-file /etc/app.rc ./r.sh", True, ""),
     ],
 )
 def test_an_interpreters_option_value_isnt_its_script(host, exec_line, finds, said):
@@ -2202,6 +2209,7 @@ def test_an_interpreters_option_value_isnt_its_script(host, exec_line, finds, sa
         f"[Service]\nType=oneshot\nWorkingDirectory=/opt/app\nExecStart={exec_line}\n",
     )
     host.write("opt/app/r.sh", RESTARTS)
+    host.write("etc/app.rc", NOTIFIES)
     out = host.run()
     assert ("restarter:store-renew.service" in _ids(out)) is finds
     assert ("restarters:unread:store-renew.service" in _ids(out)) is bool(said)
