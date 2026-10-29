@@ -38,6 +38,9 @@ Options:
   --archival NAMES   Space-separated <docs-dir> subdirectory names treated as an
                      archive rather than live context: excluded from the doc
                      inventory, and not traversed for links. Default:
+                     CTX_ARCHIVAL, the variable the write guard, check-seams.sh
+                     and stale-issue-prose.sh read, so one setting moves them
+                     all (empty or unset: the default); then
                      "plans specs research audits archive". Pass "" to measure
                      everything. Plans and audits are dated snapshots — a stale
                      path inside one is a correct historical record, so counting
@@ -206,6 +209,8 @@ BUDGET_OVERRIDE=""
 DOC_BUDGET_OVERRIDE=""
 PROXIMITY_OVERRIDE=""
 ARCHIVAL="plans specs research audits archive"
+# Whether --archival was passed: without it, CTX_ARCHIVAL decides (#465).
+ARCHIVAL_SET=0
 GATE=0
 EXACT=0
 CHECK_CRED=0
@@ -236,7 +241,7 @@ while [ $# -gt 0 ]; do
     --doc-budget) DOC_BUDGET_OVERRIDE="${2:?--doc-budget needs a number}"; shift 2 ;;
     --proximity-pct) PROXIMITY_OVERRIDE="${2:?--proximity-pct needs a number}"; shift 2 ;;
     --archival) need_arg "$#" --archival 'pass "" to measure everything'
-                ARCHIVAL="$2"; shift 2 ;;
+                ARCHIVAL="$2"; ARCHIVAL_SET=1; shift 2 ;;
     --gate) GATE=1; shift ;;
     --exact) EXACT=1; shift ;;
     --check-credential) CHECK_CRED=1; shift ;;
@@ -873,6 +878,15 @@ SKILL_COMMIT="${SKILL_META#*"$CTX_TAB"}"
 # then docs. The write guard and context-delta.sh read the same knob, so setting
 # it once points all three at one tree.
 DOCS_DIR="$(ctx_docs_dir "$ROOT" "$DOCS_DIR")"
+# --archival, else CTX_ARCHIVAL, else the default: the flag-then-env order
+# --docs-dir and CONTEXT_DOCS_DIR follow above (#465). An empty CTX_ARCHIVAL is
+# the default here as in the library's `${CTX_ARCHIVAL:-…}`, so Phase 1 and the
+# continuous surfaces read one setting one way; only the FLAG's "" measures
+# everything. Without this, CTX_ARCHIVAL=history moved every surface but the
+# one measuring the budget.
+if [ "$ARCHIVAL_SET" -eq 0 ]; then
+  ARCHIVAL="${CTX_ARCHIVAL:-$ARCHIVAL}"
+fi
 # --archival feeds the library's matcher, which both continuous surfaces use too.
 # Read by ctx_is_archival in _context-lib.sh, which shellcheck cannot see across
 # `source` — dropping this assignment silently pins the matcher to the library
