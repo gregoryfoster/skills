@@ -1551,7 +1551,8 @@ if warranted:
                   if len({entries[i][1] for i in reaching}) > 1]
     if collisions:
         print(f"\n  {len(collisions)} lost line(s) reached by more than one "
-              "entry — each charged to the longest:", file=out)
+              "entry —\n  each charged to the longest (file order breaks a tie):",
+              file=out)
         for line, idx, reaching in collisions:
             print(f"    {line[:120]}", file=out)
             print(f"      charged: {entries[idx][0]} :: "
