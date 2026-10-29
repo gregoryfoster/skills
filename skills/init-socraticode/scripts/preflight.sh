@@ -956,8 +956,14 @@ if [ "$E_PROVIDER" = ollama ]; then
       # Gate 1 probes only beside an external store. Beside a managed one the
       # answer decides nothing there, but here it decides whether an Ollama
       # container is created at all.
-      if [ -z "$NATIVE_PROBED" ] && [ -n "$DOCKER_UP" ] && command -v curl >/dev/null 2>&1; then
-        NATIVE="$(curl -q --noproxy '*' -s -o /dev/null -w '%{http_code}' --max-time 2 http://localhost:11434/api/tags 2>/dev/null || true)"
+      if [ -z "$NATIVE_PROBED" ] && [ -n "$DOCKER_UP" ]; then
+        if command -v curl >/dev/null 2>&1; then
+          NATIVE="$(curl -q --noproxy '*' -s -o /dev/null -w '%{http_code}' --max-time 2 http://localhost:11434/api/tags 2>/dev/null || true)"
+        else
+          # Said, as Gate 1 says it beside an external store (CR 793): the
+          # Ollama container below is then assumed, perhaps needlessly.
+          warn "curl not found — localhost:11434 was not probed for a native Ollama, so the Ollama container is checked as if none answers"
+        fi
       fi
       [ "$NATIVE" = 200 ] || LOCAL_TARGETS+=(ollama)
       ;;

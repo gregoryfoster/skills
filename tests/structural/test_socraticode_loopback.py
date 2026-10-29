@@ -529,6 +529,22 @@ class TestPreflightReadsTheContainers:
             "a native Ollama answers, so no Ollama container will be created"
         )
 
+    def test_no_curl_beside_a_managed_store_is_said(self, tmp_path):
+        """CR 793: the Ollama target is an assumption there, and is named as one."""
+        binv = _host(tmp_path)
+        (binv / "curl").unlink()
+        stub = binv / "docker"
+        stub.write_text(DOCKER_STUB.format(python=sys.executable))
+        stub.chmod(0o755)
+        state = binv.parent / "containers.json"
+        state.write_text(json.dumps({"socraticode-qdrant": LOOPBACK_Q}))
+        result = _preflight(
+            tmp_path, _project(tmp_path), binv, STUB_CONTAINERS=str(state)
+        )
+        assert "•" in _line(
+            result, "the Ollama container is checked as if none answers"
+        )
+
     def test_an_idle_socket_is_not_inspected(self, tmp_path):
         binv = _host(tmp_path, systemd=True)
         stub = binv / "docker"
