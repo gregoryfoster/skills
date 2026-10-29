@@ -60,8 +60,8 @@ def git(cwd: Path, *args: str) -> str:
 
 
 def _block(variant: str) -> str:
-    lines = (SKILLS_DIR / variant / "scripts" / "gather-context.sh").read_text()
-    lines = lines.splitlines()
+    script = SKILLS_DIR / variant / "scripts" / "gather-context.sh"
+    lines = script.read_text().splitlines()
     starts = [i for i, ln in enumerate(lines) if ln == START]
     ends = [i for i, ln in enumerate(lines) if ln == END]
     assert len(starts) == 1 and len(ends) == 1 and starts[0] < ends[0], (
