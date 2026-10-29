@@ -69,7 +69,10 @@ git log --diff-filter=A --format=%cI -- .github/dependabot.yml | tail -1   # aft
 
 The head never changes, so the bounded wait above times out. The `git log`
 needs full history: in a shallow clone it prints nothing, or a later commit's
-date, until `git fetch --unshallow`.
+date, until `git fetch --unshallow`. Its date is when the config was committed,
+not when it reached the default branch, so a PR opened between the two is
+affected too. Where they differ, the inventory taken before the push, or the
+bot's answer, decides.
 
 - **Inventory them before pushing the config,** and land each one first where
   its CI and the ship gate allow.
