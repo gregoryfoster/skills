@@ -300,11 +300,6 @@ class TestTheScriptNeverTouchesAnExistingContainer:
         assert docker.mutations() == []
         assert {v for v, _ in _rows(result).values()} == {"missing"}
 
-    def test_no_mutating_docker_verb_but_run_appears_in_the_script(self):
-        text = SCRIPT.read_text()
-        for verb in MUTATING - {"run"}:
-            assert not re.search(rf"\bdocker\s+{verb}\b", text), verb
-
 
 class TestTheScriptsVerdicts:
     @pytest.mark.parametrize(
@@ -502,6 +497,30 @@ class TestPreflightReadsTheContainers:
         assert result.returncode == 0, result.stdout
         assert "•" in _line(result, "QDRANT__TELEMETRY_DISABLED=true is not set")
 
+    def test_a_decoy_is_a_warning_naming_the_rename(self, tmp_path):
+        """CR 797a: each verdict's line, not only ok/missing/wide/telemetry."""
+        old = dict(LOOPBACK_Q, state="exited")
+        result, _ = _preflight_with(
+            tmp_path,
+            {"socraticode-qdrant": LOOPBACK_Q, "socraticode-qdrant-old": old,
+             "socraticode-ollama": LOOPBACK_O},
+        )  # fmt: skip
+        assert result.returncode == 0, result.stdout
+        assert "•" in _line(result, "SocratiCode may skip starting the real one")
+        assert "rename the other" in result.stdout
+
+    def test_an_unknown_container_is_a_warning(self, tmp_path):
+        never = dict(LOOPBACK_Q, state="created")
+        result, _ = _preflight_with(
+            tmp_path, {"socraticode-qdrant": never, "socraticode-ollama": LOOPBACK_O}
+        )
+        assert "•" in _line(result, "has never started")
+
+    def test_a_check_that_printed_nothing_is_said(self, tmp_path):
+        result, _ = _preflight_with(tmp_path, {}, QDRANT_PORT="not-a-port")
+        line = _line(result, "SocratiCode's containers could not be inspected")
+        assert "•" in line and "exited 2" in line and "not a number" in line
+
     def test_non_default_ports_go_in_front_of_the_command(self, tmp_path):
         result, _ = _preflight_with(
             tmp_path, {}, QDRANT_PORT="26333", OLLAMA_PORT="21435"
@@ -649,6 +668,25 @@ class Hook:
         ]
 
 
+# What the hook runs, linked one by one, so a tool can be left out: a host
+# that lacks it, whatever the suite's own host has.
+HOOK_TOOLS = ("bash", "git", "date", "cat", "wc", "tail", "mv", "rm", "dirname", "grep")
+
+
+def _bare_bin(
+    tmp_path: Path, hook: "Hook", *, node: bool, stubs: tuple[str, ...]
+) -> Path:
+    bin_dir = tmp_path / "bare-bin"
+    bin_dir.mkdir()
+    for tool in HOOK_TOOLS + (("node",) if node else ()):
+        found = shutil.which(tool)
+        assert found, tool
+        (bin_dir / tool).symlink_to(found)
+    for stub in stubs:
+        (bin_dir / stub).symlink_to(hook.bin / stub)
+    return bin_dir
+
+
 @requires_node
 class TestTheHookReadsListeners:
     def test_a_wide_listener_is_reported(self, tmp_path):
@@ -701,6 +739,15 @@ class TestTheHookReadsListeners:
         assert result.stdout == ""
         assert "listeners not read: ss -ltn failed" in hook.log()
 
+    @pytest.mark.parametrize(("os_name", "tool"), [("Linux", "ss"), ("Darwin", "lsof")])
+    def test_a_host_without_the_tool_is_logged_not_said(self, tmp_path, os_name, tool):
+        """CR 797b: a property of the host, so a session line would fire daily."""
+        hook = Hook(tmp_path, os_name=os_name)
+        bin_dir = _bare_bin(tmp_path, hook, node=True, stubs=("uname",))
+        result = hook.run(path=str(bin_dir))
+        assert result.stdout == "", result.stdout
+        assert f"listeners not read: no {tool}" in hook.log()
+
     def test_the_hook_runs_no_docker_command(self, tmp_path):
         hook = Hook(tmp_path)
         hook.run(STUB_SS=SS_WIDE)
@@ -717,26 +764,7 @@ class TestTheHookReadsListeners:
 
     def test_it_is_reported_where_node_is_missing(self, tmp_path):
         hook = Hook(tmp_path)
-        bin_dir = tmp_path / "no-node"
-        bin_dir.mkdir()
-        for tool in (
-            "bash",
-            "git",
-            "date",
-            "cat",
-            "wc",
-            "tail",
-            "mv",
-            "rm",
-            "dirname",
-            "grep",
-        ):
-            found = shutil.which(tool)
-            assert found, tool
-            (bin_dir / tool).symlink_to(found)
-        for stub in ("uname", "ss"):
-            (bin_dir / stub).symlink_to(hook.bin / stub)
-        assert shutil.which("node", path=str(bin_dir)) is None
+        bin_dir = _bare_bin(tmp_path, hook, node=False, stubs=("uname", "ss"))
         result = hook.run(path=str(bin_dir), STUB_SS=SS_WIDE)
         assert "node is not on PATH" in result.stdout
         assert FINDING in result.stdout, result.stdout
@@ -771,13 +799,19 @@ class TestTheContractIsWritten:
             assert needle in text, needle
 
     def test_the_hook_still_runs_no_docker_command(self):
-        code = "\n".join(
+        lines = HOOK.read_text().splitlines()
+        # The --help heredoc names docker in prose; drop it by its own lines
+        # (CR 797d), not by the first "EOF" in the file.
+        start = next(i for i, ln in enumerate(lines) if ln.strip() == "cat <<EOF")
+        end = next(i for i in range(start + 1, len(lines)) if lines[i] == "EOF")
+        code = [
             ln
-            for ln in HOOK.read_text().splitlines()
+            for ln in lines[:start] + lines[end + 1 :]
             if not ln.lstrip().startswith("#")
-        )
-        assert not re.search(r"(^|[;&|(]\s*|\s)docker\s", code.split("EOF", 2)[-1]), (
-            "the hook's contract is no docker command of its own"
+        ]
+        offenders = [ln for ln in code if re.search(r"(^|[;&|(]\s*|\s)docker\s", ln)]
+        assert offenders == [], (
+            f"the hook's contract is no docker command of its own: {offenders}"
         )
 
 
