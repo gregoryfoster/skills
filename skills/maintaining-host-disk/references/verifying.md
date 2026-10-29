@@ -9,6 +9,10 @@ What to read after an install, an update, turning it on, and a retirement. Read 
 - `cat /usr/local/lib/cannobserv/disk-gc/VERSION` is the pin's.
 - `systemctl is-enabled cannobserv-disk-gc.timer cannobserv-disk-headroom.timer` is what it was before the update: an update never changes it.
 
+## A repo test that loads the installed GC
+
+Load it with bytecode off. `disk-gc` has no extension, so `SourceFileLoader` writes `__pycache__/disk-gc…pyc` beside it, and `-I` doesn't stop that: as a non-root user the write fails silently, but as root it adds a file MANIFEST doesn't list (#514). Set `sys.dont_write_bytecode = True` around `exec_module` (or run the test under `python3 -B`), and assert the load leaves only `disk-gc` in its directory (CannObserv/processor `5f6cb7c`). Whether a stray file there makes a later update or `current` check refuse is untested.
+
 ## The GC's and the sensor's runs
 
 The GC's journal lines carry sd-daemon priorities: alerts `<3>`, warnings `<4>`, `ok` `<6>`. So `journalctl -p` works for it. Read the journal **with sudo**: for a user outside `adm` and `systemd-journal`, `journalctl` prints `-- No entries --` and exits 0, which reads exactly like "no alerts":
