@@ -7,8 +7,9 @@ was HEAD and the block printed nothing. Seen on CannObserv/provisioner PR #45:
 +569 tokens to AGENTS.md and a new 2,000-token reference doc, an empty budget
 block across five CR rounds.
 
-The base is now the first of the default branch (`main`, `master`,
-`origin/HEAD`) and then `@{upstream}` whose merge base is not HEAD itself. The
+The base is now the first of the default branch (`origin/HEAD`, `main`,
+`master`) and then `@{upstream}` whose merge base is not HEAD itself.
+`origin/HEAD` leads because a local `main` is often stale (CR 696). The
 block is identical in all four variants, so it is lifted out of each and run
 against fixture repositories; one end-to-end run of the baseline script shows
 the block printing on a pushed branch.
@@ -153,11 +154,35 @@ class TestTheBudgetBase:
 
     @pytest.mark.parametrize("variant", VARIANTS)
     def test_unpushed_commits_on_main_diff_from_the_upstream(self, variant, clone):
-        """On main itself, main's merge base is HEAD and is skipped; the
-        upstream is then the last pushed main."""
+        """On main itself, origin/HEAD's merge base is the last pushed main,
+        which is the right base; main's own is HEAD and is skipped."""
         pushed = git(clone, "rev-parse", "HEAD")
         _commit(clone, "notes.md", "unpushed\n")
         assert _base(variant, clone) == pushed
+
+    @pytest.mark.parametrize("variant", VARIANTS)
+    def test_a_stale_local_main_does_not_claim_upstreams_commits(
+        self, variant, tmp_path, remote, clone
+    ):
+        """CR 696. Others push to main; this clone fetches but never moves its
+        local main, then cuts a branch from origin/main. A base taken from
+        the stale local main counts their commits as this branch's."""
+        other = tmp_path / "other"
+        git(tmp_path, "clone", "-q", str(remote), str(other))
+        _commit(other, "b.md", "theirs\n")
+        _commit(other, "x.md", "theirs too\n")
+        git(other, "push", "-q", "origin", "main")
+        git(clone, "fetch", "-q", "origin")
+        tip = git(clone, "rev-parse", "origin/main")
+        assert git(clone, "rev-parse", "main") != tip  # local main is stale
+        git(clone, "checkout", "-q", "-b", "feat", "origin/main")
+        _commit(clone, "mine.md", "mine\n")
+        base = _base(variant, clone)
+        assert base == tip, (
+            f"{variant}: the budget base was {base}, the stale local main, not "
+            f"origin/main's tip {tip}; two commits pushed by someone else "
+            "would be counted as this branch's."
+        )
 
     @pytest.mark.parametrize("variant", VARIANTS)
     def test_nothing_to_diff_against_falls_back_to_head(self, variant, tmp_path):
