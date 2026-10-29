@@ -22,16 +22,18 @@ Install once, deliberately, under a cap:
 # Pick the version deliberately — a literal, never `latest`, or the pin floats
 # and buys nothing. This is what the plugin's own command would have resolved:
 npm view socraticode version
+# --save-exact: the pin's package.json records that literal, not ^<version>,
+# so a bare `npm update` there cannot move the pin (#495).
 
 # Linux with user systemd — the cap is the point; on a small host, run it here
 # and nowhere else. choom as in row U: a session at -1000 (below) hands that
 # score to the install, and at -1000 the cap stalls it instead of killing it.
 systemd-run --user --scope -p MemoryHigh=1200M -p MemoryMax=1536M \
-  choom -n 500 -- npm install --prefix ~/.socraticode/pin socraticode@<version>
+  choom -n 500 -- npm install --save-exact --prefix ~/.socraticode/pin socraticode@<version>
 
 # Anywhere else (macOS, a host without user systemd): the install is the same,
 # just uncapped. Size the host for ~1.2 G rather than hoping.
-npm install --prefix ~/.socraticode/pin socraticode@<version>
+npm install --save-exact --prefix ~/.socraticode/pin socraticode@<version>
 ```
 
 `resolveServerLaunch()` prefers that build over the plugin's command, so no
@@ -129,7 +131,7 @@ pinned, the driver is deterministic while the session goes on floating.
 | A minor or major release (`1.13.2` vs `1.14.0`) | **defect** — two feature releases writing one store, the shape [`troubleshooting.md`](troubleshooting.md) row S is about. Re-pin deliberately |
 | The registry did not answer, or no server version was recorded | **note**, worded as *NOT measured* — never silence, which would read as "no drift" |
 
-Re-pinning is the same `npm install --prefix` line with the new version —
+Re-pinning is the same `npm install --save-exact --prefix` line with the new version —
 and the same version in `SOCRATICODE_SPEC`, its npx tree warmed first. Do it
 as a decision, not on a schedule: the reason to pin was to stop an unattended
 launch from installing.
