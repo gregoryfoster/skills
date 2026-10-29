@@ -67,9 +67,14 @@ The image tags are upstream's own, so SocratiCode doesn't pull a second image.
 Upstream floats Ollama on `latest`, and so does this script. Override either
 tag with `--qdrant-image` / `--ollama-image`.
 
-An IPv4-only loopback bind is safe for upstream's `localhost` URLs.
-Node falls back from `::1` to `127.0.0.1`, both `fetch` and `http.get`
-[measured on Node 26 by the 2026-10-28 mitigation].
+**An IPv4-only loopback bind needs Node 20 or later.** Upstream's URLs say
+`localhost`, and from Node 20 a refused `::1` falls back to `127.0.0.1`, for
+both `fetch` and `http.get`. Node 18 and 19 try only the first address. Where
+`localhost` resolves to `::1` first, every call is refused. Upstream's own
+wide publish also listens on `[::]`, which hid this. Preflight fails a Node
+below 20 unless `localhost` resolves to `127.*` first.
+[Measured 2026-10-28 with an IPv4-only listener: 18.20.8 was refused, while
+20.20.2 and 22.23.2 fell back; Node 26 by the mitigation.]
 
 ## How it's checked
 

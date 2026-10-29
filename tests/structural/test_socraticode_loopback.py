@@ -705,3 +705,42 @@ class TestTheContractIsWritten:
         assert not re.search(r"(^|[;&|(]\s*|\s)docker\s", code.split("EOF", 2)[-1]), (
             "the hook's contract is no docker command of its own"
         )
+
+
+class TestNodeBelow20CannotReachALoopbackContainer:
+    """CR 788: Node 18/19 tries `localhost`'s first address only (measured on 18.20.8)."""
+
+    def _run(self, tmp_path, version: str, first: str):
+        binv = _host(tmp_path)
+        (binv / "node").write_text(
+            "#!/bin/sh\n"
+            f'[ "$1" = --version ] && {{ echo {version}; exit 0; }}\n'
+            f'[ "$1" = -e ] && {{ printf %s "{first}"; exit 0; }}\n'
+            "exit 0\n"
+        )
+        stub = binv / "docker"
+        stub.write_text(DOCKER_STUB.format(python=sys.executable))
+        stub.chmod(0o755)
+        state = binv.parent / "containers.json"
+        state.write_text(
+            json.dumps(
+                {"socraticode-qdrant": LOOPBACK_Q, "socraticode-ollama": LOOPBACK_O}
+            )
+        )
+        return _preflight(
+            tmp_path, _project(tmp_path), binv, STUB_CONTAINERS=str(state)
+        )
+
+    def test_node_18_resolving_ipv6_first_fails(self, tmp_path):
+        result = self._run(tmp_path, "v18.20.8", "::1")
+        assert result.returncode == 1
+        line = _line(result, "cannot reach SocratiCode's loopback containers")
+        assert "✗" in line and "::1" in line
+
+    def test_node_18_resolving_ipv4_first_passes(self, tmp_path):
+        result = self._run(tmp_path, "v18.20.8", "127.0.0.1")
+        assert "✓" in _line(result, "resolves localhost to 127.0.0.1 first")
+
+    def test_node_20_is_not_asked(self, tmp_path):
+        result = self._run(tmp_path, "v20.11.0", "::1")
+        assert "loopback containers" not in result.stdout.replace("on loopback", "")

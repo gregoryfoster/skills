@@ -1320,6 +1320,25 @@ else
   fi
 fi
 
+# Node below 20 cannot reach a loopback container through `localhost` (#494 CR
+# 788). Upstream addresses its containers as http://localhost:<port>, and
+# loopback-containers.sh publishes on 127.0.0.1 alone. Node 20 falls back from
+# ::1 to 127.0.0.1; 18 and 19 try the first address only. Measured on 18.20.8,
+# fetch and http.get both: ECONNREFUSED. Upstream's own wide publish also
+# listens on [::], which is why Node 18 worked before. So the question is what
+# `localhost` resolves to first, asked of this node, which is the one the
+# plugin's npx launches.
+if [ -n "${NODE_MAJOR:-}" ] && [ "$NODE_MAJOR" -lt 20 ] && [ "${#LOCAL_TARGETS[@]}" -gt 0 ]; then
+  LOCALHOST_FIRST="$(node -e "require('dns').lookup('localhost',(e,a)=>process.stdout.write(e?'':String(a)))" 2>/dev/null || true)"
+  case "$LOCALHOST_FIRST" in
+    127.*) pass "Node $NODE_RAW resolves localhost to $LOCALHOST_FIRST first, so it reaches the loopback containers" ;;
+    *)
+      fail "Node $NODE_RAW cannot reach SocratiCode's loopback containers: localhost resolves to ${LOCALHOST_FIRST:-an address this check could not read} first, and before Node 20 there is no fallback to 127.0.0.1"
+      hint "Upgrade: 'nvm install 22 && nvm use 22'"
+      ;;
+  esac
+fi
+
 # ── Gate 3: npx reachable (the plugin MCP server launches as `npx -y socraticode`)
 if ! command -v npx >/dev/null 2>&1; then
   fail "npx not on PATH (ships with npm/Node)"
