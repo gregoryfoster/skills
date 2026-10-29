@@ -1311,7 +1311,7 @@ def test_a_package_left_unheld_that_the_bulk_took_anyway_fails_it(host, after, t
         ),
     )
     host.cases["dpkg-query"].insert(
-        0, ("-W containerd", f"containerd\t{after}\n", 0, "", None)
+        0, ("-W redis-server containerd", f"containerd\t{after}\n", 0, "", None)
     )
     out = host.run(rc=1 if taken else 0)
     assert out["holds"]["not_in_lane"] == ["redis-server", "containerd"]
