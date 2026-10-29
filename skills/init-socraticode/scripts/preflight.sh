@@ -198,7 +198,7 @@ resolve OLLAMA_PORT;        O_PORT="$R_VAL"
 resolve QDRANT_API_KEY;     Q_KEY="$R_VAL"
 resolve EMBEDDING_PROVIDER; E_PROVIDER="${R_VAL:-ollama}"
 resolve OLLAMA_MODE;        O_MODE="${R_VAL:-auto}"
-resolve OLLAMA_URL;         O_URL="${R_VAL:-http://localhost:11434}"
+resolve OLLAMA_URL;         O_URL_RAW="$R_VAL" O_URL="${R_VAL:-http://localhost:11434}"
 O_URL="${O_URL%/}"
 # Declared in a FILE, whatever the environment says — the trust gate compares
 # the two.
@@ -998,7 +998,8 @@ elif [ -n "$DOCKER_IDLE" ]; then
 elif [ -n "$DOCKER_UP" ]; then
   LB_OUT="" LB_RC=0
   LB_OUT="$(QDRANT_PORT="${Q_PORT:-16333}" QDRANT_GRPC_PORT="${Q_GRPC_PORT:-16334}" \
-    OLLAMA_PORT="${O_PORT:-11435}" "$BASH" "$LOOPBACK" --check "${LOCAL_TARGETS[@]}" 2>&1)" || LB_RC=$?
+    OLLAMA_PORT="${O_PORT:-11435}" OLLAMA_MODE="$O_MODE" OLLAMA_URL="$O_URL_RAW" \
+    "$BASH" "$LOOPBACK" --check "${LOCAL_TARGETS[@]}" 2>&1)" || LB_RC=$?
   LB_SEEN=""
   while IFS=$'\t' read -r _ lb_name lb_verdict lb_detail; do
     case "$lb_verdict" in
@@ -1362,7 +1363,7 @@ for _t in ${LOCAL_TARGETS[@]+"${LOCAL_TARGETS[@]}"}; do
     qdrant) case "${Q_HOST:-localhost}" in 127.*) continue ;; esac ;;
     ollama)
       if [ "$O_MODE" = docker ]; then
-        resolve OLLAMA_URL; _ou="$R_VAL"
+        _ou="$O_URL_RAW"
         resolve OLLAMA_HOST; _oh="$R_VAL"
         case "$(url_host "${_ou:-http://localhost}") $(url_host "${_oh:-http://localhost}")" in
           127.*" "127.*) continue ;;

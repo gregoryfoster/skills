@@ -163,7 +163,8 @@ class Docker:
 
 def _script(docker: Docker, *args: str, **env: str) -> subprocess.CompletedProcess:
     base = {k: v for k, v in os.environ.items()
-            if k not in ("QDRANT_PORT", "QDRANT_GRPC_PORT", "OLLAMA_PORT", "DOCKER_HOST")}  # fmt: skip
+            if k not in ("QDRANT_PORT", "QDRANT_GRPC_PORT", "OLLAMA_PORT", "OLLAMA_MODE",
+                         "OLLAMA_URL", "QDRANT_URL", "DOCKER_HOST")}  # fmt: skip
     base.update(docker.env())
     base["PATH"] = f"{docker.bin}{os.pathsep}{base.get('PATH', '')}"
     base.update(env)
@@ -219,9 +220,12 @@ class TestTheScriptCreatesWhatIsMissing:
 
     def test_upstreams_port_variables_reach_the_publishes(self, tmp_path):
         docker = Docker(tmp_path)
+        # Docker mode with a matching OLLAMA_URL: in auto mode the embedder
+        # looks on 11435 whatever OLLAMA_PORT says (CR 807).
         result = _script(docker, "qdrant", "ollama",
-                         QDRANT_PORT="26333", QDRANT_GRPC_PORT="26334", OLLAMA_PORT="21435")  # fmt: skip
-        assert result.returncode == 0, result.stderr
+                         QDRANT_PORT="26333", QDRANT_GRPC_PORT="26334", OLLAMA_PORT="21435",
+                         OLLAMA_MODE="docker", OLLAMA_URL="http://localhost:21435")  # fmt: skip
+        assert result.returncode == 0, result.stdout + result.stderr
         assert docker.runs() == [
             _upstream_but_loopback("qdrant", "26333", "26334", "21435"),
             _upstream_but_loopback("ollama", "26333", "26334", "21435"),
@@ -351,8 +355,35 @@ class TestTheScriptsVerdicts:
         verdict, detail = _rows(
             _script(docker, "--check", "qdrant", QDRANT_PORT="26333")
         )["qdrant"]
-        assert verdict == "broken" and "26333" in detail and "QDRANT_PORT" in detail
+        assert verdict == "broken" and "26333 (QDRANT_PORT" in detail
         assert "GRPC" not in detail and "OLLAMA" not in detail
+
+    def test_auto_ollama_needs_11435_whatever_ollama_port_says(self, tmp_path):
+        """CR 807: OLLAMA_PORT is the readiness wait; auto mode embeds on 11435."""
+        c = {"state": "running", "binds": [["127.0.0.1", "21435"]], "env": []}
+        docker = Docker(tmp_path, {"socraticode-ollama": c})
+        verdict, detail = _rows(
+            _script(docker, "--check", "ollama", OLLAMA_PORT="21435")
+        )["ollama"]
+        assert verdict == "broken"
+        assert "11435 (where its embedder looks" in detail
+        assert "Upstream publishes only OLLAMA_PORT, so set the two to match" in detail
+
+    def test_docker_ollama_needs_its_url_port(self, tmp_path):
+        docker = Docker(tmp_path, {"socraticode-ollama": LOOPBACK_O})
+        env = {"OLLAMA_MODE": "docker", "OLLAMA_URL": "http://localhost:21435"}
+        verdict, detail = _rows(_script(docker, "--check", "ollama", **env))["ollama"]
+        assert verdict == "broken" and "21435 (OLLAMA_URL, its embedder)" in detail
+
+    def test_docker_ollama_on_one_port_for_both_is_ok(self, tmp_path):
+        c = {"state": "running", "binds": [["127.0.0.1", "21435"]], "env": []}
+        docker = Docker(tmp_path, {"socraticode-ollama": c})
+        env = {
+            "OLLAMA_MODE": "docker",
+            "OLLAMA_URL": "http://127.0.0.1:21435/",
+            "OLLAMA_PORT": "21435",
+        }
+        assert _rows(_script(docker, "--check", "ollama", **env))["ollama"][0] == "ok"
 
     def test_a_missing_grpc_publish_is_still_ok(self, tmp_path):
         """CR 800: upstream's client is REST on QDRANT_PORT; it never dials gRPC."""

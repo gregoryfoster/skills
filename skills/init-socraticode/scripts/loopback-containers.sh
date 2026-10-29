@@ -41,13 +41,18 @@
 #   QDRANT_PORT       host port for Qdrant's HTTP API   (default 16333)
 #   QDRANT_GRPC_PORT  host port for Qdrant's gRPC API   (default 16334)
 #   OLLAMA_PORT       host port for the Ollama API      (default 11435)
+#   OLLAMA_MODE, OLLAMA_URL
+#                     where the Ollama embedder looks (CR 807): OLLAMA_URL's
+#                     port in docker mode, else 11435, which auto mode
+#                     hard-codes. OLLAMA_PORT is only its readiness wait, so
+#                     --check requires both ports
 #
 # Output: one tab-separated line per target on stdout,
 #   <target> <container> <verdict> <detail>
 # where <verdict> is one of:
 #   ok         exists and has run before (stopped is fine: SocratiCode starts
-#              it), publishes the port SocratiCode addresses (QDRANT_PORT or
-#              OLLAMA_PORT) on loopback only, is not on the host network, and
+#              it), publishes every port SocratiCode addresses (see Env) on
+#              loopback only, is not on the host network, and
 #              (Qdrant) has telemetry off
 #   created    was missing; created on loopback by this run
 #   missing    does not exist (--check only)
@@ -56,7 +61,7 @@
 #              substring match may take it for this one
 #   telemetry  on loopback, but Qdrant's telemetry is not disabled
 #   broken     will not serve SocratiCode as it stands: has never started (a
-#              failed bind leaves one), publishes no port, or not the port
+#              failed bind leaves one), publishes no port, or not every port
 #              SocratiCode addresses
 #   unknown    could not be read, or could not be created
 # After a create, any verdict other than ok ends "; created by this run".
@@ -105,15 +110,15 @@ is_loopback() {
   esac
 }
 
-# inspect NAME PORTS — sets V (verdict) and DETAIL. Read-only. PORTS are the
-# host ports SocratiCode will address, space-separated; $var names them.
+# inspect NAME EXPECT — sets V (verdict) and DETAIL. Read-only. EXPECT is one
+# `<port><TAB><what addresses it>` line per host port SocratiCode will use.
 #
 # One template, two parts: state, network mode and publishes on the first
 # line, then the environment one variable per line. Bash builtins parse it, so the script runs
 # on preflight's stubbed PATH, which carries no awk and no mktemp.
 INSPECT_FORMAT='{{.State.Status}}{{"\t"}}{{.HostConfig.NetworkMode}}{{"\t"}}{{range .HostConfig.PortBindings}}{{range .}}{{.HostIp}}|{{.HostPort}} {{end}}{{end}}{{"\n"}}{{range .Config.Env}}{{.}}{{"\n"}}{{end}}'
 inspect() {
-  local name="$1" expect="$2" out err line state net="" env b ip p wide="" seen="" telemetry="" other=""
+  local name="$1" expect="$2" out err line state net="" env b ip p role wide="" seen="" telemetry="" other=""
   local ports=" " unmet=""
   local -a binds=()
   V="" DETAIL=""
@@ -150,9 +155,10 @@ inspect() {
     is_loopback "$ip" || wide="${wide:+$wide, }${ip:-0.0.0.0}:${b#*|}"
   done
   # A publish SocratiCode never addresses is no use to it (CR 791).
-  for p in $expect; do
-    case "$ports" in *" $p "*) ;; *) unmet="${unmet:+$unmet, }$p" ;; esac
-  done
+  while IFS=$'\t' read -r p role; do
+    [ -n "$p" ] || continue
+    case "$ports" in *" $p "*) ;; *) unmet="${unmet:+$unmet; }$p ($role)" ;; esac
+  done <<<"$expect"
   case $'\n'"$env" in
     *$'\nQDRANT__TELEMETRY_DISABLED=true'$'\n'* | *$'\nQDRANT__TELEMETRY_DISABLED=true') telemetry=off ;;
   esac
@@ -177,7 +183,14 @@ inspect() {
     # it fails the same way until whatever holds the port lets go.
     V=broken DETAIL="$name has never started (state created): a docker run that could not bind leaves one behind, so find what holds its port before starting it"
   elif [ -n "$unmet" ]; then
-    V=broken DETAIL="$name ($state) is on loopback, but does not publish $unmet, the $var SocratiCode addresses"
+    V=broken DETAIL="$name ($state) is on loopback, but does not publish $unmet"
+    # Two ports, one upstream publish: only matching them can serve both.
+    case "$expect" in
+      *$'\n'*)
+        role="${expect%%$'\n'*}" role="${role#*$'\t'}"
+        DETAIL="$DETAIL. Upstream publishes only ${role%%,*}, so set the two to match"
+        ;;
+    esac
   elif [ -n "$other" ]; then
     V=decoy DETAIL="$name ($state) is on loopback, but SocratiCode's substring match also counts: $other"
   elif [ "$name" = socraticode-qdrant ] && [ -z "$telemetry" ]; then
@@ -188,6 +201,18 @@ inspect() {
   if [ "$V" = ok ] || [ "$V" = telemetry ]; then
     [ -z "$other" ] || DETAIL="$DETAIL; SocratiCode's substring match also counts: $other"
   fi
+}
+
+# url_port URL — its explicit port, or nothing. Parameter expansion only.
+url_port() {
+  local rest="${1#*://}"
+  rest="${rest%%/*}"
+  rest="${rest##*@}"
+  case "$rest" in
+    \[*\]:*) printf '%s' "${rest##*\]:}" ;;
+    \[*) ;;
+    *:*) printf '%s' "${rest##*:}" ;;
+  esac
 }
 
 # create TARGET NAME — `docker run`, matching SocratiCode's own except for the
@@ -215,10 +240,26 @@ create() {
 RC=0
 for target in "${TARGETS[@]}"; do
   name="socraticode-$target"
-  # The port each one is addressed on (CR 800). Upstream publishes gRPC but
-  # never connects to it: its client is REST, on QDRANT_HOST:QDRANT_PORT
-  # [traced, 1.16.1 dist/services/qdrant.js getClient].
-  if [ "$target" = qdrant ]; then expect="$QP" var=QDRANT_PORT; else expect="$OP" var=OLLAMA_PORT; fi
+  # The ports each one is addressed on (CR 800, 807). Upstream publishes gRPC
+  # but never connects to it: its client is REST, on QDRANT_HOST:QDRANT_PORT
+  # [traced, 1.16.1 dist/services/qdrant.js getClient]. Ollama's readiness
+  # wait is on OLLAMA_PORT, its embedder elsewhere [embedding-config.js,
+  # provider-ollama.js: docker mode OLLAMA_URL || localhost:11435, auto mode
+  # localhost:11435 always].
+  if [ "$target" = qdrant ]; then
+    expect="$QP"$'\t'"QDRANT_PORT, its client and readiness wait"
+  else
+    expect="$OP"$'\t'"OLLAMA_PORT, its readiness wait"
+    ep=11435 erole="where its embedder looks: auto mode hard-codes localhost:11435"
+    if [ "${OLLAMA_MODE:-auto}" = docker ]; then
+      if [ -n "${OLLAMA_URL:-}" ]; then
+        ep="$(url_port "$OLLAMA_URL")" erole="OLLAMA_URL, its embedder"
+      else
+        erole="its embedder, at docker mode's default localhost:11435"
+      fi
+    fi
+    [ -z "$ep" ] || [ "$ep" = "$OP" ] || expect="$expect"$'\n'"$ep"$'\t'"$erole"
+  fi
   inspect "$name" "$expect"
   if [ "$V" = missing ] && [ -z "$CHECK" ]; then
     if create "$target" "$name"; then
