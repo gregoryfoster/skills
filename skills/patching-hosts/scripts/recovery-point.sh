@@ -18,11 +18,11 @@ directory. Until every check passes it changes nothing, and prints why.
   The host's own backup regime first: each backup unit the knob declares
   whose last run succeeded is started, and must succeed again. Where a boot
   has reset its state since that run, systemd's own journal lines about the
-  unit say how its last run ended (#459). It writes off
-  the node itself, so it stands in for the dumps of the datastores its
-  backup line names, and no others: each datastore no usable unit covers is
-  dumped, and so is each database a line naming a Postgres unit's databases
-  (<unit>:<db>,<db>) leaves out. --dump takes dumps of them all instead. A Redis a backup unit
+  unit say how its last run ended (#459). It writes off the node itself, so
+  it stands in for the dumps of the datastores its backup line names, and no
+  others: each datastore no usable unit covers is dumped, and so is each
+  database a line naming a Postgres unit's databases (<unit>:<db>,<db>)
+  leaves out. --dump takes dumps of them all instead. A Redis a backup unit
   covers is saved first, since the unit ships its RDB file as it stands:
   BGSAVE and the wait, where it can log in, or else its RDB file must have
   been written within --rdb-within of the run's start (#382).
