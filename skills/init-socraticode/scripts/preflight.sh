@@ -35,10 +35,14 @@
 # start the daemon.
 #
 # Where Docker answers, each container that will run here is read with
-# loopback-containers.sh --check (#494): one that is missing, or publishes
-# beyond loopback, fails, and the fix names that script's create command or
+# loopback-containers.sh --check (#494): one that is missing, publishes beyond
+# loopback, or is broken (never started, or not on every port SocratiCode
+# addresses) fails, and the fix names that script's create command or
 # references/loopback-containers.md. Upstream would create a missing one on
-# every interface. This script creates and recreates nothing.
+# every interface. On an idle socket nothing is read and the create command is
+# named anyway. Node below 20 fails where a container is reached through
+# localhost, which it cannot resolve past ::1. This script creates and
+# recreates nothing.
 #
 # Two launches can install at start — the driver's and the plugin session's —
 # and each is pinned separately: a pre-install under SOCRATICODE_PIN_DIR, and
@@ -60,9 +64,10 @@
 #     with it, so a store that answers 401 is told apart from one that does not
 #     answer, and a rejected key from a missing one. The key goes to curl on
 #     stdin, never on its command line.
-#   - Ollama in `external` mode: GET <OLLAMA_URL>/api/tags; in `auto` mode with
-#     an external store, the same probe of localhost:11434 that the server
-#     makes to choose between a native Ollama and a container.
+#   - Ollama in `external` mode: GET <OLLAMA_URL>/api/tags; in `auto` mode, the
+#     same probe of localhost:11434 that the server makes to choose between a
+#     native Ollama and a container — beside an external store, and beside a
+#     managed one where Docker answers or its socket is idle (#494).
 #
 # Exit codes: 0 = all gates green; 1 = at least one gate failed (see messages).
 # <<< usage
@@ -966,7 +971,7 @@ if [ "$E_PROVIDER" = ollama ]; then
         else
           # Said, as Gate 1 says it beside an external store (CR 793): the
           # Ollama container below is then assumed, perhaps needlessly.
-          warn "curl not found — localhost:11434 was not probed for a native Ollama, so the Ollama container is checked as if none answers"
+          warn "curl not found — localhost:11434 was not probed for a native Ollama, so the Ollama container is treated as needed, as if none answers"
         fi
       fi
       [ "$NATIVE" = 200 ] || LOCAL_TARGETS+=(ollama)

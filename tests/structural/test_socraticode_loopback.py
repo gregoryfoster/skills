@@ -657,7 +657,7 @@ class TestPreflightReadsTheContainers:
             tmp_path, _project(tmp_path), binv, STUB_CONTAINERS=str(state)
         )
         assert "•" in _line(
-            result, "the Ollama container is checked as if none answers"
+            result, "the Ollama container is treated as needed, as if none answers"
         )
 
     def test_an_idle_socket_is_not_inspected(self, tmp_path):
