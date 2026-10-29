@@ -35,10 +35,6 @@ AGENTS.md :: enumerated :: Two readings bind it, not one
 # different number of ratchets have been breached then.
 AGENTS.md :: stable :: which let three ratchets be breached past a green suite
 
-# Back-reference to the two readings enumerated three sentences earlier, not an
-# independent tally.
-AGENTS.md :: stable :: How the two are reconciled
-
 # --- the skill's own surface (v1.14 self-curation pass, 2026-08-31) ---
 #
 # Path-scoped: this file is shared with the repo's AGENTS.md surface.
