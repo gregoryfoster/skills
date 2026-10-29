@@ -214,7 +214,8 @@ for target in "${TARGETS[@]}"; do
   if [ "$V" = missing ] && [ -z "$CHECK" ]; then
     if create "$target" "$name"; then
       inspect "$name" "$expect"
-      [ "$V" != ok ] || V=created
+      # A verdict other than ok still names the change this run made (CR 796).
+      if [ "$V" = ok ]; then V=created; else DETAIL="$DETAIL; created by this run"; fi
     else
       inspect "$name" "$expect"
       if [ "$V" = missing ]; then

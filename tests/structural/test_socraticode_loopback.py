@@ -333,6 +333,14 @@ class TestTheScriptsVerdicts:
         verdict, detail = _rows(_script(docker, "--check", "qdrant"))["qdrant"]
         assert verdict == "decoy" and "socraticode-qdrant-old" in detail
 
+    def test_a_create_beside_a_decoy_still_says_it_created(self, tmp_path):
+        """CR 796: the row must not hide a container this run made."""
+        old = dict(LOOPBACK_Q, state="exited")
+        docker = Docker(tmp_path, {"socraticode-qdrant-old": old})
+        verdict, detail = _rows(_script(docker, "qdrant"))["qdrant"]
+        assert len(docker.runs()) == 1
+        assert verdict == "decoy" and "created by this run" in detail
+
     def test_the_mitigations_backup_name_is_not_a_decoy(self, tmp_path):
         docker = Docker(
             tmp_path, {"socraticode-qdrant": LOOPBACK_Q, "bak494-qdrant": WIDE_Q}
