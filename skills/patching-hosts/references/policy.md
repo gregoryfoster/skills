@@ -106,7 +106,7 @@ exception <what> <review-by YYYY-MM-DD> <reason>
 | `unpinned:<package>` | an installed package whose candidate comes from a followed origin, and that no package pin names (both postures) |
 | `tailscale:auto-update` | Tailscale updates itself (`tailscale set --auto-update`), or nothing ever set it on the node, so nothing on record says whether it does (both postures). The node's own setting isn't enough: on co-replicator, tailscaled re-applied the tailnet's default, on, over `--auto-update=false` at a later boot (2026-10-06, #357). Turn it off for the tailnet too, in the admin console's auto-updates. `--post-boot` reads it again |
 | `held:<package>` | an owner's hold on a pending package |
-| `database:<name>` | a cluster database no `datastore` line names |
+| `database:<name>` | a cluster database no `datastore` line names. `<name>` may be a glob, `*` and `?`, so `database:app_test*` covers a test suite's per-worker databases; an exact name wins over a glob, and the more specific glob over another (#455). No other `<what>` takes one |
 | `datastore:<container>` | a running Qdrant container no `datastore` line names, because the owner rebuilds the store rather than snapshot it (#367) |
 | `ordering:<service>` | a `service` with no `After=` on a data store |
 | `journal:volatile` | the journal doesn't survive a reboot |
