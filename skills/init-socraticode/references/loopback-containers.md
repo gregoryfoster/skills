@@ -103,7 +103,8 @@ removing the backup, and any rollback. A recreate run to prove the procedure
 counts too. The procedure swaps a container under a live index, so it stays
 out of every script. It's the one the 2026-10-28 mitigation ran on a
 workstation and a cohort host.
-Below, `C=socraticode-qdrant`, `B=bak494-qdrant` and `P=16333`. For Ollama, it's
+Below, `C=socraticode-qdrant`, `B=bak494-qdrant`, `P=16333` and `G=16334`,
+or the host's `QDRANT_PORT` / `QDRANT_GRPC_PORT`. For Ollama, it's
 the same steps with its own volume, port and `/root/.ollama`, and no telemetry
 variable.
 
@@ -130,7 +131,7 @@ existing, and SocratiCode would `docker start` a name with nothing behind it.
 2. **Rename, then stop, then run**, back to back:
    ```bash
    docker rename "$C" "$B" && docker stop "$B" && \
-   docker run -d --pull never --name "$C" -p "127.0.0.1:$P:6333" -p 127.0.0.1:16334:6334 \
+   docker run -d --pull never --name "$C" -p "127.0.0.1:$P:6333" -p "127.0.0.1:$G:6334" \
      -v socraticode_qdrant_data:/qdrant/storage --restart unless-stopped \
      -e QDRANT__TELEMETRY_DISABLED=true "$TAG"
    ```
