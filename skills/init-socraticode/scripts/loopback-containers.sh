@@ -45,7 +45,10 @@
 # Output: one tab-separated line per target on stdout,
 #   <target> <container> <verdict> <detail>
 # where <verdict> is one of:
-#   ok         exists, every publish on loopback, telemetry off (Qdrant)
+#   ok         exists and has run before (stopped is fine: SocratiCode starts
+#              it), publishes the port SocratiCode addresses (QDRANT_PORT or
+#              OLLAMA_PORT) on loopback only, is not on the host network, and
+#              (Qdrant) has telemetry off
 #   created    was missing; created on loopback by this run
 #   missing    does not exist (--check only)
 #   wide       publishes a port beyond loopback, or uses the host network
@@ -56,6 +59,7 @@
 #              failed bind leaves one), publishes no port, or not the port
 #              SocratiCode addresses
 #   unknown    could not be read, or could not be created
+# After a create, any verdict other than ok ends "; created by this run".
 # Docker's own messages, and a pull's progress, go to stderr.
 #
 # Exit codes: 0 = every target ok or created; 1 = at least one target is not;

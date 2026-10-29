@@ -940,9 +940,10 @@ fi
 # firewall. It starts an existing container by name and never recreates one,
 # so a container created first on 127.0.0.1 is the one it keeps using. That is
 # loopback-containers.sh's job. This script still creates nothing: it reads
-# the containers through that script's --check and names the command. A wide
-# or a missing container is a ✗; telemetry, a decoy name, or a container that
-# could not be read is a •.
+# the containers through that script's --check and names the command. A
+# wide, missing or broken container is a ✗; telemetry, a decoy name, or a
+# container that could not be read is a •. On an idle socket nothing is read,
+# and the create command is named anyway.
 #
 # Read only where Docker already answered above. Against an idle socket any
 # docker command would start the daemon (row R), and the health hook's

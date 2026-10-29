@@ -85,7 +85,7 @@ Auto mode hard-codes `localhost:11435`.
 
 | Where | Reads | Verdict |
 |---|---|---|
-| `preflight.sh`, Gate 1b | `loopback-containers.sh --check`, only where Docker already answered | **✗** wide, or missing (its fix is the create command); **•** telemetry on, a decoy, unreadable |
+| `preflight.sh`, Gate 1b | `loopback-containers.sh --check`, only where Docker already answered; on an idle socket, nothing, and the create command is named | **✗** wide (host networking included), missing (its fix is the create command), or broken (never started, or not on SocratiCode's port); **•** telemetry on, a decoy, unreadable |
 | `socraticode-health.sh`, once a day | TCP listeners on the three ports: `ss -ltn` (Linux), `lsof -iTCP -sTCP:LISTEN` (macOS). It runs no docker command | one session line naming each non-loopback bind |
 
 What the listener check can't see:
