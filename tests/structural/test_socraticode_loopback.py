@@ -994,6 +994,20 @@ class TestNodeBelow20CannotReachALoopbackContainer:
         line = _line(result, "through localhost")
         assert "the native Ollama" in line and "socraticode-qdrant" not in line
 
+    def test_node_20_reads_no_setting_for_it(self, tmp_path):
+        """CR 811: on Node 20+ an escaped OLLAMA_HOST cannot warn about a check that never runs."""
+        binv = _host(tmp_path)
+        stub = binv / "docker"
+        stub.write_text(DOCKER_STUB.format(python=sys.executable))
+        stub.chmod(0o755)
+        state = binv.parent / "containers.json"
+        state.write_text(json.dumps({"socraticode-qdrant": LOOPBACK_Q}))
+        project = _project(tmp_path, shared={"OLLAMA_HOST": 'http://a\\"b'})
+        result = _preflight(
+            tmp_path, project, binv, STUB_CONTAINERS=str(state), OLLAMA_MODE="docker"
+        )
+        assert "OLLAMA_HOST in" not in result.stdout, result.stdout
+
     def test_below_the_engines_floor_says_upgrade_once(self, tmp_path):
         result = self._run(tmp_path, "v18.16.1", "::1")
         assert "through localhost" not in result.stdout

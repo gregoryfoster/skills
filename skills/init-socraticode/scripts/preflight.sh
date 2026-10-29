@@ -1362,44 +1362,47 @@ fi
 # docker mode its embedder reads OLLAMA_URL and its readiness wait OLLAMA_HOST,
 # and only both on 127.* move it. And only above the engines floor, where the
 # "too old" ✗ has not already said to upgrade.
+# Built only where the check applies (CR 811): on Node 20+ no settings value
+# is read for it, so none can warn about a check that never runs.
 LOCALHOST_TARGETS=""
-for _t in ${LOCAL_TARGETS[@]+"${LOCAL_TARGETS[@]}"}; do
-  case "$_t" in
-    qdrant)
-      # Its client takes QDRANT_URL when set, readiness QDRANT_HOST (CR 808).
-      case "$(url_host "http://${Q_HOST:-localhost}") $(url_host "${Q_URL:-http://127.0.0.1}")" in
-        127.*" "127.*) continue ;;
-      esac
-      ;;
-    ollama)
-      if [ "$O_MODE" = docker ]; then
-        _ou="$O_URL_RAW"
-        resolve OLLAMA_HOST; _oh="$R_VAL"
-        case "$(url_host "${_ou:-http://localhost}") $(url_host "${_oh:-http://localhost}")" in
+if [ -n "${NODE_MAJOR:-}" ] && [ "$NODE_MAJOR" -lt 20 ] && version_ge "$NODE_VER" "$NODE_MIN"; then
+  for _t in ${LOCAL_TARGETS[@]+"${LOCAL_TARGETS[@]}"}; do
+    case "$_t" in
+      qdrant)
+        # Its client takes QDRANT_URL when set, readiness QDRANT_HOST (CR 808).
+        case "$(url_host "http://${Q_HOST:-localhost}") $(url_host "${Q_URL:-http://127.0.0.1}")" in
           127.*" "127.*) continue ;;
         esac
-      fi
-      ;;
-  esac
-  LOCALHOST_TARGETS="${LOCALHOST_TARGETS:+$LOCALHOST_TARGETS, }socraticode-$_t"
-done
-# The native Ollama auto mode found (CR 806). This script's curl falls back to
-# 127.0.0.1, so it answered; upstream's own probe is a Node fetch of
-# localhost:11434, refused on Node 18 where ::1 comes first, and then upstream
-# falls back to a container it creates on every interface.
-if [ "$E_PROVIDER" = ollama ] && [ "$O_MODE" = auto ] && [ "$NATIVE" = 200 ]; then
-  LOCALHOST_TARGETS="${LOCALHOST_TARGETS:+$LOCALHOST_TARGETS, }the native Ollama (upstream's auto-mode probe; refused, it creates a wide Ollama container)"
-fi
-if [ -n "${NODE_MAJOR:-}" ] && [ "$NODE_MAJOR" -lt 20 ] && [ -n "$LOCALHOST_TARGETS" ] \
-  && version_ge "$NODE_VER" "$NODE_MIN"; then
-  LOCALHOST_FIRST="$(node -e "require('dns').lookup('localhost',(e,a)=>process.stdout.write(e?'':String(a)))" 2>/dev/null || true)"
-  case "$LOCALHOST_FIRST" in
-    127.*) pass "Node $NODE_RAW resolves localhost to $LOCALHOST_FIRST first, so it reaches the loopback containers" ;;
-    *)
-      fail "Node $NODE_RAW cannot reach $LOCALHOST_TARGETS through localhost: it resolves to ${LOCALHOST_FIRST:-an address this check could not read} first, and before Node 20 there is no fallback to 127.0.0.1"
-      hint "Upgrade: 'nvm install 22 && nvm use 22'"
-      ;;
-  esac
+        ;;
+      ollama)
+        if [ "$O_MODE" = docker ]; then
+          _ou="$O_URL_RAW"
+          resolve OLLAMA_HOST; _oh="$R_VAL"
+          case "$(url_host "${_ou:-http://localhost}") $(url_host "${_oh:-http://localhost}")" in
+            127.*" "127.*) continue ;;
+          esac
+        fi
+        ;;
+    esac
+    LOCALHOST_TARGETS="${LOCALHOST_TARGETS:+$LOCALHOST_TARGETS, }socraticode-$_t"
+  done
+  # The native Ollama auto mode found (CR 806). This script's curl falls back to
+  # 127.0.0.1, so it answered; upstream's own probe is a Node fetch of
+  # localhost:11434, refused on Node 18 where ::1 comes first, and then upstream
+  # falls back to a container it creates on every interface.
+  if [ "$E_PROVIDER" = ollama ] && [ "$O_MODE" = auto ] && [ "$NATIVE" = 200 ]; then
+    LOCALHOST_TARGETS="${LOCALHOST_TARGETS:+$LOCALHOST_TARGETS, }the native Ollama (upstream's auto-mode probe; refused, it creates a wide Ollama container)"
+  fi
+  if [ -n "$LOCALHOST_TARGETS" ]; then
+    LOCALHOST_FIRST="$(node -e "require('dns').lookup('localhost',(e,a)=>process.stdout.write(e?'':String(a)))" 2>/dev/null || true)"
+    case "$LOCALHOST_FIRST" in
+      127.*) pass "Node $NODE_RAW resolves localhost to $LOCALHOST_FIRST first, so it reaches the loopback containers" ;;
+      *)
+        fail "Node $NODE_RAW cannot reach $LOCALHOST_TARGETS through localhost: it resolves to ${LOCALHOST_FIRST:-an address this check could not read} first, and before Node 20 there is no fallback to 127.0.0.1"
+        hint "Upgrade: 'nvm install 22 && nvm use 22'"
+        ;;
+    esac
+  fi
 fi
 
 # ── Gate 3: npx reachable (the plugin MCP server launches as `npx -y socraticode`)
