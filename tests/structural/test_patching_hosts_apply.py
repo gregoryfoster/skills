@@ -186,7 +186,7 @@ class Host(RigHost):
             f"began={TUE_1530 - 3600}\nexit=0\ncount=4\nwall_seconds=540\nsecurity_only=1\n"
         )
         (self.dry / "dry-run.log").write_text(
-            "Packages that will be upgraded: libc6 libxml2 libssl3t64 postgresql-16\n"
+            "Packages that will be upgraded: libc6 libxml2 libssl3t64 postgresql-16 libpq5\n"
         )
         self.state = tmp_path / "state"
         self.state.mkdir()
@@ -1242,6 +1242,50 @@ def test_the_bulk_holds_each_groups_pending_packages_and_never_the_owners(host):
         f'bash "{apply}" --approve --step postgres --run "{host.run_dir}": approval 3(a), a restart',
         f'bash "{apply}" --approve --step redis --run "{host.run_dir}": approval 3(a), a restart',
     ]
+
+
+# --- a hold group's package the lane can't take (#488) ------------------------------
+# host 6's security lane selected 37 packages, none in a hold group, but
+# -updates had a newer containerd: the bulk held it, which the lane could
+# never take, and releasing it took a held step that upgraded nothing.
+
+PG_NOW = "16.10-0ubuntu0.24.04.1"
+REDIS_NOW = "5:7.0.15-1ubuntu0.24.04.1"
+CTRD_NOW = "1.7.28-0ubuntu1~24.04.1"
+CONTAINERD = (
+    f"Inst containerd [1.7.27-0ubuntu1~24.04.1] ({CTRD_NOW} "
+    "Ubuntu:24.04/noble-updates [arm64])\n"
+)
+
+
+def _counted(host: Host, containerd: str = CTRD_NOW) -> Host:
+    """containerd pending from -updates, and a dry run that counted every
+    hold group's candidate, containerd's at CONTAINERD."""
+    host.cases["apt-get"].insert(0, (SIM_ARGS, SIMULATION + CONTAINERD, 0, "", None))
+    with (host.dry / "summary").open("a") as f:
+        f.write(
+            f"held_versions=postgresql-16={PG_NOW} libpq5={PG_NOW} "
+            f"redis-server={REDIS_NOW} containerd={containerd}\n"
+        )
+    return host
+
+
+def test_the_bulk_holds_only_what_the_lanes_selection_takes(host):
+    out = _counted(host).run()
+    assert out["holds"]["placed"] == {"postgres": ["postgresql-16", "libpq5"]}
+    [hold] = [a for n, a, _ in host.calls("apt-mark") if a.startswith("hold")]
+    assert hold == "hold postgresql-16 libpq5"
+    # The span it was gated on counted the same steps.
+    assert out["gate"]["run_span"]["held_steps"] == ["postgres"]
+    assert not [n for n in out["next"] if "--step docker" in n or "--step redis" in n]
+
+
+def test_a_candidate_that_moved_since_the_dry_run_is_still_held(host):
+    # The dry run can't say whether the lane takes a release it never saw:
+    # held, as before, rather than taken unheld by the bulk.
+    out = _counted(host, containerd="1.7.27-0ubuntu1~24.04.2").run()
+    assert out["holds"]["placed"]["docker"] == ["containerd"]
+    assert "redis" not in out["holds"]["placed"]
 
 
 @pytest.mark.parametrize("sudo", [True, "reset"])
