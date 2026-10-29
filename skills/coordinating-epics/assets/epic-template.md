@@ -4,7 +4,7 @@ The epic's body is the run's whole state. A coordinator thread that is compacted
 
 Copy the block below into the epic and fill it in. The **core** sections are in every epic. Add the **optional** ones only when the run needs them, and drop a section once it is empty for good. `epic-edit.sh` finds lines by their leading ref and sections by their heading, so keep each item led by its ref, and keep each heading unique.
 
-- **Header lines** use the `- **Field:** value` form. `scan.sh` reads `Last check-in`, `Last issue seen` and `Last verified SHA` from them, and `epic-edit.sh`'s `header` op writes them.
+- **Header lines** use the `- **Field:** value` form. `scan.sh` reads `Last check-in`, `Last issue seen` and `Last verified SHA` from them, and `epic-edit.sh`'s `header` op writes them, turning a paragraph-form header into this list.
 - **Checklist items** lead with their ref: `- [ ] #12 …`, or `- [ ] owner/repo#3 …` for another repo's issue.
 - **Notes on a line** are appended, dated and short, each its own field after a middle dot (`·`): `- [ ] #12 … · S · Decided 2026-10-14: one PR.` The `note` op writes the dot, so its text is the note alone: `Still open: census on the next export.` or `Deploy no earlier than 2026-10-15T18:00Z.`
 
