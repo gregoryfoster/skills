@@ -181,3 +181,15 @@ class TestTheOtherShapesAreUnchanged:
         repo = _repo(tmp_path, "# P\n\nSee #81.\n")
         rows, _ = _issues(repo, "--repo", CURRENT)
         assert rows == {"#81": ("TRUE", "open")}, rows
+
+
+class TestTheRepoIsAskedOnce:
+    def test_gh_repo_view_runs_once_for_many_short_references(self, tmp_path: Path):
+        """CR 844: the lookup is cached for the run, as its comment says. A
+        command substitution ran it in a subshell, so the cache never
+        survived and every short reference cost its own `gh repo view`."""
+        repo = _repo(tmp_path, "# P\n\nSee watcher#368, broker#93 and skills#81.\n")
+        rows, calls = _issues(repo)
+        assert rows["watcher#368"][0] == "UNVERIFIABLE", rows
+        assert rows["#81"] == ("TRUE", "open"), rows
+        assert sum(c.startswith("repo view") for c in calls) == 1, calls
