@@ -1978,6 +1978,124 @@ def test_a_module_stays_unread_whatever_its_working_directory(host):
     assert "python3 -m infra.renew, a Python module" in f["message"]
 
 
+# --- systemd's drop-in order (#515, #484 site 5) -------------------------------------
+# journald.conf(5) and systemd.unit(5): every *.conf across /etc, /run,
+# /usr/local/lib and /usr/lib, a name in a higher directory masking the same
+# name lower down, then applied in filename order whatever the directory.
+
+JD = "systemd/journald.conf.d"
+
+
+@pytest.mark.parametrize(
+    "files, storage, set_in",
+    [
+        # The disk GC's layer installs its drop-in under /usr/local/lib.
+        (
+            {f"usr/local/lib/{JD}/zz-cannobserv-journal.conf": "volatile"},
+            "volatile",
+            f"/usr/local/lib/{JD}/zz-cannobserv-journal.conf:2",
+        ),
+        ({f"run/{JD}/50-x.conf": "none"}, "none", f"/run/{JD}/50-x.conf:2"),
+        # By filename, not by directory: zz-a sorts after 10-b, and wins.
+        (
+            {
+                f"usr/lib/{JD}/zz-a.conf": "volatile",
+                f"etc/{JD}/10-b.conf": "persistent",
+            },
+            "volatile",
+            f"/usr/lib/{JD}/zz-a.conf:2",
+        ),
+        # /etc's copy of a name masks /usr/lib's.
+        (
+            {
+                f"usr/lib/{JD}/50-x.conf": "volatile",
+                f"etc/{JD}/50-x.conf": "persistent",
+            },
+            "persistent",
+            f"/etc/{JD}/50-x.conf:2",
+        ),
+        # And so does a link to /dev/null, which reads as nothing.
+        (
+            {f"usr/lib/{JD}/50-x.conf": "volatile", f"etc/{JD}/50-x.conf": None},
+            "persistent",
+            "/etc/systemd/journald.conf:2",
+        ),
+    ],
+    ids=["usr-local-lib", "run", "filename-order", "masked", "masked-by-null"],
+)
+def test_journald_drop_ins_are_read_as_journald_reads_them(
+    host, files, storage, set_in
+):
+    host.write("etc/systemd/journald.conf", "[Journal]\nStorage=persistent\n")
+    for rel, value in files.items():
+        if value is None:
+            host.link(rel, "/dev/null")
+        else:
+            host.write(rel, f"[Journal]\nStorage={value}\n")
+    j = host.run()["environment"]["journal"]
+    assert (j["storage"], j["storage_set_in"]) == (storage, set_in)
+
+
+def test_a_working_directory_drop_in_in_usr_local_lib_is_read_in_name_order(host):
+    # read_language's drop-in merge read /etc and /run alone (CR 236): a
+    # drop-in under /usr/local/lib that sorts last sets the tree.
+    _tree(host)
+    _uv(host)
+    d = "systemd/system/app.service.d"
+    host.write(f"etc/{d}/10-elsewhere.conf", "[Service]\nWorkingDirectory=/srv/x\n")
+    host.write(
+        f"usr/local/lib/{d}/zz-app.conf", f"[Service]\nWorkingDirectory=/{APP}\n"
+    )
+    [t] = _lang(_audit(host))
+    assert t["dir"] == f"/{APP}"
+
+
+@pytest.mark.parametrize(
+    "dropins, finds",
+    [
+        # Site 5: zz-a sorts last, so its WorkingDirectory= wins, though it's
+        # in /etc and 10-b in /usr/lib.
+        (
+            {
+                "etc/systemd/system/cache-sweep.service.d/zz-a.conf": f"WorkingDirectory={AV}",
+                "usr/lib/systemd/system/cache-sweep.service.d/10-b.conf": "WorkingDirectory=/srv/old",
+            },
+            True,
+        ),
+        (
+            {
+                "etc/systemd/system/cache-sweep.service.d/10-a.conf": f"WorkingDirectory={AV}",
+                "usr/lib/systemd/system/cache-sweep.service.d/zz-b.conf": "WorkingDirectory=/srv/old",
+            },
+            False,
+        ),
+        # /run's copy of a name masks /usr/lib's.
+        (
+            {
+                "run/systemd/system/cache-sweep.service.d/50-wd.conf": f"WorkingDirectory={AV}",
+                "usr/lib/systemd/system/cache-sweep.service.d/50-wd.conf": "WorkingDirectory=/srv/old",
+            },
+            True,
+        ),
+    ],
+    ids=["etc-sorts-last", "usr-lib-sorts-last", "run-masks-usr-lib"],
+)
+def test_the_restarter_scans_working_directory_follows_drop_in_filename_order(
+    host, dropins, finds
+):
+    host.write("etc/systemd/system/cache-sweep.timer", "[Timer]\nOnCalendar=daily\n")
+    host.write(
+        "etc/systemd/system/cache-sweep.service",
+        f"[Service]\nType=oneshot\nExecStart={AV}/.venv/bin/python infra/sweep_cache.py\n",
+    )
+    for rel, line in dropins.items():
+        host.write(rel, f"[Service]\n{line}\n")
+    host.write(SWEEP, RESTARTS)
+    host.write(OLD_SWEEP, NOTIFIES)
+    out = host.run()
+    assert ("restarter:cache-sweep.service" in _ids(out)) is finds
+
+
 # --- the restarter scan's residual sites (#484) --------------------------------------
 # Sites 1 and 4 can hide a real restarter: a restart the scan should find,
 # and didn't.
@@ -1996,6 +2114,12 @@ def test_a_plain_units_own_systemctl_start_is_a_restarter(host):
     f = _finding(out, "restarter:app-watch.service")
     assert f["exception_what"] is None
     assert "app-watch.service" in {r["unit"] for r in out["impact"]["restarters"]}
+    # A restart on an Exec line was read, so no exception silences it.
+    host.knob(
+        "posture scheduled\n"
+        "exception not-restarter:app-watch.service 2099-01-01 it only starts\n"
+    )
+    assert "restarter:app-watch.service" in _ids(host.run())
 
 
 def test_an_inline_commands_relative_script_is_read_against_its_working_directory(
