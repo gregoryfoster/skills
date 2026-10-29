@@ -3422,7 +3422,9 @@ named_by() {  # <ere>: NAMED (JSON array body); NAMED_USE, the deploy/ line that
 
 # A host unit that uses a component (#491): an admin's unit or drop-in whose
 # Requires=, After= or Exec* line names it. The component's own units, and
-# their drop-ins, don't count. NAMED_UNIT := the first, in words, or empty.
+# their drop-ins, don't count: a name that starts with the component's, as
+# postgresql@16-main and redis-server do, and app-redis-worker doesn't
+# (CR 889). NAMED_UNIT := the first, in words, or empty.
 unit_names() {  # <ere>
   local f base out
   NAMED_UNIT=""
@@ -3430,7 +3432,7 @@ unit_names() {  # <ere>
     [ -f "$f" ] || continue
     base=${f#"$P_ROOT"/etc/systemd/system/}
     base=${base%%/*}
-    if grep -qiE -- "$1" <<<"$base"; then continue; fi
+    if grep -qiE -- "^($1)" <<<"$base"; then continue; fi
     capture out as_reader grep -m1 -iE -- "^[[:space:]]*(Requires|After|Exec[A-Za-z]*)=.*($1)" "$f"
     if [ "$CAP_RC" -eq 0 ] && [ -n "$out" ]; then
       out=${out#"${out%%[![:space:]]*}"}
