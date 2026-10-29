@@ -91,6 +91,9 @@ STORE_VARIABLES = (
     "QDRANT_URL",
     "QDRANT_HOST",
     "QDRANT_PORT",
+    # Read since #494 for the loopback containers' publishes (CR 794).
+    "QDRANT_GRPC_PORT",
+    "OLLAMA_PORT",
     "QDRANT_API_KEY",
     "OLLAMA_MODE",
     "OLLAMA_URL",
