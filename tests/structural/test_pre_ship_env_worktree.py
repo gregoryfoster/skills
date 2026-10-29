@@ -64,10 +64,14 @@ def _git(*args: str) -> None:
     subprocess.run(["git", *args], check=True, capture_output=True, env=_clean_env())
 
 
-def _recipe(variant: str) -> str:
+def _recipe(variant: str, etc_env: str = "/nonexistent-497/.env") -> str:
     """The runnable recipe: the first contiguous run of `#   ` code lines in
     the override block, uncommented. For the delegating variants that is the
-    whole wrapper; for the stub it is the loader and the calls to it."""
+    whole wrapper; for the stub it is the loader and the calls to it.
+
+    `etc_env` stands in for the machine-wide file. The default does not exist;
+    pass a real file to exercise a project whose env lives only there (CR 695).
+    """
     lines = (SKILLS_DIR / variant / "scripts" / "pre-ship.sh").read_text().splitlines()
     start = next(i for i, ln in enumerate(lines) if ln.startswith(HEADER))
     out = []
@@ -81,14 +85,14 @@ def _recipe(variant: str) -> str:
     assert out, f"no runnable recipe found in {variant}'s override block"
     program = "\n".join(out)
     # The machine-wide file is a placeholder path whose `<` would parse as a
-    # redirect; point it somewhere that does not exist.
+    # redirect; point it at the stand-in.
     assert "/etc/<project>/.env" in program, program
-    return program.replace("/etc/<project>/.env", "/nonexistent-497/.env")
+    return program.replace("/etc/<project>/.env", etc_env)
 
 
 # What the probe reports: names only, never values.
 PROBE = """
-for n in PRIMARY_ONLY WT_ONLY; do
+for n in PRIMARY_ONLY WT_ONLY ETC_ONLY; do
   if [ -n "${!n+x}" ]; then echo "HAS_$n"; fi
 done
 if [ -n "${PRE_SHIP_ENV_NAMES+x}" ]; then
@@ -116,8 +120,10 @@ def checkouts(tmp_path: Path):
     return primary, worktree
 
 
-def _run_recipe(variant: str, cwd: Path) -> subprocess.CompletedProcess:
-    program = _recipe(variant)
+def _run_recipe(
+    variant: str, cwd: Path, etc_env: str = "/nonexistent-497/.env"
+) -> subprocess.CompletedProcess:
+    program = _recipe(variant, etc_env)
     if variant in DELEGATING_VARIANTS:
         # The wrapper execs the delegate through its symlink path; put the
         # probe there so the exec lands on it.
@@ -355,3 +361,62 @@ class TestTheStampKnowsItsEnvironment:
             f"{variant}: an env-keyed run reused the stamp of a run with no "
             "env contract."
         )
+
+
+class TestAnEnvOnlyInEtc:
+    """CR 695: a host-deployed service keeps its env in /etc/<project>/.env
+    and has no repo .env at all. The recipe loaded it, then reset the names
+    and warned that tests would skip: a false WARN on every run, and a gate
+    that never stamps."""
+
+    @pytest.mark.parametrize("variant", ALL_VARIANTS)
+    def test_no_warn_when_the_machine_wide_file_loaded(
+        self, variant, checkouts, tmp_path
+    ):
+        _, worktree = checkouts
+        etc = tmp_path / "etc.env"
+        etc.write_text(f"ETC_ONLY={SECRET}\n")
+        r = _run_recipe(variant, worktree, str(etc))
+        _no_secret(r)
+        assert r.returncode == 0, r.stderr
+        assert "HAS_ETC_ONLY" in r.stdout, r.stdout
+        assert "WARN" not in r.stderr, (
+            f"{variant}: the env loaded from the machine-wide file, and the "
+            f"recipe still warned that tests needing it will skip:\n{r.stderr}"
+        )
+
+    @pytest.mark.parametrize("variant", STAMPED_VARIANTS)
+    def test_its_names_reach_the_gate_and_the_gate_stamps(
+        self, variant, checkouts, tmp_path, project
+    ):
+        _, worktree = checkouts
+        etc = tmp_path / "etc.env"
+        etc.write_text(f"ETC_ONLY={SECRET}\nAPI_KEY={SECRET}\n")
+        r = _run_recipe(variant, worktree, str(etc))
+        _no_secret(r)
+        line = next((ln for ln in r.stdout.splitlines() if ln.startswith("NAMES=")), "")
+        names = line[len("NAMES=[") : -1]
+        assert set(names.split()) == {"ETC_ONLY", "API_KEY"}, (
+            f"{variant}: the recipe discarded the names the machine-wide file "
+            f"set, so the gate reads 'no env file' and never stamps. {line!r}"
+        )
+        _gate(variant, project, names)
+        assert _stamps(project), (
+            f"{variant}: a run whose env loaded from /etc wrote no stamp."
+        )
+
+
+@pytest.mark.parametrize("variant", ALL_VARIANTS)
+def test_the_warn_names_each_path_it_tried_once(variant, checkouts):
+    """CR 697: in a primary checkout the fallback resolves to the same file,
+    and the WARN printed it twice. It names each path tried, once."""
+    primary, _ = checkouts
+    r = _run_recipe(variant, primary)
+    assert r.returncode == 0, r.stderr
+    local = str(primary / ".env")
+    assert r.stderr.count(local) == 1, (
+        f"{variant}: the WARN should name {local} once:\n{r.stderr}"
+    )
+    assert "/nonexistent-497/.env" in r.stderr, (
+        f"{variant}: the WARN must name the machine-wide path it tried too:\n{r.stderr}"
+    )
