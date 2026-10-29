@@ -66,8 +66,10 @@ class TestTheLongestEntryIsCharged:
         """replicator#137: the run's own entry, listed below the old suffix,
         is the one charged — and in either order, since file order is an
         accident of when each entry was appended."""
-        for name, order in (("below", (OLD_SUFFIX, OWN_ENTRY)),
-                            ("above", (OWN_ENTRY, OLD_SUFFIX))):
+        for name, order in (
+            ("below", (OLD_SUFFIX, OWN_ENTRY)),
+            ("above", (OWN_ENTRY, OLD_SUFFIX)),
+        ):
             repo = _rewritten(tmp_path / name, ARCH_BEFORE, ARCH_AFTER)
             _ack(repo, *order)
             r = _prove(repo, "--claims")
@@ -154,8 +156,10 @@ class TestNestedLinesNeedNoOrdering:
         return repo
 
     def test_either_order_passes(self, tmp_path: Path):
-        for name, order in (("short-first", (self.NESTED, self.NESTING)),
-                            ("long-first", (self.NESTING, self.NESTED))):
+        for name, order in (
+            ("short-first", (self.NESTED, self.NESTING)),
+            ("long-first", (self.NESTING, self.NESTED)),
+        ):
             repo = self._repo(tmp_path / name)
             _ack(repo, *(f"disproven :: {t}" for t in order))
             r = _prove(repo)

@@ -149,7 +149,8 @@ Warranted losses (.skills/context-loss-ok):
     disproven  a command refuted the claim (see verify-facts.sh)
     default    the tool now does this by default, so the instruction is noise
     tighten    Phase 3 class C rewrote the line in place — same claims, fewer
-               words. REQUIRES --claims, and is refused without it (#250).
+               words. REQUIRES --claims, and a run that charges one a line
+               is refused without it (#250, #338).
     index      Phase 5 extended an index line in place to link a doc it did
                not link at --base. CHECKED here, and refused when the
                evidence does not hold (#282): see "The index warrant".
@@ -229,6 +230,16 @@ The index warrant:
   lost. Only identical text folds, surrounding whitespace aside: two links
   equal only once a move's re-aiming is erased are two lines, and one entry
   matching both is refused. A second entry for a copy is reported redundant.
+
+  A line two entries reach is charged to the LONGER, whatever their order in
+  the file; equal lengths fall back to file order (#347). An entry an earlier
+  run judged usually pins a prefix of its line, so it still reaches the line
+  after a later run rewrites it, and first-match let it shadow the later run's
+  own entry. Longest-wins settles the common case, where the later entry names
+  more of the line, but not every case, so each such line is reported with
+  every entry that reaches it. An uncharged entry the charged one contains is
+  redundant: prune it. One it does not contain is SHADOWED, a second
+  judgement of the same line, and the run does not say which to keep.
 
   Comments are `#` at LINE START only. Stripping an inline one would silently
   broaden the entry — `Fixed in #412` becomes `Fixed in`.
@@ -1002,8 +1013,11 @@ for raw in before:
         lost.append(raw.strip())
 
 # A warrant only ever reaches a line that is ALREADY unaccounted for, so it can
-# neither mask a relocation nor manufacture one. First matching entry is charged
-# with the hit, which is what makes an entry's blast radius visible below.
+# neither mask a relocation nor manufacture one. The LONGEST entry that reaches
+# a line is charged with the hit, which is what makes an entry's blast radius
+# visible below; file order breaks only a tie. First-match let an earlier run's
+# prefix entry shadow the specific one a later rewrite of the same line wrote
+# below it, and then called that one redundant (#347).
 #
 # A scoped entry sits out a run against another target entirely: it cannot
 # warrant a line here, and it is not accused of having gone stale here either,
@@ -1015,15 +1029,31 @@ for i, entry in enumerate(entries):
     else:
         out_of_scope.append(entry)
 
+warranted, unwarranted = [], []
+charged = [[] for _ in entries]
+reached_by = {}
+for line in lost:
+    # max() keeps the first of equal keys, so a tie falls back to file order.
+    reaching = [i for i in in_scope if reaches(entries[i][1], line)]
+    if not reaching:
+        unwarranted.append(line)
+        continue
+    idx = max(reaching, key=lambda i: len(entries[i][1]))
+    warranted.append((entries[idx][0], line))
+    charged[idx].append(line)
+    reached_by[line] = (idx, reaching)
+
 # A warrant that cannot certify itself is refused when its evidence was not
 # gathered, rather than downgraded to a warning — warnings ride in stdout, where
 # the exit code and the ledger row do not read them, which is the lesson the
-# over-broad refusal below already paid for. Checked against IN-SCOPE entries
-# only: a `tighten` judged for another target is not this run's claim to make,
-# and demanding --claims for it would make one target's file dictate another
-# target's flags.
+# over-broad refusal below already paid for. Checked against the entries this
+# run CHARGED: a `tighten` that warrants nothing here — judged for another
+# target, or outranked by a longer entry — is not this run's claim to make, and
+# demanding --claims for it made an unscoped one left by a policy-file run
+# refuse every per-doc run that tightened nothing (#338).
 ungated = sorted({entries[i][0] for i in in_scope
-                  if entries[i][0] in REQUIRES_CLAIMS}) if not claims_on else []
+                  if charged[i] and entries[i][0] in REQUIRES_CLAIMS}
+                 ) if not claims_on else []
 if ungated:
     print(f"ERROR {ack_path} uses {', '.join(ungated)} without --claims.",
           file=sys.stderr)
@@ -1032,16 +1062,6 @@ if ungated:
           "produce: re-run with\n  --claims, which checks that every atom of "
           "the rewritten lines survived.", file=sys.stderr)
     sys.exit(1)
-
-warranted, unwarranted = [], []
-charged = [[] for _ in entries]
-for line in lost:
-    idx = next((i for i in in_scope if reaches(entries[i][1], line)), None)
-    if idx is None:
-        unwarranted.append(line)
-    else:
-        warranted.append((entries[idx][0], line))
-        charged[idx].append(line)
 
 # A short entry that is part of a line this run lost, and left unwarranted, is
 # REFUSED (#283). Below the floor an entry matches whole lines only, so `ly l`
@@ -1115,16 +1135,17 @@ if broad:
               "line", file=sys.stderr)
         # Narrowing cannot help when one matched line is part of another:
         # every substring of `return f()` is in `return f() or {}` too, and
-        # deleted code nests lines that way. A line is charged to the FIRST
-        # entry matching it, so order is the remedy, and advice that cannot be
-        # followed is no advice.
+        # deleted code nests lines that way. A line is charged to the LONGEST
+        # entry reaching it, so an entry naming the longer line whole is the
+        # remedy, wherever it sits, and advice that cannot be followed is no
+        # advice.
         nested = next(((a, b) for a in lines for b in lines
                        if a != b and a in b), None)
         if nested:
             print(f"    `{nested[0][:60]}` is part of a longer lost line, so "
-                  "no narrowing separates them:\n    list an entry for "
-                  f"`{nested[1][:60]}` ABOVE this one — a line is charged to\n"
-                  "    the first entry that matches it", file=sys.stderr)
+                  "no narrowing separates them:\n    add an entry naming "
+                  f"`{nested[1][:60]}` whole — a line is charged to\n"
+                  "    the longest entry that reaches it", file=sys.stderr)
     sys.exit(1)
 
 # --- the index warrant (#282) ---------------------------------------------
@@ -1519,6 +1540,26 @@ if warranted:
         copies = f" x{len(hits)}" if len(hits) > 1 else ""
         print(f"    {len(set(hits))} hit(s){copies}: {warrant} :: "
               f"{content[:70]}", file=out)
+    # Shadowing, said out loud (#347). Longest-wins picks the more specific of
+    # two entries, but whether it picked the one judged for THIS run's edit is
+    # a question only the operator can answer: an older entry pinning a longer
+    # prefix of the line still wins. So every lost line two different entries
+    # reach is printed with all of them. Identical CONTENT is not a collision —
+    # it is the redundant copy reported below.
+    collisions = [(line, idx, reaching) for line, (idx, reaching)
+                  in reached_by.items()
+                  if len({entries[i][1] for i in reaching}) > 1]
+    if collisions:
+        print(f"\n  {len(collisions)} lost line(s) reached by more than one "
+              "entry — each charged to the longest:", file=out)
+        for line, idx, reaching in collisions:
+            print(f"    {line[:120]}", file=out)
+            print(f"      charged: {entries[idx][0]} :: "
+                  f"{entries[idx][1][:70]}", file=out)
+            for i in reaching:
+                if entries[i][1] != entries[idx][1]:
+                    print(f"      also:    {entries[i][0]} :: "
+                          f"{entries[i][1][:70]}", file=out)
 
 # An entry that matched nothing was called stale outright, and "prune it" is
 # only sound advice for some of them (#251). Two facts decide which:
@@ -1548,26 +1589,43 @@ if warranted:
 # line" is exactly the judgement whole-line matching exists to not make.
 #
 # A third case is neither. An entry that matches a LOST line and was charged
-# nothing matched only lines an earlier entry took first — a second entry for a
-# copy the first already covers, the one-per-occurrence file #278 tried, or a
-# narrower entry listed below a broader one. "Accounted for now" would be false
-# of it: its line is lost, and warranted. It is redundant.
-stale, ambiguous, redundant = [], [], []
+# nothing matched only lines a longer entry took — a second entry for a copy
+# the first already covers, the one-per-occurrence file #278 tried, or a
+# narrower entry inside a broader one. "Accounted for now" would be false of it:
+# its line is lost, and warranted. When the entry charged with each such line
+# CONTAINS it, it adds nothing and is redundant. When one does not, the two are
+# different judgements of one line — the issue's own case (#347), where an
+# earlier run's longer prefix outranks this run's retarget — and calling the
+# shorter one redundant told the operator to delete this run's judgement. It is
+# shadowed, and the run cannot say which of the two to keep.
+stale, ambiguous, redundant, shadowed = [], [], [], []
 for i in in_scope:
     if charged[i]:
         continue
     warrant, content, scope = entries[i]
-    if any(reaches(content, line) for line in lost):
-        redundant.append(entries[i])
+    taken = [entries[idx][1] for line, (idx, reaching) in reached_by.items()
+             if i in reaching]
+    if taken:
+        nested = all(content in other for other in taken)
+        (redundant if nested else shadowed).append(entries[i])
         continue
     settled = scope is not None or any(reaches(content, b) for b in base_lines)
     (stale if settled else ambiguous).append(entries[i])
 
 if redundant:
     print(f"\n  {len(redundant)} entry(ies) redundant — every line each matches "
-          "is already warranted by\n  an earlier entry, and one entry covers all "
-          "of a line's copies; prune:", file=out)
+          "is warranted by a longer\n  or earlier entry that contains it, and one "
+          "entry covers all of a line's copies;\n  prune:", file=out)
     for warrant, content, _ in redundant:
+        print(f"    {warrant} :: {content[:70]}", file=out)
+
+if shadowed:
+    print(f"\n  {len(shadowed)} entry(ies) shadowed — each reaches a lost line "
+          "charged to a longer or\n  earlier entry that does not contain it, so the two may "
+          "judge different edits\n  of that line (listed above). Keep the one "
+          "that judged this run's edit and\n  re-judge the other; do not prune "
+          "on this run alone:", file=out)
+    for warrant, content, _ in shadowed:
         print(f"    {warrant} :: {content[:70]}", file=out)
 
 if stale:
