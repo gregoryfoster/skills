@@ -1,15 +1,15 @@
 """A line repeated in a deleted code sample is one judgement, not several (#278).
 
 `prove-no-loss.sh` appends a lost line once per base-line OCCURRENCE, charges
-each to the first in-scope entry whose CONTENT it contains, and refuses any
-entry charged more than one line. The refusal is right to exist — its target is
+each to the longest in-scope entry whose CONTENT it contains (file order
+breaking a tie, #347), and refuses any entry charged more than one line. The refusal is right to exist — its target is
 one entry zeroing many *different* lines, `retarget :: e` — but it could not
 tell that from identical copies of one text, so a curation that deleted a code
 block whose lines repeat could never reach `ok`:
 
 - one entry per text was charged every copy and refused as over-broad (exit 1);
-- one entry per occurrence charged every copy to the FIRST of them, and was
-  refused the same way;
+- one entry per occurrence charged every copy to the FIRST of them — equal
+  lengths, so file order decides — and was refused the same way;
 - no entry at all exited 3.
 
 That is the normal shape of a deleted code sample. CannObserv/cannobserv#414
@@ -156,8 +156,8 @@ class TestADeletedCodeSampleCanBeWarranted:
 
 
 class TestARedundantEntryIsNamedAsOne:
-    """An entry that matched only lines an earlier entry was charged with is
-    neither stale nor ambiguous: its line is lost, and warranted. Reporting it
+    """An entry that matched only lines a longer or earlier entry was charged
+    with is neither stale nor ambiguous: its line is lost, and warranted. Reporting it
     "matched nothing — accounted for now" was false of it, and this change
     made the commonest shape of it passable."""
 
