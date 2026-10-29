@@ -54,7 +54,7 @@ class TestTheLongestEntryIsCharged:
 
     def test_equal_lengths_fall_back_to_file_order(self, tmp_path: Path):
         first = "enumerated :: Eight timers"
-        second = "stable :: the tree fresh"
+        second = "stable :: e tree fresh"
         assert len(first.split(" :: ")[1]) == len(second.split(" :: ")[1])
         repo = _repo(tmp_path, f"{first}\n{second}", policy=POLICY)
         r = _run(repo)
