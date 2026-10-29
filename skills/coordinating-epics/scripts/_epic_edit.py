@@ -67,12 +67,19 @@ operations (a JSON array, from --ops FILE or --ops - for stdin):
                                               "before" at its level, else at
                                               the end at the sections' level
 
-  A header op on a cursor field the body lacks (Last check-in, Last probe,
-  Last issue seen, Last verified SHA, Next) adds its line to the top-level
-  "- **Field:**" list holding the cursor lines, else to the one above the
-  first section, else just before that section (a "#" title stays above).
-  With add-section, that brings an adopted epic onto the template without a
-  hand edit.
+  A header op adds a line only for a cursor field the body lacks (Last
+  check-in, Last probe, Last issue seen, Last verified SHA, Next); any other
+  field must already be there. The line joins the top-level "- **Field:**"
+  list holding the cursor lines, else the one above the first section, else
+  goes just before that section (a "#" title stays above). With add-section,
+  that brings an adopted epic onto the template without a hand edit.
+
+  Every header op first turns each paragraph holding a cursor line, such as
+  "**Last check-in:** ...", into "- **Field:** value" items, so the header
+  converges on one list. A paragraph with a line that isn't a field stays as
+  it is, the summary's notes say why, and a new line goes below it. After the
+  last op, each field a header op set must still be there once, with the
+  value set, or the call is refused: run section ops before header ops.
 
   A ref is "#N" for this repo or "owner/repo#N". A ref's line is the checklist
   item, bullet or table row whose first token is that ref. In any text,
@@ -99,9 +106,10 @@ exit codes:
   2  infrastructure failure (gh or python3 failed; gh's own stderr is shown).
      Nothing was written, including a PATCH gh reported failed when the body
      read afterwards is unchanged.
-  3  refused: a foreign edit, a missing anchor, a count or lint failure, an
-     open issue the epic doesn't list (--account [FROM]), or a new issue in the
-     --scan report that the body doesn't mention. Nothing was written.
+  3  refused: a foreign edit, a missing anchor, a count or lint failure, a
+     header line a later op removed or changed, an open issue the epic doesn't
+     list (--account [FROM]), or a new issue in the --scan report that the
+     body doesn't mention. Nothing was written.
   4  not confirmed. Either written (summary "written": true) but the body read
      back differs from the body sent, the read-back failed, or the baseline
      couldn't be saved; or the PATCH failed and whether it landed is unknown
@@ -594,40 +602,154 @@ def after_block(lines: list[str], i: int) -> int:
     return end
 
 
+def list_field(lines: list[str], fence: list[bool], i: int) -> bool:
+    """True for a top-level "- **Field:** value" item outside a fence.
+
+    Top-level only: a "  - **Next:** ask alice" under a checklist item is that
+    item's note, and a line after it would split the list. A tier line
+    "- **#15:** …" is an item, not a header field (CR 316).
+    """
+    m = FIELD_RE.match(lines[i])
+    return (
+        bool(m)
+        and not fence[i]
+        and not lines[i][:1].isspace()
+        and bool(LIST_MARK_RE.match(lines[i]))
+        and not re.fullmatch(REF_PAT, m.group("field").strip())
+    )
+
+
+def field_list_end(lines: list[str], fence: list[bool], i: int) -> int:
+    """One past the run of adjacent field items from line i, sub-bullets and all."""
+    end = after_block(lines, i)
+    while end < len(lines) and list_field(lines, fence, end):
+        end = after_block(lines, end)
+    return end
+
+
+def paragraph_headers(lines: list[str]) -> list[tuple[int, int]]:
+    """(start, end) of each paragraph holding a top-level cursor line (#399).
+
+    "**Last check-in:** …" with no "- " is no list item, so it is no anchor for
+    a new header line, and a header op used to leave it a paragraph.
+    """
+    return [
+        (s, e)
+        for s, e, kind in spans(lines)
+        if kind == "para"
+        and any(
+            not lines[j][:1].isspace() and is_cursor_line(lines[j]) for j in range(s, e)
+        )
+    ]
+
+
+SETEXT_RE = re.compile(r"^\s{0,3}(?:=+|-+)[ \t]*$")
+
+
+def converge(lines: list[str]) -> list[str]:
+    """Turn each paragraph header into "- **Field:** value" items, in place (#399).
+
+    Every line of the paragraph must be a field line, cursor or not: a plain
+    line would become a lazy continuation of the item above it. A paragraph
+    that can't converge is left as it is, and a note names the line, because
+    no op can rewrite a paragraph above the first heading (#413), and refusing
+    would block the Last check-in write every check-in makes. A hard break
+    goes: two trailing spaces, or a "\\" that would show in an item as itself.
+    Blank lines between it and a field list holding a cursor go too, or GitHub
+    renders one loose list; an unrelated list keeps its gap [measured with
+    gh api markdown]. Edits lines in place and returns notes on what it did.
+    """
+    notes = []
+    for s, e in reversed(paragraph_headers(lines)):
+        para = lines[s:e]
+        bad = next(
+            (ln for ln in para if ln[:1].isspace() or not FIELD_RE.match(ln)), None
+        )
+        why = f"{bad.strip()!r} can't become a list item" if bad is not None else ""
+        if not why and e < len(lines) and SETEXT_RE.match(lines[e]):
+            why = f"the {lines[e].strip()!r} under it makes it a heading"
+        if why:
+            notes.append(
+                f"the header paragraph at line {s + 1} stays a paragraph: {why}"
+            )
+            continue
+        items = []
+        for k, ln in enumerate(para):
+            ln = ln.rstrip()
+            # A "\" ends a hard break only before a line ending, and an escaped
+            # "\\" is no break: an odd count of them is one.
+            if k < len(para) - 1 and (len(ln) - len(ln.rstrip("\\"))) % 2:
+                ln = ln[:-1].rstrip()
+            items.append("- " + ln)
+        lines[s:e] = items
+        notes.append(f"the header paragraph at line {s + 1} became a list")
+        fence = fenced(lines)
+        below = e
+        while below < len(lines) and not lines[below].strip():
+            below += 1
+        if (
+            below > e
+            and below < len(lines)
+            and list_field(lines, fence, below)
+            and holds_cursor(lines, below, field_list_end(lines, fence, below))
+        ):
+            del lines[e:below]
+        above = s
+        while above > 0 and not lines[above - 1].strip():
+            above -= 1
+        if above < s and any(
+            end == above and holds_cursor(lines, start, end)
+            for start, end in field_lists(lines)
+        ):
+            del lines[above:s]
+    return notes
+
+
+def holds_cursor(lines: list[str], start: int, end: int) -> bool:
+    """True when a top-level line in the range is a cursor line, not a sub-note."""
+    return any(not ln[:1].isspace() and is_cursor_line(ln) for ln in lines[start:end])
+
+
+def field_lists(lines: list[str]) -> list[tuple[int, int]]:
+    """(start, end) of each run of adjacent top-level field items."""
+    fence, out, i = fenced(lines), [], 0
+    while i < len(lines):
+        if list_field(lines, fence, i):
+            end = field_list_end(lines, fence, i)
+            out.append((i, end))
+            i = end
+        else:
+            i += 1
+    return out
+
+
 def header_end(lines: list[str]) -> tuple[int, bool]:
     """(where a new header line goes, whether it joins an existing field list).
 
-    After the run of "- **Field:**" items holding the cursor lines, else the
-    list-item fields above the first section, and after each one's
-    sub-bullets (as add-line, CR 250). A bold-led paragraph is no field list.
-    Else just before the first section heading, a title kept above (CR 308).
+    After the run of "- **Field:**" items holding the cursor lines, and after
+    each one's sub-bullets (as add-line, CR 250). Else below a paragraph
+    header converge() couldn't turn into a list, not in some other list
+    (#399). Else after the list-item fields above the first section. A
+    bold-led paragraph is no field list. Else just before the first section
+    heading, a title kept above (CR 308).
     """
     fence = fenced(lines)
     secs = section_headings(lines)
     first = secs[0][0] if secs else len(lines)
-
-    def list_field(i: int) -> bool:
-        # Top-level only: a "  - **Next:** ask alice" under a checklist item
-        # is that item's note, and a line after it would split the list. A
-        # tier line "- **#15:** …" is an item, not a header field (CR 316).
-        m = FIELD_RE.match(lines[i])
-        return (
-            bool(m)
-            and not fence[i]
-            and not lines[i][:1].isspace()
-            and bool(LIST_MARK_RE.match(lines[i]))
-            and not re.fullmatch(REF_PAT, m.group("field").strip())
-        )
-
     starts = [
-        i for i in range(len(lines)) if list_field(i) and is_cursor_line(lines[i])
+        i
+        for i in range(len(lines))
+        if list_field(lines, fence, i) and is_cursor_line(lines[i])
     ]
-    starts = starts or [i for i in range(first) if list_field(i)]
+    if not starts and (paras := paragraph_headers(lines)):
+        end = paras[0][1]
+        # A line between a setext heading and its underline unmakes the heading.
+        if end < len(lines) and SETEXT_RE.match(lines[end]):
+            end += 1
+        return end, False
+    starts = starts or [i for i in range(first) if list_field(lines, fence, i)]
     if starts:
-        end = after_block(lines, starts[0])
-        while end < len(lines) and list_field(end):
-            end = after_block(lines, end)
-        return end, True
+        return field_list_end(lines, fence, starts[0]), True
     while first > 0 and not lines[first - 1].strip():
         first -= 1
     return first, False
@@ -673,31 +795,32 @@ ONE_LINE_BLOCK_RE = re.compile(
 )
 
 
-def paragraphs(lines: list[str]) -> list[tuple[str, bool]]:
-    """(text, is_row) for each paragraph and each table row outside a fenced block.
+def spans(lines: list[str]) -> list[tuple[int, int, str]]:
+    """(start, end, kind) for each paragraph and table row outside a fenced block.
 
     A code span or link text can wrap within a paragraph, never past it, so a
     paragraph is read whole (CR 334). It ends at a blank line, a fence, a table,
     a heading, a thematic break, a list item, or a quote's start. An ordered
     item numbered other than 1 doesn't break a plain paragraph, but does end
     an item; a ">" line continues a quote; any other line continues the
-    paragraph [each measured with gh api markdown].
+    paragraph [each measured with gh api markdown]. kind is "row", "item",
+    "quote", "line" (a one-line block) or "para".
     """
     fence, table = fenced(lines), tabled(lines)
-    out: list[tuple[str, bool]] = []
-    run: list[str] = []
-    kind = ""
+    out: list[tuple[int, int, str]] = []
+    start, kind = -1, ""
 
-    def flush() -> None:
-        if run:
-            out.append(("\n".join(run), False))
-            run.clear()
+    def flush(end: int) -> None:
+        nonlocal start
+        if start >= 0:
+            out.append((start, end, kind))
+            start = -1
 
     for i, ln in enumerate(lines):
         if fence[i] or table[i] or not ln.strip():
-            flush()
+            flush(i)
             if table[i] and not fence[i]:
-                out.append((ln, True))
+                out.append((i, i + 1, "row"))
             continue
         item, quote = LIST_ITEM_RE.match(ln), QUOTE_RE.match(ln)
         one_line = ONE_LINE_BLOCK_RE.match(ln)
@@ -707,14 +830,21 @@ def paragraphs(lines: list[str]) -> list[tuple[str, bool]]:
             or (item and kind == "item")
             or (quote and kind != "quote")
         )
-        if starts or not run:
-            flush()
-            kind = "item" if item else "quote" if quote else "para"
-        run.append(ln)
+        if starts or start < 0:
+            flush(i)
+            start = i
+            kind = (
+                "line" if one_line else "item" if item else "quote" if quote else "para"
+            )
         if one_line:
-            flush()
-    flush()
+            flush(i + 1)
+    flush(len(lines))
     return out
+
+
+def paragraphs(lines: list[str]) -> list[tuple[str, bool]]:
+    """(text, is_row) for each of spans(): what the lint reads as one unit."""
+    return [("\n".join(lines[s:e]), kind == "row") for s, e, kind in spans(lines)]
 
 
 def refs_in(lines: list[str], host: str) -> set[str]:
@@ -771,6 +901,9 @@ def apply_ops(
     lines = list(body_lines)
     expect = {"open": 0, "done": 0}
     notes: list[str] = []
+    converged: set[str] = set()
+    # field -> (op, name, value) of the last header op that set it (#399).
+    header_set: dict[str, tuple[str, str, str]] = {}
     for n, op in enumerate(ops, 1):
         kind = op.get("op")
         where = f"op {n} ({kind})"
@@ -868,14 +1001,12 @@ def apply_ops(
             elif kind == "header":
                 field = op["field"].strip()
                 value = inject(op["value"], now, scan).strip()
-                fence = fenced(lines)
-                hits = [
-                    i
-                    for i, ln in enumerate(lines)
-                    if not fence[i]
-                    and (m := FIELD_RE.match(ln))
-                    and m.group("field").strip().lower() == field.lower()
-                ]
+                for note in converge(lines):
+                    if note not in converged:
+                        converged.add(note)
+                        notes.append(f"{where}: {note}")
+                header_set[field.lower()] = (where, field, value)
+                hits = field_hits(lines, field)
                 if not hits and field.lower() in CURSOR_FIELDS:
                     # An adopted epic gets its cursors through here, not a
                     # hand edit (CR 292). Other fields aren't added: a typo
@@ -976,7 +1107,36 @@ def apply_ops(
             + ", ".join(doubled)
             + ". Keep one line per ref, and move it rather than copy it"
         )
+    # Ops apply in order, so a later section op can delete or copy a line a
+    # header op just set, and the call used to report success (#399, shape D).
+    for f, (where, name, value) in header_set.items():
+        found = [
+            FIELD_RE.match(lines[i]).group("value").strip()
+            for i in field_hits(lines, f)
+        ]
+        if found != [value]:
+            now_reads = (
+                f"it reads {found[0]!r}"
+                if len(found) == 1
+                else f"{len(found)} '**{name}:**' lines remain"
+            )
+            raise Refused(
+                f"{where} set {name} to {value!r}, but after every op {now_reads}."
+                " Put section ops before header ops"
+            )
     return lines, expect, notes
+
+
+def field_hits(lines: list[str], field: str) -> list[int]:
+    """Every "**Field:**" line outside a fence, in either form, at any depth."""
+    fence, want = fenced(lines), field.strip().lower()
+    return [
+        i
+        for i, ln in enumerate(lines)
+        if not fence[i]
+        and (m := FIELD_RE.match(ln))
+        and m.group("field").strip().lower() == want
+    ]
 
 
 # ---------------------------------------------------------------- gh

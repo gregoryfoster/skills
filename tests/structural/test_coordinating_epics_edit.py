@@ -634,6 +634,26 @@ def test_moving_a_line_between_sections_in_one_call_is_fine(adopted):
             "- **#11:** first\n- **#12:** second\n\n## Log\n\n- x\n",
             "- **#12:** second\n\n- **Last verified SHA:** abc1234\n\n## Log",
         ),
+        (
+            "Intro.\n\n**Last check-in:** 2026-10-28T17:37Z\n\n"
+            "- **Last issue seen:** #14\n- **Next:** #12\n\n## Tier 1\n\n- [ ] #12 b\n",
+            "Intro.\n\n- **Last check-in:** 2026-10-28T17:37Z\n"
+            "- **Last issue seen:** #14\n- **Next:** #12\n"
+            "- **Last verified SHA:** abc1234\n\n## Tier 1",
+        ),
+        (
+            "Intro.\n\n## Children\n\n- [ ] #12 b\n\n"
+            "## Coordination\n\n**Last check-in:** 2026-10-15\n\nMore text.\n",
+            "## Coordination\n\n- **Last check-in:** 2026-10-15\n"
+            "- **Last verified SHA:** abc1234\n\nMore text.",
+        ),
+        (
+            "Intro.\n\n**Last check-in:** 2026-10-15  \n**Next:** #12\n\n"
+            "**Milestones**\n\n- **M1:** soak\n- **M2:** ship\n\n## Tier 1\n\n- [ ] #12 b\n",
+            "Intro.\n\n- **Last check-in:** 2026-10-15\n- **Next:** #12\n"
+            "- **Last verified SHA:** abc1234\n\n**Milestones**\n\n"
+            "- **M1:** soak\n- **M2:** ship\n\n## Tier 1",
+        ),
     ],
     ids=[
         "fields-under-a-title",
@@ -644,15 +664,153 @@ def test_moving_a_line_between_sections_in_one_call_is_fine(adopted):
         "a-lone-title",
         "a-checklist-items-nested-field",
         "tier-lines-are-no-header",
+        "a-paragraph-cursor-over-the-list",
+        "a-paragraph-cursor-in-a-section",
+        "a-paragraph-cursor-over-an-unrelated-list",
     ],
 )
 def test_a_new_header_line_joins_the_header_block(rig, body, want):
-    """CR 308: never inside a paragraph, between a field and its sub-bullets, or above a title."""
+    """CR 308: never inside a paragraph, between a field and its sub-bullets, or above a title.
+
+    #399: a paragraph cursor line anchors too, and becomes a list item first.
+    """
     rig.issue(REPO, EPIC, body=body)
     ops = [{"op": "header", "field": "Last verified SHA", "value": "abc1234"}]
     res = rig.edit(REPO, EPIC, ops, "--adopt-live")
     assert res.returncode == 0, res.stderr
     assert want in rig.body(REPO, EPIC), rig.body(REPO, EPIC)
+
+
+def _header(rig, body, ops):
+    rig.issue(REPO, EPIC, body=body)
+    return rig.edit(REPO, EPIC, ops, "--adopt-live")
+
+
+def test_setting_a_paragraph_cursor_converges_the_header(rig):
+    """#399 shape A, as CannObserv/broker#80 has it: one tight list, once."""
+    body = (
+        "Intro.\n\n**Last check-in:** 2026-10-28T17:37Z\n\n"
+        "- **Last issue seen:** #14\n- **Next:** #12\n\n## Tier 1\n\n- [ ] #12 b\n"
+    )
+    ops = [{"op": "header", "field": "Last check-in", "value": "2026-10-29T09:00Z"}]
+    res = _header(rig, body, ops)
+    assert res.returncode == 0, res.stderr
+    assert summary(res)["notes"] == [
+        "op 1 (header): the header paragraph at line 3 became a list"
+    ]
+    assert rig.body(REPO, EPIC).startswith(
+        "Intro.\n\n- **Last check-in:** 2026-10-29T09:00Z\n"
+        "- **Last issue seen:** #14\n- **Next:** #12\n\n## Tier 1"
+    ), rig.body(REPO, EPIC)
+    res = rig.edit(REPO, EPIC, ops)
+    assert res.returncode == 0 and summary(res).get("unchanged"), res.stderr
+
+
+def test_any_header_op_converges_the_header(rig):
+    """#399, finding 141: a header op on another field converges the paragraph too."""
+    body = (
+        "**Last check-in:** 2026-10-28\n\n- **Next:** #12\n\n## Tier 1\n\n- [ ] #12 b\n"
+    )
+    res = _header(rig, body, [{"op": "header", "field": "Next", "value": "#12"}])
+    assert res.returncode == 0, res.stderr
+    assert rig.body(REPO, EPIC).startswith(
+        "- **Last check-in:** 2026-10-28\n- **Next:** #12\n\n## Tier 1"
+    ), rig.body(REPO, EPIC)
+
+
+def test_a_converged_paragraph_drops_its_hard_breaks(rig):
+    """#399: two trailing spaces, or a "\\", would show in an item; a last "\\" isn't a break."""
+    body = (
+        "**Last check-in:** 2026-10-28  \n**Protocol:** gregoryfoster/skills#348\\\n"
+        "**Next:** C:\\\\\n**Last issue seen:** #14 \\\n\n## Tier 1\n\n- [ ] #12 b\n"
+    )
+    res = _header(rig, body, [{"op": "header", "field": "Next", "value": "#12"}])
+    assert res.returncode == 0, res.stderr
+    assert rig.body(REPO, EPIC).startswith(
+        "- **Last check-in:** 2026-10-28\n- **Protocol:** gregoryfoster/skills#348\n"
+        "- **Next:** #12\n- **Last issue seen:** #14 \\\n\n## Tier 1"
+    ), rig.body(REPO, EPIC)
+
+
+@pytest.mark.parametrize(
+    "para, why",
+    [
+        ("**Last check-in:** 2026-10-28\nsee the log", "'see the log'"),
+        ("**Last check-in:** 2026-10-28\n---", "the '---' under it"),
+        ("**Last check-in:** 2026-10-28\n  **Next:** #12", "'**Next:** #12'"),
+    ],
+    ids=["a-plain-line", "a-setext-heading", "an-indented-field"],
+)
+def test_a_paragraph_that_cant_converge_stays_and_says_so(rig, para, why):
+    """#399: no op rewrites a paragraph above the first heading (#413), so no refusal.
+
+    The set still lands in place, and a new field goes right below the
+    paragraph, not into some other list.
+    """
+    body = f"{para}\n\n- **M1:** soak\n\n## Tier 1\n\n- [ ] #12 b\n"
+    ops = [
+        {"op": "header", "field": "Last check-in", "value": "2026-10-29"},
+        {"op": "header", "field": "Last verified SHA", "value": "abc1234"},
+    ]
+    res = _header(rig, body, ops)
+    assert res.returncode == 0, res.stderr
+    notes = summary(res)["notes"]
+    assert len(notes) == 1 and why in notes[0] and "stays a paragraph" in notes[0]
+    want = para.replace("2026-10-28", "2026-10-29")
+    assert rig.body(REPO, EPIC).startswith(
+        f"{want}\n\n- **Last verified SHA:** abc1234\n\n- **M1:** soak"
+    ), rig.body(REPO, EPIC)
+
+
+def test_an_unrelated_list_keeps_its_gap(rig):
+    """#399: joining the cursors to the Milestones list was finding 140's defect."""
+    body = (
+        "**Last check-in:** 2026-10-28\n\n- **M1:** soak\n\n## Tier 1\n\n- [ ] #12 b\n"
+    )
+    ops = [{"op": "header", "field": "Next", "value": "#12"}]
+    res = _header(rig, body, ops)
+    assert res.returncode == 0, res.stderr
+    assert rig.body(REPO, EPIC).startswith(
+        "- **Last check-in:** 2026-10-28\n- **Next:** #12\n\n- **M1:** soak\n\n## Tier 1"
+    ), rig.body(REPO, EPIC)
+
+
+@pytest.mark.parametrize(
+    "section, why, reversed_code",
+    [
+        ("Moved.", "0 '**Last check-in:**' lines remain", 0),
+        ("**Last check-in:** 2026-10-01", "it reads '2026-10-01'", 0),
+        (
+            "**Last check-in:** 2026-10-29\n\n- **Last check-in:** 2026-10-29",
+            "2 '**Last check-in:**' lines remain",
+            3,
+        ),
+    ],
+    ids=["deleted", "overwritten", "copied"],
+)
+def test_a_later_op_cant_undo_a_header_op(rig, section, why, reversed_code):
+    """#399 shape D: replace-section after the header ops removed the cursors, exit 0."""
+    body = (
+        "Intro.\n\n## Coordination\n\n- **Last check-in:** 2026-10-15\n"
+        "- **Next:** #12\n\n## Tier 1\n\n- [ ] #12 b\n"
+    )
+    ops = [
+        {"op": "header", "field": "Last check-in", "value": "2026-10-29"},
+        {"op": "replace-section", "heading": "Coordination", "text": section},
+    ]
+    res = _header(rig, body, ops)
+    assert res.returncode == 3, res.stderr
+    assert "op 1 (header) set Last check-in to '2026-10-29'" in res.stderr
+    assert why in res.stderr and "section ops before header ops" in res.stderr
+    assert not (rig.state_dir / "acme" / "widgets" / "10" / "last-written.md").exists()
+    # Section first, as the refusal advises: the header op then sees the
+    # result, and a copy is refused by the op's own count.
+    res = _header(rig, body, ops[::-1])
+    assert res.returncode == reversed_code, res.stderr
+    if reversed_code:
+        assert "want exactly one" in res.stderr
+    else:
+        assert "- **Last check-in:** 2026-10-29\n" in rig.body(REPO, EPIC)
 
 
 def test_header_adds_only_a_cursor_field(adopted):
