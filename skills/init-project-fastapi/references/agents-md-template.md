@@ -124,7 +124,7 @@ Two env files, loaded in order (later values override):
 1. **`/etc/<PROJECT_NAME>/.env`** — production secrets (`DATABASE_URL`, etc.). Survives repo resets and worktree switches. Managed manually on the VM. The only env file the systemd service loads.
 2. **`.env`** (repo root, git-ignored) — dev/agent secrets (`GH_TOKEN`, `TEST_DATABASE_URL`). Never commit. Production never reads it.
 
-For shell commands, **parse the files, never source them**: sourcing runs a file as shell code, and exporting all of it hands every secret in it to every child process. Define `load_env` once per shell from the recipe in `skills/shipping-work-python-fastapi/scripts/pre-ship.sh`'s header (in a linked worktree, its `ENV_FILE` lines find the primary checkout's `.env`), then:
+For shell commands, **parse the files, never source them**: sourcing runs a file as shell code, so anything in it that isn't a plain `KEY=value` executes or expands. `load_env` exports what it loads, so keep secrets a shell doesn't need out of these files. Define `load_env` once per shell from the recipe in `skills/shipping-work-python-fastapi/scripts/pre-ship.sh`'s header (in a linked worktree, its `ENV_FILE` lines find the primary checkout's `.env`), then:
 
 ​```bash
 load_env /etc/<PROJECT_NAME>/.env; load_env .env
