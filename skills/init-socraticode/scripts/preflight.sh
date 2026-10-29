@@ -34,6 +34,12 @@
 # whose daemon is down, no docker command runs at all — any of them would
 # start the daemon.
 #
+# Where Docker answers, each container that will run here is read with
+# loopback-containers.sh --check (#494): one that is missing, or publishes
+# beyond loopback, fails, and the fix names that script's create command or
+# references/loopback-containers.md. Upstream would create a missing one on
+# every interface. This script creates and recreates nothing.
+#
 # Two launches can install at start — the driver's and the plugin session's —
 # and each is pinned separately: a pre-install under SOCRATICODE_PIN_DIR, and
 # SOCRATICODE_SPEC (read like the store values above) on a plugin build that
@@ -187,6 +193,8 @@ resolve QDRANT_MODE;        STORE_MODE="$R_VAL" STORE_SRC="$R_SRC"
 resolve QDRANT_URL;         Q_URL="${R_VAL%/}"
 resolve QDRANT_HOST;        Q_HOST="$R_VAL"
 resolve QDRANT_PORT;        Q_PORT="$R_VAL"
+resolve QDRANT_GRPC_PORT;   Q_GRPC_PORT="$R_VAL"
+resolve OLLAMA_PORT;        O_PORT="$R_VAL"
 resolve QDRANT_API_KEY;     Q_KEY="$R_VAL"
 resolve EMBEDDING_PROVIDER; E_PROVIDER="${R_VAL:-ollama}"
 resolve OLLAMA_MODE;        O_MODE="${R_VAL:-auto}"
@@ -772,7 +780,7 @@ memory_protection /proc/self/mountinfo
 # DOCKER_FOR says why, for the gate's own line; DOCKER_WHAT names what runs,
 # for the boot-persistence lines, which used to say "Qdrant never starts" on a
 # host where only an Ollama container needed Docker (#287 CR 22).
-DOCKER_FOR="" DOCKER_WHAT=""
+DOCKER_FOR="" DOCKER_WHAT="" NATIVE="" NATIVE_PROBED="" DOCKER_UP="" DOCKER_IDLE=""
 if [ "$STORE_MODE" = managed ]; then
   DOCKER_FOR="the managed Qdrant" DOCKER_WHAT="the Qdrant container"
 fi
@@ -787,6 +795,7 @@ if [ "$E_PROVIDER" = ollama ]; then
       # Probed only where the answer changes the verdict: next to a managed
       # Qdrant, Docker is needed either way.
       if [ "$STORE_MODE" = external ]; then
+        NATIVE_PROBED=1
         if command -v curl >/dev/null 2>&1; then
           NATIVE="$(curl -q --noproxy '*' -s -o /dev/null -w '%{http_code}' --max-time 2 http://localhost:11434/api/tags 2>/dev/null || true)"
         else
@@ -874,12 +883,14 @@ else
       # The socket is how this host runs Docker, and the server's first docker
       # call brings the daemon up.
       pass "Docker is socket-activated and its daemon is down — not probed, since any docker command would start it; the server starts it on first use (needed for $DOCKER_FOR)"
+      DOCKER_IDLE=1
     fi
   elif ! docker info >/dev/null 2>&1; then
     fail "Docker installed but the daemon is not running (needed for $DOCKER_FOR)"
     hint "Start Docker Desktop (macOS) or: sudo systemctl start docker (Linux)"
   else
     pass "Docker installed and daemon reachable (needed for $DOCKER_FOR)"
+    DOCKER_UP=1
   fi
 
   # Boot persistence (advisory; systemd hosts only). SocratiCode creates both
@@ -920,6 +931,96 @@ fi
 # that has it is the one that never heard it before (#287 CR 22).
 if [ "$STORE_MODE" = external ] && [ -n "$DOCKER_FOR" ]; then
   warn "This external-store client still embeds through an Ollama container — OLLAMA_MODE=external with the store's OLLAMA_URL keeps it Docker-free"
+fi
+
+# ── Gate 1b: SocratiCode's containers publish on loopback only (#494) ───────
+# Upstream creates each container with `-p <port>:6333` and no host IP, so an
+# unauthenticated Qdrant holding every indexed chunk's source text, and its
+# Ollama, listen on every interface, and Docker's publishes bypass the host
+# firewall. It starts an existing container by name and never recreates one,
+# so a container created first on 127.0.0.1 is the one it keeps using. That is
+# loopback-containers.sh's job. This script still creates nothing: it reads
+# the containers through that script's --check and names the command. A wide
+# or a missing container is a ✗; telemetry, a decoy name, or a container that
+# could not be read is a •.
+#
+# Read only where Docker already answered above. Against an idle socket any
+# docker command would start the daemon (row R), and the health hook's
+# listener check covers that host without one.
+LOCAL_TARGETS=()
+[ "$STORE_MODE" != managed ] || LOCAL_TARGETS+=(qdrant)
+if [ "$E_PROVIDER" = ollama ]; then
+  case "$O_MODE" in
+    docker) LOCAL_TARGETS+=(ollama) ;;
+    auto)
+      # Gate 1 probes only beside an external store. Beside a managed one the
+      # answer decides nothing there, but here it decides whether an Ollama
+      # container is created at all.
+      if [ -z "$NATIVE_PROBED" ] && [ -n "$DOCKER_UP" ] && command -v curl >/dev/null 2>&1; then
+        NATIVE="$(curl -q --noproxy '*' -s -o /dev/null -w '%{http_code}' --max-time 2 http://localhost:11434/api/tags 2>/dev/null || true)"
+      fi
+      [ "$NATIVE" = 200 ] || LOCAL_TARGETS+=(ollama)
+      ;;
+  esac
+fi
+case "${BASH_SOURCE[0]}" in
+  */*) LOOPBACK="${BASH_SOURCE[0]%/*}/loopback-containers.sh" ;;
+  *) LOOPBACK="./loopback-containers.sh" ;;
+esac
+# The command as an operator would type it from a plain shell, which lacks
+# whatever the settings env block sets: each port that is not upstream's
+# default goes in front of it.
+LOOPBACK_ENV=()
+[ -z "$Q_PORT" ] || [ "$Q_PORT" = 16333 ] || LOOPBACK_ENV+=("QDRANT_PORT=$Q_PORT")
+[ -z "$Q_GRPC_PORT" ] || [ "$Q_GRPC_PORT" = 16334 ] || LOOPBACK_ENV+=("QDRANT_GRPC_PORT=$Q_GRPC_PORT")
+[ -z "$O_PORT" ] || [ "$O_PORT" = 11435 ] || LOOPBACK_ENV+=("OLLAMA_PORT=$O_PORT")
+LOOPBACK_CMD="${LOOPBACK_ENV[*]:+${LOOPBACK_ENV[*]} }bash \"$LOOPBACK\" ${LOCAL_TARGETS[*]:-}"
+LOOPBACK_REF="init-socraticode's references/loopback-containers.md"
+
+if [ "${#LOCAL_TARGETS[@]}" -eq 0 ]; then
+  : # nothing runs in a container here, so there is nothing to publish
+elif [ -n "$DOCKER_IDLE" ]; then
+  warn "SocratiCode's containers were not inspected — any docker command would start the idle daemon. The daily health hook checks their listeners without one"
+elif [ -n "$DOCKER_UP" ]; then
+  LB_OUT="" LB_RC=0
+  LB_OUT="$(QDRANT_PORT="${Q_PORT:-16333}" QDRANT_GRPC_PORT="${Q_GRPC_PORT:-16334}" \
+    OLLAMA_PORT="${O_PORT:-11435}" "$BASH" "$LOOPBACK" --check "${LOCAL_TARGETS[@]}" 2>&1)" || LB_RC=$?
+  LB_SEEN=""
+  while IFS=$'\t' read -r _ lb_name lb_verdict lb_detail; do
+    case "$lb_verdict" in
+      ok) LB_SEEN=1; pass "$lb_detail" ;;
+      missing)
+        # A ✗, not a •: Phase 1 re-runs until this exits 0, so a host cannot
+        # reach its first codebase_* call with the container still missing.
+        LB_SEEN=1
+        fail "$lb_name does not exist yet — SocratiCode's first codebase_* call would create it publishing on every interface"
+        hint "create it on loopback first: $LOOPBACK_CMD"
+        ;;
+      wide)
+        LB_SEEN=1
+        case "$lb_name" in
+          socraticode-qdrant) fail "$lb_detail — anyone who can reach this host can read the index, unauthenticated" ;;
+          *) fail "$lb_detail — anyone who can reach this host can use its embedder, unauthenticated" ;;
+        esac
+        hint "recreate it on loopback, with the operator's approval: $LOOPBACK_REF"
+        ;;
+      decoy)
+        LB_SEEN=1
+        warn "$lb_detail — SocratiCode may skip starting the real one"
+        hint "rename the other to a name without \"$lb_name\" in it: $LOOPBACK_REF"
+        ;;
+      telemetry)
+        LB_SEEN=1
+        warn "$lb_detail — Qdrant reports anonymous telemetry"
+        hint "recreate it with telemetry off, with the operator's approval: $LOOPBACK_REF"
+        ;;
+      unknown) LB_SEEN=1; warn "$lb_detail" ;;
+    esac
+  done <<<"$LB_OUT"
+  if [ -z "$LB_SEEN" ]; then
+    # Said, not dropped: a check that could not run is not a clean one.
+    warn "SocratiCode's containers could not be inspected (loopback-containers.sh exited $LB_RC): ${LB_OUT%%$'\n'*}"
+  fi
 fi
 
 # ── External store: the URL, its TLS, and an answer ─────────────────────────

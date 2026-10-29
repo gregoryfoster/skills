@@ -41,6 +41,11 @@ The common drift found across the cohort
   (CannObserv/replicator). Step C's installer rebuilds the command without it,
   which since [#330](https://github.com/gregoryfoster/skills/issues/330) loses nothing:
   the hook caps itself ([`host-memory.md`](host-memory.md#the-health-hook-caps-itself));
+- a managed container that SocratiCode created publishing on every interface,
+  which is every install before
+  [#494](https://github.com/gregoryfoster/skills/issues/494) that wasn't fixed by
+  hand. Phase 1 now fails it. The recreate is manual and needs the operator's
+  approval: [`loopback-containers.md`](loopback-containers.md#moving-a-wide-container-to-loopback-manual);
 - a repo moving to `STORE=external`. If it was ever indexed into that store
   without a `projectId`, those collections sit under its path hash and the
   rename orphans them; see

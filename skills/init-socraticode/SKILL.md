@@ -4,7 +4,7 @@ description: Installs, configures, and indexes SocratiCode semantic code search 
 compatibility: Designed for Claude Code (SocratiCode ships as the socraticode@socraticode plugin). Requires Docker running (or an external Qdrant and Ollama), Node >=18.17, and npx. Run from the target repo's root.
 metadata:
   author: gregoryfoster
-  version: "1.7"
+  version: "1.8"
   triggers: init socraticode, set up code search, index this project, socraticode setup
 ---
 
@@ -92,6 +92,13 @@ non-zero. Do **not** auto-install Node/npm or auto-start Docker — relay the fi
 and wait. Re-run until it exits 0.
 `bash "<SKILL_DIR>/scripts/preflight.sh" --check` is the same gates, the skill's
 dry-run.
+
+**A managed stack's containers come first.** SocratiCode's own `docker run`
+publishes Qdrant (no API key, every chunk's source text) and Ollama on every
+interface, and it reuses an existing container by name. So preflight fails a
+missing container, naming `loopback-containers.sh`'s create command: run that
+before any `codebase_*` call. It also fails one already wide; the manual
+recreate is in [`references/loopback-containers.md`](references/loopback-containers.md).
 
 If `EMBEDDING_BACKEND` is a cloud/native backend, export its env (see
 [`references/embedding-backends.md`](references/embedding-backends.md)) in the
@@ -313,7 +320,7 @@ Present a completion table:
 
 | Component | Status |
 |---|---|
-| Preflight | Docker ✓ (boot-enabled: `<yes/n-a>`) or not needed · `external`: store `<url>` ✓, `env` block in session ✓ · Node `<version>` (>=18.17) ✓ · npx ✓ |
+| Preflight | Docker ✓ (boot-enabled: `<yes/n-a>`; containers on loopback) or not needed · `external`: store `<url>` ✓, `env` block in session ✓ · Node `<version>` (>=18.17) ✓ · npx ✓ |
 | Store config | `validate-store` ✓ · `.socraticode.json`: `projectId` `<id/none>`, `<N>` relative `linkedProjects` |
 | Plugin | marketplace `socraticode` registered · `plugin:socraticode:socraticode` Connected |
 | Backend | `<EMBEDDING_BACKEND>`, or the store's (`external`: `OLLAMA_URL`, model) |
@@ -335,7 +342,7 @@ phase re-does, what a re-run repairs, and the rescue it must not skip.
 
 The invariants Phases 4–6 enforce are in
 [`references/troubleshooting.md`](references/troubleshooting.md) beside the
-gotcha matrix (A–U) and the native-vs-fallback decision tree.
+gotcha matrix (A–V) and the native-vs-fallback decision tree.
 
 - **All file edits are idempotent.** The AGENTS.md policy block and the
   `docs/SOCRATICODE.md` template are both marker-delimited — a re-run replaces

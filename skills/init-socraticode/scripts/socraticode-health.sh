@@ -85,6 +85,13 @@ What it reports (to stdout, which Claude Code injects as session context):
     check: one whose projectId is invalid, or two that share one.
   - A check its own memory cap stopped (#330): said as such, since nothing
     was measured, and never re-run uncapped.
+  - SocratiCode's local store listening beyond loopback (#494): a TCP listener
+    on QDRANT_PORT, QDRANT_GRPC_PORT or OLLAMA_PORT (16333, 16334, 11435 by
+    default) bound to any address but loopback. That is what SocratiCode's own
+    docker run publishes when it finds its container missing, and Qdrant
+    there asks for no key. Read with ss on Linux and lsof on macOS, never
+    docker, and checked even where node or the driver is missing. A publish
+    with no listening socket (Docker's userland-proxy off) is not seen.
 
 It reports. It runs no docker command of its own, never re-indexes and never
 edits a file — a session-start hook is the wrong place to spend an hour of CPU
@@ -282,12 +289,89 @@ fi
 _see=""
 [ -f "$PROJECT/docs/SOCRATICODE.md" ] && _see=" (see docs/SOCRATICODE.md)"
 
+# ── Listeners beyond loopback (#494) ─────────────────────────────────────────
+# SocratiCode starts an existing container by name and creates one only when it
+# is missing, with `docker run -p <port>:6333` and no host IP. So a container
+# pre-created on 127.0.0.1 holds until someone removes it, and the next
+# codebase_* call — this hook's own codebase_status among them — brings it back
+# on every interface, with an unauthenticated Qdrant holding every indexed
+# chunk's source text. Nothing else in the cohort would notice.
+#
+# Read from the listeners, not the containers: the contract above is no docker
+# command of our own, and on a socket-activated host any docker command starts
+# the daemon. Called after the driver run, so a container that run created is
+# reported today rather than tomorrow, and on the two early exits too: a host
+# with no node still has a store.
+#
+# A host with no ss (Linux) or lsof (macOS) is logged and otherwise silent. It
+# is a property of the host, so a session line would fire every day.
+_is_loopback() {
+  case "$1" in
+    127.* | ::1 | ::ffff:127.* | localhost) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+_report_listeners() {
+  local qp="${QDRANT_PORT:-16333}" qg="${QDRANT_GRPC_PORT:-16334}" op="${OLLAMA_PORT:-11435}"
+  local out="" line tok addr port wq="" wg="" wo="" list="" f
+  local -a toks=()
+  case "$(uname -s 2>/dev/null || true)" in
+    Darwin)
+      # Without root, lsof sees only this user's sockets. Docker Desktop's
+      # listener is the user's own com.docker.backend, so that is enough here.
+      command -v lsof >/dev/null 2>&1 || { _log "listeners not read: no lsof"; return 0; }
+      # -Fn: one `n<address>:<port>` line per socket. Exit 1 means none.
+      out="$(lsof -nP -iTCP -sTCP:LISTEN -Fn 2>/dev/null || true)"
+      ;;
+    *)
+      # ss lists every socket in this network namespace, root's docker-proxy
+      # included, without -p and without privilege.
+      command -v ss >/dev/null 2>&1 || { _log "listeners not read: no ss"; return 0; }
+      # `trap - ERR` inside the substitution, as for the cap probe below: set -E
+      # hands the trap to the subshell, where the `if` no longer shields ss.
+      if ! out="$(trap - ERR; ss -ltn 2>/dev/null)"; then
+        _log "listeners not read: ss -ltn failed"
+        return 0
+      fi
+      ;;
+  esac
+  while IFS= read -r line; do
+    case "$line" in n*) line="${line#n}" ;; esac
+    read -r -a toks <<<"$line" || true
+    # The local address is the first token ending in :<port>. A listener's
+    # peer ends in :*, and ss prints a State column on some versions only.
+    for tok in ${toks[@]+"${toks[@]}"}; do
+      case "$tok" in *:*) ;; *) continue ;; esac
+      port="${tok##*:}"
+      case "$port" in '' | *[!0-9]*) continue ;; esac
+      addr="${tok%:*}" addr="${addr#\[}" addr="${addr%\]}" addr="${addr%%\%*}"
+      [ -n "$addr" ] || addr="*"
+      if ! _is_loopback "$addr"; then
+        case "$port" in
+          "$qp") case ", $wq, " in *", $addr, "*) ;; *) wq="${wq:+$wq, }$addr" ;; esac ;;
+          "$qg") case ", $wg, " in *", $addr, "*) ;; *) wg="${wg:+$wg, }$addr" ;; esac ;;
+          "$op") case ", $wo, " in *", $addr, "*) ;; *) wo="${wo:+$wo, }$addr" ;; esac ;;
+        esac
+      fi
+      break
+    done
+  done <<<"$out"
+  for f in "$qp (Qdrant HTTP) on $wq" "$qg (Qdrant gRPC) on $wg" "$op (Ollama) on $wo"; do
+    [ -n "${f##* on }" ] && list="${list:+$list; }$f"
+  done
+  [ -n "$list" ] || return 0
+  _log "listeners beyond loopback: $list — reported"
+  echo "socraticode-health: SocratiCode's local store listens beyond loopback: port $list. Neither Qdrant nor Ollama there asks for credentials, so anyone who can reach this host can read the index."
+  echo "socraticode-health: SocratiCode publishes on every interface when it creates a missing container, and Docker's publishes bypass the host firewall. Recreate it on loopback, with the operator's approval: init-socraticode's references/loopback-containers.md."
+}
+
 if ! command -v node >/dev/null 2>&1; then
   _log "node not on PATH — reported"
   # "Will fail", not "may": the plugin starts its server as `npx` with no env
   # of its own, so the server inherits the PATH this hook was given.
   echo "socraticode-health: node is not on PATH, but this project is configured for SocratiCode (.socraticodecontextartifacts.json is present). The plugin starts its server with npx on this same PATH, so semantic search is unavailable and the codebase_* tools will fail — answer code questions with grep/rg this session."
   echo "socraticode-health: restoring node is an install fix, not a session one: init-socraticode's preflight.sh --check names what is missing${_see}."
+  _report_listeners
   exit 0
 fi
 
@@ -325,6 +409,7 @@ if [ -z "$DRIVER" ]; then
   _log "mcp-driver.mjs not found — reported"
   echo "socraticode-health: this project is configured for SocratiCode (.socraticodecontextartifacts.json is present), but mcp-driver.mjs was not found, so today's check could not run. Nothing was measured — this is not a clean result."
   echo "socraticode-health: restore the vendored init-socraticode skill, or point SOCRATICODE_DRIVER at mcp-driver.mjs; --help lists where this hook looks${_see}."
+  _report_listeners
   exit 0
 fi
 
@@ -567,6 +652,8 @@ elif [ "$RC" -ne 0 ]; then
     echo "socraticode-health: this is not a clean result. Nothing was measured today."
   fi
 fi
+
+_report_listeners
 
 _log "health-check exited $RC${CAP_UNIT:+ (capped: scope $CAP_UNIT.scope)}"
 cat "$FINDINGS_FILE" >>"$LOG" 2>/dev/null || true
