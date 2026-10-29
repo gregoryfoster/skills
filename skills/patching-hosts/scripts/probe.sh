@@ -2767,13 +2767,13 @@ inline_verdict() {  # <command> [<working directory>]
 # -c: the command follows); code (another language's code on the command
 # line, which the scan doesn't read); or module (Python's -m, with OC_MOD
 # the module when it's attached). OC_SKIP := how many words after it are
-# its options' values: bash -o, perl -I, node -r, Python's -X and
-# --check-hash-based-pycs. A value read as the script was read as a path.
+# its options' values: bash -o and --rcfile, perl -I, node -r, Python's -X
+# and --check-hash-based-pycs. A value read as the script was read as a path.
 opt_word() {  # <sh, python, perl, ruby or node> <word>
   local w=$2 c rest k=1
   OC=flag OC_MOD="" OC_SKIP=0
   case $1:$w in
-    sh:+[oO] | python:--check-hash-based-pycs | node:-r | node:--require) OC_SKIP=1 && return 0 ;;
+    sh:+[oO] | sh:--rcfile | sh:--init-file | python:--check-hash-based-pycs | node:-r | node:--require) OC_SKIP=1 && return 0 ;;
     node:-e | node:--eval | node:-p | node:--print) OC=code && return 0 ;;
     *:--* | node:*) return 0 ;;
   esac
@@ -2785,7 +2785,9 @@ opt_word() {  # <sh, python, perl, ruby or node> <word>
       sh:[oO]) OC_SKIP=$((OC_SKIP + 1)) ;;
       python:m) OC=module OC_MOD=$rest && return 0 ;;
       python:c | perl:[eE] | ruby:e) OC=code && return 0 ;;
-      python:[XWQ] | perl:[IMmx] | ruby:[rICEx])
+      # perl's and ruby's -x take a directory attached or none, never the
+      # next word, which is the script (CR 888).
+      python:[XWQ] | perl:[IMm] | ruby:[rICE])
         if [ -z "$rest" ]; then OC_SKIP=$((OC_SKIP + 1)); fi
         return 0 ;;
       # -l and -0 take octal digits, attached: -l0e is -l0, then -e.
