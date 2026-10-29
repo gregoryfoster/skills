@@ -57,16 +57,18 @@ git diff --name-only --staged HEAD 2>/dev/null || true
 # The default branch comes before @{upstream}, and a ref whose merge base is
 # HEAD itself is skipped (#389). On a branch pushed with -u the upstream IS
 # HEAD, so trying it first diffed nothing on every PR branch; after a further
-# local commit it diffed only the unpushed tail. origin/HEAD covers a clone
-# with no local main. On main itself, main is skipped and the upstream — the
-# last push — is the base.
+# local commit it diffed only the unpushed tail. origin/HEAD leads: a local
+# main is often stale, and a branch cut from a fresher origin/main would then
+# count other people's commits as its own (CR 696). It also covers a clone
+# with no local main. On main itself, origin/HEAD's merge base is the last
+# push, which is the base.
 #
 # Falls back to HEAD when no candidate qualifies — a detached checkout, a repo
 # whose default branch is named something else — which is the old behaviour
 # and still correct for reviewing a dirty tree.
 _cd_base=""
 _cd_head=$(git rev-parse HEAD 2>/dev/null) || _cd_head=""
-for _ref in main master origin/HEAD "@{upstream}"; do
+for _ref in origin/HEAD main master "@{upstream}"; do
   _cd_base=$(git merge-base HEAD "$_ref" 2>/dev/null) && [ -n "$_cd_base" ] &&
     [ "$_cd_base" != "$_cd_head" ] && break
   _cd_base=""
