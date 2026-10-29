@@ -42,6 +42,8 @@ if [[ "${1:-}" == "--help" ]]; then
   echo "     present but unreadable)"
   echo ""
   echo "Skips pytest when HEAD hasn't changed AND working tree is clean (per-SHA stamp)."
+  echo "The stamp is also keyed on the env names a wrapper exports in"
+  echo "PRE_SHIP_ENV_NAMES; an exported but empty list writes no stamp (#497)."
   exit 0
 fi
 
@@ -84,10 +86,19 @@ cd "$PROJECT_ROOT"
 #         \'*\') val=${val#\'} val=${val%\'} ;;
 #       esac
 #       export "$key=$val"
+#       PRE_SHIP_ENV_NAMES="${PRE_SHIP_ENV_NAMES:+$PRE_SHIP_ENV_NAMES }$key"
 #     done < "$1"
 #   }
-#   load_env /etc/<project>/.env
-#   load_env "$PROJECT_ROOT/.env"
+#   export PRE_SHIP_ENV_NAMES=""                  # names only: the stamp's key
+#   ENV_FILE="$PROJECT_ROOT/.env"                 # a linked worktree has none,
+#   [ -r "$ENV_FILE" ] ||                         # so use the primary checkout's
+#     ENV_FILE="$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")/.env"
+#   load_env /etc/<project>/.env                  # after: it may set PROJECT_ROOT
+#   if [ -r "$ENV_FILE" ]; then load_env "$ENV_FILE"; else
+#     echo "WARN: no .env at $PROJECT_ROOT/.env or $ENV_FILE;" >&2
+#     echo "      tests that need it will skip, and no stamp is written" >&2
+#     PRE_SHIP_ENV_NAMES=""
+#   fi
 #   exec bash "$DELEGATE" "$@"
 #
 # Every line there is a trap someone has already hit:
@@ -113,6 +124,17 @@ cd "$PROJECT_ROOT"
 #     A malformed line in a secrets file must not decide whether the gate
 #     runs — that is precisely the environmental-vs-real judgement call a
 #     gate should never put in front of an operator.
+#   - Fall back to the primary checkout's .env, and WARN when neither file
+#     exists. A gitignored .env lives only in the primary checkout, so in a
+#     linked worktree "$PROJECT_ROOT/.env" is missing, and load_env returns 0
+#     on a missing file by design: the tests that needed it skipped and the
+#     gate passed, saying nothing (#497). --git-common-dir names the
+#     primary's .git from any worktree. The WARN prints paths, never a value.
+#   - Export PRE_SHIP_ENV_NAMES, the names (never the values) the env files
+#     set. This gate folds a hash of them into its per-SHA stamp, and writes
+#     no stamp when the list is empty, so a run that loaded no env cannot
+#     bless the commit for the run that does (#497). A wrapper that does not
+#     export it keeps the SHA-only stamp.
 #
 # This variant makes the wrapper load-bearing rather than merely tidy: `exec`
 # leaves $0 pointing at the vendored copy, so SCRIPT_DIR above still resolves
@@ -281,6 +303,27 @@ else
     STAMP_FILE="/tmp/${STAMP_PREFIX}-${CURRENT_SHA}"
   else
     STAMP_FILE=""
+  fi
+
+  # Env fingerprint (#497). A wrapper built to the recipe above exports
+  # PRE_SHIP_ENV_NAMES: the names, never the values, its env files set. A run
+  # with the env missing skips every test that needs it and still passes, so
+  # its stamp must not be the one a run with the env reads. The key carries a
+  # hash of the sorted names, and an empty list (the wrapper found no env
+  # file) writes no stamp at all. Unset means no env contract — no wrapper,
+  # or one not yet refreshed — and keeps the SHA-only key.
+  if [[ -n "$STAMP_FILE" && -n "${PRE_SHIP_ENV_NAMES+set}" ]]; then
+    read -r -a ENV_NAMES <<<"$PRE_SHIP_ENV_NAMES"   # never glob-expanded
+    if [[ ${#ENV_NAMES[@]} -eq 0 ]]; then
+      echo "WARN: PRE_SHIP_ENV_NAMES is empty (the wrapper loaded no env file);" >&2
+      echo "      running pytest, and no stamp is written." >&2
+      STAMP_FILE=""
+    elif ENV_HASH=$(printf '%s\n' "${ENV_NAMES[@]}" | LC_ALL=C sort -u | git hash-object --stdin); then
+      STAMP_FILE="${STAMP_FILE}-env-${ENV_HASH:0:12}"
+    else
+      echo "WARN: could not hash PRE_SHIP_ENV_NAMES; running pytest, and no stamp is written." >&2
+      STAMP_FILE=""
+    fi
   fi
 
   if [[ -n "$STAMP_FILE" && -f "$STAMP_FILE" && -z "$WORKING_TREE_DIRTY" ]]; then

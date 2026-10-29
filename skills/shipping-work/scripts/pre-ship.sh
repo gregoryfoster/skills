@@ -95,8 +95,14 @@ cd "$PROJECT_ROOT"
 #       export "$key=$val"
 #     done < "$1"
 #   }
-#   load_env /etc/<project>/.env
-#   load_env "$PROJECT_ROOT/.env"
+#   ENV_FILE="$PROJECT_ROOT/.env"                 # a linked worktree has none,
+#   [ -r "$ENV_FILE" ] ||                         # so use the primary checkout's
+#     ENV_FILE="$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")/.env"
+#   load_env /etc/<project>/.env                  # after: it may set PROJECT_ROOT
+#   if [ -r "$ENV_FILE" ]; then load_env "$ENV_FILE"; else
+#     echo "WARN: no .env at $PROJECT_ROOT/.env or $ENV_FILE;" >&2
+#     echo "      tests that need it will skip" >&2
+#   fi
 #
 # Note how this differs from the language variants (-php, -python-click,
 # -python-fastapi). Those ship a real gate, so their advice is a project-local
@@ -116,6 +122,13 @@ cd "$PROJECT_ROOT"
 # so there is no `set -f` dance and no shellcheck suppressions. A key that is
 # not a plain identifier is skipped rather than aborting: a malformed line in
 # a secrets file must not decide whether the gate runs.
+#
+# Fall back to the primary checkout's .env, and WARN when neither file exists.
+# A gitignored .env lives only in the primary checkout, so in a linked
+# worktree "$PROJECT_ROOT/.env" is missing, and load_env returns 0 on a
+# missing file by design: the tests that needed it skipped and the gate
+# passed, saying nothing (#497). --git-common-dir names the primary's .git
+# from any worktree. The WARN prints paths, never a value.
 
 # Pre-flight: warn (do not fail) if zombie processes from previously-destroyed
 # worktrees are still around. Helps surface drift the destroy script can't see
