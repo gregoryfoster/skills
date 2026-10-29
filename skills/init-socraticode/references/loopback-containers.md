@@ -74,7 +74,10 @@ tag with `--qdrant-image` / `--ollama-image`.
 both `fetch` and `http.get`. Node 18 and 19 try only the first address. Where
 `localhost` resolves to `::1` first, every call is refused. Upstream's own
 wide publish also listens on `[::]`, which hid this. Preflight fails a Node
-below 20 unless `localhost` resolves to `127.*` first.
+below 20 unless `localhost` resolves to `127.*` first. It skips any container
+not addressed through `localhost`: Qdrant with a `127.*` `QDRANT_HOST`, and a
+docker-mode Ollama whose `OLLAMA_URL` and `OLLAMA_HOST` are both `127.*`.
+Auto mode hard-codes `localhost:11435`.
 [Measured 2026-10-28 with an IPv4-only listener: 18.20.8 was refused, while
 20.20.2 and 22.23.2 fell back; Node 26 by the mitigation.]
 

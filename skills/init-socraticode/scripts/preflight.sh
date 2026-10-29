@@ -1348,12 +1348,36 @@ fi
 # listens on [::], which is why Node 18 worked before. So the question is what
 # `localhost` resolves to first, asked of this node, which is the one the
 # plugin's npx launches.
-if [ -n "${NODE_MAJOR:-}" ] && [ "$NODE_MAJOR" -lt 20 ] && [ "${#LOCAL_TARGETS[@]}" -gt 0 ]; then
+#
+# Asked only for a container addressed through `localhost` (CR 801). Qdrant is
+# reached on QDRANT_HOST, so a 127.* literal there needs no fallback. Ollama
+# cannot be moved off it in auto mode, which hard-codes localhost:11435; in
+# docker mode its embedder reads OLLAMA_URL and its readiness wait OLLAMA_HOST,
+# and only both on 127.* move it. And only above the engines floor, where the
+# "too old" ✗ has not already said to upgrade.
+LOCALHOST_TARGETS=""
+for _t in ${LOCAL_TARGETS[@]+"${LOCAL_TARGETS[@]}"}; do
+  case "$_t" in
+    qdrant) case "${Q_HOST:-localhost}" in 127.*) continue ;; esac ;;
+    ollama)
+      if [ "$O_MODE" = docker ]; then
+        resolve OLLAMA_URL; _ou="$R_VAL"
+        resolve OLLAMA_HOST; _oh="$R_VAL"
+        case "$(url_host "${_ou:-http://localhost}") $(url_host "${_oh:-http://localhost}")" in
+          127.*" "127.*) continue ;;
+        esac
+      fi
+      ;;
+  esac
+  LOCALHOST_TARGETS="${LOCALHOST_TARGETS:+$LOCALHOST_TARGETS, }socraticode-$_t"
+done
+if [ -n "${NODE_MAJOR:-}" ] && [ "$NODE_MAJOR" -lt 20 ] && [ -n "$LOCALHOST_TARGETS" ] \
+  && version_ge "$NODE_VER" "$NODE_MIN"; then
   LOCALHOST_FIRST="$(node -e "require('dns').lookup('localhost',(e,a)=>process.stdout.write(e?'':String(a)))" 2>/dev/null || true)"
   case "$LOCALHOST_FIRST" in
     127.*) pass "Node $NODE_RAW resolves localhost to $LOCALHOST_FIRST first, so it reaches the loopback containers" ;;
     *)
-      fail "Node $NODE_RAW cannot reach SocratiCode's loopback containers: localhost resolves to ${LOCALHOST_FIRST:-an address this check could not read} first, and before Node 20 there is no fallback to 127.0.0.1"
+      fail "Node $NODE_RAW cannot reach $LOCALHOST_TARGETS through localhost: it resolves to ${LOCALHOST_FIRST:-an address this check could not read} first, and before Node 20 there is no fallback to 127.0.0.1"
       hint "Upgrade: 'nvm install 22 && nvm use 22'"
       ;;
   esac

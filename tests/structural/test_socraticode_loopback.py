@@ -858,7 +858,7 @@ class TestTheContractIsWritten:
 class TestNodeBelow20CannotReachALoopbackContainer:
     """CR 788: Node 18/19 tries `localhost`'s first address only (measured on 18.20.8)."""
 
-    def _run(self, tmp_path, version: str, first: str):
+    def _run(self, tmp_path, version: str, first: str, **env: str):
         binv = _host(tmp_path)
         (binv / "node").write_text(
             "#!/bin/sh\n"
@@ -876,14 +876,33 @@ class TestNodeBelow20CannotReachALoopbackContainer:
             )
         )
         return _preflight(
-            tmp_path, _project(tmp_path), binv, STUB_CONTAINERS=str(state)
+            tmp_path, _project(tmp_path), binv, STUB_CONTAINERS=str(state), **env
         )
 
     def test_node_18_resolving_ipv6_first_fails(self, tmp_path):
         result = self._run(tmp_path, "v18.20.8", "::1")
         assert result.returncode == 1
-        line = _line(result, "cannot reach SocratiCode's loopback containers")
+        line = _line(result, "through localhost")
         assert "✗" in line and "::1" in line
+        assert "socraticode-qdrant, socraticode-ollama" in line
+
+    def test_a_127_qdrant_host_takes_qdrant_out_of_it(self, tmp_path):
+        """CR 801: Qdrant is addressed on QDRANT_HOST; auto Ollama stays on localhost."""
+        result = self._run(tmp_path, "v18.20.8", "::1", QDRANT_HOST="127.0.0.1")
+        line = _line(result, "through localhost")
+        assert "socraticode-ollama" in line and "socraticode-qdrant" not in line
+
+    def test_nothing_on_localhost_is_not_asked(self, tmp_path):
+        result = self._run(
+            tmp_path, "v18.20.8", "::1", QDRANT_HOST="127.0.0.1", OLLAMA_MODE="docker",
+            OLLAMA_URL="http://127.0.0.1:11435", OLLAMA_HOST="http://127.0.0.1:11435",
+        )  # fmt: skip
+        assert "through localhost" not in result.stdout, result.stdout
+
+    def test_below_the_engines_floor_says_upgrade_once(self, tmp_path):
+        result = self._run(tmp_path, "v18.16.1", "::1")
+        assert "through localhost" not in result.stdout
+        assert "too old" in result.stdout
 
     def test_node_18_resolving_ipv4_first_passes(self, tmp_path):
         result = self._run(tmp_path, "v18.20.8", "127.0.0.1")
@@ -891,4 +910,4 @@ class TestNodeBelow20CannotReachALoopbackContainer:
 
     def test_node_20_is_not_asked(self, tmp_path):
         result = self._run(tmp_path, "v20.11.0", "::1")
-        assert "loopback containers" not in result.stdout.replace("on loopback", "")
+        assert "through localhost" not in result.stdout
