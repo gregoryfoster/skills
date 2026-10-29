@@ -19,7 +19,8 @@ directory. Until every check passes it changes nothing, and prints why.
   whose last run succeeded is started, and must succeed again. It writes off
   the node itself, so it stands in for the dumps of the datastores its
   backup line names, and no others: each datastore no usable unit covers is
-  dumped. --dump takes dumps of them all instead. A Redis a backup unit
+  dumped, and so is each database a line naming a Postgres unit's databases
+  (<unit>:<db>,<db>) leaves out. --dump takes dumps of them all instead. A Redis a backup unit
   covers is saved first, since the unit ships its RDB file as it stands:
   BGSAVE and the wait, where it can log in, or else its RDB file must have
   been written within --rdb-within of the run's start (#382).
@@ -90,8 +91,10 @@ its address, can't say where its RDB file is, refuses the login, or has none
 to make (an aclfile, and no user and key file on its datastore line), or its
 key file can't be read as root; when a Qdrant's container isn't running, its
 storage's size can't be read, its key file can't be read, or its collections
-can't be listed; when a backup line names a datastore no datastore line
-declares; and when the run's filesystem has less free space than the data it
+can't be listed; when a backup line names a datastore, or a database, no
+datastore line declares, or names a Postgres unit whole whose datastore
+lines name more than one database, and so doesn't say which it takes
+(#480); and when the run's filesystem has less free space than the data it
 would dump plus 131072 KiB, the floor every filesystem a patch run writes
 keeps free (#390), or its free space can't be read. A Qdrant snapshot is
 written under Docker's root first, then copied out: on one filesystem it
@@ -103,7 +106,7 @@ The record, one line each (run.md section 2):
   dump redis <unit> <sha256> <path>
   dump qdrant <unit> <sha256> <path>
   counts qdrant <unit> <path>
-  backup <unit> <datastore unit>...
+  backup <unit> <datastore unit, or <unit>:<database>>...
   persistence redis <unit> <aof, rdb, none or unknown>
   local <path>             personal <path>
 
@@ -330,28 +333,15 @@ gate_run() {
 # for the dumps of the datastores its backup line names, and no other: a
 # datastore no usable unit covers is dumped (CR 194).
 gate_backup() {
-  local r u svc o="" why e a="" d du dd covers declared r2 i j
-  local -a f=() ds=() g=()
+  local r u svc o="" why e a="" d covers i j
+  local -a f=()
   for r in ${KNOB_BACKUP[@]+"${KNOB_BACKUP[@]}"}; do
     IFS=$KNOB_US read -r -a f <<<"$r"
     unit_name u "${f[0]}"
-    read -r -a ds <<<"${f[1]}"
-    covers=""
-    for d in ${ds[@]+"${ds[@]}"}; do
-      unit_name du "$d"
-      declared=0
-      for r2 in ${KNOB_DATASTORE[@]+"${KNOB_DATASTORE[@]}"}; do
-        IFS=$KNOB_US read -r -a g <<<"$r2"
-        unit_name dd "${g[1]}"
-        [ "$dd" != "$du" ] || declared=1
-      done
-      if [ "$declared" -eq 0 ]; then
-        refuse "backup $u (knob line ${f[2]}) names $du, which no datastore line declares"
-      elif ! in_words "$du" "$covers"; then
-        covers="$covers $du"
-      fi
-    done
-    covers=${covers# }
+    # Per database on a Postgres unit (#480): _probe-lib.sh's backup_covers.
+    backup_covers "$r"
+    for why in ${BC_WHY[@]+"${BC_WHY[@]}"}; do refuse "$why"; done
+    covers=$BC_COVERS
     svc=$u why=""
     case $u in
       *.timer)
@@ -418,11 +408,13 @@ gate_persistence() {
   [ -z "$a" ] || jadd J_GATE redis_persistence "[$a]"
 }
 
-# Whether a usable backup unit covers this datastore unit.
-covered() {  # <unit>
+# Whether a usable backup unit covers this datastore unit, or this one of
+# its databases: one named whole, or by database (#480).
+covered() {  # <unit> [<database>]
   local _cv
   for _cv in ${BACKUP_COVERS[@]+"${BACKUP_COVERS[@]}"}; do
     in_words "$1" "$_cv" && return 0
+    if [ -n "${2:-}" ] && in_words "$1:$2" "$_cv"; then return 0; fi
   done
   return 1
 }
@@ -453,11 +445,11 @@ gate_datastores() {
         continue
       fi
       PG_UNITS="$PG_UNITS $u" PG_UNIT_PORT+=("$port")
-      # A backup unit that covers it stands in for its dumps: only the
-      # roles' port counts.
-      if covered "$u"; then continue; fi
       read -r -a dbs <<<"${f[2]}"
       for db in "${dbs[@]}"; do
+        # A backup unit that covers it stands in for its dump: for a unit
+        # it covers whole, only the roles' port counts (#480).
+        if covered "$u" "$db"; then continue; fi
         capture out pg_size "$port" "$db"
         sz=""
         if [ "$CAP_RC" -eq 0 ] && is_int "$out"; then sz=$out; fi

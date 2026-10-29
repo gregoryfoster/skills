@@ -4136,6 +4136,16 @@ for _r in ${KNOB_FINDING[@]+"${KNOB_FINDING[@]}"}; do
   IFS=$KNOB_US read -r -a _f <<<"$_r"
   finding knob "knob:${_f[1]}" "" "knob line ${_f[0]:-(none)}: ${_f[2]}"
 done
+# A backup line the recovery point and the bulk would refuse, named before
+# a run (#480). No exception covers it: the knob's own line is the fix.
+for _r in ${KNOB_BACKUP[@]+"${KNOB_BACKUP[@]}"}; do
+  backup_covers "$_r"
+  IFS=$KNOB_US read -r -a _f <<<"$_r"
+  unit_name _u "${_f[0]}"
+  for _i in ${BC_WHY[@]+"${!BC_WHY[@]}"}; do
+    finding knob "backup-covers:$_u:${BC_WHY_DS[$_i]}" "" "${BC_WHY[$_i]}."
+  done
+done
 FINDINGS="" EXCEPTED=""
 for _i in ${F_ID[@]+"${!F_ID[@]}"}; do
   _e=""

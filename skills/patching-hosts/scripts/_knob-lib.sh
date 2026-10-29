@@ -67,7 +67,8 @@ esac
 #   KNOB_QUIET      weekday-or-empty start end wraps line
 #   KNOB_INFLIGHT, KNOB_HEALTH                  command line
 #   KNOB_RESTARTER, KNOB_SERVICE                unit line
-#   KNOB_BACKUP     unit datastore-units line (the units space-separated)
+#   KNOB_BACKUP     unit covers line (space-separated, each a datastore unit
+#                   or <unit>:<db>,<db>...; backup_covers reads them)
 #   KNOB_CALLER     repo line
 #   KNOB_DEPENDS    datastore-unit unit line
 #   KNOB_DATASTORE  engine unit databases(space-separated) line; for
@@ -214,12 +215,19 @@ _knob_directive() {  # <line> <sec> <text>
         _knob_malformed "$n" "$dir takes one unit"
       fi ;;
     # A backup regime names what it covers: unbound, it would stand in for
-    # every datastore's dump, one it never copies included (CR 194).
+    # every datastore's dump, one it never copies included (CR 194). A
+    # Postgres unit may carry the databases it takes, as <unit>:<db>,<db>
+    # (#480), split at the first colon.
     backup)
-      if [ "$nt" -ge 2 ]; then
+      local cover ok=1
+      [ "$nt" -ge 2 ] || ok=0
+      for cover in "${tok[@]:1}"; do
+        [[ $cover =~ ^[^:,]+(:[^:,]+(,[^:,]+)*)?$ ]] || ok=0
+      done
+      if [ "$ok" -eq 1 ]; then
         _knob_record "$n" "$sec" backup "" "${tok[0]}$u${tok[*]:1}"
       else
-        _knob_malformed "$n" "backup takes <unit> and each datastore unit it covers, as datastore lines name them"
+        _knob_malformed "$n" "backup takes <unit> and each datastore unit it covers, as datastore lines name them, or <datastore unit>:<database>,... for the databases it takes of a Postgres one"
       fi ;;
     caller)
       if [ "$nt" -eq 1 ] && _knob_is_repo "${tok[0]}"; then

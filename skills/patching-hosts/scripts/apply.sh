@@ -124,7 +124,9 @@ the node: each dump attested by its sha256, and each backup unit, one the
 knob declares, run successfully since the recovery point began, with its
 object named. A backup unit stands in only for the datastores the record
 says it covered, which its knob line must name too: each other datastore
-needs its own dump.
+needs its own dump. On a Postgres unit whose datastore lines name more than
+one database, the backup line must name the databases it takes, as
+<unit>:<db>,<db> (#480), or the bulk refuses.
 
 The run's directory is root-only: 0700, and each file 0600.
   recovery-point   written before the bulk (run.md section 2 has its lines)
@@ -838,8 +840,8 @@ gate_apt() {
 # name. A recovery point from another day isn't one for this run.
 RP_MAX_AGE=86400
 gate_recovery() {
-  local rec line kind engine unit rest db sha path key n=0 i r s x began="" retain="" o="" a="" e iso="" ok u k declared d kc w
-  local -a f=() dbs=() need=() dkeys=() dsums=() dpaths=() backups=() bcovers=() kcovers=()
+  local rec line kind engine unit raw rest db sha path key n=0 i r s x began="" retain="" o="" a="" e iso="" ok u k declared d kc w
+  local -a f=() dbs=() need=() dkeys=() dsums=() dpaths=() backups=() bcovers=()
   [ "$step" = bulk ] || return 0
   if [ "${#KNOB_DATASTORE[@]}" -eq 0 ]; then
     if [ "${#sums[@]}" -gt 0 ] || [ "${#objects[@]}" -gt 0 ]; then
@@ -871,6 +873,7 @@ gate_recovery() {
     [ -n "$line" ] || continue
     kind="" engine="" unit="" rest="" db="" sha="" path=""
     read -r kind engine unit rest <<<"$line"
+    raw=$unit
     if [ -n "$unit" ]; then unit_name unit "$unit"; fi
     case $kind:$engine in
       began:*) began=$engine ;;
@@ -885,11 +888,12 @@ gate_recovery() {
           ?*:aof | ?*:rdb | ?*:none | ?*:unknown) ;;
           *) kind=bad ;;
         esac ;;
-      # A backup line names its unit and each datastore unit it covered.
+      # A backup line names its unit and each datastore unit it covered, or
+      # <unit>:<db> for each database it covered of one (#480).
       backup:*)
         if [ -n "$engine" ] && [ -n "$unit" ]; then
           w=""
-          for d in $unit $rest; do unit_name d "$d"; w="$w $d"; done
+          for d in $raw $rest; do cover_name d "$d"; w="$w $d"; done
           backups+=("$engine") bcovers+=("${w# }")
         else
           kind=bad
@@ -916,13 +920,24 @@ gate_recovery() {
   iso_utc iso "$began"
   jaddsn o began "$iso"
   jaddsn o retain_until "$retain"
-  # Each datastore needs a dump, or a backup unit that covered its unit: a
-  # backup stands in only for what its line names (CR 194).
+  # A backup line that can't stand in for a dump as the knob spells it is
+  # refused here too, whatever the record says (#480).
+  for r in ${KNOB_BACKUP[@]+"${KNOB_BACKUP[@]}"}; do
+    backup_covers "$r"
+    for w in ${BC_WHY[@]+"${BC_WHY[@]}"}; do refuse "$w"; done
+  done
+  # Each datastore needs a dump, or a backup unit that covered its unit, or
+  # that database of it: a backup stands in only for what its line names
+  # (CR 194, #480).
   for key in ${need[@]+"${need[@]}"}; do
     s=0
     for i in ${dkeys[@]+"${!dkeys[@]}"}; do [ "${dkeys[$i]}" != "$key" ] || s=1; done
-    u=${key#* } u=${u%% *}
-    for i in ${bcovers[@]+"${!bcovers[@]}"}; do in_words "$u" "${bcovers[$i]}" && s=1; done
+    u=${key#* } u=${u%% *} db=""
+    case $key in "postgres "*) db=${key##* } ;; esac
+    for i in ${bcovers[@]+"${!bcovers[@]}"}; do
+      in_words "$u" "${bcovers[$i]}" && s=1
+      if [ -n "$db" ] && in_words "$u:$db" "${bcovers[$i]}"; then s=1; fi
+    done
     [ "$s" -eq 1 ] || refuse "the recovery point holds no dump of $key, and no backup unit covered $u"
   done
   for i in ${dkeys[@]+"${!dkeys[@]}"}; do
@@ -959,13 +974,19 @@ gate_recovery() {
       unit_name k "${f[0]}"
       if [ "$k" = "$unit" ] || [ "$k" = "${unit%.service}.timer" ]; then
         declared=1
-        read -r -a kcovers <<<"${f[1]}"
-        for d in ${kcovers[@]+"${kcovers[@]}"}; do unit_name d "$d"; kc="$kc $d"; done
+        backup_covers "$r"
+        kc="$kc $BC_COVERS"
       fi
     done
     jaddb e declared "$declared"
+    # A database the record names is covered by its line's naming it, or
+    # its unit whole, which a Postgres unit of one database may (#480).
     w=""
-    for d in ${bcovers[$i]}; do in_words "$d" "$kc" || w="$w $d"; done
+    for d in ${bcovers[$i]}; do
+      in_words "$d" "$kc" && continue
+      case $d in *:*) in_words "${d%%:*}" "$kc" && continue ;; esac
+      w="$w $d"
+    done
     if [ "$declared" -eq 0 ]; then
       refuse "backup unit $unit isn't one the knob declares: only the host's own backup regime, named by a backup line (knob.md), stands in for a dump"
     elif [ -n "$w" ]; then

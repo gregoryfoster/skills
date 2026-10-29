@@ -216,6 +216,75 @@ unit_name() {  # <var> <unit>: a knob's unit name, with .service when it has no 
   esac
 }
 
+cover_name() {  # <var> <cover>: a backup cover's unit with its suffix, and its databases kept
+  local _cn
+  unit_name _cn "${2%%:*}"
+  case $2 in *:*) _cn="$_cn:${2#*:}" ;; esac
+  printf -v "$1" '%s' "$_cn"
+}
+
+# What one backup line stands in for (CR 194, #480). A cover is a datastore
+# unit a datastore line declares, or <unit>:<db>,<db>... for the databases a
+# backup takes of a Postgres one, split at the first colon. A Postgres unit
+# named whole, whose datastore lines name more than one database, is
+# refused: a backup that dumps one of them would cover the rest silently, as
+# wslcb's dumped wslcb and never wslcb_test. The recovery point, the bulk
+# and the probe all read a line through this, so each refuses the same way.
+# BC_COVERS := what it covers, space-separated, each a unit with its suffix
+# or <unit>:<db>; BC_WHY := each reason the line can't stand in for a dump,
+# and BC_WHY_DS the datastore unit each one is about.
+BC_COVERS="" BC_WHY=() BC_WHY_DS=()
+backup_covers() {  # <a KNOB_BACKUP record>
+  local _r _t _du _dd _dl _db _eng _dbs _u _x _fix
+  local -a _f=() _g=() _ts=() _ls=()
+  BC_COVERS="" BC_WHY=() BC_WHY_DS=()
+  IFS=$KNOB_US read -r -a _f <<<"$1"
+  unit_name _u "${_f[0]}"
+  read -r -a _ts <<<"${_f[1]}"
+  for _t in ${_ts[@]+"${_ts[@]}"}; do
+    _dl=""
+    case $_t in *:*) _dl=${_t#*:} ;; esac
+    unit_name _du "${_t%%:*}"
+    _eng="" _dbs=""
+    for _r in ${KNOB_DATASTORE[@]+"${KNOB_DATASTORE[@]}"}; do
+      IFS=$KNOB_US read -r -a _g <<<"$_r"
+      unit_name _dd "${_g[1]}"
+      [ "$_dd" = "$_du" ] || continue
+      _eng=${_g[0]}
+      if [ "$_eng" = postgres ] && ! in_words "${_g[2]}" "$_dbs"; then _dbs="$_dbs ${_g[2]}"; fi
+    done
+    _dbs=${_dbs# }
+    if [ -z "$_eng" ]; then
+      BC_WHY+=("backup $_u (knob line ${_f[2]}) names $_du, which no datastore line declares")
+      BC_WHY_DS+=("$_du")
+    elif [ -n "$_dl" ] && [ "$_eng" != postgres ]; then
+      BC_WHY+=("backup $_u (knob line ${_f[2]}) names databases on $_du, a $_eng datastore, which has none: name the unit alone")
+      BC_WHY_DS+=("$_du")
+    elif [ -n "$_dl" ]; then
+      IFS=, read -r -a _ls <<<"$_dl"
+      for _db in "${_ls[@]}"; do
+        if ! in_words "$_db" "$_dbs"; then
+          BC_WHY+=("backup $_u (knob line ${_f[2]}) names $_du:$_db, which no datastore postgres line declares")
+          BC_WHY_DS+=("$_du")
+        elif ! in_words "$_du:$_db" "$BC_COVERS"; then
+          BC_COVERS="$BC_COVERS $_du:$_db"
+        fi
+      done
+    elif [ "$_eng" = postgres ] && [ "$_dbs" != "${_dbs%% *}" ]; then
+      _fix=""
+      for _x in "${_ts[@]}"; do
+        if [ "$_x" = "$_t" ]; then _x="$_t:${_dbs// /,}"; fi
+        _fix="$_fix $_x"
+      done
+      BC_WHY+=("backup $_u (knob line ${_f[2]}) covers $_du, whose datastore lines name $_dbs, and doesn't say which of them it takes: one it doesn't dump would go undumped (#480). Write the line as backup ${_f[0]}$_fix, then drop each database the backup doesn't dump, and the recovery point dumps those")
+      BC_WHY_DS+=("$_du")
+    elif ! in_words "$_du" "$BC_COVERS"; then
+      BC_COVERS="$BC_COVERS $_du"
+    fi
+  done
+  BC_COVERS=${BC_COVERS# }
+}
+
 # unattended-upgrades' own variable, not a shell expansion.
 # shellcheck disable=SC2016
 UU_DISTRO_ID='${distro_id}'
