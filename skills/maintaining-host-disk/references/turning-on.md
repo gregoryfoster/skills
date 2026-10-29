@@ -66,7 +66,20 @@ sudo systemctl enable --now cannobserv-disk-gc.timer cannobserv-disk-headroom.ti
 
 Enable them in the same change that retires the host's own disk tooling, once its retire check has been read ([retiring.md](retiring.md)), so the host never runs two GCs. The GC runs daily at 05:15 UTC plus up to 30 minutes, with no catch-up at boot. The sensor runs every 10 minutes.
 
-**A host whose own probe already reports its free space** enables only the GC timer, and sets `gc_stale_hours = 0`, as the contract says. It skips steps 3, 4 and 6: no monitor, no key, no rehearsal. With the sensor timer off, nothing reports for the GC, and `gc_stale_hours = 0` matters only if the sensor ever runs (the timer enabled later, say). There it turns off **both** GC faults, `gc-stale` and `gc-failed`: the GC checks either only while `gc_stale_hours` is non-zero. A failed GC run then goes unreported unless the host's own probe reads the GC's `/var/lib/cannobserv-disk-gc/state.json`.
+**A host whose own probe already reports its free space** enables only the GC timer, and sets `gc_stale_hours = 0`, as the contract says. It skips steps 3, 4 and 6: no monitor, no key, no rehearsal. With the sensor timer off, nothing reports for the GC, and `gc_stale_hours = 0` matters only if the sensor ever runs (the timer enabled later, say). There it turns off **both** GC faults, `gc-stale` and `gc-failed`: the GC checks either only while `gc_stale_hours` is non-zero. **On this path a failed GC run reports nothing.** The canonical `cannobserv-disk-gc.service` has no `OnFailure=`, and `gc-failed` comes only from the sensor, so a GC that exits 1 or 2, or hits `TimeoutStartSec=1800`, run after run, leaves only `state.json` and the journal (#522). Close it one of three ways:
+
+- **(a) A drop-in `OnFailure=`** to the host's own notifier. It lives under `/etc`, so the installed unit is untouched and MANIFEST still passes, as with an `OnCalendar=` drop-in. Then `sudo systemctl daemon-reload`:
+
+  ```ini
+  # /etc/systemd/system/cannobserv-disk-gc.service.d/on-failure.conf
+  [Unit]
+  OnFailure=<host-notifier>@%n.service
+  ```
+
+- **(b) The host's probe reads `/var/lib/cannobserv-disk-gc/state.json`**, which the GC writes after every `--prune` run: alert on a non-zero `exit`, and on a `finished_at` more than about 25 hours old, since a run killed at its timeout may write nothing. A host down at 05:15 misses that day's run (there's no catch-up), so a stale `finished_at` after a reboot is expected once.
+- **(c) Take both timers after all,** with steps 3, 4 and 6: the sensor's `gc-failed` and `gc-stale` then cover it.
+
+**A host retiring tooling that had a failure net** (an `OnFailure=`, a dead-man, a probe on its output) takes this path only with (a), (b) or (c) in the same change; otherwise the retirement removes a net the host had ([retiring.md](retiring.md#what-stays-by-hand), question 4). Whether the canonical unit should ship a hook a host can wire to its own notifier is the GC owner's call (CannObserv/provisioner#61), not this skill's.
 
 ## 6. The first check-in, then the monitor, then the rehearsal
 
