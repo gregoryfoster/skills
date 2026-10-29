@@ -51,7 +51,8 @@ Pick up OWNER/REPO#45. The brief is the latest coordinator comment on it; read i
 Work in a worktree off origin/main; never change the deploy checkout's branch.
 Review the brief against the code and post corrections before you build.
 Put notes for later issues under "For #N:"; list skipped verification and accepted limits.
-Write the post-merge host steps on the issue. Run the review, report, and pause before shipping.
+Write the post-merge host steps on the issue. Run the code review and fix its findings, or record
+each declined one with its reason, before you report. The report names the final SHA. Pause before shipping.
 ```
 
 **A prompt instruction the implementer skips gets noted, and the wording adjusted. It isn't enforced** (status 42). **A review "stet" that recurs across close-outs** points to a gap in the prompt. Offer the operator a one-line addition; don't add it on your own (watcher F31, F34).

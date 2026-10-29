@@ -117,6 +117,7 @@ Every kickoff prompt carries these, or points to the brief that does:
 - Notes for later issues go under a `For #N:` heading.
 - List the verification you skipped, and why. Record accepted limitations.
 - Write the post-merge host steps on the issue.
+- Run the code review and fix its findings, or record each declined one with its reason, before reporting. The report names the final SHA.
 - Pause for the operator before shipping.
 
 ## Talking to the operator

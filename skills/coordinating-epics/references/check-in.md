@@ -21,7 +21,7 @@ The detail behind SKILL.md's check-in steps 1–5 and 7. A citation such as "bro
 
 A null `commits` means the range was skipped, not that it was empty: `commits_skipped` says why, and names the fix that fits. In a clone with no `origin/HEAD`, the tip falls back to GitHub's default branch. If neither resolves, the fix is `--ref`, `git remote set-head origin -a` once in that clone, or, when the clone lacks the default branch itself, a fetch of it.
 
-Read every comment on the child from the hand-off onward, and read edited comments as they now stand. Review rounds land after the close, sometimes a dozen (broker 102, private-backlog 100).
+Read every comment on the child from the hand-off onward, and read edited comments as they now stand. Review rounds land after the close, sometimes a dozen (broker 102, private-backlog 100). A closing comment older than commits in its range is verified on the range's tip, not the SHA it reports (#430).
 
 **CI:**
 - Read job-level check-runs on the final SHA **and** on `main`'s tip, never a run's summary (private-backlog 97, status 15).
