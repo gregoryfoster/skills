@@ -280,8 +280,11 @@ for target in "${TARGETS[@]}"; do
       if [ "$V" = missing ]; then
         V=unknown DETAIL="docker run failed for $name (its message is above, on stderr)"
       else
-        # Its leftover keeps inspect's verdict (CR 798): broken, or wide.
-        DETAIL="docker run failed for $name (its message is above, on stderr) and left it behind: $DETAIL"
+        # Whatever is there now keeps inspect's verdict (CR 798, 810): a failed
+        # bind's leftover reads broken or wide, and a container another creator
+        # won the name race with may read ok, which is then the truth — usable,
+        # though this run did not make it.
+        DETAIL="docker run failed for $name (its message is above, on stderr); the container now present: $DETAIL"
       fi
     fi
   fi

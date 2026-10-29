@@ -105,7 +105,12 @@ elif cmd == "run":
     name = args[args.index("--name") + 1]
     if os.environ.get("STUB_RUN_FAIL"):
         sys.stderr.write(os.environ["STUB_RUN_FAIL"] + "\n")
-        if os.environ.get("STUB_RUN_LEAVES"):
+        if os.environ.get("STUB_RUN_LEAVES_OK"):
+            # Another creator won the name race, on loopback.
+            state[name] = {{"state": "running", "binds": [["127.0.0.1", "16333"]],
+                            "env": ["QDRANT__TELEMETRY_DISABLED=true"]}}
+            json.dump(state, open(path, "w"))
+        elif os.environ.get("STUB_RUN_LEAVES"):
             # What a failed bind leaves: a container in the Created state.
             state[name] = {{"state": "created", "binds": [["127.0.0.1", "16333"]], "env": []}}
             json.dump(state, open(path, "w"))
@@ -267,9 +272,19 @@ class TestTheScriptCreatesWhatIsMissing:
         verdict, detail = _rows(result)["qdrant"]
         assert (
             verdict == "broken"
-            and "left it behind" in detail
+            and "the container now present" in detail
             and "never started" in detail
         )
+
+    def test_a_lost_name_race_reports_the_winner_without_contradiction(self, tmp_path):
+        """CR 810: another creator's loopback container is usable, and said plainly."""
+        docker = Docker(tmp_path)
+        result = _script(docker, "qdrant", STUB_RUN_FAIL="Conflict. The container name is already in use",
+                         STUB_RUN_LEAVES_OK="1")  # fmt: skip
+        verdict, detail = _rows(result)["qdrant"]
+        assert verdict == "ok" and result.returncode == 0
+        assert "docker run failed" in detail and "the container now present" in detail
+        assert "left it behind" not in detail
 
     def test_a_rerun_is_a_no_op(self, tmp_path):
         docker = Docker(tmp_path)
