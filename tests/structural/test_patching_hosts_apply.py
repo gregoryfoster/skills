@@ -1288,6 +1288,44 @@ def test_a_candidate_that_moved_since_the_dry_run_is_still_held(host):
     assert "redis" not in out["holds"]["placed"]
 
 
+CTRD_BEFORE = "1.7.27-0ubuntu1~24.04.1"
+
+
+@pytest.mark.parametrize("after, taken", [(CTRD_BEFORE, False), (CTRD_NOW, True)])
+def test_a_package_left_unheld_that_the_bulk_took_anyway_fails_it(host, after, taken):
+    # CR 894: the narrowing's limit, made loud. A -security release behind an
+    # unchanged, newer -updates candidate is outside the dry run's selection
+    # and didn't move, so it's left unheld, and the bulk can still take it,
+    # with none of its held step's protections. It can't be undone; it
+    # fails the bulk, naming it, so the run takes the abort branch.
+    _containerd_pending(host)
+    host.cases["dpkg-query"].insert(
+        0,
+        (
+            "-W",
+            "libc6\t2.39-0ubuntu8.5\npostgresql-16\t16.9-0ubuntu0.24.04.1\n"
+            f"containerd\t{CTRD_BEFORE}\n",
+            0,
+            "",
+            None,
+        ),
+    )
+    host.cases["dpkg-query"].insert(
+        0, ("-W containerd", f"containerd\t{after}\n", 0, "", None)
+    )
+    out = host.run(rc=1 if taken else 0)
+    assert out["holds"]["not_in_lane"] == ["redis-server", "containerd"]
+    assert out["holds"]["taken_unheld"] == (["containerd"] if taken else [])
+    why = [w for w in out["verdict"]["why"] if "containerd" in w]
+    if taken:
+        [w] = why
+        assert f"unattended-upgrade took containerd ({CTRD_BEFORE} to {after})" in w
+        assert "a docker package" in w and "held step" in w
+        assert out["abort"]["instructions"][0].startswith("Stop: no further held step")
+    else:
+        assert why == [] and out["verdict"]["ok"] is True
+
+
 @pytest.mark.parametrize("sudo", [True, "reset"])
 def test_needrestart_mode_and_choom_reach_unattended_upgrade(tmp_path, sudo):
     host = _ready(Host(tmp_path, sudo=sudo))
