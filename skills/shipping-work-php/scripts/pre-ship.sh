@@ -67,8 +67,16 @@ cd "$PROJECT_ROOT"
 #       export "$key=$val"
 #     done < "$1"
 #   }
-#   load_env /etc/<project>/.env
-#   load_env "$PROJECT_ROOT/.env"
+#   ETC_ENV="/etc/<project>/.env" LOCAL_ENV="$PROJECT_ROOT/.env"
+#   ENV_FILE=$LOCAL_ENV                           # a linked worktree has none,
+#   [ -r "$ENV_FILE" ] ||                         # so use the primary checkout's
+#     ENV_FILE="$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")/.env"
+#   [ -r "$ETC_ENV" ] || [ -r "$ENV_FILE" ] || {  # neither: say so, loudly
+#     [ "$ENV_FILE" = "$LOCAL_ENV" ] || LOCAL_ENV="$LOCAL_ENV or $ENV_FILE"
+#     echo "WARN: no env file at $ETC_ENV or $LOCAL_ENV;" >&2
+#     echo "      tests that need one will skip" >&2
+#   }
+#   for f in "$ETC_ENV" "$ENV_FILE"; do load_env "$f"; done  # paths fixed first
 #   exec bash "$DELEGATE" "$@"
 #
 # Every line there is a trap someone has already hit:
@@ -94,6 +102,14 @@ cd "$PROJECT_ROOT"
 #     A malformed line in a secrets file must not decide whether the gate
 #     runs — that is precisely the environmental-vs-real judgement call a
 #     gate should never put in front of an operator.
+#   - Fall back to the primary checkout's .env, and WARN when neither file
+#     exists. A gitignored .env lives only in the primary checkout, so in a
+#     linked worktree "$PROJECT_ROOT/.env" is missing, and load_env returns 0
+#     on a missing file by design: the tests that needed it skipped and the
+#     gate passed, saying nothing (#497). --git-common-dir names the
+#     primary's .git from any worktree. Every path is fixed before either
+#     file loads, since /etc's may set PROJECT_ROOT; the WARN fires only when
+#     neither file is readable, and prints paths, never a value.
 #
 # A wrapper also keeps PRE_SHIP_PHP_LINT_JOBS working: env set before `exec`
 # is inherited, so tuning belongs in the wrapper, not in a forked copy of the

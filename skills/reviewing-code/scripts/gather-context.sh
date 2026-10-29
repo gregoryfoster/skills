@@ -54,12 +54,25 @@ git diff --name-only --staged HEAD 2>/dev/null || true
 # sighting of the `--base HEAD` default reading as "nothing changed" (#169 was
 # the cadence's).
 #
-# Falls back to HEAD when there is no upstream and no main/master — a detached
-# checkout, a repo whose default branch is named something else — which is the
-# old behaviour and still correct for reviewing a dirty tree.
+# The default branch comes before @{upstream}, and a ref whose merge base is
+# HEAD itself is skipped (#389). On a branch pushed with -u the upstream IS
+# HEAD, so trying it first diffed nothing on every PR branch; after a further
+# local commit it diffed only the unpushed tail. origin/HEAD leads: a local
+# main is often stale, and a branch cut from a fresher origin/main would then
+# count other people's commits as its own (CR 696). It also covers a clone
+# with no local main. origin/main and origin/master follow it, because a
+# checkout made with `git init` + `remote add` + `fetch` has no origin/HEAD
+# (CR 698). On main itself, origin/HEAD's merge base is the last push, which
+# is the base.
+#
+# Falls back to HEAD when no candidate qualifies — a detached checkout, a repo
+# whose default branch is named something else — which is the old behaviour
+# and still correct for reviewing a dirty tree.
 _cd_base=""
-for _ref in "@{upstream}" main master; do
-  _cd_base=$(git merge-base HEAD "$_ref" 2>/dev/null) && [ -n "$_cd_base" ] && break
+_cd_head=$(git rev-parse HEAD 2>/dev/null) || _cd_head=""
+for _ref in origin/HEAD origin/main origin/master main master "@{upstream}"; do
+  _cd_base=$(git merge-base HEAD "$_ref" 2>/dev/null) && [ -n "$_cd_base" ] &&
+    [ "$_cd_base" != "$_cd_head" ] && break
   _cd_base=""
 done
 [ -n "$_cd_base" ] || _cd_base=HEAD
