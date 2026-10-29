@@ -43,6 +43,9 @@ Options:
                    attribute — because each is its own way to lose a row or a
                    warning, and one combined "ok" would have read green through
                    all of #173, #192, #237, #273 and #325.
+                   A ninth line, the checkout pin, says what a re-render
+                   would write over the installed actions/checkout line
+                   (#373); it is not a guarantee and never sets the exit.
                    Exit 0 all present, 3 any missing.
   --uninstall      Remove the workflow file AND every merge attribute it
                    installed, leaving .gitattributes as it found it (the file
@@ -162,6 +165,44 @@ fi
 # Otherwise describe the repo rather than the invocation.
 if [ "$LEDGER_SET" -eq 0 ] && [ -n "$INSTALLED_LEDGER" ]; then
   LEDGER="$INSTALLED_LEDGER"
+fi
+
+# The checkout pin is read back from the installed workflow too (#373). The
+# template's pin is a floor for a fresh install, not a value to impose:
+# Dependabot moves an installed copy of the line, and writing the template's
+# major back over it was a silent downgrade that read as part of the
+# regeneration. So the installed line is kept verbatim when it is a SHA pin
+# (the SHA and its `# vX.Y.Z` comment move together) or a `@vN` tag at or above
+# the template's major: max(installed, template). Anything else (no installed
+# file, an older major, a branch or a form this can't read) renders the
+# template's line, and --check says which it was.
+TEMPLATE_CHECKOUT_MAJOR=7
+TEMPLATE_CHECKOUT_LINE="      - uses: actions/checkout@v$TEMPLATE_CHECKOUT_MAJOR"
+CHECKOUT_LINE="$TEMPLATE_CHECKOUT_LINE"
+CHECKOUT_PIN="none"   # none | template | sha | newer | older | unread
+INSTALLED_CHECKOUT_REF=""
+if [ -f "$WF" ]; then
+  installed_checkout="$(grep -m1 -E '^ *- uses: actions/checkout@' "$WF" || true)"
+  if [ -n "$installed_checkout" ]; then
+    INSTALLED_CHECKOUT_REF="${installed_checkout#*actions/checkout@}"
+    INSTALLED_CHECKOUT_REF="${INSTALLED_CHECKOUT_REF%%[[:space:]]*}"
+    if [ "$installed_checkout" = "$TEMPLATE_CHECKOUT_LINE" ]; then
+      CHECKOUT_PIN="template"
+    elif [[ "$INSTALLED_CHECKOUT_REF" =~ ^[0-9a-f]{40}$ ]]; then
+      CHECKOUT_PIN="sha"
+    elif [[ "$INSTALLED_CHECKOUT_REF" =~ ^v([0-9]+)(\.[0-9]+)*$ ]]; then
+      if (( 10#${BASH_REMATCH[1]} >= TEMPLATE_CHECKOUT_MAJOR )); then
+        CHECKOUT_PIN="newer"
+      else
+        CHECKOUT_PIN="older"
+      fi
+    else
+      CHECKOUT_PIN="unread"
+    fi
+    case "$CHECKOUT_PIN" in
+      sha|newer) CHECKOUT_LINE="$installed_checkout" ;;
+    esac
+  fi
 fi
 
 # ONE definition, above the mode dispatch, because --check reads this and
@@ -441,6 +482,27 @@ if [ "$MODE" = "check" ]; then
       echo "                    (#325). Re-run install-cadence.sh."
       rc=3
     fi
+    # Not a guarantee, so never rc=3: it says what a re-render would write over
+    # the installed pin, which is the one thing a re-render used to change
+    # without a word (#373).
+    case "$CHECKOUT_PIN" in
+      template) echo "checkout pin:       yes (@v$TEMPLATE_CHECKOUT_MAJOR, the template's)" ;;
+      sha)      echo "checkout pin:       kept (SHA-pinned; a re-render keeps the line verbatim)" ;;
+      newer)
+        echo "checkout pin:       kept (@$INSTALLED_CHECKOUT_REF is at or above the"
+        echo "                    template's @v$TEMPLATE_CHECKOUT_MAJOR; a re-render keeps it)" ;;
+      older)
+        echo "checkout pin:       behind (@$INSTALLED_CHECKOUT_REF; a re-render raises it"
+        echo "                    to the template's @v$TEMPLATE_CHECKOUT_MAJOR)" ;;
+      unread)
+        echo "checkout pin:       DOWNGRADE — @$INSTALLED_CHECKOUT_REF is neither a SHA pin"
+        echo "                    nor @vN, so a re-render writes the template's"
+        echo "                    @v$TEMPLATE_CHECKOUT_MAJOR over it. Restore the line after"
+        echo "                    re-rendering, or pin it in a form this reads." ;;
+      none)
+        echo "checkout pin:       none (no actions/checkout line installed; a re-render"
+        echo "                    writes the template's @v$TEMPLATE_CHECKOUT_MAJOR)" ;;
+    esac
   else
     echo "workflow:           MISSING ($WF_PATH)"
     rc=3
@@ -784,10 +846,10 @@ jobs:
       # during the measurement, and rebasing on a depth-1 clone lacks the history
       # to replay onto.
       # Never below @v5: v4 targets Node 20, which runners force onto Node 24
-      # with a deprecation warning on every run (#163). Dependabot bumps an
-      # installed copy of this line, and a re-render writes this pin back over
-      # it, so move this one in the same change (#373).
-      - uses: actions/checkout@v7
+      # with a deprecation warning on every run (#163). The template's pin is
+      # only a floor: a re-render keeps an installed SHA pin, or an installed
+      # major at or above the template's, so a Dependabot bump survives (#373).
+$CHECKOUT_LINE
         with:
           submodules: recursive
           fetch-depth: 0
@@ -1033,6 +1095,11 @@ else
     echo "installed: $WF_PATH (schedule: $CRON)"
   fi
 fi
+case "$CHECKOUT_PIN" in
+  sha|newer) echo "kept: actions/checkout@$INSTALLED_CHECKOUT_REF, the installed pin (#373)" ;;
+  unread)    echo "replaced: actions/checkout@$INSTALLED_CHECKOUT_REF with the template's" \
+                  "@v$TEMPLATE_CHECKOUT_MAJOR — restore it if it was deliberate (#373)" >&2 ;;
+esac
 # NOT inside the else. The installer's contract is two artifacts, and an early
 # exit on "the workflow is current" skipped this entirely — so every repo that
 # adopted before the merge attribute existed re-ran the installer, was told

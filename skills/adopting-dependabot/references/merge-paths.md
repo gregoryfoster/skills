@@ -98,9 +98,12 @@ ones included (`inventory.sh`'s `workflows[].generated`). The next re-render
 writes the generator's older pin back, quietly: a one-line diff in a file whose
 header says not to hand-edit it, so it reads as part of the regeneration.
 `curating-context`'s `install-cadence.sh` was the first generator found doing
-this ([#373](https://github.com/gregoryfoster/skills/issues/373)).
+this ([#373](https://github.com/gregoryfoster/skills/issues/373)). It now keeps
+an installed SHA pin, or a major at or above its template's, so its bump lands
+bare; `--check`'s `checkout pin:` line says what a re-render would write. A
+consumer vendoring a skills commit from before that fix still downgrades.
 
-Until the generator never writes an older pin than the one installed:
+For a generator that still writes its own pin:
 
 - take the bump;
 - where the generator is in the same repo and a test holds the file to its
