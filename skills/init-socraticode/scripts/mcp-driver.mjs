@@ -1073,6 +1073,14 @@ function updateLockHeld(text) {
   return /Another process is already indexing this project/i.test(text);
 }
 
+// Its other early return, the same shape (CR 1088): a reclamation barrier on
+// the project's identity — "Refusing to index: <why>" among the progress lines.
+// The refusal line, or null.
+function updateRefused(text) {
+  const m = text.match(/Refusing to index:[^\n]*/i);
+  return m ? m[0].trim() : null;
+}
+
 function parseArtifacts(text) {
   // Two known shapes:
   //   "Context artifacts: 2/7 indexed"          → {done:2, total:7}
@@ -2915,6 +2923,7 @@ async function cmdUpdate(projectPath) {
     let refused = null;
     if (indexAlreadyRunning(reply)) refused = 'an index of this project is already in progress in the server';
     else if (updateLockHeld(reply)) refused = "another process holds this project's index lock — a session's server, or a concurrent index";
+    else if (updateRefused(reply)) refused = `the server refused it: ${updateRefused(reply)}`;
     else if (!updateRan(reply) || !counts) refused = `the server did not run it. It replied:\n${reply}`;
     process.stdout.write(JSON.stringify(
       refused ? { projectPath, ran: false } : { projectPath, ran: true, ...counts }, null, 2) + '\n');
@@ -4132,7 +4141,7 @@ export {
   pluginServerFromVersionDir, expandVars,
   // tool-reply predicates (gotcha M)
   indexStarted, indexAlreadyRunning, runningOperationIsFullIndex,
-  parseUpdateCounts, updateRan, updateLockHeld,
+  parseUpdateCounts, updateRan, updateLockHeld, updateRefused,
   contextIndexComplete, indexedZeroChunks,
   searchHasHits, listHasProjects,
 };
