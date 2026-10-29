@@ -670,6 +670,8 @@ def test_knob_commands_never_run_as_root(host):
 # --- the recovery point -----------------------------------------------------------
 
 DATASTORE = KNOB + "datastore postgres postgresql@16-main app audit\n"
+# #480: a backup over both of its databases, as the knob and the record spell it.
+BOTH = "postgresql@16-main:app postgresql@16-main:audit"
 
 
 def _recovery(host: Host, *lines: str, began: int | None = None) -> None:
@@ -779,9 +781,9 @@ def test_a_backup_unit_must_have_run_since_the_recovery_point(
     host, started, objects, refused
 ):
     # Declared by its timer: the record names the service it starts.
-    host.knob(DATASTORE + "backup app-backup.timer postgresql@16-main\n")
+    host.knob(DATASTORE + "backup app-backup.timer postgresql@16-main:app,audit\n")
     began = TUE_1530 - 3600
-    _recovery(host, "backup app-backup postgresql@16-main", began=began)
+    _recovery(host, "backup app-backup " + BOTH, began=began)
     host.show(
         "app-backup.service",
         Result="success",
@@ -807,9 +809,9 @@ def test_a_backup_unit_must_have_run_since_the_recovery_point(
     ],
 )
 def test_a_backup_unit_must_have_finished_and_succeeded(host, result, ran, refused):
-    host.knob(DATASTORE + "backup app-backup postgresql@16-main\n")
+    host.knob(DATASTORE + "backup app-backup postgresql@16-main:app,audit\n")
     began = TUE_1530 - 3600
-    _recovery(host, "backup app-backup postgresql@16-main", began=began)
+    _recovery(host, "backup app-backup " + BOTH, began=began)
     host.show(
         "app-backup.service",
         Result=result,
@@ -824,9 +826,9 @@ def test_a_backup_unit_must_have_finished_and_succeeded(host, result, ran, refus
 def test_a_backup_unit_the_knob_doesnt_declare_stands_in_for_nothing(host):
     # Any unit that ran since the recovery point began would otherwise waive
     # every dump.
-    host.knob(DATASTORE + "backup app-backup postgresql@16-main\n")
+    host.knob(DATASTORE + "backup app-backup postgresql@16-main:app,audit\n")
     began = TUE_1530 - 3600
-    _recovery(host, "backup apt-daily postgresql@16-main", began=began)
+    _recovery(host, "backup apt-daily " + BOTH, began=began)
     host.show(
         "apt-daily.service",
         Result="success",
@@ -844,26 +846,55 @@ def test_a_backup_unit_the_knob_doesnt_declare_stands_in_for_nothing(host):
     [
         # The knob binds the unit to Postgres; Redis has nothing.
         (
-            "backup app-backup postgresql@16-main",
-            "backup app-backup postgresql@16-main",
+            "backup app-backup postgresql@16-main:app,audit",
+            "backup app-backup " + BOTH,
             "no dump of redis redis-server.service, and no backup unit covered"
             " redis-server.service",
         ),
         # The record says it covered Redis too; its line doesn't.
         (
-            "backup app-backup postgresql@16-main",
-            "backup app-backup postgresql@16-main redis-server",
+            "backup app-backup postgresql@16-main:app,audit",
+            "backup app-backup " + BOTH + " redis-server",
             "is recorded as covering redis-server.service, which its backup line"
             " doesn't name",
         ),
         # A record from before backup lines named their datastores.
         (
-            "backup app-backup postgresql@16-main redis-server",
+            "backup app-backup postgresql@16-main:app,audit redis-server",
             "backup app-backup",
             "isn't one apply.sh reads",
         ),
+        # #480: the record and the knob agree, and the knob doesn't say which
+        # of the cluster's two databases the backup takes.
+        (
+            "backup app-backup postgresql@16-main redis-server",
+            "backup app-backup postgresql@16-main redis-server",
+            "covers postgresql@16-main.service, whose datastore lines name app audit",
+        ),
+        # #480: it takes app; audit has neither a dump nor a backup.
+        (
+            "backup app-backup postgresql@16-main:app redis-server",
+            "backup app-backup postgresql@16-main:app redis-server",
+            "no dump of postgres postgresql@16-main.service audit, and no backup"
+            " unit covered",
+        ),
+        # #480: a record from before the knob named the databases claims the
+        # whole cluster.
+        (
+            "backup app-backup postgresql@16-main:app,audit redis-server",
+            "backup app-backup postgresql@16-main redis-server",
+            "is recorded as covering postgresql@16-main.service, which its backup"
+            " line doesn't name",
+        ),
     ],
-    ids=["uncovered", "over-claimed", "unbound-record"],
+    ids=[
+        "uncovered",
+        "over-claimed",
+        "unbound-record",
+        "whole-cluster",
+        "one-of-two",
+        "cluster-record",
+    ],
 )
 def test_a_backup_unit_stands_in_only_for_what_its_line_names(
     host, knob_line, record_line, refused

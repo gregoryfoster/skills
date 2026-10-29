@@ -3402,6 +3402,23 @@ def test_an_undeclared_backup_regime_is_named_with_the_grammar_to_declare_it(hos
     assert "backup:app-backup" not in _ids(host.run())
 
 
+def test_a_backup_over_a_cluster_of_several_databases_is_a_finding_before_a_run(host):
+    # #480: the recovery point and the bulk refuse it, so the probe names it
+    # first, with the line to write.
+    knob = (
+        "class production\nposture automatic\n"
+        "datastore postgres postgresql@16-main app app_test\n"
+    )
+    host.knob(knob + "backup app-backup.service postgresql@16-main\n")
+    f = _finding(
+        host.run(), "backup-covers:app-backup.service:postgresql@16-main.service"
+    )
+    assert f["kind"] == "knob" and f["exception_what"] is None
+    assert "backup app-backup.service postgresql@16-main:app,app_test" in f["message"]
+    host.knob(knob + "backup app-backup.service postgresql@16-main:app\n")
+    assert not [i for i in _ids(host.run()) if i.startswith("backup-covers:")]
+
+
 def _mutating(name: str, args: str) -> bool:
     """Whether one stubbed call would change the host."""
     a = args.split()

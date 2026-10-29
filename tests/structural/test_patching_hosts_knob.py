@@ -578,10 +578,31 @@ def test_a_backup_line_names_the_datastores_it_covers(tmp_path):
             "line": 4,
         }
     ]
+    # #480: a Postgres unit's databases it takes, after a colon.
+    out = _read(
+        tmp_path,
+        "posture scheduled\n"
+        "datastore postgres postgresql@16-main app app_test\n"
+        "backup app-backup.timer postgresql@16-main:app\n",
+    )
+    assert out["report_only"] is False
+    assert out["backup"][0]["datastores"] == ["postgresql@16-main:app"]
     out = _read(tmp_path, "posture scheduled\nbackup app-backup.timer\n")
     assert out["report_only"] is True
     assert any(
         f["line"] == 2 and "backup takes <unit> and each datastore unit" in f["message"]
+        for f in out["findings"]
+    ), out["findings"]
+
+
+@pytest.mark.parametrize(
+    "token", ["postgresql@16-main:", "postgresql@16-main:app,,b", ":app", "pg:a:b"]
+)
+def test_a_backup_lines_database_list_that_doesnt_parse_is_malformed(tmp_path, token):
+    out = _read(tmp_path, f"posture scheduled\nbackup app-backup.timer {token}\n")
+    assert out["report_only"] is True
+    assert any(
+        f["line"] == 2 and "<datastore unit>:<database>,..." in f["message"]
         for f in out["findings"]
     ), out["findings"]
 

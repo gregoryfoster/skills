@@ -982,6 +982,89 @@ def test_a_backup_line_naming_no_declared_datastore_is_refused(host):
     ), out["refused"]
 
 
+# --- a backup that dumps some of a cluster's databases (#480) --------------------
+# wslcb's backup unit dumps --database wslcb, and its knob declared wslcb and
+# wslcb_test on the cluster that backup line covers: wslcb_test was declared
+# and never dumped, by the backup or the recovery point.
+
+TWO = KNOB + "datastore postgres postgresql@16-main app app_test\n"
+
+
+def _two(host: Host, backup_line: str) -> Host:
+    _regime(host)
+    host.knob(TWO + backup_line)
+    host.on(
+        "psql",
+        "*-v db=app_test",
+        script=f'cat > "{host.state}/psql.in"; echo 2048; exit 0',
+    )
+    host.on("pg_dump", "-Fc -p 5432 -d app_test", "PGDMP app-test-data\n")
+    return host
+
+
+def test_a_backup_over_a_cluster_of_several_databases_must_say_which_it_takes(host):
+    _two(host, "backup app-backup.timer postgresql@16-main\n")
+    out = host.recover(rc=3)
+    [r] = [r for r in out["refused"] if "#480" in r]
+    assert "postgresql@16-main.service, whose datastore lines name app app_test" in r
+    # The exact line to write, to be trimmed to the databases it dumps.
+    assert "backup app-backup.timer postgresql@16-main:app,app_test" in r
+    assert not host.calls("pg_dump")
+    assert ("systemctl", "start -- app-backup.service") not in host.calls("systemctl")
+    assert not (host.run_dir / "recovery-point").exists()
+
+
+def test_a_backup_naming_its_databases_leaves_the_rest_to_a_dump(host):
+    _two(host, "backup app-backup.timer postgresql@16-main:app\n")
+    out = host.recover()
+    [b] = out["backup"]
+    assert (b["ok"], b["datastores"]) == (True, ["postgresql@16-main.service:app"])
+    assert [d["datastore"] for d in out["dumps"]] == [
+        "postgres postgresql@16-main.service app_test"
+    ]
+    assert [a for _, a, _ in host.calls("pg_dump")] == ["-Fc -p 5432 -d app_test"]
+    rec = host.record("recovery-point")
+    assert "backup app-backup.service postgresql@16-main.service:app\n" in rec
+    assert "dump postgres postgresql@16-main.service app_test " in rec
+    # The bulk takes it: app by the backup's object, app_test by its sha256.
+    sha = out["dumps"][0]["sha256"]
+    out = host.run("--offnode-object", "gs://bucket/app-1", "--offnode-sha256", sha)
+    assert out["refused"] == []
+
+
+def test_a_backup_naming_every_database_dumps_none(host):
+    _two(host, "backup app-backup.timer postgresql@16-main:app,app_test\n")
+    out = host.recover()
+    assert out["backup"][0]["datastores"] == [
+        "postgresql@16-main.service:app",
+        "postgresql@16-main.service:app_test",
+    ]
+    assert out["dumps"] is None
+    assert not host.calls("pg_dump")
+
+
+@pytest.mark.parametrize(
+    "line, refused",
+    [
+        (
+            "backup app-backup.timer postgresql@16-main:app,audit\n",
+            "names postgresql@16-main.service:audit, which no datastore postgres line declares",
+        ),
+        (
+            "backup app-backup.timer redis-server:app\n",
+            "names databases on redis-server.service, a redis datastore, which has none",
+        ),
+    ],
+    ids=["undeclared-database", "not-postgres"],
+)
+def test_a_backup_naming_a_database_it_cant_cover_is_refused(host, line, refused):
+    _two(host, line)
+    host.knob(TWO + "datastore redis redis-server\n" + line)
+    out = host.recover(rc=3)
+    assert any(refused in r for r in out["refused"]), out["refused"]
+    assert not (host.run_dir / "recovery-point").exists()
+
+
 def test_dump_takes_dumps_even_with_a_backup_regime(host):
     _regime(host)
     out = host.recover("--dump")
