@@ -79,7 +79,7 @@ bash "<SKILL_DIR>/scripts/preflight.sh"
 
 Gates: Docker, **only when something will run in it** (a managed Qdrant, or an
 Ollama container), never probed on a socket-activated host with the daemon
-down; Node `>=18.17` (26+ is checked against the resolved `socraticode@latest`
+down; Node `>=18.17`, `>=20` beside local containers (26+ is checked against the resolved `socraticode@latest`
 — [#269](https://github.com/gregoryfoster/skills/issues/269)); `npx`; for
 `STORE=external`, the store, the external Ollama, and whether this session
 carries the settings `env` block (a first install passes the values inline,
@@ -323,7 +323,7 @@ Present a completion table:
 
 | Component | Status |
 |---|---|
-| Preflight | Docker ✓ (boot-enabled: `<yes/n-a>`; containers on loopback) or not needed · `external`: store `<url>` ✓, `env` block in session ✓ · Node `<version>` (>=18.17) ✓ · npx ✓ |
+| Preflight | Docker ✓ (boot-enabled: `<yes/n-a>`; containers on loopback) or not needed · `external`: store `<url>` ✓, `env` block in session ✓ · Node `<version>` (>=18.17; >=20 beside local containers) ✓ · npx ✓ |
 | Store config | `validate-store` ✓ · `.socraticode.json`: `projectId` `<id/none>`, `<N>` relative `linkedProjects` |
 | Plugin | marketplace `socraticode` registered · `plugin:socraticode:socraticode` Connected |
 | Backend | `<EMBEDDING_BACKEND>`, or the store's (`external`: `OLLAMA_URL`, model) |
