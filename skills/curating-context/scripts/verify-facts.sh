@@ -191,13 +191,43 @@ check_commands() {
   # Scan only code context — inline backticks and fenced blocks. Scanning prose
   # matches English ("make it possible", "just once") and produces confident
   # nonsense; a documented command lives in code formatting or it isn't one.
+  #
+  # Fences by CommonMark's rule, ported from measure-context.sh's link walk
+  # (#468): a run of 3+ backticks or tildes indented under 4 spaces opens one,
+  # unless a backtick opener's info string holds a backtick (then the line is a
+  # code span, e.g. ```json```); it closes only on a run of its own character
+  # at least as long, with nothing after it. A naive toggle let a quoted ```
+  # line close a ```` block and read the rest of the file inside out. The
+  # indent rule is CommonMark's, as measure-context.sh's is; the gate walks'
+  # fence_toggle takes any indent, for a fence inside a list item.
   LC_ALL=C awk '
-    /^[[:space:]]*```/ { fence = !fence; next }
-    fence { print; next }
-    { while (match($0, /`[^`]+`/)) {
-        print substr($0, RSTART + 1, RLENGTH - 2)
-        $0 = substr($0, RSTART + RLENGTH)
-      } }
+    {
+      line = $0
+      sub(/\r$/, "", line)
+      stripped = line
+      sub(/^ +/, "", stripped)
+      indent = length(line) - length(stripped)
+      fchar = substr(stripped, 1, 1)
+      run = 0
+      if (indent < 4 && (fchar == "`" || fchar == "~")) {
+        while (substr(stripped, run + 1, 1) == fchar) run++
+        if (run < 3) run = 0
+      }
+      if (run > 0) {
+        info = substr(stripped, run + 1)
+        if (!fence && !(fchar == "`" && index(info, "`") > 0)) {
+          fence = 1; ffchar = fchar; frun = run; next
+        }
+        if (fence && fchar == ffchar && run >= frun && info ~ /^[ \t]*$/) {
+          fence = 0; next
+        }
+      }
+      if (fence) { print line; next }
+      while (match(line, /`[^`]+`/)) {
+        print substr(line, RSTART + 1, RLENGTH - 2)
+        line = substr(line, RSTART + RLENGTH)
+      }
+    }
   ' "$f" >"$TMP/code" 2>/dev/null || : >"$TMP/code"
   # Capture any leading `cd <dir> &&` chain (optionally inside a subshell) and a
   # directory-scoping flag between the runner and its target, so the parser below
