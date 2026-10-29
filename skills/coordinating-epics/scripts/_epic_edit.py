@@ -669,9 +669,10 @@ def converge(lines: list[str]) -> list[str]:
         if not why and e < len(lines) and SETEXT_RE.match(lines[e]):
             why = f"the {lines[e].strip()!r} under it makes it a heading"
         if why:
-            notes.append(
-                f"the header paragraph at line {s + 1} stays a paragraph: {why}"
-            )
+            # Named by its cursor field, not a line number: an earlier op can
+            # move it, and a later header op would note it again (CR 939).
+            lead = next(m.group("lead") for ln in para if (m := FIELD_RE.match(ln)))
+            notes.append(f"the paragraph holding {lead!r} stays a paragraph: {why}")
             continue
         items = []
         for k, ln in enumerate(para):

@@ -767,6 +767,22 @@ def test_a_paragraph_that_cant_converge_stays_and_says_so(rig, para, why):
     ), rig.body(REPO, EPIC)
 
 
+def test_a_paragraph_that_cant_converge_is_noted_once(rig):
+    """CR 939: an op that moves the paragraph doesn't make a second header op note it again."""
+    body = "## Tier 1\n\n- [ ] #11 a\n\n## Coordination\n\n**Last check-in:** 2026-10-28\nplain\n"
+    ops = [
+        {"op": "header", "field": "Last check-in", "value": "2026-10-29"},
+        {"op": "add-line", "section": "Tier 1", "line": "- [ ] #12 b"},
+        {"op": "header", "field": "Last check-in", "value": "2026-10-30"},
+    ]
+    res = _header(rig, body, ops)
+    assert res.returncode == 0, res.stderr
+    assert summary(res)["notes"] == [
+        "op 1 (header): the paragraph holding '**Last check-in:**' stays a"
+        " paragraph: 'plain' can't become a list item"
+    ]
+
+
 def test_an_unrelated_list_keeps_its_gap(rig):
     """#399: joining the cursors to the Milestones list was finding 140's defect."""
     body = (
