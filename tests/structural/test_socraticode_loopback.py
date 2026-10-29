@@ -902,6 +902,27 @@ class TestNodeBelow20CannotReachALoopbackContainer:
         )  # fmt: skip
         assert "through localhost" not in result.stdout, result.stdout
 
+    def test_a_native_ollama_is_reached_through_localhost_too(self, tmp_path):
+        """CR 806: upstream's own probe of it is a Node fetch of localhost:11434."""
+        binv = _host(tmp_path)
+        (binv / "node").write_text(
+            '#!/bin/sh\n[ "$1" = --version ] && { echo v18.20.8; exit 0; }\n'
+            '[ "$1" = -e ] && { printf %s "::1"; exit 0; }\nexit 0\n'
+        )
+        stub = binv / "docker"
+        stub.write_text(DOCKER_STUB.format(python=sys.executable))
+        stub.chmod(0o755)
+        state = binv.parent / "containers.json"
+        state.write_text(json.dumps({"socraticode-qdrant": LOOPBACK_Q}))
+        native = {"http://localhost:11434/api/tags": ["200", 0]}
+        result = _preflight(
+            tmp_path, _project(tmp_path), binv, curl=native,
+            STUB_CONTAINERS=str(state), QDRANT_HOST="127.0.0.1",
+        )  # fmt: skip
+        assert result.returncode == 1, result.stdout
+        line = _line(result, "through localhost")
+        assert "the native Ollama" in line and "socraticode-qdrant" not in line
+
     def test_below_the_engines_floor_says_upgrade_once(self, tmp_path):
         result = self._run(tmp_path, "v18.16.1", "::1")
         assert "through localhost" not in result.stdout

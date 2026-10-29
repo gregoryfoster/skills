@@ -1372,6 +1372,13 @@ for _t in ${LOCAL_TARGETS[@]+"${LOCAL_TARGETS[@]}"}; do
   esac
   LOCALHOST_TARGETS="${LOCALHOST_TARGETS:+$LOCALHOST_TARGETS, }socraticode-$_t"
 done
+# The native Ollama auto mode found (CR 806). This script's curl falls back to
+# 127.0.0.1, so it answered; upstream's own probe is a Node fetch of
+# localhost:11434, refused on Node 18 where ::1 comes first, and then upstream
+# falls back to a container it creates on every interface.
+if [ "$E_PROVIDER" = ollama ] && [ "$O_MODE" = auto ] && [ "$NATIVE" = 200 ]; then
+  LOCALHOST_TARGETS="${LOCALHOST_TARGETS:+$LOCALHOST_TARGETS, }the native Ollama (upstream's auto-mode probe; refused, it creates a wide Ollama container)"
+fi
 if [ -n "${NODE_MAJOR:-}" ] && [ "$NODE_MAJOR" -lt 20 ] && [ -n "$LOCALHOST_TARGETS" ] \
   && version_ge "$NODE_VER" "$NODE_MIN"; then
   LOCALHOST_FIRST="$(node -e "require('dns').lookup('localhost',(e,a)=>process.stdout.write(e?'':String(a)))" 2>/dev/null || true)"
