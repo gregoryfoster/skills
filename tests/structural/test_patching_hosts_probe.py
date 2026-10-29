@@ -3787,6 +3787,21 @@ def test_a_backup_over_a_cluster_of_several_databases_is_a_finding_before_a_run(
     assert not [i for i in _ids(host.run()) if i.startswith("backup-covers:")]
 
 
+def test_a_backup_refusals_line_names_each_database_once(host):
+    # CR 895: two datastore lines for one unit whose lists overlap.
+    host.knob(
+        "class production\nposture automatic\n"
+        "datastore postgres postgresql@16-main app\n"
+        "datastore postgres postgresql@16-main app b\n"
+        "backup app-backup.service postgresql@16-main\n"
+    )
+    f = _finding(
+        host.run(), "backup-covers:app-backup.service:postgresql@16-main.service"
+    )
+    assert "backup app-backup.service postgresql@16-main:app,b," in f["message"]
+    assert "whose datastore lines name app b," in f["message"]
+
+
 # --- a database: exception's glob (#455) --------------------------------------------
 # host 6's test suite made one database per pytest-xdist worker, and each new
 # worker was a new finding.
