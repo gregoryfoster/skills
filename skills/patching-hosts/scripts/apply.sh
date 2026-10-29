@@ -16,8 +16,10 @@ passes it changes nothing, and prints why.
 
 Steps:
   bulk         refreshes apt's lists, records the before-versions, holds the
-               pending packages of every hold group, runs unattended-upgrade
-               on the rest, and polls the health checks. Approval 2.
+               pending packages of every hold group that its lane takes (the
+               dry run's selection, or one whose candidate moved since it;
+               #488), runs unattended-upgrade on the rest, and polls the
+               health checks. Approval 2.
   <held step>  one hold group: postgres, redis, docker, or a step the knob's
                hold lines name. Stops each restarter that was active, then
                releases what the bulk held for it, runs the same command,
@@ -1425,7 +1427,7 @@ STARTED=0
 
 LANE_KEEP=""
 do_bulk() {
-  local out pend="" p i r s g o="" a="" names="" e kw rest pol onames oskip sim bv dv="" dseen=0 c d line vout="" va=""
+  local out pend="" p i r s g o="" a="" names="" e kw rest pol onames oskip sim bv dv="" dseen=0 c d line vout="" va="" outside=""
   local -a f=() w=()
   if ! root_has "$run" && ! as_root mkdir -p -m 700 -- "$run"; then
     fail "$run couldn't be made"
@@ -1502,11 +1504,36 @@ do_bulk() {
         return 0
       fi ;;
   esac
+  # Each held group's candidate now, and the version the dry run counted.
+  hold_group_versions bv "$sim"
+  while IFS= read -r line; do
+    case $line in held_versions=*) dv=${line#held_versions=} dseen=1 ;; esac
+  done <<<"$DRY_SUMMARY"
   # Each pending package matching a hold group's globs, in the knob's order,
   # unless the owner already holds it: the run never holds or releases those.
+  # In the security and maintenance lanes, only one the lane takes (#488):
+  # its dry run's selection, as the span gate counted it. One it passed
+  # over, at the candidate it counted, is left alone: host 6's security
+  # lane held a -updates containerd it could never take, and the held step
+  # that released it upgraded nothing. One whose candidate moved since, or
+  # that a dry run from before #383 never counted, is held as before: the
+  # lane may take a release its dry run never saw, and unheld, the bulk
+  # would.
   read -r -a w <<<"$pend" || true
   for p in ${w[@]+"${w[@]}"}; do
     in_words "$p" "$BEFORE_HOLDS" && continue
+    case $LANE in
+      origin:*) ;;
+      *)
+        if [ "$dseen" -eq 1 ] && ! in_words "$p" "$DRY_SEL"; then
+          version_in c "$bv" "$p"
+          version_in d "$dv" "$p"
+          if [ -n "$d" ] && [ "$c" = "$d" ]; then
+            outside="$outside $p"
+            continue
+          fi
+        fi ;;
+    esac
     for r in ${KNOB_HOLD[@]+"${KNOB_HOLD[@]}"}; do
       IFS=$KNOB_US read -r -a f <<<"$r"
       if glob_match "$p" "${f[1]}"; then
@@ -1522,10 +1549,6 @@ do_bulk() {
   # the simulation's candidate can be a newer -updates version than the one
   # unattended-upgrade takes from -security (usa-wa), so a comparison would
   # name a version the step won't install (CR 238).
-  hold_group_versions bv "$sim"
-  while IFS= read -r line; do
-    case $line in held_versions=*) dv=${line#held_versions=} dseen=1 ;; esac
-  done <<<"$DRY_SUMMARY"
   for i in ${RUN_HOLD_PKG[@]+"${!RUN_HOLD_PKG[@]}"}; do
     p=${RUN_HOLD_PKG[$i]}
     version_in c "$bv" "$p"
@@ -1590,6 +1613,9 @@ do_bulk() {
     fi
   done
   jadd o placed "{$a}"
+  # A hold group's pending package the lane's selection doesn't take (#488).
+  json_words e "$outside"
+  jadd o not_in_lane "$e"
   json_words e "$BEFORE_HOLDS"
   jadd o owner "$e"
   J_HOLDS="{$o}"
