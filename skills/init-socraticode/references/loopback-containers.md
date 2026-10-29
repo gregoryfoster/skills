@@ -150,7 +150,9 @@ existing, and SocratiCode would `docker start` a name with nothing behind it.
    - The backup is stopped before the new container starts, so two Qdrants never
      share the volume.
 3. **Verify.**
-   - `loopback-containers.sh --check qdrant` reports `ok`.
+   - `QDRANT_PORT="$P" loopback-containers.sh --check qdrant` reports `ok`.
+     Without the port it checks 16333, and on another port a correct
+     container reads `broken`.
    - The listeners are `127.0.0.1` only (`lsof -nP -iTCP -sTCP:LISTEN` or
      `ss -ltn`).
    - `counts.before.tsv` matches a recount, collection by collection.
