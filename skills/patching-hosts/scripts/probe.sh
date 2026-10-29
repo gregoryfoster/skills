@@ -2761,6 +2761,39 @@ inline_verdict() {  # <command> [<working directory>]
   return $rc
 }
 
+# What one option word does to an interpreter's arguments (#484 site 2),
+# its letters read one by one as each one's getopt reads them, so a
+# combined -um or -ec is read as its parts. OC := flag; inline (a shell's
+# -c: the command follows); code (another language's code on the command
+# line, which the scan doesn't read); or module (Python's -m, with OC_MOD
+# the module when it's attached). OC_SKIP := how many words after it are
+# its options' values: bash -o, perl -I, node -r, Python's -X and
+# --check-hash-based-pycs. A value read as the script was read as a path.
+opt_word() {  # <sh, python, perl, ruby or node> <word>
+  local w=$2 c rest k=1
+  OC=flag OC_MOD="" OC_SKIP=0
+  case $1:$w in
+    sh:+[oO] | python:--check-hash-based-pycs | node:-r | node:--require) OC_SKIP=1 && return 0 ;;
+    node:-e | node:--eval | node:-p | node:--print) OC=code && return 0 ;;
+    *:--* | node:*) return 0 ;;
+  esac
+  while [ "$k" -lt "${#w}" ]; do
+    c=${w:k:1} rest=${w:k+1}
+    k=$((k + 1))
+    case $1:$c in
+      sh:c) OC=inline ;;
+      sh:[oO]) OC_SKIP=$((OC_SKIP + 1)) ;;
+      python:m) OC=module OC_MOD=$rest && return 0 ;;
+      python:c | perl:[eE] | ruby:e) OC=code && return 0 ;;
+      python:[XWQ] | perl:[IMmx] | ruby:[rICEx])
+        if [ -z "$rest" ]; then OC_SKIP=$((OC_SKIP + 1)); fi
+        return 0 ;;
+      # -l and -0 take octal digits, attached: -l0e is -l0, then -e.
+      perl:[l0]) while [[ ${w:k:1} == [0-9] ]]; do k=$((k + 1)); done ;;
+    esac
+  done
+}
+
 # Whether a script restarts anything: 0 when it can, 1 when it's read and
 # can't, 2 when it can't be read, with SV_WHY saying why. One level deep: a
 # script it calls in turn isn't followed, so a restart two scripts down is
@@ -2843,7 +2876,7 @@ onfailure_restarts() {  # <target unit>
 # lines alone sets UR_MATCH to every script that matched and its lines
 # (#419).
 unit_restarts() {  # <service> <who>
-  local t=$1 who=$2 tmpl="" d f files="" line raw prog base script rc=1 w i v text mod wd="" exec_restarts=0 seen="" ml=""
+  local t=$1 who=$2 tmpl="" d f files="" line raw prog base script rc=1 w i v text mod wd="" exec_restarts=0 seen="" ml="" lang user="" home
   local -a tok=() texts=()
   UR_WHY="" UR_MATCH=""
   case $t in *@*.*) tmpl=${t%%@*}@.${t##*.} ;; esac
@@ -2875,12 +2908,19 @@ unit_restarts() {  # <service> <who>
         [[:space:]]*WorkingDirectory=* | WorkingDirectory=*)
           read -r wd <<<"${line#*=}" || true
           wd=${wd#-} ;;
+        [[:space:]]*User=* | User=*) read -r user <<<"${line#*=}" || true ;;
         [[:space:]]*Exec*=* | Exec*=*)
           if [[ $line =~ $RESTART_RE ]]; then exec_restarts=1; fi ;;
       esac
     done <<<"$text"
   done <<<"$files"
   if [ "$exec_restarts" -eq 1 ]; then return 0; fi
+  # ~ is User='s home, root's without one, as read_language reads it
+  # (#484 site 3). One passwd doesn't name stays ~, and unread.
+  if [ "$wd" = "~" ]; then
+    passwd_home home "${user:-root}"
+    if [ -n "$home" ]; then wd=$home; fi
+  fi
   for text in ${texts[@]+"${texts[@]}"}; do
     while IFS= read -r line || [ -n "$line" ]; do
       case $line in [[:space:]]*Exec*=* | Exec*=*) ;; *) continue ;; esac
@@ -2905,27 +2945,39 @@ unit_restarts() {  # <service> <who>
       case $base in
         "") continue ;;
         sh | bash | dash | zsh | python | python[0-9]* | perl | perl[0-9]* | ruby | node)
-          # Its script is its first argument that isn't an option. With -c,
-          # the command follows, and each simple command in it is read.
-          # Python's -m takes a module, which isn't followed to a file (#393),
-          # and -X and -W take a value that isn't the script.
+          # Its script is its first argument that isn't an option or an
+          # option's value (#484 site 2: opt_word). A shell's -c is followed
+          # by the command, and each simple command in it is read. Python's
+          # -m takes a module, which isn't followed to a file (#393), and
+          # another language's code on the command line isn't read.
+          case $base in
+            python*) lang=python ;;
+            perl*) lang=perl ;;
+            ruby | node) lang=$base ;;
+            *) lang="sh" ;;
+          esac
           while [ "$i" -lt "${#tok[@]}" ]; do
             w=${tok[$i]}
             i=$((i + 1))
-            case $base:$w in
-              *:-c)
-                inline_verdict "${raw#* -c }" "$wd" || true
-                if [ -n "$IV_WHY" ]; then UR_WHY="$who runs $IV_WHY" rc=2; fi
-                break ;;
-              python*:-m*)
-                mod=${w#-m}
-                if [ -z "$mod" ]; then mod=${tok[$i]:-}; fi
-                UR_WHY="$who runs $base -m $mod, a Python module the scan doesn't follow to a file" rc=2
-                break ;;
-              python*:-[XW]) i=$((i + 1)) ;;
-              *:-*) ;;
+            case $w in
+              -?* | +[oO]) ;;
               *) script=$w && break ;;
             esac
+            opt_word "$lang" "$w"
+            case $OC in
+              inline)
+                inline_verdict "${raw#* "$w" }" "$wd" || true
+                if [ -n "$IV_WHY" ]; then UR_WHY="$who runs $IV_WHY" rc=2; fi
+                break ;;
+              module)
+                mod=${OC_MOD:-${tok[$i]:-}}
+                UR_WHY="$who runs $base -m $mod, a Python module the scan doesn't follow to a file" rc=2
+                break ;;
+              code)
+                UR_WHY="$who runs $base $w, code the scan doesn't read" rc=2
+                break ;;
+            esac
+            i=$((i + OC_SKIP))
           done ;;
         *) in_words "$base" "$INERT_PROGS" || script=$prog ;;
       esac
