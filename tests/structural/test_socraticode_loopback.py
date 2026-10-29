@@ -578,6 +578,17 @@ class TestPreflightReadsTheContainers:
             "a native Ollama answers, so no Ollama container will be created"
         )
 
+    def test_an_idle_socket_still_probes_for_a_native_ollama(self, tmp_path):
+        """CR 799: the idle branch prints the command, so its targets must be right."""
+        binv = _host(tmp_path, systemd=True)
+        native = {"http://localhost:11434/api/tags": ["200", 0]}
+        result = _preflight(
+            tmp_path, _project(tmp_path), binv, curl=native, SOCKET="active"
+        )
+        assert not (binv.parent / "docker.log").exists()
+        assert f'bash "{SCRIPT}" qdrant' in result.stdout, result.stdout
+        assert f'bash "{SCRIPT}" qdrant ollama' not in result.stdout
+
     def test_no_curl_beside_a_managed_store_is_said(self, tmp_path):
         """CR 793: the Ollama target is an assumption there, and is named as one."""
         binv = _host(tmp_path)

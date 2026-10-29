@@ -956,7 +956,10 @@ if [ "$E_PROVIDER" = ollama ]; then
       # Gate 1 probes only beside an external store. Beside a managed one the
       # answer decides nothing there, but here it decides whether an Ollama
       # container is created at all.
-      if [ -z "$NATIVE_PROBED" ] && [ -n "$DOCKER_UP" ]; then
+      # Beside an idle socket too (CR 799): the probe is a GET to
+      # localhost:11434, which never touches Docker's socket, and that
+      # branch prints the create command, whose targets this decides.
+      if [ -z "$NATIVE_PROBED" ] && { [ -n "$DOCKER_UP" ] || [ -n "$DOCKER_IDLE" ]; }; then
         if command -v curl >/dev/null 2>&1; then
           NATIVE="$(curl -q --noproxy '*' -s -o /dev/null -w '%{http_code}' --max-time 2 http://localhost:11434/api/tags 2>/dev/null || true)"
         else
