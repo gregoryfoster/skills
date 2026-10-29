@@ -198,3 +198,17 @@ class TestTheGateIsWrappedNotForked:
         for ln in lines:
             assert "fork only if" not in ln, ln
         assert any("wrapper" in ln and RECIPE in ln for ln in lines), lines
+
+
+class TestTheRationaleIsTrue:
+    """CR 1038: load_env exports what it loads, as `set -a` does, so the
+    template's reason to parse must be the one that holds: sourcing runs the
+    file as shell code."""
+
+    def test_it_does_not_claim_parsing_avoids_exporting(self):
+        text = TEMPLATE.read_text()
+        assert "hands every secret in it to every child process" not in text
+        assert "runs a file as shell code" in text
+        assert "`load_env` exports" in text, (
+            "say plainly that load_env exports what it loads"
+        )
