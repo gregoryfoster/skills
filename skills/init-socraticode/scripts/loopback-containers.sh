@@ -102,7 +102,7 @@ is_loopback() {
 }
 
 # inspect NAME PORTS — sets V (verdict) and DETAIL. Read-only. PORTS are the
-# host ports SocratiCode will address, space-separated.
+# host ports SocratiCode will address, space-separated; $var names them.
 #
 # One template, two parts: state, network mode and publishes on the first
 # line, then the environment one variable per line. Bash builtins parse it, so the script runs
@@ -173,7 +173,7 @@ inspect() {
     # it fails the same way until whatever holds the port lets go.
     V=broken DETAIL="$name has never started (state created): a docker run that could not bind leaves one behind, so find what holds its port before starting it"
   elif [ -n "$unmet" ]; then
-    V=broken DETAIL="$name ($state) is on loopback, but does not publish $unmet, where SocratiCode will look (QDRANT_PORT, QDRANT_GRPC_PORT, OLLAMA_PORT)"
+    V=broken DETAIL="$name ($state) is on loopback, but does not publish $unmet, the $var SocratiCode addresses"
   elif [ -n "$other" ]; then
     V=decoy DETAIL="$name ($state) is on loopback, but SocratiCode's substring match also counts: $other"
   elif [ "$name" = socraticode-qdrant ] && [ -z "$telemetry" ]; then
@@ -211,7 +211,10 @@ create() {
 RC=0
 for target in "${TARGETS[@]}"; do
   name="socraticode-$target"
-  if [ "$target" = qdrant ]; then expect="$QP $QG"; else expect="$OP"; fi
+  # The port each one is addressed on (CR 800). Upstream publishes gRPC but
+  # never connects to it: its client is REST, on QDRANT_HOST:QDRANT_PORT
+  # [traced, 1.16.1 dist/services/qdrant.js getClient].
+  if [ "$target" = qdrant ]; then expect="$QP" var=QDRANT_PORT; else expect="$OP" var=OLLAMA_PORT; fi
   inspect "$name" "$expect"
   if [ "$V" = missing ] && [ -z "$CHECK" ]; then
     if create "$target" "$name"; then

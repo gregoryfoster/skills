@@ -351,7 +351,14 @@ class TestTheScriptsVerdicts:
         verdict, detail = _rows(
             _script(docker, "--check", "qdrant", QDRANT_PORT="26333")
         )["qdrant"]
-        assert verdict == "broken" and "26333" in detail and "16334" not in detail
+        assert verdict == "broken" and "26333" in detail and "QDRANT_PORT" in detail
+        assert "GRPC" not in detail and "OLLAMA" not in detail
+
+    def test_a_missing_grpc_publish_is_still_ok(self, tmp_path):
+        """CR 800: upstream's client is REST on QDRANT_PORT; it never dials gRPC."""
+        rest_only = dict(LOOPBACK_Q, binds=[["127.0.0.1", "16333"]])
+        docker = Docker(tmp_path, {"socraticode-qdrant": rest_only})
+        assert _rows(_script(docker, "--check", "qdrant"))["qdrant"][0] == "ok"
 
     def test_the_host_network_is_wide(self, tmp_path):
         c = {"state": "running", "network": "host", "binds": [], "env": []}
