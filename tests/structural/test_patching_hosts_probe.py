@@ -1978,6 +1978,264 @@ def test_a_module_stays_unread_whatever_its_working_directory(host):
     assert "python3 -m infra.renew, a Python module" in f["message"]
 
 
+# --- systemd's drop-in order (#515, #484 site 5) -------------------------------------
+# journald.conf(5) and systemd.unit(5): every *.conf across /etc, /run,
+# /usr/local/lib and /usr/lib, a name in a higher directory masking the same
+# name lower down, then applied in filename order whatever the directory.
+
+JD = "systemd/journald.conf.d"
+
+
+@pytest.mark.parametrize(
+    "files, storage, set_in",
+    [
+        # The disk GC's layer installs its drop-in under /usr/local/lib.
+        (
+            {f"usr/local/lib/{JD}/zz-cannobserv-journal.conf": "volatile"},
+            "volatile",
+            f"/usr/local/lib/{JD}/zz-cannobserv-journal.conf:2",
+        ),
+        ({f"run/{JD}/50-x.conf": "none"}, "none", f"/run/{JD}/50-x.conf:2"),
+        # By filename, not by directory: zz-a sorts after 10-b, and wins.
+        (
+            {
+                f"usr/lib/{JD}/zz-a.conf": "volatile",
+                f"etc/{JD}/10-b.conf": "persistent",
+            },
+            "volatile",
+            f"/usr/lib/{JD}/zz-a.conf:2",
+        ),
+        # /etc's copy of a name masks /usr/lib's.
+        (
+            {
+                f"usr/lib/{JD}/50-x.conf": "volatile",
+                f"etc/{JD}/50-x.conf": "persistent",
+            },
+            "persistent",
+            f"/etc/{JD}/50-x.conf:2",
+        ),
+        # And so does a link to /dev/null, which reads as nothing.
+        (
+            {f"usr/lib/{JD}/50-x.conf": "volatile", f"etc/{JD}/50-x.conf": None},
+            "persistent",
+            "/etc/systemd/journald.conf:2",
+        ),
+    ],
+    ids=["usr-local-lib", "run", "filename-order", "masked", "masked-by-null"],
+)
+def test_journald_drop_ins_are_read_as_journald_reads_them(
+    host, files, storage, set_in
+):
+    host.write("etc/systemd/journald.conf", "[Journal]\nStorage=persistent\n")
+    for rel, value in files.items():
+        if value is None:
+            host.link(rel, "/dev/null")
+        else:
+            host.write(rel, f"[Journal]\nStorage={value}\n")
+    j = host.run()["environment"]["journal"]
+    assert (j["storage"], j["storage_set_in"]) == (storage, set_in)
+
+
+def test_a_working_directory_drop_in_in_usr_local_lib_is_read_in_name_order(host):
+    # read_language's drop-in merge read /etc and /run alone (CR 236): a
+    # drop-in under /usr/local/lib that sorts last sets the tree.
+    _tree(host)
+    _uv(host)
+    d = "systemd/system/app.service.d"
+    host.write(f"etc/{d}/10-elsewhere.conf", "[Service]\nWorkingDirectory=/srv/x\n")
+    host.write(
+        f"usr/local/lib/{d}/zz-app.conf", f"[Service]\nWorkingDirectory=/{APP}\n"
+    )
+    [t] = _lang(_audit(host))
+    assert t["dir"] == f"/{APP}"
+
+
+@pytest.mark.parametrize(
+    "dropins, finds",
+    [
+        # Site 5: zz-a sorts last, so its WorkingDirectory= wins, though it's
+        # in /etc and 10-b in /usr/lib.
+        (
+            {
+                "etc/systemd/system/cache-sweep.service.d/zz-a.conf": f"WorkingDirectory={AV}",
+                "usr/lib/systemd/system/cache-sweep.service.d/10-b.conf": "WorkingDirectory=/srv/old",
+            },
+            True,
+        ),
+        (
+            {
+                "etc/systemd/system/cache-sweep.service.d/10-a.conf": f"WorkingDirectory={AV}",
+                "usr/lib/systemd/system/cache-sweep.service.d/zz-b.conf": "WorkingDirectory=/srv/old",
+            },
+            False,
+        ),
+        # /run's copy of a name masks /usr/lib's.
+        (
+            {
+                "run/systemd/system/cache-sweep.service.d/50-wd.conf": f"WorkingDirectory={AV}",
+                "usr/lib/systemd/system/cache-sweep.service.d/50-wd.conf": "WorkingDirectory=/srv/old",
+            },
+            True,
+        ),
+    ],
+    ids=["etc-sorts-last", "usr-lib-sorts-last", "run-masks-usr-lib"],
+)
+def test_the_restarter_scans_working_directory_follows_drop_in_filename_order(
+    host, dropins, finds
+):
+    host.write("etc/systemd/system/cache-sweep.timer", "[Timer]\nOnCalendar=daily\n")
+    host.write(
+        "etc/systemd/system/cache-sweep.service",
+        f"[Service]\nType=oneshot\nExecStart={AV}/.venv/bin/python infra/sweep_cache.py\n",
+    )
+    for rel, line in dropins.items():
+        host.write(rel, f"[Service]\n{line}\n")
+    host.write(SWEEP, RESTARTS)
+    host.write(OLD_SWEEP, NOTIFIES)
+    out = host.run()
+    assert ("restarter:cache-sweep.service" in _ids(out)) is finds
+
+
+# --- the restarter scan's residual sites (#484) --------------------------------------
+# Sites 1 and 4 can hide a real restarter: a restart the scan should find,
+# and didn't.
+
+
+def test_a_plain_units_own_systemctl_start_is_a_restarter(host):
+    # Site 4: read_restarters' own grep took restart and not start, an older
+    # matcher than RESTART_RE; a unit that's neither an OnFailure= target nor
+    # a timer's service was found only through it.
+    host.write(
+        "etc/systemd/system/app-watch.service",
+        "[Service]\nExecStart=/usr/bin/app-watch\n"
+        "ExecStartPost=/bin/systemctl start app.service\n",
+    )
+    out = host.run()
+    f = _finding(out, "restarter:app-watch.service")
+    assert f["exception_what"] is None
+    assert "app-watch.service" in {r["unit"] for r in out["impact"]["restarters"]}
+    # A restart on an Exec line was read, so no exception silences it.
+    host.knob(
+        "posture scheduled\n"
+        "exception not-restarter:app-watch.service 2099-01-01 it only starts\n"
+    )
+    assert "restarter:app-watch.service" in _ids(host.run())
+
+
+def test_an_inline_commands_relative_script_is_read_against_its_working_directory(
+    host,
+):
+    # Site 1: #418's defect at the inline-command site. A relative command
+    # word runs from WorkingDirectory=, as a script on an Exec line does.
+    host.write("etc/systemd/system/store-cert.timer", RENEW_TIMER)
+    host.write(
+        "etc/systemd/system/store-renew.service",
+        "[Service]\nType=oneshot\nWorkingDirectory=/opt/app\n"
+        "ExecStart=/bin/sh -c 'scripts/renew.sh && ./scripts/after.sh'\n",
+    )
+    host.write("opt/app/scripts/renew.sh", NOTIFIES)
+    host.write("opt/app/scripts/after.sh", RESTARTS)
+    out = host.run()
+    assert "restarters:unread:store-renew.service" not in _ids(out)
+    f = _finding(out, "restarter:store-renew.service")
+    assert "/opt/app/scripts/after.sh, which matches at line 2" in f["message"]
+
+
+def test_an_inline_command_names_every_script_that_matches(host):
+    # Site 1: #419's first-match shape. Each matching script is named, so
+    # an exception is declared over all of them, not the first alone. An
+    # absolute path is also a word of the Exec line, which unit_restarts
+    # reads; a relative one is only the inline command's.
+    host.write("etc/systemd/system/store-cert.timer", RENEW_TIMER)
+    host.write(
+        "etc/systemd/system/store-renew.service",
+        "[Service]\nType=oneshot\nWorkingDirectory=/opt/app\n"
+        "ExecStart=/bin/sh -c './a.sh; ./b.sh'\n",
+    )
+    host.write("opt/app/a.sh", "#!/bin/sh\necho 'then systemctl restart x'\n")
+    host.write("opt/app/b.sh", RESTARTS)
+    out = host.run()
+    msg = _finding(out, "restarter:store-renew.service")["message"]
+    assert "/opt/app/a.sh, which matches at line 2" in msg
+    assert "/opt/app/b.sh, which matches at line 2" in msg
+
+
+@pytest.mark.parametrize(
+    "exec_line, finds, said",
+    [
+        # Site 2: an option's value was read as the script. Relative, as an
+        # absolute path is also read as any word of the line.
+        ("/bin/bash -o pipefail ./r.sh", True, ""),
+        ("/bin/bash -O extglob ./r.sh", True, ""),
+        # A cluster holding c is -c: each simple command is read.
+        ("/bin/bash -ec 'true && ./r.sh'", True, ""),
+        ("/usr/bin/perl -I /opt/lib ./r.sh", True, ""),
+        ("/usr/bin/perl -M strict ./r.sh", True, ""),
+        ("/usr/bin/node -r dotenv/config ./r.sh", True, ""),
+        ("/usr/bin/node --require dotenv/config ./r.sh", True, ""),
+        ("/usr/bin/python3 --check-hash-based-pycs never ./r.sh", True, ""),
+        ("/usr/bin/python3 -u -X dev ./r.sh", True, ""),
+        # Combined short flags: -um is -u, then -m and its module.
+        (
+            "/usr/bin/python3 -um app.backup",
+            False,
+            "python3 -m app.backup, a Python module",
+        ),
+        ("/usr/bin/python3 -uX dev ./r.sh", True, ""),
+        # Code on the command line is another language's: it isn't read as
+        # a shell's, and stays unread, saying so.
+        (
+            "/usr/bin/python3 -c 'import app'",
+            False,
+            "python3 -c, code the scan doesn't read",
+        ),
+        ("/usr/bin/perl -e 'system 1'", False, "perl -e, code the scan doesn't read"),
+        ("/usr/bin/node -e 'run()'", False, "node -e, code the scan doesn't read"),
+        # perl's -c only checks the syntax: the script after it is read.
+        ("/usr/bin/perl -c ./r.sh", True, ""),
+        # CR 888: perl's and ruby's -x take a directory attached, never the
+        # next word, which is the script.
+        ("/usr/bin/perl -x ./r.sh", True, ""),
+        ("/usr/bin/ruby -x ./r.sh", True, ""),
+        # CR 891: bash's --rcfile and --init-file take a file.
+        ("/bin/bash --rcfile /etc/app.rc ./r.sh", True, ""),
+        ("/bin/bash --init-file /etc/app.rc ./r.sh", True, ""),
+    ],
+)
+def test_an_interpreters_option_value_isnt_its_script(host, exec_line, finds, said):
+    host.write("etc/systemd/system/store-cert.timer", RENEW_TIMER)
+    host.write(
+        "etc/systemd/system/store-renew.service",
+        f"[Service]\nType=oneshot\nWorkingDirectory=/opt/app\nExecStart={exec_line}\n",
+    )
+    host.write("opt/app/r.sh", RESTARTS)
+    host.write("etc/app.rc", NOTIFIES)
+    out = host.run()
+    assert ("restarter:store-renew.service" in _ids(out)) is finds
+    assert ("restarters:unread:store-renew.service" in _ids(out)) is bool(said)
+    if said:
+        assert said in _finding(out, "restarters:unread:store-renew.service")["message"]
+
+
+def test_a_home_working_directory_is_read_through_the_units_user(host):
+    # Site 3: ~ is User='s home, as systemd reads it, and read_language
+    # already resolves it.
+    host.write(
+        "etc/passwd",
+        "root:x:0:0:root:/root:/bin/bash\nexedev:x:1000:1000::/home/exedev:/bin/bash\n",
+    )
+    host.write("etc/systemd/system/cache-sweep.timer", "[Timer]\nOnCalendar=daily\n")
+    host.write(
+        "etc/systemd/system/cache-sweep.service",
+        "[Service]\nType=oneshot\nUser=exedev\nWorkingDirectory=~\n"
+        f"ExecStart={AV}/.venv/bin/python address-validator/infra/sweep_cache.py\n",
+    )
+    host.write(SWEEP, RESTARTS)
+    out = host.run()
+    assert "restarters:unread:cache-sweep.service" not in _ids(out)
+    assert "restarter:cache-sweep.service" in _ids(out)
+
+
 def test_an_exception_clears_a_timers_service_the_scan_cant_follow(host):
     host.write("etc/systemd/system/store-cert.timer", RENEW_TIMER)
     host.write("etc/systemd/system/store-renew.service", RENEW_UNIT)
@@ -2877,6 +3135,93 @@ def test_docker_with_a_container_is_in_use(host):
     assert _dormant(out, "docker")["verdict"] == "in-use"
 
 
+# --- text names a component; only a working line uses it (#491) ----------------------
+# On co-processor, a comment in deploy/processor.service saying the service
+# user is NOT in group docker made an idle Docker in-use, hiding a prune
+# candidate.
+
+NOT_IN_GROUP = (
+    "[Service]\n# The service user is not in group docker: it never runs containers.\n"
+    "ExecStart=/srv/app/serve\n"
+)
+
+
+def _repo(host: Host, rel: str, text: str) -> None:
+    p = host.repo / rel
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(text)
+
+
+@pytest.mark.parametrize(
+    "rel, text",
+    [
+        ("deploy/processor.service", NOT_IN_GROUP),
+        ("deploy/README.md", "We used Docker once, and don't now.\n"),
+    ],
+    ids=["comment", "prose"],
+)
+def test_a_component_deploy_names_only_in_text_is_named(host, rel, text):
+    _repo(host, rel, text)
+    out = _docker(host).run()
+    d = _dormant(out, "docker")
+    assert d["verdict"] == "named"
+    assert rel in d["named_by"]
+    assert "no container in any state" in d["evidence"]
+    assert "dormant:docker" not in _ids(out)
+    # Not a prune candidate without the operator's look, which it asks for.
+    f = _finding(out, "named:docker")
+    assert (f["kind"], f["exception_what"]) == ("dormant", "keep:docker")
+    assert "look before proposing a prune" in f["message"]
+    host.knob("posture automatic\nexception keep:docker 2099-01-01 kept on purpose\n")
+    assert _dormant(host.run(), "docker")["verdict"] == "kept"
+
+
+@pytest.mark.parametrize(
+    "rel, text, evidence",
+    [
+        (
+            "deploy/processor.service",
+            "[Unit]\nAfter=docker.service\n[Service]\nExecStart=/srv/app/serve\n",
+            "deploy/processor.service names it on a line that isn't a comment",
+        ),
+        (
+            "deploy/compose.sh",
+            "#!/bin/sh\n# start it\ndocker compose up -d\n",
+            "deploy/compose.sh names it on a line that isn't a comment",
+        ),
+    ],
+    ids=["unit", "script"],
+)
+def test_a_working_deploy_line_is_in_use(host, rel, text, evidence):
+    _repo(host, rel, text)
+    d = _dormant(_docker(host).run(), "docker")
+    assert (d["verdict"], d["evidence"]) == ("in-use", evidence)
+
+
+@pytest.mark.parametrize(
+    "line, uses",
+    [
+        ("Requires=docker.service", True),
+        ("After=docker.service", True),
+        ("ExecStartPre=/usr/bin/docker pull app", True),
+        # A description, or a comment, is text.
+        ("Description=Not docker", False),
+        ("# After=docker.service", False),
+    ],
+)
+def test_a_host_units_requires_after_or_exec_naming_it_is_in_use(host, line, uses):
+    host.write(
+        "etc/systemd/system/app.service",
+        f"[Unit]\n{line}\n[Service]\nExecStart=/srv/app/serve\n",
+    )
+    d = _dormant(_docker(host).run(), "docker")
+    if uses:
+        assert d["verdict"] == "in-use"
+        assert d["evidence"].startswith("/etc/systemd/system/app.service names it")
+    else:
+        assert d["verdict"] == "dormant"
+
+
 def test_idle_evidence_younger_than_30_days_is_unknown(tmp_path):
     h = Host(tmp_path, uptime_days=10).knob("posture automatic\n")
     out = _docker(h).run()
@@ -3215,6 +3560,29 @@ def test_a_redis_with_no_key_is_dormant_only_when_nothing_uses_it(
     assert evidence in d["evidence"]
 
 
+@pytest.mark.parametrize(
+    "unit, uses",
+    [
+        # CR 889: only a unit whose name starts with the component's is its
+        # own; app-redis-worker.service, which needs Redis, uses it.
+        ("app-redis-worker.service", True),
+        ("redis-server.service.d/override.conf", False),
+    ],
+)
+def test_a_unit_whose_name_merely_holds_the_components_isnt_its_own(host, unit, uses):
+    host.installed("redis-server")
+    host.show("redis-server.service", ActiveState="active")
+    host.on("redis-cli", "INFO", "".join(f"{k}:{v}\r\n" for k, v in REDIS_IDLE.items()))
+    host.write(
+        f"etc/systemd/system/{unit}",
+        "[Unit]\nRequires=redis-server.service\n[Service]\nExecStart=/srv/app/work\n",
+    )
+    d = _dormant(host.run(), "redis")
+    assert d["verdict"] == ("in-use" if uses else "dormant")
+    if uses:
+        assert d["evidence"].startswith(f"/etc/systemd/system/{unit} names it")
+
+
 def test_a_redis_that_needs_a_login_says_so(host):
     # Unauthenticated, as the probe asks: an ACL'd Redis answers NOAUTH, and
     # nothing reaches its ACL LOG (#379; measured on 7.0).
@@ -3400,6 +3768,90 @@ def test_an_undeclared_backup_regime_is_named_with_the_grammar_to_declare_it(hos
         "backup app-backup.service postgresql@16-main\n"
     )
     assert "backup:app-backup" not in _ids(host.run())
+
+
+def test_a_backup_over_a_cluster_of_several_databases_is_a_finding_before_a_run(host):
+    # #480: the recovery point and the bulk refuse it, so the probe names it
+    # first, with the line to write.
+    knob = (
+        "class production\nposture automatic\n"
+        "datastore postgres postgresql@16-main app app_test\n"
+    )
+    host.knob(knob + "backup app-backup.service postgresql@16-main\n")
+    f = _finding(
+        host.run(), "backup-covers:app-backup.service:postgresql@16-main.service"
+    )
+    assert f["kind"] == "knob" and f["exception_what"] is None
+    assert "backup app-backup.service postgresql@16-main:app,app_test" in f["message"]
+    host.knob(knob + "backup app-backup.service postgresql@16-main:app\n")
+    assert not [i for i in _ids(host.run()) if i.startswith("backup-covers:")]
+
+
+def test_a_backup_refusals_line_names_each_database_once(host):
+    # CR 895: two datastore lines for one unit whose lists overlap.
+    host.knob(
+        "class production\nposture automatic\n"
+        "datastore postgres postgresql@16-main app\n"
+        "datastore postgres postgresql@16-main app b\n"
+        "backup app-backup.service postgresql@16-main\n"
+    )
+    f = _finding(
+        host.run(), "backup-covers:app-backup.service:postgresql@16-main.service"
+    )
+    assert "backup app-backup.service postgresql@16-main:app,b," in f["message"]
+    assert "whose datastore lines name app b," in f["message"]
+
+
+# --- a database: exception's glob (#455) --------------------------------------------
+# host 6's test suite made one database per pytest-xdist worker, and each new
+# worker was a new finding.
+
+_WORKERS = [
+    ("postgres", "7000000", "0", "", "C.UTF-8", "c", "", "0"),
+    ("app", "90000000", "1200", "1700000000", "en_US.UTF-8", "c", "2.39"),
+    ("app_test", "8000000", "0", "", "en_US.UTF-8", "c", "2.39"),
+    ("app_test_gw0", "8000000", "0", "", "en_US.UTF-8", "c", "2.39"),
+    ("app_test_gw1", "8000000", "0", "", "en_US.UTF-8", "c", "2.39"),
+    ("stray", "8000000", "0", "", "en_US.UTF-8", "c", "2.39"),
+]
+
+
+def test_a_database_exception_takes_a_glob(host):
+    _postgres(host, _WORKERS)
+    host.knob(
+        "posture scheduled\ndatastore postgres postgresql@16-main app\n"
+        "exception database:app_test* 2099-01-01 the test suite's, rebuilt by every run\n"
+    )
+    out = host.run()
+    for db in ("app_test", "app_test_gw0", "app_test_gw1"):
+        assert f"database:{db}" not in _ids(out)
+        assert _finding(out, f"database:{db}", "excepted")["exception_line"] == 3
+    assert _finding(out, "database:stray")["kind"] == "knob"
+
+
+def test_an_exact_database_exception_beats_a_glob(host):
+    _postgres(host, _WORKERS)
+    host.knob(
+        "posture scheduled\ndatastore postgres postgresql@16-main app\n"
+        "exception database:app_test* 2099-01-01 the test suite's\n"
+        "exception database:app_test_gw1 2099-02-01 this worker's own reason\n"
+    )
+    out = host.run()
+    f = _finding(out, "database:app_test_gw1", "excepted")
+    assert (f["exception_line"], f["review_by"]) == (4, "2099-02-01")
+    assert _finding(out, "database:app_test_gw0", "excepted")["exception_line"] == 3
+
+
+def test_a_glob_excepts_nothing_but_a_database(host):
+    # A held:<package> names one thing: a glob there would over-cover.
+    host.on("apt-mark", "showhold", "libxml2\n")
+    host.on(
+        "apt-cache",
+        "*policy libxml2",
+        _policy("libxml2", "2.9.14", "2.9.14.1", ["noble-updates", "noble-security"]),
+    )
+    host.knob("posture automatic\nexception held:lib* 2099-01-01 every library\n")
+    assert "held:libxml2" in _ids(host.run())
 
 
 def _mutating(name: str, args: str) -> bool:

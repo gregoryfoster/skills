@@ -186,7 +186,7 @@ class Host(RigHost):
             f"began={TUE_1530 - 3600}\nexit=0\ncount=4\nwall_seconds=540\nsecurity_only=1\n"
         )
         (self.dry / "dry-run.log").write_text(
-            "Packages that will be upgraded: libc6 libxml2 libssl3t64 postgresql-16\n"
+            "Packages that will be upgraded: libc6 libxml2 libssl3t64 postgresql-16 libpq5\n"
         )
         self.state = tmp_path / "state"
         self.state.mkdir()
@@ -670,6 +670,8 @@ def test_knob_commands_never_run_as_root(host):
 # --- the recovery point -----------------------------------------------------------
 
 DATASTORE = KNOB + "datastore postgres postgresql@16-main app audit\n"
+# #480: a backup over both of its databases, as the knob and the record spell it.
+BOTH = "postgresql@16-main:app postgresql@16-main:audit"
 
 
 def _recovery(host: Host, *lines: str, began: int | None = None) -> None:
@@ -779,9 +781,9 @@ def test_a_backup_unit_must_have_run_since_the_recovery_point(
     host, started, objects, refused
 ):
     # Declared by its timer: the record names the service it starts.
-    host.knob(DATASTORE + "backup app-backup.timer postgresql@16-main\n")
+    host.knob(DATASTORE + "backup app-backup.timer postgresql@16-main:app,audit\n")
     began = TUE_1530 - 3600
-    _recovery(host, "backup app-backup postgresql@16-main", began=began)
+    _recovery(host, "backup app-backup " + BOTH, began=began)
     host.show(
         "app-backup.service",
         Result="success",
@@ -807,9 +809,9 @@ def test_a_backup_unit_must_have_run_since_the_recovery_point(
     ],
 )
 def test_a_backup_unit_must_have_finished_and_succeeded(host, result, ran, refused):
-    host.knob(DATASTORE + "backup app-backup postgresql@16-main\n")
+    host.knob(DATASTORE + "backup app-backup postgresql@16-main:app,audit\n")
     began = TUE_1530 - 3600
-    _recovery(host, "backup app-backup postgresql@16-main", began=began)
+    _recovery(host, "backup app-backup " + BOTH, began=began)
     host.show(
         "app-backup.service",
         Result=result,
@@ -824,9 +826,9 @@ def test_a_backup_unit_must_have_finished_and_succeeded(host, result, ran, refus
 def test_a_backup_unit_the_knob_doesnt_declare_stands_in_for_nothing(host):
     # Any unit that ran since the recovery point began would otherwise waive
     # every dump.
-    host.knob(DATASTORE + "backup app-backup postgresql@16-main\n")
+    host.knob(DATASTORE + "backup app-backup postgresql@16-main:app,audit\n")
     began = TUE_1530 - 3600
-    _recovery(host, "backup apt-daily postgresql@16-main", began=began)
+    _recovery(host, "backup apt-daily " + BOTH, began=began)
     host.show(
         "apt-daily.service",
         Result="success",
@@ -844,26 +846,55 @@ def test_a_backup_unit_the_knob_doesnt_declare_stands_in_for_nothing(host):
     [
         # The knob binds the unit to Postgres; Redis has nothing.
         (
-            "backup app-backup postgresql@16-main",
-            "backup app-backup postgresql@16-main",
+            "backup app-backup postgresql@16-main:app,audit",
+            "backup app-backup " + BOTH,
             "no dump of redis redis-server.service, and no backup unit covered"
             " redis-server.service",
         ),
         # The record says it covered Redis too; its line doesn't.
         (
-            "backup app-backup postgresql@16-main",
-            "backup app-backup postgresql@16-main redis-server",
+            "backup app-backup postgresql@16-main:app,audit",
+            "backup app-backup " + BOTH + " redis-server",
             "is recorded as covering redis-server.service, which its backup line"
             " doesn't name",
         ),
         # A record from before backup lines named their datastores.
         (
-            "backup app-backup postgresql@16-main redis-server",
+            "backup app-backup postgresql@16-main:app,audit redis-server",
             "backup app-backup",
             "isn't one apply.sh reads",
         ),
+        # #480: the record and the knob agree, and the knob doesn't say which
+        # of the cluster's two databases the backup takes.
+        (
+            "backup app-backup postgresql@16-main redis-server",
+            "backup app-backup postgresql@16-main redis-server",
+            "covers postgresql@16-main.service, whose datastore lines name app audit",
+        ),
+        # #480: it takes app; audit has neither a dump nor a backup.
+        (
+            "backup app-backup postgresql@16-main:app redis-server",
+            "backup app-backup postgresql@16-main:app redis-server",
+            "no dump of postgres postgresql@16-main.service audit, and no backup"
+            " unit covered",
+        ),
+        # #480: a record from before the knob named the databases claims the
+        # whole cluster.
+        (
+            "backup app-backup postgresql@16-main:app,audit redis-server",
+            "backup app-backup postgresql@16-main redis-server",
+            "is recorded as covering postgresql@16-main.service, which its backup"
+            " line doesn't name",
+        ),
     ],
-    ids=["uncovered", "over-claimed", "unbound-record"],
+    ids=[
+        "uncovered",
+        "over-claimed",
+        "unbound-record",
+        "whole-cluster",
+        "one-of-two",
+        "cluster-record",
+    ],
 )
 def test_a_backup_unit_stands_in_only_for_what_its_line_names(
     host, knob_line, record_line, refused
@@ -1211,6 +1242,88 @@ def test_the_bulk_holds_each_groups_pending_packages_and_never_the_owners(host):
         f'bash "{apply}" --approve --step postgres --run "{host.run_dir}": approval 3(a), a restart',
         f'bash "{apply}" --approve --step redis --run "{host.run_dir}": approval 3(a), a restart',
     ]
+
+
+# --- a hold group's package the lane can't take (#488) ------------------------------
+# host 6's security lane selected 37 packages, none in a hold group, but
+# -updates had a newer containerd: the bulk held it, which the lane could
+# never take, and releasing it took a held step that upgraded nothing.
+
+PG_LATER = "16.10-0ubuntu0.24.04.1"
+REDIS_LATER = "5:7.0.15-1ubuntu0.24.04.1"
+CTRD_NOW = "1.7.28-0ubuntu1~24.04.1"
+CONTAINERD = (
+    f"Inst containerd [1.7.27-0ubuntu1~24.04.1] ({CTRD_NOW} "
+    "Ubuntu:24.04/noble-updates [arm64])\n"
+)
+
+
+def _containerd_pending(host: Host, containerd: str = CTRD_NOW) -> Host:
+    """containerd pending from -updates, and a dry run that counted every
+    hold group's candidate, containerd's at CONTAINERD."""
+    host.cases["apt-get"].insert(0, (SIM_ARGS, SIMULATION + CONTAINERD, 0, "", None))
+    with (host.dry / "summary").open("a") as f:
+        f.write(
+            f"held_versions=postgresql-16={PG_LATER} libpq5={PG_LATER} "
+            f"redis-server={REDIS_LATER} containerd={containerd}\n"
+        )
+    return host
+
+
+def test_the_bulk_holds_only_what_the_lanes_selection_takes(host):
+    out = _containerd_pending(host).run()
+    assert out["holds"]["placed"] == {"postgres": ["postgresql-16", "libpq5"]}
+    [hold] = [a for n, a, _ in host.calls("apt-mark") if a.startswith("hold")]
+    assert hold == "hold postgresql-16 libpq5"
+    # The span it was gated on counted the same steps.
+    assert out["gate"]["run_span"]["held_steps"] == ["postgres"]
+    assert not [n for n in out["next"] if "--step docker" in n or "--step redis" in n]
+
+
+def test_a_candidate_that_moved_since_the_dry_run_is_still_held(host):
+    # The dry run can't say whether the lane takes a release it never saw:
+    # held, as before, rather than taken unheld by the bulk.
+    out = _containerd_pending(host, containerd="1.7.27-0ubuntu1~24.04.2").run()
+    assert out["holds"]["placed"]["docker"] == ["containerd"]
+    assert "redis" not in out["holds"]["placed"]
+
+
+CTRD_BEFORE = "1.7.27-0ubuntu1~24.04.1"
+
+
+@pytest.mark.parametrize("after, taken", [(CTRD_BEFORE, False), (CTRD_NOW, True)])
+def test_a_package_left_unheld_that_the_bulk_took_anyway_fails_it(host, after, taken):
+    # CR 894: the narrowing's limit, made loud. A -security release behind an
+    # unchanged, newer -updates candidate is outside the dry run's selection
+    # and didn't move, so it's left unheld, and the bulk can still take it,
+    # with none of its held step's protections. It can't be undone; it
+    # fails the bulk, naming it, so the run takes the abort branch.
+    _containerd_pending(host)
+    host.cases["dpkg-query"].insert(
+        0,
+        (
+            "-W",
+            "libc6\t2.39-0ubuntu8.5\npostgresql-16\t16.9-0ubuntu0.24.04.1\n"
+            f"containerd\t{CTRD_BEFORE}\n",
+            0,
+            "",
+            None,
+        ),
+    )
+    host.cases["dpkg-query"].insert(
+        0, ("-W redis-server containerd", f"containerd\t{after}\n", 0, "", None)
+    )
+    out = host.run(rc=1 if taken else 0)
+    assert out["holds"]["not_in_lane"] == ["redis-server", "containerd"]
+    assert out["holds"]["taken_unheld"] == (["containerd"] if taken else [])
+    why = [w for w in out["verdict"]["why"] if "containerd" in w]
+    if taken:
+        [w] = why
+        assert f"unattended-upgrade took containerd ({CTRD_BEFORE} to {after})" in w
+        assert "a docker package" in w and "held step" in w
+        assert out["abort"]["instructions"][0].startswith("Stop: no further held step")
+    else:
+        assert why == [] and out["verdict"]["ok"] is True
 
 
 @pytest.mark.parametrize("sudo", [True, "reset"])

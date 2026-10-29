@@ -106,7 +106,7 @@ exception <what> <review-by YYYY-MM-DD> <reason>
 | `unpinned:<package>` | an installed package whose candidate comes from a followed origin, and that no package pin names (both postures) |
 | `tailscale:auto-update` | Tailscale updates itself (`tailscale set --auto-update`), or nothing ever set it on the node, so nothing on record says whether it does (both postures). The node's own setting isn't enough: on co-replicator, tailscaled re-applied the tailnet's default, on, over `--auto-update=false` at a later boot (2026-10-06, #357). Turn it off for the tailnet too, in the admin console's auto-updates. `--post-boot` reads it again |
 | `held:<package>` | an owner's hold on a pending package |
-| `database:<name>` | a cluster database no `datastore` line names |
+| `database:<name>` | a cluster database no `datastore` line names. `<name>` may be a glob, `*` and `?`, so `database:app_test*` covers a test suite's per-worker databases; an exact name wins over a glob, and the more specific glob over another (#455). No other `<what>` takes one |
 | `datastore:<container>` | a running Qdrant container no `datastore` line names, because the owner rebuilds the store rather than snapshot it (#367) |
 | `ordering:<service>` | a `service` with no `After=` on a data store |
 | `journal:volatile` | the journal doesn't survive a reboot |
@@ -125,7 +125,7 @@ The rest take no exception, because each is fixed where it is:
 
 An installed engine or daemon that nothing uses is patch surface, disk and attack surface for no benefit. nginx was disabled on six hosts yet in every one's security set. The probe reports the evidence; it never removes anything.
 
-- **The verdict** is `in-use`, `dormant`, `kept` (an exception) or `unknown`.
+- **The verdict** is `in-use`, `dormant`, `kept` (an exception), `named` or `unknown`. **Text isn't use** (#491): only a `deploy/` line that isn't a comment, or a host unit's `Requires=`, `After=` or `Exec*` line naming it, reads `in-use`. A `deploy/` comment or prose that names it reads `named`, which is never a prune candidate until the operator has read what it says ([pruning.md](pruning.md)).
 - **`dormant` needs 30 days of evidence** (decided 2026-09-27): uptime, database statistics since their reset, container history. Anything younger is `unknown`, as is anything the probe couldn't read. **No row written isn't idleness:** an app may only read, so a database with no write but a session since its statistics were reset is `unknown`. Likewise a Redis with no key may be a cache whose keys expired, or a bus: a lookup, an expiry, a subscription or another client since it started means it's in use. A volatile journal (see the profile) often can't reach back 30 days, so name the evidence source for each verdict.
 - **A prune** runs on a disable → remove → purge calendar with a 30–90-day soak. With a savepoint (config tarball, before-versions, an off-node dump where data exists), the remove stage is skipped. The operator chooses the path, and can shorten any soak (decided 2026-09-27). The stages and their scripts: [pruning.md](pruning.md).
 - **A prune covers groups and memberships, not only packages and units.** watcher's Docker removal left the `docker` group with `exedev` in it, which would make `exedev` root-equivalent the moment Docker returned (CannObserv/watcher#336).

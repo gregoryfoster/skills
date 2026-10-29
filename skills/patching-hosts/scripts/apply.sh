@@ -16,8 +16,11 @@ passes it changes nothing, and prints why.
 
 Steps:
   bulk         refreshes apt's lists, records the before-versions, holds the
-               pending packages of every hold group, runs unattended-upgrade
-               on the rest, and polls the health checks. Approval 2.
+               pending packages of every hold group that its lane takes (the
+               dry run's selection, or one whose candidate moved since it;
+               #488), runs unattended-upgrade on the rest, and polls the
+               health checks. One it left unheld that unattended-upgrade
+               took anyway fails it, named (CR 894). Approval 2.
   <held step>  one hold group: postgres, redis, docker, or a step the knob's
                hold lines name. Stops each restarter that was active, then
                releases what the bulk held for it, runs the same command,
@@ -124,7 +127,9 @@ the node: each dump attested by its sha256, and each backup unit, one the
 knob declares, run successfully since the recovery point began, with its
 object named. A backup unit stands in only for the datastores the record
 says it covered, which its knob line must name too: each other datastore
-needs its own dump.
+needs its own dump. On a Postgres unit whose datastore lines name more than
+one database, the backup line must name the databases it takes, as
+<unit>:<db>,<db> (#480), or the bulk refuses.
 
 The run's directory is root-only: 0700, and each file 0600.
   recovery-point   written before the bulk (run.md section 2 has its lines)
@@ -838,8 +843,8 @@ gate_apt() {
 # name. A recovery point from another day isn't one for this run.
 RP_MAX_AGE=86400
 gate_recovery() {
-  local rec line kind engine unit rest db sha path key n=0 i r s x began="" retain="" o="" a="" e iso="" ok u k declared d kc w
-  local -a f=() dbs=() need=() dkeys=() dsums=() dpaths=() backups=() bcovers=() kcovers=()
+  local rec line kind engine unit raw rest db sha path key n=0 i r s x began="" retain="" o="" a="" e iso="" ok u k declared d kc w
+  local -a f=() dbs=() need=() dkeys=() dsums=() dpaths=() backups=() bcovers=()
   [ "$step" = bulk ] || return 0
   if [ "${#KNOB_DATASTORE[@]}" -eq 0 ]; then
     if [ "${#sums[@]}" -gt 0 ] || [ "${#objects[@]}" -gt 0 ]; then
@@ -871,6 +876,7 @@ gate_recovery() {
     [ -n "$line" ] || continue
     kind="" engine="" unit="" rest="" db="" sha="" path=""
     read -r kind engine unit rest <<<"$line"
+    raw=$unit
     if [ -n "$unit" ]; then unit_name unit "$unit"; fi
     case $kind:$engine in
       began:*) began=$engine ;;
@@ -885,11 +891,12 @@ gate_recovery() {
           ?*:aof | ?*:rdb | ?*:none | ?*:unknown) ;;
           *) kind=bad ;;
         esac ;;
-      # A backup line names its unit and each datastore unit it covered.
+      # A backup line names its unit and each datastore unit it covered, or
+      # <unit>:<db> for each database it covered of one (#480).
       backup:*)
         if [ -n "$engine" ] && [ -n "$unit" ]; then
           w=""
-          for d in $unit $rest; do unit_name d "$d"; w="$w $d"; done
+          for d in $raw $rest; do cover_name d "$d"; w="$w $d"; done
           backups+=("$engine") bcovers+=("${w# }")
         else
           kind=bad
@@ -916,13 +923,24 @@ gate_recovery() {
   iso_utc iso "$began"
   jaddsn o began "$iso"
   jaddsn o retain_until "$retain"
-  # Each datastore needs a dump, or a backup unit that covered its unit: a
-  # backup stands in only for what its line names (CR 194).
+  # A backup line that can't stand in for a dump as the knob spells it is
+  # refused here too, whatever the record says (#480).
+  for r in ${KNOB_BACKUP[@]+"${KNOB_BACKUP[@]}"}; do
+    backup_covers "$r"
+    for w in ${BC_WHY[@]+"${BC_WHY[@]}"}; do refuse "$w"; done
+  done
+  # Each datastore needs a dump, or a backup unit that covered its unit, or
+  # that database of it: a backup stands in only for what its line names
+  # (CR 194, #480).
   for key in ${need[@]+"${need[@]}"}; do
     s=0
     for i in ${dkeys[@]+"${!dkeys[@]}"}; do [ "${dkeys[$i]}" != "$key" ] || s=1; done
-    u=${key#* } u=${u%% *}
-    for i in ${bcovers[@]+"${!bcovers[@]}"}; do in_words "$u" "${bcovers[$i]}" && s=1; done
+    u=${key#* } u=${u%% *} db=""
+    case $key in "postgres "*) db=${key##* } ;; esac
+    for i in ${bcovers[@]+"${!bcovers[@]}"}; do
+      in_words "$u" "${bcovers[$i]}" && s=1
+      if [ -n "$db" ] && in_words "$u:$db" "${bcovers[$i]}"; then s=1; fi
+    done
     [ "$s" -eq 1 ] || refuse "the recovery point holds no dump of $key, and no backup unit covered $u"
   done
   for i in ${dkeys[@]+"${!dkeys[@]}"}; do
@@ -959,13 +977,19 @@ gate_recovery() {
       unit_name k "${f[0]}"
       if [ "$k" = "$unit" ] || [ "$k" = "${unit%.service}.timer" ]; then
         declared=1
-        read -r -a kcovers <<<"${f[1]}"
-        for d in ${kcovers[@]+"${kcovers[@]}"}; do unit_name d "$d"; kc="$kc $d"; done
+        backup_covers "$r"
+        kc="$kc $BC_COVERS"
       fi
     done
     jaddb e declared "$declared"
+    # A database the record names is covered by its line's naming it, or
+    # its unit whole, which a Postgres unit of one database may (#480).
     w=""
-    for d in ${bcovers[$i]}; do in_words "$d" "$kc" || w="$w $d"; done
+    for d in ${bcovers[$i]}; do
+      in_words "$d" "$kc" && continue
+      case $d in *:*) in_words "${d%%:*}" "$kc" && continue ;; esac
+      w="$w $d"
+    done
     if [ "$declared" -eq 0 ]; then
       refuse "backup unit $unit isn't one the knob declares: only the host's own backup regime, named by a backup line (knob.md), stands in for a dump"
     elif [ -n "$w" ]; then
@@ -1404,7 +1428,7 @@ STARTED=0
 
 LANE_KEEP=""
 do_bulk() {
-  local out pend="" p i r s g o="" a="" names="" e kw rest pol onames oskip sim bv dv="" dseen=0 c d line vout="" va=""
+  local out pend="" p i r s g o="" a="" names="" e kw rest pol onames oskip sim bv dv="" dseen=0 c d line vout="" va="" outside="" bver=""
   local -a f=() w=()
   if ! root_has "$run" && ! as_root mkdir -p -m 700 -- "$run"; then
     fail "$run couldn't be made"
@@ -1427,6 +1451,7 @@ do_bulk() {
     fail "the before-versions couldn't be recorded: nothing was held or upgraded"
     return 0
   fi
+  bver=$out
   capture out apt-mark showauto
   if [ "$CAP_RC" -ne 0 ] || ! printf '%s\n' "$out" | root_write "$run/before-showauto"; then
     fail "apt-mark showauto couldn't be recorded: nothing was held or upgraded"
@@ -1481,11 +1506,36 @@ do_bulk() {
         return 0
       fi ;;
   esac
+  # Each held group's candidate now, and the version the dry run counted.
+  hold_group_versions bv "$sim"
+  while IFS= read -r line; do
+    case $line in held_versions=*) dv=${line#held_versions=} dseen=1 ;; esac
+  done <<<"$DRY_SUMMARY"
   # Each pending package matching a hold group's globs, in the knob's order,
   # unless the owner already holds it: the run never holds or releases those.
+  # In the security and maintenance lanes, only one the lane takes (#488):
+  # its dry run's selection, as the span gate counted it. One it passed
+  # over, at the candidate it counted, is left alone: host 6's security
+  # lane held a -updates containerd it could never take, and the held step
+  # that released it upgraded nothing. One whose candidate moved since, or
+  # that a dry run from before #383 never counted, is held as before: the
+  # lane may take a release its dry run never saw, and unheld, the bulk
+  # would.
   read -r -a w <<<"$pend" || true
   for p in ${w[@]+"${w[@]}"}; do
     in_words "$p" "$BEFORE_HOLDS" && continue
+    case $LANE in
+      origin:*) ;;
+      *)
+        if [ "$dseen" -eq 1 ] && ! in_words "$p" "$DRY_SEL"; then
+          version_in c "$bv" "$p"
+          version_in d "$dv" "$p"
+          if [ -n "$d" ] && [ "$c" = "$d" ]; then
+            outside="$outside $p"
+            continue
+          fi
+        fi ;;
+    esac
     for r in ${KNOB_HOLD[@]+"${KNOB_HOLD[@]}"}; do
       IFS=$KNOB_US read -r -a f <<<"$r"
       if glob_match "$p" "${f[1]}"; then
@@ -1501,10 +1551,6 @@ do_bulk() {
   # the simulation's candidate can be a newer -updates version than the one
   # unattended-upgrade takes from -security (usa-wa), so a comparison would
   # name a version the step won't install (CR 238).
-  hold_group_versions bv "$sim"
-  while IFS= read -r line; do
-    case $line in held_versions=*) dv=${line#held_versions=} dseen=1 ;; esac
-  done <<<"$DRY_SUMMARY"
   for i in ${RUN_HOLD_PKG[@]+"${!RUN_HOLD_PKG[@]}"}; do
     p=${RUN_HOLD_PKG[$i]}
     version_in c "$bv" "$p"
@@ -1569,6 +1615,9 @@ do_bulk() {
     fi
   done
   jadd o placed "{$a}"
+  # A hold group's pending package the lane's selection doesn't take (#488).
+  json_words e "$outside"
+  jadd o not_in_lane "$e"
   json_words e "$BEFORE_HOLDS"
   jadd o owner "$e"
   J_HOLDS="{$o}"
@@ -1580,8 +1629,52 @@ do_bulk() {
   check_holds
   [ "${#FAILED[@]}" -eq 0 ] || return 0
   run_uu
+  check_unheld "$outside" "$bver"
+  json_words e "$TAKEN_UNHELD"
+  jadd o taken_unheld "$e"
+  J_HOLDS="{$o}"
   check_holds
   poll_health
+}
+
+# The narrowing's limit, made loud (CR 894): a hold group's package left
+# unheld, outside the dry run's selection at the candidate it counted, can
+# still be taken, as a -security release behind an unchanged, newer
+# -updates candidate is. Taken, it had none of its held step's protections:
+# no restarter stopped, no checkpoint, no health poll of its own. That can't
+# be undone here, so each one whose version moved fails the bulk, named, and
+# the run takes the abort branch: no held step and no reboot chain until
+# the owner decides. TAKEN_UNHELD := those packages.
+TAKEN_UNHELD=""
+check_unheld() {  # <packages left unheld> <the before-versions, dpkg-query -W's>
+  local out p x y b v g r
+  local -a ps=() f=()
+  read -r -a ps <<<"$1" || true
+  [ "${#ps[@]}" -gt 0 ] || return 0
+  # Exit 1 means one isn't installed now: the others still print.
+  capture out dpkg-query -W "${ps[@]}"
+  if [ "$CAP_RC" -gt 1 ]; then
+    fail "dpkg-query -W couldn't read$1 after the upgrade (${CAP_ERR:-exit $CAP_RC}), so whether the bulk took one the run left unheld is unknown: read $run/$step.log"
+    return 0
+  fi
+  for p in "${ps[@]}"; do
+    b="" v=""
+    # A Multi-Arch package prints with its architecture (CR 237).
+    while read -r x y; do
+      if [ "${x%%:*}" = "$p" ]; then b=$y; fi
+    done <<<"$2"
+    while read -r x y; do
+      if [ "${x%%:*}" = "$p" ]; then v=$y; fi
+    done <<<"$out"
+    [ "$v" != "$b" ] || continue
+    g=""
+    for r in ${KNOB_HOLD[@]+"${KNOB_HOLD[@]}"}; do
+      IFS=$KNOB_US read -r -a f <<<"$r"
+      if glob_match "$p" "${f[1]}"; then g=${f[0]} && break; fi
+    done
+    TAKEN_UNHELD="$TAKEN_UNHELD $p"
+    fail "unattended-upgrade took $p (${b:-not installed} to ${v:-not installed}), a $g package the run left unheld as outside its lane's selection: its held step's protections didn't apply (no restarter stopped, no checkpoint). Read $run/$step.log, and check what $g runs by hand"
+  done
 }
 
 # Each Qdrant datastore's start, before a held step, so a restart the step

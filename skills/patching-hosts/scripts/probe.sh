@@ -387,9 +387,15 @@ finding() {  # <kind> <id> <what an exception names, or empty> <message>
 NOT_READ=""
 not_read() { jpushs NOT_READ "$1"; }
 
+# A database:<what> may be a glob, * and ? as [host <glob>] takes them, so a
+# test suite's per-worker databases need one line (#455). An exact <what>
+# wins over any glob, and of two globs the more specific, by its count of
+# characters that aren't * or ?, as [host]'s precedence reads it; the first
+# in the knob on a tie. No other kind takes one: a held:<package> or a
+# keep:<component> names one thing, and a glob there would over-cover.
 exception_for() {  # <what>: sets EX_*; returns 1 when the knob declares none
-  local _r
-  local -a _f=()
+  local _r _g _s _best=-1
+  local -a _f=() _hit=()
   EX_LINE="" EX_REVIEW="" EX_REASON="" EX_EXPIRED=""
   for _r in ${KNOB_EXCEPTION[@]+"${KNOB_EXCEPTION[@]}"}; do
     IFS=$KNOB_US read -r -a _f <<<"$_r"
@@ -398,7 +404,20 @@ exception_for() {  # <what>: sets EX_*; returns 1 when the knob declares none
       return 0
     fi
   done
-  return 1
+  case $1 in database:*) ;; *) return 1 ;; esac
+  for _r in ${KNOB_EXCEPTION[@]+"${KNOB_EXCEPTION[@]}"}; do
+    IFS=$KNOB_US read -r -a _f <<<"$_r"
+    case ${_f[0]} in database:*[*?]*) ;; *) continue ;; esac
+    _g=${_f[0]#database:}
+    # The exception's glob is a pattern on purpose.
+    # shellcheck disable=SC2254
+    case ${1#database:} in $_g) ;; *) continue ;; esac
+    _s=${_g//[*?]/}
+    if [ "${#_s}" -gt "$_best" ]; then _best=${#_s} _hit=("${_f[@]}"); fi
+  done
+  [ "$_best" -ge 0 ] || return 1
+  EX_REVIEW=${_hit[1]} EX_REASON=${_hit[2]} EX_EXPIRED=${_hit[3]} EX_LINE=${_hit[4]}
+  return 0
 }
 
 knob_units() {  # <var> <list-directive records>...: VAR := their units, space-separated
@@ -464,8 +483,11 @@ read_boot() {
 journal_first_line() { { jctl -q -o short-unix --no-pager 2>/dev/null || true; } | head -n 1; }
 
 read_journal() {
-  local o="" f line n storage="" ssrc="" flush flush_live="" out pc="" vc="" verdict=unknown oldest="" reach="" at
-  for f in "$P_ROOT/etc/systemd/journald.conf" "$P_ROOT"/usr/lib/systemd/journald.conf.d/*.conf "$P_ROOT"/etc/systemd/journald.conf.d/*.conf; do
+  local o="" f line n storage="" ssrc="" flush flush_live="" out pc="" vc="" verdict=unknown oldest="" reach="" at dfs
+  # The main file, then the drop-ins as journald reads them (#515).
+  dropin_files dfs "$P_ROOT/etc/systemd/journald.conf.d" "$P_ROOT/run/systemd/journald.conf.d" \
+    "$P_ROOT/usr/local/lib/systemd/journald.conf.d" "$P_ROOT/usr/lib/systemd/journald.conf.d"
+  while IFS= read -r f; do
     [ -f "$f" ] || continue
     n=0
     while IFS= read -r line || [ -n "$line" ]; do
@@ -477,7 +499,7 @@ read_journal() {
           ssrc="${f#"$P_ROOT"}:$n" ;;
       esac
     done <"$f"
-  done
+  done <<<"$P_ROOT/etc/systemd/journald.conf"$'\n'"$dfs"
   unit_disk_state flush systemd-journal-flush.service
   if live_cmd systemctl; then
     capture flush_live systemctl is-enabled systemd-journal-flush.service
@@ -1880,22 +1902,14 @@ read_language() {
     capture o as_reader cat -- "$f"
     [ "$CAP_RC" -eq 0 ] || continue
     # Its drop-ins after it, so a later WorkingDirectory= wins, as in
-    # systemd: /etc's and /run's merged in name order, /etc's copy of a name
-    # both hold taking its place (CR 236).
-    dn=""
-    for d in "$P_ROOT"/etc/systemd/system/"${f##*/}".d/*.conf "$P_ROOT"/run/systemd/system/"${f##*/}".d/*.conf; do
-      [ -f "$d" ] && dn="$dn"$'\n'"${d##*/}"
-    done
+    # systemd: every unit directory's, in name order, a higher directory's
+    # copy of a name taking its place (CR 236, #484 site 5).
+    unit_dropins dn "${f##*/}"
     while IFS= read -r d; do
       [ -n "$d" ] || continue
-      if [ -f "$P_ROOT/etc/systemd/system/${f##*/}.d/$d" ]; then
-        d="$P_ROOT/etc/systemd/system/${f##*/}.d/$d"
-      else
-        d="$P_ROOT/run/systemd/system/${f##*/}.d/$d"
-      fi
       capture line as_reader cat -- "$d"
       [ "$CAP_RC" -ne 0 ] || o="$o"$'\n'"$line"
-    done <<<"$(printf '%s\n' "$dn" | LC_ALL=C sort -u)"
+    done <<<"$dn"
     dir="" user=""
     while IFS= read -r line || [ -n "$line" ]; do
       case $line in
@@ -2709,9 +2723,13 @@ SHELL_BUILTINS=": [ test exit"
 # Whether an inline command (sh -c '...') restarts anything, read as simple
 # commands: 0 when it can, 1 when each command word was read and can't, 2
 # when one couldn't be, with IV_WHY saying which (CR 205). A path runs a
-# script, read like any other; a bare name must start nothing.
-inline_verdict() {  # <command>
-  local cmd=$1 seg w i rc=1 v
+# script, read like any other, a relative one against the unit's
+# WorkingDirectory= as an Exec line's is (#484 site 1, #418); a bare name
+# must start nothing. Every script that matches is read and recorded through
+# ur_match, its caller's, not the first alone (#419's shape), so a 0 can
+# come with an unread one too, and the unread one is still named.
+inline_verdict() {  # <command> [<working directory>]
+  local cmd=$1 wd=${2-} seg w i rc=1 v hit=0
   local -a ws=()
   IV_WHY=""
   cmd=${cmd//[\'\"]/ }
@@ -2725,11 +2743,11 @@ inline_verdict() {  # <command>
     [ "$i" -lt "${#ws[@]}" ] || continue
     w=${ws[$i]}
     case $w in
-      /*)
+      */*)
         v=0
-        script_verdict "$w" || v=$?
+        script_verdict "$w" "$wd" || v=$?
         case $v in
-          0) return 0 ;;
+          0) hit=1 && ur_match ;;
           2) IV_WHY=$SV_WHY rc=2 ;;
         esac ;;
       *)
@@ -2739,7 +2757,43 @@ inline_verdict() {  # <command>
         fi ;;
     esac
   done <<<"$cmd"
+  [ "$hit" -eq 0 ] || return 0
   return $rc
+}
+
+# What one option word does to an interpreter's arguments (#484 site 2),
+# its letters read one by one as each one's getopt reads them, so a
+# combined -um or -ec is read as its parts. OC := flag; inline (a shell's
+# -c: the command follows); code (another language's code on the command
+# line, which the scan doesn't read); or module (Python's -m, with OC_MOD
+# the module when it's attached). OC_SKIP := how many words after it are
+# its options' values: bash -o and --rcfile, perl -I, node -r, Python's -X
+# and --check-hash-based-pycs. A value read as the script was read as a path.
+opt_word() {  # <sh, python, perl, ruby or node> <word>
+  local w=$2 c rest k=1
+  OC=flag OC_MOD="" OC_SKIP=0
+  case $1:$w in
+    sh:+[oO] | sh:--rcfile | sh:--init-file | python:--check-hash-based-pycs | node:-r | node:--require) OC_SKIP=1 && return 0 ;;
+    node:-e | node:--eval | node:-p | node:--print) OC=code && return 0 ;;
+    *:--* | node:*) return 0 ;;
+  esac
+  while [ "$k" -lt "${#w}" ]; do
+    c=${w:k:1} rest=${w:k+1}
+    k=$((k + 1))
+    case $1:$c in
+      sh:c) OC=inline ;;
+      sh:[oO]) OC_SKIP=$((OC_SKIP + 1)) ;;
+      python:m) OC=module OC_MOD=$rest && return 0 ;;
+      python:c | perl:[eE] | ruby:e) OC=code && return 0 ;;
+      # perl's and ruby's -x take a directory attached or none, never the
+      # next word, which is the script (CR 888).
+      python:[XWQ] | perl:[IMm] | ruby:[rICE])
+        if [ -z "$rest" ]; then OC_SKIP=$((OC_SKIP + 1)); fi
+        return 0 ;;
+      # -l and -0 take octal digits, attached: -l0e is -l0, then -e.
+      perl:[l0]) while [[ ${w:k:1} == [0-9] ]]; do k=$((k + 1)); done ;;
+    esac
+  done
 }
 
 # Whether a script restarts anything: 0 when it can, 1 when it's read and
@@ -2824,7 +2878,7 @@ onfailure_restarts() {  # <target unit>
 # lines alone sets UR_MATCH to every script that matched and its lines
 # (#419).
 unit_restarts() {  # <service> <who>
-  local t=$1 who=$2 tmpl="" d f files="" line raw prog base script rc=1 w i v text mod wd="" exec_restarts=0 seen="" ml=""
+  local t=$1 who=$2 tmpl="" d f files="" line raw prog base script rc=1 w i v text mod wd="" exec_restarts=0 seen="" ml="" lang user="" home
   local -a tok=() texts=()
   UR_WHY="" UR_MATCH=""
   case $t in *@*.*) tmpl=${t%%@*}@.${t##*.} ;; esac
@@ -2837,14 +2891,12 @@ unit_restarts() {  # <service> <who>
     UR_WHY="$who has no unit file to read"
     return 2
   fi
-  for d in etc/systemd/system run/systemd/system usr/local/lib/systemd/system usr/lib/systemd/system lib/systemd/system; do
-    for f in "$P_ROOT/$d/$t.d"/*.conf ${tmpl:+"$P_ROOT/$d/$tmpl.d"/*.conf}; do
-      [ -f "$f" ] && files="$files"$'\n'"$f"
-    done
-  done
+  unit_dropins f "$t" "$tmpl"
+  if [ -n "$f" ]; then files="$files"$'\n'"$f"; fi
   # Each file is read once, before any Exec line is: its WorkingDirectory=
-  # is the last assignment across them all, a drop-in's over the unit's, and
-  # a leading - only lets the directory be missing (#418).
+  # is the last assignment across them all, a drop-in's over the unit's in
+  # systemd's drop-in order (#484 site 5), and a leading - only lets the
+  # directory be missing (#418).
   while IFS= read -r f; do
     capture text as_reader cat -- "$f"
     if [ "$CAP_RC" -ne 0 ]; then
@@ -2858,12 +2910,19 @@ unit_restarts() {  # <service> <who>
         [[:space:]]*WorkingDirectory=* | WorkingDirectory=*)
           read -r wd <<<"${line#*=}" || true
           wd=${wd#-} ;;
+        [[:space:]]*User=* | User=*) read -r user <<<"${line#*=}" || true ;;
         [[:space:]]*Exec*=* | Exec*=*)
           if [[ $line =~ $RESTART_RE ]]; then exec_restarts=1; fi ;;
       esac
     done <<<"$text"
   done <<<"$files"
   if [ "$exec_restarts" -eq 1 ]; then return 0; fi
+  # ~ is User='s home, root's without one, as read_language reads it
+  # (#484 site 3). One passwd doesn't name stays ~, and unread.
+  if [ "$wd" = "~" ]; then
+    passwd_home home "${user:-root}"
+    if [ -n "$home" ]; then wd=$home; fi
+  fi
   for text in ${texts[@]+"${texts[@]}"}; do
     while IFS= read -r line || [ -n "$line" ]; do
       case $line in [[:space:]]*Exec*=* | Exec*=*) ;; *) continue ;; esac
@@ -2888,31 +2947,39 @@ unit_restarts() {  # <service> <who>
       case $base in
         "") continue ;;
         sh | bash | dash | zsh | python | python[0-9]* | perl | perl[0-9]* | ruby | node)
-          # Its script is its first argument that isn't an option. With -c,
-          # the command follows, and each simple command in it is read.
-          # Python's -m takes a module, which isn't followed to a file (#393),
-          # and -X and -W take a value that isn't the script.
+          # Its script is its first argument that isn't an option or an
+          # option's value (#484 site 2: opt_word). A shell's -c is followed
+          # by the command, and each simple command in it is read. Python's
+          # -m takes a module, which isn't followed to a file (#393), and
+          # another language's code on the command line isn't read.
+          case $base in
+            python*) lang=python ;;
+            perl*) lang=perl ;;
+            ruby | node) lang=$base ;;
+            *) lang="sh" ;;
+          esac
           while [ "$i" -lt "${#tok[@]}" ]; do
             w=${tok[$i]}
             i=$((i + 1))
-            case $base:$w in
-              *:-c)
-                v=0
-                inline_verdict "${raw#* -c }" || v=$?
-                case $v in
-                  0) ur_match ;;
-                  2) UR_WHY="$who runs $IV_WHY" rc=2 ;;
-                esac
-                break ;;
-              python*:-m*)
-                mod=${w#-m}
-                if [ -z "$mod" ]; then mod=${tok[$i]:-}; fi
-                UR_WHY="$who runs $base -m $mod, a Python module the scan doesn't follow to a file" rc=2
-                break ;;
-              python*:-[XW]) i=$((i + 1)) ;;
-              *:-*) ;;
+            case $w in
+              -?* | +[oO]) ;;
               *) script=$w && break ;;
             esac
+            opt_word "$lang" "$w"
+            case $OC in
+              inline)
+                inline_verdict "${raw#* "$w" }" "$wd" || true
+                if [ -n "$IV_WHY" ]; then UR_WHY="$who runs $IV_WHY" rc=2; fi
+                break ;;
+              module)
+                mod=${OC_MOD:-${tok[$i]:-}}
+                UR_WHY="$who runs $base -m $mod, a Python module the scan doesn't follow to a file" rc=2
+                break ;;
+              code)
+                UR_WHY="$who runs $base $w, code the scan doesn't read" rc=2
+                break ;;
+            esac
+            i=$((i + OC_SKIP))
           done ;;
         *) in_words "$base" "$INERT_PROGS" || script=$prog ;;
       esac
@@ -2981,7 +3048,8 @@ read_restarters() {
       unread="$unread ${f#"$P_ROOT"}"
       continue
     fi
-    if grep -qE '^[[:space:]]*Exec[A-Za-z]*=.*systemctl[^#]*(restart|try-restart|reload-or-restart)' <<<"$text"; then
+    # RESTART_RE, start included, as every other site reads it (#484 site 4).
+    if grep -qE "^[[:space:]]*Exec[A-Za-z]*=.*$RESTART_RE" <<<"$text"; then
       in_words "$base:restart" "$found" || found="$found $base:restart"
       hard="$hard $base"
     fi
@@ -3294,8 +3362,8 @@ read_impact() {
 }
 
 # --- dormant components -----------------------------------------------------
-# One entry per engine the probe knows. The verdict is in-use, dormant, kept
-# or unknown (policy.md): never dormant on evidence it couldn't read, or on
+# One entry per engine the probe knows. The verdict is in-use, dormant, kept,
+# named (#491) or unknown (policy.md): never dormant on evidence it couldn't read, or on
 # fewer than 30 days of it.
 DORMANT=""
 SS_LOCAL=()
@@ -3320,21 +3388,58 @@ active_days() {  # <unit>: ACTIVE := the days it has been active, else since sys
   esac
 }
 
-named_by() {  # <ere>: NAMED (JSON array body); NAMED_DEPLOY 1 when deploy/ names it
-  local out f hit
-  NAMED="" NAMED_DEPLOY=0
+# What the repo says of a component (#491). Only a deploy/ line that isn't a
+# comment uses it: co-processor's deploy/processor.service said in a comment
+# that its user is *not* in group docker, which read as in-use and hid a
+# prune candidate. A comment, or prose (a .md file), is text alone.
+named_by() {  # <ere>: NAMED (JSON array body); NAMED_USE, the deploy/ line that uses it; NAMED_TEXT, the deploy/ files that name it only in text
+  local out f hit rel lines line
+  NAMED="" NAMED_USE="" NAMED_TEXT=""
   if [ -n "$repo" ] && [ -d "$repo" ]; then
     for f in deploy docs AGENTS.md README.md; do
       [ -e "$repo/$f" ] || continue
       capture out grep -rliE -- "$1" "$repo/$f"
       while IFS= read -r hit; do
         [ -n "$hit" ] || continue
-        jpushs NAMED "${hit#"$repo"/}"
-        case ${hit#"$repo"/} in deploy/*) NAMED_DEPLOY=1 ;; esac
+        rel=${hit#"$repo"/}
+        jpushs NAMED "$rel"
+        case $rel in deploy/*) ;; *) continue ;; esac
+        if [ -z "$NAMED_USE" ] && [[ $rel != *.md ]]; then
+          capture lines grep -iE -- "$1" "$hit"
+          while IFS= read -r line; do
+            [[ $line =~ ^[[:space:]]*(#|\;|//) ]] && continue
+            NAMED_USE="$rel names it on a line that isn't a comment"
+            break
+          done <<<"$lines"
+          [ -z "$NAMED_USE" ] || continue
+        fi
+        NAMED_TEXT="${NAMED_TEXT:+$NAMED_TEXT, }$rel"
       done <<<"$out"
     done
   fi
   if [ -r "$config" ] && grep -qiE -- "$1" "$config" 2>/dev/null; then jpushs NAMED "the knob"; fi
+}
+
+# A host unit that uses a component (#491): an admin's unit or drop-in whose
+# Requires=, After= or Exec* line names it. The component's own units, and
+# their drop-ins, don't count: a name that starts with the component's, as
+# postgresql@16-main and redis-server do, and app-redis-worker doesn't
+# (CR 889). NAMED_UNIT := the first, in words, or empty.
+unit_names() {  # <ere>
+  local f base out
+  NAMED_UNIT=""
+  for f in "$P_ROOT"/etc/systemd/system/*.service "$P_ROOT"/etc/systemd/system/*.service.d/*.conf; do
+    [ -f "$f" ] || continue
+    base=${f#"$P_ROOT"/etc/systemd/system/}
+    base=${base%%/*}
+    if grep -qiE -- "^($1)" <<<"$base"; then continue; fi
+    capture out as_reader grep -m1 -iE -- "^[[:space:]]*(Requires|After|Exec[A-Za-z]*)=.*($1)" "$f"
+    if [ "$CAP_RC" -eq 0 ] && [ -n "$out" ]; then
+      out=${out#"${out%%[![:space:]]*}"}
+      NAMED_UNIT="${f#"$P_ROOT"} names it on its ${out%%=*}= line"
+      return 0
+    fi
+  done
 }
 
 # The security set only: what a dormant component costs is the security fixes
@@ -3388,7 +3493,8 @@ engine() {
   unit_disk_state disk "$unit"
   unit_show "$unit" ActiveState || true
   named_by "$ere"
-  if [ -z "$inuse" ] && [ "$NAMED_DEPLOY" -eq 1 ]; then inuse="the repo's deploy/ names it"; fi
+  unit_names "$ere"
+  if [ -z "$inuse" ]; then inuse=${NAMED_USE:-$NAMED_UNIT}; fi
   for x in keep disabled removed purged; do
     if exception_for "$x:$name" && [ "$EX_EXPIRED" = 0 ]; then
       stage=$x
@@ -3400,6 +3506,9 @@ engine() {
     verdict=in-use why=$inuse
   elif [ -n "$stage" ]; then
     verdict=kept why="exception $stage:$name on knob line $EX_LINE, review by $EX_REVIEW"
+  elif [ -n "$NAMED_TEXT" ]; then
+    # Text isn't use, and isn't idleness either: the operator looks (#491).
+    verdict=named why=${dorm:-$unk}
   elif [ -n "$dorm" ]; then
     verdict=dormant why=$dorm
   fi
@@ -3421,6 +3530,8 @@ engine() {
   jpush DORMANT "{$e}"
   if [ "$verdict" = dormant ]; then
     finding dormant "dormant:$name" "keep:$name" "$name is installed and nothing uses it ($why). It's patch surface and attack surface for no benefit: propose a prune (policy.md), or declare exception keep:$name <review-by> <reason>."
+  elif [ "$verdict" = named ] && [ -n "$dorm" ]; then
+    finding dormant "named:$name" "keep:$name" "$name is installed, and $NAMED_TEXT names it only in a comment or prose, which isn't use ($dorm). Read what it says, and look before proposing a prune (pruning.md), or declare exception keep:$name <review-by> <reason>."
   fi
 }
 
@@ -4135,6 +4246,16 @@ fi
 for _r in ${KNOB_FINDING[@]+"${KNOB_FINDING[@]}"}; do
   IFS=$KNOB_US read -r -a _f <<<"$_r"
   finding knob "knob:${_f[1]}" "" "knob line ${_f[0]:-(none)}: ${_f[2]}"
+done
+# A backup line the recovery point and the bulk would refuse, named before
+# a run (#480). No exception covers it: the knob's own line is the fix.
+for _r in ${KNOB_BACKUP[@]+"${KNOB_BACKUP[@]}"}; do
+  backup_covers "$_r"
+  IFS=$KNOB_US read -r -a _f <<<"$_r"
+  unit_name _u "${_f[0]}"
+  for _i in ${BC_WHY[@]+"${!BC_WHY[@]}"}; do
+    finding knob "backup-covers:$_u:${BC_WHY_DS[$_i]}" "" "${BC_WHY[$_i]}."
+  done
 done
 FINDINGS="" EXCEPTED=""
 for _i in ${F_ID[@]+"${!F_ID[@]}"}; do

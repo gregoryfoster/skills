@@ -1,6 +1,6 @@
 # Pruning a dormant component
 
-A component the probe calls `dormant` is patch surface, disk and attack surface for no benefit ([policy.md](policy.md#dormant-components)). The skill proposes a prune and the owner runs it, one stage at a time, each under its own approval. Two scripts cover the steps that are the same on every host: `prune-plan.sh` reads, and `prune.sh` acts on exactly what a plan names.
+A component the probe calls `dormant` is patch surface, disk and attack surface for no benefit ([policy.md](policy.md#dormant-components)). One it calls `named` (`named:<name>`) is idle too, but the repo's `deploy/` names it in a comment or prose: it isn't a prune candidate until the operator reads what that says, and proposes the prune or declares `keep:<name>` (#491). The skill proposes a prune and the owner runs it, one stage at a time, each under its own approval. Two scripts cover the steps that are the same on every host: `prune-plan.sh` reads, and `prune.sh` acts on exactly what a plan names.
 
 Where the component shipped with the image on every host, the prune belongs in the base image instead, so provisioning stays reproducible. Until it gets there, a prune on one host is drift from that image, and the knob declares it.
 

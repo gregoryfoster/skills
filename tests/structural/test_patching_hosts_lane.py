@@ -195,6 +195,28 @@ def test_a_held_step_records_what_it_installed_against_the_dry_run(tmp_path):
     ]
 
 
+def test_the_maintenance_bulk_holds_no_pinned_origins_package(tmp_path):
+    # #488: a hold group's package from an origin the knob pins is never in
+    # the lane's selection, so no hold, and no held step that takes nothing.
+    host = _counted(tmp_path, f"postgresql-16={PG_NOW} libpq5={PG_NOW} grafana=10.4.2")
+    host.knob(KNOB + ORIGINS + "hold grafana gf\n")
+    host.cases["apt-get"].insert(
+        0,
+        (
+            SIM_ARGS,
+            "Inst postgresql-16 [16.9-0ubuntu0.24.04.1] "
+            f"({PG_NOW} Ubuntu:24.04/noble-security [arm64])\n"
+            "Inst grafana [10.4.1] (10.4.2 Grafana:stable [arm64])\n",
+            0,
+            "",
+            None,
+        ),
+    )
+    out = host.run("--lane", "maintenance")
+    assert out["holds"]["placed"] == {"postgres": ["postgresql-16"]}
+    assert not [n for n in out["next"] if "--step gf" in n]
+
+
 def _uu_apt_config(host: ApplyHost) -> list[str]:
     return [c for _, _, c in host.calls("unattended-upgrade")]
 

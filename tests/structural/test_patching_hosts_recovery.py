@@ -982,6 +982,89 @@ def test_a_backup_line_naming_no_declared_datastore_is_refused(host):
     ), out["refused"]
 
 
+# --- a backup that dumps some of a cluster's databases (#480) --------------------
+# wslcb's backup unit dumps --database wslcb, and its knob declared wslcb and
+# wslcb_test on the cluster that backup line covers: wslcb_test was declared
+# and never dumped, by the backup or the recovery point.
+
+TWO = KNOB + "datastore postgres postgresql@16-main app app_test\n"
+
+
+def _two(host: Host, backup_line: str) -> Host:
+    _regime(host)
+    host.knob(TWO + backup_line)
+    host.on(
+        "psql",
+        "*-v db=app_test",
+        script=f'cat > "{host.state}/psql.in"; echo 2048; exit 0',
+    )
+    host.on("pg_dump", "-Fc -p 5432 -d app_test", "PGDMP app-test-data\n")
+    return host
+
+
+def test_a_backup_over_a_cluster_of_several_databases_must_say_which_it_takes(host):
+    _two(host, "backup app-backup.timer postgresql@16-main\n")
+    out = host.recover(rc=3)
+    [r] = [r for r in out["refused"] if "#480" in r]
+    assert "postgresql@16-main.service, whose datastore lines name app app_test" in r
+    # The exact line to write, to be trimmed to the databases it dumps.
+    assert "backup app-backup.timer postgresql@16-main:app,app_test" in r
+    assert not host.calls("pg_dump")
+    assert ("systemctl", "start -- app-backup.service") not in host.calls("systemctl")
+    assert not (host.run_dir / "recovery-point").exists()
+
+
+def test_a_backup_naming_its_databases_leaves_the_rest_to_a_dump(host):
+    _two(host, "backup app-backup.timer postgresql@16-main:app\n")
+    out = host.recover()
+    [b] = out["backup"]
+    assert (b["ok"], b["datastores"]) == (True, ["postgresql@16-main.service:app"])
+    assert [d["datastore"] for d in out["dumps"]] == [
+        "postgres postgresql@16-main.service app_test"
+    ]
+    assert [a for _, a, _ in host.calls("pg_dump")] == ["-Fc -p 5432 -d app_test"]
+    rec = host.record("recovery-point")
+    assert "backup app-backup.service postgresql@16-main.service:app\n" in rec
+    assert "dump postgres postgresql@16-main.service app_test " in rec
+    # The bulk takes it: app by the backup's object, app_test by its sha256.
+    sha = out["dumps"][0]["sha256"]
+    out = host.run("--offnode-object", "gs://bucket/app-1", "--offnode-sha256", sha)
+    assert out["refused"] == []
+
+
+def test_a_backup_naming_every_database_dumps_none(host):
+    _two(host, "backup app-backup.timer postgresql@16-main:app,app_test\n")
+    out = host.recover()
+    assert out["backup"][0]["datastores"] == [
+        "postgresql@16-main.service:app",
+        "postgresql@16-main.service:app_test",
+    ]
+    assert out["dumps"] is None
+    assert not host.calls("pg_dump")
+
+
+@pytest.mark.parametrize(
+    "line, refused",
+    [
+        (
+            "backup app-backup.timer postgresql@16-main:app,audit\n",
+            "names postgresql@16-main.service:audit, which no datastore postgres line declares",
+        ),
+        (
+            "backup app-backup.timer redis-server:app\n",
+            "names databases on redis-server.service, a redis datastore, which has none",
+        ),
+    ],
+    ids=["undeclared-database", "not-postgres"],
+)
+def test_a_backup_naming_a_database_it_cant_cover_is_refused(host, line, refused):
+    _two(host, line)
+    host.knob(TWO + "datastore redis redis-server\n" + line)
+    out = host.recover(rc=3)
+    assert any(refused in r for r in out["refused"]), out["refused"]
+    assert not (host.run_dir / "recovery-point").exists()
+
+
 def test_dump_takes_dumps_even_with_a_backup_regime(host):
     _regime(host)
     out = host.recover("--dump")
@@ -998,6 +1081,134 @@ def test_a_backup_regime_whose_last_run_failed_isnt_relied_on(host):
         "ended in exit-code" in out["gate"]["backup_regime"]["backups"][0]["not_used"]
     )
     assert [d["ok"] for d in out["dumps"]] == [True]
+
+
+# --- a backup regime after a boot (#459) -------------------------------------------
+# A boot resets a unit's state to systemd's initial values: Result=success and
+# no ExecMainExitTimestamp. host 6's second run of 2026-10-20 read that as
+# "ended in success, so it isn't one to rely on", and dumped Postgres itself,
+# though the journal held that morning's successful run.
+
+DEACTIVATED = "7ad2d189f7e94e70a38c781354912448"  # "Deactivated successfully."
+FAILED = "d9b373ed55a64feb8242e02dbe79a49c"  # "Failed with result '...'."
+EXITED = "98e322203f7a4ed290d09fe03c09fe15"  # "Main process exited, ..."
+
+
+def _entry(mid: str, ago: int, **fields: str) -> str:
+    """One line of systemd's own journal for app-backup.service, AGO seconds
+    before the clock."""
+    return (
+        json.dumps(
+            {
+                "__REALTIME_TIMESTAMP": str((TUE_1530 - ago) * 10**6),
+                "MESSAGE_ID": mid,
+                "UNIT": "app-backup.service",
+                "_PID": "1",
+                **fields,
+            }
+        )
+        + "\n"
+    )
+
+
+def _booted(host: Host, journal: str = "", rc: int = 0) -> Host:
+    """The regime, on a host booted since its last run: systemd's state for
+    it is reset, and the journal, newest first, is JOURNAL."""
+    _regime(host)
+    (host.state / "backup").write_text(
+        "LoadState=loaded\nResult=success\nExecMainStartTimestamp=\nExecMainExitTimestamp=\n"
+    )
+    stderr = "Failed to open journal: Permission denied\n" if rc else ""
+    host.on("journalctl", "*UNIT=app-backup.service*", journal, rc=rc, stderr=stderr)
+    return host
+
+
+def _regime_row(out: dict) -> dict:
+    [b] = out["gate"]["backup_regime"]["backups"]
+    return b
+
+
+def test_after_a_boot_the_journal_says_the_regime_has_worked(host):
+    _booted(host, _entry(DEACTIVATED, 7 * 3600) + _entry(DEACTIVATED, 31 * 3600))
+    out = host.recover()
+    b = _regime_row(out)
+    assert (b["not_used"], b["last_run_from"]) == (None, "journal")
+    assert out["backup"][0]["ok"] is True
+    assert not host.calls("pg_dump")
+    # Only systemd's own lines about the unit: a service can write any
+    # MESSAGE_ID it likes, never _PID=1.
+    [(_, args, _)] = host.calls("journalctl")
+    assert "UNIT=app-backup.service" in args.split() and "_PID=1" in args.split()
+
+
+@pytest.mark.parametrize(
+    "journal, said",
+    [
+        (
+            _entry(FAILED, 7 * 3600, UNIT_RESULT="exit-code")
+            + _entry(EXITED, 7 * 3600 + 1, EXIT_CODE="exited", EXIT_STATUS="1")
+            + _entry(DEACTIVATED, 31 * 3600),
+            "and its last run before it, in the journal, ended in exit-code",
+        ),
+        (
+            _entry(EXITED, 7 * 3600, EXIT_CODE="killed", EXIT_STATUS="TERM")
+            + _entry(DEACTIVATED, 31 * 3600),
+            "ended in code=killed, status=TERM",
+        ),
+    ],
+    ids=["failed", "killed"],
+)
+def test_after_a_boot_a_last_run_that_failed_isnt_relied_on(host, journal, said):
+    _booted(host, journal)
+    out = host.recover()
+    why = _regime_row(out)["not_used"]
+    assert "since this boot (systemd's state resets at boot)" in why and said in why
+    assert "ended in success" not in why
+    assert [d["ok"] for d in out["dumps"]] == [True]
+
+
+@pytest.mark.parametrize(
+    "journal, rc, said",
+    [
+        ("", 0, "and the journal holds none of its runs"),
+        # The process line of a run that exited 0 isn't a success: systemd's
+        # "Deactivated successfully." is.
+        (
+            _entry(EXITED, 3600, EXIT_CODE="exited", EXIT_STATUS="0"),
+            0,
+            "and the journal holds none of its runs",
+        ),
+        ("", 1, "and its journal couldn't be read (Failed to open journal"),
+    ],
+    ids=["none", "exit-line-only", "unread"],
+)
+def test_after_a_boot_no_journal_record_isnt_a_run_to_rely_on(host, journal, rc, said):
+    _booted(host, journal, rc)
+    # A timer's last trigger alone says it started, not that it worked.
+    host.cases["systemctl"].insert(
+        0,
+        (
+            "show*-- app-backup.timer",
+            f"Triggers=app-backup.service\nLastTriggerUSec=@{TUE_1530 - 3600}\n",
+            0,
+            "",
+            None,
+        ),
+    )
+    out = host.recover()
+    why = _regime_row(out)["not_used"]
+    assert why.startswith(
+        "app-backup.service's last run isn't recorded since this boot (systemd's state resets at boot)"
+    ), why
+    assert said in why
+    assert [d["ok"] for d in out["dumps"]] == [True]
+
+
+def test_a_run_since_the_boot_is_read_from_systemd_not_the_journal(host):
+    _regime(host)
+    out = host.recover()
+    assert _regime_row(out)["last_run_from"] == "systemd"
+    assert not host.calls("journalctl")
 
 
 def test_an_rdb_copy_redis_check_rdb_cant_read_records_nothing(tmp_path):
