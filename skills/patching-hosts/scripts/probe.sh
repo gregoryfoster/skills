@@ -2728,9 +2728,13 @@ SHELL_BUILTINS=": [ test exit"
 # Whether an inline command (sh -c '...') restarts anything, read as simple
 # commands: 0 when it can, 1 when each command word was read and can't, 2
 # when one couldn't be, with IV_WHY saying which (CR 205). A path runs a
-# script, read like any other; a bare name must start nothing.
-inline_verdict() {  # <command>
-  local cmd=$1 seg w i rc=1 v
+# script, read like any other, a relative one against the unit's
+# WorkingDirectory= as an Exec line's is (#484 site 1, #418); a bare name
+# must start nothing. Every script that matches is read and recorded through
+# ur_match, its caller's, not the first alone (#419's shape), so a 0 can
+# come with an unread one too, and the unread one is still named.
+inline_verdict() {  # <command> [<working directory>]
+  local cmd=$1 wd=${2-} seg w i rc=1 v hit=0
   local -a ws=()
   IV_WHY=""
   cmd=${cmd//[\'\"]/ }
@@ -2744,11 +2748,11 @@ inline_verdict() {  # <command>
     [ "$i" -lt "${#ws[@]}" ] || continue
     w=${ws[$i]}
     case $w in
-      /*)
+      */*)
         v=0
-        script_verdict "$w" || v=$?
+        script_verdict "$w" "$wd" || v=$?
         case $v in
-          0) return 0 ;;
+          0) hit=1 && ur_match ;;
           2) IV_WHY=$SV_WHY rc=2 ;;
         esac ;;
       *)
@@ -2758,6 +2762,7 @@ inline_verdict() {  # <command>
         fi ;;
     esac
   done <<<"$cmd"
+  [ "$hit" -eq 0 ] || return 0
   return $rc
 }
 
@@ -2916,12 +2921,8 @@ unit_restarts() {  # <service> <who>
             i=$((i + 1))
             case $base:$w in
               *:-c)
-                v=0
-                inline_verdict "${raw#* -c }" || v=$?
-                case $v in
-                  0) ur_match ;;
-                  2) UR_WHY="$who runs $IV_WHY" rc=2 ;;
-                esac
+                inline_verdict "${raw#* -c }" "$wd" || true
+                if [ -n "$IV_WHY" ]; then UR_WHY="$who runs $IV_WHY" rc=2; fi
                 break ;;
               python*:-m*)
                 mod=${w#-m}
@@ -3000,7 +3001,8 @@ read_restarters() {
       unread="$unread ${f#"$P_ROOT"}"
       continue
     fi
-    if grep -qE '^[[:space:]]*Exec[A-Za-z]*=.*systemctl[^#]*(restart|try-restart|reload-or-restart)' <<<"$text"; then
+    # RESTART_RE, start included, as every other site reads it (#484 site 4).
+    if grep -qE "^[[:space:]]*Exec[A-Za-z]*=.*$RESTART_RE" <<<"$text"; then
       in_words "$base:restart" "$found" || found="$found $base:restart"
       hard="$hard $base"
     fi
