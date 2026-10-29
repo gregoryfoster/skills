@@ -28,7 +28,9 @@ npm view socraticode version
 # Linux with user systemd — the cap is the point; on a small host, run it here
 # and nowhere else. choom as in row U: a session at -1000 (below) hands that
 # score to the install, and at -1000 the cap stalls it instead of killing it.
-systemd-run --user --scope -p MemoryHigh=1200M -p MemoryMax=1536M \
+# MemorySwapMax=0 because MemoryMax= bounds RAM only: with swap, a job past it
+# pages out and runs on instead of being killed (#340).
+systemd-run --user --scope -p MemoryHigh=1200M -p MemoryMax=1536M -p MemorySwapMax=0 \
   choom -n 500 -- npm install --save-exact --prefix ~/.socraticode/pin socraticode@<version>
 
 # Anywhere else (macOS, a host without user systemd): the install is the same,
@@ -79,7 +81,7 @@ install at an unattended start — #295's peak, once. Warm it deliberately,
 under the cap; this builds the tree the plugin's pinned launch then uses:
 
 ```bash
-systemd-run --user --scope -p MemoryHigh=1200M -p MemoryMax=1536M \
+systemd-run --user --scope -p MemoryHigh=1200M -p MemoryMax=1536M -p MemorySwapMax=0 \
   choom -n 500 -- npm exec --yes --prefer-online --package=socraticode@<version> -- true
 ```
 
@@ -156,7 +158,8 @@ reported as stopped by its cap, and never re-run uncapped.
 `SOCRATICODE_HEALTH_CAP` sets the properties, or `off`. Set it in
 `.claude/settings.local.json`'s `env` block, since a ceiling belongs to the
 host, not to every clone of the repo. A value the probe rejects runs uncapped
-too; the log line names systemd's reason.
+too; the log line names systemd's reason. A refused `MemorySwapMax=` is the
+exception: dropped alone, and logged, so it never turns the cap off.
 
 It is defence in depth, not the fix. Pinned, the hook's launch installs nothing
 and peaks near 75 MB; the cap is for a host that never pinned, a pin that broke

@@ -449,7 +449,7 @@ case "$MEM_KB" in
       # passes that score to the install, and at -1000 the cap stalls it
       # rather than killing it. choom's `--` is not optional — it permutes its
       # options, so `--prefix` would be read as one of its own.
-      hint "Pre-install once under a cap instead of installing at every launch: systemd-run --user --scope -p MemoryMax=1536M choom -n 500 -- npm install --save-exact --prefix $SC_PIN_DIR socraticode@<version>"
+      hint "Pre-install once under a cap instead of installing at every launch: systemd-run --user --scope -p MemoryMax=1536M -p MemorySwapMax=0 choom -n 500 -- npm install --save-exact --prefix $SC_PIN_DIR socraticode@<version>"
       hint "mcp-driver.mjs prefers that pin over the plugin's 'npx ... @latest', so no driver launch installs anything (references/host-memory.md)"
       # The unattended launch is covered without a step here (#330): the
       # health hook opens this scope itself wherever the host can, so a
@@ -1493,7 +1493,7 @@ if [ -n "$SC_PLUGIN_FIXED" ]; then
     "socraticode@$SC_PLUGIN_FIXED" 2>/dev/null || true)"
   if [ -n "$SC_NPX_KEY" ] && [ ! -f "$SC_NPX_DIR/$SC_NPX_KEY/node_modules/socraticode/package.json" ]; then
     warn "No npx cache tree under $SC_NPX_DIR holds socraticode@$SC_PLUGIN_FIXED, so the first session to launch it installs it — the install peak, once, at an unattended start"
-    hint "Warm it now, capped where user systemd allows: systemd-run --user --scope -p MemoryHigh=1200M -p MemoryMax=1536M choom -n 500 -- npm exec --yes --prefer-online --package=socraticode@$SC_PLUGIN_FIXED -- true (elsewhere, the npm exec alone)"
+    hint "Warm it now, capped where user systemd allows: systemd-run --user --scope -p MemoryHigh=1200M -p MemoryMax=1536M -p MemorySwapMax=0 choom -n 500 -- npm exec --yes --prefer-online --package=socraticode@$SC_PLUGIN_FIXED -- true (elsewhere, the npm exec alone)"
   fi
 elif [ -n "$SC_PLUGIN_FLOATS" ]; then
   if [ -z "$SC_SPEC_VAR" ] && [ -n "$SC_SPEC" ]; then
