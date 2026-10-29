@@ -147,6 +147,21 @@ def test_a_pin_it_cannot_read_is_named_before_and_after(tmp_path):
     assert _checkout(repo) == _template_line(tmp_path / "again")
 
 
+def test_check_names_a_sha_pin_below_the_template(tmp_path):
+    """Verbatim is the rule for a SHA pin, but one whose comment is below the
+    floor (Node 20's v4, #163) is said out loud rather than read as current."""
+    old = "      - uses: actions/checkout@" + "08eba0b2" * 5 + " # v4.3.0"
+    repo = _installed(tmp_path, old)
+    r = _run(repo, "--check")
+    assert "kept (SHA-pinned" in r.stdout
+    assert "Its comment says v4, below the template's" in r.stdout
+    assert r.returncode == 0
+    assert (
+        "below the template's"
+        not in _run(_installed(tmp_path / "x", SHA_LINE), "--check").stdout
+    )
+
+
 @pytest.mark.parametrize(
     ("line", "says"),
     [

@@ -181,6 +181,7 @@ TEMPLATE_CHECKOUT_LINE="      - uses: actions/checkout@v$TEMPLATE_CHECKOUT_MAJOR
 CHECKOUT_LINE="$TEMPLATE_CHECKOUT_LINE"
 CHECKOUT_PIN="none"   # none | template | sha | newer | older | unread
 INSTALLED_CHECKOUT_REF=""
+CHECKOUT_SHA_BELOW=""
 if [ -f "$WF" ]; then
   installed_checkout="$(grep -m1 -E '^ *- uses: actions/checkout@' "$WF" || true)"
   if [ -n "$installed_checkout" ]; then
@@ -190,6 +191,12 @@ if [ -f "$WF" ]; then
       CHECKOUT_PIN="template"
     elif [[ "$INSTALLED_CHECKOUT_REF" =~ ^[0-9a-f]{40}$ ]]; then
       CHECKOUT_PIN="sha"
+      # Kept whatever it pins, but --check names one whose version comment
+      # is below the floor: verbatim must not quietly mean "below @v5".
+      if [[ "$installed_checkout" =~ \#[[:space:]]*v([0-9]+) ]] \
+        && (( 10#${BASH_REMATCH[1]} < TEMPLATE_CHECKOUT_MAJOR )); then
+        CHECKOUT_SHA_BELOW="v${BASH_REMATCH[1]}"
+      fi
     elif [[ "$INSTALLED_CHECKOUT_REF" =~ ^v([0-9]+)(\.[0-9]+)*$ ]]; then
       if (( 10#${BASH_REMATCH[1]} >= TEMPLATE_CHECKOUT_MAJOR )); then
         CHECKOUT_PIN="newer"
@@ -487,7 +494,12 @@ if [ "$MODE" = "check" ]; then
     # without a word (#373).
     case "$CHECKOUT_PIN" in
       template) echo "checkout pin:       yes (@v$TEMPLATE_CHECKOUT_MAJOR, the template's)" ;;
-      sha)      echo "checkout pin:       kept (SHA-pinned; a re-render keeps the line verbatim)" ;;
+      sha)
+        echo "checkout pin:       kept (SHA-pinned; a re-render keeps the line verbatim)"
+        if [ -n "$CHECKOUT_SHA_BELOW" ]; then
+          echo "                    Its comment says $CHECKOUT_SHA_BELOW, below the template's"
+          echo "                    @v$TEMPLATE_CHECKOUT_MAJOR: move the pin by hand, or let Dependabot."
+        fi ;;
       newer)
         echo "checkout pin:       kept (@$INSTALLED_CHECKOUT_REF is at or above the"
         echo "                    template's @v$TEMPLATE_CHECKOUT_MAJOR; a re-render keeps it)" ;;
