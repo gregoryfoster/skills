@@ -4,13 +4,14 @@
 Dependabot's github-actions ecosystem bumps every `uses:` under
 `.github/workflows/`, the generated file included. The next re-render wrote the
 template's pin back over the bump, and nothing said so: a one-line diff in a
-file whose header says not to hand-edit it. watcher SHA-pins every action, so
-there the downgrade also turned its pin guard red.
+file whose header says not to hand-edit it. watcher had SHA-pinned every action
+(CannObserv/watcher#360, 2026-10-10), so there it would also turn the pin
+guard red.
 
 The installed line now wins when it is a SHA pin (kept verbatim) or a `@vN` at
 or above the template's major, and `--check` names what a re-render would
-write. Three fixtures, per the brief: a SHA-pinned installed line, an `@vN`
-above the template and an `@vN` below it, plus the form it can't read.
+write. Three fixtures, as #373's thread asks: a SHA-pinned installed line, an
+`@vN` above the template and an `@vN` below it, plus the form it can't read.
 """
 
 from __future__ import annotations
