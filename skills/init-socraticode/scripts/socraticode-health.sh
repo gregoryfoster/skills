@@ -361,7 +361,10 @@ _report_listeners() {
   done
   [ -n "$list" ] || return 0
   _log "listeners beyond loopback: $list — reported"
-  echo "socraticode-health: SocratiCode's local store listens beyond loopback: port $list. Neither Qdrant nor Ollama there asks for credentials, so anyone who can reach this host can read the index."
+  # Qdrant holds the index; Ollama only embeds (CR 792), as preflight says too.
+  local reach="use its embedder"
+  [ -z "$wq$wg" ] || reach="read the index"
+  echo "socraticode-health: SocratiCode's local store listens beyond loopback: port $list. Neither Qdrant nor Ollama there asks for credentials, so anyone who can reach this host can $reach."
   echo "socraticode-health: SocratiCode publishes on every interface when it creates a missing container, and Docker's publishes bypass the host firewall. Recreate it on loopback, with the operator's approval: init-socraticode's references/loopback-containers.md."
 }
 

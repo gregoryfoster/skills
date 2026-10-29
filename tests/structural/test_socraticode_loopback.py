@@ -636,7 +636,14 @@ class TestTheHookReadsListeners:
         assert "16334 (Qdrant gRPC) on 0.0.0.0" in line, line
         assert "11435" not in line, "a loopback Ollama is not a finding"
         assert "references/loopback-containers.md" in result.stdout
+        assert "read the index" in result.stdout
         assert "listeners beyond loopback" in hook.log()
+
+    def test_only_ollama_wide_is_its_embedder_not_the_index(self, tmp_path):
+        """CR 792: the hook says what preflight says."""
+        ss = "LISTEN 0 4096 0.0.0.0:11435 0.0.0.0:*\n"
+        out = Hook(tmp_path).run(STUB_SS=ss).stdout
+        assert "use its embedder" in out and "read the index" not in out, out
 
     def test_loopback_only_is_silent(self, tmp_path):
         hook = Hook(tmp_path)
