@@ -27,6 +27,8 @@ What the subcommand owes, each a test here:
 import json
 from pathlib import Path
 
+import pytest
+
 from .test_socraticode_external_store import (
     _config,
     _driver,
@@ -117,6 +119,28 @@ New chunks: 0
 
 Progress:
 Refusing to index: identity broker is being reclaimed"""
+
+# A run cancelled part-way (the lock lost, or a cancellation requested): the
+# headline and the partial counts, the cancellation only among the progress.
+UPDATE_CANCELLED = """Updated project index: /repo
+Added: 2
+Updated: 1
+Removed: 0
+New chunks: 9
+
+Progress:
+Update cancelled after 3/8 batches (9 chunks saved). Progress is preserved — re-run codebase_update to resume."""
+
+# The same, where an update on an empty or missing collection fell back to a
+# full index (indexer.js updateProjectIndex -> indexProjectLocked).
+INDEX_CANCELLED = """Updated project index: /repo
+Added: 40
+Updated: 0
+Removed: 0
+New chunks: 120
+
+Progress:
+Indexing cancelled before completion (120 chunks saved). Progress is preserved — re-run codebase_index to resume."""
 
 DOCKER_DOWN = """❌ Docker is not available.
 
@@ -221,6 +245,28 @@ class TestAnUpdateThatDidNotRunFails:
         assert result.returncode == 1, result.stderr
         assert json.loads(result.stdout)["ran"] is False, result.stdout
         assert "Refusing to index" in result.stderr, result.stderr
+
+    @requires_node
+    @pytest.mark.parametrize(
+        "reply, line",
+        [
+            (UPDATE_CANCELLED, "Update cancelled after 3/8 batches"),
+            (INDEX_CANCELLED, "Indexing cancelled before completion"),
+        ],
+        ids=["update-cancelled", "fallback-index-cancelled"],
+    )
+    def test_a_cancelled_run_is_not_a_success(
+        self, tmp_path: Path, reply: str, line: str
+    ) -> None:
+        """CR 1095: a run that stopped part-way, counts and all, read as one
+        that finished. The partial counts stay in the JSON beside `ran: false`:
+        those chunks were written."""
+        result, _, _, _ = _update(tmp_path, reply)
+        assert result.returncode == 1, result.stderr
+        report = json.loads(result.stdout)
+        assert report["ran"] is False and report["cancelled"] is True, report
+        assert isinstance(report["chunksCreated"], int), report
+        assert line in result.stderr, result.stderr
 
     @requires_node
     def test_any_other_reply_fails_with_the_reply(self, tmp_path: Path) -> None:
