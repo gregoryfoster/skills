@@ -19,7 +19,8 @@ Steps:
                pending packages of every hold group that its lane takes (the
                dry run's selection, or one whose candidate moved since it;
                #488), runs unattended-upgrade on the rest, and polls the
-               health checks. Approval 2.
+               health checks. One it left unheld that unattended-upgrade
+               took anyway fails it, named (CR 894). Approval 2.
   <held step>  one hold group: postgres, redis, docker, or a step the knob's
                hold lines name. Stops each restarter that was active, then
                releases what the bulk held for it, runs the same command,
@@ -1427,7 +1428,7 @@ STARTED=0
 
 LANE_KEEP=""
 do_bulk() {
-  local out pend="" p i r s g o="" a="" names="" e kw rest pol onames oskip sim bv dv="" dseen=0 c d line vout="" va="" outside=""
+  local out pend="" p i r s g o="" a="" names="" e kw rest pol onames oskip sim bv dv="" dseen=0 c d line vout="" va="" outside="" bver=""
   local -a f=() w=()
   if ! root_has "$run" && ! as_root mkdir -p -m 700 -- "$run"; then
     fail "$run couldn't be made"
@@ -1450,6 +1451,7 @@ do_bulk() {
     fail "the before-versions couldn't be recorded: nothing was held or upgraded"
     return 0
   fi
+  bver=$out
   capture out apt-mark showauto
   if [ "$CAP_RC" -ne 0 ] || ! printf '%s\n' "$out" | root_write "$run/before-showauto"; then
     fail "apt-mark showauto couldn't be recorded: nothing was held or upgraded"
@@ -1627,8 +1629,52 @@ do_bulk() {
   check_holds
   [ "${#FAILED[@]}" -eq 0 ] || return 0
   run_uu
+  check_unheld "$outside" "$bver"
+  json_words e "$TAKEN_UNHELD"
+  jadd o taken_unheld "$e"
+  J_HOLDS="{$o}"
   check_holds
   poll_health
+}
+
+# The narrowing's limit, made loud (CR 894): a hold group's package left
+# unheld, outside the dry run's selection at the candidate it counted, can
+# still be taken, as a -security release behind an unchanged, newer
+# -updates candidate is. Taken, it had none of its held step's protections:
+# no restarter stopped, no checkpoint, no health poll of its own. That can't
+# be undone here, so each one whose version moved fails the bulk, named, and
+# the run takes the abort branch: no held step and no reboot chain until
+# the owner decides. TAKEN_UNHELD := those packages.
+TAKEN_UNHELD=""
+check_unheld() {  # <packages left unheld> <the before-versions, dpkg-query -W's>
+  local out p x y b v g r
+  local -a ps=() f=()
+  read -r -a ps <<<"$1" || true
+  [ "${#ps[@]}" -gt 0 ] || return 0
+  # Exit 1 means one isn't installed now: the others still print.
+  capture out dpkg-query -W "${ps[@]}"
+  if [ "$CAP_RC" -gt 1 ]; then
+    fail "dpkg-query -W couldn't read$1 after the upgrade (${CAP_ERR:-exit $CAP_RC}), so whether the bulk took one the run left unheld is unknown: read $run/$step.log"
+    return 0
+  fi
+  for p in "${ps[@]}"; do
+    b="" v=""
+    # A Multi-Arch package prints with its architecture (CR 237).
+    while read -r x y; do
+      if [ "${x%%:*}" = "$p" ]; then b=$y; fi
+    done <<<"$2"
+    while read -r x y; do
+      if [ "${x%%:*}" = "$p" ]; then v=$y; fi
+    done <<<"$out"
+    [ "$v" != "$b" ] || continue
+    g=""
+    for r in ${KNOB_HOLD[@]+"${KNOB_HOLD[@]}"}; do
+      IFS=$KNOB_US read -r -a f <<<"$r"
+      if glob_match "$p" "${f[1]}"; then g=${f[0]} && break; fi
+    done
+    TAKEN_UNHELD="$TAKEN_UNHELD $p"
+    fail "unattended-upgrade took $p (${b:-not installed} to ${v:-not installed}), a $g package the run left unheld as outside its lane's selection: its held step's protections didn't apply (no restarter stopped, no checkpoint). Read $run/$step.log, and check what $g runs by hand"
+  done
 }
 
 # Each Qdrant datastore's start, before a held step, so a restart the step
