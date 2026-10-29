@@ -146,7 +146,11 @@ class TestNestedLinesNeedNoOrdering:
             "# P\n\n## C\n\nBuild a site.\n\n"
             f"```python\n{self.NESTED}\n{self.NESTING}\n```\n",
         )
-        (repo / "AGENTS.md").write_text("# P\n\n## C\n\nBuild a site.\n")
+        # The fence lines survive in another block, so the two code lines are
+        # the only losses.
+        (repo / "AGENTS.md").write_text(
+            "# P\n\n## C\n\nBuild a site.\n\n```python\nimport this\n```\n"
+        )
         return repo
 
     def test_either_order_passes(self, tmp_path: Path):
