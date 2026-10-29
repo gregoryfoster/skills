@@ -954,11 +954,12 @@ function indexingInProgress(text) {
 //
 // Pinned to "Full index" rather than any completed operation. codebase_index
 // always records a full index (indexProject() sets type: "full-index"
-// unconditionally, even re-indexing an existing project), while the file
-// watcher — which auto-starts on the first status call — records "Incremental
-// update" completions in this same process. Accepting either would let a
-// watcher's incremental satisfy our gate in the window before the full index
-// takes its lock.
+// unconditionally, even re-indexing an existing project), while a file
+// watcher records "Incremental update" completions in the same process.
+// Accepting either would let a watcher's incremental satisfy our gate in the
+// window before the full index takes its lock. The driver's server runs with
+// the watcher on manual (#349), since past the first completion this same pin
+// left the gate nothing to match.
 function lastOperationCompleted(text) {
   return /Last operation:\s*Full index\s*[-—–]\s*completed/i.test(text);
 }
@@ -2755,21 +2756,26 @@ function die(msg) { console.error(`ERROR: ${msg}`); process.exit(1); }
 // worktree. With a shared projectId that wrote a worktree's files into the
 // store once a day, from a hook whose contract is "reports; never re-indexes".
 // Upstream reads SOCRATICODE_AUTO_RESUME=off before any Docker or Qdrant
-// access. `readOnly` also stops the watcher that status and query calls start
-// on their own, so `status`, `verify` and `health-check` write no index
-// content; `index` keeps it, since a completed index starting its watcher is
-// upstream's normal sequence. Not "nothing" (#287 round 2, CR 35): upstream's
+// access. SOCRATICODE_WATCHER=manual stops the watcher that status and query
+// calls start on their own, for every command, index included (#349): once a
+// full index completed, the next status poll started one inside index's own
+// server, and its first incremental overwrote "Full index — completed", the
+// record indexSettled() waits for — a successful index polled to its timeout,
+// holding the host-local watch lock the session's server wanted. This server
+// indexes and exits; the session's server owns the watcher. So `status`,
+// `verify` and `health-check` write no index content, and `index` writes only
+// the run it asked for. Not "nothing" (#287 round 2, CR 35): upstream's
 // readiness paths still act — on a managed store codebase_status starts a
 // stopped Qdrant container, codebase_graph_status creates a project's empty
 // symbol-graph metadata collection when a graph lacks one, and verify's sample
 // search pulls a missing embedding model, onto the store's Ollama when it is
 // external.
-async function withClient(fn, { readOnly = false, project } = {}) {
+async function withClient(fn, { project } = {}) {
   const launch = resolveServerLaunch({ project });
   console.error(`[driver] server launch (${launch.source}): ${launch.command} ${launch.args.join(' ')}`);
   const client = new RpcClient(launch, {
     SOCRATICODE_AUTO_RESUME: 'off',
-    ...(readOnly ? { SOCRATICODE_WATCHER: 'manual' } : {}),
+    SOCRATICODE_WATCHER: 'manual',
   });
   try {
     await client.handshake();
@@ -2860,7 +2866,7 @@ async function cmdStatus(projectPath) {
   await withClient(async (client) => {
     const text = await client.callTool('codebase_status', { projectPath });
     process.stdout.write(text + '\n');
-  }, { readOnly: true, project: projectPath });
+  }, { project: projectPath });
 }
 
 async function cmdIndex(projectPath) {
@@ -3505,7 +3511,7 @@ async function cmdHealthCheck(projectPath, probePath) {
         note(unresolvedFinding(y.unresolvedPct, v.verdict));
       }
     }
-  }, { readOnly: true, project: projectPath });
+  }, { project: projectPath });
 
   // ── the session's pin, as launched (#332) ─────────────────────────────────
   // This process carries SOCRATICODE_SPEC and the session's server was seen
@@ -3729,7 +3735,7 @@ async function cmdVerify(projectPath) {
     if (!(okGraph && okSearch && okList)) die('verification failed — see lines above');
     if (lastOpFailed) die('verification failed — the last recorded operation FAILED; re-index before declaring this green');
     console.error('[driver] verify OK');
-  }, { readOnly: true, project: projectPath });
+  }, { project: projectPath });
 }
 
 function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
