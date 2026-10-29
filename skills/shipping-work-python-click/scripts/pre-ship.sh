@@ -90,15 +90,16 @@ cd "$PROJECT_ROOT"
 #     done < "$1"
 #   }
 #   export PRE_SHIP_ENV_NAMES=""                  # names only: the stamp's key
-#   ENV_FILE="$PROJECT_ROOT/.env"                 # a linked worktree has none,
+#   ETC_ENV="/etc/<project>/.env" LOCAL_ENV="$PROJECT_ROOT/.env"
+#   ENV_FILE=$LOCAL_ENV                           # a linked worktree has none,
 #   [ -r "$ENV_FILE" ] ||                         # so use the primary checkout's
 #     ENV_FILE="$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")/.env"
-#   load_env /etc/<project>/.env                  # after: it may set PROJECT_ROOT
-#   if [ -r "$ENV_FILE" ]; then load_env "$ENV_FILE"; else
-#     echo "WARN: no .env at $PROJECT_ROOT/.env or $ENV_FILE;" >&2
-#     echo "      tests that need it will skip, and no stamp is written" >&2
-#     PRE_SHIP_ENV_NAMES=""
-#   fi
+#   [ -r "$ETC_ENV" ] || [ -r "$ENV_FILE" ] || {  # neither: say so, loudly
+#     [ "$ENV_FILE" = "$LOCAL_ENV" ] || LOCAL_ENV="$LOCAL_ENV or $ENV_FILE"
+#     echo "WARN: no env file at $ETC_ENV or $LOCAL_ENV;" >&2
+#     echo "      tests that need one will skip, and no stamp is written" >&2
+#   }
+#   for f in "$ETC_ENV" "$ENV_FILE"; do load_env "$f"; done  # paths fixed first
 #   exec bash "$DELEGATE" "$@"
 #
 # Every line there is a trap someone has already hit:
@@ -129,7 +130,9 @@ cd "$PROJECT_ROOT"
 #     linked worktree "$PROJECT_ROOT/.env" is missing, and load_env returns 0
 #     on a missing file by design: the tests that needed it skipped and the
 #     gate passed, saying nothing (#497). --git-common-dir names the
-#     primary's .git from any worktree. The WARN prints paths, never a value.
+#     primary's .git from any worktree. Every path is fixed before either
+#     file loads, since /etc's may set PROJECT_ROOT; the WARN fires only when
+#     neither file is readable, and prints paths, never a value.
 #   - Export PRE_SHIP_ENV_NAMES, the names (never the values) the env files
 #     set. This gate folds a hash of them into its per-SHA stamp, and writes
 #     no stamp when the list is empty, so a run that loaded no env cannot
@@ -309,13 +312,13 @@ else
   # PRE_SHIP_ENV_NAMES: the names, never the values, its env files set. A run
   # with the env missing skips every test that needs it and still passes, so
   # its stamp must not be the one a run with the env reads. The key carries a
-  # hash of the sorted names, and an empty list (the wrapper found no env
-  # file) writes no stamp at all. Unset means no env contract — no wrapper,
-  # or one not yet refreshed — and keeps the SHA-only key.
+  # hash of the sorted names, and an empty list (no env file found, or none
+  # set anything) writes no stamp at all. Unset means no env contract — no
+  # wrapper, or one not yet refreshed — and keeps the SHA-only key.
   if [[ -n "$STAMP_FILE" && -n "${PRE_SHIP_ENV_NAMES+set}" ]]; then
     read -r -a ENV_NAMES <<<"$PRE_SHIP_ENV_NAMES"   # never glob-expanded
     if [[ ${#ENV_NAMES[@]} -eq 0 ]]; then
-      echo "WARN: PRE_SHIP_ENV_NAMES is empty (the wrapper loaded no env file);" >&2
+      echo "WARN: PRE_SHIP_ENV_NAMES is empty (the wrapper's env files set nothing);" >&2
       echo "      running pytest, and no stamp is written." >&2
       STAMP_FILE=""
     elif ENV_HASH=$(printf '%s\n' "${ENV_NAMES[@]}" | LC_ALL=C sort -u | git hash-object --stdin); then

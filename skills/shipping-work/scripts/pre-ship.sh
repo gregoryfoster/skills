@@ -95,14 +95,16 @@ cd "$PROJECT_ROOT"
 #       export "$key=$val"
 #     done < "$1"
 #   }
-#   ENV_FILE="$PROJECT_ROOT/.env"                 # a linked worktree has none,
+#   ETC_ENV="/etc/<project>/.env" LOCAL_ENV="$PROJECT_ROOT/.env"
+#   ENV_FILE=$LOCAL_ENV                           # a linked worktree has none,
 #   [ -r "$ENV_FILE" ] ||                         # so use the primary checkout's
 #     ENV_FILE="$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")/.env"
-#   load_env /etc/<project>/.env                  # after: it may set PROJECT_ROOT
-#   if [ -r "$ENV_FILE" ]; then load_env "$ENV_FILE"; else
-#     echo "WARN: no .env at $PROJECT_ROOT/.env or $ENV_FILE;" >&2
-#     echo "      tests that need it will skip" >&2
-#   fi
+#   [ -r "$ETC_ENV" ] || [ -r "$ENV_FILE" ] || {  # neither: say so, loudly
+#     [ "$ENV_FILE" = "$LOCAL_ENV" ] || LOCAL_ENV="$LOCAL_ENV or $ENV_FILE"
+#     echo "WARN: no env file at $ETC_ENV or $LOCAL_ENV;" >&2
+#     echo "      tests that need one will skip" >&2
+#   }
+#   for f in "$ETC_ENV" "$ENV_FILE"; do load_env "$f"; done  # paths fixed first
 #
 # Note how this differs from the language variants (-php, -python-click,
 # -python-fastapi). Those ship a real gate, so their advice is a project-local
@@ -128,7 +130,9 @@ cd "$PROJECT_ROOT"
 # worktree "$PROJECT_ROOT/.env" is missing, and load_env returns 0 on a
 # missing file by design: the tests that needed it skipped and the gate
 # passed, saying nothing (#497). --git-common-dir names the primary's .git
-# from any worktree. The WARN prints paths, never a value.
+# from any worktree. Every path is fixed before either file loads, since
+# /etc's may set PROJECT_ROOT; the WARN fires only when neither file is
+# readable, and prints paths, never a value.
 
 # Pre-flight: warn (do not fail) if zombie processes from previously-destroyed
 # worktrees are still around. Helps surface drift the destroy script can't see
