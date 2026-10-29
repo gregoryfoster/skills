@@ -49,6 +49,14 @@ class TestTheGcTimerOnlyPathNamesItsCloses:
     def test_both_timers_after_all(self):
         assert "both timers" in _gc_timer_only()
 
+    def test_both_timers_puts_gc_stale_hours_back(self):
+        """CR 1039: this path set `gc_stale_hours = 0`, which turns off both
+        GC faults, so close (c) covers nothing until it is non-zero again."""
+        close_c = next(
+            ln for ln in _gc_timer_only().splitlines() if ln.startswith("- **(c)")
+        )
+        assert "gc_stale_hours" in close_c, close_c
+
     def test_retiring_a_failure_net_waits_on_one_of_them(self):
         text = _gc_timer_only()
         assert re.search(r"retir\w*[^.]*failure net", text, re.S), text
