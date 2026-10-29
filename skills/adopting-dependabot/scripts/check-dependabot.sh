@@ -20,7 +20,9 @@ pass, fail, unread (this token can't read it) or info:
                     fixed limit of 10, but their PRs can't be told apart by
                     branch, so the count may include them
   update-runs       the latest "Dependabot Updates" run per ecosystem and
-                    directory didn't fail; none at all fails too
+                    directory succeeded. Any other conclusion (failure,
+                    cancelled, timed_out, ...) fails, and so does none at
+                    all; one still queued or in progress reads info
   last-pr           the newest Dependabot PR and its age (info)
   graph             every committed lockfile (uv.lock, package-lock.json,
                     composer.lock, ...) is a dependency-graph manifest.

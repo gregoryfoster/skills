@@ -217,6 +217,22 @@ the warning.
 `--check` reports a workflow rendered before this as `delta check: STALE` and
 exits 3, the same marker the drift report carries.
 
+## A re-render keeps a newer checkout pin
+
+Dependabot's `github-actions` ecosystem bumps every `uses:` under
+`.github/workflows/`, this generated file included, and a re-render used to
+write the template's `actions/checkout` pin back over the bump without a word
+([#373](https://github.com/gregoryfoster/skills/issues/373)). The template's
+pin is now a floor. An installed SHA pin is kept verbatim, with its
+`# vX.Y.Z` comment, and so is an installed `@vN` at or above the template's
+major. An older major is raised to the template's, and a ref that is neither
+(a branch, a pre-release tag) is replaced, with a `replaced:` line on stderr.
+
+`--check` prints a `checkout pin:` line saying which it is, `DOWNGRADE` for
+that last case. It is not a guarantee, so it never sets exit 3. `--print` reads
+the installed line too, which is what lets this repo's parity test pass a bare
+Dependabot bump of `context-cadence.yml`.
+
 ## The workflow
 
 The rendered job, step by step, with the annotations that explain each one —

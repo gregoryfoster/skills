@@ -41,6 +41,13 @@ repo's own token, and not re-verified. Re-derive it with
 Version updates propose only direct dependencies, so a transitive advisory is
 exactly the case security updates fix.
 
+A security PR opened before the repo has a `dependabot.yml` can't be rebased
+once the config lands. index's and power-map's four were of that kind
+(observed 2026-10-28, not re-verified:
+`gh api repos/CannObserv/<r>/contents/.github/dependabot.yml`).
+Land each first, or by hand at the advisory's fixed version or later, before
+closing it: [merge-paths.md](merge-paths.md#security-prs-opened-before-the-config).
+
 ## The check
 
 `check-dependabot.sh`'s `graph`, `alerts` and `security-updates` checks. The

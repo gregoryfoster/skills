@@ -74,9 +74,9 @@ jobs:
       # during the measurement, and rebasing on a depth-1 clone lacks the history
       # to replay onto.
       # Never below @v5: v4 targets Node 20, which runners force onto Node 24
-      # with a deprecation warning on every run (#163). Dependabot bumps an
-      # installed copy of this line, and a re-render writes this pin back over
-      # it, so move this one in the same change (#373).
+      # with a deprecation warning on every run (#163). The template's pin is
+      # only a floor: a re-render keeps an installed SHA pin, or an installed
+      # major at or above the template's, so a Dependabot bump survives (#373).
       - uses: actions/checkout@v7
         with:
           submodules: recursive

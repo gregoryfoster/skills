@@ -72,10 +72,11 @@ def _pr(
     }
 
 
-def _run(title: str, conclusion: str, created: str) -> dict:
+def _run(title: str, conclusion: str | None, created: str) -> dict:
     return {
         "path": "dynamic/dependabot/dependabot-updates",
         "display_title": title,
+        "status": "in_progress" if conclusion is None else "completed",
         "conclusion": conclusion,
         "created_at": created,
         "html_url": f"https://github.com/{REPO}/actions/runs/1",
@@ -227,6 +228,57 @@ def test_a_failing_latest_update_run_fails(tmp_path):
     assert rc == 1
     assert "uv in /" in _by_name(out)["update-runs"]["detail"]
     assert _by_name(out)["update-runs"]["status"] == "fail"
+
+
+def _newest_uv_run(table: dict, conclusion: str | None) -> None:
+    runs = table[f"repos/{REPO}/actions/runs?event=dynamic&per_page=100"]["body"][
+        "workflow_runs"
+    ]
+    runs.insert(0, _run("uv in / - Update #4", conclusion, "2026-10-27T21:01:20Z"))
+
+
+def test_an_unfinished_latest_run_is_info_not_pass(tmp_path):
+    """#511: address-validator#361's check, 33s after the config's push, read four
+    in_progress runs as "succeeded". Not finished isn't a failure either."""
+    table = healthy()
+    _newest_uv_run(table, None)
+    rc, out, _ = _check(tmp_path, table)
+    assert rc == 0
+    runs = _by_name(out)["update-runs"]
+    assert runs["status"] == "info", runs
+    assert "re-run after it completes" in runs["detail"]
+    assert "uv in /: in_progress since 2026-10-27T21:01:20Z" in runs["detail"]
+    assert "github_actions" not in runs["detail"], "only the unfinished run is named"
+
+
+@pytest.mark.parametrize(
+    "conclusion",
+    ["timed_out", "cancelled", "startup_failure", "action_required", "stale"],
+)
+def test_a_latest_run_that_did_not_succeed_fails(tmp_path, conclusion):
+    """#511: only `failure` failed, so a timed-out or cancelled run, which opens
+    no PR either, passed as "succeeded"."""
+    table = healthy()
+    _newest_uv_run(table, conclusion)
+    rc, out, _ = _check(tmp_path, table)
+    assert rc == 1
+    runs = _by_name(out)["update-runs"]
+    assert runs["status"] == "fail"
+    assert f"uv in / ({conclusion}," in runs["detail"]
+
+
+def test_a_failure_still_fails_beside_an_unfinished_run(tmp_path):
+    """A run still going elsewhere doesn't soften a failure; both are named."""
+    table = healthy()
+    _newest_uv_run(table, "timed_out")
+    table[f"repos/{REPO}/actions/runs?event=dynamic&per_page=100"]["body"][
+        "workflow_runs"
+    ].insert(0, _run("github_actions in / - Update #5", None, "2026-10-27T21:01:21Z"))
+    rc, out, _ = _check(tmp_path, table)
+    assert rc == 1
+    detail = _by_name(out)["update-runs"]["detail"]
+    assert "uv in / (timed_out," in detail
+    assert "Not finished yet: github_actions in /: in_progress" in detail
 
 
 def test_no_update_run_at_all_fails(tmp_path):

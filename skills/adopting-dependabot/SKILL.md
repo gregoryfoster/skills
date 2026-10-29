@@ -85,7 +85,7 @@ Phases 1–3 are read-only or test-first, and safe in any session. Phase 7 is ou
 
 - **`patching-hosts`** audits what a host *runs*: its language-dependencies class audits a deployed `uv.lock`, and its record reads the owning repo's update mechanism. This skill is the repo side of that loop: a host audit that finds advisories in a tree whose repo fails `check-dependabot.sh` points here. Neither skill updates the other's side.
 - **`shipping-work*`**: Step 3 can point at [merge-paths.md](references/merge-paths.md) for a PR it didn't author.
-- **`curating-context`**: `install-cadence.sh` renders a workflow Dependabot bumps, and a re-render downgrades it ([#373](https://github.com/gregoryfoster/skills/issues/373)).
+- **`curating-context`**: `install-cadence.sh` renders a workflow Dependabot bumps; re-renders keep a newer pin ([#373](https://github.com/gregoryfoster/skills/issues/373)).
 - **`auditing-ci-cost`**: every Dependabot PR runs full CI. Count its weekly volume, and weigh grouping.
 - **`init-project-*`**: offer this skill once CI exists.
 
