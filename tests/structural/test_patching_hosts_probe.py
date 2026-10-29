@@ -3419,6 +3419,58 @@ def test_a_backup_over_a_cluster_of_several_databases_is_a_finding_before_a_run(
     assert not [i for i in _ids(host.run()) if i.startswith("backup-covers:")]
 
 
+# --- a database: exception's glob (#455) --------------------------------------------
+# host 6's test suite made one database per pytest-xdist worker, and each new
+# worker was a new finding.
+
+_WORKERS = [
+    ("postgres", "7000000", "0", "", "C.UTF-8", "c", "", "0"),
+    ("app", "90000000", "1200", "1700000000", "en_US.UTF-8", "c", "2.39"),
+    ("app_test", "8000000", "0", "", "en_US.UTF-8", "c", "2.39"),
+    ("app_test_gw0", "8000000", "0", "", "en_US.UTF-8", "c", "2.39"),
+    ("app_test_gw1", "8000000", "0", "", "en_US.UTF-8", "c", "2.39"),
+    ("stray", "8000000", "0", "", "en_US.UTF-8", "c", "2.39"),
+]
+
+
+def test_a_database_exception_takes_a_glob(host):
+    _postgres(host, _WORKERS)
+    host.knob(
+        "posture scheduled\ndatastore postgres postgresql@16-main app\n"
+        "exception database:app_test* 2099-01-01 the test suite's, rebuilt by every run\n"
+    )
+    out = host.run()
+    for db in ("app_test", "app_test_gw0", "app_test_gw1"):
+        assert f"database:{db}" not in _ids(out)
+        assert _finding(out, f"database:{db}", "excepted")["exception_line"] == 3
+    assert _finding(out, "database:stray")["kind"] == "knob"
+
+
+def test_an_exact_database_exception_beats_a_glob(host):
+    _postgres(host, _WORKERS)
+    host.knob(
+        "posture scheduled\ndatastore postgres postgresql@16-main app\n"
+        "exception database:app_test* 2099-01-01 the test suite's\n"
+        "exception database:app_test_gw1 2099-02-01 this worker's own reason\n"
+    )
+    out = host.run()
+    f = _finding(out, "database:app_test_gw1", "excepted")
+    assert (f["exception_line"], f["review_by"]) == (4, "2099-02-01")
+    assert _finding(out, "database:app_test_gw0", "excepted")["exception_line"] == 3
+
+
+def test_a_glob_excepts_nothing_but_a_database(host):
+    # A held:<package> names one thing: a glob there would over-cover.
+    host.on("apt-mark", "showhold", "libxml2\n")
+    host.on(
+        "apt-cache",
+        "*policy libxml2",
+        _policy("libxml2", "2.9.14", "2.9.14.1", ["noble-updates", "noble-security"]),
+    )
+    host.knob("posture automatic\nexception held:lib* 2099-01-01 every library\n")
+    assert "held:libxml2" in _ids(host.run())
+
+
 def _mutating(name: str, args: str) -> bool:
     """Whether one stubbed call would change the host."""
     a = args.split()
