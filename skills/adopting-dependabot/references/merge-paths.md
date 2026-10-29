@@ -80,8 +80,8 @@ The head never changes, so the bounded wait above times out.
   gate: `uv lock --upgrade-package <pkg>`, `npm update <pkg>`. Taking the
   newest release, not the PR's exact version, is fine: address-validator's
   hand-made fix (CannObserv/address-validator#375) landed a newer `filelock`
-  than address-validator#357 proposed, and was accepted (CannObserv/address-validator#361,
-  2026-10-28).
+  than address-validator#357 proposed, and was accepted
+  (CannObserv/address-validator#361, 2026-10-28).
 - **Then close the PR, with a comment pointing at the commit that landed the
   fix.** The ignore it records no longer matters once `main` is on that
   version or later.
