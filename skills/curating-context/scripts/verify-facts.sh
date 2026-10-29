@@ -30,6 +30,9 @@ Options:
   --issues         Resolve GitHub issue references (#N, owner/repo#N) via gh.
                    Off by default: it costs one API call per reference.
   --repo SLUG      owner/repo for bare #N references. Default: gh's inference.
+                   A short <word>#N resolves as #N only when <word> is this
+                   repo's name (or PR, GH, issue); naming another repo it has
+                   no owner, so it is UNVERIFIABLE: write owner/<word>#N.
   -h, --help       Show this help and exit 0.
 
 Claim classes checked:
@@ -342,16 +345,77 @@ check_units() {
 }
 
 # --- GitHub issue claims --------------------------------------------------
+# The repo a short `<word>#N` would have to name to be this repo's #N: --repo,
+# else gh's own inference. Resolved once, lazily, and only when a short
+# reference turns up, since it costs a gh call. Empty when neither answers.
+CURRENT_REPO=""
+CURRENT_KNOWN=0
+current_repo() {
+  if [ "$CURRENT_KNOWN" -eq 0 ]; then
+    CURRENT_KNOWN=1
+    CURRENT_REPO="${REPO:-$(gh repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null || true)}"
+  fi
+  printf '%s' "$CURRENT_REPO"
+}
+
 check_issues() {
-  local f="$1" ref slug num state
+  local f="$1" ref slug num state word name
   [ "$CHECK_ISSUES" -eq 1 ] || return 0
   if ! command -v gh >/dev/null 2>&1; then
     echo "WARN --issues requested but gh is not installed; skipping issue checks" >&2
     return 0
   fi
-  grep -oE '(\b[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)?#[0-9]+' "$f" 2>/dev/null | sort -u >"$TMP/issues" || true
+  # Three shapes: owner/repo#N, a bare #N, and a short <word>#N (#461). The
+  # reference grammar is _sentences.REF's, spelled identically (#438); the
+  # owner group in it needs a slash, so `watcher#368` matched it as a bare
+  # #368 and was resolved against THIS repo — a confident TRUE about the
+  # wrong issue. The leading word run, outside that grammar, captures the
+  # <word> a bare match follows, as _sentences reads it from the text before.
+  grep -oE '[A-Za-z0-9_.-]*(\b[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)?#[0-9]+' "$f" >"$TMP/issue-tokens" 2>/dev/null \
+    || : >"$TMP/issue-tokens"
+  : >"$TMP/issues"
+  while IFS= read -r ref; do
+    case "$ref" in
+      */*|'#'*) printf '%s\n' "$ref" >>"$TMP/issues"; continue ;;
+    esac
+    num="${ref##*#}"
+    # Read as _sentences._short_repo reads it (CR 434), so the two readers of
+    # one reference agree: emphasis and dots trimmed, and a word with no
+    # letter, or one naming this repo's own item (PR#12, GH#12), is #N.
+    word="${ref%#*}"
+    word="$(printf '%s' "$word" | sed -e 's/^[_.-]*//' -e 's/[_.-]*$//')"
+    case "$(printf '%s' "$word" | tr '[:upper:]' '[:lower:]')" in
+      *[a-z]*) ;;
+      *) printf '#%s\n' "$num" >>"$TMP/issues"; continue ;;
+    esac
+    case "$(printf '%s' "$word" | tr '[:upper:]' '[:lower:]')" in
+      pr|gh|issue|issues|bug|pull) printf '#%s\n' "$num" >>"$TMP/issues"; continue ;;
+    esac
+    name="$(current_repo)"
+    name="${name##*/}"
+    if [ -n "$name" ] && [ "$(printf '%s' "$word" | tr '[:upper:]' '[:lower:]')" = \
+         "$(printf '%s' "$name" | tr '[:upper:]' '[:lower:]')" ]; then
+      # This repo's own #N, written short: resolved, and keyed, as a bare #N.
+      printf '#%s\n' "$num" >>"$TMP/issues"
+    elif [ -n "$name" ]; then
+      printf 'SHORT\t%s#%s\n' "$word" "$num" >>"$TMP/issues"
+    else
+      printf 'NOREPO\t%s#%s\n' "$word" "$num" >>"$TMP/issues"
+    fi
+  done <"$TMP/issue-tokens"
+  sort -u "$TMP/issues" -o "$TMP/issues"
   while IFS= read -r ref; do
     [ -n "$ref" ] || continue
+    case "$ref" in
+      SHORT$'\t'*)
+        ref="${ref#*$'\t'}"
+        emit UNVERIFIABLE issue "$f" "$ref" "short cross-repo reference $ref: no owner, so it can't be resolved; write owner/$ref"
+        continue ;;
+      NOREPO$'\t'*)
+        ref="${ref#*$'\t'}"
+        emit UNVERIFIABLE issue "$f" "$ref" "short reference $ref: neither --repo nor gh names this repo, so whether it is this repo's #${ref##*#} or another's can't be told; pass --repo, or write owner/$ref"
+        continue ;;
+    esac
     num="${ref##*#}"
     slug="${ref%#*}"
     [ -z "$slug" ] && slug="$REPO"

@@ -44,7 +44,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-# verify-facts.sh: grep -oE '(\b[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)?#[0-9]+'
+# verify-facts.sh: grep -oE '(\b[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)?#[0-9]+',
+# with the word a bare match follows read in front of it (#461).
 REF = re.compile(r"(\b[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)?#[0-9]+", re.ASCII)
 _WORD_CHAR = re.compile(r"[A-Za-z0-9_.-]", re.ASCII)
 _SHORT_REPO = re.compile(r"[A-Za-z0-9_.-]+$", re.ASCII)
