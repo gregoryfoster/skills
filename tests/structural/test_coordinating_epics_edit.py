@@ -719,16 +719,21 @@ def test_any_header_op_converges_the_header(rig):
 
 
 def test_a_converged_paragraph_drops_its_hard_breaks(rig):
-    """#399: two trailing spaces, or a "\\", would show in an item; a last "\\" isn't a break."""
+    """#399: two trailing spaces, or a "\\", would show in an item.
+
+    An escaped "\\\\" is no break, and neither is a last line's "\\" (CR 938).
+    """
     body = (
         "**Last check-in:** 2026-10-28  \n**Protocol:** gregoryfoster/skills#348\\\n"
-        "**Next:** C:\\\\\n**Last issue seen:** #14 \\\n\n## Tier 1\n\n- [ ] #12 b\n"
+        "**Path:** C:\\\\\n**Next:** #11\n**Last issue seen:** #14 \\\n\n"
+        "## Tier 1\n\n- [ ] #12 b\n"
     )
     res = _header(rig, body, [{"op": "header", "field": "Next", "value": "#12"}])
     assert res.returncode == 0, res.stderr
     assert rig.body(REPO, EPIC).startswith(
         "- **Last check-in:** 2026-10-28\n- **Protocol:** gregoryfoster/skills#348\n"
-        "- **Next:** #12\n- **Last issue seen:** #14 \\\n\n## Tier 1"
+        "- **Path:** C:\\\\\n- **Next:** #12\n- **Last issue seen:** #14 \\\n\n"
+        "## Tier 1"
     ), rig.body(REPO, EPIC)
 
 
