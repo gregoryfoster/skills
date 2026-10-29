@@ -213,19 +213,41 @@ def runs(repo: str, per_page: int, doc: dict) -> list[dict]:
             continue
         key = f"{m.group(1)} in {m.group(2)}" if m else run.get("display_title", "?")
         latest.setdefault(key, run)
-    failed = {k: r for k, r in latest.items() if r.get("conclusion") == "failure"}
+    # Only a success passes (#511). A run still queued or in progress has no
+    # conclusion yet, which is how it looks right after the config's push; any
+    # other conclusion (cancelled, timed_out, startup_failure, ...) opened no PR.
+    unfinished = {k: r for k, r in latest.items() if r.get("conclusion") is None}
+    failed = {
+        k: r
+        for k, r in latest.items()
+        if k not in unfinished and r.get("conclusion") != "success"
+    }
     newest = updates[0].get("created_at")
+    waiting = "; ".join(
+        f"{k}: {r.get('status') or 'unfinished'} since {r.get('created_at')}"
+        for k, r in sorted(unfinished.items())
+    )
     if failed:
         listed = "; ".join(
-            f"{k} ({r.get('created_at')}, {r.get('html_url')})"
+            f"{k} ({r.get('conclusion')}, {r.get('created_at')}, {r.get('html_url')})"
             for k, r in sorted(failed.items())
         )
         return [
             check(
                 "update-runs",
                 "fail",
-                f"the latest run failed for: {listed}. A failed update run opens no PR and reads as "
-                "'no updates available' everywhere else",
+                f"the latest run didn't succeed for: {listed}. A failed update run opens no PR "
+                "and reads as 'no updates available' everywhere else"
+                + (f". Not finished yet: {waiting}" if waiting else ""),
+                newest=newest,
+            )
+        ]
+    if unfinished:
+        return [
+            check(
+                "update-runs",
+                "info",
+                f"not finished; re-run after it completes: {waiting}",
                 newest=newest,
             )
         ]

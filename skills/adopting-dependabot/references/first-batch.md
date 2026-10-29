@@ -22,7 +22,9 @@ gh pr list --author app/dependabot --json number,title,headRefName,createdAt
   `Configured Graph Update` runs, which refresh the dependency graph and open
   no PR: the filter above leaves them out. A failed updater run opens no PR,
   and reads as "no updates available" everywhere else. Its log names the
-  resolution error (a private index, a wrong directory).
+  resolution error (a private index, a wrong directory). Right after the push
+  they're still running, and `check-dependabot.sh` reads `update-runs` as
+  `info` until they finish: run it again then.
 - **Each PR's CI**: per job, the actor is `dependabot[bot]`, and the auth steps
   succeeded ([credential-context.md](credential-context.md)).
 - **Expect one PR per moved dependency, all at once.** Grouped dev tooling is
