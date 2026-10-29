@@ -1978,6 +1978,64 @@ def test_a_module_stays_unread_whatever_its_working_directory(host):
     assert "python3 -m infra.renew, a Python module" in f["message"]
 
 
+# --- the restarter scan's residual sites (#484) --------------------------------------
+# Sites 1 and 4 can hide a real restarter: a restart the scan should find,
+# and didn't.
+
+
+def test_a_plain_units_own_systemctl_start_is_a_restarter(host):
+    # Site 4: read_restarters' own grep took restart and not start, an older
+    # matcher than RESTART_RE; a unit that's neither an OnFailure= target nor
+    # a timer's service was found only through it.
+    host.write(
+        "etc/systemd/system/app-watch.service",
+        "[Service]\nExecStart=/usr/bin/app-watch\n"
+        "ExecStartPost=/bin/systemctl start app.service\n",
+    )
+    out = host.run()
+    f = _finding(out, "restarter:app-watch.service")
+    assert f["exception_what"] is None
+    assert "app-watch.service" in {r["unit"] for r in out["impact"]["restarters"]}
+
+
+def test_an_inline_commands_relative_script_is_read_against_its_working_directory(
+    host,
+):
+    # Site 1: #418's defect at the inline-command site. A relative command
+    # word runs from WorkingDirectory=, as a script on an Exec line does.
+    host.write("etc/systemd/system/store-cert.timer", RENEW_TIMER)
+    host.write(
+        "etc/systemd/system/store-renew.service",
+        "[Service]\nType=oneshot\nWorkingDirectory=/opt/app\n"
+        "ExecStart=/bin/sh -c 'scripts/renew.sh && ./scripts/after.sh'\n",
+    )
+    host.write("opt/app/scripts/renew.sh", NOTIFIES)
+    host.write("opt/app/scripts/after.sh", RESTARTS)
+    out = host.run()
+    assert "restarters:unread:store-renew.service" not in _ids(out)
+    f = _finding(out, "restarter:store-renew.service")
+    assert "/opt/app/scripts/after.sh, which matches at line 2" in f["message"]
+
+
+def test_an_inline_command_names_every_script_that_matches(host):
+    # Site 1: #419's first-match shape. Each matching script is named, so
+    # an exception is declared over all of them, not the first alone. An
+    # absolute path is also a word of the Exec line, which unit_restarts
+    # reads; a relative one is only the inline command's.
+    host.write("etc/systemd/system/store-cert.timer", RENEW_TIMER)
+    host.write(
+        "etc/systemd/system/store-renew.service",
+        "[Service]\nType=oneshot\nWorkingDirectory=/opt/app\n"
+        "ExecStart=/bin/sh -c './a.sh; ./b.sh'\n",
+    )
+    host.write("opt/app/a.sh", "#!/bin/sh\necho 'then systemctl restart x'\n")
+    host.write("opt/app/b.sh", RESTARTS)
+    out = host.run()
+    msg = _finding(out, "restarter:store-renew.service")["message"]
+    assert "/opt/app/a.sh, which matches at line 2" in msg
+    assert "/opt/app/b.sh, which matches at line 2" in msg
+
+
 def test_an_exception_clears_a_timers_service_the_scan_cant_follow(host):
     host.write("etc/systemd/system/store-cert.timer", RENEW_TIMER)
     host.write("etc/systemd/system/store-renew.service", RENEW_UNIT)
