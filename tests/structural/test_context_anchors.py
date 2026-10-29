@@ -42,6 +42,9 @@ def _clean_env() -> dict:
         "CONTEXT_DOC_BUDGET",
         "CONTEXT_DOCS_DIR",
         "ANTHROPIC_API_KEY",
+        # measure-context.sh reads it since #465; a developer's exported one
+        # would otherwise move these archival cases (CR 845).
+        "CTX_ARCHIVAL",
     ):
         env.pop(k, None)
     return env
