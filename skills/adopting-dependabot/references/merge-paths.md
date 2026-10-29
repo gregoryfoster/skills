@@ -67,7 +67,9 @@ git log --diff-filter=A --format=%cI -- .github/dependabot.yml | tail -1   # aft
 > can't be rebased. Please close the PR so Dependabot can create a new one with
 > the current dependabot.yml.
 
-The head never changes, so the bounded wait above times out.
+The head never changes, so the bounded wait above times out. The `git log`
+needs full history: in a shallow clone it prints nothing, or a later commit's
+date, until `git fetch --unshallow`.
 
 - **Inventory them before pushing the config,** and land each one first where
   its CI and the ship gate allow.
