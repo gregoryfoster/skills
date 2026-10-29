@@ -823,6 +823,9 @@ class TestTheContractIsWritten:
         assert "loopback-containers.sh" in text
         assert "before any `codebase_*` call" in text
         assert "idle daemon" in text, "CR 789: the idle-socket case runs the create too"
+        assert "one exception to the rule above" in text, (
+            "CR 802: waking the daemon is named as the exception to 'do not auto-start Docker'"
+        )
         assert "references/loopback-containers.md" in text
 
     def test_the_reference_holds_the_mitigations_traps(self):
