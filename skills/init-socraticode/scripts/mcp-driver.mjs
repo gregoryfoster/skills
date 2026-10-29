@@ -1081,6 +1081,17 @@ function updateRefused(text) {
   return m ? m[0].trim() : null;
 }
 
+// A run cancelled part-way — the lock lost, or a cancellation requested
+// (CR 1095). updateProjectIndex returns cancelled: true with partial counts and
+// the headline still prints; only a progress line says so: "Update cancelled
+// …", or "Indexing cancelled …" where an update on an empty or missing
+// collection fell back to a full index. Each tells the caller to re-run. The
+// cancellation line, or null.
+function updateCancelled(text) {
+  const m = text.match(/(?:Update|Indexing) cancelled\b[^\n]*/);
+  return m ? m[0].trim() : null;
+}
+
 function parseArtifacts(text) {
   // Two known shapes:
   //   "Context artifacts: 2/7 indexed"          → {done:2, total:7}
@@ -2925,8 +2936,18 @@ async function cmdUpdate(projectPath) {
     else if (updateLockHeld(reply)) refused = "another process holds this project's index lock — a session's server, or a concurrent index";
     else if (updateRefused(reply)) refused = `the server refused it: ${updateRefused(reply)}`;
     else if (!updateRan(reply) || !counts) refused = `the server did not run it. It replied:\n${reply}`;
+    // Cancelled is "did not run to completion", not "did not run": the partial
+    // counts are writes that happened, so they stay in the JSON.
+    const cancelled = refused ? null : updateCancelled(reply);
     process.stdout.write(JSON.stringify(
-      refused ? { projectPath, ran: false } : { projectPath, ran: true, ...counts }, null, 2) + '\n');
+      cancelled ? { projectPath, ran: false, cancelled: true, ...counts }
+        : refused ? { projectPath, ran: false } : { projectPath, ran: true, ...counts },
+      null, 2) + '\n');
+    if (cancelled) {
+      console.error(`[driver] update did NOT run to completion: ${cancelled}`);
+      process.exitCode = 1;
+      return;
+    }
     if (refused) {
       console.error(`[driver] update did NOT run: ${refused}`);
       process.exitCode = 1;
@@ -3823,8 +3844,9 @@ Commands:
   update   run codebase_update (incremental: re-embeds changed files and
            artifacts) and print its counts as JSON; exit 1 when it did not
            run — another process held the project's index lock, a run was in
-           progress, or the server refused. The capped path outside a session
-           (#483): run it under the cap as you would index.
+           progress, or the server refused — or was cancelled part-way, its
+           partial counts kept beside "ran": false. The capped path outside
+           a session (#483): run it under the cap as you would index.
   verify   sample codebase_search + graph_status + list_projects + a check that
            the last recorded operation did not FAIL, and on an external store
            that codebase_health reports Qdrant mode: external; exit 0/1.
@@ -4142,7 +4164,7 @@ export {
   pluginServerFromVersionDir, expandVars,
   // tool-reply predicates (gotcha M)
   indexStarted, indexAlreadyRunning, runningOperationIsFullIndex,
-  parseUpdateCounts, updateRan, updateLockHeld, updateRefused,
+  parseUpdateCounts, updateRan, updateLockHeld, updateRefused, updateCancelled,
   contextIndexComplete, indexedZeroChunks,
   searchHasHits, listHasProjects,
 };
