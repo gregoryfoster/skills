@@ -3360,8 +3360,8 @@ read_impact() {
 }
 
 # --- dormant components -----------------------------------------------------
-# One entry per engine the probe knows. The verdict is in-use, dormant, kept
-# or unknown (policy.md): never dormant on evidence it couldn't read, or on
+# One entry per engine the probe knows. The verdict is in-use, dormant, kept,
+# named (#491) or unknown (policy.md): never dormant on evidence it couldn't read, or on
 # fewer than 30 days of it.
 DORMANT=""
 SS_LOCAL=()
@@ -3386,21 +3386,56 @@ active_days() {  # <unit>: ACTIVE := the days it has been active, else since sys
   esac
 }
 
-named_by() {  # <ere>: NAMED (JSON array body); NAMED_DEPLOY 1 when deploy/ names it
-  local out f hit
-  NAMED="" NAMED_DEPLOY=0
+# What the repo says of a component (#491). Only a deploy/ line that isn't a
+# comment uses it: co-processor's deploy/processor.service said in a comment
+# that its user is *not* in group docker, which read as in-use and hid a
+# prune candidate. A comment, or prose (a .md file), is text alone.
+named_by() {  # <ere>: NAMED (JSON array body); NAMED_USE, the deploy/ line that uses it; NAMED_TEXT, the deploy/ files that name it only in text
+  local out f hit rel lines line
+  NAMED="" NAMED_USE="" NAMED_TEXT=""
   if [ -n "$repo" ] && [ -d "$repo" ]; then
     for f in deploy docs AGENTS.md README.md; do
       [ -e "$repo/$f" ] || continue
       capture out grep -rliE -- "$1" "$repo/$f"
       while IFS= read -r hit; do
         [ -n "$hit" ] || continue
-        jpushs NAMED "${hit#"$repo"/}"
-        case ${hit#"$repo"/} in deploy/*) NAMED_DEPLOY=1 ;; esac
+        rel=${hit#"$repo"/}
+        jpushs NAMED "$rel"
+        case $rel in deploy/*) ;; *) continue ;; esac
+        if [ -z "$NAMED_USE" ] && [[ $rel != *.md ]]; then
+          capture lines grep -iE -- "$1" "$hit"
+          while IFS= read -r line; do
+            [[ $line =~ ^[[:space:]]*(#|\;|//) ]] && continue
+            NAMED_USE="$rel names it on a line that isn't a comment"
+            break
+          done <<<"$lines"
+          [ -z "$NAMED_USE" ] || continue
+        fi
+        NAMED_TEXT="${NAMED_TEXT:+$NAMED_TEXT, }$rel"
       done <<<"$out"
     done
   fi
   if [ -r "$config" ] && grep -qiE -- "$1" "$config" 2>/dev/null; then jpushs NAMED "the knob"; fi
+}
+
+# A host unit that uses a component (#491): an admin's unit or drop-in whose
+# Requires=, After= or Exec* line names it. The component's own units, and
+# their drop-ins, don't count. NAMED_UNIT := the first, in words, or empty.
+unit_names() {  # <ere>
+  local f base out
+  NAMED_UNIT=""
+  for f in "$P_ROOT"/etc/systemd/system/*.service "$P_ROOT"/etc/systemd/system/*.service.d/*.conf; do
+    [ -f "$f" ] || continue
+    base=${f#"$P_ROOT"/etc/systemd/system/}
+    base=${base%%/*}
+    if grep -qiE -- "$1" <<<"$base"; then continue; fi
+    capture out as_reader grep -m1 -iE -- "^[[:space:]]*(Requires|After|Exec[A-Za-z]*)=.*($1)" "$f"
+    if [ "$CAP_RC" -eq 0 ] && [ -n "$out" ]; then
+      out=${out#"${out%%[![:space:]]*}"}
+      NAMED_UNIT="${f#"$P_ROOT"} names it on its ${out%%=*}= line"
+      return 0
+    fi
+  done
 }
 
 # The security set only: what a dormant component costs is the security fixes
@@ -3454,7 +3489,8 @@ engine() {
   unit_disk_state disk "$unit"
   unit_show "$unit" ActiveState || true
   named_by "$ere"
-  if [ -z "$inuse" ] && [ "$NAMED_DEPLOY" -eq 1 ]; then inuse="the repo's deploy/ names it"; fi
+  unit_names "$ere"
+  if [ -z "$inuse" ]; then inuse=${NAMED_USE:-$NAMED_UNIT}; fi
   for x in keep disabled removed purged; do
     if exception_for "$x:$name" && [ "$EX_EXPIRED" = 0 ]; then
       stage=$x
@@ -3466,6 +3502,9 @@ engine() {
     verdict=in-use why=$inuse
   elif [ -n "$stage" ]; then
     verdict=kept why="exception $stage:$name on knob line $EX_LINE, review by $EX_REVIEW"
+  elif [ -n "$NAMED_TEXT" ]; then
+    # Text isn't use, and isn't idleness either: the operator looks (#491).
+    verdict=named why=${dorm:-$unk}
   elif [ -n "$dorm" ]; then
     verdict=dormant why=$dorm
   fi
@@ -3487,6 +3526,8 @@ engine() {
   jpush DORMANT "{$e}"
   if [ "$verdict" = dormant ]; then
     finding dormant "dormant:$name" "keep:$name" "$name is installed and nothing uses it ($why). It's patch surface and attack surface for no benefit: propose a prune (policy.md), or declare exception keep:$name <review-by> <reason>."
+  elif [ "$verdict" = named ] && [ -n "$dorm" ]; then
+    finding dormant "named:$name" "keep:$name" "$name is installed, and $NAMED_TEXT names it only in a comment or prose, which isn't use ($dorm). Read what it says, and look before proposing a prune (pruning.md), or declare exception keep:$name <review-by> <reason>."
   fi
 }
 
