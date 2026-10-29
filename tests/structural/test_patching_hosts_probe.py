@@ -3127,6 +3127,93 @@ def test_docker_with_a_container_is_in_use(host):
     assert _dormant(out, "docker")["verdict"] == "in-use"
 
 
+# --- text names a component; only a working line uses it (#491) ----------------------
+# On co-processor, a comment in deploy/processor.service saying the service
+# user is NOT in group docker made an idle Docker in-use, hiding a prune
+# candidate.
+
+NOT_IN_GROUP = (
+    "[Service]\n# The service user is not in group docker: it never runs containers.\n"
+    "ExecStart=/srv/app/serve\n"
+)
+
+
+def _repo(host: Host, rel: str, text: str) -> None:
+    p = host.repo / rel
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(text)
+
+
+@pytest.mark.parametrize(
+    "rel, text",
+    [
+        ("deploy/processor.service", NOT_IN_GROUP),
+        ("deploy/README.md", "We used Docker once, and don't now.\n"),
+    ],
+    ids=["comment", "prose"],
+)
+def test_a_component_deploy_names_only_in_text_is_named(host, rel, text):
+    _repo(host, rel, text)
+    out = _docker(host).run()
+    d = _dormant(out, "docker")
+    assert d["verdict"] == "named"
+    assert rel in d["named_by"]
+    assert "no container in any state" in d["evidence"]
+    assert "dormant:docker" not in _ids(out)
+    # Not a prune candidate without the operator's look, which it asks for.
+    f = _finding(out, "named:docker")
+    assert (f["kind"], f["exception_what"]) == ("dormant", "keep:docker")
+    assert "look before proposing a prune" in f["message"]
+    host.knob("posture automatic\nexception keep:docker 2099-01-01 kept on purpose\n")
+    assert _dormant(host.run(), "docker")["verdict"] == "kept"
+
+
+@pytest.mark.parametrize(
+    "rel, text, evidence",
+    [
+        (
+            "deploy/processor.service",
+            "[Unit]\nAfter=docker.service\n[Service]\nExecStart=/srv/app/serve\n",
+            "deploy/processor.service names it on a line that isn't a comment",
+        ),
+        (
+            "deploy/compose.sh",
+            "#!/bin/sh\n# start it\ndocker compose up -d\n",
+            "deploy/compose.sh names it on a line that isn't a comment",
+        ),
+    ],
+    ids=["unit", "script"],
+)
+def test_a_working_deploy_line_is_in_use(host, rel, text, evidence):
+    _repo(host, rel, text)
+    d = _dormant(_docker(host).run(), "docker")
+    assert (d["verdict"], d["evidence"]) == ("in-use", evidence)
+
+
+@pytest.mark.parametrize(
+    "line, uses",
+    [
+        ("Requires=docker.service", True),
+        ("After=docker.service", True),
+        ("ExecStartPre=/usr/bin/docker pull app", True),
+        # A description, or a comment, is text.
+        ("Description=Not docker", False),
+        ("# After=docker.service", False),
+    ],
+)
+def test_a_host_units_requires_after_or_exec_naming_it_is_in_use(host, line, uses):
+    host.write(
+        "etc/systemd/system/app.service",
+        f"[Unit]\n{line}\n[Service]\nExecStart=/srv/app/serve\n",
+    )
+    d = _dormant(_docker(host).run(), "docker")
+    if uses:
+        assert d["verdict"] == "in-use"
+        assert d["evidence"].startswith("/etc/systemd/system/app.service names it")
+    else:
+        assert d["verdict"] == "dormant"
+
+
 def test_idle_evidence_younger_than_30_days_is_unknown(tmp_path):
     h = Host(tmp_path, uptime_days=10).knob("posture automatic\n")
     out = _docker(h).run()
