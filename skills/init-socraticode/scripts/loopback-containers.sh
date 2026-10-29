@@ -52,7 +52,8 @@
 #   decoy      another container's name contains this one's; SocratiCode's
 #              substring match may take it for this one
 #   telemetry  on loopback, but Qdrant's telemetry is not disabled
-#   unknown    could not be read, publishes no port, or could not be created
+#   unknown    could not be read, publishes no port, has never started, or
+#              could not be created
 # Docker's own messages, and a pull's progress, go to stderr.
 #
 # Exit codes: 0 = every target ok or created; 1 = at least one target is not;
@@ -149,6 +150,11 @@ inspect() {
     if [ "$name" = socraticode-qdrant ] && [ -z "$telemetry" ]; then
       DETAIL="$DETAIL; telemetry not disabled"
     fi
+  elif [ "$state" = created ]; then
+    # Never started (CR 790). A `docker run` that cannot bind its port leaves
+    # one behind, loopback publishes and all; SocratiCode's start of
+    # it fails the same way until whatever holds the port lets go.
+    V=unknown DETAIL="$name has never started (state created): a docker run that could not bind leaves one behind, so find what holds its port before starting it"
   elif [ -n "$other" ]; then
     V=decoy DETAIL="$name ($state) is on loopback, but SocratiCode's substring match also counts: $other"
   elif [ "$name" = socraticode-qdrant ] && [ -z "$telemetry" ]; then
@@ -192,7 +198,12 @@ for target in "${TARGETS[@]}"; do
       inspect "$name"
       [ "$V" != ok ] || V=created
     else
-      V=unknown DETAIL="docker run failed for $name (its message is above, on stderr)"
+      inspect "$name"
+      if [ "$V" = missing ]; then
+        V=unknown DETAIL="docker run failed for $name (its message is above, on stderr)"
+      else
+        V=unknown DETAIL="docker run failed for $name (its message is above, on stderr) and left it behind: $DETAIL"
+      fi
     fi
   fi
   case "$V" in ok | created) ;; *) RC=1 ;; esac

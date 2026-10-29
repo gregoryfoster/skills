@@ -98,10 +98,14 @@ elif cmd == "ps":
         if f in name:
             print(name)
 elif cmd == "run":
+    name = args[args.index("--name") + 1]
     if os.environ.get("STUB_RUN_FAIL"):
         sys.stderr.write(os.environ["STUB_RUN_FAIL"] + "\n")
+        if os.environ.get("STUB_RUN_LEAVES"):
+            # What a failed bind leaves: a container in the Created state.
+            state[name] = {{"state": "created", "binds": [["127.0.0.1", "16333"]], "env": []}}
+            json.dump(state, open(path, "w"))
         sys.exit(125)
-    name = args[args.index("--name") + 1]
     binds, env = [], []
     for i, a in enumerate(args):
         if a == "-p":
@@ -235,6 +239,28 @@ class TestTheScriptCreatesWhatIsMissing:
         assert _rows(result)["qdrant"][0] == "unknown"
         assert "Bind for 0.0.0.0:16333 failed" in result.stderr, (
             "docker's own message must reach the operator, not be swallowed"
+        )
+
+    def test_a_container_that_never_started_is_not_ok(self, tmp_path):
+        """CR 790: a failed run's leftover has loopback publishes and still is not ok."""
+        never = dict(LOOPBACK_Q, state="created")
+        docker = Docker(tmp_path, {"socraticode-qdrant": never})
+        verdict, detail = _rows(_script(docker, "--check", "qdrant"))["qdrant"]
+        assert verdict == "unknown" and "never started" in detail
+
+    def test_a_failed_run_that_left_a_container_says_so(self, tmp_path):
+        docker = Docker(tmp_path)
+        result = _script(
+            docker,
+            "qdrant",
+            STUB_RUN_FAIL="port is already allocated",
+            STUB_RUN_LEAVES="1",
+        )
+        verdict, detail = _rows(result)["qdrant"]
+        assert (
+            verdict == "unknown"
+            and "left it behind" in detail
+            and "never started" in detail
         )
 
     def test_a_rerun_is_a_no_op(self, tmp_path):
