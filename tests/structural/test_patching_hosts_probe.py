@@ -2160,6 +2160,74 @@ def test_an_inline_command_names_every_script_that_matches(host):
     assert "/opt/app/b.sh, which matches at line 2" in msg
 
 
+@pytest.mark.parametrize(
+    "exec_line, finds, said",
+    [
+        # Site 2: an option's value was read as the script. Relative, as an
+        # absolute path is also read as any word of the line.
+        ("/bin/bash -o pipefail ./r.sh", True, ""),
+        ("/bin/bash -O extglob ./r.sh", True, ""),
+        # A cluster holding c is -c: each simple command is read.
+        ("/bin/bash -ec 'true && ./r.sh'", True, ""),
+        ("/usr/bin/perl -I /opt/lib ./r.sh", True, ""),
+        ("/usr/bin/perl -M strict ./r.sh", True, ""),
+        ("/usr/bin/node -r dotenv/config ./r.sh", True, ""),
+        ("/usr/bin/node --require dotenv/config ./r.sh", True, ""),
+        ("/usr/bin/python3 --check-hash-based-pycs never ./r.sh", True, ""),
+        ("/usr/bin/python3 -u -X dev ./r.sh", True, ""),
+        # Combined short flags: -um is -u, then -m and its module.
+        (
+            "/usr/bin/python3 -um app.backup",
+            False,
+            "python3 -m app.backup, a Python module",
+        ),
+        ("/usr/bin/python3 -uX dev ./r.sh", True, ""),
+        # Code on the command line is another language's: it isn't read as
+        # a shell's, and stays unread, saying so.
+        (
+            "/usr/bin/python3 -c 'import app'",
+            False,
+            "python3 -c, code the scan doesn't read",
+        ),
+        ("/usr/bin/perl -e 'system 1'", False, "perl -e, code the scan doesn't read"),
+        ("/usr/bin/node -e 'run()'", False, "node -e, code the scan doesn't read"),
+        # perl's -c only checks the syntax: the script after it is read.
+        ("/usr/bin/perl -c ./r.sh", True, ""),
+    ],
+)
+def test_an_interpreters_option_value_isnt_its_script(host, exec_line, finds, said):
+    host.write("etc/systemd/system/store-cert.timer", RENEW_TIMER)
+    host.write(
+        "etc/systemd/system/store-renew.service",
+        f"[Service]\nType=oneshot\nWorkingDirectory=/opt/app\nExecStart={exec_line}\n",
+    )
+    host.write("opt/app/r.sh", RESTARTS)
+    out = host.run()
+    assert ("restarter:store-renew.service" in _ids(out)) is finds
+    assert ("restarters:unread:store-renew.service" in _ids(out)) is bool(said)
+    if said:
+        assert said in _finding(out, "restarters:unread:store-renew.service")["message"]
+
+
+def test_a_home_working_directory_is_read_through_the_units_user(host):
+    # Site 3: ~ is User='s home, as systemd reads it, and read_language
+    # already resolves it.
+    host.write(
+        "etc/passwd",
+        "root:x:0:0:root:/root:/bin/bash\nexedev:x:1000:1000::/home/exedev:/bin/bash\n",
+    )
+    host.write("etc/systemd/system/cache-sweep.timer", "[Timer]\nOnCalendar=daily\n")
+    host.write(
+        "etc/systemd/system/cache-sweep.service",
+        "[Service]\nType=oneshot\nUser=exedev\nWorkingDirectory=~\n"
+        f"ExecStart={AV}/.venv/bin/python address-validator/infra/sweep_cache.py\n",
+    )
+    host.write(SWEEP, RESTARTS)
+    out = host.run()
+    assert "restarters:unread:cache-sweep.service" not in _ids(out)
+    assert "restarter:cache-sweep.service" in _ids(out)
+
+
 def test_an_exception_clears_a_timers_service_the_scan_cant_follow(host):
     host.write("etc/systemd/system/store-cert.timer", RENEW_TIMER)
     host.write("etc/systemd/system/store-renew.service", RENEW_UNIT)
