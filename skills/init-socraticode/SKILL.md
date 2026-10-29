@@ -262,7 +262,7 @@ first):
    re-running. Afterwards, a *stale* artifact is repaired by `codebase_update`,
    which re-embeds only what changed
    ([#317](https://github.com/gregoryfoster/skills/issues/317)); outside a
-   session, under the cap, `node "<SKILL_DIR>/scripts/mcp-driver.mjs" update
+   session, under [row U](references/troubleshooting.md)'s cap, `node "<SKILL_DIR>/scripts/mcp-driver.mjs" update
    "<PROJECT_PATH>"`, which exits 1 if another session holds the lock.
 4. Confirm the file watcher registered (`codebase_watch` / status); it is
    **ephemeral**, living only while a server runs (gotcha E).
