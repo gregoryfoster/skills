@@ -30,6 +30,9 @@ Options:
   --issues         Resolve GitHub issue references (#N, owner/repo#N) via gh.
                    Off by default: it costs one API call per reference.
   --repo SLUG      owner/repo for bare #N references. Default: gh's inference.
+                   A short <word>#N resolves as #N only when <word> is this
+                   repo's name (or PR, GH, issue); naming another repo it has
+                   no owner, so it is UNVERIFIABLE: write owner/<word>#N.
   -h, --help       Show this help and exit 0.
 
 Claim classes checked:
@@ -89,19 +92,33 @@ fi
 TMP="$(mktemp -d)" || { echo "ERROR mktemp failed" >&2; exit 2; }
 trap 'rm -rf "$TMP"' EXIT
 
-emit() { printf '%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" "$5"; }
+# Each field with any tab, CR or newline folded to a space, so a row is always
+# the five fields the header promises (#462): a tab inside a claim split its
+# row into six, and a consumer holding rows to five refused the whole file.
+# check_commands already made its claims TSV-safe; this holds every class.
+emit() {
+  local out="" field
+  for field in "$1" "$2" "$3" "$4" "$5"; do
+    field="${field//$'\t'/ }"
+    field="${field//$'\r'/ }"
+    field="${field//$'\n'/ }"
+    out="${out:+$out$'\t'}$field"
+  done
+  printf '%s\n' "$out"
+}
 
 # --- path claims ----------------------------------------------------------
 # A backticked token is a path claim when it contains a slash or ends in a known
-# source extension. Tokens with shell metacharacters, spaces, or placeholder
-# brackets are prose, not paths.
+# source extension. Tokens with shell metacharacters, whitespace of any kind
+# (a tab or a CR as well as a space, #462), or placeholder brackets are prose,
+# not paths.
 check_paths() {
   local f="$1" line tok
   # The backticks are regex literals — this greps Markdown code spans out of a
   # doc — so single quotes are correct and expansion is not wanted.
   # shellcheck disable=SC2016
   grep -oE '`[^`]+`' "$f" 2>/dev/null | sed -e 's/^`//' -e 's/`$//' | sort -u \
-    | grep -vE '[ <>*$|(){}]' \
+    | grep -vE '[[:space:]<>*$|(){}]' \
     | grep -E '/|\.(py|js|ts|tsx|php|go|rb|sh|json|toml|yaml|yml|md|service|timer|sql)$' \
     >"$TMP/paths" || true
   while IFS= read -r tok; do
@@ -174,13 +191,43 @@ check_commands() {
   # Scan only code context — inline backticks and fenced blocks. Scanning prose
   # matches English ("make it possible", "just once") and produces confident
   # nonsense; a documented command lives in code formatting or it isn't one.
+  #
+  # Fences by CommonMark's rule, ported from measure-context.sh's link walk
+  # (#468): a run of 3+ backticks or tildes indented under 4 spaces opens one,
+  # unless a backtick opener's info string holds a backtick (then the line is a
+  # code span, e.g. ```json```); it closes only on a run of its own character
+  # at least as long, with nothing after it. A naive toggle let a quoted ```
+  # line close a ```` block and read the rest of the file inside out. The
+  # indent rule is CommonMark's, as measure-context.sh's is; the gate walks'
+  # fence_toggle takes any indent, for a fence inside a list item.
   LC_ALL=C awk '
-    /^[[:space:]]*```/ { fence = !fence; next }
-    fence { print; next }
-    { while (match($0, /`[^`]+`/)) {
-        print substr($0, RSTART + 1, RLENGTH - 2)
-        $0 = substr($0, RSTART + RLENGTH)
-      } }
+    {
+      line = $0
+      sub(/\r$/, "", line)
+      stripped = line
+      sub(/^ +/, "", stripped)
+      indent = length(line) - length(stripped)
+      fchar = substr(stripped, 1, 1)
+      run = 0
+      if (indent < 4 && (fchar == "`" || fchar == "~")) {
+        while (substr(stripped, run + 1, 1) == fchar) run++
+        if (run < 3) run = 0
+      }
+      if (run > 0) {
+        info = substr(stripped, run + 1)
+        if (!fence && !(fchar == "`" && index(info, "`") > 0)) {
+          fence = 1; ffchar = fchar; frun = run; next
+        }
+        if (fence && fchar == ffchar && run >= frun && info ~ /^[ \t]*$/) {
+          fence = 0; next
+        }
+      }
+      if (fence) { print line; next }
+      while (match(line, /`[^`]+`/)) {
+        print substr(line, RSTART + 1, RLENGTH - 2)
+        line = substr(line, RSTART + RLENGTH)
+      }
+    }
   ' "$f" >"$TMP/code" 2>/dev/null || : >"$TMP/code"
   # Capture any leading `cd <dir> &&` chain (optionally inside a subshell) and a
   # directory-scoping flag between the runner and its target, so the parser below
@@ -342,16 +389,78 @@ check_units() {
 }
 
 # --- GitHub issue claims --------------------------------------------------
+# The repo a short `<word>#N` would have to name to be this repo's #N: --repo,
+# else gh's own inference. Resolved once, lazily, and only when a short
+# reference turns up, since it costs a gh call. Empty when neither answers.
+# Sets CURRENT_REPO rather than printing it: called as "$(…)", the cache would
+# live in a subshell and every short reference would ask gh again (CR 844).
+CURRENT_REPO=""
+CURRENT_KNOWN=0
+resolve_current_repo() {
+  if [ "$CURRENT_KNOWN" -eq 0 ]; then
+    CURRENT_KNOWN=1
+    CURRENT_REPO="${REPO:-$(gh repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null || true)}"
+  fi
+}
+
 check_issues() {
-  local f="$1" ref slug num state
+  local f="$1" ref slug num state word name
   [ "$CHECK_ISSUES" -eq 1 ] || return 0
   if ! command -v gh >/dev/null 2>&1; then
     echo "WARN --issues requested but gh is not installed; skipping issue checks" >&2
     return 0
   fi
-  grep -oE '(\b[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)?#[0-9]+' "$f" 2>/dev/null | sort -u >"$TMP/issues" || true
+  # Three shapes: owner/repo#N, a bare #N, and a short <word>#N (#461). The
+  # reference grammar is _sentences.REF's, spelled identically (#438); the
+  # owner group in it needs a slash, so `watcher#368` matched it as a bare
+  # #368 and was resolved against THIS repo — a confident TRUE about the
+  # wrong issue. The leading word run, outside that grammar, captures the
+  # <word> a bare match follows, as _sentences reads it from the text before.
+  grep -oE '[A-Za-z0-9_.-]*(\b[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)?#[0-9]+' "$f" >"$TMP/issue-tokens" 2>/dev/null \
+    || : >"$TMP/issue-tokens"
+  : >"$TMP/issues"
+  while IFS= read -r ref; do
+    case "$ref" in
+      */*|'#'*) printf '%s\n' "$ref" >>"$TMP/issues"; continue ;;
+    esac
+    num="${ref##*#}"
+    # Read as _sentences._short_repo reads it (CR 434), so the two readers of
+    # one reference agree: emphasis and dots trimmed, and a word with no
+    # letter, or one naming this repo's own item (PR#12, GH#12), is #N.
+    word="${ref%#*}"
+    word="$(printf '%s' "$word" | sed -e 's/^[_.-]*//' -e 's/[_.-]*$//')"
+    case "$(printf '%s' "$word" | tr '[:upper:]' '[:lower:]')" in
+      *[a-z]*) ;;
+      *) printf '#%s\n' "$num" >>"$TMP/issues"; continue ;;
+    esac
+    case "$(printf '%s' "$word" | tr '[:upper:]' '[:lower:]')" in
+      pr|gh|issue|issues|bug|pull) printf '#%s\n' "$num" >>"$TMP/issues"; continue ;;
+    esac
+    resolve_current_repo
+    name="${CURRENT_REPO##*/}"
+    if [ -n "$name" ] && [ "$(printf '%s' "$word" | tr '[:upper:]' '[:lower:]')" = \
+         "$(printf '%s' "$name" | tr '[:upper:]' '[:lower:]')" ]; then
+      # This repo's own #N, written short: resolved, and keyed, as a bare #N.
+      printf '#%s\n' "$num" >>"$TMP/issues"
+    elif [ -n "$name" ]; then
+      printf 'SHORT\t%s#%s\n' "$word" "$num" >>"$TMP/issues"
+    else
+      printf 'NOREPO\t%s#%s\n' "$word" "$num" >>"$TMP/issues"
+    fi
+  done <"$TMP/issue-tokens"
+  sort -u "$TMP/issues" -o "$TMP/issues"
   while IFS= read -r ref; do
     [ -n "$ref" ] || continue
+    case "$ref" in
+      SHORT$'\t'*)
+        ref="${ref#*$'\t'}"
+        emit UNVERIFIABLE issue "$f" "$ref" "short cross-repo reference $ref: no owner, so it can't be resolved; write owner/$ref"
+        continue ;;
+      NOREPO$'\t'*)
+        ref="${ref#*$'\t'}"
+        emit UNVERIFIABLE issue "$f" "$ref" "short reference $ref: neither --repo nor gh names this repo, so whether it is this repo's #${ref##*#} or another's can't be told; pass --repo, or write owner/$ref"
+        continue ;;
+    esac
     num="${ref##*#}"
     slug="${ref%#*}"
     [ -z "$slug" ] && slug="$REPO"

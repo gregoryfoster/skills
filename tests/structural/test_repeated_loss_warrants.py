@@ -1,15 +1,15 @@
 """A line repeated in a deleted code sample is one judgement, not several (#278).
 
 `prove-no-loss.sh` appends a lost line once per base-line OCCURRENCE, charges
-each to the first in-scope entry whose CONTENT it contains, and refuses any
-entry charged more than one line. The refusal is right to exist — its target is
+each to the longest in-scope entry whose CONTENT it contains (file order
+breaking a tie, #347), and refuses any entry charged more than one line. The refusal is right to exist — its target is
 one entry zeroing many *different* lines, `retarget :: e` — but it could not
 tell that from identical copies of one text, so a curation that deleted a code
 block whose lines repeat could never reach `ok`:
 
 - one entry per text was charged every copy and refused as over-broad (exit 1);
-- one entry per occurrence charged every copy to the FIRST of them, and was
-  refused the same way;
+- one entry per occurrence charged every copy to the FIRST of them — equal
+  lengths, so file order decides — and was refused the same way;
 - no entry at all exited 3.
 
 That is the normal shape of a deleted code sample. CannObserv/cannobserv#414
@@ -156,8 +156,8 @@ class TestADeletedCodeSampleCanBeWarranted:
 
 
 class TestARedundantEntryIsNamedAsOne:
-    """An entry that matched only lines an earlier entry was charged with is
-    neither stale nor ambiguous: its line is lost, and warranted. Reporting it
+    """An entry that matched only lines a longer or earlier entry was charged
+    with is neither stale nor ambiguous: its line is lost, and warranted. Reporting it
     "matched nothing — accounted for now" was false of it, and this change
     made the commonest shape of it passable."""
 
@@ -195,7 +195,9 @@ class TestARedundantEntryIsNamedAsOne:
     def test_a_narrower_entry_below_a_broader_one_is_redundant(self, tmp_path: Path):
         """The other shape the third case names, and one this change moved: it
         was reported stale, with "re-judge and prune" advice resting on a line
-        being accounted for that was in fact lost."""
+        being accounted for that was in fact lost. The longer entry is charged
+        wherever it sits (#347), and it contains this one, so this one is the
+        entry to prune."""
         repo = _repo(tmp_path, "# P\n\n## A\n\nthe contract lives in the spec\n")
         (repo / "AGENTS.md").write_text("# P\n\n## A\n")
         _ack(
@@ -230,34 +232,9 @@ class TestBreadthIsStillRefused:
         assert "2 lines matched (3 with copies)" in r.stderr, r.stderr
         assert "loss_warranted" not in r.stdout, r.stdout
         # Neither line is inside the other, so narrowing CAN separate them and
-        # the ordering hint below would be wrong advice here.
-        assert "ABOVE this one" not in r.stderr, r.stderr
-
-    def test_a_line_inside_another_is_told_to_reorder_not_narrow(self, tmp_path: Path):
-        """Deleted code nests lines: `return make_default_drivers()` is part of
-        `return make_default_drivers() or {}`, so no narrowing of the shorter
-        line's entry excludes the longer line, and "narrow the content" was
-        advice nobody could follow. A line is charged to the FIRST entry that
-        matches it, so order is the remedy — and the advice must work."""
-        nested = "return make_default_drivers()"
-        nesting = "return make_default_drivers() or {}"
-        repo = _repo(
-            tmp_path,
-            "# P\n\n## Constructors\n\nBuild a site from its metadata.\n\n"
-            f"```python\n{nested}\n{nesting}\n```\n\n"
-            "## Imports\n\n```python\nimport this\n```\n",
-        )
-        (repo / "AGENTS.md").write_text(AFTER)
-        _ack(repo, f"disproven :: {nested}", f"disproven :: {nesting}")
-        r = _prove(repo)
-        assert r.returncode == 1, r.stdout + r.stderr
-        assert "ABOVE this one" in r.stderr, r.stderr
-        assert f"`{nesting}`" in r.stderr, r.stderr
-
-        _ack(repo, f"disproven :: {nesting}", f"disproven :: {nested}")
-        r = _prove(repo)
-        assert r.returncode == 0, r.stdout + r.stderr
-        assert "loss_warranted: 2" in r.stdout, r.stdout
+        # the nested-line hint (test_loss_warrant_specificity.py) would be
+        # wrong advice here.
+        assert "the longest entry that reaches it" not in r.stderr, r.stderr
 
     def test_lines_equal_only_after_normalising_are_two_lines(self, tmp_path: Path):
         """normalise() erases a docs-root prefix because a MOVE forces it, so

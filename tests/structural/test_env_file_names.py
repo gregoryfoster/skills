@@ -350,12 +350,16 @@ class TestAMissedNameIsNamed:
     ):
         """The convention needs no roll-call: the generic line already says
         `.env`, and a scheduled run with its key in the environment must not
-        start narrating two missing files every week."""
-        _, worktree = layout
+        start narrating two missing files every week. In the primary checkout:
+        a linked worktree's lookup also tries the primary's, and names every
+        path it tried (#525, test_env_file_worktree_fallback.py)."""
+        main, _ = layout
+        (main / ".env").unlink()
         env = _no_ant(tmp_path, _clean_env())
-        r = _measure(worktree, env, "--exact", "--no-write")
+        r = _measure(main, env, "--exact", "--no-write")
         assert "using offline estimate" in r.stderr
         assert "--env-file names are searched" not in r.stderr
+        assert "tried" not in r.stderr, r.stderr
 
     def test_no_env_file_searched_nothing_so_names_nothing(
         self, layout: tuple[Path, Path], tmp_path: Path

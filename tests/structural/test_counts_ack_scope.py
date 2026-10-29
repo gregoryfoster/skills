@@ -24,7 +24,7 @@ The fix mirrors #139, and #251's refinement with it:
   for another file. There is no `--base` here, so #251's second fact — is the
   CONTENT in this target? — is read against the file as it stands.
 - **An entry whose text is still here was never "changed or gone".** Its clause
-  stopped reporting, or an earlier entry took the hit first.
+  stopped reporting, or a longer or earlier entry took the hit.
 """
 
 import os
@@ -227,14 +227,15 @@ class TestAnEntryThatMatchedNothing:
         assert "though the text each names is still in AGENTS.md" in result.stdout
         assert "Do not prune" not in result.stdout, result.stdout
 
-    def test_a_second_entry_for_one_hit_is_redundant(self, tmp_path: Path) -> None:
-        """A hit is charged to the FIRST entry that matches it, so the second
-        matched nothing while its hit sits in the report acknowledged."""
-        first = "enumerated :: Eight timers keep"
-        second = "stable :: timers keep the tree fresh"
+    def test_a_contained_entry_for_one_hit_is_redundant(self, tmp_path: Path) -> None:
+        """A hit is charged to the LONGEST entry that fits it (#347, CR 843), so
+        a shorter entry the charged one contains matched nothing while its hit
+        sits in the report acknowledged."""
+        longer = "stable :: timers keep the tree fresh"
+        shorter = "enumerated :: timers keep"
         repo = _repo(
             tmp_path,
-            f"{first}\n{second}",
+            f"{shorter}\n{longer}",
             policy="# P\n\nEight timers keep the tree fresh.\n",
         )
         result = _run(repo)
@@ -242,5 +243,5 @@ class TestAnEntryThatMatchedNothing:
         assert "1 entry(ies) redundant" in result.stdout, result.stdout
         assert STALE_ADVICE not in result.stdout, result.stdout
         redundant = result.stdout.split("redundant", 1)[1]
-        assert second in redundant, result.stdout
-        assert first not in redundant, result.stdout
+        assert shorter in redundant, result.stdout
+        assert longer not in redundant, result.stdout

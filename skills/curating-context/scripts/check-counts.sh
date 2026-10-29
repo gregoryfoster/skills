@@ -101,11 +101,19 @@ Options:
                    An entry that matched nothing is reported by what this run
                    can know about it (#251). Text gone and PATH naming this
                    file: stale, re-judge and prune. Text still here: redundant
-                   (an earlier entry took its hit) or spent (no hit left that
-                   its warrant covers), prune. Text gone and no PATH: a
-                   re-worded line and an entry judged for another file look
-                   alike here, and the report says so rather than advise a
-                   prune.
+                   (a longer or earlier entry that contains it took its hit)
+                   or spent (no hit left that its warrant covers), prune; or
+                   shadowed (an entry that does not contain it took its hit:
+                   two judgements of one clause, so no prune advice). Text
+                   gone and no PATH: a re-worded line and an entry judged
+                   for another file look alike here, and the report says so
+                   rather than advise a prune.
+
+                   A hit two entries fit is charged to the LONGER CONTENT,
+                   whatever their order; equal lengths fall back to file
+                   order (#347). An older, shorter entry otherwise shadows
+                   the specific one a later run wrote, so each such hit is
+                   also listed with every entry that fits it.
 
                    WARRANT is from a closed set, and an unrecognised one is
                    REFUSED rather than ignored — a warrant that merely failed to
@@ -614,16 +622,23 @@ def fits(warrant, cls, content, full):
 
 # By position, not by text: two identical lines are two entries, and the second
 # is the redundant one the report below has to be able to name.
-new, acked = [], []
+#
+# The LONGEST fitting CONTENT is charged, file order breaking a tie (#347, as
+# prove-no-loss.sh does). First-match let an older, shorter entry shadow the
+# specific one a later run wrote below it, and then called that one redundant.
+new, acked, fitted_by = [], [], []
 charged = [[] for _ in in_scope]
 for cls, loc, detail, full in hits:
-    idx = next((i for i, (_, _, warrant, content) in enumerate(in_scope)
-                if fits(warrant, cls, content, full)), None)
-    if idx is None:
+    fitting = [i for i, (_, _, warrant, content) in enumerate(in_scope)
+               if fits(warrant, cls, content, full)]
+    if not fitting:
         new.append((cls, loc, detail))
-    else:
-        acked.append((cls, loc))
-        charged[idx].append(loc)
+        continue
+    # max() keeps the first of equal keys, so a tie falls back to file order.
+    idx = max(fitting, key=lambda i: len(in_scope[i][3]))
+    acked.append((cls, loc))
+    charged[idx].append(loc)
+    fitted_by.append((loc, idx, fitting))
 
 if index_max <= 0:
     print("note: index lines not checked (--index-max 0).")
@@ -669,6 +684,21 @@ if acked:
         if len(locs) > 1:
             print(f"    WARN this entry covers {len(locs)} hits — an "
                   "acknowledgement should warrant ONE judged line; split it")
+    # Shadowing, said out loud (#347). Longest-wins picks the more specific of
+    # two entries, not necessarily the one judged for the clause as it is now,
+    # so every hit two different entries fit is printed with all of them.
+    # Identical CONTENT is not a collision: it is the redundant copy below.
+    collisions = [(loc, idx, fitting) for loc, idx, fitting in fitted_by
+                  if len({in_scope[i][3] for i in fitting}) > 1]
+    if collisions:
+        print(f"\n  {len(collisions)} hit(s) more than one entry fits —\n"
+              "  each charged to the longest (file order breaks a tie):")
+        for loc, idx, fitting in collisions:
+            print(f"    {loc}")
+            print(f"      charged: {in_scope[idx][0][:70]}")
+            for i in fitting:
+                if in_scope[i][3] != in_scope[idx][3]:
+                    print(f"      also:    {in_scope[i][0][:70]}")
 
 # An in-scope entry that matched nothing was told its text "has changed or
 # gone", and to prune it — true of only some of them, which is #251's lesson
@@ -677,8 +707,11 @@ if acked:
 # file. There is no --base here, so the second is read against the file as it
 # stands, paragraphs joined so text matched across a hard wrap is still found:
 #
-#   in a hit its warrant fits    an EARLIER entry took the hit, since a hit is
-#                                charged to the first match. Redundant.
+#   in a hit its warrant fits    a longer or earlier entry took the hit, since
+#                                a hit is charged to the longest match. If that
+#                                entry contains this one, Redundant; if not,
+#                                the two judge one clause differently, and this
+#                                run cannot say which to keep. Shadowed.
 #   in the file, in no such hit  the clause stopped reporting — it gained its
 #                                command, lost its precision, or is the other
 #                                class. Nothing is left to warrant. Spent.
@@ -700,12 +733,14 @@ for line in lines + [""]:
         paragraphs.append(" ".join(para))
         para = []
 
-redundant, spent, stale, ambiguous = [], [], [], []
-for (raw, path, warrant, content), locs in zip(in_scope, charged):
+redundant, shadowed, spent, stale, ambiguous = [], [], [], [], []
+for i, ((raw, path, warrant, content), locs) in enumerate(zip(in_scope, charged)):
     if locs:
         continue
-    if any(fits(warrant, cls, content, full) for cls, _, _, full in hits):
-        redundant.append(raw)
+    taken = [in_scope[idx][3] for _, idx, fitting in fitted_by if i in fitting]
+    if taken:
+        nested = all(content in other for other in taken)
+        (redundant if nested else shadowed).append(raw)
     elif any(content in p for p in paragraphs):
         spent.append(raw)
     else:
@@ -713,10 +748,18 @@ for (raw, path, warrant, content), locs in zip(in_scope, charged):
 
 if redundant:
     print(f"\n{len(redundant)} entry(ies) redundant — every hit each matches is "
-          "acknowledged by an\nearlier entry, since a hit is charged to the "
-          "first that matches. Prune, unless\nthat earlier entry is warned "
-          "about above as broad; narrow that one instead:")
+          "acknowledged by a longer\nor earlier entry that contains it. Prune, "
+          "unless that entry is warned about above\nas broad; narrow that one "
+          "instead:")
     for raw in redundant:
+        print(f"  {raw[:70]}")
+if shadowed:
+    print(f"\n{len(shadowed)} entry(ies) shadowed — each fits a hit charged to "
+          "a longer or earlier entry\nthat does not contain it, so the two may "
+          "judge different edits of that clause\n(listed above). Keep the one "
+          "that judged the clause as it is now and re-judge\nthe other; do not "
+          "prune on this run alone:")
+    for raw in shadowed:
         print(f"  {raw[:70]}")
 if spent:
     print(f"\n{len(spent)} entry(ies) matched nothing, though the text each "

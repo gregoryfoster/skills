@@ -40,6 +40,7 @@ ROOT = Path(__file__).resolve().parent.parent.parent
 SCRIPTS = ROOT / "skills" / "curating-context" / "scripts"
 PROVE = SCRIPTS / "prove-no-loss.sh"
 COUNTS = SCRIPTS / "check-counts.sh"
+VERIFY = SCRIPTS / "verify-facts.sh"
 
 # A fenced block carrying a marker of the other kind as CONTENT.
 TILDE_BLOCK = "```text\nseams: 0\n~~~ not a fence, just output ~~~\n```\n"
@@ -253,3 +254,77 @@ class TestCommonMarkClose:
         )
         r = _run(PROVE, repo, "--base", "HEAD", "--claims")
         assert r.returncode == 0, f"{r.stdout}{r.stderr}"
+
+
+class TestVerifyFactsCommandScan:
+    """#468: `check_commands` toggled on any line opening with three backticks,
+    so a ```` block quoting one ```bash line lost track of where it ended, and
+    from there to the end of the file prose was scanned as code and code as
+    prose. It now follows `measure-context.sh`'s CommonMark rule, indent rule
+    included: a fence marker is indented fewer than 4 spaces (operator
+    decision, Wave 2 lane C) — the gate walks' `fence_toggle` takes any indent,
+    because a fence inside a list item sits deeper, and the two families
+    differ there on purpose."""
+
+    @staticmethod
+    def _commands(tmp_path: Path, policy: str) -> set[str]:
+        repo = tmp_path / "repo"
+        repo.mkdir(parents=True)
+        _git(repo, "init", "-q")
+        _write(repo, "AGENTS.md", policy)
+        r = _run(VERIFY, repo)
+        assert r.returncode == 0, r.stderr
+        rows = [x.split("\t") for x in r.stdout.splitlines()]
+        return {row[3] for row in rows if row[1] == "command"}
+
+    def test_a_quoted_opener_does_not_close_a_longer_fence(self, tmp_path: Path):
+        """The issue's test: inside the block is code, after it is prose."""
+        cmds = self._commands(
+            tmp_path,
+            "# P\n\n````md\n```bash\nmake inside\n````\n\n"
+            "Then make sure the docs build.\n",
+        )
+        assert "make inside" in cmds, cmds
+        assert "make sure" not in cmds, cmds
+
+    def test_a_tilde_fence_is_a_fence(self, tmp_path: Path):
+        cmds = self._commands(
+            tmp_path,
+            "# P\n\n~~~\nmake inside\n~~~\n\nThen make sure the docs build.\n",
+        )
+        assert "make inside" in cmds, cmds
+        assert "make sure" not in cmds, cmds
+
+    def test_an_inline_triple_backtick_span_opens_no_fence(self, tmp_path: Path):
+        """```json``` is a code span in prose: its info string holds a
+        backtick, so it opens nothing, and the prose after it stays prose."""
+        cmds = self._commands(
+            tmp_path,
+            "# P\n\n```json``` blocks are fine.\n\nThen make sure it builds.\n",
+        )
+        assert "make sure" not in cmds, cmds
+
+    def test_a_marker_with_text_after_it_does_not_close(self, tmp_path: Path):
+        cmds = self._commands(
+            tmp_path,
+            "# P\n\n```\n``` not a close\nmake inside\n```\n\n"
+            "Then make sure it builds.\n",
+        )
+        assert "make inside" in cmds, cmds
+        assert "make sure" not in cmds, cmds
+
+    def test_a_marker_indented_four_spaces_is_not_a_fence(self, tmp_path: Path):
+        """CommonMark's indent rule, as `measure-context.sh` takes it."""
+        cmds = self._commands(
+            tmp_path,
+            "# P\n\n    ```\nThen make sure it builds.\n",
+        )
+        assert "make sure" not in cmds, cmds
+
+    def test_a_crlf_fence_closes(self, tmp_path: Path):
+        cmds = self._commands(
+            tmp_path,
+            "# P\r\n\r\n```\r\nmake inside\r\n```\r\n\r\nThen make sure.\r\n",
+        )
+        assert "make inside" in cmds, cmds
+        assert "make sure" not in cmds, cmds

@@ -168,9 +168,9 @@ bash "<stale-issue-prose.sh>" /tmp/context-facts.tsv > /tmp/context-stale.tsv
   is what skipping costs (4 of the 18 stale sentences). Read that way, it is
   the same 54 rows as one ranking, with every live catch in the first 23.
   `--skip-archival` sends nothing for those rows (status `archival`).
-  `CTX_ARCHIVAL` replaces the list here, as it does for `check-seams.sh` and
-  the write guard; Phase 1 reads `--archival` instead, so give a custom list
-  to both.
+  `CTX_ARCHIVAL` replaces the list here, as it does for `check-seams.sh`, the
+  write guard and Phase 1 (`measure-context.sh`, where `--archival` still
+  wins; [#465](https://github.com/gregoryfoster/skills/issues/465)).
 - **It never changes a verdict.** Every row stays TRUE. A sentence it ranks
   first is rewritten (class C), never deleted on its word.
 - **Exits 2 and 4 are a partial result, or none.** On 4 (a skip: not opted
