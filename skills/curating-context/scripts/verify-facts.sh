@@ -392,14 +392,15 @@ check_units() {
 # The repo a short `<word>#N` would have to name to be this repo's #N: --repo,
 # else gh's own inference. Resolved once, lazily, and only when a short
 # reference turns up, since it costs a gh call. Empty when neither answers.
+# Sets CURRENT_REPO rather than printing it: called as "$(…)", the cache would
+# live in a subshell and every short reference would ask gh again (CR 844).
 CURRENT_REPO=""
 CURRENT_KNOWN=0
-current_repo() {
+resolve_current_repo() {
   if [ "$CURRENT_KNOWN" -eq 0 ]; then
     CURRENT_KNOWN=1
     CURRENT_REPO="${REPO:-$(gh repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null || true)}"
   fi
-  printf '%s' "$CURRENT_REPO"
 }
 
 check_issues() {
@@ -435,8 +436,8 @@ check_issues() {
     case "$(printf '%s' "$word" | tr '[:upper:]' '[:lower:]')" in
       pr|gh|issue|issues|bug|pull) printf '#%s\n' "$num" >>"$TMP/issues"; continue ;;
     esac
-    name="$(current_repo)"
-    name="${name##*/}"
+    resolve_current_repo
+    name="${CURRENT_REPO##*/}"
     if [ -n "$name" ] && [ "$(printf '%s' "$word" | tr '[:upper:]' '[:lower:]')" = \
          "$(printf '%s' "$name" | tr '[:upper:]' '[:lower:]')" ]; then
       # This repo's own #N, written short: resolved, and keyed, as a bare #N.
