@@ -41,6 +41,8 @@
 #   QDRANT_PORT       host port for Qdrant's HTTP API   (default 16333)
 #   QDRANT_GRPC_PORT  host port for Qdrant's gRPC API   (default 16334)
 #   OLLAMA_PORT       host port for the Ollama API      (default 11435)
+#   QDRANT_URL        when set, the Qdrant client's address (CR 808): --check
+#                     requires its explicit port too
 #   OLLAMA_MODE, OLLAMA_URL
 #                     where the Ollama embedder looks (CR 807): OLLAMA_URL's
 #                     port in docker mode, else 11435, which auto mode
@@ -247,7 +249,14 @@ for target in "${TARGETS[@]}"; do
   # provider-ollama.js: docker mode OLLAMA_URL || localhost:11435, auto mode
   # localhost:11435 always].
   if [ "$target" = qdrant ]; then
-    expect="$QP"$'\t'"QDRANT_PORT, its client and readiness wait"
+    # A managed store's client takes QDRANT_URL over QDRANT_HOST:QDRANT_PORT
+    # when it is set; readiness still waits on QDRANT_PORT (CR 808).
+    qp="$(url_port "${QDRANT_URL:-}")"
+    if [ -n "${QDRANT_URL:-}" ] && [ -n "$qp" ] && [ "$qp" != "$QP" ]; then
+      expect="$QP"$'\t'"QDRANT_PORT, its readiness wait"$'\n'"$qp"$'\t'"QDRANT_URL, its client"
+    else
+      expect="$QP"$'\t'"QDRANT_PORT, its client and readiness wait"
+    fi
   else
     expect="$OP"$'\t'"OLLAMA_PORT, its readiness wait"
     ep=11435 erole="where its embedder looks: auto mode hard-codes localhost:11435"

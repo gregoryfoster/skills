@@ -385,6 +385,23 @@ class TestTheScriptsVerdicts:
         }
         assert _rows(_script(docker, "--check", "ollama", **env))["ollama"][0] == "ok"
 
+    def test_a_qdrant_url_port_is_required_too(self, tmp_path):
+        """CR 808: the client's QDRANT_URL port, beside readiness's QDRANT_PORT."""
+        docker = Docker(tmp_path, {"socraticode-qdrant": LOOPBACK_Q})
+        result = _script(
+            docker, "--check", "qdrant", QDRANT_URL="http://localhost:26333"
+        )
+        verdict, detail = _rows(result)["qdrant"]
+        assert verdict == "broken" and "26333 (QDRANT_URL, its client)" in detail
+        assert "Upstream publishes only QDRANT_PORT" in detail
+
+    def test_a_qdrant_url_on_qdrant_port_is_ok(self, tmp_path):
+        docker = Docker(tmp_path, {"socraticode-qdrant": LOOPBACK_Q})
+        result = _script(
+            docker, "--check", "qdrant", QDRANT_URL="http://127.0.0.1:16333"
+        )
+        assert _rows(result)["qdrant"][0] == "ok"
+
     def test_a_missing_grpc_publish_is_still_ok(self, tmp_path):
         """CR 800: upstream's client is REST on QDRANT_PORT; it never dials gRPC."""
         rest_only = dict(LOOPBACK_Q, binds=[["127.0.0.1", "16333"]])
@@ -925,6 +942,14 @@ class TestNodeBelow20CannotReachALoopbackContainer:
         result = self._run(tmp_path, "v18.20.8", "::1", QDRANT_HOST="127.0.0.1")
         line = _line(result, "through localhost")
         assert "socraticode-ollama" in line and "socraticode-qdrant" not in line
+
+    def test_a_localhost_qdrant_url_keeps_qdrant_in_it(self, tmp_path):
+        """CR 808: a managed store's client takes QDRANT_URL over QDRANT_HOST."""
+        result = self._run(
+            tmp_path, "v18.20.8", "::1",
+            QDRANT_HOST="127.0.0.1", QDRANT_URL="http://localhost:16333",
+        )  # fmt: skip
+        assert "socraticode-qdrant" in _line(result, "through localhost")
 
     def test_nothing_on_localhost_is_not_asked(self, tmp_path):
         result = self._run(
