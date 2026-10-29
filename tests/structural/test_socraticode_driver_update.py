@@ -107,6 +107,17 @@ Updated: 0
 Removed: 0
 New chunks: 0"""
 
+# A reclamation barrier on the project's identity: the other early return in
+# updateProjectIndex, zero counts again, the refusal only among the progress.
+RECLAIMED = """Updated project index: /repo
+Added: 0
+Updated: 0
+Removed: 0
+New chunks: 0
+
+Progress:
+Refusing to index: identity broker is being reclaimed"""
+
 DOCKER_DOWN = """❌ Docker is not available.
 
 SocratiCode requires Docker to manage the Qdrant container."""
@@ -201,6 +212,15 @@ class TestAnUpdateThatDidNotRunFails:
         result, _, _, _ = _update(tmp_path, IN_PROGRESS)
         assert result.returncode == 1, result.stderr
         assert "already in progress" in result.stderr, result.stderr
+
+    @requires_node
+    def test_a_reclamation_refusal_is_not_a_success(self, tmp_path: Path) -> None:
+        """CR 1088: the same headline and zero counts as a run that found
+        nothing to change."""
+        result, _, _, _ = _update(tmp_path, RECLAIMED)
+        assert result.returncode == 1, result.stderr
+        assert json.loads(result.stdout)["ran"] is False, result.stdout
+        assert "Refusing to index" in result.stderr, result.stderr
 
     @requires_node
     def test_any_other_reply_fails_with_the_reply(self, tmp_path: Path) -> None:
