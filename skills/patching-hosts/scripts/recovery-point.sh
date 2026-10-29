@@ -16,7 +16,9 @@ the knob declares, and writes its record, recovery-point, into the run's
 directory. Until every check passes it changes nothing, and prints why.
 
   The host's own backup regime first: each backup unit the knob declares
-  whose last run succeeded is started, and must succeed again. It writes off
+  whose last run succeeded is started, and must succeed again. Where a boot
+  has reset its state since that run, systemd's own journal lines about the
+  unit say how its last run ended (#459). It writes off
   the node itself, so it stands in for the dumps of the datastores its
   backup line names, and no others: each datastore no usable unit covers is
   dumped, and so is each database a line naming a Postgres unit's databases
@@ -328,12 +330,52 @@ gate_run() {
   fi
 }
 
+# A unit's last run, from systemd's own journal lines about it (#459), for
+# when its state since the boot holds none. Only PID 1's lines count, since
+# a service may log any MESSAGE_ID it likes, and the newest of these
+# decides: "Deactivated successfully." is a run that worked; "Failed with
+# result" (its UNIT_RESULT), or a main process that didn't exit 0, is one
+# that didn't. The journal reaches back past the boot where it's
+# persistent. A timer's LastTriggerUSec says only that it started a run.
+# LR := success, failed, none or unread; LR_SAID := how it ended, or why
+# the journal couldn't be read.
+J_UNIT_SUCCESS=7ad2d189f7e94e70a38c781354912448
+J_UNIT_FAILURE=d9b373ed55a64feb8242e02dbe79a49c
+J_UNIT_EXIT=98e322203f7a4ed290d09fe03c09fe15
+journal_last_run() {  # <service>
+  local out line code st
+  LR=none LR_SAID=""
+  capture out as_root journalctl --no-pager -q -r -n 500 -o json \
+    --output-fields=MESSAGE_ID,UNIT_RESULT,EXIT_CODE,EXIT_STATUS "UNIT=$1" _PID=1
+  if [ "$CAP_RC" -ne 0 ]; then
+    LR=unread LR_SAID=${CAP_ERR:-journalctl exited $CAP_RC}
+    return 0
+  fi
+  while IFS= read -r line; do
+    [[ $line =~ \"MESSAGE_ID\":[[:space:]]*\"([0-9a-f]{32})\" ]] || continue
+    case ${BASH_REMATCH[1]} in
+      "$J_UNIT_SUCCESS") LR=success && return 0 ;;
+      "$J_UNIT_FAILURE")
+        LR=failed LR_SAID="an unknown result"
+        if [[ $line =~ \"UNIT_RESULT\":[[:space:]]*\"([^\"]*)\" ]]; then LR_SAID=${BASH_REMATCH[1]}; fi
+        return 0 ;;
+      "$J_UNIT_EXIT")
+        code="" st=""
+        if [[ $line =~ \"EXIT_CODE\":[[:space:]]*\"([^\"]*)\" ]]; then code=${BASH_REMATCH[1]}; fi
+        if [[ $line =~ \"EXIT_STATUS\":[[:space:]]*\"([^\"]*)\" ]]; then st=${BASH_REMATCH[1]}; fi
+        if [ "$code" = exited ] && [ "$st" = 0 ]; then continue; fi
+        LR=failed LR_SAID="code=$code, status=$st"
+        return 0 ;;
+    esac
+  done <<<"$out"
+}
+
 # The host's own backup regime, where the knob declares one whose last run
 # succeeded: a unit, or the service a declared timer starts. Each stands in
 # for the dumps of the datastores its backup line names, and no other: a
 # datastore no usable unit covers is dumped (CR 194).
 gate_backup() {
-  local r u svc o="" why e a="" d covers i j
+  local r u svc o="" why e a="" d covers i j from lost
   local -a f=()
   for r in ${KNOB_BACKUP[@]+"${KNOB_BACKUP[@]}"}; do
     IFS=$KNOB_US read -r -a f <<<"$r"
@@ -342,7 +384,7 @@ gate_backup() {
     backup_covers "$r"
     for why in ${BC_WHY[@]+"${BC_WHY[@]}"}; do refuse "$why"; done
     covers=$BC_COVERS
-    svc=$u why=""
+    svc=$u why="" from=""
     case $u in
       *.timer)
         svc=""
@@ -356,12 +398,26 @@ gate_backup() {
       why="$svc couldn't be read"
     elif [ "$U_LoadState" != loaded ]; then
       why="$svc is ${U_LoadState:-unknown}, not loaded"
-    elif [ "$U_Result" != success ] || [ -z "${U_ExecMainExitTimestamp#@}" ]; then
+    elif [ "$U_Result" != success ]; then
       why="$svc's last run ended in ${U_Result:-nothing}, so it isn't one to rely on"
+    elif [ -n "${U_ExecMainExitTimestamp#@}" ]; then
+      from=systemd
+    else
+      # #459: a boot resets Result to success, its initial value, with no
+      # exit: no run since this boot, which the journal reads past.
+      journal_last_run "$svc"
+      lost="$svc's last run isn't recorded since this boot (systemd's state resets at boot)"
+      case $LR in
+        success) from=journal ;;
+        failed) why="$lost, and its last run before it, in the journal, ended in $LR_SAID, so it isn't one to rely on" ;;
+        unread) why="$lost, and its journal couldn't be read ($LR_SAID)" ;;
+        *) why="$lost, and the journal holds none of its runs: a volatile journal keeps none across a boot" ;;
+      esac
     fi
     e=""
     jadds e unit "$u"
     jaddsn e service "$svc"
+    jaddsn e last_run_from "$from"
     json_words d "$covers"
     jadd e datastores "$d"
     jaddsn e not_used "$why"
