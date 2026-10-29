@@ -97,6 +97,10 @@ class TestTheLongestEntryIsCharged:
         r = _prove(repo)
         assert r.returncode == 0, r.stdout + r.stderr
         assert "1 hit(s): disproven :: contract lives" in r.stdout, r.stdout
+        # CR 842: the collision block's header says so too.
+        assert "each charged to the longest (file order breaks a tie)" in r.stdout, (
+            r.stdout
+        )
 
 
 class TestShadowingIsReported:
