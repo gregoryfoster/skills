@@ -3560,6 +3560,29 @@ def test_a_redis_with_no_key_is_dormant_only_when_nothing_uses_it(
     assert evidence in d["evidence"]
 
 
+@pytest.mark.parametrize(
+    "unit, uses",
+    [
+        # CR 889: only a unit whose name starts with the component's is its
+        # own; app-redis-worker.service, which needs Redis, uses it.
+        ("app-redis-worker.service", True),
+        ("redis-server.service.d/override.conf", False),
+    ],
+)
+def test_a_unit_whose_name_merely_holds_the_components_isnt_its_own(host, unit, uses):
+    host.installed("redis-server")
+    host.show("redis-server.service", ActiveState="active")
+    host.on("redis-cli", "INFO", "".join(f"{k}:{v}\r\n" for k, v in REDIS_IDLE.items()))
+    host.write(
+        f"etc/systemd/system/{unit}",
+        "[Unit]\nRequires=redis-server.service\n[Service]\nExecStart=/srv/app/work\n",
+    )
+    d = _dormant(host.run(), "redis")
+    assert d["verdict"] == ("in-use" if uses else "dormant")
+    if uses:
+        assert d["evidence"].startswith(f"/etc/systemd/system/{unit} names it")
+
+
 def test_a_redis_that_needs_a_login_says_so(host):
     # Unauthenticated, as the probe asks: an ACL'd Redis answers NOAUTH, and
     # nothing reaches its ACL LOG (#379; measured on 7.0).
