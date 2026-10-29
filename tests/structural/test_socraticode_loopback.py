@@ -87,7 +87,8 @@ if cmd == "inspect":
     c = state[name]
     if "--format" in args:
         binds = "".join(f"{{ip}}|{{port}} " for ip, port in c.get("binds", []))
-        sys.stdout.write(c.get("state", "running") + "\t" + binds + "\n")
+        net = c.get("network", "bridge")
+        sys.stdout.write(c.get("state", "running") + "\t" + net + "\t" + binds + "\n")
         for e in c.get("env", []):
             sys.stdout.write(e + "\n")
     else:
@@ -337,6 +338,19 @@ class TestTheScriptsVerdicts:
             tmp_path, {"socraticode-qdrant": LOOPBACK_Q, "bak494-qdrant": WIDE_Q}
         )
         assert _rows(_script(docker, "--check", "qdrant"))["qdrant"][0] == "ok"
+
+    def test_a_publish_on_another_port_is_not_ok(self, tmp_path):
+        """CR 791: SocratiCode addresses QDRANT_PORT, not whatever is published."""
+        docker = Docker(tmp_path, {"socraticode-qdrant": LOOPBACK_Q})
+        verdict, detail = _rows(
+            _script(docker, "--check", "qdrant", QDRANT_PORT="26333")
+        )["qdrant"]
+        assert verdict == "unknown" and "26333" in detail and "16334" not in detail
+
+    def test_the_host_network_is_wide(self, tmp_path):
+        c = {"state": "running", "network": "host", "binds": [], "env": []}
+        docker = Docker(tmp_path, {"socraticode-ollama": c})
+        assert _rows(_script(docker, "--check", "ollama"))["ollama"][0] == "wide"
 
     def test_a_container_publishing_nothing_is_unknown(self, tmp_path):
         docker = Docker(

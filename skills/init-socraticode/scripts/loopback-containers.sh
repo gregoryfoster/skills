@@ -48,12 +48,12 @@
 #   ok         exists, every publish on loopback, telemetry off (Qdrant)
 #   created    was missing; created on loopback by this run
 #   missing    does not exist (--check only)
-#   wide       publishes a port beyond loopback
+#   wide       publishes a port beyond loopback, or uses the host network
 #   decoy      another container's name contains this one's; SocratiCode's
 #              substring match may take it for this one
 #   telemetry  on loopback, but Qdrant's telemetry is not disabled
-#   unknown    could not be read, publishes no port, has never started, or
-#              could not be created
+#   unknown    could not be read, publishes no port or not the ports above,
+#              has never started, or could not be created
 # Docker's own messages, and a pull's progress, go to stderr.
 #
 # Exit codes: 0 = every target ok or created; 1 = at least one target is not;
@@ -99,14 +99,16 @@ is_loopback() {
   esac
 }
 
-# inspect NAME — sets V (verdict) and DETAIL. Read-only.
+# inspect NAME PORTS — sets V (verdict) and DETAIL. Read-only. PORTS are the
+# host ports SocratiCode will address, space-separated.
 #
-# One template, two parts: state and publishes on the first line, then the
-# environment one variable per line. Bash builtins parse it, so the script runs
+# One template, two parts: state, network mode and publishes on the first
+# line, then the environment one variable per line. Bash builtins parse it, so the script runs
 # on preflight's stubbed PATH, which carries no awk and no mktemp.
-INSPECT_FORMAT='{{.State.Status}}{{"\t"}}{{range .HostConfig.PortBindings}}{{range .}}{{.HostIp}}|{{.HostPort}} {{end}}{{end}}{{"\n"}}{{range .Config.Env}}{{.}}{{"\n"}}{{end}}'
+INSPECT_FORMAT='{{.State.Status}}{{"\t"}}{{.HostConfig.NetworkMode}}{{"\t"}}{{range .HostConfig.PortBindings}}{{range .}}{{.HostIp}}|{{.HostPort}} {{end}}{{end}}{{"\n"}}{{range .Config.Env}}{{.}}{{"\n"}}{{end}}'
 inspect() {
-  local name="$1" out err line state env b ip wide="" seen="" telemetry="" other=""
+  local name="$1" expect="$2" out err line state net="" env b ip p wide="" seen="" telemetry="" other=""
+  local ports=" " unmet=""
   local -a binds=()
   V="" DETAIL=""
   if ! out="$(docker inspect --type container --format "$INSPECT_FORMAT" "$name" 2>/dev/null)"; then
@@ -129,12 +131,21 @@ inspect() {
     return 0
   fi
   if [ "${line#*$'\t'}" != "$line" ]; then
-    read -r -a binds <<<"${line#*$'\t'}" || true
+    line="${line#*$'\t'}"
+    net="${line%%$'\t'*}"
+    if [ "${line#*$'\t'}" != "$line" ]; then
+      read -r -a binds <<<"${line#*$'\t'}" || true
+    fi
   fi
   for b in ${binds[@]+"${binds[@]}"}; do
     ip="${b%%|*}"
     seen=1
+    ports="$ports${b#*|} "
     is_loopback "$ip" || wide="${wide:+$wide, }${ip:-0.0.0.0}:${b#*|}"
+  done
+  # A publish SocratiCode never addresses is no use to it (CR 791).
+  for p in $expect; do
+    case "$ports" in *" $p "*) ;; *) unmet="${unmet:+$unmet, }$p" ;; esac
   done
   case $'\n'"$env" in
     *$'\nQDRANT__TELEMETRY_DISABLED=true'$'\n'* | *$'\nQDRANT__TELEMETRY_DISABLED=true') telemetry=off ;;
@@ -143,7 +154,11 @@ inspect() {
   # then a substring `.includes(name)`, so `socraticode-qdrant-old` counts.
   other="$(docker ps -a --filter "name=$name" --format '{{.Names}}' 2>/dev/null | grep -vx -- "$name" | tr '\n' ' ' || true)"
   other="${other% }"
-  if [ -z "$seen" ]; then
+  if [ "$net" = host ]; then
+    # Host networking publishes nothing and listens wherever the image binds,
+    # which for both images is every interface (CR 791).
+    V=wide DETAIL="$name ($state) uses the host network, so it listens on every interface the image binds"
+  elif [ -z "$seen" ]; then
     V=unknown DETAIL="$name ($state) publishes no port, so SocratiCode cannot reach it"
   elif [ -n "$wide" ]; then
     V=wide DETAIL="$name ($state) publishes beyond loopback: $wide"
@@ -155,6 +170,8 @@ inspect() {
     # one behind, loopback publishes and all; SocratiCode's start of
     # it fails the same way until whatever holds the port lets go.
     V=unknown DETAIL="$name has never started (state created): a docker run that could not bind leaves one behind, so find what holds its port before starting it"
+  elif [ -n "$unmet" ]; then
+    V=unknown DETAIL="$name ($state) is on loopback, but does not publish $unmet, where SocratiCode will look (QDRANT_PORT, QDRANT_GRPC_PORT, OLLAMA_PORT)"
   elif [ -n "$other" ]; then
     V=decoy DETAIL="$name ($state) is on loopback, but SocratiCode's substring match also counts: $other"
   elif [ "$name" = socraticode-qdrant ] && [ -z "$telemetry" ]; then
@@ -192,13 +209,14 @@ create() {
 RC=0
 for target in "${TARGETS[@]}"; do
   name="socraticode-$target"
-  inspect "$name"
+  if [ "$target" = qdrant ]; then expect="$QP $QG"; else expect="$OP"; fi
+  inspect "$name" "$expect"
   if [ "$V" = missing ] && [ -z "$CHECK" ]; then
     if create "$target" "$name"; then
-      inspect "$name"
+      inspect "$name" "$expect"
       [ "$V" != ok ] || V=created
     else
-      inspect "$name"
+      inspect "$name" "$expect"
       if [ "$V" = missing ]; then
         V=unknown DETAIL="docker run failed for $name (its message is above, on stderr)"
       else
