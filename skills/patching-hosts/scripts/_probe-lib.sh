@@ -216,6 +216,46 @@ unit_name() {  # <var> <unit>: a knob's unit name, with .service when it has no 
   esac
 }
 
+# systemd's drop-in order, journald.conf(5) and systemd.unit(5) alike: every
+# *.conf across the directories given, a name in a higher-priority directory
+# masking the same name lower down, then all of them applied in filename
+# order, whatever directory each is in. A link to /dev/null masks and reads
+# as nothing, so it's left out (#515, #484). The probe read /etc and /usr/lib
+# by directory for journald, and /etc and /run for a unit's.
+dropin_files() {  # <var> <directory, highest priority first>...: VAR := the files, a line each
+  local _df_v=$1 _df_d _df_f _df_n _df_seen=$'\n' _df_out=""
+  local -a _df_l=()
+  shift
+  for _df_d in "$@"; do
+    for _df_f in "$_df_d"/*.conf; do
+      [ -e "$_df_f" ] || [ -L "$_df_f" ] || continue
+      _df_n=${_df_f##*/}
+      case $_df_seen in *$'\n'"$_df_n"$'\n'*) continue ;; esac
+      _df_seen="$_df_seen$_df_n"$'\n'
+      [ -f "$_df_f" ] || continue
+      _df_l+=("$_df_n/$_df_f")
+    done
+  done
+  if [ "${#_df_l[@]}" -gt 0 ]; then
+    # A name holds no /, so the first / ends the sort key.
+    _df_out=$(printf '%s\n' "${_df_l[@]}" | LC_ALL=C sort -t/ -k1,1 | cut -d/ -f2-)
+  fi
+  printf -v "$_df_v" '%s' "$_df_out"
+}
+
+# Where systemd looks for a unit's files, highest priority first.
+UNIT_DIRS="etc/systemd/system run/systemd/system usr/local/lib/systemd/system usr/lib/systemd/system lib/systemd/system"
+
+unit_dropins() {  # <var> <unit> [<its template>]: VAR := its drop-ins, in systemd's order, a line each
+  local _ud_d
+  local -a _ud_dirs=()
+  for _ud_d in $UNIT_DIRS; do
+    _ud_dirs+=("$P_ROOT/$_ud_d/$2.d")
+    if [ -n "${3:-}" ]; then _ud_dirs+=("$P_ROOT/$_ud_d/$3.d"); fi
+  done
+  dropin_files "$1" "${_ud_dirs[@]}"
+}
+
 cover_name() {  # <var> <cover>: a backup cover's unit with its suffix, and its databases kept
   local _cn
   unit_name _cn "${2%%:*}"

@@ -483,8 +483,11 @@ read_boot() {
 journal_first_line() { { jctl -q -o short-unix --no-pager 2>/dev/null || true; } | head -n 1; }
 
 read_journal() {
-  local o="" f line n storage="" ssrc="" flush flush_live="" out pc="" vc="" verdict=unknown oldest="" reach="" at
-  for f in "$P_ROOT/etc/systemd/journald.conf" "$P_ROOT"/usr/lib/systemd/journald.conf.d/*.conf "$P_ROOT"/etc/systemd/journald.conf.d/*.conf; do
+  local o="" f line n storage="" ssrc="" flush flush_live="" out pc="" vc="" verdict=unknown oldest="" reach="" at dfs
+  # The main file, then the drop-ins as journald reads them (#515).
+  dropin_files dfs "$P_ROOT/etc/systemd/journald.conf.d" "$P_ROOT/run/systemd/journald.conf.d" \
+    "$P_ROOT/usr/local/lib/systemd/journald.conf.d" "$P_ROOT/usr/lib/systemd/journald.conf.d"
+  while IFS= read -r f; do
     [ -f "$f" ] || continue
     n=0
     while IFS= read -r line || [ -n "$line" ]; do
@@ -496,7 +499,7 @@ read_journal() {
           ssrc="${f#"$P_ROOT"}:$n" ;;
       esac
     done <"$f"
-  done
+  done <<<"$P_ROOT/etc/systemd/journald.conf"$'\n'"$dfs"
   unit_disk_state flush systemd-journal-flush.service
   if live_cmd systemctl; then
     capture flush_live systemctl is-enabled systemd-journal-flush.service
@@ -1899,22 +1902,14 @@ read_language() {
     capture o as_reader cat -- "$f"
     [ "$CAP_RC" -eq 0 ] || continue
     # Its drop-ins after it, so a later WorkingDirectory= wins, as in
-    # systemd: /etc's and /run's merged in name order, /etc's copy of a name
-    # both hold taking its place (CR 236).
-    dn=""
-    for d in "$P_ROOT"/etc/systemd/system/"${f##*/}".d/*.conf "$P_ROOT"/run/systemd/system/"${f##*/}".d/*.conf; do
-      [ -f "$d" ] && dn="$dn"$'\n'"${d##*/}"
-    done
+    # systemd: every unit directory's, in name order, a higher directory's
+    # copy of a name taking its place (CR 236, #484 site 5).
+    unit_dropins dn "${f##*/}"
     while IFS= read -r d; do
       [ -n "$d" ] || continue
-      if [ -f "$P_ROOT/etc/systemd/system/${f##*/}.d/$d" ]; then
-        d="$P_ROOT/etc/systemd/system/${f##*/}.d/$d"
-      else
-        d="$P_ROOT/run/systemd/system/${f##*/}.d/$d"
-      fi
       capture line as_reader cat -- "$d"
       [ "$CAP_RC" -ne 0 ] || o="$o"$'\n'"$line"
-    done <<<"$(printf '%s\n' "$dn" | LC_ALL=C sort -u)"
+    done <<<"$dn"
     dir="" user=""
     while IFS= read -r line || [ -n "$line" ]; do
       case $line in
@@ -2861,14 +2856,12 @@ unit_restarts() {  # <service> <who>
     UR_WHY="$who has no unit file to read"
     return 2
   fi
-  for d in etc/systemd/system run/systemd/system usr/local/lib/systemd/system usr/lib/systemd/system lib/systemd/system; do
-    for f in "$P_ROOT/$d/$t.d"/*.conf ${tmpl:+"$P_ROOT/$d/$tmpl.d"/*.conf}; do
-      [ -f "$f" ] && files="$files"$'\n'"$f"
-    done
-  done
+  unit_dropins f "$t" "$tmpl"
+  if [ -n "$f" ]; then files="$files"$'\n'"$f"; fi
   # Each file is read once, before any Exec line is: its WorkingDirectory=
-  # is the last assignment across them all, a drop-in's over the unit's, and
-  # a leading - only lets the directory be missing (#418).
+  # is the last assignment across them all, a drop-in's over the unit's in
+  # systemd's drop-in order (#484 site 5), and a leading - only lets the
+  # directory be missing (#418).
   while IFS= read -r f; do
     capture text as_reader cat -- "$f"
     if [ "$CAP_RC" -ne 0 ]; then
