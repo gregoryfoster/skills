@@ -62,7 +62,7 @@ ports, restart policy and image tags. The only differences are
   data, since the volume names match.
 - `--check` is the same inspection, read-only.
 - Each target gets one tab-separated line: `ok`, `created`, `missing`,
-  `wide`, `decoy`, `telemetry` or `unknown`. The script's `--help` explains
+  `wide`, `broken`, `decoy`, `telemetry` or `unknown`. The script's `--help` explains
   each one.
 
 The image tags are upstream's own, so SocratiCode doesn't pull a second image.

@@ -81,6 +81,9 @@ state = json.load(open(path)) if os.path.exists(path) else {{}}
 cmd = args[0] if args else ""
 if cmd == "inspect":
     name = args[-1]
+    if os.environ.get("STUB_INSPECT_FAIL"):
+        sys.stderr.write("Error: " + os.environ["STUB_INSPECT_FAIL"] + "\n")
+        sys.exit(1)
     if name not in state:
         sys.stderr.write(f"Error: No such object: {{name}}\n")
         sys.exit(1)
@@ -247,7 +250,7 @@ class TestTheScriptCreatesWhatIsMissing:
         never = dict(LOOPBACK_Q, state="created")
         docker = Docker(tmp_path, {"socraticode-qdrant": never})
         verdict, detail = _rows(_script(docker, "--check", "qdrant"))["qdrant"]
-        assert verdict == "unknown" and "never started" in detail
+        assert verdict == "broken" and "never started" in detail
 
     def test_a_failed_run_that_left_a_container_says_so(self, tmp_path):
         docker = Docker(tmp_path)
@@ -259,7 +262,7 @@ class TestTheScriptCreatesWhatIsMissing:
         )
         verdict, detail = _rows(result)["qdrant"]
         assert (
-            verdict == "unknown"
+            verdict == "broken"
             and "left it behind" in detail
             and "never started" in detail
         )
@@ -348,19 +351,27 @@ class TestTheScriptsVerdicts:
         verdict, detail = _rows(
             _script(docker, "--check", "qdrant", QDRANT_PORT="26333")
         )["qdrant"]
-        assert verdict == "unknown" and "26333" in detail and "16334" not in detail
+        assert verdict == "broken" and "26333" in detail and "16334" not in detail
 
     def test_the_host_network_is_wide(self, tmp_path):
         c = {"state": "running", "network": "host", "binds": [], "env": []}
         docker = Docker(tmp_path, {"socraticode-ollama": c})
         assert _rows(_script(docker, "--check", "ollama"))["ollama"][0] == "wide"
 
-    def test_a_container_publishing_nothing_is_unknown(self, tmp_path):
+    def test_a_container_publishing_nothing_is_broken(self, tmp_path):
         docker = Docker(
             tmp_path,
             {"socraticode-ollama": {"state": "exited", "binds": [], "env": []}},
         )
-        assert _rows(_script(docker, "--check", "ollama"))["ollama"][0] == "unknown"
+        assert _rows(_script(docker, "--check", "ollama"))["ollama"][0] == "broken"
+
+    def test_an_inspect_that_fails_otherwise_is_unknown(self, tmp_path):
+        docker = Docker(tmp_path, {"socraticode-ollama": LOOPBACK_O})
+        result = _script(
+            docker, "--check", "ollama", STUB_INSPECT_FAIL="permission denied"
+        )
+        verdict, detail = _rows(result)["ollama"]
+        assert verdict == "unknown" and "permission denied" in detail
 
     @pytest.mark.parametrize(
         "args",
@@ -509,12 +520,23 @@ class TestPreflightReadsTheContainers:
         assert "•" in _line(result, "SocratiCode may skip starting the real one")
         assert "rename the other" in result.stdout
 
-    def test_an_unknown_container_is_a_warning(self, tmp_path):
+    def test_a_broken_container_fails(self, tmp_path):
+        """CR 798: a container SocratiCode cannot start or reach is not a warning."""
         never = dict(LOOPBACK_Q, state="created")
         result, _ = _preflight_with(
             tmp_path, {"socraticode-qdrant": never, "socraticode-ollama": LOOPBACK_O}
         )
-        assert "•" in _line(result, "has never started")
+        assert result.returncode == 1
+        assert "✗" in _line(result, "has never started")
+        assert "free the port it needs" in result.stdout
+
+    def test_an_unreadable_container_is_a_warning(self, tmp_path):
+        result, _ = _preflight_with(
+            tmp_path,
+            {"socraticode-qdrant": LOOPBACK_Q, "socraticode-ollama": LOOPBACK_O},
+            STUB_INSPECT_FAIL="permission denied",
+        )
+        assert "•" in _line(result, "docker inspect failed: Error: permission denied")
 
     def test_a_check_that_printed_nothing_is_said(self, tmp_path):
         result, _ = _preflight_with(tmp_path, {}, QDRANT_PORT="not-a-port")

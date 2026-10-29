@@ -1024,6 +1024,13 @@ elif [ -n "$DOCKER_UP" ]; then
         warn "$lb_detail — Qdrant reports anonymous telemetry"
         hint "recreate it with telemetry off, with the operator's approval: $LOOPBACK_REF"
         ;;
+      broken)
+        # A ✗ (CR 798): SocratiCode's start of it, or its readiness wait,
+        # fails, so Phase 1 must not pass on to an index that cannot run.
+        LB_SEEN=1
+        fail "$lb_detail"
+        hint "free the port it needs, or recreate it on loopback, with the operator's approval: $LOOPBACK_REF"
+        ;;
       unknown) LB_SEEN=1; warn "$lb_detail" ;;
     esac
   done <<<"$LB_OUT"
