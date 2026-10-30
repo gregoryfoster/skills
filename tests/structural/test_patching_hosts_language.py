@@ -366,7 +366,14 @@ def test_a_root_owned_lock_is_audited_as_nobody_with_a_root_only_uv(host, where)
 @needs_root
 @pytest.mark.parametrize(
     "case",
-    ["home only", "path only", "group-writable", "not root's", "dir not root's"],
+    [
+        "home only",
+        "path only",
+        "group-writable",
+        "not root's",
+        "dir not root's",
+        "a root-owned link into a home",
+    ],
 )
 def test_a_root_owned_lock_never_takes_a_uv_another_user_can_change(host, case):
     _root_tree(host)
@@ -381,11 +388,33 @@ def test_a_root_owned_lock_never_takes_a_uv_another_user_can_change(host, case):
             uv.chmod(0o775)
         elif case == "not root's":
             os.chown(uv, 1000, 1000)
-        else:
+        elif case == "dir not root's":
             os.chown(uv.parent, 1000, 1000)
+        else:
+            # CR 1138: the link is root's, and what it runs is the user's.
+            target = _system_uv(host, body, "home/exedev/.local/bin/uv")
+            os.chown(target, 1000, 1000)
+            uv.unlink()
+            uv.symlink_to(target)
     [t] = _lang(_audit(host))
     assert (t["audited"], t["why"]) == (False, ROOT_LOCK)
     assert not ran.exists() and not on_path.exists()
+
+
+@needs_root
+def test_a_root_owned_link_to_a_root_only_uv_is_taken(host):
+    # CR 1138: an installer's /usr/local/bin/uv -> /opt/uv/uv, all root's.
+    _root_tree(host)
+    _uv(host)
+    ran = host.tmp / "system-uv.ran"
+    target = _system_uv(
+        host, f'touch "{ran}"\necho "Found no known vulnerabilities" >&2\n', "opt/uv/uv"
+    )
+    (host.root / "usr/local/bin").mkdir(parents=True)
+    (host.root / "usr/local/bin/uv").symlink_to(target)
+    [t] = _lang(_audit(host))
+    assert (t["audited"], t["why"]) == (True, None)
+    assert ran.exists()
 
 
 @needs_root
