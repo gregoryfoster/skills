@@ -71,7 +71,9 @@ Options:
                       unattended-upgrades origins take; maintenance, which
                       adds Ubuntu's -updates and each origin the knob
                       follows; or origin:<origin>, one followed origin and
-                      nothing else. With --dry-run-into only
+                      nothing else, which counts only against lists this
+                      run fetched, so it takes --refresh-into too. With
+                      --dry-run-into only
   --post-boot         the checks after a reboot (reboot-and-record.md
                       section 6), not the readings before a run. Takes
                       neither --refresh-into nor --dry-run-into
@@ -1603,23 +1605,35 @@ class_of() {  # <var> <origins, ", "-separated>
   fi
 }
 
+# The lists' age from their fetch, not the archive's (#493). apt sets an
+# InRelease's mtime from the archive's Last-Modified, so a quiet day for
+# noble-security read as stale lists right after an apt-get update. Its ctime
+# moves at each fetch, a Hit included, and not at a failed one (apt 2.8.3,
+# noble, 2026-10-30); lists/partial/'s mtime moves at a failed one too. In a
+# copied tree, the ctime is the copy's. LISTS_FETCHED := that epoch, which the
+# one-origin lane's dry run reads too.
+LISTS_FETCHED=""
 read_lists_age() {
-  local f mt newest="" age=""
-  R_LISTS=""
+  local f mt ct newest="" age="" lm=""
+  R_LISTS="" LISTS_FETCHED=""
   for f in "$LISTS_DIR"/*-security_InRelease "$LISTS_DIR"/*-security_Release; do
     [ -f "$f" ] || continue
     file_mtime mt "$f"
+    file_ctime ct "$f"
     if [ -n "$mt" ] && { [ -z "$newest" ] || [ "$mt" -gt "$newest" ]; }; then newest=$mt; fi
+    if [ -n "$ct" ] && { [ -z "$LISTS_FETCHED" ] || [ "$ct" -gt "$LISTS_FETCHED" ]; }; then LISTS_FETCHED=$ct; fi
   done
-  if [ -n "$newest" ]; then age=$(((P_NOW - newest) / 3600)); fi
+  if [ -n "$LISTS_FETCHED" ]; then age=$(((P_NOW - LISTS_FETCHED) / 3600)); fi
+  if [ -n "$newest" ]; then lm=$(((P_NOW - newest) / 3600)); fi
   jadds R_LISTS dir "${LISTS_DIR#"$P_ROOT"}"
   jaddb R_LISTS refreshed "$REFRESHED"
   jaddn R_LISTS security_age_hours "$age"
-  jadds R_LISTS source "the security InRelease's mtime, which apt sets from the archive's Last-Modified"
+  jaddn R_LISTS security_last_modified_hours "$lm"
+  jadds R_LISTS source "when the security InRelease was last fetched: its ctime, which apt moves at every fetch and not at a failed one. Its mtime is the archive's Last-Modified (security_last_modified_hours)"
   if [ -z "$age" ]; then
     finding unknown lists:age "" "No security InRelease under ${LISTS_DIR#"$P_ROOT"}, so the counts have no security list behind them."
   elif [ "$age" -gt 24 ] && [ "$REFRESHED" -eq 0 ]; then
-    finding risk lists:stale "" "The security list is $age hours old, so the counts measure the lists, not the host. Re-run with --refresh-into DIR."
+    finding risk lists:stale "" "The security list was fetched $age hours ago, so the counts measure the lists, not the host. Run apt-get update, or re-run with --refresh-into DIR."
   fi
 }
 
@@ -2282,6 +2296,15 @@ read_dry_run() {
       origin_names lnames "${lane#origin:}" "$POLICY_OUT"
       if [ "$lnames" = "|" ]; then
         finding unknown dry-run "" "the $lane lane's dry run didn't run: apt-cache policy lists no origin at ${lane#origin:}, so nothing from it is pending: is its source configured?"
+        return 0
+      fi
+      # On lists fetched before the run, it can count an older release of
+      # the origin's package, and that passes every gate (#523): only lists
+      # this run fetched count it.
+      if [ -z "$LISTS_FETCHED" ] || [ "$LISTS_FETCHED" -lt "$P_NOW" ]; then
+        w="fetched before this run"
+        if [ -n "$LISTS_FETCHED" ]; then w="fetched $(((P_NOW - LISTS_FETCHED) / 3600)) hours before this run"; fi
+        finding risk dry-run "" "the $lane lane's dry run didn't run: its lists were $w, and on lists older than the run it can count an older release of the origin's package with every gate passed (#523). Count again with --refresh-into DIR beside --dry-run-into."
         return 0
       fi
       origin_split lkeep lskip "$lnames" "$SIM_DIST_OUT" ;;

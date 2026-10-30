@@ -1000,6 +1000,13 @@ file_mtime() {  # <var> <path>
   printf -v "$1" '%s' "$_ft"
 }
 
+file_ctime() {  # <var> <path>
+  local _fc
+  _fc=$(stat -c %Z "$2" 2>/dev/null || stat -f %c "$2" 2>/dev/null) || _fc=""
+  case $_fc in '' | *[!0-9]*) _fc="" ;; esac
+  printf -v "$1" '%s' "$_fc"
+}
+
 file_owner() {  # <var> <path>
   local _fo
   _fo=$(stat -c %u "$2" 2>/dev/null || stat -f %u "$2" 2>/dev/null) || _fo=""
