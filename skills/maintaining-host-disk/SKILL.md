@@ -36,6 +36,7 @@ The GC's tiers, keep rules and sensor are Provisioner's. Where the GC does somet
 | "The GC prunes the same things, so the old script can go" | Read what the old one removed that the GC keeps: containers, volumes, unused tagged images, tiers that are off. [retiring.md](references/retiring.md). |
 | "`journalctl -p err` shows no alerts" | Only with `sudo`: without it, a user outside `adm` gets `-- No entries --`. And only for the GC, whose lines carry priorities: a host's own script logs plain stderr at `info`. [verifying.md](references/verifying.md). |
 | "Weekly is enough for VS Code builds" | Two ~640M server builds shipped in one week on power-map. Keep the GC daily. |
+| "I'll check the host's config against the staged GC first" | Never run or import anything from staging: loading `disk-gc` writes a `__pycache__` beside it that MANIFEST doesn't list, and the installer refuses the tree (#514). Load it with bytecode off (`python3 -B`, or `PYTHONDONTWRITEBYTECODE=1`), or check after the install. On that refusal, re-pull into a fresh directory; never delete files from staging by hand. |
 | "The update only changed the GC script, so restart journald anyway" | Only when its drop-in changed, or a reinstall or a resumed update may owe the restart: the installer decides and says (`journald_restart`). |
 
 ## Script path resolution
@@ -85,6 +86,6 @@ It never installs from an unpinned tag, edits the installed GC, writes the host'
 - [references/retiring.md](references/retiring.md) — the retire list, what the check automates, and the by-hand checklist against the nine rules
 - [references/repo-knobs.md](references/repo-knobs.md) — the repo-side disk knobs no host tool should own
 - [references/editor-builds.md](references/editor-builds.md) — the VS Code tiers, and where they differ from #482's ask
-- [references/verifying.md](references/verifying.md) — reading the GC's and the sensor's runs, and a host's own scripts
+- [references/verifying.md](references/verifying.md) — reading the GC's and the sensor's runs, a host's own scripts, and a repo test that loads the GC
 
 **Self-budget:** held to a **6,000-token ratchet (estimate and exact)** by `tests/structural/test_skill_self_budget.py`; both readings must clear it. Each `references/` doc is held to the 10,000-token per-doc budget.

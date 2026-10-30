@@ -27,18 +27,18 @@ ExecStartPre=+/bin/bash -c 'mkdir -p /run/<PROJECT_NAME> && chown <DEPLOY_USER>:
 # Write current git SHA to a runtime env file before starting
 ExecStartPre=/bin/bash -c 'echo BUILD_ID=$(git rev-parse --short HEAD) > /run/<PROJECT_NAME>/build-id'
 
-# Load BUILD_ID, then system secrets, then optional repo-local overrides.
-# Order matters: later EnvironmentFiles override earlier ones.
+# Load BUILD_ID, then system secrets. Order matters: later EnvironmentFiles
+# override earlier ones. Never the repo .env: it is the developer's file
+# (GH_TOKEN, ANTHROPIC_API_KEY), and production has no use for either.
 EnvironmentFile=-/run/<PROJECT_NAME>/build-id
 EnvironmentFile=/etc/<PROJECT_NAME>/.env
-EnvironmentFile=-<DEPLOY_HOME>/.env
 
 # Production opt-in for the db_safety boot guard (DB_BACKED=yes only — drop
 # otherwise). NOTE: systemd gives EnvironmentFile= precedence over
 # Environment= regardless of textual order (systemd.exec: "Settings from
 # these files override settings made with Environment="), so the guard
 # holds only because the env files never define this variable — keep it
-# out of /etc/<PROJECT_NAME>/.env and the repo .env.
+# out of every env file.
 Environment=<PROJECT_UNDERSCORE_UPPER>_ALLOW_PRODUCTION_DB=1
 
 # --frozen --no-sync: serve exactly the committed lockfile; dependency sync
@@ -134,5 +134,5 @@ sudo systemctl enable --now <PROJECT_NAME>
 sudo journalctl -u <PROJECT_NAME> -f
 ​```
 
-Production secrets live in `/etc/<PROJECT_NAME>/.env` (managed manually on the VM, not in the repo). The unit's `ExecStartPre` writes the current git SHA to `/run/<PROJECT_NAME>/build-id` and exposes it as `BUILD_ID`.
+Production secrets live in `/etc/<PROJECT_NAME>/.env` (managed manually on the VM, not in the repo), the only env file the unit reads: anything production needs from the repo `.env`, `DATABASE_URL` included, goes there. The unit's `ExecStartPre` writes the current git SHA to `/run/<PROJECT_NAME>/build-id` and exposes it as `BUILD_ID`.
 ```

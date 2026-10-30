@@ -906,17 +906,27 @@ $CHECKOUT_LINE
       # empty rather than presenting a standing count as a week's accrual.
       - name: Sweep the seams and the counts
         run: |
-          bash "\$CHECK_SEAMS_SH" --base-ledger "$LEDGER" >/tmp/seams.txt 2>&1 || true
-          tail -20 /tmp/seams.txt
-          echo "SEAMS=\$(sed -n 's/^seams: \([0-9]*\)\$/\1/p' /tmp/seams.txt | tail -1)" >>"\$GITHUB_ENV"
-          echo "SEAMS_ACKED=\$(sed -n 's/^seams_acked: \([0-9]*\)\$/\1/p' /tmp/seams.txt | tail -1)" >>"\$GITHUB_ENV"
-          # Same step, same file, same shape (#258): without it the scheduled
-          # row carries a null counts field forever and the class is recorded
-          # only by hand-run curations — #169's shape, one field over.
-          bash "\$CHECK_COUNTS_SH" >/tmp/counts.txt 2>&1 || true
-          tail -20 /tmp/counts.txt
-          echo "COUNTS=\$(sed -n 's/^counts: \([0-9]*\)\$/\1/p' /tmp/counts.txt | tail -1)" >>"\$GITHUB_ENV"
-          echo "COUNTS_ACKED=\$(sed -n 's/^counts_acked: \([0-9]*\)\$/\1/p' /tmp/counts.txt | tail -1)" >>"\$GITHUB_ENV"
+          # Files of its own (#526): a fixed /tmp path is shared with every
+          # other run on the machine, which can truncate it between two reads.
+          SEAMS_OUT=\$(mktemp) COUNTS_OUT=\$(mktemp)
+          trap 'rm -f "\$SEAMS_OUT" "\$COUNTS_OUT"' EXIT
+          bash "\$CHECK_SEAMS_SH" --base-ledger "$LEDGER" >"\$SEAMS_OUT" 2>&1 || true
+          tail -20 "\$SEAMS_OUT"
+          SEAMS=\$(sed -n 's/^seams: \([0-9]*\)\$/\1/p' "\$SEAMS_OUT" | tail -1)
+          SEAMS_ACKED=\$(sed -n 's/^seams_acked: \([0-9]*\)\$/\1/p' "\$SEAMS_OUT" | tail -1)
+          # Same step, same shape (#258): without it the scheduled row carries
+          # a null counts field forever and the class is recorded only by
+          # hand-run curations — #169's shape, one field over.
+          bash "\$CHECK_COUNTS_SH" >"\$COUNTS_OUT" 2>&1 || true
+          tail -20 "\$COUNTS_OUT"
+          COUNTS=\$(sed -n 's/^counts: \([0-9]*\)\$/\1/p' "\$COUNTS_OUT" | tail -1)
+          COUNTS_ACKED=\$(sed -n 's/^counts_acked: \([0-9]*\)\$/\1/p' "\$COUNTS_OUT" | tail -1)
+          # An empty count is a lost count, not a zero (#526): fail before
+          # GITHUB_ENV rather than record the row with the field missing.
+          for kv in "SEAMS=\$SEAMS" "SEAMS_ACKED=\$SEAMS_ACKED" "COUNTS=\$COUNTS" "COUNTS_ACKED=\$COUNTS_ACKED"; do
+            [ -n "\${kv#*=}" ] || { echo "::error::no \${kv%%=*} count in the sweep's output"; exit 1; }
+          done
+          printf '%s\n' "SEAMS=\$SEAMS" "SEAMS_ACKED=\$SEAMS_ACKED" "COUNTS=\$COUNTS" "COUNTS_ACKED=\$COUNTS_ACKED" >>"\$GITHUB_ENV"
 
       # Measured ONCE — the drift report below reads this file rather than
       # re-running --exact, which would disagree with the row just recorded.

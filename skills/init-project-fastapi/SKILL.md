@@ -70,7 +70,7 @@ Each has a default the user can accept silently. Defaults come from comparing 7 
 | Sub-parameter | Default | Used in |
 |---|---|---|
 | `DEPLOY_USER` | `exedev` | systemd unit `User=` + `chown` in `ExecStartPre` |
-| `DEPLOY_HOME` | `/home/<DEPLOY_USER>/<PROJECT_NAME>` | systemd unit `WorkingDirectory=` + repo-`.env` `EnvironmentFile` path |
+| `DEPLOY_HOME` | `/home/<DEPLOY_USER>/<PROJECT_NAME>` | systemd unit `WorkingDirectory=` |
 
 **Sub-parameters of `PRIVATE_WHEELHOUSE=find-links`** (skipped when `no`): `WHEELHOUSE_BUCKET` (required; GCS bucket, no `gs://`), `WHEELHOUSE_PREFIX` (default `wheels/`, trailing slash required), `WHEELHOUSE_SA` (required when `GITHUB_CI=yes`; WIF `service_account` email), `WHEELHOUSE_PACKAGES` (required; the **import lines** for the Phase 12 smoke, not dist names). Full legend, plus the `<PROJECT_UNDERSCORE_UPPER>`-namespaced env overrides and the `GCP_WIF_PROVIDER` org-variable prerequisite, in [`references/private-wheelhouse.md`](references/private-wheelhouse.md).
 
@@ -260,7 +260,7 @@ Create empty `__init__.py` files (`tests/`, `tests/api/`, `tests/core/`), then c
 
 Copy the templates from [`references/systemd-deploy.md`](references/systemd-deploy.md):
 
-- `deploy/<PROJECT_NAME>.service` — systemd unit: BUILD_ID stamping via `ExecStartPre`, three-tier `EnvironmentFile` chain (`/run/<PROJECT_NAME>/build-id` → `/etc/<PROJECT_NAME>/.env` → repo `.env`), bounded restarts, `--frozen --no-sync` serve, and (when `DB_BACKED=yes`) the `ALLOW_PRODUCTION_DB` opt-in. Substitute `<PROJECT_NAME>`, `<PROJECT_DESCRIPTION>`, `<API_PORT>`, `<DEPLOY_USER>`, `<DEPLOY_HOME>`. The reference notes per-host adjustments and ships the fleet patterns (oneshot+timer pairs, `OnFailure=` notify template, main-checkout guard) to adopt as scheduled jobs appear.
+- `deploy/<PROJECT_NAME>.service` — systemd unit: BUILD_ID stamping via `ExecStartPre`, two-tier `EnvironmentFile` chain (`/run/<PROJECT_NAME>/build-id` → `/etc/<PROJECT_NAME>/.env`; never the repo `.env`), bounded restarts, `--frozen --no-sync` serve, and (when `DB_BACKED=yes`) the `ALLOW_PRODUCTION_DB` opt-in. Substitute `<PROJECT_NAME>`, `<PROJECT_DESCRIPTION>`, `<API_PORT>`, `<DEPLOY_USER>`, `<DEPLOY_HOME>`. The reference notes per-host adjustments and ships the fleet patterns (oneshot+timer pairs, `OnFailure=` notify template, main-checkout guard) to adopt as scheduled jobs appear.
 - README **"Deploy"** section — append the `systemctl` install/restart/journalctl recipe to `README.md`.
 
 When `PRIVATE_WHEELHOUSE=find-links`: insert the non-fatal `ExecStartPre=-…sync_wheelhouse.py` line just **before** the unit's `ExecStart`, per call site (c) in [`references/private-wheelhouse.md`](references/private-wheelhouse.md). Absolute `uv` path, relative script path (resolved against `WorkingDirectory=`); `GOOGLE_APPLICATION_CREDENTIALS` comes from the already-loaded `/etc/<PROJECT_NAME>/.env`. Keep `ExecStart` on `--frozen --no-sync` — the deploy step still runs `uv sync --frozen` after the sync (reference's ordering invariant).
@@ -399,7 +399,7 @@ Then present the completion table from [`references/completion-report.md`](refer
 - All symlinks use **relative** paths — absolute paths break after cloning.
 - `src/core/config.py` is the single source of env access. Both `os.environ` reads and `pydantic-settings` instantiation belong there; no other module should call `os.environ.get()` for runtime configuration.
 - `configure_logging()` is called once inside the FastAPI `lifespan` context manager — never at module import time, and never in library modules.
-- When `DEPLOY_TARGET=systemd`: the unit must declare its `ExecStartPre` BUILD_ID write **before** the `EnvironmentFile=-/run/<PROJECT_NAME>/build-id` line (the file must exist when systemd loads it). The `EnvironmentFile` order itself follows systemd convention — later entries override earlier ones — so BUILD_ID (read-only state from `ExecStartPre`) goes first as the lowest-precedence layer, then `/etc/<PROJECT_NAME>/.env`, then the repo `.env`.
+- When `DEPLOY_TARGET=systemd`: the unit must declare its `ExecStartPre` BUILD_ID write **before** the `EnvironmentFile=-/run/<PROJECT_NAME>/build-id` line (the file must exist when systemd loads it). The `EnvironmentFile` order itself follows systemd convention — later entries override earlier ones — so BUILD_ID (read-only state from `ExecStartPre`) goes first as the lowest-precedence layer, then `/etc/<PROJECT_NAME>/.env`; never the repo `.env`.
 - When `DB_BACKED=yes`: `tests/conftest.py` must reject `TEST_DATABASE_URL == DATABASE_URL` (production-URL safety check) — `Base.metadata.drop_all` runs on teardown and would destroy any production table mapped to the project's models.
 - When `ADMIN_UI=htmx`: `require_admin` fails closed (unconfigured `ADMIN_AUTH_HEADER` → 503, never open); the admin router mounts with `include_in_schema=False`; `htmx.min.js` is copied from this skill's assets (provenance = `<SKILL_SHA>`) — never hot-linked from a CDN.
 - `uv.lock` must be committed alongside `pyproject.toml`.
