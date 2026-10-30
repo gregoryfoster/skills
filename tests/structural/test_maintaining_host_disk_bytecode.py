@@ -23,8 +23,6 @@ from tests.structural import maintaining_host_disk_rig as rig
 
 from .test_maintaining_host_disk_install import install, refused, staged
 
-pytestmark = pytest.mark.usefixtures("linux_tools")
-
 BYTECODE = "bytecode"
 PYC = "__pycache__/disk-gccpython-312.pyc"  # the name processor#82 saw
 
@@ -62,6 +60,9 @@ def _load(path, *python_flags):
     assert r.returncode == 0, r.stderr
 
 
+# The mark is on the class that drives the GC's scripts, not the module, so
+# the docs-only class below runs on the operator's Mac too (#531).
+@pytest.mark.usefixtures("linux_tools")
 class TestTheRefusalNamesTheBytecode:
     def test_a_loaded_staging_tree_is_refused_with_its_recovery(self, tmp_path, host):
         staging = staged(tmp_path)
