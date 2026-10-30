@@ -302,3 +302,80 @@ class TestTheRationaleIsTrue:
         assert "`load_env` exports" in text, (
             "say plainly that load_env exports what it loads"
         )
+
+
+# A variable whose name says it holds a secret (#530). Anchored at the end so
+# `KEY_PATH`, `P_TOKENS` and git-config key names stay out.
+_SECRET_NAME = re.compile(
+    r"(?:^|_)(?:PG)?(?:PW|PASS|PASSWD|PASSWORD|SECRET|TOKEN|PAT|API_KEY|"
+    r"SECRET_KEY|PRIVATE_KEY)$",
+    re.I,
+)
+# An expansion of a variable's value: `$X` or `${X…}`, but not `${#X}`, which
+# expands to its length, and not an escaped `\$X`.
+_EXPANSION = re.compile(r"(?<!\\)\$(?:\{(?!#))?([A-Za-z_][A-Za-z0-9_]*)")
+# One echo/printf command, up to the next separator: `;`, `&&`, `||` or `|`.
+_PRINT_CMD = re.compile(
+    r"\b(?:echo|printf)\b(?P<args>(?:[^;&|]|&(?!&))*)(?P<end>\|\|?|;|&&|$)"
+)
+
+
+def _echoed_secrets(line: str) -> list[str]:
+    """The secret-named variables a line prints to the terminal. Output piped
+    to a command (`printf '%s' "$TOKEN" | gh auth login --with-token`) or
+    redirected to a file never reaches the transcript, so it is spared;
+    `>&2` still prints."""
+    found = []
+    for m in _PRINT_CMD.finditer(line):
+        if m["end"] == "|" or re.search(r">>?\s*(?!&)\S", m["args"]):
+            continue
+        found += [v for v in _EXPANSION.findall(m["args"]) if _SECRET_NAME.search(v)]
+    return found
+
+
+class TestNoSecretIsEchoed:
+    """#530: postgres-provisioning.md § 3 echoed the role password it had just
+    generated, into the agent's transcript and every log that keeps it. Step 5
+    already writes it to `.env`. No file in the skill prints a secret-holding
+    variable's value; its length (`${#PG_PW}`) is fine."""
+
+    def test_no_file_echoes_a_secret_variable(self):
+        hits = [
+            f"{p}:{n}: {', '.join(vs)}"
+            for p, n, ln in _skill_lines()
+            if (vs := _echoed_secrets(ln))
+        ]
+        assert not hits, (
+            "a secret printed to the terminal lands in the transcript. Print "
+            f"that it is set and its length, never its value. Sites: {hits}"
+        )
+
+    @pytest.mark.parametrize(
+        "line,var",
+        [
+            ('echo "PG_PW=$PG_PW   # save this"', "PG_PW"),
+            ('printf "%s\\n" "${GH_TOKEN}"', "GH_TOKEN"),
+            ('echo "key: ${ANTHROPIC_API_KEY:-unset}" >&2', "ANTHROPIC_API_KEY"),
+            ("echo $PGPASSWORD", "PGPASSWORD"),
+            ('test -n "$X" && echo "pw $DB_PASSWORD"', "DB_PASSWORD"),
+            ('echo "$SECRET_KEY" || true', "SECRET_KEY"),
+        ],
+    )
+    def test_the_detector_fires(self, line, var):
+        assert _echoed_secrets(line) == [var], line
+
+    @pytest.mark.parametrize(
+        "line",
+        [
+            'echo "PG_PW set (${#PG_PW} chars)"',
+            'PGPASSWORD="$PG_PW" psql -h localhost -c "SELECT 1;"',
+            "printf '%s' \"$GH_TOKEN\" | gh auth login --with-token",
+            'echo "$PG_PW" > ./pw.txt',
+            'echo "Key already exists at $KEY_PATH — skipping generation."',
+            'echo "GATE over budget: $P_TOKENS tokens"',
+            'echo "set git config: $DRIVER_KEY=$DRIVER_VALUE"',
+            'echo "no variable: \\$PG_PW"',
+        ],
+    )
+    def test_the_detector_spares_lengths_pipes_files_and_non_secrets(self, line):
+        assert _echoed_secrets(line) == [], line
