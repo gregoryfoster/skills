@@ -60,7 +60,7 @@ Options:
 
 It refuses (exit 3) for each reason under refused, among them: without
 --approve; on a report-only host; without root, or as root with no invoking
-user while the knob has inflight or health commands (run it through sudo
+user while the knob has inflight, health or recovery commands (run it through sudo
 from your own account); when systemd-run, systemctl, journalctl, pgrep or
 runuser isn't on PATH, or ss with a Redis datastore; when --run doesn't
 exist or isn't mode 0700; when the run aborted at a step; while the run's

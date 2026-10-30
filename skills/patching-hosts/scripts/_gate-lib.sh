@@ -34,7 +34,7 @@ The gate_* functions add their readings to the caller's J_GATE.
                             and SPAN_S and SPAN_E are left as they were
   gate_inflight             refuses unless every inflight command prints 0
                             and exits 0, and when there's no invoking user
-                            to run the knob's inflight or health commands as
+                            to run the knob's inflight, health or recovery commands as
   chain_active UNIT         whether a run's reboot chain is scheduled or
                             running; CHAIN_STATE says which unit, and how
   package_manager VAR       which package manager runs now, or empty
@@ -239,8 +239,8 @@ gate_span() {  # <expected seconds, or empty when unknown>
 gate_inflight() {
   local r c l out rc e="" a="" why
   local -a f=()
-  if [ -z "$P_KNOB_USER" ] && [ $((${#KNOB_INFLIGHT[@]} + ${#KNOB_HEALTH[@]})) -gt 0 ]; then
-    refuse "the knob's inflight and health commands never run as root, and there's no invoking user to run them as: run $ME.sh through sudo from your own account"
+  if [ -z "$P_KNOB_USER" ] && [ $((${#KNOB_INFLIGHT[@]} + ${#KNOB_HEALTH[@]} + ${#KNOB_RECOVERY[@]})) -gt 0 ]; then
+    refuse "the knob's inflight, health and recovery commands never run as root, and there's no invoking user to run them as: run $ME.sh through sudo from your own account"
     jadd J_GATE inflight null
     return 0
   fi

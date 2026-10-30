@@ -21,7 +21,7 @@ Options:
   -h, --help      show this help
 
 Output keys: knob, host, sections, class, posture, report_only,
-report_only_reasons, window, quiet, inflight, health, restarter, service,
+report_only_reasons, window, quiet, inflight, health, recovery, restarter, service,
 backup, caller, depends, datastore, hold, owner, image_owner, origin,
 exception, records, findings. Every value from the knob carries its line number, but a
 datastore's databases, merged per unit, carry the line that first names the
@@ -198,6 +198,7 @@ emit_records window o_window , ${KNOB_WINDOW[@]+"${KNOB_WINDOW[@]}"}
 emit_records quiet o_quiet , ${KNOB_QUIET[@]+"${KNOB_QUIET[@]}"}
 emit_records inflight o_command , ${KNOB_INFLIGHT[@]+"${KNOB_INFLIGHT[@]}"}
 emit_records health o_command , ${KNOB_HEALTH[@]+"${KNOB_HEALTH[@]}"}
+emit_records recovery o_command , ${KNOB_RECOVERY[@]+"${KNOB_RECOVERY[@]}"}
 emit_records restarter o_unit , ${KNOB_RESTARTER[@]+"${KNOB_RESTARTER[@]}"}
 emit_records service o_unit , ${KNOB_SERVICE[@]+"${KNOB_SERVICE[@]}"}
 emit_records backup o_backup , ${KNOB_BACKUP[@]+"${KNOB_BACKUP[@]}"}

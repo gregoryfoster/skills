@@ -109,7 +109,7 @@ Unattended-Upgrade::Origins-Pattern {
 
 **The verdict** comes from the exit code, `All upgrades installed`, an empty `dpkg --audit`, and in the one-origin lane, nothing of the origin's left pending. **Never count `Failed` or `error` lines**: a clean apply logged about 100 needrestart "kernel versions" lines.
 
-**A data-store step checks recovery, not just health.** A fail-open cache or audit writer hides a database outage from callers, and from the operator. So prove the path works:
+**A data-store step checks recovery, not just health.** A fail-open cache or audit writer hides a database outage from callers, and from the operator. So prove the path works, in a `recovery` line: `apply.sh` runs each once after a held step's health checks pass, and `--post-boot` after the reboot. Never in a `health` line, which every probe runs (#423):
 - a real request through it;
 - a new row where one should appear;
 - a cache hit on a repeat;

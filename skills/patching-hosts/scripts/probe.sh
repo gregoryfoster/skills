@@ -8,13 +8,17 @@ Usage: bash probe.sh [--config FILE] [--host NAME] [--root DIR] [--repo DIR]
                      [--refresh-into DIR] [--dry-run-into DIR]
                      [--lane security|maintenance|origin:<origin>]
                      [--post-boot [--run DIR]] [--session-pid PID]
-                     [--today YYYY-MM-DD]
+                     [--no-sudo] [--today YYYY-MM-DD]
 
 Reads the host and prints one JSON object on stdout: its environment, what
 updates it, the pending set by class, what an apply would touch, dormant
 components, and every finding against the posture its knob declares. It
-installs, removes, holds, restarts and configures nothing. The readings, and
-the mistake each one prevents: references/readings.md.
+installs, removes, holds, restarts and configures nothing. Run as root, the
+Ubuntu Pro read writes pro's own /var/log/ubuntu-advantage.log and
+/var/lib/ubuntu-advantage/lock, the one host state it changes. It runs the
+knob's health lines, which must be safe at any time, and its recovery lines
+only under --post-boot. The readings, and the mistake each one prevents:
+references/readings.md.
 
 Options:
   --config FILE       the knob (default: .skills/patching-hosts at the root of
@@ -84,6 +88,10 @@ Options:
                       lines are read instead
   --session-pid PID   where the session's chain to PID 1 starts (default: the
                       probe itself)
+  --no-sudo           never escalate. Without it, a non-root probe reads the
+                      root-only readings through sudo -n wherever that asks
+                      no password, and probe.privilege says sudo; with it,
+                      those readings are in not_read
   --today YYYY-MM-DD  the date exceptions expire against (default: today, UTC)
   -h, --help          show this help
 
@@ -117,6 +125,7 @@ USAGE
 }
 
 config="" host="" root=/ repo="" refresh="" dryrun="" postboot=0 session_pid="" today="" lane="" run=""
+P_NO_SUDO=0
 repo_set=0
 while [ "$#" -gt 0 ]; do
   case $1 in
@@ -136,6 +145,7 @@ while [ "$#" -gt 0 ]; do
       esac
       shift 2 ;;
     --post-boot) postboot=1; shift ;;
+    --no-sudo) P_NO_SUDO=1; shift ;;
     -h | --help) usage; exit 0 ;;
     *) echo "ERROR unknown argument: $1 (see --help)" >&2; exit 2 ;;
   esac
@@ -454,7 +464,9 @@ if [ "$P_LIVE" -ne 1 ]; then
   not_read "readings from a running system (systemctl, journalctl, docker, psql, needrestart, knob commands): ${P_ROOT:-}/run/systemd/system is absent, so nothing runs this tree"
 fi
 if [ "$P_PRIV" = none ]; then
-  not_read "root-only readings (other users' /proc maps, needrestart, the Postgres catalogs, the whole journal): not root, and sudo -n needs a password"
+  _w="sudo -n needs a password"
+  if [ "$P_NO_SUDO" -eq 1 ]; then _w="--no-sudo"; fi
+  not_read "root-only readings (other users' /proc maps, needrestart, the Postgres catalogs, the whole journal): not root, and $_w"
 fi
 
 # --- environment ------------------------------------------------------------
@@ -1770,6 +1782,10 @@ read_esm() {
   fi
   if have pro; then
     capture pro pro security-status --format json
+    if [ "$CAP_RC" -ne 0 ] && cap_read_only; then
+      not_read "Ubuntu Pro / ESM: pro security-status exited $CAP_RC on a read-only filesystem, writing its own log or lock (a sandbox such as ProtectSystem=strict), so it read nothing; pro itself isn't shown broken, and \"0 security pending\" never covers universe"
+      return 0
+    fi
     if [ "$CAP_RC" -eq 0 ]; then
       for k in num_esm_apps_updates num_esm_infra_updates num_universe_packages num_installed_packages; do
         re="\"$k\": *([0-9]+)"
@@ -4334,7 +4350,8 @@ first_start() {  # <unit>, after unit_show read its Inactive*Timestamps: FIRST_S
 }
 
 read_post_boot() {
-  local svc ds t out line down="" i said
+  local svc ds t out line down="" i said r rc
+  local -a f=()
   check_shutdown
   for svc in $KNOB_SERVICES; do
     if unit_show "$svc" ActiveState Result NRestarts After InactiveExitTimestamp InactiveEnterTimestamp; then
@@ -4442,6 +4459,24 @@ read_post_boot() {
     else
       health_says said "${HEALTH_RC[$i]}"
       check "health:${HEALTH_LINE[$i]}" 0 "the check on knob line ${HEALTH_LINE[$i]} $said"
+    fi
+  done
+  # A recovery line proves the path through a data store with a real request
+  # or a new row, so it runs here and around a data-store step, never at a
+  # reading before a run (#423).
+  for r in ${KNOB_RECOVERY[@]+"${KNOB_RECOVERY[@]}"}; do
+    IFS=$KNOB_US read -r -a f <<<"$r"
+    if [ "$P_LIVE" -ne 1 ] || [ -z "$P_KNOB_USER" ]; then
+      check "recovery:${f[1]}" "" "not run: a knob command needs a running system and a user who isn't root"
+      continue
+    fi
+    rc=0
+    knob_cmd "${f[0]}" >/dev/null 2>&1 </dev/null || rc=$?
+    if [ "$rc" -eq 0 ]; then
+      check "recovery:${f[1]}" 1 "exit 0"
+    else
+      health_says said "$rc"
+      check "recovery:${f[1]}" 0 "the check on knob line ${f[1]} $said"
     fi
   done
   case $R_FAILED in

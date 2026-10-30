@@ -15,7 +15,9 @@ Usage: . _probe-lib.sh    (sourced by probe.sh, recovery-point.sh, apply.sh,
 
 The primitives these scripts reach a host through:
   probe_init ROOT           sets P_ROOT ("" for /), P_LIVE, P_EUID, P_USER,
-                            P_PRIV (root, sudo or none), P_KNOB_USER, P_NOW
+                            P_PRIV (root, sudo or none), P_KNOB_USER, P_NOW.
+                            P_NO_SUDO=1 before it keeps a non-root P_PRIV
+                            none: nothing goes through sudo (#490)
                             and P_TMP, a scratch directory the caller removes
   as_root CMD...            runs CMD as root, directly or through sudo -n
                             (which sets LC_ALL=C again past sudo's
@@ -116,7 +118,7 @@ probe_init() {  # <root>
   P_PRIV=none
   if [ "$P_EUID" -eq 0 ]; then
     P_PRIV=root
-  elif command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1; then
+  elif [ "${P_NO_SUDO:-0}" -ne 1 ] && command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1; then
     P_PRIV=sudo
   fi
   # Knob commands come from a committed file, so they never run as root
@@ -191,6 +193,11 @@ capture() {  # <var> <cmd>...: VAR := its stdout; CAP_RC := its status; CAP_ERR 
   IFS= read -r CAP_ERR <"$P_TMP/stderr" || true
   printf -v "$_cv" '%s' "$_co"
 }
+
+# Whether the last capture failed on a read-only filesystem: EROFS's C-locale
+# text anywhere in its stderr, not only the first line, since pro prints a
+# traceback (#501).
+cap_read_only() { grep -q 'Read-only file system' "$P_TMP/stderr" 2>/dev/null; }
 
 in_words() {  # <word> <space-separated list>
   case " $2 " in *" $1 "*) return 0 ;; esac
