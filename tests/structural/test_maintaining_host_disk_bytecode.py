@@ -47,11 +47,16 @@ def _load(path, *python_flags):
         "spec = u.spec_from_loader('disk_gc', loader)\n"
         "loader.exec_module(u.module_from_spec(spec))\n"
     )
+    # Bytecode on unless a flag says otherwise: the docs now recommend
+    # exporting PYTHONDONTWRITEBYTECODE, and under it this load writes nothing
+    # and the reproduction proves nothing (CR 1042).
+    env = rig.clean_env(None)
+    env.pop("PYTHONDONTWRITEBYTECODE", None)
     r = subprocess.run(
         [sys.executable, *python_flags, "-c", code, str(path)],
         capture_output=True,
         text=True,
-        env=rig.clean_env(None),
+        env=env,
         timeout=60,
     )
     assert r.returncode == 0, r.stderr
