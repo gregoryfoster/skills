@@ -2413,4 +2413,3 @@ def test_an_unreadable_edit_history_is_a_warning(adopted):
     s = summary(res)
     assert s["edit_history"].startswith("unread") and "GraphQL" in s["edit_history"]
     assert "WARNING" in res.stderr
-

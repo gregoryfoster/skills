@@ -31,6 +31,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import difflib
+import hashlib
 import json
 import os
 import re
@@ -92,6 +93,14 @@ operations (a JSON array, from --ops FILE or --ops - for stdin):
   Last check-in and Last issue seen: the next scan's window then starts where
   this one looked, not where the write happened.
 
+edit history:
+  Each run with a baseline reads the body's edit history (GraphQL) and lists,
+  in the summary's foreign_edits, every entry later than the baseline whose
+  body no write of this tool produced. Every thread may write as one account,
+  so an entry is matched by its body's hash and its time, never by its editor.
+  The list is a warning, not a refusal: read those edits before trusting a
+  clean diff. An unread history is a warning too (summary "edit_history").
+
 lint:
   Every line the edit adds or changes is linted whole, so ticking a line that
   already holds a short ref or an unexpanded variable is refused with it. That
@@ -109,7 +118,8 @@ exit codes:
   2  infrastructure failure (gh or python3 failed; gh's own stderr is shown).
      Nothing was written, including a PATCH gh reported failed when the body
      read afterwards is unchanged.
-  3  refused: a foreign edit, a missing anchor, a count or lint failure, a
+  3  refused: a foreign edit, a baseline no write or adoption of this tool
+     saved (its hash is recorded beside it, in writes.jsonl), a missing anchor, a count or lint failure, a
      header line a later op removed or changed, an open issue the epic doesn't
      list (--account [FROM]), or a new issue in the --scan report that the
      body doesn't mention. Nothing was written.
@@ -1202,9 +1212,14 @@ def gh_graphql(query: str, variables: dict, what: str) -> tuple[dict, list[str]]
     return data, [str(e.get("message", e)) for e in resp.get("errors") or []]
 
 
-def fetch_body(repo: str, num: int) -> str:
+def fetch_issue(repo: str, num: int) -> dict:
+    """The epic as REST returns it: body, updated_at, state and closer."""
     data = gh_json(["api", f"repos/{repo}/issues/{num}"], "fetching the epic")
-    return data.get("body") or ""
+    return data if isinstance(data, dict) else {}
+
+
+def fetch_body(repo: str, num: int) -> str:
+    return fetch_issue(repo, num).get("body") or ""
 
 
 # ---------------------------------------------------------------- lint
@@ -1437,6 +1452,105 @@ def state_dir(arg: str | None, repo: str, num: int) -> Path:
     return base / owner / name / str(num)
 
 
+# ---------------------------------------------------------------- baseline
+#
+# The baseline is a plain per-user file, and a thread that learned the
+# procedure once saved its own hand edit into it, so the diff read clean
+# (#518). Each body this tool writes or adopts is recorded by hash, with
+# GitHub's time for it; a baseline no record matches is refused, and the
+# body's edit history is read for any edit since.
+
+WRITES = "writes.jsonl"
+# An edit-history entry this long after the baseline's own time is no part
+# of it: GitHub's clocks for the issue and its history can differ by a beat.
+HISTORY_SLACK = dt.timedelta(seconds=60)
+
+
+def digest(body: str) -> str:
+    """A body's hash, line endings and trailing blank lines aside: a baseline
+    file and an edit-history entry hash alike for the same body."""
+    return hashlib.sha256(("\n".join(split_raw(body)) + "\n").encode()).hexdigest()
+
+
+def gh_time(value) -> dt.datetime | None:
+    try:
+        return dt.datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def read_writes(sd: Path) -> list[dict]:
+    """Every record this tool made, skipping a line that isn't one."""
+    try:
+        lines = (sd / WRITES).read_text().splitlines()
+    except FileNotFoundError:
+        return []
+    out = []
+    for ln in lines:
+        try:
+            rec = json.loads(ln)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(rec, dict) and isinstance(rec.get("sha256"), str):
+            out.append(rec)
+    return out
+
+
+def save_baseline(sd: Path, text: str, at: str, via: str) -> None:
+    """Record the body's hash, then save it as the baseline.
+
+    In that order: a baseline saved without its record would refuse the
+    next run, while a record without its baseline leaves the old baseline,
+    which the diff then calls foreign, as before.
+    """
+    sd.mkdir(parents=True, exist_ok=True)
+    rec = {"sha256": digest(text), "at": at, "via": via}
+    with open(sd / WRITES, "a") as f:
+        f.write(json.dumps(rec) + "\n")
+    write_atomic(sd / "last-written.md", text)
+
+
+def foreign_edits(
+    host: str, num: int, since: dt.datetime, mine: set[str]
+) -> list[dict]:
+    """The body's history entries since the baseline that no write of this
+    tool made, oldest first.
+
+    Every thread writes as one account here, so logins can't tell them
+    apart: an entry is this tool's when its body hashes to a recorded write.
+    Any other entry later than the baseline's own time is foreign. GitHub
+    can fold several writes into one entry: it is read at its latest time,
+    with the body it ends on. A fold ending on a foreign edit is reported; one
+    ending on this tool's write passes, and a foreign edit earlier in it had
+    to pass that write's own diff against a recorded baseline.
+    """
+    owner, name = host.split("/")
+    data, _ = gh_graphql(
+        "query($owner: String!, $name: String!, $number: Int!) {"
+        " repository(owner: $owner, name: $name) { issue(number: $number) {"
+        " userContentEdits(last: 100) { nodes {"
+        " editedAt updatedAt editor { login } diff } } } } }",
+        {"owner": owner, "name": name, "number": num},
+        "reading the epic's edit history",
+    )
+    issue = (data.get("repository") or {}).get("issue") or {}
+    out = []
+    for e in (issue.get("userContentEdits") or {}).get("nodes") or []:
+        times = [t for t in (gh_time(e.get(k)) for k in ("editedAt", "updatedAt")) if t]
+        if not times or max(times) <= since + HISTORY_SLACK:
+            continue
+        diff = e.get("diff")
+        if isinstance(diff, str) and digest(diff) in mine:
+            continue
+        out.append(
+            {
+                "at": max(times).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "editor": (e.get("editor") or {}).get("login"),
+            }
+        )
+    return sorted(out, key=lambda x: x["at"])
+
+
 def write_atomic(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=path.name, suffix=".tmp")
@@ -1665,7 +1779,13 @@ def run(argv: list[str]) -> int:
         sd = state_dir(a.state_dir, host, a.epic)
         base_path = sd / "last-written.md"
 
-        live_raw = fetch_body(host, a.epic)
+        live_issue = fetch_issue(host, a.epic)
+        live_raw = live_issue.get("body") or ""
+        # GitHub's time for the body as fetched, for the record of what this
+        # run adopts (#518). The local clock only when GitHub sent none.
+        live_at = str(
+            live_issue.get("updated_at") or now.strftime("%Y-%m-%dT%H:%M:%SZ")
+        )
         live = normalize(live_raw)  # for comparisons only
         live_lines = split_raw(live_raw)  # what the operations edit
         if not live:
@@ -1682,7 +1802,48 @@ def run(argv: list[str]) -> int:
             baseline = live
             summary["adopted_live"] = True
         else:
-            baseline = normalize(base_path.read_text())
+            base_text = base_path.read_text()
+            writes = read_writes(sd)
+            ours = [w for w in writes if w["sha256"] == digest(base_text)]
+            if not ours:
+                why = (
+                    "it predates this tool's record of its writes (#518)"
+                    if not writes
+                    else "another thread may have saved it there"
+                )
+                raise Refused(
+                    f"the baseline at {base_path} matches no body this tool wrote or"
+                    f" adopted: {why}. Read the live body and its edit history, then"
+                    " re-run with --adopt-live"
+                )
+            baseline = normalize(base_text)
+            times = [t for t in (gh_time(w.get("at")) for w in ours) if t]
+            try:
+                if not times:
+                    raise Infra("the record of this baseline has no usable time")
+                summary["foreign_edits"] = foreign_edits(
+                    host, a.epic, max(times), {w["sha256"] for w in writes}
+                )
+            except Infra as e:
+                summary["edit_history"] = f"unread: {gh_cause(e)}"
+                print(
+                    "WARNING the epic's edit history wasn't read, so an edit since"
+                    f" the baseline shows only in the diff: {indented(gh_cause(e))}",
+                    file=sys.stderr,
+                )
+            else:
+                summary["edit_history"] = "read"
+                if summary["foreign_edits"]:
+                    print(
+                        "WARNING the epic's edit history holds edits since this"
+                        " tool's last write that none of its writes made: "
+                        + ", ".join(
+                            f"{e['at']} by {e['editor']}"
+                            for e in summary["foreign_edits"]
+                        )
+                        + ". Read them in the history before trusting a clean diff",
+                        file=sys.stderr,
+                    )
         ticks, other = foreign_changes(baseline, live, host)
         summary["foreign_ticks"] = ticks
         if other:
@@ -1780,7 +1941,12 @@ def run(argv: list[str]) -> int:
             return EXIT_OK
         if new == live_lines:
             if summary.get("adopted_live") or ticks:
-                write_atomic(base_path, "\n".join(live_lines) + "\n")
+                save_baseline(
+                    sd,
+                    "\n".join(live_lines) + "\n",
+                    live_at,
+                    "adopt-live" if summary.get("adopted_live") else "accept-ticks",
+                )
             summary["unchanged"] = True
             print(json.dumps(summary, indent=2))
             return EXIT_OK
@@ -1836,7 +2002,8 @@ def run(argv: list[str]) -> int:
             return EXIT_READBACK
 
         try:
-            back_raw = fetch_body(host, a.epic)
+            back_issue = fetch_issue(host, a.epic)
+            back_raw = back_issue.get("body") or ""
         except Infra as e:
             if patch_error:
                 summary["written"] = "unknown"
@@ -1898,7 +2065,12 @@ def run(argv: list[str]) -> int:
             return unconfirmed("the body read back differs from the body sent")
         summary["readback"] = "matches"
         try:
-            write_atomic(base_path, text)
+            save_baseline(
+                sd,
+                text,
+                str(back_issue.get("updated_at") or live_at),
+                "write",
+            )
         except (OSError, Infra) as e:
             summary["baseline"] = "not saved"
             return unconfirmed(f"saving the baseline failed: {e}")
