@@ -130,6 +130,7 @@ from tests.structural.test_patching_hosts_space import (
 from tests.structural.test_patching_hosts_space import (
     DOWNLOAD,
     DPKG,
+    FLOOR,
     GROWTH,
     PEAK,
     SHOW,
@@ -140,6 +141,17 @@ from tests.structural.test_patching_hosts_space import (
 PROBE = SKILL / "scripts" / "probe.sh"
 TODAY = "2026-09-30"
 SECRET = "kSECRETVALUE123-abcdefGHIJKL"
+# What apt would fetch into the dry run's DIR/archives (#499): the format
+# noble's apt 2.8.3 prints for `apt-get --print-uris -qq`, with the sizes of
+# the tzdata, age and bison the space fixtures resolve, 2660798 bytes.
+PRINT_URIS = (
+    "'http://archive.ubuntu.com/ubuntu/pool/main/t/tzdata/tzdata_2026e-0ubuntu0.24.04.1_all.deb'"
+    " tzdata_2026e-0ubuntu0.24.04.1_all.deb 282136 MD5Sum:d04b4d9c76a0acb9f3bdd9408abb857e\n"
+    "'http://archive.ubuntu.com/ubuntu/pool/universe/a/age/age_1.1.1-1ubuntu0.24.04.3_amd64.deb'"
+    " age_1.1.1-1ubuntu0.24.04.3_amd64.deb 1629868 MD5Sum:ebd0a1a1db79453e54687d06eaf13415\n"
+    "'http://archive.ubuntu.com/ubuntu/pool/main/b/bison/bison_3.8.2+dfsg-1ubuntu0.24.04.1_amd64.deb'"
+    " bison_2%3a3.8.2+dfsg-1ubuntu0.24.04.1_amd64.deb 748794 MD5Sum:dfd0ee7383158a5021011734efd1fac7\n"
+)
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -161,6 +173,7 @@ class Host(RigHost):
         # output for tzdata, age and bison, after every case a test set.
         for cmd, glob, out in (
             ("apt-get", "-s *install --only-upgrade *", SIM),
+            ("apt-get", "--print-uris *", PRINT_URIS),
             ("apt-cache", "* show *", SHOW),
             (
                 "dpkg-query",
@@ -733,6 +746,8 @@ def test_the_dry_run_sizes_what_the_run_writes_and_the_free_space_beside_it(host
 
 def test_a_run_that_wouldnt_fit_is_a_finding(host):
     _counted(host)
+    # The dry run's own download fits in DIR (#499); the run doesn't.
+    host.on("df", f"-Pk -- {host.tmp}/dry/archives", df_row(1, 9000000, "/scratch"))
     host.on("df", "-Pk -- *", df_row(9000000, 1000))
     out = host.run("--dry-run-into", str(host.tmp / "dry"))
     f = _finding(out, "dry-run:space:disk")
@@ -740,6 +755,79 @@ def test_a_run_that_wouldnt_fit_is_a_finding(host):
     assert f["message"].startswith("The run needs ")
     assert "131072 KiB floor" in f["message"]
     assert out["pending"]["dry_run"]["free_kib_root"] == 1000
+
+
+# --- the dry run's own download (#499) ----------------------------------------
+# It downloads the lane's whole selection into DIR/archives as root, so it is
+# sized first, from apt's own --print-uris against the dry run's own apt
+# config: an upper bound, since the selection isn't known until it has run.
+
+
+def test_the_dry_run_sizes_its_own_download_before_it_starts(host):
+    out = _counted(host).run("--dry-run-into", str(host.tmp / "dry"))
+    d = out["pending"]["dry_run"]
+    assert d["download_bound_kib"] == DOWNLOAD
+    assert isinstance(d["free_kib_dry_run_dir"], int)
+    calls = host.calls()
+    [i] = [
+        i
+        for i, c in enumerate(calls)
+        if c[0] == "apt-get" and c[1].startswith("--print-uris")
+    ]
+    [j] = [i for i, c in enumerate(calls) if c[0] == "unattended-upgrade"]
+    assert i < j
+    _, args, apt_config = calls[i]
+    # Where the dry run downloads, and against the lists it counts with.
+    assert apt_config == str(host.tmp / "dry" / "apt.conf") == calls[j][2]
+    assert args.endswith(" dist-upgrade")
+    assert "-o Debug::NoLocking=1" in args
+    assert "-o APT::Get::Always-Include-Phased-Updates=true" in args
+
+
+@pytest.mark.parametrize("short", [1, 0], ids=["short-1-kib", "exactly-enough"])
+def test_a_dry_run_whose_download_wouldnt_fit_doesnt_start(host, short):
+    _counted(host)
+    dry = host.tmp / "dry"
+    free = DOWNLOAD + FLOOR - short
+    host.on("df", f"-Pk -- {dry}/archives", df_row(9000000, free, "/scratch"))
+    out = host.run("--dry-run-into", str(dry))
+    if not short:
+        assert out["pending"]["dry_run"]["free_kib_dry_run_dir"] == free
+        assert host.calls("unattended-upgrade")
+        assert "dry-run" not in _ids(out)
+        return
+    f = _finding(out, "dry-run")
+    assert f["kind"] == "risk"
+    for words in (f"{DOWNLOAD} KiB", f"{FLOOR} KiB floor", "/scratch", f"{free}"):
+        assert words in f["message"], words
+    assert out["pending"]["dry_run"] is None
+    assert not host.calls("unattended-upgrade")
+    assert not (dry / "summary").exists()
+
+
+@pytest.mark.parametrize("unread", ["print-uris", "df"])
+def test_a_dry_run_whose_download_cant_be_sized_doesnt_start(host, unread):
+    _counted(host)
+    dry = host.tmp / "dry"
+    if unread == "print-uris":
+        host.on("apt-get", "--print-uris *", rc=100, stderr="E: Broken packages\n")
+    else:
+        host.on("df", f"-Pk -- {dry}/archives", rc=1)
+    out = host.run("--dry-run-into", str(dry))
+    f = _finding(out, "dry-run")
+    assert f["kind"] == "unknown"
+    assert "didn't run" in f["message"]
+    assert out["pending"]["dry_run"] is None
+    assert not host.calls("unattended-upgrade")
+
+
+def test_help_says_the_dry_run_sizes_its_download_first():
+    r = subprocess.run(
+        ["bash", str(PROBE), "--help"], capture_output=True, text=True, env=_clean_env()
+    )
+    text = " ".join(r.stdout.split())
+    assert "--print-uris" in text
+    assert "download_bound_kib" in text
 
 
 def test_a_run_that_would_cross_the_gcs_headroom_line_is_a_finding(host):

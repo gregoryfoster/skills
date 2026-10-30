@@ -670,6 +670,9 @@ def test_the_probes_dry_run_counts_one_origin(tmp_path):
     assert '  "site=pkgs.tailscale.com";' in conf
     assert '  "^libc6$";' in conf and '  "^libstdc\\+\\+6$";' in conf
     assert '"^tailscale$"' not in conf
+    # Its download is sized from the origin's packages alone (#499).
+    [(_, uris, _)] = [c for c in host.calls("apt-get") if "--print-uris" in c[1]]
+    assert uris.endswith(" install --only-upgrade tailscale")
 
 
 @pytest.mark.parametrize(
