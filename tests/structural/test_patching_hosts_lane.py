@@ -642,6 +642,47 @@ def test_the_one_origin_lane_takes_only_an_origin_the_knob_follows(
     assert not host.calls("unattended-upgrade")
 
 
+def _refreshed(host) -> tuple[str, str]:
+    """--refresh-into, which the one-origin lane's dry run needs (#493): an
+    update that fetches the security list into the scratch copy."""
+    host.on(
+        "apt-get",
+        "update*",
+        script="for a; do case $a in Dir::State::Lists=*) d=${a#*=} ;; esac; done; "
+        'touch "${d}security.ubuntu.com_ubuntu_dists_noble-security_InRelease"; exit 0',
+    )
+    return ("--refresh-into", str(host.tmp / "fresh"))
+
+
+def test_a_one_origin_dry_run_on_lists_older_than_the_run_doesnt_start(tmp_path):
+    # #523, broker 2026-10-28: on lists older than the fix, the dry run
+    # counted Tailscale 1.104.2 against a 1.104.4 target, and that passed
+    # every gate: a count of 1, and nothing of the origin's left.
+    host = ProbeHost(tmp_path).knob(
+        "class production\nposture scheduled\norigin pkgs.tailscale.com follow\n"
+    )
+    host.on(
+        "apt-get",
+        "-s *dist-upgrade",
+        "Inst tailscale [1.102.2] (1.104.2 Tailscale:pkgs.tailscale.com [arm64])\n",
+    )
+    host.on("apt-cache", "*policy", POLICY)
+    host.on(
+        "unattended-upgrade",
+        "--dry-run -d",
+        "Packages that will be upgraded: tailscale\n",
+    )
+    scratch = host.tmp / "dry"
+    out = host.run("--dry-run-into", str(scratch), "--lane", TS)
+    [f] = [f for f in out["findings"] if f["id"] == "dry-run"]
+    assert f["kind"] == "risk"
+    assert f["message"].startswith(f"the {TS} lane's dry run didn't run: ")
+    assert "--refresh-into" in f["message"]
+    assert out["pending"]["dry_run"] is None
+    assert not host.calls("unattended-upgrade")
+    assert not (scratch / "summary").exists()
+
+
 def test_the_probes_dry_run_counts_one_origin(tmp_path):
     host = ProbeHost(tmp_path).knob(
         "class production\nposture scheduled\norigin pkgs.tailscale.com follow\n"
@@ -659,7 +700,7 @@ def test_the_probes_dry_run_counts_one_origin(tmp_path):
         "Packages that will be upgraded: tailscale\n",
     )
     scratch = host.tmp / "dry"
-    out = host.run("--dry-run-into", str(scratch), "--lane", TS)
+    out = host.run(*_refreshed(host), "--dry-run-into", str(scratch), "--lane", TS)
     d = out["pending"]["dry_run"]
     assert d["lane"] == TS and d["count"] == 1
     assert d["origin_pending"] == ["tailscale"]
@@ -670,6 +711,8 @@ def test_the_probes_dry_run_counts_one_origin(tmp_path):
     assert '  "site=pkgs.tailscale.com";' in conf
     assert '  "^libc6$";' in conf and '  "^libstdc\\+\\+6$";' in conf
     assert '"^tailscale$"' not in conf
+    # It counts against the lists this run fetched (#493).
+    assert f'Dir::State::Lists "{host.tmp}/fresh/lists/";' in conf
     # Its download is sized from the origin's packages alone (#499).
     [(_, uris, _)] = [c for c in host.calls("apt-get") if "--print-uris" in c[1]]
     assert uris.endswith(" install --only-upgrade tailscale")
@@ -705,7 +748,9 @@ def test_the_probes_one_origin_dry_run_names_what_it_would_leave(
     host.on("apt-cache", "*policy", POLICY)
     host.on("unattended-upgrade", "--dry-run -d", selection)
     scratch = host.tmp / "dry"
-    d = host.run("--dry-run-into", str(scratch), "--lane", TS)["pending"]["dry_run"]
+    d = host.run(*_refreshed(host), "--dry-run-into", str(scratch), "--lane", TS)[
+        "pending"
+    ]["dry_run"]
     assert (d["count"], d["origin_left"]) == (count, left)
     assert f"origin_left={' '.join(left)}\n" in (scratch / "summary").read_text()
 

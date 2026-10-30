@@ -575,11 +575,67 @@ def test_the_pending_set_is_counted_by_class(host):
     assert p["removals"] == ["libde265-0"]
     assert p["esm"]["num_esm_apps_updates"] == 29
     assert p["esm"]["attached"] is False
-    assert p["lists"]["security_age_hours"] >= 71
-    assert _finding(out, "lists:stale")["kind"] == "risk"
+    # #493: the archive last published 3 days ago, and the lists were
+    # fetched just now, so they're current.
+    assert p["lists"]["security_last_modified_hours"] >= 71
+    assert p["lists"]["security_age_hours"] == 0
+    assert "lists:stale" not in _ids(out)
     groups = {g["step"]: g["pending"] for g in p["hold_groups"]}
     assert groups["postgres"] == ["postgresql-16", "libpq5"]
     assert groups["docker"] == []
+
+
+# --- the lists' age (#493) -----------------------------------------------------
+# apt sets a list's mtime from the archive's Last-Modified, so a quiet day for
+# noble-security read as stale lists right after a host apt-get update. What
+# moves at a fetch, measured on noble (apt 2.8.3, 2026-10-30): each InRelease's
+# ctime, at a Get and at a Hit alike, and only when it was fetched. lists/
+# partial/'s mtime moves at a failed update too, and nothing in apt writes
+# /var/lib/apt/periodic/update-success-stamp: update-notifier-common's hook
+# does, where it's installed.
+
+SECURITY_IN_RELEASE = (
+    "var/lib/apt/lists/archive.ubuntu.com_ubuntu_dists_noble-security_InRelease"
+)
+
+
+class LaterHost(Host):
+    """The probe's clock HOURS on from the tree's, so a list written now
+    reads as fetched HOURS ago: a ctime can't be set back."""
+
+    STUBBED = (*Host.STUBBED, "date")
+    FALLBACKS = {
+        **Host.FALLBACKS,
+        "date": 'for d in /bin /usr/bin; do [ -x "$d/date" ] && exec "$d/date" "$@"; done; exit 127',
+    }
+
+    def __init__(self, tmp_path, hours: int):
+        super().__init__(tmp_path)
+        self.on("date", "+%s", f"{self.now + hours * 3600 + 600}\n")
+
+
+def test_the_lists_age_from_their_fetch_not_the_archives_last_modified(host):
+    # co-processor, 2026-10-26: noble-security hadn't published for 26 h.
+    host.write(SECURITY_IN_RELEASE, "x", age_days=26 / 24)
+    out = host.run()
+    lists = out["pending"]["lists"]
+    assert lists["security_age_hours"] == 0
+    assert lists["security_last_modified_hours"] >= 25
+    assert "fetched" in lists["source"]
+    assert "lists:stale" not in _ids(out)
+
+
+@pytest.mark.parametrize("hours, stale", [(30, True), (20, False)])
+def test_lists_fetched_more_than_a_day_ago_are_stale(tmp_path, hours, stale):
+    host = LaterHost(tmp_path, hours)
+    host.write(SECURITY_IN_RELEASE, "x")
+    out = host.run()
+    assert out["pending"]["lists"]["security_age_hours"] == hours
+    assert ("lists:stale" in _ids(out)) is stale
+    if stale:
+        f = _finding(out, "lists:stale")
+        assert f["kind"] == "risk"
+        assert f"fetched {hours} hours ago" in f["message"]
 
 
 def _policy(name: str, installed: str, candidate: str, suites: list[str]) -> str:
