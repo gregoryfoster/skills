@@ -94,10 +94,12 @@ deploy/         — Systemd unit + deployment config
 | After editing `deploy/<PROJECT_NAME>.service` | `sudo systemctl daemon-reload && sudo systemctl restart <PROJECT_NAME>` |
 | After DB model changes [DB_BACKED=yes] | `uv run alembic upgrade head` then restart |
 
-**Dev server workflow.** Run on port `<API_PORT_DEV>` so the live service stays up. Load env first (`load_env`: § Environment Variables):
+**Dev server workflow.** Run on port `<API_PORT_DEV>` so the live service stays up. Load env in the same command (§ Environment Variables):
 
 ​```bash
-load_env /etc/<PROJECT_NAME>/.env; load_env .env
+eval "$(sed -n 's/^#   //; /^load_env() [{]/,/^[}]/p' skills/shipping-work-python-fastapi/scripts/pre-ship.sh)"
+ENV_FILE=.env; [ -r "$ENV_FILE" ] || ENV_FILE="$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")/.env"
+load_env /etc/<PROJECT_NAME>/.env; load_env "$ENV_FILE"
 uv run uvicorn src.api.main:app --host 0.0.0.0 --port <API_PORT_DEV> --reload --log-config src/core/log_config.json
 ​```
 
@@ -124,18 +126,22 @@ Two env files, loaded in order (later values override):
 1. **`/etc/<PROJECT_NAME>/.env`** — production secrets (`DATABASE_URL`, etc.). Survives repo resets and worktree switches. Managed manually on the VM. The only env file the systemd service loads.
 2. **`.env`** (repo root, git-ignored) — dev/agent secrets (`GH_TOKEN`, `TEST_DATABASE_URL`). Never commit. Production never reads it.
 
-For shell commands, **parse the files, never source them**: sourcing runs a file as shell code, so anything in it that isn't a plain `KEY=value` executes or expands. `load_env` exports what it loads, so keep secrets a shell doesn't need out of these files. Define `load_env` once per shell from the recipe in `skills/shipping-work-python-fastapi/scripts/pre-ship.sh`'s header (in a linked worktree, its `ENV_FILE` lines find the primary checkout's `.env`), then:
+For shell commands, **parse the files, never source them**: sourcing runs a file as shell code, so anything in it that isn't a plain `KEY=value` executes or expands. `load_env` exports what it loads, so keep secrets a shell doesn't need out of these files. Load them **in the same command as whatever needs them**: an agent's tool starts a fresh shell per call, so a function defined in one call is gone in the next. The first line defines `load_env` in place from the recipe in `skills/shipping-work-python-fastapi/scripts/pre-ship.sh`'s header, which stays the only copy; the second picks the checkout's own `.env`, or from a linked worktree the primary checkout's, as the recipe's `ENV_FILE` lines do:
 
 ​```bash
-load_env /etc/<PROJECT_NAME>/.env; load_env .env
+eval "$(sed -n 's/^#   //; /^load_env() [{]/,/^[}]/p' skills/shipping-work-python-fastapi/scripts/pre-ship.sh)"
+ENV_FILE=.env; [ -r "$ENV_FILE" ] || ENV_FILE="$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")/.env"
+load_env /etc/<PROJECT_NAME>/.env; load_env "$ENV_FILE"
 ​```
 > end include
 
 > Include when DEPLOY_TARGET=none:
-**`.env`** (repo root, git-ignored): all secrets. Never commit. **Parse it, never source it**: define `load_env` once per shell from the recipe in `skills/shipping-work-python-fastapi/scripts/pre-ship.sh`'s header, then:
+**`.env`** (repo root, git-ignored): all secrets. Never commit. **Parse it, never source it**, in the same command as whatever needs it, since an agent's tool starts a fresh shell per call. The first line defines `load_env` in place from the recipe in `skills/shipping-work-python-fastapi/scripts/pre-ship.sh`'s header; the second finds the primary checkout's `.env` from a linked worktree:
 
 ​```bash
-load_env .env
+eval "$(sed -n 's/^#   //; /^load_env() [{]/,/^[}]/p' skills/shipping-work-python-fastapi/scripts/pre-ship.sh)"
+ENV_FILE=.env; [ -r "$ENV_FILE" ] || ENV_FILE="$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")/.env"
+load_env "$ENV_FILE"
 ​```
 > end include
 
@@ -163,9 +169,11 @@ Currently defined:
 # Install dependencies
 uv sync
 
-# Load environment (required before running server, migrations, or gh; load_env: § Environment Variables)
-load_env /etc/<PROJECT_NAME>/.env; load_env .env   # DEPLOY_TARGET=systemd
-# load_env .env                                    # DEPLOY_TARGET=none
+# Load environment (required before running server, migrations, or gh), in the
+# same command as what needs it (§ Environment Variables)
+eval "$(sed -n 's/^#   //; /^load_env() [{]/,/^[}]/p' skills/shipping-work-python-fastapi/scripts/pre-ship.sh)"
+ENV_FILE=.env; [ -r "$ENV_FILE" ] || ENV_FILE="$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")/.env"
+load_env /etc/<PROJECT_NAME>/.env; load_env "$ENV_FILE"   # DEPLOY_TARGET=none: drop the /etc load
 
 # Run tests
 uv run pytest
