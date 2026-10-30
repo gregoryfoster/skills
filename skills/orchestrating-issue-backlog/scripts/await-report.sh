@@ -11,10 +11,11 @@
 # and exits on the first one it finds that carries this session's ID and was
 # written by the expected author. One session has two spellings: the worker
 # writes $CLAUDE_CODE_REMOTE_SESSION_ID, `cse_<id>`, while claude.ai/code shows
-# `session_<id>` in its URL. Either one given finds either one written (#524). The repo may be public, so anyone can
-# comment, and a marker from anyone else is ignored. Every status ends the
-# wait, `blocked` and `question` as surely as `done`: a watch that ended only
-# on success would leave a stuck worker looking like a busy one.
+# `session_<id>` in its URL. Either one given finds either one written (#524).
+# The repo may be public, so anyone can comment, and a marker from anyone else
+# is ignored. Every status ends the wait, `blocked` and `question` as surely as
+# `done`: a watch that ended only on success would leave a stuck worker looking
+# like a busy one.
 #
 # The worker pushes after every commit, so with --branch a moving branch SHA
 # counts as activity, and --progress prints each new SHA as it lands. With
