@@ -72,10 +72,11 @@ operations (a JSON array, from --ops FILE or --ops - for stdin):
   check-in, Last probe, Last issue seen, Last verified SHA, Next); any other
   field must already be there. It reads unindented lines only, as scan.sh
   does: an indented "**Field:**" line, a checklist item's sub-note or a header
-  list set in 1-3 spaces, is skipped, and the summary's notes name it. The line joins the top-level "- **Field:**"
-  list holding the cursor lines, else the one above the first section, else
-  goes just before that section (a "#" title stays above). With add-section,
-  that brings an adopted epic onto the template without a hand edit.
+  list set in 1-3 spaces, is skipped, and the summary's notes name it. The
+  line joins the top-level "- **Field:**" list holding the cursor lines, else
+  the one above the first section, else goes just before that section (a "#"
+  title stays above). With add-section, that brings an adopted epic onto the
+  template without a hand edit.
 
   Every header op first turns each paragraph holding a cursor line, such as
   "**Last check-in:** ...", into "- **Field:** value" items, so the header
@@ -121,11 +122,12 @@ exit codes:
      Nothing was written, including a PATCH gh reported failed when the body
      read afterwards is unchanged.
   3  refused: a foreign edit, a baseline no write or adoption of this tool
-     saved (its hash is recorded beside it, in writes.jsonl), a missing anchor, a count or lint failure, a
-     header line a later op removed or changed, an open issue the epic doesn't
-     list (--account [FROM]), a new issue in the --scan report that the
-     body doesn't mention, or a closed epic without --closed-ok (the message
-     names who closed it and when; a dry run notes it). Nothing was written.
+     saved (its hash is recorded beside it, in writes.jsonl), a missing
+     anchor, a count or lint failure, a header line a later op removed or
+     changed, an open issue the epic doesn't list (--account [FROM]), a new
+     issue in the --scan report that the body doesn't mention, or a closed
+     epic without --closed-ok (the message names who closed it and when; a
+     dry run notes it). Nothing was written.
   4  not confirmed. Either written (summary "written": true) but the body read
      back differs from the body sent, the read-back failed, or the baseline
      couldn't be saved; or the PATCH failed and whether it landed is unknown
