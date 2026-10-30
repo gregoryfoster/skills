@@ -536,6 +536,25 @@ class TestAThrottledCheckIsReportedAsSuch:
         assert THROTTLE_LINE in log and "high 20184" in log, log
 
     @requires_node
+    def test_the_report_holds_where_swap_was_left_unbounded(
+        self, harness: Harness
+    ) -> None:
+        """CR 1338: where systemd refuses MemorySwapMax= and the hook drops
+        it (#340), the scope can reclaim into swap, and `high` still counts.
+        The report must not claim it could not."""
+        result = harness.run(
+            events=THROTTLED,
+            STUB_REJECT_PROPS="MemorySwapMax",
+            STUB_EXIT="3",
+            STUB_STDERR=INCOMPLETE,
+        )
+        assert THROTTLE_LINE in result.stdout, result.stdout
+        assert "cannot reclaim" not in result.stdout, (
+            "with swap unbounded the scope can reclaim; the throttle report "
+            f"must hold on either host (CR 1338)\n{result.stdout}"
+        )
+
+    @requires_node
     def test_an_unthrottled_failure_is_still_a_failure_to_run(
         self, harness: Harness
     ) -> None:
