@@ -66,9 +66,9 @@ Options:
                       adds Ubuntu's -updates and each origin the knob
                       follows; or origin:<origin>, one followed origin and
                       nothing else. With --dry-run-into only
-  --post-boot         the checks after a reboot (run.md section 6), not the
-                      readings before a run. Takes neither --refresh-into nor
-                      --dry-run-into
+  --post-boot         the checks after a reboot (reboot-and-record.md
+                      section 6), not the readings before a run. Takes
+                      neither --refresh-into nor --dry-run-into
   --run DIR           with --post-boot: the run whose reboot chain copied a
                       volatile journal into DIR/journal (default: the newest
                       /var/backups/patching-hosts-<UTC>). A persistent
@@ -550,7 +550,7 @@ read_journal() {
   jaddn o reach_days "$reach"
   R_JOURNAL=$o
   if [ "$verdict" = volatile ]; then
-    finding risk journal:volatile journal:volatile "The journal is volatile (Storage=${storage:-unset}, systemd-journal-flush ${flush_live:-$flush}, ${pc:-an unknown number of} files under /var/log/journal): a reboot erases everything before it. Copy it as the reboot chain's last step (run.md section 5)."
+    finding risk journal:volatile journal:volatile "The journal is volatile (Storage=${storage:-unset}, systemd-journal-flush ${flush_live:-$flush}, ${pc:-an unknown number of} files under /var/log/journal): a reboot erases everything before it. Copy it as the reboot chain's last step (reboot-and-record.md section 5)."
   fi
 }
 
@@ -3868,7 +3868,7 @@ read_dormant() {
   not_read "whether each component came with the image or was installed later: that needs the image's build date, and the guest sees neither its image's digest nor its date (the profile's Detection)"
 }
 
-# --- after the boot (run.md §6) ---------------------------------------------
+# --- after the boot (reboot-and-record.md §6) -------------------------------
 POST=""
 check() {  # <name> <ok 1|0|""> <evidence>
   local e=""

@@ -678,7 +678,7 @@ PID1_MAPS=/proc/1/maps
 
 # Whether the bulk's selection makes a reboot certain: a kernel, or a package
 # owning a file PID 1 maps, as libc6 and systemd do. On wslcb, PID 1 mapped
-# 15 deleted libraries after the bulk. Only PID 1 is read: run.md's step 4
+# 15 deleted libraries after the bulk. Only PID 1 is read: reboot-and-record.md's step 4
 # also reboots for dbus, logind, user@ or a data store, and a library only
 # they map isn't predicted, as watcher's PostgreSQL mapped libxml2 (CR 214,
 # CR 215). 0 predicted, 1 not, 2 unknown, with REBOOT_WHY saying why.
@@ -1398,7 +1398,7 @@ finish() {
         break
       done
     done
-    NEXT+=("the reboot decision: run.md section 4")
+    NEXT+=("the reboot decision: reboot-and-record.md section 4")
   fi
   # The probe again, into the run, for the record: never part of the verdict.
   out=$(bash "$_libdir/probe.sh" --config "$config" --host "$host" --today "$today" 2>"$P_TMP/reprobe.err") || rc=$?

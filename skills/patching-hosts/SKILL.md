@@ -65,7 +65,7 @@ done
 6. **The reboot**, when needrestart's list or `reboot-required` calls for one: a detached in-guest chain, approval 3(b). `bash "<reboot-chain.sh>" --run <dir>` prints the chain for the owner to read; with `--approve` it writes and launches it. Then verify: `bash "<probe.sh>" --post-boot`.
 7. **Record** what happened and what's left pending, by class, then journal the run in the [process log](references/process-log.md): what the profile got wrong or lacked, the decisions, and the surprises. **Where the skill is vendored, never write into the copy:** draft the entry, and file it upstream as an issue, with the owner's approval.
 
-Steps 4–7 in full, with each trap: [run.md](references/run.md). The probe's `environment.profile` names the environment profile the host matches, and its image generation. That profile holds the environment's quirks: which packages restart themselves, `/tmp`, clean-shutdown evidence. The one so far: [environments/exe-dev-exeuntu.md](references/environments/exe-dev-exeuntu.md).
+Steps 4–7 in full, with each trap: [run.md](references/run.md), then [reboot-and-record.md](references/reboot-and-record.md). The probe's `environment.profile` names the environment profile the host matches, and its image generation. That profile holds the environment's quirks: which packages restart themselves, `/tmp`, clean-shutdown evidence. The one so far: [environments/exe-dev-exeuntu.md](references/environments/exe-dev-exeuntu.md).
 
 **A dormant component** is pruned apart from the run, one stage at a time: disable, then remove, then purge, each after the last one's soak, and a savepoint lets the purge skip the remove. `bash "<prune-plan.sh>" --component <name> --out <file>` reads what it would take; `bash "<prune.sh>" --stage <stage> --plan <file>` prints the stage's commands, and with `--approve` runs exactly those. The calendar, what each purge script deletes, and the traps: [pruning.md](references/pruning.md).
 
@@ -87,7 +87,8 @@ It never unmasks a timer, edits apt or needrestart config beyond the approved dr
 ## Detail Docs
 
 - [references/readings.md](references/readings.md) — what to measure before proposing, and the mistake each reading prevents
-- [references/run.md](references/run.md) — approvals, the gate, the recovery point, held steps, the reboot chain, post-boot checks, the record
+- [references/run.md](references/run.md) — approvals, the gate, the recovery point, held steps
+- [references/reboot-and-record.md](references/reboot-and-record.md) — the reboot decision, the reboot chain, post-boot checks, the record
 - [references/datastores.md](references/datastores.md) — Redis and Qdrant: reaching each, its recovery point, the chain's stop, a restore, the checks after a restart
 - [references/policy.md](references/policy.md) — the two postures, the two lanes, pending classes, exceptions, dormant components, owners
 - [references/pruning.md](references/pruning.md) — pruning a dormant component: the calendar, the plan, the stages, and what a purge deletes
