@@ -214,6 +214,18 @@ class TestThePointerRuns:
         assert r.stdout.split()[0] == _sha(SENTINEL), "load_env did not load it"
         assert SENTINEL not in r.stdout + r.stderr
 
+    def test_the_lifted_loader_skips_a_leading_digit_key(self, tmp_path: Path):
+        """#532, through the template's own lift: the copy every scaffolded
+        repo runs is the recipe's, so a key filter that lets `9BAD` reach
+        `export` aborts the agent's command here too."""
+        env_file = tmp_path / ".env"
+        env_file.write_text(f"9BAD=x\nGH_TOKEN={SENTINEL}\n")
+        r = _run_block(f"{EXTRACT}\nload_env {env_file}", ROOT)
+        assert r.returncode == 0, (
+            f"the lifted load_env aborted on a key starting with a digit: {r.stderr}"
+        )
+        assert r.stdout.split()[0] == _sha(SENTINEL), "the next key did not load"
+
 
 class TestTheTemplateLoadsInOneCommand:
     """CR 1044: an agent's Bash tool starts a fresh shell per call, so "define

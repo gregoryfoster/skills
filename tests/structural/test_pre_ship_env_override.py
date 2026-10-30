@@ -535,6 +535,20 @@ class TestTheRecipeActuallyRuns:
         assert "GOOD=[y]" in r.stdout
 
     @pytest.mark.parametrize("variant", ALL_VARIANTS)
+    def test_a_leading_digit_key_is_skipped_not_fatal(self, variant):
+        """#532: `9BAD` passes a filter that only rejects characters outside
+        `[A-Za-z0-9_]`, and `export "9BAD=x"` is `not a valid identifier`, so
+        under `set -euo pipefail` the wrapper died before the gate ran. The
+        key is skipped, and the line after it still loads."""
+        r = _run_loader(variant, "9BAD=x\nGOOD=y\n", 'echo "GOOD=[${GOOD}]"')
+        assert r.returncode == 0, (
+            f"{variant}: a key starting with a digit aborted the recipe. A "
+            "secrets file typo must not decide whether the gate runs. Skip it "
+            f"with a `[0-9]*` arm in the key filter. stderr: {r.stderr.strip()}"
+        )
+        assert "GOOD=[y]" in r.stdout, r.stdout
+
+    @pytest.mark.parametrize("variant", ALL_VARIANTS)
     def test_lifting_the_loader_does_not_clobber_the_caller(self, variant):
         """The recipe has to survive being reused, because it is written to be.
 
