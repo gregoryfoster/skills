@@ -4458,6 +4458,71 @@ def test_post_boot_honours_a_depends_exception_only_for_the_order(
     assert (fid in _ids(out)) is not excepted
 
 
+# --- what the probe changes (#423, #490, #501) ---------------------------------
+
+
+def test_a_recovery_line_runs_only_after_a_boot(host):
+    # A health line runs at every probe; a recovery line, with its real
+    # request and new row, never does before a run.
+    marker = host.tmp / "recovered"
+    host.knob(f"posture scheduled\nrecovery touch {marker}\nrecovery false\n")
+    out = host.run()
+    assert not marker.exists()
+    assert not [i for i in _ids(out) if "recovery" in i]
+    out = host.run("--post-boot")
+    assert marker.exists()
+    checks = {c["check"]: c for c in out["post_boot"]}
+    assert checks["recovery:2"]["ok"] is True
+    assert checks["recovery:3"]["ok"] is False
+    assert "exits 1" in checks["recovery:3"]["evidence"]
+    assert "post-boot:recovery:3" in _ids(out)
+
+
+def test_no_sudo_reads_nothing_through_sudo(host):
+    assert host.run()["probe"]["privilege"] == "sudo"
+    host.log.unlink()
+    out = host.run("--no-sudo")
+    assert out["probe"]["privilege"] == "none"
+    assert not host.calls("sudo")
+    [n] = [n for n in out["not_read"] if n.startswith("root-only readings")]
+    assert "--no-sudo" in n
+
+
+def test_help_names_no_sudo_and_what_the_probe_writes():
+    r = subprocess.run(
+        ["bash", str(PROBE), "--help"], capture_output=True, text=True, env=_clean_env()
+    )
+    text = " ".join(r.stdout.split())
+    assert "--no-sudo" in text
+    assert "probe.privilege" in text
+    assert "/var/log/ubuntu-advantage.log" in text
+
+
+# pro security-status as root appends to its log and takes its lock: under
+# systemd's ProtectSystem=strict it exits 1 within ~3 s, a traceback ending
+# in EROFS (exe.dev, ubuntu-pro-client 37.2, 2026-10-26).
+EROFS = (
+    "Traceback (most recent call last):\n"
+    '  File "/usr/lib/python3/dist-packages/uaclient/log.py", line 1, in emit\n'
+    "OSError: [Errno 30] Read-only file system: '/var/log/ubuntu-advantage.log'\n"
+)
+
+
+@pytest.mark.parametrize(
+    "stderr, read_only",
+    [(EROFS, True), ("Failed to connect to the contract server\n", False)],
+    ids=["read-only", "other"],
+)
+def test_a_pro_read_a_read_only_filesystem_stopped_says_so(host, stderr, read_only):
+    host.on("pro", "security-status --format json", rc=1, stderr=stderr)
+    out = host.run()
+    assert out["pending"]["esm"] is None
+    [n] = [n for n in out["not_read"] if n.startswith("Ubuntu Pro / ESM")]
+    assert ("read-only filesystem" in n) is read_only
+    if not read_only:
+        assert "couldn't be read" in n
+
+
 def test_post_boot_reads_the_run_it_is_given(host):
     host.write("run/log/journal/" + "a" * 32 + "/system.journal", "x")
     host.write(f"{RUN}/reboot-chain.log", COPIED)

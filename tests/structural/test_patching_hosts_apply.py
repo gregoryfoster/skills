@@ -1607,6 +1607,60 @@ def test_a_held_step_stops_its_restarters_around_the_restart_and_polls_health(ho
     assert all(line[:4] == "2026" for line in log)
 
 
+RECOVERY = "recovery curl -sf -X POST http://localhost:8000/api/v2/validate\n"
+
+
+def _posts(host: Host) -> list[int]:
+    return [
+        i for i, (n, a, _) in enumerate(host.calls()) if n == "curl" and "POST" in a
+    ]
+
+
+def test_a_held_step_proves_recovery_once_after_its_health_checks(host):
+    # #423: a recovery line runs around a data-store step, and never in the
+    # bulk or the gate.
+    host.knob(KNOB + RECOVERY)
+    out = host.run()
+    assert not _posts(host)
+    assert out["recovery"] is None
+    out = host.run(step="postgres")
+    [post] = _posts(host)
+    polls = [
+        i for i, (n, a, _) in enumerate(host.calls()) if n == "curl" and "POST" not in a
+    ]
+    assert post > max(polls)
+    assert out["recovery"] == {
+        "declared": 1,
+        "checks": [
+            {
+                "command": RECOVERY.split(" ", 1)[1].strip(),
+                "line": 6,
+                "exit": 0,
+            }
+        ],
+        "passed": True,
+    }
+    assert out["verdict"]["ok"] is True
+
+
+def test_a_failed_recovery_check_fails_the_held_step(host):
+    host.knob(KNOB + RECOVERY)
+    host.run()
+    host.cases["curl"].insert(0, ("-sf -X POST*", "", 22, "", None))
+    out = host.run(step="postgres", rc=1)
+    assert out["recovery"]["passed"] is False
+    assert any("recovery check on knob line 6" in w for w in out["verdict"]["why"])
+    assert out["abort"]["restarters_stopped"] == ["app-healthcheck.timer"]
+
+
+def test_a_recovery_line_never_runs_as_root(host):
+    host.knob(
+        KNOB.replace("health curl -sf http://localhost:8000/health\n", "") + RECOVERY
+    )
+    out = host.run(rc=3, env={"STUB_USER": "root"})
+    assert any("never run as root" in r for r in out["refused"])
+
+
 def test_a_restart_the_health_checks_never_pass_leaves_the_restarters_stopped(host):
     host.run()
     host.cases["curl"] = []

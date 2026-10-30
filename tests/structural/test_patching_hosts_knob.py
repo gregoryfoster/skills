@@ -487,6 +487,7 @@ EVERY_DIRECTIVE = {
     "service": "service app-web.service",
     "depends": "depends postgresql@16-main tailscaled.service",
     "health": "health curl -sf http://localhost:8000/health",
+    "recovery": "recovery /usr/local/bin/app-recovery-check",
     "datastore": "datastore postgres postgresql@16-main app",
     "backup": "backup app-backup.service postgresql@16-main",
     "hold": "hold postgresql-* libpq5 postgres",
@@ -516,6 +517,7 @@ def test_every_directive_in_knob_md_is_one_the_parser_reads(tmp_path):
         "service",
         "depends",
         "health",
+        "recovery",
         "datastore",
         "backup",
         "caller",
@@ -525,6 +527,22 @@ def test_every_directive_in_knob_md_is_one_the_parser_reads(tmp_path):
     ):
         assert out[key], f"{key} parsed to nothing"
     assert out["records"]["value"] == "example-org/host-records"
+
+
+def test_a_recovery_line_is_a_command_list_apart_from_health(tmp_path):
+    # #423: a check with side effects, run only around data-store steps and
+    # after a boot, never at every probe as a health line is.
+    out = _read(
+        tmp_path,
+        "posture scheduled\nhealth curl -sf http://localhost/health\n"
+        "recovery curl -sf -X POST http://localhost/v2/validate | grep -q hit\n"
+        "[host web-*]\nrecovery /usr/local/bin/check-rows\nrecovery\n",
+    )
+    assert out["recovery"] == [{"command": "/usr/local/bin/check-rows", "line": 5}]
+    assert out["health"] == [{"command": "curl -sf http://localhost/health", "line": 2}]
+    [f] = out["findings"]
+    assert (f["line"], f["kind"]) == (6, "malformed")
+    assert "recovery takes a command" in f["message"]
 
 
 def test_an_hourly_quiet_range_is_one_for_every_hour(tmp_path):

@@ -74,3 +74,25 @@ def test_an_unread_class_or_tree_is_recorded_as_no_read_never_0():
     s7 = _section(AFTER, "## 7. The record")
     assert "*no read*, never as 0" in s7
     assert "`not_read`" in s7 and "`lockfile: null`" in s7
+
+
+# #423, #490, #501: the probe reads, with named exceptions, and says where
+# the contract is stated.
+READINGS = (SKILL / "references" / "readings.md").read_text()
+KNOB_MD = (SKILL / "references" / "knob.md").read_text()
+
+
+def test_the_probes_promise_names_its_exceptions():
+    step = _step(1)
+    assert "Ubuntu Pro's own log and lock" in step
+    assert "--no-sudo" in step and "probe.privilege" in step
+    for path in ("/var/log/ubuntu-advantage.log", "/var/lib/ubuntu-advantage/lock"):
+        assert path in READINGS, path
+    assert "It changes nothing" not in step
+
+
+def test_a_health_line_is_safe_at_any_time_and_recovery_isnt_run_by_every_probe():
+    [health] = [li for li in KNOB_MD.splitlines() if li.startswith("| `health ")]
+    assert "safe and cheap at any time" in health
+    [recovery] = [li for li in KNOB_MD.splitlines() if li.startswith("| `recovery ")]
+    assert "--post-boot" in recovery
