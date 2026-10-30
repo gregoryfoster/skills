@@ -85,8 +85,8 @@ What it reports (to stdout, which Claude Code injects as session context):
     check: one whose projectId is invalid, or two that share one.
   - A check its own memory cap stopped (#330): said as such, since nothing
     was measured, and never re-run uncapped. So is one the cap throttled past
-    MemoryHigh= until it ended unfinished (#527): the kernel slows a job it
-    cannot reclaim rather than killing it, and the scope's memory.events
+    MemoryHigh= until it ended unfinished (#527): the kernel slows the job
+    there rather than killing it, and the scope's memory.events
     (high above 0, oom_kill 0) is what says so.
   - SocratiCode's local store listening beyond loopback (#494): a TCP listener
     on QDRANT_PORT, QDRANT_GRPC_PORT or OLLAMA_PORT (16333, 16334, 11435 by
@@ -751,7 +751,7 @@ elif [ "$RC" -ne 0 ]; then
     _limit="$(_cap_word MemoryHigh)"
     _log "health-check throttled at its memory cap ($_limit) and did not finish (driver exited $RC) — not re-run uncapped"
     echo "socraticode-health: the check was throttled at its memory cap ($_limit) and did not finish (driver exited $RC) — see $LOG."
-    echo "socraticode-health: this is not a clean result. Nothing was measured today, and it was not re-run uncapped: past MemoryHigh= the kernel slows a job it cannot reclaim rather than killing it, and the cap keeps this host's other services up. $_CAP_ADVICE"
+    echo "socraticode-health: this is not a clean result. Nothing was measured today, and it was not re-run uncapped: past MemoryHigh= the kernel slows the job rather than killing it, and the cap keeps this host's other services up. $_CAP_ADVICE"
   else
     echo "socraticode-health: the check FAILED TO RUN (driver exited $RC with no findings) — see $LOG."
     echo "socraticode-health: this is not a clean result. Nothing was measured today."
