@@ -66,33 +66,77 @@ WORKTREE_ROOT=$(bash "$SCRIPT_DIR/resolve-worktree-root.sh") || {
 # resolve-worktree-root.sh already verifies we're inside a git repo (exits 2
 # otherwise), so no separate `git rev-parse --show-toplevel` sentinel is needed.
 
-# Trim any trailing slash so the pgrep/grep patterns don't produce `//` when
+# Trim any trailing slash so the match doesn't look for `//` when
 # WORKTREE_ROOT is set via env with a conventional trailing slash. Without
-# this, `WORKTREE_ROOT=/custom/wt/` produces pattern `/custom/wt//` which
-# won't match real cmdlines — silent false negatives.
+# this, `WORKTREE_ROOT=/custom/wt/` looks for `/custom/wt//`, which won't
+# match real cmdlines — silent false negatives.
 WORKTREE_ROOT="${WORKTREE_ROOT%/}"
+
+# Enumerate with `ps`, not `pgrep -af` (#335). On macOS and the BSDs `pgrep -a`
+# means "include ancestors in the match", not "print the command line", so each
+# line was a bare PID, no worktree path could be read from it, and the audit
+# said "No worktree zombies." — fail-open, and quietly. `ps -A -o` prints
+# `<pid> <ppid> <args>` on procps and BSD alike. `-ww` because procps cuts args
+# at $COLUMNS without it, which can cut the worktree path off and fail open the
+# same way. Captured rather than piped, so a ps that fails is a tooling failure
+# (exit 2) with its own stderr shown, never a clean bill.
+PS_TABLE=$(ps -A -ww -o pid= -o ppid= -o args=) || {
+  echo "ERROR: ps failed, so no process was checked" >&2
+  exit 2
+}
 
 # Scope all matching to the project's RESOLVED worktree root, which may be the
 # default <repo>/.worktrees/ or a custom location set via WORKTREE_ROOT env var
 # or .skills/worktree_root file. Without this scoping, processes referencing
 # other projects' worktree paths on the same machine would be falsely flagged
 # as zombies of this project.
-# Escape regex metacharacters for the grep/pgrep patterns.
-ESC_WORKTREE_ROOT=$(printf '%s\n' "$WORKTREE_ROOT" | sed 's/[][\\.*^$/()+?{|}]/\\&/g')
+#
+# The root is matched as a literal string, passed through the environment: a
+# `grep` filter would carry the pattern in its own argv and could match itself,
+# and awk's `-v` would rewrite any backslash in the path. Each candidate is
+# printed as `<pid> TAB <root>/<name> TAB <args>`, where <name> is the first
+# path component after the root — the worktree the process belongs to.
+#
+# The audit's own ancestors are never candidates. The shell that ran it may
+# name a vanished worktree in its own command text, and so may a wrapper further
+# up: under worktree-create.sh's preamble the wrapper is the audit's
+# grandparent. Listing either would make the `Kill all:` recipe kill the caller.
+CANDIDATES=$(AUDIT_ROOT="$WORKTREE_ROOT/" AUDIT_SELF=$$ awk '
+  BEGIN { root = ENVIRON["AUDIT_ROOT"] }
+  {
+    ppid[$1] = $2
+    args = $0
+    sub("^[ \t]*[0-9]+[ \t]+[0-9]+[ \t]", "", args)
+    s = args
+    while ((i = index(s, root)) > 0) {
+      s = substr(s, i + length(root))
+      if (match(s, "^[^/ ]+")) {
+        n++; pid[n] = $1; wt[n] = root substr(s, 1, RLENGTH); cmd[n] = args
+        break
+      }
+    }
+  }
+  END {
+    p = ENVIRON["AUDIT_SELF"]
+    while (!(p in ancestor)) {
+      ancestor[p] = 1
+      if (!(p in ppid)) break
+      p = ppid[p]
+    }
+    for (k = 1; k <= n; k++)
+      if (!(pid[k] in ancestor)) print pid[k] "\t" wt[k] "\t" cmd[k]
+  }
+' <<<"$PS_TABLE") || {
+  echo "ERROR: awk failed to read the process table" >&2
+  exit 2
+}
 
 ZOMBIES=()
-while IFS= read -r line; do
-  PID=$(awk '{print $1}' <<<"$line")
-  CMD=$(awk '{$1=""; print substr($0,2)}' <<<"$line")
-  # The pgrep filter guarantees $CMD contains at least one match for
-  # "$ESC_WORKTREE_ROOT/<name>", so this extraction is the SECOND-pass
-  # step: it isolates which specific worktree this process belongs to,
-  # so we can check whether that worktree's directory still exists.
-  WT_PATH=$(grep -oE "$ESC_WORKTREE_ROOT/[^/ ]+" <<<"$CMD" | head -1 || true)
-  [[ -z "$WT_PATH" ]] && continue
+while IFS=$'\t' read -r PID WT_PATH CMD; do
+  [[ -n "$PID" ]] || continue
   [[ -d "$WT_PATH" ]] && continue
   ZOMBIES+=("$PID $CMD")
-done < <(pgrep -af "$ESC_WORKTREE_ROOT/" 2>/dev/null || true)
+done <<<"$CANDIDATES"
 
 if (( ${#ZOMBIES[@]} > 0 )); then
   if (( QUIET == 0 )); then

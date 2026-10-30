@@ -140,9 +140,16 @@ fi
 # is where the breakage would have been diagnosed. The redirect makes the
 # coupling structural instead of behavioural; --quiet stays so the audit is not
 # doing work whose output is thrown away.
+#
+# Exit 1 is zombies found; anything else non-zero is an audit that could not
+# run (exit 2: no process table, no root), which is not a finding (#335).
 if [[ -x "$SCRIPT_DIR/audit-worktree-zombies.sh" ]]; then
-  if ! "$SCRIPT_DIR/audit-worktree-zombies.sh" --quiet >/dev/null; then
+  AUDIT_RC=0
+  "$SCRIPT_DIR/audit-worktree-zombies.sh" --quiet >/dev/null || AUDIT_RC=$?
+  if [[ $AUDIT_RC -eq 1 ]]; then
     echo "WARN: worktree zombies detected — run 'bash $SCRIPT_DIR/audit-worktree-zombies.sh' for details" >&2
+  elif [[ $AUDIT_RC -ne 0 ]]; then
+    echo "WARN: the worktree zombie audit could not run (exit $AUDIT_RC) — run 'bash $SCRIPT_DIR/audit-worktree-zombies.sh' to see why" >&2
   fi
 fi
 
