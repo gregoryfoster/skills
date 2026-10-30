@@ -191,9 +191,9 @@ then at -1000 after a reboot changed their path in; the spaced earlyoom
 regex), wslcb-licensing-tracker (the inert `MemoryLow=`,
 the `$`-anchored `--prefer`, earlyoom on stock arguments), address-validator
 (the templated-slice clamp, and -1000 with no `exe-init` — both measured
-there alone — plus the stock-arguments earlyoom again) and replicator (-1000
-with swap — 8 GiB and 4 G when #331 measured it — where a dry run showed what
-earlyoom reaches, and it was declined). Where the hosts disagreed, the
+there alone — plus the stock-arguments earlyoom again) and replicator (swap —
+8 GiB and 4 G when #331 measured it — at -1000 until its `exe-init` was
+replaced, at 0 since (#339), and earlyoom declined at both). Where the hosts disagreed, the
 disagreement is stated rather than resolved
 ([#295](https://github.com/gregoryfoster/skills/issues/295),
 [#303](https://github.com/gregoryfoster/skills/issues/303),
@@ -215,19 +215,18 @@ done
 
 | Sessions at | Measured on | What follows |
 |---|---|---|
-| **-1000** | broker; address-validator; replicator; notifier after its 2026-09-28 reboot | Inherited from `sshd` and `exe-init` on broker; address-validator has no `exe-init` process and lands there anyway. **No killer can pick a session** — not the kernel's, and not earlyoom, which skips a -1000 process exactly as the kernel does, `--prefer` or not (`kill.c`, v1.7 and since), so its `--prefer` reaches only a `choom`'d launch (§4). VSCode Server, Claude Code and any server they launch are never the victim, so under real exhaustion something else goes, the production service included, and a cgroup cap on a session **stalls** it rather than killing it. The service's `OOMScoreAdjust=` only reorders what *is* killable. The lever that works here is the session's own score: launch it under `choom -n 500 --` (raising is unprivileged), or inside [row U](troubleshooting.md)'s capped scope, which applies the same `choom` and bounds what it can take. |
-| **0** | notifier, 09-18 and 09-24, with the session root under `sshd` → `sshd-session` | Only `sshd` and `exe-init` at -1000; every `claude`, `MainThread` and `npm exec socrat` at 0. The kernel's killer *can* pick a session, and so can earlyoom, so the production unit's `OOMScoreAdjust=` is what creates the gap, and a cap on a session **kills** rather than stalls. |
+| **-1000** | broker; address-validator; notifier after its 2026-09-28 reboot | An `exe-init` build bug (below): inherited from `sshd` and `exe-init` on broker, and on address-validator, which has no resident `exe-init`, all the same. **No killer can pick a session** — not the kernel's, and not earlyoom, which skips a -1000 process exactly as the kernel does, `--prefer` or not (`kill.c`, v1.7 and since), so its `--prefer` reaches only a `choom`'d launch (§4). VSCode Server, Claude Code and any server they launch are never the victim, so under real exhaustion something else goes, the production service included, and a cgroup cap on a session **stalls** it rather than killing it. The service's `OOMScoreAdjust=` only reorders what *is* killable. The lever that works here is the session's own score: launch it under `choom -n 500 --` (raising is unprivileged), or inside [row U](troubleshooting.md)'s capped scope, which applies the same `choom` and bounds what it can take. |
+| **0** | notifier, 09-18 and 09-24, with the session root under `sshd` → `sshd-session`; replicator since its `exe-init` was replaced (2026-09-29), with the session root directly under `exe-init` | Only `sshd` and `exe-init` at -1000; every `claude`, `MainThread` and `npm exec socrat` at 0. The kernel's killer *can* pick a session, and so can earlyoom, so the production unit's `OOMScoreAdjust=` is what creates the gap, and a cap on a session **kills** rather than stalls. |
 
-**The class belongs to the session's path in, not to the host.** notifier
-has been in both rows:
-- at 0 while the session root sat under `sshd` → `sshd-session`;
-- at -1000 after the reboot for CannObserv/notifier#91 (2026-09-28), when the
-  editor's server started directly under `exe-init` (-1000) and every process
-  below it inherited that value (CannObserv/notifier#88, reopened).
-
-What sets the path, and so the class, was not determined. `exe-init`'s
-presence alone doesn't decide it: address-validator has no `exe-init` and
-sits at -1000.
+**On exe.dev the class is the `exe-init` build, not the path in**
+([#339](https://github.com/gregoryfoster/skills/issues/339)). The platform
+confirmed (2026-09-29) that some builds start sessions at -1000, a bug fixed
+in new VMs: replicator's sessions, directly under `exe-init`, read 0 once it
+was replaced. notifier has been in both rows — at 0 under `sshd-session`, at
+-1000 after the reboot for CannObserv/notifier#91 started its editor's server
+under `exe-init` (CannObserv/notifier#88) — and neither that flip nor
+address-validator's -1000 has been re-read against its build. Which builds,
+how to read one, and the fix: [patching-hosts' exe.dev profile](../../patching-hosts/references/environments/exe-dev-exeuntu.md#sessions-and-oom).
 **The service-side actions below are the same either way.** Do not skip them
 after measuring a 0: the reservation keeps reclaim off the service on any host,
 and `OOMScoreAdjust=` puts the service behind every process a killer can take —
@@ -237,11 +236,11 @@ sit at -1000 nothing on the service's side can: add the `choom` launch above.
 **Pin the reading, since nothing pins its cause.** A host can change class
 under you, and the earlyoom configuration in §4 then silently means something
 else. notifier did, across one reboot, and its pinned test was what caught
-it. CannObserv/replicator holds its reading with a test: it walks from its
-own process up to the child of `exe-init` or `sshd`, asserts that session
-root's `oom_score_adj` is still what the host's configuration assumed, fails
-naming the issue to reopen, and skips in CI and outside a session
-(`bcf3e5a`, `TestTheEarlyoomDecline`). A host at 0 asserts the opposite.
+it. CannObserv/replicator holds its reading with a test, which asserted
+-1000 (`bcf3e5a`, `TestTheEarlyoomDecline`) until its `exe-init` was replaced.
+It now asserts 0, fails naming `exe-init --version` against the fixed build,
+and skips in CI and outside a session (`297c339`,
+`tests/test_deploy.py::TestTheSessionPremise`).
 
 ### 2. Pin
 
@@ -350,11 +349,14 @@ before the kernel has to, and what it can act on is §1's reading:
 
 | Sessions at | What its `--prefer` reaches | So |
 |---|---|---|
-| **0** | every session process — `MainThread`, `claude`, `npm exec socrat` | run it as configured below; it takes a session before the service |
-| **-1000** | only a launch raised with `choom -n 500 --`; nothing else in a session | it is only as useful as the `choom` discipline around what it would need to kill. Otherwise it sheds small adj-0 daemons — the user manager, cron, logind, `tailscaled` unless avoided — in the kernel's own order, just sooner, freeing tens of MiB. That is a legitimate reason to decline it; replicator did |
+| **0** | every session process — `MainThread`, `claude`, `npm exec socrat` | run it as configured below; it takes a session before the service. Or decline it: replicator declined at 0, since the kernel's own order already takes the heaviest session process first, so earlyoom adds only an earlier kill on `MemAvailable`, which counts reclaimable page cache |
+| **-1000** | only a launch raised with `choom -n 500 --`; nothing else in a session | it is only as useful as the `choom` discipline around what it would need to kill. Otherwise it sheds small adj-0 daemons — the user manager, cron, logind, `tailscaled` unless avoided — in the kernel's own order, just sooner, freeing tens of MiB. That is a legitimate reason to decline it |
 
-On replicator's dry run a `choom`'d `node` was the victim at badness 1313;
-without one it was `(sd-pam)` at 733. Two cohort hosts at -1000 installed
+On replicator's dry run at -1000 a `choom`'d `node` was the victim at badness
+1313; without one it was `(sd-pam)` at 733, and it declined. At 0 it declined
+again (CannObserv/replicator#112, PR #126): stock arguments picked
+`systemd --user` (11 MiB), tuned ones VS Code's `MainThread` (476 MiB), the
+kernel's own next choice. Two cohort hosts at -1000 installed
 earlyoom and documented it as preferring dev tooling, which it never selects
 there ([#331](https://github.com/gregoryfoster/skills/issues/331)).
 
