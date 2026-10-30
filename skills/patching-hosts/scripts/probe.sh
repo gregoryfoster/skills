@@ -2309,6 +2309,69 @@ dry_run_fits() {  # <apt config> <the one origin's packages>: 1 with DRY_KIND an
   fi
 }
 
+# The sites a knob origin's lists are named after: a site key itself, or
+# for an o= name, each site apt-cache policy (POLICY_OUT) lists under it.
+origin_sites() {  # <var> <key>
+  local _os_l _os_o="" _os_s=""
+  local -a _os_kv=()
+  case $2 in
+    *.*) _os_s=$2 ;;
+    *)
+      while IFS= read -r _os_l; do
+        case $_os_l in
+          *" release "*)
+            _os_o=""
+            IFS=, read -r -a _os_kv <<<"${_os_l#*release }"
+            for _os_l in ${_os_kv[@]+"${_os_kv[@]}"}; do
+              case $_os_l in o=*) _os_o=${_os_l#o=} ;; esac
+            done ;;
+          *" origin "*)
+            if [ "$_os_o" = "${2//_/ }" ] && ! in_words "${_os_l#*origin }" "$_os_s"; then
+              _os_s="$_os_s ${_os_l#*origin }"
+            fi
+            _os_o="" ;;
+        esac
+      done <<<"$POLICY_OUT" ;;
+  esac
+  printf -v "$1" '%s' "${_os_s# }"
+}
+
+# Whether every list of the origin was fetched in this run: its ctime no
+# older than the probe's start. OF_WHY := why not, and OF_KIND its kind.
+OF_WHY="" OF_KIND=""
+origin_fresh() {  # <key>
+  local sites site f c t any=0 stale=0 oldest=""
+  OF_WHY="" OF_KIND=risk
+  origin_sites sites "$1"
+  if [ -z "$sites" ]; then
+    OF_KIND=unknown
+    OF_WHY="which sites serve the origin $1 couldn't be read from apt-cache policy${POLICY_WHY:+ ($POLICY_WHY)}, so whether its lists were fetched in this run is unknown"
+    return 0
+  fi
+  for site in $sites; do
+    for f in "$LISTS_DIR/${site}_"*_InRelease "$LISTS_DIR/${site}_"*_Release; do
+      [ -f "$f" ] || continue
+      any=1
+      file_ctime c "$f"
+      if [ -n "$c" ] && [ "$c" -ge "$P_NOW" ]; then continue; fi
+      stale=1
+      list_fetched t "$f"
+      if [ -z "$t" ]; then
+        oldest=unpacked
+      elif [ "$oldest" != unpacked ] && { [ -z "$oldest" ] || [ "$t" -lt "$oldest" ]; }; then
+        oldest=$t
+      fi
+    done
+  done
+  if [ "$any" -eq 0 ]; then
+    OF_WHY="no list of $1 was fetched in this run, so its lists' age is unknown"
+  elif [ "$stale" -eq 1 ] && [ "$oldest" = unpacked ]; then
+    OF_WHY="its lists weren't fetched in this run, and when they were can't be told from the tree's unpacking"
+  elif [ "$stale" -eq 1 ]; then
+    OF_WHY="its lists were fetched $(((P_NOW - oldest) / 3600)) hours before this run"
+  fi
+}
+
 read_dry_run() {
   local o="" conf t0 t1 out rc line names="" n="" dlk="" free="" rss="" w sel=0 lnames="" lkeep="" lskip=""
   local oleft="" left_read=0 kw p rest unlisted="" prompts="" cfp="" cfs="" i k keys="" po="" hv
@@ -2359,13 +2422,14 @@ read_dry_run() {
         finding unknown dry-run "" "the $lane lane's dry run didn't run: apt-cache policy lists no origin at ${lane#origin:}, so nothing from it is pending: is its source configured?"
         return 0
       fi
-      # On lists fetched before the run, it can count an older release of
-      # the origin's package, and that passes every gate (#523): only lists
-      # this run fetched count it.
-      if [ -z "$LISTS_FETCHED" ] || [ "$LISTS_FETCHED" -lt "$P_NOW" ]; then
-        w="no security list was fetched in this run, so its lists' age is unknown"
-        if [ -n "$LISTS_FETCHED" ]; then w="its lists were fetched $(((P_NOW - LISTS_FETCHED) / 3600)) hours before this run"; fi
-        finding risk dry-run "" "the $lane lane's dry run didn't run: $w, and on lists older than the run it can count an older release of the origin's package with every gate passed (#523). Count again with --refresh-into DIR beside --dry-run-into."
+      # On the origin's lists fetched before the run, it can count an older
+      # release of its package, and that passes every gate (#523): only the
+      # origin's own lists fetched in this run count it. Not the security
+      # pocket's (CR 1296): apt-get update exits 0 when one source fails,
+      # and leaves that source's list as it was.
+      origin_fresh "${lane#origin:}"
+      if [ -n "$OF_WHY" ]; then
+        finding "$OF_KIND" dry-run "" "the $lane lane's dry run didn't run: $OF_WHY, and on lists older than the run it can count an older release of the origin's package with every gate passed (#523). Count again with --refresh-into DIR beside --dry-run-into."
         return 0
       fi
       origin_split lkeep lskip "$lnames" "$SIM_DIST_OUT" ;;

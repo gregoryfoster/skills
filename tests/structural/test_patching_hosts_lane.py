@@ -681,6 +681,8 @@ def test_a_one_origin_refresh_whose_origin_list_wasnt_fetched_doesnt_count(
         "--dry-run -d",
         "Packages that will be upgraded: tailscale\n",
     )
+    host.write("usr/lib/os-release", 'NAME="Ubuntu"\n')
+    time.sleep(1.1)
     fresh = host.tmp / "fresh"
     (fresh / "lists").mkdir(parents=True)
     (fresh / "lists" / TS_LIST).write_text("x")
@@ -701,7 +703,7 @@ def test_a_one_origin_refresh_whose_origin_list_wasnt_fetched_doesnt_count(
     )
     [f] = [f for f in out["findings"] if f["id"] == "dry-run"]
     assert f["kind"] == "risk"
-    assert "before this run" in f["message"]
+    assert "its lists were fetched 0 hours before this run" in f["message"]
     assert not host.calls("unattended-upgrade")
 
 
