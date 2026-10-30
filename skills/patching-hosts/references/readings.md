@@ -42,7 +42,7 @@ The probe reads the root-only readings through `sudo -n`, so it never prompts, a
 
 | Reading | How | Mistake it prevents |
 |---|---|---|
-| List age | when the security `InRelease` was last fetched, its ctime; its mtime is the archive's `Last-Modified`, which a quiet day for the archive ages (#493) | a count against stale lists, which measures provisioning, not the image |
+| List age | when the security `InRelease` was last fetched, its ctime; its mtime is the archive's `Last-Modified`, which a quiet day for the archive ages (#493). A ctime is also a tree's unpacking, so it counts only when newer than `/usr/lib/os-release`'s, which no fetch writes; otherwise the age is the mtime's, and `lists.source` says so (CR 1295) | a count against stale lists, which measures provisioning, not the image |
 | **Security, counted right** | `unattended-upgrade --dry-run -d`'s `Packages that will be upgraded` line | `apt list \| grep -security` undercounts (usa-wa: 178 against 185), and `grep \| head` on the one-per-line header truncates |
 | `-updates` and third-party | `apt list --upgradable` against each origin | treating the security count as "everything" |
 | **Ubuntu Pro / ESM** | `pro security-status` | "0 security pending" read as covering `universe` (wslcb: 29 esm-apps pending) |

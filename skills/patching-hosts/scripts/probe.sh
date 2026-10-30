@@ -1621,31 +1621,76 @@ class_of() {  # <var> <origins, ", "-separated>
 # InRelease's mtime from the archive's Last-Modified, so a quiet day for
 # noble-security read as stale lists right after an apt-get update. Its ctime
 # moves at each fetch, a Hit included, and not at a failed one (apt 2.8.3,
-# noble, 2026-10-30); lists/partial/'s mtime moves at a failed one too. In a
-# copied tree, the ctime is the copy's. LISTS_FETCHED := that epoch, which the
-# one-origin lane's dry run reads too.
+# noble, 2026-10-30); lists/partial/'s mtime moves at a failed one too.
+# A ctime is also when the tree was unpacked, though (CR 1295): an image's
+# lists would read as fetched at provisioning. So it counts as a fetch only
+# when it's no older than the probe's start, or newer than os-release's, a
+# file apt-get update never writes. Otherwise the age is the mtime's, and
+# says so.
+LISTS_REF="" LISTS_REF_CT=""
+lists_reference() {
+  local f
+  for f in usr/lib/os-release etc/os-release; do
+    if [ -f "$P_ROOT/$f" ] && [ ! -L "$P_ROOT/$f" ]; then
+      file_ctime LISTS_REF_CT "$P_ROOT/$f"
+      if [ -n "$LISTS_REF_CT" ]; then LISTS_REF=/$f; fi
+      return 0
+    fi
+  done
+}
+
+list_fetched() {  # <var> <list file>: when it was fetched, or empty when its ctime can't say
+  local _lf_c
+  file_ctime _lf_c "$2"
+  if [ -n "$_lf_c" ] && { [ "$_lf_c" -ge "$P_NOW" ] ||
+    { [ -n "$LISTS_REF_CT" ] && [ "$_lf_c" -gt "$LISTS_REF_CT" ]; }; }; then
+    printf -v "$1" '%s' "$_lf_c"
+  else
+    printf -v "$1" '%s' ""
+  fi
+}
+
+# LISTS_FETCHED := the security list's fetch, or empty.
 LISTS_FETCHED=""
 read_lists_age() {
-  local f mt ct newest="" age="" lm=""
+  local f mt ct newest="" age="" lm="" seen=0 src
   R_LISTS="" LISTS_FETCHED=""
+  lists_reference
   for f in "$LISTS_DIR"/*-security_InRelease "$LISTS_DIR"/*-security_Release; do
     [ -f "$f" ] || continue
+    seen=1
     file_mtime mt "$f"
-    file_ctime ct "$f"
+    list_fetched ct "$f"
     if [ -n "$mt" ] && { [ -z "$newest" ] || [ "$mt" -gt "$newest" ]; }; then newest=$mt; fi
     if [ -n "$ct" ] && { [ -z "$LISTS_FETCHED" ] || [ "$ct" -gt "$LISTS_FETCHED" ]; }; then LISTS_FETCHED=$ct; fi
   done
-  if [ -n "$LISTS_FETCHED" ]; then age=$(((P_NOW - LISTS_FETCHED) / 3600)); fi
   if [ -n "$newest" ]; then lm=$(((P_NOW - newest) / 3600)); fi
+  src="when the security InRelease was last fetched: its ctime, which apt moves at every fetch and not at a failed one, and which is newer than ${LISTS_REF:-os-release}'s, which no fetch writes. Its mtime is the archive's Last-Modified (security_last_modified_hours)"
+  if [ -n "$LISTS_FETCHED" ]; then
+    age=$(((P_NOW - LISTS_FETCHED) / 3600))
+  elif [ "$seen" -eq 1 ]; then
+    # An unpacked list's age, as the archive's, is a bound: the list is no
+    # newer than the archive it came from.
+    age=$lm
+    if [ -n "$LISTS_REF" ]; then
+      src="the security InRelease's mtime, the archive's Last-Modified: its ctime is no newer than $LISTS_REF's, so it dates the tree's unpacking, not a fetch"
+    else
+      src="the security InRelease's mtime, the archive's Last-Modified: with no os-release to read, its ctime can't be told from the tree's unpacking"
+    fi
+  fi
   jadds R_LISTS dir "${LISTS_DIR#"$P_ROOT"}"
   jaddb R_LISTS refreshed "$REFRESHED"
   jaddn R_LISTS security_age_hours "$age"
   jaddn R_LISTS security_last_modified_hours "$lm"
-  jadds R_LISTS source "when the security InRelease was last fetched: its ctime, which apt moves at every fetch and not at a failed one. Its mtime is the archive's Last-Modified (security_last_modified_hours)"
+  jadds R_LISTS source "$src"
   if [ -z "$age" ]; then
     finding unknown lists:age "" "No security InRelease under ${LISTS_DIR#"$P_ROOT"}, so the counts have no security list behind them."
   elif [ "$age" -gt 24 ] && [ "$REFRESHED" -eq 0 ]; then
-    finding risk lists:stale "" "The security list was fetched $age hours ago, so the counts measure the lists, not the host. Run apt-get update, or re-run with --refresh-into DIR."
+    if [ -n "$LISTS_FETCHED" ]; then
+      finding risk lists:stale "" "The security list was fetched $age hours ago, so the counts measure the lists, not the host. Run apt-get update, or re-run with --refresh-into DIR."
+    else
+      finding risk lists:stale "" "The security list's archive last changed $age hours ago, and when it was fetched can't be told from when the tree was unpacked (lists.source), so the counts may measure the image's lists, not the host. Run apt-get update, or re-run with --refresh-into DIR."
+    fi
   fi
 }
 
