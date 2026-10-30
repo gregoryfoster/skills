@@ -121,6 +121,13 @@ if method == "PATCH":
     st.setdefault("patches", []).append(body)
     if not st.get("patch_noop"):
         find(repo)["issues"][parts[4]]["body"] = body
+        # GitHub's clock moves updated_at, and the edit lands in the body's
+        # history, under the one account every thread writes as (#518).
+        now = st.get("server_now", "2026-10-14T18:03:27Z")
+        find(repo)["issues"][parts[4]]["updated_at"] = now
+        find(repo).setdefault("edits", {}).setdefault(parts[4], []).append(
+            {"editedAt": now, "updatedAt": now, "editor": {"login": "gregoryfoster"}, "diff": body}
+        )
     after = st.get("patch_fails_after_apply")  # GitHub applied it; gh saw a 502
     if after:  # or gh's whole stderr, when a string
         fail(after if isinstance(after, str) else "HTTP 502: Bad Gateway")
@@ -166,7 +173,7 @@ if len(parts) == 5 and parts[3] == "issues":
         fail("HTTP 502: Bad Gateway")
     change = st.get("change_on_get", {}).get(parts[4])
     if change and gets[parts[4]] == change["at"]:
-        it["body"] = change["body"]
+        it.update({k: v for k, v in change.items() if k != "at"})
     out(dict(it, number=int(parts[4])))
 
 if len(parts) == 6 and parts[5] == "comments":
@@ -248,6 +255,23 @@ class Rig:
         self.load()
         self.state.setdefault("fail_on_get", {})[str(num)] = at
         self.state["gets"] = {}
+        self.save()
+
+    def edit_elsewhere(
+        self, num: int, body: str, at: str, repo: str = "acme/widgets"
+    ) -> None:
+        """Another thread edits issue num's body at GitHub time at, by hand."""
+        self.load()
+        r = self.state["repos"][repo]
+        r["issues"][str(num)].update(body=body, updated_at=at)
+        r.setdefault("edits", {}).setdefault(str(num), []).append(
+            {
+                "editedAt": at,
+                "updatedAt": at,
+                "editor": {"login": "gregoryfoster"},
+                "diff": body,
+            }
+        )
         self.save()
 
     def body(self, repo: str, num: int) -> str:
