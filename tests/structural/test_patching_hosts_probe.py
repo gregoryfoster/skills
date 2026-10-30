@@ -117,6 +117,7 @@ patching_hosts_rig.py, shared with apply.sh's tests.
 
 import os
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -614,8 +615,21 @@ class LaterHost(Host):
         self.on("date", "+%s", f"{self.now + hours * 3600 + 600}\n")
 
 
+# CR 1295: a ctime is also when a tree was unpacked, so a list that came
+# with an image would read as fetched at provisioning. The reference is a
+# file apt-get update never writes; a list it fetched is newer.
+OS_RELEASE = "usr/lib/os-release"
+
+
+def _unpacked_then_fetched(host: Host) -> None:
+    """The tree's own file, then, a second later, a fetch's list."""
+    host.write(OS_RELEASE, 'NAME="Ubuntu"\n')
+    time.sleep(1.1)
+
+
 def test_the_lists_age_from_their_fetch_not_the_archives_last_modified(host):
     # co-processor, 2026-10-26: noble-security hadn't published for 26 h.
+    _unpacked_then_fetched(host)
     host.write(SECURITY_IN_RELEASE, "x", age_days=26 / 24)
     out = host.run()
     lists = out["pending"]["lists"]
@@ -628,6 +642,7 @@ def test_the_lists_age_from_their_fetch_not_the_archives_last_modified(host):
 @pytest.mark.parametrize("hours, stale", [(30, True), (20, False)])
 def test_lists_fetched_more_than_a_day_ago_are_stale(tmp_path, hours, stale):
     host = LaterHost(tmp_path, hours)
+    _unpacked_then_fetched(host)
     host.write(SECURITY_IN_RELEASE, "x")
     out = host.run()
     assert out["pending"]["lists"]["security_age_hours"] == hours
@@ -636,6 +651,22 @@ def test_lists_fetched_more_than_a_day_ago_are_stale(tmp_path, hours, stale):
         f = _finding(out, "lists:stale")
         assert f["kind"] == "risk"
         assert f"fetched {hours} hours ago" in f["message"]
+
+
+@pytest.mark.parametrize("reference", [True, False], ids=["unpacked", "no-reference"])
+def test_lists_unpacked_with_the_tree_age_from_their_last_modified(tmp_path, reference):
+    # The image's lists, unpacked with the tree: their ctime is the unpack's,
+    # no newer than os-release's, so it says nothing of a fetch. Without the
+    # reference file, nothing tells the two apart either.
+    host = LaterHost(tmp_path, 1)
+    host.write(SECURITY_IN_RELEASE, "x", age_days=3)
+    if reference:
+        host.write(OS_RELEASE, 'NAME="Ubuntu"\n')
+    out = host.run()
+    lists = out["pending"]["lists"]
+    assert lists["security_age_hours"] == lists["security_last_modified_hours"] >= 73
+    assert "unpack" in lists["source"]
+    assert _finding(out, "lists:stale")["kind"] == "risk"
 
 
 def _policy(name: str, installed: str, candidate: str, suites: list[str]) -> str:
