@@ -70,7 +70,9 @@ operations (a JSON array, from --ops FILE or --ops - for stdin):
 
   A header op adds a line only for a cursor field the body lacks (Last
   check-in, Last probe, Last issue seen, Last verified SHA, Next); any other
-  field must already be there. The line joins the top-level "- **Field:**"
+  field must already be there. It reads unindented lines only, as scan.sh
+  does: an indented "**Field:**" line, a checklist item's sub-note or a header
+  list set in 1-3 spaces, is skipped, and the summary's notes name it. The line joins the top-level "- **Field:**"
   list holding the cursor lines, else the one above the first section, else
   goes just before that section (a "#" title stays above). With add-section,
   that brings an adopted epic onto the template without a hand edit.
@@ -1026,6 +1028,15 @@ def apply_ops(
                         notes.append(f"{where}: {note}")
                 header_set[field.lower()] = (where, field, value)
                 hits = field_hits(lines, field)
+                # A sub-note, or a header list indented 1-3 spaces, which
+                # CommonMark allows: neither script reads it as the header's,
+                # so a missing header line is added at the top level (#528).
+                for i in field_hits(lines, field, nested=True):
+                    notes.append(
+                        f"{where}: skipped the indented '**{field}:**' line at line"
+                        f" {i + 1}: neither this op nor scan.sh reads an indented"
+                        " line as the header's"
+                    )
                 if not hits and field.lower() in CURSOR_FIELDS:
                     # An adopted epic gets its cursors through here, not a
                     # hand edit (CR 292). Other fields aren't added: a typo
@@ -1146,13 +1157,20 @@ def apply_ops(
     return lines, expect, notes
 
 
-def field_hits(lines: list[str], field: str) -> list[int]:
-    """Every "**Field:**" line outside a fence, in either form, at any depth."""
+def field_hits(lines: list[str], field: str, nested: bool = False) -> list[int]:
+    """Every unindented "**Field:**" line outside a fence, in either form.
+
+    Top-level only, as list_field reads and scan.sh's header_fields does: an
+    indented one is a checklist item's sub-note, which a header op once
+    rewrote in place (#528). With nested, the indented ones instead, which
+    the op skips and notes.
+    """
     fence, want = fenced(lines), field.strip().lower()
     return [
         i
         for i, ln in enumerate(lines)
         if not fence[i]
+        and ln[:1].isspace() == nested
         and (m := FIELD_RE.match(ln))
         and m.group("field").strip().lower() == want
     ]

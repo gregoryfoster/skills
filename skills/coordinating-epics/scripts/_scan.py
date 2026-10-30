@@ -108,11 +108,16 @@ def fetch_epic(host: str, epic: int, warnings: list[str]) -> tuple[str, str]:
 
 
 def header_fields(lines: list[str]) -> dict[str, str]:
+    """The first unindented "**Field:**" line of each field, outside fences.
+
+    Top-level only, as epic-edit.sh's header op reads: an indented one is a
+    checklist item's sub-note, not the header's (#528).
+    """
     fence = fenced(lines)
     out = {}
     for i, ln in enumerate(lines):
         m = FIELD_RE.match(ln)
-        if m and not fence[i]:
+        if m and not fence[i] and not ln[:1].isspace():
             out.setdefault(m.group("field").strip().lower(), m.group("value").strip())
     return out
 
