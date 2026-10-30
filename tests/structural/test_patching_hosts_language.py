@@ -128,6 +128,36 @@ def test_a_knob_service_beside_its_lock_is_audited_as_before(host):
     assert out["pending"]["language"]["complete"] is True
 
 
+@pytest.mark.skipif(os.geteuid() == 0, reason="root reads a mode-000 file")
+@pytest.mark.parametrize("which", ["unit", "drop-in"])
+def test_a_unit_file_it_cant_read_leaves_the_class_incomplete(tmp_path, which):
+    # CR 1143: the knob service's tree vanished and the class read complete,
+    # as on a host with no language dependencies. A drop-in is where a
+    # secret Environment= lives, so a 0600 one is the realistic case, and
+    # it can carry the WorkingDirectory= too. As CR 235 does for a tree it
+    # can't enter: incomplete, and a not_read line naming the file.
+    h = _tree(LangHost(tmp_path, sudo=False))
+    _knob(h, "service app.service")
+    _uv(h)
+    unit = "etc/systemd/system/app.service"
+    if which == "drop-in":
+        h.write(unit, "[Service]\nUser=exedev\nExecStart=/bin/true\n")
+        unit = "etc/systemd/system/app.service.d/override.conf"
+        h.write(unit, f"[Service]\nWorkingDirectory=/{APP}\n")
+    f = h.root / unit
+    f.chmod(0)
+    try:
+        out = _audit(h)
+    finally:
+        f.chmod(0o644)
+    assert out["pending"]["language"] == {"trees": [], "complete": False}
+    assert (
+        f"language dependencies: /{unit} couldn't be read without root, so a "
+        "WorkingDirectory= it sets wasn't seen: run the probe under sudo"
+    ) in out["not_read"]
+    assert not h.calls("uv")
+
+
 # --- #508, #427: an owner line that matches nothing ----------------------------
 
 
