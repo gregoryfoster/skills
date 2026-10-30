@@ -124,8 +124,9 @@ bash .claude/hooks/socraticode-reminder.sh
 - **`codebase_impact` / `codebase_graph_query`** read the dependency graph,
   built apart from the embeddings; stale or low-yield, it answers *empty*
   rather than erroring (see **Graph health**).
-- **`codebase_flow`** traces from an entry point: pass a file path, not a
-  symbol name.
+- **`codebase_flow`** traces from an entry point: pass a symbol name as
+  `entrypoint`, with `file` to disambiguate; with no arguments it lists
+  detected entry points.
 - **`codebase_context_search`** sees only indexed artifacts from
   `.socraticodecontextartifacts.json`. No answer can mean a manifest path that
   does not resolve, skipped silently; an artifact left unindexed, which

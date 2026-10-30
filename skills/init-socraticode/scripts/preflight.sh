@@ -449,7 +449,7 @@ case "$MEM_KB" in
       # passes that score to the install, and at -1000 the cap stalls it
       # rather than killing it. choom's `--` is not optional — it permutes its
       # options, so `--prefix` would be read as one of its own.
-      hint "Pre-install once under a cap instead of installing at every launch: systemd-run --user --scope -p MemoryMax=1536M choom -n 500 -- npm install --prefix $SC_PIN_DIR socraticode@<version>"
+      hint "Pre-install once under a cap instead of installing at every launch: systemd-run --user --scope -p MemoryMax=1536M -p MemorySwapMax=0 choom -n 500 -- npm install --save-exact --prefix $SC_PIN_DIR socraticode@<version>"
       hint "mcp-driver.mjs prefers that pin over the plugin's 'npx ... @latest', so no driver launch installs anything (references/host-memory.md)"
       # The unattended launch is covered without a step here (#330): the
       # health hook opens this scope itself wherever the host can, so a
@@ -1295,7 +1295,7 @@ else
         pass "Node $NODE_RAW with pinned socraticode $SC_PIN_VER (>=$NODE26_SERVER_MIN carries the Node 26 Qdrant transport bridge)"
       else
         fail "Node $NODE_RAW with pinned socraticode $SC_PIN_VER — the driver's server exits on start (undici 6 vs Node 26's undici 8)"
-        hint "Re-pin above $NODE26_SERVER_MIN: 'npm install --prefix $SC_PIN_DIR socraticode@latest', or use Node 22"
+        hint "Re-pin above $NODE26_SERVER_MIN: 'npm install --save-exact --prefix $SC_PIN_DIR socraticode@latest', or use Node 22"
       fi
     fi
     # Network read, never a mutation, and its failure is not this gate's
@@ -1473,7 +1473,7 @@ if [ -n "$SC_PLUGIN_FIXED" ]; then
       SC_SESSION_SIDE="$SC_PINNED_IN launches $SC_PLUGIN_FIXED (not observed: ${SC_SEEN_WHY:-the process table was not read})"
     fi
     warn "Launch pins disagree: the driver's pin is socraticode $SC_PIN_VER, $SC_SESSION_SIDE — two builds writing one store"
-    hint "Pin both to one version: $SPEC_NAME=socraticode@$SC_PIN_VER, or re-pin the driver with 'npm install --prefix $SC_PIN_DIR socraticode@$SC_PLUGIN_FIXED'"
+    hint "Pin both to one version: $SPEC_NAME=socraticode@$SC_PIN_VER, or re-pin the driver with 'npm install --save-exact --prefix $SC_PIN_DIR socraticode@$SC_PLUGIN_FIXED'"
   elif [ -n "$SC_SEEN_SPEC" ]; then
     pass "Plugin session launched socraticode $SC_PLUGIN_FIXED — observed: its server (pid $SC_SEEN_PIDS) was launched as socraticode@$SC_PLUGIN_FIXED${SC_PIN_VER:+, matching the driver pin} — no launch installs"
   else
@@ -1493,7 +1493,7 @@ if [ -n "$SC_PLUGIN_FIXED" ]; then
     "socraticode@$SC_PLUGIN_FIXED" 2>/dev/null || true)"
   if [ -n "$SC_NPX_KEY" ] && [ ! -f "$SC_NPX_DIR/$SC_NPX_KEY/node_modules/socraticode/package.json" ]; then
     warn "No npx cache tree under $SC_NPX_DIR holds socraticode@$SC_PLUGIN_FIXED, so the first session to launch it installs it — the install peak, once, at an unattended start"
-    hint "Warm it now, capped where user systemd allows: systemd-run --user --scope -p MemoryHigh=1200M -p MemoryMax=1536M choom -n 500 -- npm exec --yes --prefer-online --package=socraticode@$SC_PLUGIN_FIXED -- true (elsewhere, the npm exec alone)"
+    hint "Warm it now, capped where user systemd allows: systemd-run --user --scope -p MemoryHigh=1200M -p MemoryMax=1536M -p MemorySwapMax=0 choom -n 500 -- npm exec --yes --prefer-online --package=socraticode@$SC_PLUGIN_FIXED -- true (elsewhere, the npm exec alone)"
   fi
 elif [ -n "$SC_PLUGIN_FLOATS" ]; then
   if [ -z "$SC_SPEC_VAR" ] && [ -n "$SC_SPEC" ]; then

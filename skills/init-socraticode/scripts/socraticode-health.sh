@@ -127,7 +127,8 @@ Behaviour:
     must not wait two minutes on a server that will never answer.
   - Capped where the host can cap (#330). The driver and the server it
     launches run in one transient scope — systemd-run --user --scope with
-    MemoryHigh=1200M MemoryMax=1536M CPUQuota=100%, under choom -n 500 so a
+    MemoryHigh=1200M MemoryMax=1536M MemorySwapMax=0 CPUQuota=100% (swap
+    too, since MemoryMax= bounds RAM only), under choom -n 500 so a
     session at oom_score_adj -1000 is killed by the cap rather than stalled —
     after a probe that runs the identical command and asks systemd, from
     inside its scope, whether it accounts that scope's memory — without a
@@ -135,9 +136,9 @@ Behaviour:
     host cannot cap (no systemd-run, as on macOS; no user systemd; or no
     memory controller for it — cgroup v1, or none delegated) the check runs
     uncapped, as before, and says nothing about it; a failed probe leaves one
-    log line. With a pinned server the launch peaks near 75 MB and the
-    cap never binds: it is for a host that never pinned, a pin that broke, or
-    an index that grew.
+    log line. A refused MemorySwapMax= is dropped alone, and logged. With a
+    pinned server the launch peaks near 75 MB and the cap never binds: it is
+    for a host that never pinned, a pin that broke, or an index that grew.
   - Logs to <common .git>/socraticode-health.log (~64 KiB / 200 lines).
   - Exits 0 on every condition.
 
@@ -160,10 +161,12 @@ Env:
                           Set it yourself for a slower, more patient check.
   SOCRATICODE_HEALTH_CAP  the scope's systemd properties, space-separated;
                           default 'MemoryHigh=1200M MemoryMax=1536M
-                          CPUQuota=100%'. 'off' runs the check uncapped, and
-                          so does a value the probe rejects — the log says
-                          why. A ceiling belongs to the host: set it in
-                          .claude/settings.local.json, not settings.json.
+                          MemorySwapMax=0 CPUQuota=100%'. 'off' runs the check
+                          uncapped, and so does a value the probe rejects —
+                          the log says why — except a refused MemorySwapMax=,
+                          which alone is dropped. A ceiling belongs to the
+                          host: set it in .claude/settings.local.json, not
+                          settings.json.
   SOCRATICODE_HEALTH_FORCE=1
                           ignore the once-per-day lock (for testing)
 
@@ -453,7 +456,13 @@ export HEALTH_TIMEOUT_MS="${HEALTH_TIMEOUT_MS:-60000}"
 # 120s registration after it; the scope holds nothing the driver does not, so
 # when the driver exits, on its own timer or killed, its server's stdin
 # closes, the server exits, and the empty scope goes with it.
-CAP_DEFAULT="MemoryHigh=1200M MemoryMax=1536M CPUQuota=100%"
+#
+# MemorySwapMax=0 because MemoryMax= bounds RAM only (#340). Under cgroup v2 a
+# scope's memory.swap.max defaults to unlimited, so on a host with swap a job
+# past its cap pages out and runs on, and the cap-kill report below never
+# fires. Measured on co-registrar (4 G swap): 200 MB finished under
+# MemoryMax=64M, and was killed once MemorySwapMax=0 was added.
+CAP_DEFAULT="MemoryHigh=1200M MemoryMax=1536M MemorySwapMax=0 CPUQuota=100%"
 CAP_PROPS=()
 CAP_UNIT=""
 _cap_words=()
@@ -502,6 +511,16 @@ _capped() {
     ${CAP_PROPS[@]+"${CAP_PROPS[@]}"} choom -n 500 -- "$@"
 }
 
+# The probe for one unit, with the current properties: `true`, or, for a cap
+# with a Memory property, the accounting question asked about its own scope.
+_probe_cap() {
+  local probe=(true)
+  case " ${_cap_words[*]}" in
+    *" Memory"*) probe=(sh -c "$_CAP_MEMORY_CHECK" sh "$1.scope") ;;
+  esac
+  _capped "$1" "${probe[@]}"
+}
+
 if [ "${#CAP_PROPS[@]}" -gt 0 ]; then
   _unit="socraticode-health-$$-$(date -u +%s)"
   # Silent where it fails — every host without user systemd, linger or a
@@ -519,15 +538,38 @@ if [ "${#CAP_PROPS[@]}" -gt 0 ]; then
   # (measured on bash 3.2): _hook_panic would run there and `exit 0`, and a
   # probe that failed would read as one that passed — a capped launch on a
   # host that cannot cap, and FAILED TO RUN every day.
-  _probe=(true)
-  case " ${_cap_words[*]}" in
-    *" Memory"*) _probe=(sh -c "$_CAP_MEMORY_CHECK" sh "$_unit-probe.scope") ;;
-  esac
-  if _probe_err="$(trap - ERR; _capped "$_unit-probe" "${_probe[@]}" 2>&1 >/dev/null)"; then
+  if _probe_err="$(trap - ERR; _probe_cap "$_unit-probe" 2>&1 >/dev/null)"; then
     CAP_UNIT="$_unit"
   else
     _probe_err="${_probe_err%%$'\n'*}"
-    _log "memory cap unavailable: the probe (systemd-run --user --scope ${CAP_PROPS[*]} choom -n 500) failed (${_probe_err:-no message}) — running uncapped"
+    # A refused swap bound must not take the rest of the cap with it (#340): a
+    # systemd that does not know MemorySwapMax=, say. So where the cap holds
+    # one, probe again without it, and keep what that probe passes — the
+    # retry is the call, as the first probe is. Any other refusal fails the
+    # retry the same way, and the check runs uncapped, as before.
+    _kept=()
+    _swap=""
+    for _w in "${_cap_words[@]}"; do
+      case "$_w" in
+        MemorySwapMax=*) _swap="$_w" ;;
+        *) _kept+=("$_w") ;;
+      esac
+    done
+    if [ -n "$_swap" ] && [ "${#_kept[@]}" -gt 0 ]; then
+      _cap_words=("${_kept[@]}")
+      CAP_PROPS=()
+      for _w in "${_kept[@]}"; do
+        CAP_PROPS+=(-p "$_w")
+      done
+      if _retry_err="$(trap - ERR; _probe_cap "$_unit-probe2" 2>&1 >/dev/null)"; then
+        CAP_UNIT="$_unit"
+        _log "memory cap without $_swap: systemd refused it (${_probe_err:-no message}) — capped by ${_kept[*]}, so swap is unbounded here"
+      else
+        _probe_err="${_retry_err%%$'\n'*}"
+      fi
+    fi
+    [ -n "$CAP_UNIT" ] ||
+      _log "memory cap unavailable: the probe (systemd-run --user --scope ${CAP_PROPS[*]} choom -n 500) failed (${_probe_err:-no message}) — running uncapped"
   fi
 fi
 

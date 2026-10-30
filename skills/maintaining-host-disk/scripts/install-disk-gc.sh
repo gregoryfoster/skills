@@ -58,7 +58,8 @@ the new MANIFEST drops is disabled, before it goes.
 Before anything changes it refuses (exit 3), with every reason in refused:
   - staging: MANIFEST missing or not the pinned one, a line not in
     sha256sum's format, a path outside usr/local/lib/, a link or special
-    file, a file MANIFEST doesn't list, a file mode other than 0644 or 0755
+    file, a file MANIFEST doesn't list (bytecode alone says so: re-pull),
+    a file mode other than 0644 or 0755
     or a directory mode other than 0755, `sha256sum --strict -c` failing,
     or a VERSION that isn't an integer
   - the installed copy: a MANIFEST that names a path outside
@@ -218,8 +219,16 @@ else
   [ -z "$badd" ] || refuse "staging holds a directory whose mode is not 0755: $badd"
   have=$(cd "$STAGED" && find . -type f | sed 's|^\./||' | sort)
   want=$(printf '%s\n' "$MANIFEST_REL" ${S_PATHS[@]+"${S_PATHS[@]}"} | sort)
-  extra=$(comm -23 <(printf '%s\n' "$have") <(printf '%s\n' "$want") | tr '\n' ' ')
-  [ -z "$extra" ] || refuse "staging holds files MANIFEST doesn't list: $extra"
+  extra=$(comm -23 <(printf '%s\n' "$have") <(printf '%s\n' "$want"))
+  if [ -n "$extra" ]; then
+    # Bytecode alone has one known cause (#514): something loaded the staged
+    # GC with Python, bytecode on. Still refused; the hint names the recovery.
+    hint=""
+    if ! grep -qv '\(^\|/\)__pycache__/' <<<"$extra"; then
+      hint=" (bytecode: Python loaded the staged GC with bytecode on; re-pull into a fresh directory, never edit staging by hand)"
+    fi
+    refuse "staging holds files MANIFEST doesn't list: $(tr '\n' ' ' <<<"$extra")$hint"
+  fi
   if [ ${#REFUSED[@]} -eq 0 ] && ! (cd "$STAGED" && sha256sum --strict --quiet -c "$MANIFEST_REL") >&2; then
     refuse "staging fails sha256sum --strict -c MANIFEST"
   fi

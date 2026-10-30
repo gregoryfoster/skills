@@ -1135,7 +1135,7 @@ class TestTheCappedInstallCanBeKilled:
         )
         adj, install = _choom(command)
         assert adj == {"-n": "500"}, cmd
-        assert install[:3] == ["npm", "install", "--prefix"], install
+        assert install[:4] == ["npm", "install", "--save-exact", "--prefix"], install
 
     @requires_bash
     def test_every_capped_scope_is_composed_alike(self) -> None:

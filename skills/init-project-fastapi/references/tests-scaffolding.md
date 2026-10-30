@@ -29,7 +29,8 @@ TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL")
 if not TEST_DATABASE_URL:
     raise RuntimeError(
         "TEST_DATABASE_URL is not set. "
-        "Load env: set -a; . /etc/<PROJECT_NAME>/.env; . .env; set +a"
+        "Load env with load_env (AGENTS.md § Environment Variables); "
+        "never source the file."
     )
 
 

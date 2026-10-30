@@ -1853,11 +1853,15 @@ class TestTheDriversOwnServerDoesNotWrite:
         )
 
     @requires_node
-    def test_index_keeps_the_watcher_but_not_auto_resume(self, tmp_path: Path) -> None:
-        """A completed index starting its watcher is upstream's sequence; an
-        incremental run racing the full index the driver asked for is not."""
+    def test_index_starts_neither_writer_either(self, tmp_path: Path) -> None:
+        """#349: upstream starts the watcher on the first status poll after a
+        completed index, and inside the driver's own server its first
+        incremental overwrote "Full index — completed", the record the
+        completion gate waits for — a successful index polled to its timeout.
+        The driver's server indexes and exits; the session's owns the watcher.
+        """
         seen = self._launch(tmp_path, "index")
-        assert seen == {"autoResume": "off", "watcher": None}, seen
+        assert seen == {"autoResume": "off", "watcher": "manual"}, seen
 
 
 VERIFY_REPLIES = {

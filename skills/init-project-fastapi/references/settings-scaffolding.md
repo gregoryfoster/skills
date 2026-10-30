@@ -13,8 +13,8 @@ Detailed `src/core/config.py` templates for the `init-project-fastapi` skill (Ph
 ```python
 """Application settings via pydantic-settings.
 
-Env files (/etc/<PROJECT_NAME>/.env, repo .env) are loaded by systemd or the
-developer before launch — never by this module.
+Env files are loaded before launch, never by this module: systemd reads
+/etc/<PROJECT_NAME>/.env only; a developer's shell parses it and the repo .env.
 """
 
 from functools import lru_cache
@@ -62,7 +62,8 @@ def get_database_url() -> str:
     if not url:
         raise RuntimeError(
             "DATABASE_URL is not set. "
-            "Load env: set -a; . /etc/<PROJECT_NAME>/.env; . .env; set +a"
+            "Load env with load_env (AGENTS.md § Environment Variables); "
+            "never source the file."
         )
     return url
 ```
@@ -72,8 +73,8 @@ def get_database_url() -> str:
 ```python
 """Application settings via os.environ.
 
-Env files (/etc/<PROJECT_NAME>/.env, repo .env) are loaded by systemd or the
-developer before launch — never by this module.
+Env files are loaded before launch, never by this module: systemd reads
+/etc/<PROJECT_NAME>/.env only; a developer's shell parses it and the repo .env.
 """
 
 import os
@@ -85,7 +86,8 @@ def get_database_url() -> str:
     if not url:
         raise RuntimeError(
             "DATABASE_URL is not set. "
-            "Load env: set -a; . /etc/<PROJECT_NAME>/.env; . .env; set +a"
+            "Load env with load_env (AGENTS.md § Environment Variables); "
+            "never source the file."
         )
     return url
 

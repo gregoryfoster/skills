@@ -36,7 +36,7 @@ The check finds where an old tool runs. It can't read an arbitrary script and sa
 1. **Which paths did it remove that no GC tier covers,** or that a tier covers but this host's config leaves off (`worktrees` not in `tiers` or with an empty `worktree_repos`, `docker` off)?
 2. **Did it remove anything the GC deliberately keeps?** Containers, volumes, unused tagged images unless `docker_unused_images_days` opts in, a VS Code build still in use or touched within the grace window, a server build newer than the newest live one (or the newest, with none live) or whose version can't be read, a tree with any entry newer than `grace_minutes` (default 60).
 3. **Did it keep anything the GC removes?** The VSIX cache is the known one ([editor-builds.md](editor-builds.md)).
-4. **Does anything else depend on it?** A monitor reading its journal lines, a state file, a health check calling it.
+4. **Does anything else depend on it?** A monitor reading its journal lines, a state file, a health check calling it. And did it carry a failure net, an `OnFailure=` or a dead-man, that the GC-timer-only path drops? Then that path needs one of its closes first ([turning-on.md](turning-on.md#5-the-timers)).
 5. **Is its cadence faster than daily?** Then the canonical timer needs a drop-in, timer first and monitor second ([turning-on.md](turning-on.md#the-cadence)).
 
 Answer each in the host's adoption issue, then disable and remove the old units in the same change that enables the canonical timers.
