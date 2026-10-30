@@ -302,3 +302,145 @@ class TestTheRationaleIsTrue:
         assert "`load_env` exports" in text, (
             "say plainly that load_env exports what it loads"
         )
+
+
+# A variable whose name says it holds a secret (#530). Anchored at the end so
+# `KEY_PATH`, `P_TOKENS` and git-config key names stay out.
+_SECRET_NAME = re.compile(
+    r"(?:^|_)(?:PG)?(?:PW|PASS|PASSWD|PASSWORD|SECRET|TOKEN|PAT|API_KEY|"
+    r"SECRET_KEY|PRIVATE_KEY)$",
+    re.I,
+)
+# An expansion of a variable's value: `$X` or `${X…}`, but not `${#X}`, which
+# expands to its length, and not an escaped `\$X`.
+_EXPANSION = re.compile(r"(?<!\\)\$(?:\{(?!#))?([A-Za-z_][A-Za-z0-9_]*)")
+# One echo/printf command, up to the next separator: `;`, `&&`, `||` or `|`.
+_PRINT_CMD = re.compile(
+    r"\b(?:echo|printf)\b(?P<args>(?:[^;&|]|&(?!&))*)(?P<end>\|\|?|;|&&|$)"
+)
+
+
+def _echoed_secrets(line: str) -> list[str]:
+    """The secret-named variables a line prints to the terminal. Output piped
+    to a command (`printf '%s' "$TOKEN" | gh auth login --with-token`) or
+    redirected to a file never reaches the transcript, so it is spared;
+    `>&2` still prints."""
+    found = []
+    for m in _PRINT_CMD.finditer(line):
+        # A stdout redirect: `>`, `1>` or `&>`, not `2>`, and not `>&2`.
+        if m["end"] == "|" or re.search(r"(?<![02-9])>>?\s*(?!&)\S", m["args"]):
+            continue
+        found += [v for v in _EXPANSION.findall(m["args"]) if _SECRET_NAME.search(v)]
+    return found
+
+
+class TestNoSecretIsEchoed:
+    """#530: postgres-provisioning.md § 3 echoed the role password it had just
+    generated, into the agent's transcript and every log that keeps it. Step 5
+    already writes it to `.env`. No file in the skill prints a secret-holding
+    variable's value; its length (`${#PG_PW}`) is fine."""
+
+    def test_no_file_echoes_a_secret_variable(self):
+        hits = [
+            f"{p}:{n}: {', '.join(vs)}"
+            for p, n, ln in _skill_lines()
+            if (vs := _echoed_secrets(ln))
+        ]
+        assert not hits, (
+            "a secret printed to the terminal lands in the transcript. Print "
+            f"that it is set and its length, never its value. Sites: {hits}"
+        )
+
+    @pytest.mark.parametrize(
+        "line,var",
+        [
+            ('echo "PG_PW=$PG_PW   # save this"', "PG_PW"),
+            ('printf "%s\\n" "${GH_TOKEN}"', "GH_TOKEN"),
+            ('echo "key: ${ANTHROPIC_API_KEY:-unset}" >&2', "ANTHROPIC_API_KEY"),
+            ("echo $PGPASSWORD", "PGPASSWORD"),
+            ('test -n "$X" && echo "pw $DB_PASSWORD"', "DB_PASSWORD"),
+            ('echo "$SECRET_KEY" || true', "SECRET_KEY"),
+            ('echo "$PG_PW" 2>/dev/null', "PG_PW"),  # CR 1189: stderr only
+        ],
+    )
+    def test_the_detector_fires(self, line, var):
+        assert _echoed_secrets(line) == [var], line
+
+    @pytest.mark.parametrize(
+        "line",
+        [
+            'echo "PG_PW set (${#PG_PW} chars)"',
+            'PGPASSWORD="$PG_PW" psql -h localhost -c "SELECT 1;"',
+            "printf '%s' \"$GH_TOKEN\" | gh auth login --with-token",
+            'echo "$PG_PW" > ./pw.txt',
+            'echo "$PG_PW" 1>>./pw.txt',
+            'echo "$PG_PW" &>./pw.txt',
+            'echo "Key already exists at $KEY_PATH — skipping generation."',
+            'echo "GATE over budget: $P_TOKENS tokens"',
+            'echo "set git config: $DRIVER_KEY=$DRIVER_VALUE"',
+            'echo "no variable: \\$PG_PW"',
+        ],
+    )
+    def test_the_detector_spares_lengths_pipes_files_and_non_secrets(self, line):
+        assert _echoed_secrets(line) == [], line
+
+
+PG_DOC = SKILL / "references" / "postgres-provisioning.md"
+PG_GUARD = ': "${PG_PW:?run steps 3-6 in one shell; PG_PW is unset}"'
+
+
+def _pg_blocks_after_step_3() -> list[str]:
+    """Each bash block from § 4 on that expands $PG_PW."""
+    text = PG_DOC.read_text().split("## 4.", 1)[1]
+    blocks = re.findall(r"```bash\n(.*?)```", text, re.S)
+    return [b for b in blocks if _EXPANSION.search(b) and "PG_PW" in b]
+
+
+class TestThePasswordSurvivesOneShellOnly:
+    """CR 1194: with § 3's echo gone (#530), nothing carries PG_PW into a
+    later tool call, and an agent's shell keeps no variables between calls.
+    An empty value set the role's password to '' and wrote URLs with an empty
+    password into .env, which § 5's own guard then never rewrites. So § 3-6
+    run as one command, and each later block stops on an unset PG_PW."""
+
+    def test_the_doc_says_to_run_steps_3_to_6_as_one_command(self):
+        text = PG_DOC.read_text()
+        assert "one command" in text and "keeps no variables" in text
+
+    def test_every_later_block_using_the_password_opens_with_the_guard(self):
+        blocks = _pg_blocks_after_step_3()
+        assert len(blocks) == 3, blocks  # § 4, § 5, § 6
+        for b in blocks:
+            assert b.splitlines()[0] == PG_GUARD, b
+
+    def test_the_guard_message_never_expands_the_value(self):
+        assert _EXPANSION.findall(PG_GUARD) == ["PG_PW"]
+        assert "${#" not in PG_GUARD and "$PG_PW" not in PG_GUARD
+
+    @pytest.mark.parametrize("step", [0, 1])
+    def test_an_unset_password_stops_before_the_role_and_the_env_file(
+        self, step, tmp_path: Path
+    ):
+        """§ 4 under a fake sudo, § 5 against a scratch .env: neither runs."""
+        bin_ = tmp_path / "bin"
+        bin_.mkdir()
+        (bin_ / "sudo").write_text('#!/bin/sh\ntouch "$MARK"\n')
+        (bin_ / "sudo").chmod(0o755)
+        (tmp_path / ".env").write_text("EXISTING=1\n")
+        env = {
+            **_clean_env(),
+            "PATH": f"{bin_}:/usr/bin:/bin",
+            "MARK": str(tmp_path / "ran"),
+        }
+        env.pop("PG_PW", None)
+        r = subprocess.run(
+            ["bash", "-c", _pg_blocks_after_step_3()[step]],
+            capture_output=True,
+            text=True,
+            cwd=tmp_path,
+            env=env,
+            timeout=30,
+        )
+        assert r.returncode != 0 and "PG_PW is unset" in r.stderr, r.stderr
+        assert not (tmp_path / "ran").exists()
+        assert (tmp_path / ".env").read_text() == "EXISTING=1\n"

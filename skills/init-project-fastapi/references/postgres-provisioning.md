@@ -24,11 +24,13 @@ sudo apt-get install -y postgresql postgresql-contrib
 
 ## 3. Generate a random role password
 
-24 bytes ≈ 48 hex characters:
+**Run steps 3 to 6 as one command.** An agent's shell keeps no variables between tool calls, and nothing else holds `PG_PW`: it is never printed. Run in a fresh call, step 4 would give the role an empty password and step 5 would write URLs with no password into `.env`, which its own guard then never rewrites. So each later block opens with a guard that stops on an unset `PG_PW`, before `CREATE ROLE` and before the append. The guard's message names the variable, never its value.
+
+24 bytes ≈ 48 hex characters. Step 5 writes it to `./.env`, so it is never printed: the confirmation shows its length, not its value, which would land in the transcript and any log that keeps it:
 
 ```bash
 PG_PW=$(openssl rand -hex 24)
-echo "PG_PW=$PG_PW   # save this — also written to ./.env in step 5"
+echo "PG_PW set (${#PG_PW} chars)"
 ```
 
 ## 4. Create the role and two databases
@@ -36,6 +38,7 @@ echo "PG_PW=$PG_PW   # save this — also written to ./.env in step 5"
 As the `postgres` superuser:
 
 ```bash
+: "${PG_PW:?run steps 3-6 in one shell; PG_PW is unset}"
 sudo -u postgres psql <<SQL
 CREATE ROLE <PROJECT_UNDERSCORE> LOGIN PASSWORD '$PG_PW';
 CREATE DATABASE <PROJECT_UNDERSCORE>      OWNER <PROJECT_UNDERSCORE>;
@@ -48,6 +51,7 @@ SQL
 Use the `postgresql+asyncpg://` driver to match the runtime engine (Phase 5c's `database.py`). The `grep` guard makes the append idempotent — re-running Phase 5d after a step-6 failure won't produce duplicate keys. The `tail -c1` check ensures a trailing newline so the first appended line doesn't concatenate onto an existing last line that lacks one:
 
 ```bash
+: "${PG_PW:?run steps 3-6 in one shell; PG_PW is unset}"
 if ! grep -q '^DATABASE_URL=' ./.env 2>/dev/null; then
   [ -s ./.env ] && [ "$(tail -c1 ./.env)" != "" ] && echo "" >> ./.env
   cat >> ./.env <<ENV
@@ -62,6 +66,7 @@ fi
 This proves the role can authenticate over TCP (not just `peer` auth on the local socket) and that both databases are reachable:
 
 ```bash
+: "${PG_PW:?run steps 3-6 in one shell; PG_PW is unset}"
 PGPASSWORD="$PG_PW" psql -h localhost -U <PROJECT_UNDERSCORE> -d <PROJECT_UNDERSCORE>      -c "SELECT 1;"
 PGPASSWORD="$PG_PW" psql -h localhost -U <PROJECT_UNDERSCORE> -d <PROJECT_UNDERSCORE>_test -c "SELECT 1;"
 ```

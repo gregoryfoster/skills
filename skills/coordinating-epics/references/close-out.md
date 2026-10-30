@@ -24,7 +24,7 @@ Tag each item with the child it came from. **Before the last item ships, propose
 - **The implementers' unfiled observations** are listed in the summary for the operator to decide on, never dropped.
 - **The accounting check passes,** for a whole-backlog or number-range epic: `epic-edit.sh … --account [N]`.
 
-**The order:** write the final body, then post the summary comment, then close. A summary groups by theme, not by issue order, and records the live state left behind (status 98, watcher F63). Post the summary with `gh issue comment N --body-file <summary>` (check `test -s` first), then `gh issue close N`.
+**The order:** write the final body, then post the summary comment, then close. The final body write passes `--closed-ok`: a final child's thread may have closed the epic already (#502 F5), and without the flag the editor refuses a closed epic (#519). Its summary then names who closed it and when; if that wasn't the operator, say so in the summary comment. A summary groups by theme, not by issue order, and records the live state left behind (status 98, watcher F63). Post the summary with `gh issue comment N --body-file <summary>` (check `test -s` first), then `gh issue close N`.
 
 **If the thread keeps coordinating follow-ups,** the summary restates the role: "This thread continues as coordinator for #A and #B; implementation stays in separate threads." Without that line, a later "proceed" read as "implement here", and the coordinator built and shipped a child in its own thread (archiver 60).
 

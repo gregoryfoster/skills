@@ -448,8 +448,10 @@ def test_since_is_converted_to_utc_z_and_a_naive_time_is_refused(rig):
     r = scan(rig, "--since", "2026-10-03T11:30+02:00")
     assert r["cursors"]["since"] == "2026-10-03T09:30:00Z"
     assert [x["number"] for x in r["updated_since"]] == [11]
+    # #407: the query opens 30 minutes before since, still as `…Z`.
+    assert r["cursors"]["queried_since"] == "2026-10-03T09:00:00Z"
     calls = [c for c in rig.load()["calls"] if any("since=" in a for a in c)]
-    assert calls and all("since=2026-10-03T09:30:00Z" in " ".join(c) for c in calls)
+    assert calls and all("since=2026-10-03T09:00:00Z" in " ".join(c) for c in calls)
     res = rig.run(
         "scan.sh", "--repo", REPO, "--epic", str(EPIC), "--since", "2026-10-03T09:30"
     )
@@ -812,3 +814,158 @@ def test_an_explicit_ref_is_used_as_given(rig):
     r = scan_clone(rig, clone, "--no-fetch", "--ref", "origin/main")
     assert r["cursors"]["ref"] == "origin/main" and len(r["commits"]) == 4
     assert not asked_github_for_the_repo(rig)
+
+
+# ---------------------------------------------------------------- #407
+
+
+def test_an_epic_item_the_listing_left_out_is_still_reported(rig):
+    """#407: the updates listing left out #395, updated 14 minutes earlier, and
+    {checked} moved past it. The epic's own items are cross-checked by their
+    own updated_at, so the row comes back, flagged."""
+    rig.set_flag("list_omits", [11])
+    r = scan(rig)
+    rows = {x["number"]: x for x in r["updated_since"]}
+    assert 11 in rows, r["updated_since"]
+    assert rows[11]["recovered"] is True and rows[11]["in_epic"]
+    assert {c["id"] for c in rows[11]["new_comments"]} == {600, 701}
+    assert any("#11" in w and "listing" in w for w in r["warnings"]), r["warnings"]
+    assert "recovered" not in rows[15]
+
+
+def test_a_row_the_listing_returned_isnt_flagged_recovered(rig):
+    r = scan(rig)
+    assert all("recovered" not in x for x in r["updated_since"])
+    assert not any("left out" in w for w in r["warnings"]), r["warnings"]
+
+
+def test_only_the_epics_own_items_are_cross_checked(rig):
+    """#15 isn't in the epic: the cross-check can't see it, the overlap can."""
+    rig.set_flag("list_omits", [15])
+    assert 15 not in {x["number"] for x in scan(rig)["updated_since"]}
+
+
+def test_the_cross_check_is_one_graphql_query_per_hundred_items(rig):
+    """#516 holds about 120 refs: a call per item would be 120 calls."""
+    lines = "".join(f"- [ ] #{n} item\n" for n in range(100, 230))
+    rig.issue(REPO, EPIC, body=rig.body(REPO, EPIC) + "\n## Tier 2\n\n" + lines)
+    for n in range(100, 230):
+        rig.issue(REPO, n, updated_at="2026-09-01T00:00:00Z")
+    rig.issue(REPO, 229, updated_at="2026-10-02T00:00:00Z")
+    rig.set_flag("list_omits", [229])
+    r = scan(rig)
+    assert 229 in {x["number"] for x in r["updated_since"]}
+    assert rig.load()["graphql_calls"] == 2
+
+
+def test_a_missing_item_doesnt_sink_the_cross_check(rig):
+    """A ref to a deleted issue resolves to null, and gh exits 1 with the rest."""
+    rig.issue(REPO, EPIC, body=rig.body(REPO, EPIC) + "- [ ] #77 deleted since\n")
+    rig.set_flag("list_omits", [11])
+    r = scan(rig)
+    assert 11 in {x["number"] for x in r["updated_since"]}
+    warned = [w for w in r["warnings"] if "#77" in w]
+    # CR 1190: GitHub's own reason, not a guess at one.
+    assert warned and "Could not resolve" in warned[0], r["warnings"]
+
+
+def test_a_failed_cross_check_is_a_warning_not_a_failed_scan(rig):
+    """A cloud session's proxy refuses GraphQL; the listing's rows still stand."""
+    rig.set_flag("graphql_error", "HTTP 403: GraphQL is not available")
+    rig.set_flag("list_omits", [11])
+    r = scan(rig)
+    assert 11 not in {x["number"] for x in r["updated_since"]}
+    warned = [w for w in r["warnings"] if "cross-check" in w]
+    assert warned and "GraphQL is not available" in warned[0], r["warnings"]
+
+
+def test_the_epic_is_never_recovered_as_its_own_item(rig):
+    """#406, CR 289: the epic is no row of its own, whichever walk finds it."""
+    rig.issue(
+        REPO,
+        EPIC,
+        body=rig.body(REPO, EPIC) + "- [ ] #10 this epic\n",
+        updated_at="2026-10-02T00:00:00Z",
+    )
+    rig.set_flag("list_omits", [10])
+    r = scan(rig)
+    assert 10 not in {x["number"] for x in r["updated_since"]}
+
+
+def test_the_window_overlaps_the_last_check_in(rig):
+    """#407: the listing is queried from since minus the margin, while since
+    and {checked} keep their own times. A row inside the margin is flagged."""
+    rig.issue(REPO, 15, updated_at="2026-10-01T08:45:00Z")
+    rig.issue(REPO, 14, updated_at="2026-10-01T08:15:00Z")
+    r = scan(rig)
+    assert r["cursors"]["since"] == "2026-10-01T09:00:00Z"
+    assert r["cursors"]["queried_since"] == "2026-10-01T08:30:00Z"
+    rows = {x["number"]: x for x in r["updated_since"]}
+    assert rows[15]["in_overlap"] is True
+    assert rows[11]["in_overlap"] is False
+    assert 14 not in rows
+
+
+def test_comments_in_the_overlap_come_back_flagged(rig):
+    """The per-issue comment listings take the same overlap."""
+    rig.comment(
+        REPO,
+        11,
+        702,
+        created_at="2026-10-01T08:50:00Z",
+        updated_at="2026-10-01T08:50:00Z",
+    )
+    rig.comment(
+        REPO,
+        EPIC,
+        802,
+        created_at="2026-10-01T08:40:00Z",
+        updated_at="2026-10-01T08:40:00Z",
+    )
+    rig.comment(
+        REPO,
+        EPIC,
+        803,
+        created_at="2026-10-01T08:20:00Z",
+        updated_at="2026-10-01T08:20:00Z",
+    )
+    r = scan(rig)
+    rows = {x["number"]: x for x in r["updated_since"]}
+    comments = {c["id"]: c for c in rows[11]["new_comments"]}
+    assert comments[702]["in_overlap"] is True
+    assert comments[701]["in_overlap"] is False
+    assert [(c["id"], c["in_overlap"]) for c in r["epic_comments"]] == [(802, True)]
+
+
+def test_the_help_states_the_margin(rig):
+    res = rig.run("scan.sh", "--help")
+    assert res.returncode == 0
+    assert "30 minutes" in res.stdout, res.stdout
+
+
+# ---------------------------------------------------------------- #528
+
+
+def test_a_nested_field_is_no_header_line(rig):
+    """#528: header_fields read a checklist item's sub-note as the header's.
+    Top-level lines only, as the editor's header op now reads."""
+    spec = importlib.util.spec_from_file_location("_scan", SCRIPTS / "_scan.py")
+    scan_mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(scan_mod)
+    lines = ["## Tier 1", "", "- [ ] #11 a", "  - **Next:** ask alice", "- [ ] #12 b"]
+    assert "next" not in scan_mod.header_fields(lines)
+    assert scan_mod.header_fields(["- **Next:** #12"] + lines)["next"] == "#12"
+
+
+def test_a_nested_last_check_in_isnt_the_scans_since(rig):
+    body = (
+        rig.body(REPO, EPIC)
+        .replace("- **Last check-in:** 2026-10-01T09:00Z\n", "")
+        .replace(
+            "- [ ] #12 next\n",
+            "- [ ] #12 next\n  - **Last check-in:** 2026-09-01T00:00Z\n",
+        )
+    )
+    rig.issue(REPO, EPIC, body=body)
+    r = scan(rig)
+    assert r["cursors"]["since"] is None and r["updated_since"] is None

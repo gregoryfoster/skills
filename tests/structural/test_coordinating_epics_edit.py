@@ -11,6 +11,7 @@ called good (address-validator#272 48). A fake gh stands in for GitHub.
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import os
@@ -398,6 +399,24 @@ def test_an_issue_only_updated_since_shows_still_needs_accounting(adopted):
         new_numbers=[],
         updated_since=[{"number": 5, "kind": "issue"}, {"number": 14, "kind": "issue"}],
     )
+    ops.append({"op": "log", "text": "{today}: #14 out of epic."})
+    res = adopted.edit(REPO, EPIC, ops, "--scan", report)
+    assert res.returncode == 0, res.stderr
+
+
+@pytest.mark.parametrize("flag", ["in_overlap", "recovered"])
+def test_a_row_the_overlap_or_cross_check_brings_back_is_held_alike(adopted, flag):
+    """#407 keeps CR 265's and CR 276's rule: a row above the old watermark
+    must be mentioned, however the scan came to list it."""
+    report = _report(
+        adopted,
+        cursors={"watermark": 13},
+        new_numbers=[],
+        updated_since=[{"number": 14, "kind": "issue", flag: True}],
+    )
+    ops = [{"op": "header", "field": "Last issue seen", "value": "{last_seen}"}]
+    res = adopted.edit(REPO, EPIC, ops, "--scan", report)
+    assert res.returncode == 3 and "doesn't mention: #14" in res.stderr
     ops.append({"op": "log", "text": "{today}: #14 out of epic."})
     res = adopted.edit(REPO, EPIC, ops, "--scan", report)
     assert res.returncode == 0, res.stderr
@@ -2275,3 +2294,272 @@ def test_two_items_for_one_ref_are_ambiguous():
 def test_a_ref_inside_another_repos_ref_is_not_this_repos():
     assert ee.line_ref("- [ ] acme/gadgets#3 x", REPO) == ("item", "acme/gadgets#3")
     assert ee.refs_in(["see acme/gadgets#3"], REPO) == {"acme/gadgets#3"}
+
+
+# ---------------------------------------------------------------- #518
+
+
+def _state(rig):
+    return rig.state_dir / "acme" / "widgets" / "10"
+
+
+def test_a_write_records_its_body_hash_beside_the_baseline(adopted):
+    res = adopted.edit(REPO, EPIC, [{"op": "tick", "ref": "#11"}])
+    assert res.returncode == 0, res.stderr
+    lines = (_state(adopted) / "writes.jsonl").read_text().splitlines()
+    records = [json.loads(ln) for ln in lines]
+    assert [r["via"] for r in records] == ["adopt-live", "write"]
+    base = (_state(adopted) / "last-written.md").read_bytes()
+    assert records[-1]["sha256"] == hashlib.sha256(base).hexdigest()
+
+
+def test_a_baseline_no_write_of_this_tool_produced_is_refused(adopted):
+    """#518: another thread edited the epic, then saved its result as the
+    coordinator's baseline, so the diff read clean."""
+    foreign = BODY.replace("- [ ] #12 second thing", "- [ ] #12 rewritten elsewhere")
+    adopted.issue(REPO, EPIC, body=foreign)
+    (_state(adopted) / "last-written.md").write_text(foreign)
+    res = adopted.edit(REPO, EPIC, [{"op": "tick", "ref": "#11"}])
+    assert res.returncode == 3, res.stderr
+    assert "matches no body this tool wrote" in res.stderr
+    assert "--adopt-live" in res.stderr
+    assert "patches" not in adopted.load()
+
+
+def test_a_baseline_from_before_the_record_is_refused_once(adopted):
+    """A state directory from before #518 has no record: adopt once, on purpose."""
+    (_state(adopted) / "writes.jsonl").unlink()
+    res = adopted.edit(REPO, EPIC, [{"op": "tick", "ref": "#11"}])
+    assert res.returncode == 3 and "predates" in res.stderr, res.stderr
+    assert adopted.edit(REPO, EPIC, [], "--adopt-live").returncode == 0
+    res = adopted.edit(REPO, EPIC, [{"op": "tick", "ref": "#11"}])
+    assert res.returncode == 0, res.stderr
+
+
+def test_adopt_live_takes_a_hand_saved_baseline_on_purpose(adopted):
+    (_state(adopted) / "last-written.md").write_text("anything")
+    assert adopted.edit(REPO, EPIC, [], "--adopt-live").returncode == 0
+    res = adopted.edit(REPO, EPIC, [{"op": "tick", "ref": "#11"}])
+    assert res.returncode == 0, res.stderr
+
+
+def test_accepted_ticks_record_the_baseline_they_save(adopted):
+    adopted.issue(REPO, EPIC, body=BODY.replace("- [ ] #11", "- [x] #11"))
+    res = adopted.edit(REPO, EPIC, [], "--accept-ticks", "#11")
+    assert res.returncode == 0, res.stderr
+    res = adopted.edit(REPO, EPIC, [{"op": "tick", "ref": "#12"}])
+    assert res.returncode == 0, res.stderr
+
+
+def test_an_edit_since_the_last_write_is_reported_though_the_diff_is_clean(adopted):
+    """#518: the edit history is read every run. An edit after this tool's
+    last write that no write of it produced is named, by time: the operator,
+    the coordinator and every implementer write as one account here."""
+    adopted.set_flag("server_now", "2026-10-14T18:00:00Z")
+    assert adopted.edit(REPO, EPIC, [{"op": "tick", "ref": "#11"}]).returncode == 0
+    body = adopted.body(REPO, EPIC)
+    adopted.edit_elsewhere(EPIC, body + "\nstray\n", at="2026-10-14T18:20:00Z")
+    adopted.edit_elsewhere(EPIC, body, at="2026-10-14T18:21:00Z")  # and back
+    res = adopted.edit(REPO, EPIC, [{"op": "tick", "ref": "#12"}])
+    assert res.returncode == 0, res.stderr
+    s = summary(res)
+    # The revert's body hashes to this tool's write: content it wrote itself.
+    assert [e["at"] for e in s["foreign_edits"]] == ["2026-10-14T18:20:00Z"]
+    assert s["foreign_edits"][0]["editor"] == "gregoryfoster"
+    assert "WARNING" in res.stderr and "edit history" in res.stderr
+
+
+def test_this_tools_own_writes_arent_reported(adopted):
+    adopted.set_flag("server_now", "2026-10-14T18:00:00Z")
+    assert adopted.edit(REPO, EPIC, [{"op": "tick", "ref": "#11"}]).returncode == 0
+    adopted.set_flag("server_now", "2026-10-14T18:30:00Z")
+    res = adopted.edit(REPO, EPIC, [{"op": "tick", "ref": "#12"}])
+    assert res.returncode == 0, res.stderr
+    res = adopted.edit(REPO, EPIC, [{"op": "untick", "ref": "#12"}], "--dry-run")
+    assert summary(res)["foreign_edits"] == []
+
+
+def test_a_fold_ending_on_this_tools_write_is_its_own_by_hash(adopted):
+    """GitHub can fold several writes into one entry. Read at its latest time
+    with the body it ends on, a fold ending on this tool's write is its own;
+    an earlier foreign edit in it had to pass that write's own diff check."""
+    adopted.set_flag("server_now", "2026-10-14T18:00:00Z")
+    assert adopted.edit(REPO, EPIC, [{"op": "tick", "ref": "#11"}]).returncode == 0
+    st = adopted.load()
+    edits = st["repos"][REPO]["edits"][str(EPIC)]
+    edits[-1]["updatedAt"] = "2026-10-14T18:09:00Z"  # folded into a later time
+    adopted.save()
+    res = adopted.edit(REPO, EPIC, [], "--dry-run")
+    assert summary(res)["foreign_edits"] == []
+
+
+def test_a_fold_ending_on_a_foreign_edit_is_reported(adopted):
+    adopted.set_flag("server_now", "2026-10-14T18:00:00Z")
+    assert adopted.edit(REPO, EPIC, [{"op": "tick", "ref": "#11"}]).returncode == 0
+    st = adopted.load()
+    edit = st["repos"][REPO]["edits"][str(EPIC)][-1]
+    edit["updatedAt"] = "2026-10-14T18:09:00Z"
+    edit["diff"] = edit["diff"] + "\nfolded in\n"
+    adopted.save()
+    res = adopted.edit(REPO, EPIC, [], "--dry-run")
+    assert [e["at"] for e in summary(res)["foreign_edits"]] == ["2026-10-14T18:09:00Z"]
+
+
+def test_a_hand_created_epic_adopted_then_written_reports_nothing(rig):
+    """CR 1195: GitHub's first edit of a body adds a node for the body as
+    created, editedAt its creation time and updatedAt the first edit's."""
+    rig.issue(
+        REPO, EPIC, created_at="2026-10-01T00:00:00Z", updated_at="2026-10-14T17:00:00Z"
+    )
+    assert rig.edit(REPO, EPIC, [], "--adopt-live").returncode == 0
+    rig.set_flag("server_now", "2026-10-14T18:00:00Z")
+    assert rig.edit(REPO, EPIC, [{"op": "tick", "ref": "#11"}]).returncode == 0
+    edits = rig.load()["repos"][REPO]["edits"][str(EPIC)]
+    assert [e["editedAt"] for e in edits] == [
+        "2026-10-01T00:00:00Z",
+        "2026-10-14T18:00:00Z",
+    ]
+    res = rig.edit(REPO, EPIC, [], "--dry-run")
+    assert summary(res)["foreign_edits"] == [], res.stderr
+
+
+def test_the_body_as_created_is_no_edit_though_auto_ticked_before_adoption(rig):
+    """CR 1195: GitHub ticks a closed child's box with no history entry, so a
+    body adopted after that differs from the one created. The created-body
+    node is judged by its editedAt alone, the creation time, and is never
+    reported; the hand edit that made it appear still is."""
+    rig.issue(
+        REPO, EPIC, created_at="2026-10-01T00:00:00Z", updated_at="2026-10-14T17:00:00Z"
+    )
+    rig.auto_edit(EPIC, BODY.replace("- [ ] #11", "- [x] #11"))
+    assert rig.edit(REPO, EPIC, [], "--adopt-live").returncode == 0
+    ticked = rig.body(REPO, EPIC)
+    rig.edit_elsewhere(EPIC, ticked + "\nstray\n", at="2026-10-14T18:20:00Z")
+    res = rig.edit(REPO, EPIC, [], "--dry-run")
+    assert summary(res)["foreign_edits"] == [
+        {"at": "2026-10-14T18:20:00Z", "editor": "gregoryfoster"}
+    ], res.stderr
+
+
+def test_an_unreadable_edit_history_is_a_warning(adopted):
+    """A cloud session's proxy refuses GraphQL; the baseline checks still hold."""
+    adopted.set_flag("graphql_error", "HTTP 403: GraphQL is not available")
+    res = adopted.edit(REPO, EPIC, [{"op": "tick", "ref": "#11"}])
+    assert res.returncode == 0, res.stderr
+    s = summary(res)
+    assert s["edit_history"].startswith("unread") and "GraphQL" in s["edit_history"]
+    assert "WARNING" in res.stderr
+
+
+# ---------------------------------------------------------------- #519
+
+
+def _close(rig):
+    rig.issue(
+        REPO,
+        EPIC,
+        state="closed",
+        closed_at="2026-10-14T17:00:00Z",
+        closed_by={"login": "implementer-bot"},
+    )
+
+
+def test_a_write_to_a_closed_epic_is_refused_naming_the_closer(adopted):
+    """#519 (#502 F5): a final child's thread closed the epic, then the
+    editor wrote to it without complaint."""
+    _close(adopted)
+    res = adopted.edit(REPO, EPIC, [{"op": "tick", "ref": "#11"}])
+    assert res.returncode == 3, res.stderr
+    assert "closed" in res.stderr and "implementer-bot" in res.stderr
+    assert "2026-10-14T17:00:00Z" in res.stderr and "--closed-ok" in res.stderr
+    assert "patches" not in adopted.load()
+
+
+def test_closed_ok_writes_to_a_closed_epic_and_says_who_closed_it(adopted):
+    _close(adopted)
+    res = adopted.edit(REPO, EPIC, [{"op": "tick", "ref": "#11"}], "--closed-ok")
+    assert res.returncode == 0, res.stderr
+    s = summary(res)
+    assert s["written"] and s["state"] == "closed"
+    assert s["closed_by"] == "implementer-bot"
+    assert s["closed_at"] == "2026-10-14T17:00:00Z"
+
+
+def test_a_dry_run_on_a_closed_epic_works_and_reports_the_state(adopted):
+    _close(adopted)
+    res = adopted.edit(REPO, EPIC, [{"op": "tick", "ref": "#11"}], "--dry-run")
+    assert res.returncode == 0, res.stderr
+    s = summary(res)
+    assert s["state"] == "closed" and s["closed_by"] == "implementer-bot"
+    assert "--closed-ok" in res.stderr
+
+
+def test_an_open_epic_reports_its_state(adopted):
+    res = adopted.edit(REPO, EPIC, [{"op": "tick", "ref": "#11"}])
+    assert summary(res)["state"] == "open"
+
+
+def test_an_epic_closed_during_the_run_is_refused(adopted):
+    """The compare-and-swap re-read checks the state too."""
+    adopted.change_on_get(EPIC, 2, BODY)
+    st = adopted.load()
+    st["change_on_get"][str(EPIC)]["state"] = "closed"
+    adopted.save()
+    res = adopted.edit(REPO, EPIC, [{"op": "tick", "ref": "#11"}])
+    assert res.returncode == 3 and "closed" in res.stderr, res.stderr
+    assert "patches" not in adopted.load()
+
+
+def test_the_close_out_procedure_passes_closed_ok():
+    text = (SCRIPTS.parent / "references" / "close-out.md").read_text()
+    assert "--closed-ok" in text
+
+
+def test_the_implementer_contract_says_never_close_the_epic():
+    text = (SCRIPTS.parent / "references" / "hand-off.md").read_text()
+    assert "never close the epic" in text.lower()
+
+
+# ---------------------------------------------------------------- #528
+
+NESTED = "Intro.\n\n## Tier 1\n\n- [ ] #11 a\n  - **Next:** ask alice\n- [ ] #12 b\n"
+
+
+def test_a_header_op_adds_a_line_rather_than_rewrite_a_nested_sub_note(rig):
+    """#528's repro: with no header Next, `header Next` rewrote #11's sub-note
+    in place, exit 0, no note. Top-level lines only, as list_field reads."""
+    res = _header(rig, NESTED, [{"op": "header", "field": "Next", "value": "#12"}])
+    assert res.returncode == 0, res.stderr
+    body = rig.body(REPO, EPIC)
+    assert "  - **Next:** ask alice\n" in body, body
+    assert body.startswith("Intro.\n\n- **Next:** #12\n\n## Tier 1"), body
+    notes = summary(res)["notes"]
+    assert any("indented" in n and "line 6" in n for n in notes), notes
+
+
+def test_a_header_op_sets_the_header_line_past_a_nested_sub_note(rig):
+    """With a header Next too, the op found two lines and refused."""
+    body = "- **Next:** #11\n\n" + NESTED
+    res = _header(rig, body, [{"op": "header", "field": "Next", "value": "#12"}])
+    assert res.returncode == 0, res.stderr
+    out = rig.body(REPO, EPIC)
+    assert out.startswith("- **Next:** #12\n") and "  - **Next:** ask alice" in out
+
+
+def test_an_indented_header_list_is_noted_and_a_top_level_line_added(rig):
+    """CommonMark lets a list sit 1-3 spaces in. Neither script reads such a
+    line as the header's, so the op adds a top-level one and says why."""
+    body = "  - **Last check-in:** 2026-10-01T09:00Z\n  - **Next:** #11\n\n## Tier 1\n\n- [ ] #11 a\n"
+    res = _header(rig, body, [{"op": "header", "field": "Next", "value": "#12"}])
+    assert res.returncode == 0, res.stderr
+    out = rig.body(REPO, EPIC)
+    assert "\n- **Next:** #12\n" in "\n" + out and "  - **Next:** #11" in out, out
+    notes = summary(res)["notes"]
+    assert any("indented" in n and "'**Next:**'" in n for n in notes), notes
+
+
+def test_field_hits_reads_top_level_lines_only():
+    lines = NESTED.splitlines()
+    assert ee.field_hits(lines, "Next") == []
+    assert ee.field_hits(["- **Next:** #1", "  - **Next:** x"], "next") == [0]
+    assert ee.field_hits(["**Next:** #1"], "Next") == [0]  # a paragraph header too

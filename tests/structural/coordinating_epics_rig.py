@@ -15,10 +15,13 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+# An issue's created_at when a test sets none.
+CREATED = "2026-10-01T00:00:00Z"
 SCRIPTS = REPO_ROOT / "skills" / "coordinating-epics" / "scripts"
 
 FAKE_GH = r"""#!__PYTHON__
-import json, os, sys
+import json, os, re, sys
+CREATED = "__CREATED__"
 from urllib.parse import parse_qs, urlsplit
 
 state_path = os.environ["FAKE_GH_STATE"]
@@ -28,6 +31,12 @@ st.setdefault("calls", []).append(args)
 
 def save():
     json.dump(st, open(state_path, "w"))
+
+# The node GitHub adds on a body's first edit, measured on #516 (CR 1195):
+# the body as created, editedAt the creation time, updatedAt the first edit's.
+def original_node(it, original, first_edit_at):
+    return {"editedAt": it.get("created_at", CREATED), "updatedAt": first_edit_at,
+            "editor": {"login": "gregoryfoster"}, "diff": original}
 
 INCLUDE = "-i" in args  # gh api -i: the status line and headers first
 
@@ -79,6 +88,35 @@ if args[0] != "api":
 
 method = "GET"
 rest = [x for x in args[1:] if x != "-i"]
+
+if rest[0] == "graphql":  # gh api graphql -f query=… -f owner=… -F number=…
+    st.setdefault("graphql_calls", 0)
+    st["graphql_calls"] += 1
+    if "graphql_error" in st:  # a cloud session's proxy refuses GraphQL
+        fail(st["graphql_error"])
+    var = dict(a.split("=", 1) for a in rest[1:] if "=" in a)
+    r = find(f"{var['owner']}/{var['name']}") or {}
+    issues = r.get("issues", {})
+    if "userContentEdits" in var["query"]:
+        edits = r.get("edits", {}).get(var["number"], [])
+        out({"data": {"repository": {"issue": {"userContentEdits": {"nodes": edits}}}}})
+    data, errors = {}, []
+    for alias, num in re.findall(r"(\w+): issueOrPullRequest\(number: (\d+)\)", var["query"]):
+        it = issues.get(num)
+        if it is None:
+            data[alias] = None
+            errors.append({"type": "NOT_FOUND", "path": ["repository", alias],
+                           "message": f"Could not resolve to an issue or pull request with the number of {num}."})
+        else:
+            data[alias] = {"number": int(num), "updatedAt": it.get("updated_at")}
+    body = {"data": {"repository": data}}
+    if errors:  # gh prints the body, then fails with the errors (exit 1)
+        body["errors"] = errors
+        save()
+        print(json.dumps(body))
+        print("gh: " + errors[0]["message"], file=sys.stderr)
+        sys.exit(1)
+    out(body)
 if rest[:2] == ["-X", "PATCH"]:
     method, rest = "PATCH", rest[2:]
 path = rest[0]
@@ -91,7 +129,17 @@ if method == "PATCH":
     body = json.load(open(rest[rest.index("--input") + 1]))["body"]
     st.setdefault("patches", []).append(body)
     if not st.get("patch_noop"):
-        find(repo)["issues"][parts[4]]["body"] = body
+        it = find(repo)["issues"][parts[4]]
+        original = it.get("body", "")
+        it["body"] = body
+        # GitHub's clock moves updated_at, and the edit lands in the body's
+        # history, under the one account every thread writes as (#518).
+        now = st.get("server_now", "2026-10-14T18:03:27Z")
+        it["updated_at"] = now
+        edits = find(repo).setdefault("edits", {}).setdefault(parts[4], [])
+        if not edits:  # a body's first edit also records it as created (CR 1195)
+            edits.append(original_node(it, it.get("created_body", original), now))
+        edits.append({"editedAt": now, "updatedAt": now, "editor": {"login": "gregoryfoster"}, "diff": body})
     after = st.get("patch_fails_after_apply")  # GitHub applied it; gh saw a 502
     if after:  # or gh's whole stderr, when a string
         fail(after if isinstance(after, str) else "HTTP 502: Bad Gateway")
@@ -118,6 +166,8 @@ if len(parts) == 4 and parts[3] == "issues":
     rows = [dict(it, number=int(n)) for n, it in issues.items()]
     if "since" in q:
         rows = [x for x in rows if x.get("updated_at", "") >= q["since"]]
+        # GitHub's listing can leave out a row updated minutes earlier (#407).
+        rows = [x for x in rows if x["number"] not in st.get("list_omits", [])]
     if q.get("sort") == "created":
         rows.sort(key=lambda x: (x.get("created_at", ""), x["number"]), reverse=True)
     else:
@@ -135,7 +185,7 @@ if len(parts) == 5 and parts[3] == "issues":
         fail("HTTP 502: Bad Gateway")
     change = st.get("change_on_get", {}).get(parts[4])
     if change and gets[parts[4]] == change["at"]:
-        it["body"] = change["body"]
+        it.update({k: v for k, v in change.items() if k != "at"})
     out(dict(it, number=int(parts[4])))
 
 if len(parts) == 6 and parts[5] == "comments":
@@ -155,7 +205,11 @@ class Rig:
         self.bin = tmp / "bin"
         self.bin.mkdir()
         gh = self.bin / "gh"
-        gh.write_text(FAKE_GH.replace("__PYTHON__", sys.executable))
+        gh.write_text(
+            FAKE_GH.replace("__PYTHON__", sys.executable).replace(
+                "__CREATED__", CREATED
+            )
+        )
         gh.chmod(0o755)
         self.state_path = tmp / "gh-state.json"
         self.state_dir = tmp / "state"
@@ -217,6 +271,43 @@ class Rig:
         self.load()
         self.state.setdefault("fail_on_get", {})[str(num)] = at
         self.state["gets"] = {}
+        self.save()
+
+    def auto_edit(self, num: int, body: str, repo: str = "acme/widgets") -> None:
+        """GitHub's own edit, such as a closing child's auto-tick: no history
+        entry, and the body as created stays what the first edit records."""
+        self.load()
+        it = self.state["repos"][repo]["issues"][str(num)]
+        it.setdefault("created_body", it.get("body", ""))
+        it["body"] = body
+        self.save()
+
+    def edit_elsewhere(
+        self, num: int, body: str, at: str, repo: str = "acme/widgets"
+    ) -> None:
+        """Another thread edits issue num's body at GitHub time at, by hand."""
+        self.load()
+        r = self.state["repos"][repo]
+        it = r["issues"][str(num)]
+        edits = r.setdefault("edits", {}).setdefault(str(num), [])
+        if not edits:  # as the fake's PATCH does (CR 1195)
+            edits.append(
+                {
+                    "editedAt": it.get("created_at", CREATED),
+                    "updatedAt": at,
+                    "editor": {"login": "gregoryfoster"},
+                    "diff": it.get("created_body", it.get("body", "")),
+                }
+            )
+        it.update(body=body, updated_at=at)
+        edits.append(
+            {
+                "editedAt": at,
+                "updatedAt": at,
+                "editor": {"login": "gregoryfoster"},
+                "diff": body,
+            }
+        )
         self.save()
 
     def body(self, repo: str, num: int) -> str:
