@@ -1837,10 +1837,16 @@ git_origin() {  # <var> <dir>
 UV_AUDIT_MIN=0.10.8
 
 # Whether only root can change PATH: it and its directory are uid 0's, and
-# neither is writable by its group or by others.
+# neither is writable by its group or by others. A link is judged by what it
+# runs, and by the directory holding the link too: a link's own mode reads
+# 0777, and an installer's /usr/local/bin/uv can be one (CR 1138).
 root_only() {  # <path>
-  local _ro_p _ro_u _ro_m
-  for _ro_p in "$1" "${1%/*}"; do
+  local _ro_p _ro_u _ro_m _ro_r=$1
+  if [ -L "$1" ]; then
+    _ro_r=$(readlink -f -- "$1" 2>/dev/null) || _ro_r=""
+    [ -n "$_ro_r" ] || return 1
+  fi
+  for _ro_p in "$_ro_r" "${_ro_r%/*}" "${1%/*}"; do
     file_owner _ro_u "$_ro_p"
     file_mode _ro_m "$_ro_p"
     [ "$_ro_u" = 0 ] && [ -n "$_ro_m" ] || return 1
