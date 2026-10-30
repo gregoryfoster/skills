@@ -614,6 +614,13 @@ class TestAThrottledCheckIsReportedAsSuch:
         assert not harness.calls("systemd-run")
         assert "FAILED TO RUN" in result.stdout, result.stdout
 
+    def test_a_host_without_proc_reads_the_cgroupfs_root(self, tmp_path: Path) -> None:
+        """CR 1342: macOS has no /proc, and the harness read it unconditionally,
+        so every stubbed test here failed there before the hook ran. The
+        keeper's own fallback is the root: `sed` reads nothing, and it reads
+        `$fs/memory.events`."""
+        assert _own_cgroup(tmp_path / "no-proc" / "cgroup") == "/"
+
     def test_the_help_and_host_memory_name_the_throttle(self) -> None:
         usage = subprocess.run(
             ["bash", str(HOOK), "--help"],
