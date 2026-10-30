@@ -144,20 +144,15 @@ class TestTheUnitReadsOnlyEtc:
 # The template's one line that defines `load_env` from the recipe, in place
 # (CR 1044). The recipe stays the only copy of the loader.
 EXTRACT = f"eval \"$(sed -n 's/^#   //; /^load_env() [{{]/,/^[}}]/p' {RECIPE})\""
-_FENCE = re.compile(r"^\u200b?```")
 SENTINEL = "sentinel-not-a-real-token"
 
 
 def _template_load_blocks() -> list[str]:
     """Each command in the template that loads env: from the EXTRACT line to
-    its last `load_env` line, as an agent pastes it into one tool call."""
-    blocks, block, inside = [], [], False
+    its `load_env` line, as an agent pastes it into one tool call. Scanned by
+    line rather than by fence, since the template sits in an outer fence."""
+    blocks, block = [], []
     for ln in TEMPLATE.read_text().splitlines():
-        if _FENCE.match(ln):
-            inside, block = not inside, []
-            continue
-        if not inside:
-            continue
         if ln.startswith("eval ") or block:
             block.append(ln)
         if block and ln.startswith("load_env "):
