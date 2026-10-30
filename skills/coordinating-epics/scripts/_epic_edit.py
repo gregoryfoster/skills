@@ -1542,7 +1542,11 @@ def save_baseline(sd: Path, text: str, at: str, via: str) -> None:
 
 
 def foreign_edits(
-    host: str, num: int, since: dt.datetime, mine: set[str]
+    host: str,
+    num: int,
+    since: dt.datetime,
+    mine: set[str],
+    created: dt.datetime | None = None,
 ) -> list[dict]:
     """The body's history entries since the baseline that no write of this
     tool made, oldest first.
@@ -1554,6 +1558,12 @@ def foreign_edits(
     with the body it ends on. A fold ending on a foreign edit is reported; one
     ending on this tool's write passes, and a foreign edit earlier in it had
     to pass that write's own diff against a recorded baseline.
+
+    A body's first edit also adds a node for the body as created: editedAt
+    the creation time, updatedAt the first edit's [measured on #516]. It is
+    no edit, and GitHub's auto-ticks leave no node, so a body adopted after
+    one never hashes to it. A node edited at or before the issue's creation
+    is judged by that time alone, which no baseline precedes (CR 1195).
     """
     owner, name = host.split("/")
     data, _ = gh_graphql(
@@ -1567,7 +1577,10 @@ def foreign_edits(
     issue = (data.get("repository") or {}).get("issue") or {}
     out = []
     for e in (issue.get("userContentEdits") or {}).get("nodes") or []:
-        times = [t for t in (gh_time(e.get(k)) for k in ("editedAt", "updatedAt")) if t]
+        edited = gh_time(e.get("editedAt"))
+        if created and edited and edited <= created:
+            continue
+        times = [t for t in (edited, gh_time(e.get("updatedAt"))) if t]
         if not times or max(times) <= since + HISTORY_SLACK:
             continue
         diff = e.get("diff")
@@ -1873,7 +1886,11 @@ def run(argv: list[str]) -> int:
                 if not times:
                     raise Infra("the record of this baseline has no usable time")
                 summary["foreign_edits"] = foreign_edits(
-                    host, a.epic, max(times), {w["sha256"] for w in writes}
+                    host,
+                    a.epic,
+                    max(times),
+                    {w["sha256"] for w in writes},
+                    gh_time(live_issue.get("created_at")),
                 )
             except Infra as e:
                 summary["edit_history"] = f"unread: {gh_cause(e)}"
