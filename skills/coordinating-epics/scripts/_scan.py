@@ -194,8 +194,11 @@ def new_comments(host: str, num: int, since: str, what: str) -> list[dict]:
     ]
 
 
-def item_updates(host: str, numbers: set[int]) -> tuple[dict[int, str], list[int]]:
-    """Each item's own updatedAt, and the numbers that resolved to nothing.
+def item_updates(
+    host: str, numbers: set[int]
+) -> tuple[dict[int, str], list[int], list[str]]:
+    """Each item's own updatedAt, the numbers that resolved to nothing, and
+    GitHub's errors, which say why (CR 1190).
 
     One GraphQL query per GRAPHQL_BATCH items, not a REST call each: #516
     holds about 120 refs (#407).
@@ -203,6 +206,7 @@ def item_updates(host: str, numbers: set[int]) -> tuple[dict[int, str], list[int
     owner, name = host.split("/")
     found: dict[int, str] = {}
     missing: list[int] = []
+    errors: list[str] = []
     nums = sorted(numbers)
     for i in range(0, len(nums), GRAPHQL_BATCH):
         batch = nums[i : i + GRAPHQL_BATCH]
@@ -211,12 +215,13 @@ def item_updates(host: str, numbers: set[int]) -> tuple[dict[int, str], list[int
             " ... on Issue { updatedAt } ... on PullRequest { updatedAt } }"
             for n in batch
         )
-        data, _ = gh_graphql(
+        data, errs = gh_graphql(
             "query($owner: String!, $name: String!) {"
             f" repository(owner: $owner, name: $name) {{ {fields} }} }}",
             {"owner": owner, "name": name},
             "cross-checking the epic's items",
         )
+        errors += errs
         repo = data.get("repository") or {}
         for n in batch:
             node = repo.get(f"i{n}") or {}
@@ -224,7 +229,7 @@ def item_updates(host: str, numbers: set[int]) -> tuple[dict[int, str], list[int
                 found[n] = node["updatedAt"]
             else:
                 missing.append(n)
-    return found, missing
+    return found, missing, errors
 
 
 def issue_row(it: dict, host: str, epic: int, items: set[str]) -> dict:
@@ -662,7 +667,9 @@ def run(argv: list[str]) -> int:
                 - {r["number"] for r in rows}
             )
             try:
-                updated, missing = item_updates(host, own) if own else ({}, [])
+                updated, missing, errors = (
+                    item_updates(host, own) if own else ({}, [], [])
+                )
             except Infra as e:
                 warnings.append(
                     "the epic's items weren't cross-checked, so an update the"
@@ -673,7 +680,8 @@ def run(argv: list[str]) -> int:
                     warnings.append(
                         "the cross-check read nothing for "
                         + ", ".join(f"#{n}" for n in missing)
-                        + " (deleted, or transferred out?)"
+                        + ": "
+                        + ("; ".join(errors) or "GitHub gave no reason")
                     )
                 for n, when in sorted(updated.items()):
                     if parse_ts(when) < parse_ts(queried):
