@@ -59,7 +59,7 @@ cd "$PROJECT_ROOT"
 #       case $line in *=*) ;; *) continue ;; esac
 #       key=${line%%=*} val=${line#*=}
 #       key=${key%"${key##*[![:space:]]}"}
-#       case $key in ''|*[!A-Za-z0-9_]*) continue ;; esac
+#       case $key in ''|[0-9]*|*[!A-Za-z0-9_]*) continue ;; esac
 #       case $val in                                # strip matched quotes
 #         \"*\") val=${val#\"} val=${val%\"} ;;
 #         \'*\') val=${val#\'} val=${val%\'} ;;
