@@ -104,3 +104,18 @@ def test_readings_name_the_dry_runs_own_download_readings():
         li for li in READINGS.splitlines() if li.startswith("| The dry run's cost")
     ]
     assert "download_bound_kib" in row and "free_kib_dry_run_dir" in row
+
+
+def test_the_recovery_rule_reads_the_same_everywhere():
+    # CR 1294: only after a held step that restarted a declared data store.
+    import subprocess
+
+    rule = "restarted a declared data store"
+    [row] = [li for li in KNOB_MD.splitlines() if li.startswith("| `recovery ")]
+    help_text = subprocess.run(
+        ["bash", str(SKILL / "scripts" / "apply.sh"), "--help"],
+        capture_output=True,
+        text=True,
+    ).stdout
+    for name, text in (("knob.md", row), ("run.md", RUN), ("--help", help_text)):
+        assert rule in " ".join(text.split()), name

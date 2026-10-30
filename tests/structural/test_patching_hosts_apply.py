@@ -1608,6 +1608,7 @@ def test_a_held_step_stops_its_restarters_around_the_restart_and_polls_health(ho
 
 
 RECOVERY = "recovery curl -sf -X POST http://localhost:8000/api/v2/validate\n"
+PG_LINE = "datastore postgres postgresql@16-main app\n"
 
 
 def _posts(host: Host) -> list[int]:
@@ -1616,13 +1617,42 @@ def _posts(host: Host) -> list[int]:
     ]
 
 
+def _ds_held(
+    host: Host,
+    extra: str = PG_LINE,
+    unit: str = "postgresql@16-main.service",
+    restarts: bool = True,
+) -> Host:
+    """After a green bulk: the knob declares a datastore and a recovery line,
+    and the held step's upgrade restarts UNIT, or restarts nothing. The bulk
+    runs under the knob already set; its output is host.bulk."""
+    host.bulk = host.run()
+    host.knob(KNOB + extra + RECOVERY)
+    (host.run_dir / "recovery-point").write_text("began 1\n")
+    s = host.state
+    host.cases["systemctl"].insert(
+        0,
+        (
+            f"show*-- {unit}",
+            "",
+            0,
+            "",
+            f'if [ -e "{s}/upgraded" ]; then echo ActiveEnterTimestamp=@200; '
+            "else echo ActiveEnterTimestamp=@100; fi; exit 0",
+        ),
+    )
+    if restarts:
+        host.uu("All upgrades installed\n", before=f'touch "{s}/upgraded"; ')
+    return host
+
+
 def test_a_held_step_proves_recovery_once_after_its_health_checks(host):
     # #423: a recovery line runs around a data-store step, and never in the
     # bulk or the gate.
     host.knob(KNOB + RECOVERY)
-    out = host.run()
+    _ds_held(host)
     assert not _posts(host)
-    assert out["recovery"] is None
+    assert host.bulk["recovery"] is None
     out = host.run(step="postgres")
     [post] = _posts(host)
     polls = [
@@ -1631,10 +1661,12 @@ def test_a_held_step_proves_recovery_once_after_its_health_checks(host):
     assert post > max(polls)
     assert out["recovery"] == {
         "declared": 1,
+        "restarted": ["postgresql@16-main.service"],
+        "unread": [],
         "checks": [
             {
                 "command": RECOVERY.split(" ", 1)[1].strip(),
-                "line": 6,
+                "line": 7,
                 "exit": 0,
             }
         ],
@@ -1643,13 +1675,66 @@ def test_a_held_step_proves_recovery_once_after_its_health_checks(host):
     assert out["verdict"]["ok"] is True
 
 
+def test_a_held_step_that_restarts_no_datastore_runs_no_recovery_line(host):
+    # CR 1294: a docker or tailscale step, one that restarted no declared
+    # data store, makes no real request and writes no row.
+    out = _ds_held(host, restarts=False).run(step="postgres")
+    assert not _posts(host)
+    rec = out["recovery"]
+    assert (rec["restarted"], rec["checks"], rec["passed"]) == ([], [], None)
+    assert "restarted no declared data store" in rec["skipped"]
+    assert out["verdict"]["ok"] is True
+
+
+def test_a_step_that_restarts_a_qdrant_container_through_dockerd_runs_recovery(host):
+    # CR 1294: a docker step restarts the container, not its unit.
+    s = host.state
+    _ds_held(
+        host,
+        extra="datastore qdrant qdrant.service qdrant https://q.example:6333 -\n",
+        unit="qdrant.service",
+        restarts=False,
+    )
+    host.cases["docker"].insert(
+        0,
+        (
+            "inspect *qdrant",
+            "",
+            0,
+            "",
+            f'if [ -e "{s}/upgraded" ]; then echo 2026-10-30T02:00:00Z; '
+            "else echo 2026-10-30T01:00:00Z; fi; exit 0",
+        ),
+    )
+    host.uu(
+        "All upgrades installed\n",
+        before=f'touch "{s}/restarted-dockerd" "{s}/upgraded"; ',
+    )
+    host.cases["systemctl"].insert(
+        0, ("show*-- qdrant.service", "ActiveEnterTimestamp=@100\n", 0, "", None)
+    )
+    out = host.run(step="postgres")
+    assert len(_posts(host)) == 1
+    assert out["recovery"]["restarted"] == ["container:qdrant"]
+
+
+def test_a_held_step_whose_datastores_start_cant_be_read_still_proves_recovery(host):
+    # Unread is never "didn't restart": the proof runs, and says why.
+    _ds_held(host)
+    host.cases["systemctl"].insert(
+        0, ("show*-- postgresql@16-main.service", "", 1, "", None)
+    )
+    out = host.run(step="postgres")
+    assert len(_posts(host)) == 1
+    assert out["recovery"]["unread"] == ["postgresql@16-main.service"]
+
+
 def test_a_failed_recovery_check_fails_the_held_step(host):
-    host.knob(KNOB + RECOVERY)
-    host.run()
+    _ds_held(host)
     host.cases["curl"].insert(0, ("-sf -X POST*", "", 22, "", None))
     out = host.run(step="postgres", rc=1)
     assert out["recovery"]["passed"] is False
-    assert any("recovery check on knob line 6" in w for w in out["verdict"]["why"])
+    assert any("recovery check on knob line 7" in w for w in out["verdict"]["why"])
     assert out["abort"]["restarters_stopped"] == ["app-healthcheck.timer"]
 
 
