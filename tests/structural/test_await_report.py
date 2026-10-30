@@ -6,7 +6,8 @@ What this file pins is what makes that wait trustworthy rather than merely
 convenient:
 
 - only the expected author's marker counts, since a public issue takes
-  anyone's comment, and only this session's;
+  anyone's comment, and only this session's, whichever of its two forms
+  (`cse_…`, `session_…`) the wait and the marker each use (#524);
 - every status ends the wait, so a blocked worker wakes the orchestrator as
   surely as a finished one;
 - silence ends it too, rather than running forever;
@@ -29,7 +30,8 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = (
     REPO_ROOT / "skills" / "orchestrating-issue-backlog" / "scripts" / "await-report.sh"
 )
-SESSION = "cse_016cbbv9tDawyfSFk6xgv8NJ"
+SUFFIX = "016cbbv9tDawyfSFk6xgv8NJ"
+SESSION = f"cse_{SUFFIX}"
 URL = "https://github.com/o/r/issues/1#issuecomment-"
 
 FAKE_GH = r"""#!/usr/bin/env bash
@@ -78,7 +80,7 @@ def fake(tmp_path: Path):
 
 
 def _run(
-    fake: Path, *extra: str, comments: list | None = None
+    fake: Path, *extra: str, comments: list | None = None, session: str = SESSION
 ) -> subprocess.CompletedProcess:
     if comments is not None:
         (fake / "comments.json").write_text(json.dumps(comments))
@@ -87,7 +89,7 @@ def _run(
         "PATH": f"{fake / 'bin'}{os.pathsep}{os.environ['PATH']}",
         "FAKE_DIR": str(fake),
     }
-    args = ["--repo", "o/r", "--issue", "1", "--session", SESSION, "--author", "me"]
+    args = ["--repo", "o/r", "--issue", "1", "--session", session, "--author", "me"]
     return subprocess.run(
         ["bash", str(SCRIPT), *args, "--interval", "0", *extra],
         capture_output=True,
@@ -123,6 +125,43 @@ def test_another_sessions_marker_is_ignored(fake):
         comments=[_comment(7, "me", other), _comment(8, "me", prefix)],
     )
     assert r.returncode == 3, r.stderr
+
+
+@pytest.mark.parametrize("given", ["cse_", "session_"])
+@pytest.mark.parametrize("written", ["cse_", "session_"])
+def test_either_form_of_the_session_id_finds_either(fake, given, written):
+    # #524: one session, two spellings. The worker writes
+    # $CLAUDE_CODE_REMOTE_SESSION_ID, the `cse_` form; the person launching
+    # from claude.ai/code sees only `session_` in the URL. Lane A's wait was
+    # given that form, never matched, and its report was found by eye.
+    r = _run(
+        fake,
+        "--silence",
+        "0",
+        session=given + SUFFIX,
+        comments=[_comment(7, "me", _marker("done", session=written + SUFFIX))],
+    )
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert r.stdout == f"report\tdone\t{URL}7\t611a2477\n"
+
+
+@pytest.mark.parametrize("given", ["cse_", "session_"])
+def test_another_suffix_is_another_session_in_either_form(fake, given):
+    others = [
+        _marker("done", session="cse_" + SUFFIX[:-1] + "Z"),
+        _marker("done", session="session_" + SUFFIX[:-1] + "Z"),
+        _marker("done", session="session_" + SUFFIX + "X"),
+        _marker("done", session="xse_" + SUFFIX),
+    ]
+    r = _run(
+        fake,
+        "--silence",
+        "0",
+        session=given + SUFFIX,
+        comments=[_comment(n, "me", body) for n, body in enumerate(others)],
+    )
+    assert r.returncode == 3, r.stdout
+    assert r.stdout.startswith("silent\t")
 
 
 def test_the_first_matching_report_wins_over_later_ones(fake):
@@ -241,3 +280,40 @@ def test_a_bad_argument_is_exit_2(args):
     )
     assert r.returncode == 2
     assert r.stdout == ""
+
+
+@pytest.mark.parametrize(
+    "session",
+    [SUFFIX, "cse_", "session_", "sess_" + SUFFIX, "CSE_" + SUFFIX],
+    ids=[
+        "bare-suffix",
+        "cse-prefix-only",
+        "session-prefix-only",
+        "other-prefix",
+        "uppercase-prefix",
+    ],
+)
+def test_a_session_id_in_neither_form_is_exit_2_naming_both(session, tmp_path):
+    # #524: a wait that can never match is the silent failure this script
+    # exists to prevent, so an ID that is neither `cse_<id>` nor
+    # `session_<id>` is refused before the first poll, rather than polled for
+    # an hour. The stub gh only records that it ran (no jq needed, CR 519).
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "gh").write_text(
+        f'#!/usr/bin/env bash\ntouch "{tmp_path}/polled"\nexit 1\n'
+    )
+    (bin_dir / "gh").chmod(0o755)
+    env = {**os.environ, "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}"}
+    args = ["--repo", "o/r", "--issue", "1", "--session", session, "--author", "me"]
+    r = subprocess.run(
+        ["bash", str(SCRIPT), *args, "--interval", "0"],
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=30,
+    )
+    assert not (tmp_path / "polled").exists(), "gh ran: the ID was accepted"
+    assert r.returncode == 2, r.stdout + r.stderr
+    assert r.stdout == ""
+    assert "cse_" in r.stderr and "session_" in r.stderr, r.stderr
