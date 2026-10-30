@@ -417,38 +417,59 @@ def test_a_root_owned_link_to_a_root_only_uv_is_taken(host):
     assert ran.exists()
 
 
-@needs_root
-def test_nobody_really_runs_the_audit_on_a_root_owned_tree(tmp_path):
-    # The rest of this file drops to nobody through the sudo stub. Here
-    # runuser really does, as on a host whose probe runs as root, so the
-    # copy, the scratch directory and uv itself are nobody's. pytest's own
-    # tmp_path is root's 0700, which nobody can't enter.
+def _nobody_host(base: Path) -> tuple[LangHost, Path]:
+    # A root probe whose runuser really drops to nobody: the copy, the
+    # scratch directory and uv itself are nobody's. pytest's own tmp_path is
+    # root's 0700, which nobody can't enter, so BASE is a 0755 directory.
     runuser = shutil.which("runuser")
     if not runuser:
         pytest.skip("no runuser to drop to nobody")
+    base.chmod(0o755)
+    h = _root_tree(LangHost(base).knob(KNOB))
+    h.env = {"STUB_USER": "root"}
+    out_dir = base / "seen"
+    out_dir.mkdir()
+    out_dir.chmod(0o777)
+    (base / "clean").write_text(UV_CLEAN)
+    _system_uv(
+        h,
+        f'/usr/bin/id -un > "{out_dir}/who"; ls > "{out_dir}/files"\n'
+        f'cat "{base}/clean" >&2\n',
+    )
+    # The stubs nobody's shell reaches are the system's own.
+    h.on("runuser", "*", script=f'exec {runuser} "$@"')
+    (h.bin / "timeout").symlink_to(shutil.which("timeout"))
+    h.on("apt-get", "update*", "Reading package lists...\n")
+    return h, out_dir
+
+
+@needs_root
+def test_nobody_really_runs_the_audit_on_a_root_owned_tree():
     base = Path(tempfile.mkdtemp(prefix="lang-456."))
     try:
-        base.chmod(0o755)
-        h = _root_tree(LangHost(base).knob(KNOB))
-        h.env = {"STUB_USER": "root"}
-        out_dir = base / "seen"
-        out_dir.mkdir(mode=0o777)
-        out_dir.chmod(0o777)
+        h, out_dir = _nobody_host(base)
         h.tmpdir.chmod(0o1777)
-        (base / "clean").write_text(UV_CLEAN)
-        _system_uv(
-            h,
-            f'/usr/bin/id -un > "{out_dir}/who"; ls > "{out_dir}/files"\n'
-            f'cat "{base}/clean" >&2\n',
-        )
-        # The stubs nobody's shell reaches are the system's own.
-        h.on("runuser", "*", script=f'exec {runuser} "$@"')
-        (h.bin / "timeout").symlink_to(shutil.which("timeout"))
-        h.on("apt-get", "update*", "Reading package lists...\n")
-        out = h.run("--refresh-into", str(base / "fresh"))
-        [t] = _lang(out)
+        [t] = _lang(h.run("--refresh-into", str(base / "fresh")))
         assert (t["audited"], t["why"]) == (True, None), t
         assert (out_dir / "who").read_text().strip() == "nobody"
         assert (out_dir / "files").read_text().split() == ["pyproject.toml", "uv.lock"]
+    finally:
+        shutil.rmtree(base)
+
+
+@needs_root
+def test_a_scratch_directory_nobody_cant_make_says_so():
+    # CR 1139: root's TMPDIR can be root's alone (a 0700 session directory),
+    # where nobody's mktemp fails. That's no uv error.
+    base = Path(tempfile.mkdtemp(prefix="lang-1139."))
+    try:
+        h, out_dir = _nobody_host(base)
+        h.tmpdir.chmod(0o755)
+        [t] = _lang(h.run("--refresh-into", str(base / "fresh")))
+        assert t["audited"] is False
+        assert t["why"].startswith(
+            "nobody couldn't copy its pyproject.toml and uv.lock to a scratch directory"
+        ), t["why"]
+        assert not (out_dir / "who").exists()
     finally:
         shutil.rmtree(base)
