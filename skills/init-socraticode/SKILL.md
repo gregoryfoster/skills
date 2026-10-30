@@ -264,7 +264,7 @@ first):
    ([#317](https://github.com/gregoryfoster/skills/issues/317)); outside a
    session, under [row U](references/troubleshooting.md)'s cap,
    `node "<SKILL_DIR>/scripts/mcp-driver.mjs" update "<PROJECT_PATH>"`, which
-   exits 1 if another session holds the lock.
+   exits 1 if it did not finish (another session holding the lock, say).
 4. Confirm the file watcher registered (`codebase_watch` / status); it is
    **ephemeral**, living only while a server runs (gotcha E).
 
