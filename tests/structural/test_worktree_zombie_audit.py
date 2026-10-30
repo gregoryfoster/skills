@@ -205,6 +205,56 @@ def test_create_says_the_audit_failed_not_that_zombies_exist(tmp_path, repo):
     assert "could not run" in result.stderr, result.stderr
 
 
+def _table_stubs(tmp_path: Path, repo: Path, *args_lines: str) -> Path:
+    """`ps` printing one process per `args` line, PIDs from 5000 up."""
+    table = tmp_path / "ps-table-given"
+    table.write_text(
+        "".join(f" {5000 + i}     1 {args}\n" for i, args in enumerate(args_lines))
+    )
+    return _stubs(tmp_path, repo, "bsd", f'cat "{table}"\n')
+
+
+# Shell text names a worktree followed by punctuation that ends the word. A
+# live session's `cd <root>/live; …` was listed as a zombie of `live;`, and its
+# `Kill all:` recipe would have killed that session's running commands. Found
+# by the issue's real repro on the operator's Mac once the audit could see.
+PUNCTUATED = [
+    "bash -c cd {wt}; exec sleep 60",
+    "bash -c cd '{wt}' && sleep 60",
+    'bash -c cd "{wt}" && sleep 60',
+    "bash -c (cd {wt}) && sleep 60",
+    "bash -c cd {wt}&&sleep 60",
+    "bash -c ls {wt}|wc -l",
+    "env PATH={wt}:/usr/bin sleep 60",
+    "bash -c echo `ls {wt}`",
+]
+
+
+@pytest.mark.parametrize(
+    "template", PUNCTUATED, ids=[";", "'", '"', ")", "&", "|", ":", "`"]
+)
+def test_punctuation_after_a_live_worktree_is_not_part_of_its_name(
+    tmp_path, repo, template
+):
+    stubs = _table_stubs(tmp_path, repo, template.format(wt=_root(repo) / "live"))
+    result = _audit(repo, _env(repo, stubs))
+    assert result.returncode == 0, (result.returncode, result.stdout, result.stderr)
+    assert _listed(result.stdout) == set(), result.stdout
+
+
+@pytest.mark.parametrize(
+    "template", PUNCTUATED, ids=[";", "'", '"', ")", "&", "|", ":", "`"]
+)
+def test_punctuation_after_a_vanished_worktree_still_finds_it(tmp_path, repo, template):
+    """Control: the same text naming a vanished worktree is a zombie."""
+    stubs = _table_stubs(
+        tmp_path, repo, template.format(wt=_root(repo) / "ghost-branch")
+    )
+    result = _audit(repo, _env(repo, stubs))
+    assert result.returncode == 1, (result.returncode, result.stdout, result.stderr)
+    assert _listed(result.stdout) == {"5000"}, result.stdout
+
+
 # --- Real processes: whatever ps this runner has -----------------------------
 
 
