@@ -187,7 +187,7 @@ bash "<audit-worktree-zombies.sh>"         # prints zombies, exits 1 if any
 bash "<audit-worktree-zombies.sh>" --quiet # silent; exit code only — wire into pre-flight
 ```
 
-Detection-only — it does not kill anything. The operator decides whether to kill the listed PIDs.
+Detection-only — it does not kill anything. The operator decides whether to kill the listed PIDs: read each command line first, since another live session's shell whose text names a destroyed worktree is listed too. The audit never lists the shell that ran it or that shell's parents. Exit 2 means it could not read the process table, not that none were found.
 
 ## Project-local wrapper scripts
 
