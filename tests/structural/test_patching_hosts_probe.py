@@ -1243,14 +1243,16 @@ def test_uv_runs_as_the_lockfiles_owner_and_never_as_root(host):
     [t] = _lang(_audit(host))
     assert t["audited"] is True
     assert seen.read_text().split(" ")[1] == "app"
-    # A root-owned lock isn't audited: the uv found may be one its user can
-    # rewrite.
+    # A root-owned lock is never audited as root: as nobody, and only with
+    # a uv root alone can change, which the probe's PATH isn't (#456;
+    # test_patching_hosts_language.py has the rest).
     host.write("etc/passwd", f"root:x:{os.getuid()}:0:root:/root:/bin/bash\n")
     seen.unlink()
     [t] = _lang(_audit(host))
     assert (t["audited"], t["why"]) == (
         False,
-        "its uv.lock is root's, and uv never runs as root here",
+        "its uv.lock is root's, so it's audited as nobody with a uv only root "
+        "can change, and neither /usr/local/bin/uv nor /usr/bin/uv is one",
     )
     assert not seen.exists()
 
