@@ -383,3 +383,64 @@ class TestNoSecretIsEchoed:
     )
     def test_the_detector_spares_lengths_pipes_files_and_non_secrets(self, line):
         assert _echoed_secrets(line) == [], line
+
+
+PG_DOC = SKILL / "references" / "postgres-provisioning.md"
+PG_GUARD = ': "${PG_PW:?run steps 3-6 in one shell; PG_PW is unset}"'
+
+
+def _pg_blocks_after_step_3() -> list[str]:
+    """Each bash block from § 4 on that expands $PG_PW."""
+    text = PG_DOC.read_text().split("## 4.", 1)[1]
+    blocks = re.findall(r"```bash\n(.*?)```", text, re.S)
+    return [b for b in blocks if _EXPANSION.search(b) and "PG_PW" in b]
+
+
+class TestThePasswordSurvivesOneShellOnly:
+    """CR 1194: with § 3's echo gone (#530), nothing carries PG_PW into a
+    later tool call, and an agent's shell keeps no variables between calls.
+    An empty value set the role's password to '' and wrote URLs with an empty
+    password into .env, which § 5's own guard then never rewrites. So § 3-6
+    run as one command, and each later block stops on an unset PG_PW."""
+
+    def test_the_doc_says_to_run_steps_3_to_6_as_one_command(self):
+        text = PG_DOC.read_text()
+        assert "one command" in text and "keeps no variables" in text
+
+    def test_every_later_block_using_the_password_opens_with_the_guard(self):
+        blocks = _pg_blocks_after_step_3()
+        assert len(blocks) == 3, blocks  # § 4, § 5, § 6
+        for b in blocks:
+            assert b.splitlines()[0] == PG_GUARD, b
+
+    def test_the_guard_message_never_expands_the_value(self):
+        assert _EXPANSION.findall(PG_GUARD) == ["PG_PW"]
+        assert "${#" not in PG_GUARD and "$PG_PW" not in PG_GUARD
+
+    @pytest.mark.parametrize("step", [0, 1])
+    def test_an_unset_password_stops_before_the_role_and_the_env_file(
+        self, step, tmp_path: Path
+    ):
+        """§ 4 under a fake sudo, § 5 against a scratch .env: neither runs."""
+        bin_ = tmp_path / "bin"
+        bin_.mkdir()
+        (bin_ / "sudo").write_text('#!/bin/sh\ntouch "$MARK"\n')
+        (bin_ / "sudo").chmod(0o755)
+        (tmp_path / ".env").write_text("EXISTING=1\n")
+        env = {
+            **_clean_env(),
+            "PATH": f"{bin_}:/usr/bin:/bin",
+            "MARK": str(tmp_path / "ran"),
+        }
+        env.pop("PG_PW", None)
+        r = subprocess.run(
+            ["bash", "-c", _pg_blocks_after_step_3()[step]],
+            capture_output=True,
+            text=True,
+            cwd=tmp_path,
+            env=env,
+            timeout=30,
+        )
+        assert r.returncode != 0 and "PG_PW is unset" in r.stderr, r.stderr
+        assert not (tmp_path / "ran").exists()
+        assert (tmp_path / ".env").read_text() == "EXISTING=1\n"
