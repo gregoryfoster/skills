@@ -2482,3 +2482,48 @@ def test_the_close_out_procedure_passes_closed_ok():
 def test_the_implementer_contract_says_never_close_the_epic():
     text = (SCRIPTS.parent / "references" / "hand-off.md").read_text()
     assert "never close the epic" in text.lower()
+
+
+# ---------------------------------------------------------------- #528
+
+NESTED = "Intro.\n\n## Tier 1\n\n- [ ] #11 a\n  - **Next:** ask alice\n- [ ] #12 b\n"
+
+
+def test_a_header_op_adds_a_line_rather_than_rewrite_a_nested_sub_note(rig):
+    """#528's repro: with no header Next, `header Next` rewrote #11's sub-note
+    in place, exit 0, no note. Top-level lines only, as list_field reads."""
+    res = _header(rig, NESTED, [{"op": "header", "field": "Next", "value": "#12"}])
+    assert res.returncode == 0, res.stderr
+    body = rig.body(REPO, EPIC)
+    assert "  - **Next:** ask alice\n" in body, body
+    assert body.startswith("Intro.\n\n- **Next:** #12\n\n## Tier 1"), body
+    notes = summary(res)["notes"]
+    assert any("indented" in n and "line 6" in n for n in notes), notes
+
+
+def test_a_header_op_sets_the_header_line_past_a_nested_sub_note(rig):
+    """With a header Next too, the op found two lines and refused."""
+    body = "- **Next:** #11\n\n" + NESTED
+    res = _header(rig, body, [{"op": "header", "field": "Next", "value": "#12"}])
+    assert res.returncode == 0, res.stderr
+    out = rig.body(REPO, EPIC)
+    assert out.startswith("- **Next:** #12\n") and "  - **Next:** ask alice" in out
+
+
+def test_an_indented_header_list_is_noted_and_a_top_level_line_added(rig):
+    """CommonMark lets a list sit 1-3 spaces in. Neither script reads such a
+    line as the header's, so the op adds a top-level one and says why."""
+    body = "  - **Last check-in:** 2026-10-01T09:00Z\n  - **Next:** #11\n\n## Tier 1\n\n- [ ] #11 a\n"
+    res = _header(rig, body, [{"op": "header", "field": "Next", "value": "#12"}])
+    assert res.returncode == 0, res.stderr
+    out = rig.body(REPO, EPIC)
+    assert "\n- **Next:** #12\n" in "\n" + out and "  - **Next:** #11" in out, out
+    notes = summary(res)["notes"]
+    assert any("indented" in n and "'**Next:**'" in n for n in notes), notes
+
+
+def test_field_hits_reads_top_level_lines_only():
+    lines = NESTED.splitlines()
+    assert ee.field_hits(lines, "Next") == []
+    assert ee.field_hits(["- **Next:** #1", "  - **Next:** x"], "next") == [0]
+    assert ee.field_hits(["**Next:** #1"], "Next") == [0]  # a paragraph header too

@@ -939,3 +939,31 @@ def test_the_help_states_the_margin(rig):
     res = rig.run("scan.sh", "--help")
     assert res.returncode == 0
     assert "30 minutes" in res.stdout, res.stdout
+
+
+# ---------------------------------------------------------------- #528
+
+
+def test_a_nested_field_is_no_header_line(rig):
+    """#528: header_fields read a checklist item's sub-note as the header's.
+    Top-level lines only, as the editor's header op now reads."""
+    spec = importlib.util.spec_from_file_location("_scan", SCRIPTS / "_scan.py")
+    scan_mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(scan_mod)
+    lines = ["## Tier 1", "", "- [ ] #11 a", "  - **Next:** ask alice", "- [ ] #12 b"]
+    assert "next" not in scan_mod.header_fields(lines)
+    assert scan_mod.header_fields(["- **Next:** #12"] + lines)["next"] == "#12"
+
+
+def test_a_nested_last_check_in_isnt_the_scans_since(rig):
+    body = (
+        rig.body(REPO, EPIC)
+        .replace("- **Last check-in:** 2026-10-01T09:00Z\n", "")
+        .replace(
+            "- [ ] #12 next\n",
+            "- [ ] #12 next\n  - **Last check-in:** 2026-09-01T00:00Z\n",
+        )
+    )
+    rig.issue(REPO, EPIC, body=body)
+    r = scan(rig)
+    assert r["cursors"]["since"] is None and r["updated_since"] is None
