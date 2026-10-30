@@ -683,6 +683,28 @@ def test_a_one_origin_dry_run_on_lists_older_than_the_run_doesnt_start(tmp_path)
     assert not (scratch / "summary").exists()
 
 
+def test_a_one_origin_dry_run_with_no_list_fetched_says_so(tmp_path):
+    # CR 1289: a refresh that fetched no security list fetched nothing the
+    # check can read, which isn't "fetched before this run".
+    host = ProbeHost(tmp_path).knob(
+        "class production\nposture scheduled\norigin pkgs.tailscale.com follow\n"
+    )
+    host.on("apt-get", "-s *dist-upgrade", EXTRA)
+    host.on("apt-cache", "*policy", POLICY)
+    host.on("apt-get", "update*", "")
+    out = host.run(
+        "--refresh-into",
+        str(host.tmp / "fresh"),
+        "--dry-run-into",
+        str(host.tmp / "dry"),
+        "--lane",
+        TS,
+    )
+    [f] = [f for f in out["findings"] if f["id"] == "dry-run"]
+    assert "no security list was fetched in this run" in f["message"]
+    assert not host.calls("unattended-upgrade")
+
+
 def test_the_probes_dry_run_counts_one_origin(tmp_path):
     host = ProbeHost(tmp_path).knob(
         "class production\nposture scheduled\norigin pkgs.tailscale.com follow\n"

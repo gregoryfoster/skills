@@ -96,3 +96,11 @@ def test_a_health_line_is_safe_at_any_time_and_recovery_isnt_run_by_every_probe(
     assert "safe and cheap at any time" in health
     [recovery] = [li for li in KNOB_MD.splitlines() if li.startswith("| `recovery ")]
     assert "--post-boot" in recovery
+
+
+def test_readings_name_the_dry_runs_own_download_readings():
+    # CR 1290: #499's two readings, where the dry run's cost is read.
+    [row] = [
+        li for li in READINGS.splitlines() if li.startswith("| The dry run's cost")
+    ]
+    assert "download_bound_kib" in row and "free_kib_dry_run_dir" in row
