@@ -24,11 +24,11 @@ sudo apt-get install -y postgresql postgresql-contrib
 
 ## 3. Generate a random role password
 
-24 bytes ≈ 48 hex characters:
+24 bytes ≈ 48 hex characters. Step 5 writes it to `./.env`, so it is never printed: the confirmation shows its length, not its value, which would land in the transcript and any log that keeps it:
 
 ```bash
 PG_PW=$(openssl rand -hex 24)
-echo "PG_PW=$PG_PW   # save this — also written to ./.env in step 5"
+echo "PG_PW set (${#PG_PW} chars)"
 ```
 
 ## 4. Create the role and two databases
