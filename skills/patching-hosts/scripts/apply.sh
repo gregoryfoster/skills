@@ -25,7 +25,8 @@ Steps:
                hold lines name. Stops each restarter that was active, then
                releases what the bulk held for it, runs the same command,
                polls the health checks every second, runs each recovery
-               line once, and starts the
+               line once where the step restarted a declared data store
+               (or its start couldn't be read), and starts the
                restarters again: on a green step, or one that failed before
                the upgrade. After a failed upgrade they stay stopped, for
                the owner. Approval 3(a): each group is its own invocation.
@@ -153,8 +154,9 @@ apt's metadata, each filesystem's free and need, and the GC's headroom line,
 null without its config), then what the step did: holds (the bulk's with each held
 package's candidate against the dry run's version), installed (what a held
 step installed of its group), upgrade, health, recovery (a held step's
-recovery lines, each run once after its health checks: its exit, and
-whether all passed), qdrant
+recovery lines, each run once after its health checks where it restarted a
+declared data store: what restarted, what couldn't be read, each line's
+exit and whether all passed, or why none ran), qdrant
 (each Qdrant datastore, and for one the held step restarted, its counts
 against the recovery point's), redis (each Redis datastore, and for one the
 held step restarted, what its log says of the shutdown before and the load
@@ -1318,17 +1320,70 @@ poll_health() {
     fail "the health checks didn't pass twice in a row within $health_within s: read $log"
 }
 
+# Every declared data store's start, before a held step's upgrade and after
+# it (CR 1294): its unit's ActiveEnterTimestamp, and for a Qdrant line its
+# container's StartedAt too, since a docker step restarts the container under
+# a unit whose start doesn't move. "?" when it can't be read.
+DS_WHAT=() DS_BEFORE=()
+ds_start() {  # <var> <unit, or container:<name>>
+  local _ds_t="?" _ds_o
+  case $2 in
+    container:*)
+      if have docker && _ds_o=$(docker inspect --format '{{.State.StartedAt}}' -- "${2#container:}" 2>/dev/null) &&
+        [ -n "$_ds_o" ]; then _ds_t=$_ds_o; fi ;;
+    *) if unit_show "$2" ActiveEnterTimestamp; then _ds_t=$U_ActiveEnterTimestamp; fi ;;
+  esac
+  printf -v "$1" '%s' "$_ds_t"
+}
+
+ds_mark() {
+  local r u t
+  local -a f=() q=()
+  for r in ${KNOB_DATASTORE[@]+"${KNOB_DATASTORE[@]}"}; do
+    IFS=$KNOB_US read -r -a f <<<"$r"
+    unit_name u "${f[1]}"
+    ds_start t "$u"
+    DS_WHAT+=("$u") DS_BEFORE+=("$t")
+    if [ "${f[0]}" = qdrant ]; then
+      read -r -a q <<<"${f[2]}"
+      ds_start t "container:${q[0]}"
+      DS_WHAT+=("container:${q[0]}") DS_BEFORE+=("$t")
+    fi
+  done
+}
+
 # Each recovery line once, after a held step's health checks and its data
 # stores' own checks pass (#423): a real request, a new row, a cache hit,
-# which every probe would repeat if it were a health line. Not after one
-# that failed: the abort branch is already taken.
+# which every probe would repeat if it were a health line. Only after a step
+# that restarted a declared data store (CR 1294), or one whose start couldn't
+# be read, since unread is never "didn't restart". Not after a step that
+# failed: the abort branch is already taken.
 run_recovery() {
-  local r rc a="" e="" o="" ok=1 said
+  local r rc a="" e="" o="" ok=1 said i t moved="" unread="" w
   local -a f=()
   jaddn o declared "${#KNOB_RECOVERY[@]}"
+  for i in ${DS_WHAT[@]+"${!DS_WHAT[@]}"}; do
+    ds_start t "${DS_WHAT[$i]}"
+    if [ "$t" = "?" ] || [ "${DS_BEFORE[$i]}" = "?" ]; then
+      unread="$unread ${DS_WHAT[$i]}"
+    elif [ "$t" != "${DS_BEFORE[$i]}" ]; then
+      moved="$moved ${DS_WHAT[$i]}"
+    fi
+  done
+  json_words w "$moved"
+  jadd o restarted "$w"
+  json_words w "$unread"
+  jadd o unread "$w"
   if [ "${#FAILED[@]}" -gt 0 ] || [ "${#KNOB_RECOVERY[@]}" -eq 0 ]; then
     jadd o checks "[]"
     jadd o passed null
+    J_RECOVERY="{$o}"
+    return 0
+  fi
+  if [ -z "$moved$unread" ]; then
+    jadd o checks "[]"
+    jadd o passed null
+    jadds o skipped "the step restarted no declared data store, so no recovery line ran: each makes a real request or writes a row (#423)"
     J_RECOVERY="{$o}"
     return 0
   fi
@@ -1932,6 +1987,7 @@ do_held() {
     case $LANE in origin:*) LANE_TAKE=$rel ;; esac
     qdrant_mark
     redis_mark
+    ds_mark
     run_uu
     check_holds
     held_installed ${w[@]+"${w[@]}"}
