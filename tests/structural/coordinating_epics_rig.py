@@ -18,7 +18,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS = REPO_ROOT / "skills" / "coordinating-epics" / "scripts"
 
 FAKE_GH = r"""#!__PYTHON__
-import json, os, sys
+import json, os, re, sys
 from urllib.parse import parse_qs, urlsplit
 
 state_path = os.environ["FAKE_GH_STATE"]
@@ -79,6 +79,35 @@ if args[0] != "api":
 
 method = "GET"
 rest = [x for x in args[1:] if x != "-i"]
+
+if rest[0] == "graphql":  # gh api graphql -f query=… -f owner=… -F number=…
+    st.setdefault("graphql_calls", 0)
+    st["graphql_calls"] += 1
+    if "graphql_error" in st:  # a cloud session's proxy refuses GraphQL
+        fail(st["graphql_error"])
+    var = dict(a.split("=", 1) for a in rest[1:] if "=" in a)
+    r = find(f"{var['owner']}/{var['name']}") or {}
+    issues = r.get("issues", {})
+    if "userContentEdits" in var["query"]:
+        edits = r.get("edits", {}).get(var["number"], [])
+        out({"data": {"repository": {"issue": {"userContentEdits": {"nodes": edits}}}}})
+    data, errors = {}, []
+    for alias, num in re.findall(r"(\w+): issueOrPullRequest\(number: (\d+)\)", var["query"]):
+        it = issues.get(num)
+        if it is None:
+            data[alias] = None
+            errors.append({"type": "NOT_FOUND", "path": ["repository", alias],
+                           "message": f"Could not resolve to an issue or pull request with the number of {num}."})
+        else:
+            data[alias] = {"number": int(num), "updatedAt": it.get("updated_at")}
+    body = {"data": {"repository": data}}
+    if errors:  # gh prints the body, then fails with the errors (exit 1)
+        body["errors"] = errors
+        save()
+        print(json.dumps(body))
+        print("gh: " + errors[0]["message"], file=sys.stderr)
+        sys.exit(1)
+    out(body)
 if rest[:2] == ["-X", "PATCH"]:
     method, rest = "PATCH", rest[2:]
 path = rest[0]
@@ -118,6 +147,8 @@ if len(parts) == 4 and parts[3] == "issues":
     rows = [dict(it, number=int(n)) for n, it in issues.items()]
     if "since" in q:
         rows = [x for x in rows if x.get("updated_at", "") >= q["since"]]
+        # GitHub's listing can leave out a row updated minutes earlier (#407).
+        rows = [x for x in rows if x["number"] not in st.get("list_omits", [])]
     if q.get("sort") == "created":
         rows.sort(key=lambda x: (x.get("created_at", ""), x["number"]), reverse=True)
     else:

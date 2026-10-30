@@ -403,6 +403,24 @@ def test_an_issue_only_updated_since_shows_still_needs_accounting(adopted):
     assert res.returncode == 0, res.stderr
 
 
+@pytest.mark.parametrize("flag", ["in_overlap", "recovered"])
+def test_a_row_the_overlap_or_cross_check_brings_back_is_held_alike(adopted, flag):
+    """#407 keeps CR 265's and CR 276's rule: a row above the old watermark
+    must be mentioned, however the scan came to list it."""
+    report = _report(
+        adopted,
+        cursors={"watermark": 13},
+        new_numbers=[],
+        updated_since=[{"number": 14, "kind": "issue", flag: True}],
+    )
+    ops = [{"op": "header", "field": "Last issue seen", "value": "{last_seen}"}]
+    res = adopted.edit(REPO, EPIC, ops, "--scan", report)
+    assert res.returncode == 3 and "doesn't mention: #14" in res.stderr
+    ops.append({"op": "log", "text": "{today}: #14 out of epic."})
+    res = adopted.edit(REPO, EPIC, ops, "--scan", report)
+    assert res.returncode == 0, res.stderr
+
+
 def test_with_no_watermark_an_old_issues_update_needs_no_mention(adopted):
     """CR 287: {last_seen} is refused, so nothing moves past #5; {checked} alone is fine."""
     report = _report(
