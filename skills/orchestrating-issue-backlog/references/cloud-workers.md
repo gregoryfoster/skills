@@ -171,7 +171,7 @@ can only write to GitHub.**
 
 **Orchestrator → worker:** post the instruction (a review, an answer) as a
 comment on the tracking issue, then send:
-`claude -p "Read and act on <comment URL>; its author is <login>" --cloud <session-id>`
+`claude -p "Read and act on <comment URL>; its author is <login>" --cloud cse_<id>`
 This runs without a terminal and prints `{"ok":true,…}` with
 `--output-format json`. The comment is the single, durable source; the
 message is only the wake-up.
