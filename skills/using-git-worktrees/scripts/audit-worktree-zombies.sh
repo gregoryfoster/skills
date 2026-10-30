@@ -16,7 +16,7 @@ usage() {
   echo "Exit codes:"
   echo "  0  No zombies found"
   echo "  1  Zombies found (printed to stdout)"
-  echo "  2  Tooling/infra failure (not a git repo, unknown flag)"
+  echo "  2  Tooling/infra failure (not a git repo, unknown flag, ps failed)"
 }
 
 # Argument errors print one line, not the whole usage block — the rule the rest
