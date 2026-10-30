@@ -864,7 +864,9 @@ def test_a_missing_item_doesnt_sink_the_cross_check(rig):
     rig.set_flag("list_omits", [11])
     r = scan(rig)
     assert 11 in {x["number"] for x in r["updated_since"]}
-    assert any("#77" in w for w in r["warnings"]), r["warnings"]
+    warned = [w for w in r["warnings"] if "#77" in w]
+    # CR 1190: GitHub's own reason, not a guess at one.
+    assert warned and "Could not resolve" in warned[0], r["warnings"]
 
 
 def test_a_failed_cross_check_is_a_warning_not_a_failed_scan(rig):
