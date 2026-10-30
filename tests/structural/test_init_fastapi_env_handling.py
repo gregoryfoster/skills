@@ -359,6 +359,7 @@ class TestNoSecretIsEchoed:
             ("echo $PGPASSWORD", "PGPASSWORD"),
             ('test -n "$X" && echo "pw $DB_PASSWORD"', "DB_PASSWORD"),
             ('echo "$SECRET_KEY" || true', "SECRET_KEY"),
+            ('echo "$PG_PW" 2>/dev/null', "PG_PW"),  # CR 1189: stderr only
         ],
     )
     def test_the_detector_fires(self, line, var):
@@ -371,6 +372,8 @@ class TestNoSecretIsEchoed:
             'PGPASSWORD="$PG_PW" psql -h localhost -c "SELECT 1;"',
             "printf '%s' \"$GH_TOKEN\" | gh auth login --with-token",
             'echo "$PG_PW" > ./pw.txt',
+            'echo "$PG_PW" 1>>./pw.txt',
+            'echo "$PG_PW" &>./pw.txt',
             'echo "Key already exists at $KEY_PATH — skipping generation."',
             'echo "GATE over budget: $P_TOKENS tokens"',
             'echo "set git config: $DRIVER_KEY=$DRIVER_VALUE"',
