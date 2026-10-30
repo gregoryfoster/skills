@@ -3948,7 +3948,8 @@ def _mutating(name: str, args: str) -> bool:
     """Whether one stubbed call would change the host."""
     a = args.split()
     if name == "apt-get":
-        if "-s" in a:
+        # --print-uris prints what it would fetch, and fetches nothing (#499).
+        if "-s" in a or "--print-uris" in a:
             return False
         return not (
             "update" in a

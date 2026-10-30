@@ -39,7 +39,12 @@ Options:
   --dry-run-into DIR  count the selection with unattended-upgrade --dry-run,
                       as root, with apt's cache in DIR/archives. It downloads
                       the whole set (290 MB and 9 minutes on one host) and
-                      leaves it there for you to remove. The count is the
+                      leaves it there for you to remove. It doesn't start
+                      when that wouldn't fit: first, apt-get --print-uris
+                      sizes the whole pending set (in the one-origin lane,
+                      that origin's packages) as an upper bound,
+                      pending.dry_run.download_bound_kib, and it must fit on
+                      DIR's filesystem with 131072 KiB left. The count is the
                       security set exactly only while pending.dry_run's
                       security_only is true; wider origins, or another lane,
                       put other packages on the same line. DIR/summary holds
@@ -57,7 +62,8 @@ Options:
                       mount to its alert_at_percent, or when the GC's
                       config can't be read or parsed. A dry run that doesn't run
                       (no root, a lane the knob doesn't resolve, an
-                      unsimulated set, an origin's site unread) still exits
+                      unsimulated set, an origin's site unread, a download
+                      that wouldn't fit or can't be sized) still exits
                       0: it's a finding with id dry-run, and leaves no
                       summary
   --lane LANE         the dry run's selection, as apply.sh --lane takes it:
@@ -2182,6 +2188,52 @@ conffile_states() {  # <var> <package>: VAR := a JSON array body
   printf -v "$1" '%s' "$_cs_a"
 }
 
+# What the dry run would download into DIR/archives, read before it runs
+# (#499): it fetches its whole selection there as root, and nothing after it
+# can undo a full disk. The selection isn't known until it has run, so the
+# bound is apt's own answer for the whole pending set, or in the one-origin
+# lane that origin's packages: each archive --print-uris lists, which leaves
+# out one DIR/archives already holds (apt 2.8.3, noble, 2026-10-30). It reads
+# the dry run's own apt config, so its cache and lists are the dry run's.
+DRY_BOUND="" DRY_FREE="" DRY_KIND="" DRY_WHY=""
+dry_run_fits() {  # <apt config> <the one origin's packages>: 1 with DRY_KIND and DRY_WHY when it doesn't
+  local out line size bytes=0 need
+  local -a w=() what=(dist-upgrade)
+  DRY_BOUND="" DRY_FREE="" DRY_KIND=unknown DRY_WHY=""
+  case $lane in
+    origin:*)
+      read -r -a w <<<"$2" || true
+      what=(install --only-upgrade ${w[@]+"${w[@]}"}) ;;
+  esac
+  capture out env "APT_CONFIG=$1" apt-get --print-uris -qq -o Debug::NoLocking=1 "${APT_OPTS[@]}" "${APT_SIM_PHASED[@]}" --allow-change-held-packages "${what[@]}"
+  if [ "$CAP_RC" -ne 0 ]; then
+    DRY_WHY="its download couldn't be sized: apt-get --print-uris exited $CAP_RC${CAP_ERR:+ ($CAP_ERR)}"
+    return 1
+  fi
+  # 'URI' <file> <size> <hash>, a line for each archive apt would fetch.
+  while IFS= read -r line; do
+    case $line in "'"*) ;; *) continue ;; esac
+    read -r _ _ size _ <<<"$line" || true
+    case $size in '' | *[!0-9]*)
+      DRY_WHY="its download couldn't be sized: apt-get --print-uris printed a line it doesn't read: $line"
+      return 1 ;;
+    esac
+    bytes=$((bytes + size))
+  done <<<"$out"
+  DRY_BOUND=$(((bytes + 1023) / 1024))
+  if ! fs_reading "$dryrun/archives"; then
+    DRY_WHY="the free space under $dryrun/archives couldn't be read (df -Pk), so whether its download of up to $DRY_BOUND KiB fits is unknown"
+    return 1
+  fi
+  DRY_FREE=$FS_FREE
+  need=$((DRY_BOUND + SPACE_FLOOR_KIB))
+  if [ "$FS_FREE" -lt "$need" ]; then
+    DRY_KIND=risk
+    DRY_WHY="it may download up to $DRY_BOUND KiB into $dryrun/archives (the $lane lane's pending set, as apt-get --print-uris sizes it), and $FS_MOUNT, which holds it, has $FS_FREE KiB free: less than $need KiB, that and the $SPACE_FLOOR_KIB KiB floor. Free space there, or point --dry-run-into at a filesystem with room"
+    return 1
+  fi
+}
+
 read_dry_run() {
   local o="" conf t0 t1 out rc line names="" n="" dlk="" free="" rss="" w sel=0 lnames="" lkeep="" lskip=""
   local oleft="" left_read=0 kw p rest unlisted="" prompts="" cfp="" cfs="" i k keys="" po="" hv
@@ -2243,6 +2295,12 @@ read_dry_run() {
     # shellcheck disable=SC2086
     case $lane in origin:*) lane_skip_conf $lskip ;; esac
   } >"$conf"
+  if ! dry_run_fits "$conf" "$lkeep"; then
+    finding "$DRY_KIND" dry-run "" "the dry run didn't run: $DRY_WHY."
+    return 0
+  fi
+  jaddn o download_bound_kib "$DRY_BOUND"
+  jaddn o free_kib_dry_run_dir "$DRY_FREE"
   if [ -n "$lkeep$lskip" ]; then
     json_list w "$lkeep"
     jadd o origin_pending "$w"
