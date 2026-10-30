@@ -73,6 +73,12 @@ Its count is Rule 3's baseline. Name each known failure by test id in the
 brief. The pilot's was a newer shellcheck than the local one; #481 pinned it
 in `requirements-test.txt`, and there has been none since.
 
+Measure it, and every baseline after it, in the session's own clone, never in
+a worktree under the session scratchpad. That sits under `/tmp/claude-0`, mode
+0700, which a test that drops privileges can't reach: in this skill's own repo,
+the 4 `runuser -u nobody` tests in `test_maintaining_host_disk_retire.py` fail
+there (#516, Wave 1).
+
 ## What differs from a worktree worker
 
 - **It runs as root.** Every `geteuid() == 0` skip fires, so the cloud count
@@ -91,8 +97,15 @@ in `requirements-test.txt`, and there has been none since.
 - **The VM is reclaimed when idle.** Reopening restores the conversation, not
   the disk, so a commit that wasn't pushed is gone. A worker pushes after
   every commit.
-- **A commit through a suite-running hook takes the whole suite** (13 minutes
-  here). Where the baseline holds known failures, that hook can never pass, so
+- **The clone is shallow** (50 commits in #516's Wave 1). History past that
+  ends at a grafted root, so a worker that needs an older commit fetches with
+  `--deepen` or `--unshallow` first.
+- **Its git was 2.43 in Wave 1**, older than 2.48, so `git fetch` never
+  recreates a missing `origin/HEAD`; a current local git does. A test that
+  depends on that can be red in the cloud and vacuously green locally
+  (CR 701), so reproduce a cloud-only red before calling it flaky.
+- **A commit through a suite-running hook takes the whole suite** (about
+  16–17 minutes here, as of Wave 1). Where the baseline holds known failures, that hook can never pass, so
   a green commit goes in with the suite hook skipped (`SKIP=<hook id>` under
   pre-commit) after a full manual run, and its body says so.
 
@@ -110,7 +123,10 @@ worker. It can steer one once it exists (see [Coordination](#coordination)).
   `origin`, and the proxy refuses the repo. Inside the session, `add_repo`
   recovers it: it attaches the repo with push access, in a separate clone.
 - Record, on the tracking issue: the worker's session ID, the `origin/main` SHA
-  at launch, and the time.
+  at launch, and the time. Record the ID as `cse_<id>`, the form the worker's
+  marker and `-p --cloud` use. claude.ai/code shows the same session as
+  `session_<id>` in its URL, with the same `<id>`, so swap the prefix.
+  `await-report.sh` accepts either form (#524).
 
 ## The brief
 
@@ -131,8 +147,8 @@ become a preflight, and the brief names concrete values for each:
 
 Rules the brief states:
 
-- Red commits are committed on their own with `--no-verify`. **Push after every
-  commit.**
+- Each fix's tests land first, in their own commit, with `--no-verify`; the
+  fix follows. **Push after every commit.**
 - Use `gh api`, never `gh issue` or `gh pr`.
 - Never push or merge `main`, open a PR, or close or edit an issue.
 - **Act only on the comment you're pointed at**, and check its author. Never
