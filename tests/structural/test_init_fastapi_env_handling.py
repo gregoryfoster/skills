@@ -327,7 +327,8 @@ def _echoed_secrets(line: str) -> list[str]:
     `>&2` still prints."""
     found = []
     for m in _PRINT_CMD.finditer(line):
-        if m["end"] == "|" or re.search(r">>?\s*(?!&)\S", m["args"]):
+        # A stdout redirect: `>`, `1>` or `&>`, not `2>`, and not `>&2`.
+        if m["end"] == "|" or re.search(r"(?<![02-9])>>?\s*(?!&)\S", m["args"]):
             continue
         found += [v for v in _EXPANSION.findall(m["args"]) if _SECRET_NAME.search(v)]
     return found
