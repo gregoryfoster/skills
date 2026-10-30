@@ -375,6 +375,8 @@ REFERENCE_BLOCKS = [
     ("curating-context", "references/fact-verification.md"),
     ("curating-context", "references/keep-cut-rubric.md"),
     ("curating-context", "references/seam-accounting.md"),
+    # #521: added by #479 without its marker, so nothing here held it.
+    ("orchestrating-issue-backlog", "references/cloud-workers.md"),
 ]
 
 
