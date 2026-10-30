@@ -76,12 +76,13 @@ operations (a JSON array, from --ops FILE or --ops - for stdin):
 
   Every header op first turns each paragraph holding a cursor line, such as
   "**Last check-in:** ...", into "- **Field:** value" items, so the header
-  converges on one list. A paragraph with a line that isn't a field stays as
-  it is, the summary's notes say why, and a new line goes below it. After the
-  last op, each field a header op set must still be there once, with the
-  value set, or the call is refused: run section ops before header ops.
-  Converted lines are linted like any changed line, so a legacy value in one
-  (a short ref, say) is fixed by a header op on its field in the same call.
+  converges on one list. A paragraph with a line that isn't an unindented
+  field line, or with a setext underline below it, stays as it is, the
+  summary's notes say why, and a new line goes below it. After the last op,
+  each field a header op set must still be there once, with the value set, or
+  the call is refused: run section ops before header ops. Converted lines are
+  linted like any changed line, so a legacy value in one (a short ref, say) is
+  fixed by a header op on its field in the same call.
 
   A ref is "#N" for this repo or "owner/repo#N". A ref's line is the checklist
   item, bullet or table row whose first token is that ref. In any text,
