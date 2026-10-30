@@ -107,7 +107,7 @@ Read the `named` rows, then the `judged` rows from the top. Verify each row befo
 
 `scan.sh` reports three cursors, because each one alone missed something:
 - **Numbers above `Last issue seen`**, issues and PRs (they share a number space). This catches follow-ups that never mention the epic. A search by creation date returned nothing where the number watermark worked (archiver 10, 17).
-- **Updated since `Last check-in`**, with new and edited comments on the epic's items. This catches a reply on a closed child, a gate flipped in another thread, or a late approval (private-backlog 152, watcher F13, status 74). New comments on the epic itself come apart, as `epic_comments`: a sibling coordinator or the operator writes there, never in the body ([siblings.md](siblings.md)).
+- **Updated since `Last check-in`**, with new and edited comments on the epic's items. This catches a reply on a closed child, a gate flipped in another thread, or a late approval (private-backlog 152, watcher F13, status 74). New comments on the epic itself come apart, as `epic_comments`: a sibling coordinator or the operator writes there, never in the body ([siblings.md](siblings.md)). The listing has left out an issue updated minutes earlier (#407), so the window opens 30 minutes early, comments included, and a row or comment from those minutes carries `in_overlap`: likely seen last time, so check before acting twice. The epic's own items are cross-checked too: one the listing missed comes back `recovered`, with a warning.
 - **The commit range**, from §1.
 
 Also re-read:

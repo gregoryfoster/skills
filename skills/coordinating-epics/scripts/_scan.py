@@ -43,6 +43,7 @@ from _epic_edit import (  # noqa: E402
     fenced,
     gh,
     gh_cause,
+    gh_graphql,
     gh_json,
     key,
     line_ref,
@@ -53,6 +54,11 @@ from _epic_edit import (  # noqa: E402
 
 EXIT_OK, EXIT_USAGE, EXIT_INFRA = 0, 1, 2
 MAX_PAGES = 20
+# The updated-since window opens this far before since. GitHub's listing left
+# out an issue updated 14 minutes before the scan (#407): twice that, rounded.
+OVERLAP = dt.timedelta(minutes=30)
+# Aliases per GraphQL query in the cross-check of the epic's own items.
+GRAPHQL_BATCH = 100
 TS_RE = re.compile(r"\d{4}-\d\d-\d\dT\d\d:\d\d(?::\d\d)?(?:Z|[+-]\d\d:\d\d)")
 SHA_RE = re.compile(r"\b[0-9a-f]{7,40}\b")
 
@@ -155,7 +161,20 @@ def pages(path: str, what: str, stop=None):
     CAPPED.append(what)
 
 
+def overlapped(since: str) -> str:
+    """since, moved back by OVERLAP: where a listing's window opens (#407)."""
+    return (parse_ts(since) - OVERLAP).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def in_overlap(updated_at: str | None, since: str) -> bool:
+    """Updated before since: the last scan's window held it, unless a listing
+    left it out then."""
+    return bool(updated_at) and parse_ts(updated_at) < parse_ts(since)
+
+
 def new_comments(host: str, num: int, since: str, what: str) -> list[dict]:
+    """Comments updated since, read from the overlapped window (#407)."""
+    path = f"repos/{host}/issues/{num}/comments?since={overlapped(since)}"
     return [
         {
             "id": c["id"],
@@ -163,10 +182,44 @@ def new_comments(host: str, num: int, since: str, what: str) -> list[dict]:
             "created_at": c.get("created_at"),
             "updated_at": c.get("updated_at"),
             "edited": c.get("updated_at") != c.get("created_at"),
+            "in_overlap": in_overlap(c.get("updated_at"), since),
             "url": c.get("html_url"),
         }
-        for c in pages(f"repos/{host}/issues/{num}/comments?since={since}", what)
+        for c in pages(path, what)
     ]
+
+
+def item_updates(host: str, numbers: set[int]) -> tuple[dict[int, str], list[int]]:
+    """Each item's own updatedAt, and the numbers that resolved to nothing.
+
+    One GraphQL query per GRAPHQL_BATCH items, not a REST call each: #516
+    holds about 120 refs (#407).
+    """
+    owner, name = host.split("/")
+    found: dict[int, str] = {}
+    missing: list[int] = []
+    nums = sorted(numbers)
+    for i in range(0, len(nums), GRAPHQL_BATCH):
+        batch = nums[i : i + GRAPHQL_BATCH]
+        fields = " ".join(
+            f"i{n}: issueOrPullRequest(number: {n}) {{"
+            " ... on Issue { updatedAt } ... on PullRequest { updatedAt } }"
+            for n in batch
+        )
+        data, _ = gh_graphql(
+            "query($owner: String!, $name: String!) {"
+            f" repository(owner: $owner, name: $name) {{ {fields} }} }}",
+            {"owner": owner, "name": name},
+            "cross-checking the epic's items",
+        )
+        repo = data.get("repository") or {}
+        for n in batch:
+            node = repo.get(f"i{n}") or {}
+            if node.get("updatedAt"):
+                found[n] = node["updatedAt"]
+            else:
+                missing.append(n)
+    return found, missing
 
 
 def issue_row(it: dict, host: str, epic: int, items: set[str]) -> dict:
@@ -456,6 +509,14 @@ def run(argv: list[str]) -> int:
             "highest number, and the watermark walk can stop before reaching it. Its\n"
             "transfer updates it, so updated-since still lists it. The epic itself is\n"
             "never a row, but its number counts toward max_number.\n\n"
+            "updated-since reads from 30 minutes before since (cursors.queried_since):\n"
+            "GitHub's listing has left out an issue updated 14 minutes earlier (#407).\n"
+            "since, and the {checked} a write takes from now, keep their own times. A\n"
+            "row or comment updated inside those 30 minutes carries in_overlap: true,\n"
+            "a re-read the last scan should have seen, unless a listing left it out.\n"
+            "Each of the epic's own items is also checked by its own updatedAt, in one\n"
+            "GraphQL query per 100 items; one the listing left out is added with\n"
+            "recovered: true and a warning. A failed cross-check is a warning too.\n\n"
             "exit codes: 0 report written; 1 usage; 2 gh failed on the epic, a listing\n"
             "or a comment read (its stderr shown). gh failing on one cross-repo ref, one\n"
             "PR's closing issues or the default branch costs only that: a warning with\n"
@@ -563,18 +624,63 @@ def run(argv: list[str]) -> int:
             report["epic_comments"] = None
         else:
             since = cur["since"]
-            rows = []
-            for it in pages(
-                f"repos/{host}/issues?state=all&since={since}", "listing updates"
-            ):
-                if it["number"] == a.epic:
-                    continue
+            # The window opens OVERLAP early, while since and {checked} keep
+            # their own times: a row the listing left out last time comes
+            # back as a re-read, not a miss (#407).
+            cur["queried_since"] = queried = overlapped(since)
+
+            def update_row(it: dict) -> dict:
                 row = issue_row(it, host, a.epic, items)
+                row["in_overlap"] = in_overlap(it.get("updated_at"), since)
                 if row["in_epic"]:
                     row["new_comments"] = new_comments(
                         host, it["number"], since, "reading new comments"
                     )
-                rows.append(row)
+                return row
+
+            rows = []
+            for it in pages(
+                f"repos/{host}/issues?state=all&since={queried}", "listing updates"
+            ):
+                # The epic is skipped here and in the cross-check below, as
+                # the number walk skips it (#406): separate checks, both kept.
+                if it["number"] == a.epic:
+                    continue
+                rows.append(update_row(it))
+            # The listing can leave out a row past any margin, so the epic's
+            # own items, the rows that matter most, are each checked by their
+            # own updatedAt (#407).
+            prefix = host.lower() + "#"
+            own = (
+                {int(k[len(prefix) :]) for k in items if k.startswith(prefix)}
+                - {a.epic}
+                - {r["number"] for r in rows}
+            )
+            try:
+                updated, missing = item_updates(host, own) if own else ({}, [])
+            except Infra as e:
+                warnings.append(
+                    "the epic's items weren't cross-checked, so an update the"
+                    f" listing left out goes unreported: {gh_cause(e)}"
+                )
+            else:
+                if missing:
+                    warnings.append(
+                        "the cross-check read nothing for "
+                        + ", ".join(f"#{n}" for n in missing)
+                        + " (deleted, or transferred out?)"
+                    )
+                for n, when in sorted(updated.items()):
+                    if parse_ts(when) < parse_ts(queried):
+                        continue
+                    it = gh_json(["api", f"repos/{host}/issues/{n}"], f"reading #{n}")
+                    row = update_row(it)
+                    row["recovered"] = True
+                    rows.append(row)
+                    warnings.append(
+                        f"#{n} was updated at {when}, but the updates listing left"
+                        " it out; added from the epic's own items (#407)"
+                    )
             report["updated_since"] = sorted(rows, key=lambda r: r["number"])
             # The epic is no row of its own, but a sibling coordinator or the
             # operator writes to it by comment (siblings.md) (CR 289).

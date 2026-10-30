@@ -1172,6 +1172,36 @@ def gh_json(args: list[str], what: str):
         raise Infra(f"{what}: gh returned non-JSON: {out[:200]!r}") from None
 
 
+def gh_graphql(query: str, variables: dict, what: str) -> tuple[dict, list[str]]:
+    """GraphQL's data, and the message of each error that came with it.
+
+    gh exits 1 on a GraphQL error but still prints the response, so one null
+    node (a deleted issue's alias) leaves the rest readable. With no data at
+    all (a 403, a bad query), it fails as gh() does.
+    """
+    args = ["api", "graphql", "-f", f"query={query}"]
+    for k, v in variables.items():
+        args += ["-F" if isinstance(v, int) else "-f", f"{k}={v}"]
+    try:
+        r = subprocess.run(["gh", *args], capture_output=True, text=True)
+    except FileNotFoundError:
+        raise Infra("gh is not on PATH") from None
+    try:
+        resp = json.loads(r.stdout)
+    except json.JSONDecodeError:
+        resp = None
+    data = resp.get("data") if isinstance(resp, dict) else None
+    if r.returncode != 0 and not data:
+        raise Infra(
+            f"{what}: gh api graphql exited {r.returncode}:\n{r.stderr.strip()}",
+            stderr=r.stderr.strip(),
+            code=r.returncode,
+        )
+    if not isinstance(data, dict):
+        raise Infra(f"{what}: gh returned no data: {r.stdout[:200]!r}")
+    return data, [str(e.get("message", e)) for e in resp.get("errors") or []]
+
+
 def fetch_body(repo: str, num: int) -> str:
     data = gh_json(["api", f"repos/{repo}/issues/{num}"], "fetching the epic")
     return data.get("body") or ""
