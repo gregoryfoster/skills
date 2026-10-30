@@ -2413,3 +2413,72 @@ def test_an_unreadable_edit_history_is_a_warning(adopted):
     s = summary(res)
     assert s["edit_history"].startswith("unread") and "GraphQL" in s["edit_history"]
     assert "WARNING" in res.stderr
+
+
+# ---------------------------------------------------------------- #519
+
+
+def _close(rig):
+    rig.issue(
+        REPO,
+        EPIC,
+        state="closed",
+        closed_at="2026-10-14T17:00:00Z",
+        closed_by={"login": "implementer-bot"},
+    )
+
+
+def test_a_write_to_a_closed_epic_is_refused_naming_the_closer(adopted):
+    """#519 (#502 F5): a final child's thread closed the epic, then the
+    editor wrote to it without complaint."""
+    _close(adopted)
+    res = adopted.edit(REPO, EPIC, [{"op": "tick", "ref": "#11"}])
+    assert res.returncode == 3, res.stderr
+    assert "closed" in res.stderr and "implementer-bot" in res.stderr
+    assert "2026-10-14T17:00:00Z" in res.stderr and "--closed-ok" in res.stderr
+    assert "patches" not in adopted.load()
+
+
+def test_closed_ok_writes_to_a_closed_epic_and_says_who_closed_it(adopted):
+    _close(adopted)
+    res = adopted.edit(REPO, EPIC, [{"op": "tick", "ref": "#11"}], "--closed-ok")
+    assert res.returncode == 0, res.stderr
+    s = summary(res)
+    assert s["written"] and s["state"] == "closed"
+    assert s["closed_by"] == "implementer-bot"
+    assert s["closed_at"] == "2026-10-14T17:00:00Z"
+
+
+def test_a_dry_run_on_a_closed_epic_works_and_reports_the_state(adopted):
+    _close(adopted)
+    res = adopted.edit(REPO, EPIC, [{"op": "tick", "ref": "#11"}], "--dry-run")
+    assert res.returncode == 0, res.stderr
+    s = summary(res)
+    assert s["state"] == "closed" and s["closed_by"] == "implementer-bot"
+    assert "--closed-ok" in res.stderr
+
+
+def test_an_open_epic_reports_its_state(adopted):
+    res = adopted.edit(REPO, EPIC, [{"op": "tick", "ref": "#11"}])
+    assert summary(res)["state"] == "open"
+
+
+def test_an_epic_closed_during_the_run_is_refused(adopted):
+    """The compare-and-swap re-read checks the state too."""
+    adopted.change_on_get(EPIC, 2, BODY)
+    st = adopted.load()
+    st["change_on_get"][str(EPIC)]["state"] = "closed"
+    adopted.save()
+    res = adopted.edit(REPO, EPIC, [{"op": "tick", "ref": "#11"}])
+    assert res.returncode == 3 and "closed" in res.stderr, res.stderr
+    assert "patches" not in adopted.load()
+
+
+def test_the_close_out_procedure_passes_closed_ok():
+    text = (SCRIPTS.parent / "references" / "close-out.md").read_text()
+    assert "--closed-ok" in text
+
+
+def test_the_implementer_contract_says_never_close_the_epic():
+    text = (SCRIPTS.parent / "references" / "hand-off.md").read_text()
+    assert "never close the epic" in text.lower()
