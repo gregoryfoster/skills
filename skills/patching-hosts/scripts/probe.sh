@@ -2318,9 +2318,9 @@ read_dry_run() {
       # the origin's package, and that passes every gate (#523): only lists
       # this run fetched count it.
       if [ -z "$LISTS_FETCHED" ] || [ "$LISTS_FETCHED" -lt "$P_NOW" ]; then
-        w="fetched before this run"
-        if [ -n "$LISTS_FETCHED" ]; then w="fetched $(((P_NOW - LISTS_FETCHED) / 3600)) hours before this run"; fi
-        finding risk dry-run "" "the $lane lane's dry run didn't run: its lists were $w, and on lists older than the run it can count an older release of the origin's package with every gate passed (#523). Count again with --refresh-into DIR beside --dry-run-into."
+        w="no security list was fetched in this run, so its lists' age is unknown"
+        if [ -n "$LISTS_FETCHED" ]; then w="its lists were fetched $(((P_NOW - LISTS_FETCHED) / 3600)) hours before this run"; fi
+        finding risk dry-run "" "the $lane lane's dry run didn't run: $w, and on lists older than the run it can count an older release of the origin's package with every gate passed (#523). Count again with --refresh-into DIR beside --dry-run-into."
         return 0
       fi
       origin_split lkeep lskip "$lnames" "$SIM_DIST_OUT" ;;
