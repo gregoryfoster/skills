@@ -58,6 +58,7 @@ upgraded.
 """
 
 import subprocess
+import time
 
 import pytest
 
@@ -65,6 +66,7 @@ from tests.structural.patching_hosts_rig import SKILL, clean_env, dispatcher
 from tests.structural.test_patching_hosts_apply import KNOB, SIM_ARGS, TUE_1530, _ready
 from tests.structural.test_patching_hosts_apply import Host as ApplyHost
 from tests.structural.test_patching_hosts_probe import Host as ProbeHost
+from tests.structural.test_patching_hosts_probe import LaterHost
 
 UPDATES = "o=Ubuntu,a=${distro_codename}-updates"
 ORIGINS = (
@@ -644,23 +646,94 @@ def test_the_one_origin_lane_takes_only_an_origin_the_knob_follows(
 
 def _refreshed(host) -> tuple[str, str]:
     """--refresh-into, which the one-origin lane's dry run needs (#493): an
-    update that fetches the security list into the scratch copy."""
+    update that fetches the security list and the origin's into the scratch
+    copy."""
+    host.on(
+        "apt-get",
+        "update*",
+        script="for a; do case $a in Dir::State::Lists=*) d=${a#*=} ;; esac; done; "
+        'touch "${d}security.ubuntu.com_ubuntu_dists_noble-security_InRelease" '
+        f'"${{d}}{TS_LIST}"; exit 0',
+    )
+    return ("--refresh-into", str(host.tmp / "fresh"))
+
+
+# The origin's own list, as apt names it for https://pkgs.tailscale.com/stable/ubuntu.
+TS_LIST = "pkgs.tailscale.com_stable_ubuntu_dists_noble_InRelease"
+TS_KNOB = "class production\nposture scheduled\norigin pkgs.tailscale.com follow\n"
+O_KNOB = "class production\nposture scheduled\norigin Tailscale follow\n"
+
+
+@pytest.mark.parametrize(
+    "knob, lane", [(TS_KNOB, TS), (O_KNOB, "origin:Tailscale")], ids=["site", "o-name"]
+)
+def test_a_one_origin_refresh_whose_origin_list_wasnt_fetched_doesnt_count(
+    tmp_path, knob, lane
+):
+    # CR 1296: apt-get update exits 0 when a source fails, and leaves its
+    # list as it was. The security pocket answered, the origin didn't: its
+    # list is from before the run, and #523's count would pass every gate.
+    host = ProbeHost(tmp_path).knob(knob)
+    host.on("apt-get", "-s *dist-upgrade", EXTRA)
+    host.on("apt-cache", "*policy", POLICY)
+    host.on(
+        "unattended-upgrade",
+        "--dry-run -d",
+        "Packages that will be upgraded: tailscale\n",
+    )
+    fresh = host.tmp / "fresh"
+    (fresh / "lists").mkdir(parents=True)
+    (fresh / "lists" / TS_LIST).write_text("x")
+    time.sleep(1.1)
     host.on(
         "apt-get",
         "update*",
         script="for a; do case $a in Dir::State::Lists=*) d=${a#*=} ;; esac; done; "
         'touch "${d}security.ubuntu.com_ubuntu_dists_noble-security_InRelease"; exit 0',
     )
-    return ("--refresh-into", str(host.tmp / "fresh"))
+    out = host.run(
+        "--refresh-into",
+        str(fresh),
+        "--dry-run-into",
+        str(host.tmp / "dry"),
+        "--lane",
+        lane,
+    )
+    [f] = [f for f in out["findings"] if f["id"] == "dry-run"]
+    assert f["kind"] == "risk"
+    assert "before this run" in f["message"]
+    assert not host.calls("unattended-upgrade")
+
+
+def test_a_one_origin_refresh_by_o_name_counts_against_its_sites_list(tmp_path):
+    host = ProbeHost(tmp_path).knob(O_KNOB)
+    host.on("apt-get", "-s *dist-upgrade", EXTRA)
+    host.on("apt-cache", "*policy", POLICY)
+    host.on(
+        "unattended-upgrade",
+        "--dry-run -d",
+        "Packages that will be upgraded: tailscale\n",
+    )
+    out = host.run(
+        *_refreshed(host),
+        "--dry-run-into",
+        str(host.tmp / "dry"),
+        "--lane",
+        "origin:Tailscale",
+    )
+    assert out["pending"]["dry_run"]["count"] == 1
 
 
 def test_a_one_origin_dry_run_on_lists_older_than_the_run_doesnt_start(tmp_path):
     # #523, broker 2026-10-28: on lists older than the fix, the dry run
     # counted Tailscale 1.104.2 against a 1.104.4 target, and that passed
-    # every gate: a count of 1, and nothing of the origin's left.
-    host = ProbeHost(tmp_path).knob(
-        "class production\nposture scheduled\norigin pkgs.tailscale.com follow\n"
-    )
+    # every gate: a count of 1, and nothing of the origin's left. CR 1297:
+    # the origin's list was fetched, 3 hours before the run, after the tree
+    # was unpacked, so the refusal reads its age.
+    host = LaterHost(tmp_path, 3).knob(TS_KNOB)
+    host.write("usr/lib/os-release", 'NAME="Ubuntu"\n')
+    time.sleep(1.1)
+    host.write(f"var/lib/apt/lists/{TS_LIST}", "x")
     host.on(
         "apt-get",
         "-s *dist-upgrade",
@@ -676,7 +749,9 @@ def test_a_one_origin_dry_run_on_lists_older_than_the_run_doesnt_start(tmp_path)
     out = host.run("--dry-run-into", str(scratch), "--lane", TS)
     [f] = [f for f in out["findings"] if f["id"] == "dry-run"]
     assert f["kind"] == "risk"
-    assert f["message"].startswith(f"the {TS} lane's dry run didn't run: ")
+    assert f["message"].startswith(
+        f"the {TS} lane's dry run didn't run: its lists were fetched 3 hours before this run"
+    )
     assert "--refresh-into" in f["message"]
     assert out["pending"]["dry_run"] is None
     assert not host.calls("unattended-upgrade")
@@ -701,7 +776,7 @@ def test_a_one_origin_dry_run_with_no_list_fetched_says_so(tmp_path):
         TS,
     )
     [f] = [f for f in out["findings"] if f["id"] == "dry-run"]
-    assert "no security list was fetched in this run" in f["message"]
+    assert "no list of pkgs.tailscale.com was fetched in this run" in f["message"]
     assert not host.calls("unattended-upgrade")
 
 
