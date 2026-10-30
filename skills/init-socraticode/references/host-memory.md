@@ -156,7 +156,13 @@ the user manager — `MemoryMax=` is accepted and never enforced, and on systemd
 255 a 320 MB payload outlived a 64M cap. Where the host cannot cap — macOS, no
 user systemd, no memory controller — the check runs uncapped as before, and
 silently; a failed probe leaves a line in its log. A check the cap stops is
-reported as stopped by its cap, and never re-run uncapped.
+reported as stopped by its cap, and never re-run uncapped. So is one it
+throttles past `MemoryHigh=` ([#527](https://github.com/gregoryfoster/skills/issues/527)):
+with no swap to reclaim into, the kernel slows the scope rather than killing
+it, and the check ends unfinished, with no kill recorded. The scope's
+`memory.events`, read from inside it before it ends (`high` above 0,
+`oom_kill` 0), is what says it was throttled at its memory cap. The cap is
+unchanged until an install is measured under `MemoryMax=` alone.
 `SOCRATICODE_HEALTH_CAP` sets the properties, or `off`. Set it in
 `.claude/settings.local.json`'s `env` block, since a ceiling belongs to the
 host, not to every clone of the repo. A value the probe rejects runs uncapped

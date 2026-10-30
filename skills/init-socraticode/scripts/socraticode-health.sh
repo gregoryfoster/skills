@@ -84,7 +84,10 @@ What it reports (to stdout, which Claude Code injects as session context):
   - Linked projects that break includeLinked search without blocking the
     check: one whose projectId is invalid, or two that share one.
   - A check its own memory cap stopped (#330): said as such, since nothing
-    was measured, and never re-run uncapped.
+    was measured, and never re-run uncapped. So is one the cap throttled past
+    MemoryHigh= until it ended unfinished (#527): the kernel slows a job it
+    cannot reclaim rather than killing it, and the scope's memory.events
+    (high above 0, oom_kill 0) is what says so.
   - SocratiCode's local store listening beyond loopback (#494): a TCP listener
     on QDRANT_PORT, QDRANT_GRPC_PORT or OLLAMA_PORT (16333, 16334, 11435 by
     default) bound to any address but loopback. That is what SocratiCode's own
@@ -169,6 +172,9 @@ Env:
                           settings.json.
   SOCRATICODE_HEALTH_FORCE=1
                           ignore the once-per-day lock (for testing)
+  SOCRATICODE_HEALTH_CGROUP_FS
+                          the cgroupfs root the capped scope's memory.events
+                          is read under; default /sys/fs/cgroup (for testing)
 
 Options:
   --help    Show this help and exit.
@@ -511,6 +517,35 @@ _capped() {
     ${CAP_PROPS[@]+"${CAP_PROPS[@]}"} choom -n 500 -- "$@"
 }
 
+# The payload reads its own scope's memory.events before the scope ends
+# (#527). Past MemoryHigh=, with no swap to reclaim into — MemorySwapMax=0, or
+# a swapless host — the kernel throttles the job instead of killing it: it
+# stalls between MemoryHigh= and MemoryMax=, and ends on its own timeout or by
+# hand, never as an OOM kill systemd records. Measured: 12 minutes in state D
+# at 1.42 GB, `high` ~20,000, `oom_kill` 0. That `high` count is the evidence,
+# and the scope's cgroup goes with its last process, so nothing can read it
+# afterwards. The driver runs under this keeper instead: it waits for the
+# driver, copies the counts out, and exits with the driver's status. A cap
+# kill that stops the scope stops the keeper too, and Result= says so below.
+#
+# Single-quoted on purpose, as the probe's check: the keeper's `sh -c`
+# expands it. One line, so a call logged one per line stays one line. The
+# cgroupfs root is a parameter so a test can serve the measured file where no
+# user systemd would throttle.
+# shellcheck disable=SC2016
+_CAP_EVENTS_KEEP='out="$1" fs="$2"; shift 2; "$@"; rc=$?; cg="$(sed -n "s/^0:://p" /proc/self/cgroup)"; cat "$fs${cg%/}/memory.events" >"$out" 2>/dev/null; exit "$rc"'
+_CGROUP_FS="${SOCRATICODE_HEALTH_CGROUP_FS:-/sys/fs/cgroup}"
+
+# The cap's word for one property, for a report: MemoryMax=1536M, say. The
+# whole cap where it sets no such property.
+_cap_word() {
+  local w
+  for w in "${_cap_words[@]}"; do
+    case "$w" in "$1"=*) printf '%s\n' "$w"; return 0 ;; esac
+  done
+  printf '%s\n' "${_cap_words[*]}"
+}
+
 # The probe for one unit, with the current properties: `true`, or, for a cap
 # with a Memory property, the accounting question asked about its own scope.
 _probe_cap() {
@@ -594,7 +629,8 @@ fi
 # concurrent session's file mid-write, which is precisely the garbled report the
 # per-PID name exists to prevent — the sweep must not reintroduce the race it is
 # cleaning up after.
-for _stale in "$gitdir"/socraticode-health.findings.*; do
+for _stale in "$gitdir"/socraticode-health.findings.* \
+  "$gitdir"/socraticode-health.events.*; do
   [ -f "$_stale" ] || continue          # unmatched glob stays literal
   _pid="${_stale##*.}"
   case "$_pid" in
@@ -603,7 +639,8 @@ for _stale in "$gitdir"/socraticode-health.findings.*; do
   kill -0 "$_pid" 2>/dev/null || rm -f "$_stale"
 done
 FINDINGS_FILE="$gitdir/socraticode-health.findings.$$"
-trap 'rm -f "${FINDINGS_FILE:-}"' EXIT
+EVENTS_FILE="$gitdir/socraticode-health.events.$$"
+trap 'rm -f "${FINDINGS_FILE:-}" "${EVENTS_FILE:-}"' EXIT
 RC=0
 # `${A[@]+"${A[@]}"}`, not `"${A[@]}"`: under `set -u`, bash 3.2 — which is what
 # macOS ships — treats an empty array expansion as an unbound variable and kills
@@ -614,7 +651,8 @@ RC=0
 # notice, and it belongs in the log with the rest, not on the hook's stderr.
 _driver=(node "$DRIVER" health-check ${PROBE_ARGS[@]+"${PROBE_ARGS[@]}"} "$PROJECT")
 if [ -n "$CAP_UNIT" ]; then
-  { _capped "$CAP_UNIT" "${_driver[@]}"; } >>"$LOG" 2>"$FINDINGS_FILE" || RC=$?
+  { _capped "$CAP_UNIT" sh -c "$_CAP_EVENTS_KEEP" sh "$EVENTS_FILE" "$_CGROUP_FS" \
+    "${_driver[@]}"; } >>"$LOG" 2>"$FINDINGS_FILE" || RC=$?
 else
   { "${_driver[@]}"; } >>"$LOG" 2>"$FINDINGS_FILE" || RC=$?
 fi
@@ -653,6 +691,27 @@ if [ -n "$CAP_UNIT" ] && [ "$RC" -ne 0 ]; then
   fi
 fi
 
+# Throttled, not killed (#527): the operator's decision is to report it, the
+# cap unchanged. Read only after a failure the cap did not record as a kill,
+# and only as the decision states it: `high` above 0 and `oom_kill` 0. A
+# count that does not parse reads as 0 — FAILED TO RUN, as before, never a
+# guess. Whether the report then says "throttled" waits on the findings: a
+# throttled check that finished, slowly, measured what it lists.
+CAP_THROTTLED=0
+if [ -n "$CAP_UNIT" ] && [ "$RC" -ne 0 ] && [ "$CAP_KILLED" = 0 ] && [ -s "$EVENTS_FILE" ]; then
+  _high="$(awk '$1 == "high" { print $2 }' "$EVENTS_FILE")"
+  _oom="$(awk '$1 == "oom_kill" { print $2 }' "$EVENTS_FILE")"
+  case "$_high" in '' | *[!0-9]*) _high=0 ;; esac
+  case "$_oom" in '' | *[!0-9]*) _oom=0 ;; esac
+  _log "capped scope's memory.events: $(tr '\n' ' ' <"$EVENTS_FILE")"
+  if [ "$_high" -gt 0 ] && [ "$_oom" -eq 0 ]; then
+    CAP_THROTTLED=1
+  fi
+fi
+
+# What a check its cap stopped or throttled is told, after what happened.
+_CAP_ADVICE="A launch that needs that much usually installed the server — pin it (init-socraticode's references/host-memory.md); if the index has outgrown the cap, raise it with SOCRATICODE_HEALTH_CAP where the host has room."
+
 # A non-zero RC has TWO meanings and they are opposites (#254): the driver
 # exits 1 for "defects found" (#220), and node also exits 1 for an error thrown
 # out of the dispatch — `server process exited (code N) with requests in
@@ -672,14 +731,10 @@ fi
 # invariant behind #177/#214/#225/#254 is that for a reporter that is silent
 # when clean, EVERY failure mode must be louder than silence, never quieter.
 if [ "$CAP_KILLED" = 1 ]; then
-  _limit=""
-  for _w in "${_cap_words[@]}"; do
-    case "$_w" in MemoryMax=*) _limit="$_w" ;; esac
-  done
-  _limit="${_limit:-${_cap_words[*]}}"
+  _limit="$(_cap_word MemoryMax)"
   _log "health-check stopped by its memory cap ($_limit) — not re-run uncapped"
   echo "socraticode-health: the check was stopped by its memory cap ($_limit) before it finished — see $LOG."
-  echo "socraticode-health: this is not a clean result. Nothing was measured today, and it was not re-run uncapped: the cap keeps this host's other services up. A launch that needs that much usually installed the server — pin it (init-socraticode's references/host-memory.md); if the index has outgrown the cap, raise it with SOCRATICODE_HEALTH_CAP where the host has room."
+  echo "socraticode-health: this is not a clean result. Nothing was measured today, and it was not re-run uncapped: the cap keeps this host's other services up. $_CAP_ADVICE"
 elif [ "$RC" -ne 0 ]; then
   # `  - ` lines are the driver's findings; the rest is launch chatter.
   # POSIX bracket class, not `\s`: BSD grep -E does not know the escape.
@@ -692,6 +747,11 @@ elif [ "$RC" -ne 0 ]; then
     # of re-indexing does nothing for it; a LOW yield names its own policy
     # swap. The rest name no fix, and for them the index is the lever.
     echo "socraticode-health: this hook reports only. Where a finding names its own fix, apply that; otherwise re-index with codebase_index, or re-run init-socraticode, to act on it."
+  elif [ "$CAP_THROTTLED" = 1 ]; then
+    _limit="$(_cap_word MemoryHigh)"
+    _log "health-check throttled at its memory cap ($_limit) and did not finish (driver exited $RC) — not re-run uncapped"
+    echo "socraticode-health: the check was throttled at its memory cap ($_limit) and did not finish (driver exited $RC) — see $LOG."
+    echo "socraticode-health: this is not a clean result. Nothing was measured today, and it was not re-run uncapped: past MemoryHigh= the kernel slows a job it cannot reclaim rather than killing it, and the cap keeps this host's other services up. $_CAP_ADVICE"
   else
     echo "socraticode-health: the check FAILED TO RUN (driver exited $RC with no findings) — see $LOG."
     echo "socraticode-health: this is not a clean result. Nothing was measured today."
