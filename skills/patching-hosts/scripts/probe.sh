@@ -66,9 +66,9 @@ Options:
                       adds Ubuntu's -updates and each origin the knob
                       follows; or origin:<origin>, one followed origin and
                       nothing else. With --dry-run-into only
-  --post-boot         the checks after a reboot (run.md section 6), not the
-                      readings before a run. Takes neither --refresh-into nor
-                      --dry-run-into
+  --post-boot         the checks after a reboot (reboot-and-record.md
+                      section 6), not the readings before a run. Takes
+                      neither --refresh-into nor --dry-run-into
   --run DIR           with --post-boot: the run whose reboot chain copied a
                       volatile journal into DIR/journal (default: the newest
                       /var/backups/patching-hosts-<UTC>). A persistent
@@ -550,7 +550,7 @@ read_journal() {
   jaddn o reach_days "$reach"
   R_JOURNAL=$o
   if [ "$verdict" = volatile ]; then
-    finding risk journal:volatile journal:volatile "The journal is volatile (Storage=${storage:-unset}, systemd-journal-flush ${flush_live:-$flush}, ${pc:-an unknown number of} files under /var/log/journal): a reboot erases everything before it. Copy it as the reboot chain's last step (run.md section 5)."
+    finding risk journal:volatile journal:volatile "The journal is volatile (Storage=${storage:-unset}, systemd-journal-flush ${flush_live:-$flush}, ${pc:-an unknown number of} files under /var/log/journal): a reboot erases everything before it. Copy it as the reboot chain's last step (reboot-and-record.md section 5)."
   fi
 }
 
@@ -1287,28 +1287,65 @@ read_scope() {
   done
 }
 
-# Outside apt: binaries under /usr/local/bin and ~/.local/bin, with any owner
-# the knob names, and container images with their age.
-read_outside_apt() {
-  local list="" r path age mt owner oline e c=0 out line img ci=""
+# The knob's owner for one component: the last owner line whose glob
+# matches it. A binary's glob matches its path or its basename, an image's
+# its repository:tag or every tag of its repository (#427), and a tree's its
+# directory. Every line that matches is noted in OWNER_HIT, so a line that
+# matches nothing is a knob finding (owner_lines).
+OWNER_HIT="" OWNER_UNREAD=""
+knob_owner() {  # <binary|image|tree> <name>: sets KO_OWNER and KO_LINE
+  local _ko_r _ko_g
+  local -a _ko_f=()
+  KO_OWNER="" KO_LINE=""
+  for _ko_r in ${KNOB_OWNER[@]+"${KNOB_OWNER[@]}"}; do
+    IFS=$KNOB_US read -r -a _ko_f <<<"$_ko_r"
+    case $1 in
+      binary) _ko_g="${_ko_f[0]} */${_ko_f[0]}" ;;
+      image) _ko_g="${_ko_f[0]} ${_ko_f[0]}:*" ;;
+      *) _ko_g=${_ko_f[0]} ;;
+    esac
+    if glob_match "$2" "$_ko_g"; then
+      KO_OWNER=${_ko_f[1]} KO_LINE=${_ko_f[2]}
+      in_words "$KO_LINE" "$OWNER_HIT" || OWNER_HIT="$OWNER_HIT $KO_LINE"
+    fi
+  done
+}
+
+# An owner line that matches nothing the probe read does nothing, and says
+# so nowhere: the component it named has moved or gone (#508, #427). It's a
+# finding only when every reading it could match was taken.
+owner_lines() {
+  local r
   local -a of=()
+  for r in ${KNOB_OWNER[@]+"${KNOB_OWNER[@]}"}; do
+    IFS=$KNOB_US read -r -a of <<<"$r"
+    in_words "${of[2]}" "$OWNER_HIT" && continue
+    if [ -n "$OWNER_UNREAD" ]; then
+      not_read "the knob's owner line ${of[2]}: it matches nothing read, and ${OWNER_UNREAD} weren't read, so whether it names anything on this host is unknown"
+    else
+      finding knob "owner:${of[0]}" "" "knob line ${of[2]}: owner ${of[0]} matches nothing on this host, no binary under /usr/local/bin or ~/.local/bin, no container image and no unit's WorkingDirectory=, so it does nothing. What it named has moved or gone: correct the line, or remove it."
+    fi
+  done
+}
+
+# Outside apt: binaries under /usr/local/bin and ~/.local/bin, with any owner
+# the knob names, and container images with their age and owner.
+read_outside_apt() {
+  local list="" path age mt e c=0 out line img ci=""
   for path in "$P_ROOT"/usr/local/bin/* "$P_ROOT"/home/*/.local/bin/* "$P_ROOT"/root/.local/bin/*; do
     [ -f "$path" ] || continue
     c=$((c + 1))
+    # Past the first 100 too, so a line naming one is no finding.
+    knob_owner binary "${path#"$P_ROOT"}"
     [ "$c" -le 100 ] || continue
     file_mtime mt "$path"
     age=""
     if [ -n "$mt" ]; then age=$(((P_NOW - mt) / 86400)); fi
-    owner="" oline=""
-    for r in ${KNOB_OWNER[@]+"${KNOB_OWNER[@]}"}; do
-      IFS=$KNOB_US read -r -a of <<<"$r"
-      if glob_match "${path#"$P_ROOT"}" "${of[0]} */${of[0]}"; then owner=${of[1]} oline=${of[2]}; fi
-    done
     e=""
     jadds e path "${path#"$P_ROOT"}"
     jaddn e age_days "$age"
-    jaddsn e owner "$owner"
-    jaddn e owner_line "$oline"
+    jaddsn e owner "$KO_OWNER"
+    jaddn e owner_line "$KO_LINE"
     jpush list "{$e}"
   done
   if docker_running; then
@@ -1319,6 +1356,9 @@ read_outside_apt() {
         img=""
         jadds img image "${line%%|*}"
         jadds img created "${line#*|}"
+        knob_owner image "${line%%|*}"
+        jaddsn img owner "$KO_OWNER"
+        jaddn img owner_line "$KO_LINE"
         jpush ci "{$img}"
       done <<<"$out"
       ci="[$ci]"
@@ -1329,6 +1369,11 @@ read_outside_apt() {
     else
       not_read "container images: docker.service isn't running"
     fi
+  fi
+  # No docker on a running host has no images. Otherwise unread images
+  # could hold one an owner line names.
+  if [ -z "$ci" ] && { [ "$P_LIVE" -ne 1 ] || have docker; }; then
+    OWNER_UNREAD="${OWNER_UNREAD:+$OWNER_UNREAD and }container images"
   fi
   R_OUTSIDE=""
   jadd R_OUTSIDE binaries "[$list]"
@@ -1758,8 +1803,13 @@ passwd_home() {  # <var> <user>: that user's home from the tree's /etc/passwd, o
 
 # The checkout's origin as owner/name, from .git/config read as a file. Only
 # a GitHub remote is named, and only by owner/name: a URL can carry a token.
+# An ssh host alias whose name starts with github counts too, the
+# <user>@github-<repo>:Owner/name init-project-fastapi's deploy key sets up
+# (#391). It's matched by that shape alone: no ssh config is read, and no
+# ssh -G runs.
 git_origin() {  # <var> <dir>
   local _go="" _gl _gin=0 _gc re='github\.com[:/]+([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)$'
+  local ra='^[A-Za-z0-9_.-]+@github[A-Za-z0-9_.-]*:([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)$'
   capture _gc as_reader cat -- "$P_ROOT$2/.git/config"
   if [ "$CAP_RC" -eq 0 ]; then
     while IFS= read -r _gl || [ -n "$_gl" ]; do
@@ -1773,7 +1823,7 @@ git_origin() {  # <var> <dir>
             _gl=${_gl#"${_gl%%[![:space:]]*}"}
             _gl=${_gl%/}
             _gl=${_gl%.git}
-            if [[ $_gl =~ $re ]]; then _go="${BASH_REMATCH[1]}/${BASH_REMATCH[2]}"; fi
+            if [[ $_gl =~ $re ]] || [[ $_gl =~ $ra ]]; then _go="${BASH_REMATCH[1]}/${BASH_REMATCH[2]}"; fi
           fi
           ;;
       esac
@@ -1782,31 +1832,66 @@ git_origin() {  # <var> <dir>
   printf -v "$1" '%s' "$_go"
 }
 
+# The first uv with `audit`: 0.10.4 to 0.10.7 refuse it as an unrecognized
+# subcommand, and 0.10.8 runs it (each from its PyPI wheel, 2026-10-30, #422).
+UV_AUDIT_MIN=0.10.8
+
+# Whether only root can change PATH: it and its directory are uid 0's, and
+# neither is writable by its group or by others. A link is judged by what it
+# runs, and by the directory holding the link too: a link's own mode reads
+# 0777, and an installer's /usr/local/bin/uv can be one (CR 1138).
+root_only() {  # <path>
+  local _ro_p _ro_u _ro_m _ro_r=$1
+  if [ -L "$1" ]; then
+    _ro_r=$(readlink -f -- "$1" 2>/dev/null) || _ro_r=""
+    [ -n "$_ro_r" ] || return 1
+  fi
+  for _ro_p in "$_ro_r" "${_ro_r%/*}" "${1%/*}"; do
+    file_owner _ro_u "$_ro_p"
+    file_mode _ro_m "$_ro_p"
+    [ "$_ro_u" = 0 ] && [ -n "$_ro_m" ] || return 1
+    [ $((8#$_ro_m & 8#022)) -eq 0 ] || return 1
+  done
+}
+
 # A tree's uv.lock, audited in a copy as the lockfile's owner: never in the
 # tree, and never as root, since the uv found may be ~/.local/bin's, which
-# its user can rewrite. uv 0.11.8 exits 0 clean, 1 with advisories and 2 on
-# an error; its output is text only. Sets LA_AUDITED, LA_N, LA_PKGS (a JSON
-# array body) and LA_WHY.
+# its user can rewrite. A root-owned lock, such as a release tree a deploy
+# builds as root, is audited as nobody, with a uv only root can change
+# (#456). uv 0.11.8 exits 0 clean, 1 with advisories and 2 on an error; its
+# output is text only. It never fetches a newer uv for one without `audit`
+# (#422). Sets LA_AUDITED, LA_N, LA_PKGS (a JSON array body) and LA_WHY.
 lang_audit() {  # <dir> <user> <home>
-  local d=$1 u=$2 home=$3 uvb="" out err="" line re rc n=0 sum="" p
+  local d=$1 u=$2 home=$3 uvb="" out err="" line re rc n=0 sum="" p v
   LA_AUDITED=0 LA_N="" LA_PKGS="" LA_WHY=""
-  if [ "$u" = root ]; then
-    LA_WHY="its uv.lock is root's, and uv never runs as root here"
-    return 0
-  fi
   if [ ! -e "$P_ROOT$d/pyproject.toml" ] && ! as_root test -e "$P_ROOT$d/pyproject.toml" 2>/dev/null; then
     LA_WHY="no pyproject.toml beside its uv.lock, which uv audit needs"
     return 0
   fi
+  if [ "$u" = root ]; then
+    u=nobody home=""
+    for p in /usr/local/bin/uv /usr/bin/uv; do
+      if [ -x "$P_ROOT$p" ] && root_only "$P_ROOT$p"; then
+        uvb=$P_ROOT$p
+        break
+      fi
+    done
+    if [ -z "$uvb" ]; then
+      LA_WHY="its uv.lock is root's, so it's audited as nobody with a uv only root can change, and neither /usr/local/bin/uv nor /usr/bin/uv is one"
+      return 0
+    fi
+  fi
   # The owner's own uv first, then the system's, and the probe's PATH last:
   # one in the probe user's home may be one the owner can't run (CR 233).
-  for p in ${home:+"$home/.local/bin/uv"} /usr/local/bin/uv /usr/bin/uv; do
-    if [ -x "$P_ROOT$p" ]; then
-      uvb=$P_ROOT$p
-      break
-    fi
-  done
-  [ -n "$uvb" ] || uvb=$(command -v uv 2>/dev/null) || uvb=""
+  if [ -z "$uvb" ]; then
+    for p in ${home:+"$home/.local/bin/uv"} /usr/local/bin/uv /usr/bin/uv; do
+      if [ -x "$P_ROOT$p" ]; then
+        uvb=$P_ROOT$p
+        break
+      fi
+    done
+    [ -n "$uvb" ] || uvb=$(command -v uv 2>/dev/null) || uvb=""
+  fi
   if [ -z "$uvb" ]; then
     LA_WHY="no uv in $u's ~/.local/bin, /usr/local/bin, /usr/bin or on PATH"
     return 0
@@ -1814,17 +1899,34 @@ lang_audit() {  # <dir> <user> <home>
   # The script's $1..$3 are expanded by the inner sh, from its arguments.
   # shellcheck disable=SC2016
   capture out as_user "$u" env HOME="${home:-/}" sh -c '
-    t=$(mktemp -d) || exit 2
+    t=$(mktemp -d) || exit 3
     if cp -- "$1" "$2" "$t"/ && cd "$t"; then
       timeout -k 10 60 "$3" audit --frozen --no-cache --no-python-downloads --no-config
       r=$?
     else
-      r=2
+      r=3
     fi
     cd / && rm -rf "$t"
     exit $r' sh "$P_ROOT$d/pyproject.toml" "$P_ROOT$d/uv.lock" "$uvb"
   rc=$CAP_RC
   err=$(cat "$P_TMP/stderr" 2>/dev/null) || err=""
+  # uv exits 0, 1 or 2, so 3 is the copy: nobody can't read a tree that
+  # isn't world-readable, or make a directory in a TMPDIR that's root's
+  # alone (CR 1139).
+  if [ "$rc" -eq 3 ]; then
+    LA_WHY="$u couldn't copy its pyproject.toml and uv.lock to a scratch directory${CAP_ERR:+: $CAP_ERR}"
+    return 0
+  fi
+  case $err in
+    *"unrecognized subcommand 'audit'"*)
+      capture out as_user "$u" "$uvb" --version
+      re='^uv ([0-9][^ ]*)'
+      v=""
+      if [[ $out =~ $re ]]; then v=${BASH_REMATCH[1]}; fi
+      LA_WHY="uv${v:+ $v} has no \`audit\`; needs >= $UV_AUDIT_MIN: upgrade ${uvb#"$P_ROOT"}"
+      return 0
+      ;;
+  esac
   re='^([^ ]+) ([^ ]+) has ([0-9]+) known vulnerabilit(y|ies):$'
   while IFS= read -r line; do
     if [[ $line =~ $re ]]; then
@@ -1862,21 +1964,12 @@ lang_audit() {  # <dir> <user> <home>
 }
 
 read_language() {
-  local f u dir user line trees="" complete=1 i e r o owner oline uid lf k
-  local -a dirs=() units=() of=()
+  local f u dir user line trees="" complete=1 i e o uid lf k found svc unreadf="" owner oline
+  local -a dirs=() units=() owners=() olines=()
   R_LANG=null
-  if [ "$P_LIVE" -ne 1 ]; then
-    not_read "language dependencies: uv audit runs only on the machine it audits, not a tree under --root"
-    return 0
-  fi
-  # An audit asks OSV, and takes up to a minute a tree. Like the lists'
-  # refresh, it's taken only when asked: apply.sh's probe after each step
-  # never asks, and an apt step can't change a lockfile (CR 231).
-  if [ -z "$refresh" ]; then
-    not_read "language dependencies: audited only with --refresh-into, which takes the probe's network readings"
-    return 0
-  fi
-  # Every unit file the host's admin installed, and each knob service.
+  # Every unit file the host's admin installed, and each knob service. Read
+  # on every probe, so an owner line is judged against the trees whether or
+  # not they're audited.
   local files="" d dn
   for f in "$P_ROOT"/etc/systemd/system/*.service; do
     [ -f "$f" ] && files="$files"$'\n'"$f"
@@ -1900,7 +1993,10 @@ read_language() {
   while IFS= read -r f; do
     [ -n "$f" ] || continue
     capture o as_reader cat -- "$f"
-    [ "$CAP_RC" -eq 0 ] || continue
+    if [ "$CAP_RC" -ne 0 ]; then
+      unreadf="$unreadf"$'\n'"$f"
+      continue
+    fi
     # Its drop-ins after it, so a later WorkingDirectory= wins, as in
     # systemd: every unit directory's, in name order, a higher directory's
     # copy of a name taking its place (CR 236, #484 site 5).
@@ -1908,7 +2004,11 @@ read_language() {
     while IFS= read -r d; do
       [ -n "$d" ] || continue
       capture line as_reader cat -- "$d"
-      [ "$CAP_RC" -ne 0 ] || o="$o"$'\n'"$line"
+      if [ "$CAP_RC" -eq 0 ]; then
+        o="$o"$'\n'"$line"
+      else
+        unreadf="$unreadf"$'\n'"$d"
+      fi
     done <<<"$dn"
     dir="" user=""
     while IFS= read -r line || [ -n "$line" ]; do
@@ -1939,14 +2039,40 @@ read_language() {
       dirs+=("$dir") units+=("${f##*/}")
     fi
   done <<<"$files"
+  if [ -n "$unreadf" ]; then
+    OWNER_UNREAD="${OWNER_UNREAD:+$OWNER_UNREAD and }unit files"
+  fi
+  for i in ${dirs[@]+"${!dirs[@]}"}; do
+    knob_owner tree "${dirs[$i]}"
+    owners[i]=$KO_OWNER olines[i]=$KO_LINE
+  done
 
+  if [ "$P_LIVE" -ne 1 ]; then
+    not_read "language dependencies: uv audit runs only on the machine it audits, not a tree under --root"
+    return 0
+  fi
+  # An audit asks OSV, and takes up to a minute a tree. Like the lists'
+  # refresh, it's taken only when asked: apply.sh's probe after each step
+  # never asks, and an apt step can't change a lockfile (CR 231).
+  if [ -z "$refresh" ]; then
+    not_read "language dependencies: audited only with --refresh-into, which takes the probe's network readings"
+    return 0
+  fi
+  # A unit file or drop-in it couldn't read may set the WorkingDirectory=
+  # of a tree that would otherwise vanish while the class reads complete
+  # (CR 1143, as CR 235 for a tree it can't enter).
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    if [ "$P_PRIV" = none ]; then
+      not_read "language dependencies: ${f#"$P_ROOT"} couldn't be read without root, so a WorkingDirectory= it sets wasn't seen: run the probe under sudo"
+    else
+      not_read "language dependencies: ${f#"$P_ROOT"} couldn't be read, even as root, so a WorkingDirectory= it sets wasn't seen"
+    fi
+    complete=0
+  done <<<"$unreadf"
   for i in ${dirs[@]+"${!dirs[@]}"}; do
     dir=${dirs[$i]}
-    owner="" oline=""
-    for r in ${KNOB_OWNER[@]+"${KNOB_OWNER[@]}"}; do
-      IFS=$KNOB_US read -r -a of <<<"$r"
-      if glob_match "$dir" "${of[0]}"; then owner=${of[1]} oline=${of[2]}; fi
-    done
+    owner=${owners[$i]} oline=${olines[$i]}
     if [ -z "$owner" ]; then git_origin owner "$dir"; fi
     # A tree the probe can't enter, with no root to enter it as, would
     # otherwise vanish while the class reads complete (CR 235).
@@ -1955,8 +2081,10 @@ read_language() {
       complete=0
       continue
     fi
+    found=0
     for lf in uv.lock $LANG_OTHER_LOCKS; do
       if [ ! -e "$P_ROOT$dir/$lf" ] && ! as_root test -e "$P_ROOT$dir/$lf" 2>/dev/null; then continue; fi
+      found=1
       e=""
       jadds e dir "$dir"
       jadds e lockfile "$lf"
@@ -1993,6 +2121,28 @@ read_language() {
       [ "$LA_AUDITED" -eq 1 ] || complete=0
       jpush trees "{$e}"
     done
+    # A knob service's tree with no lockfile is listed, not dropped: its
+    # WorkingDirectory= moved off the lock, and the lock it runs goes
+    # unaudited (#508). Another unit's directory is nobody's tree.
+    [ "$found" -eq 0 ] || continue
+    svc=0
+    for u in ${units[$i]}; do
+      if in_words "$u" "$KNOB_SERVICES"; then svc=1; fi
+    done
+    [ "$svc" -eq 1 ] || continue
+    e="" o=""
+    jadds e dir "$dir"
+    jadd e lockfile null
+    for u in ${units[$i]}; do jpushs o "$u"; done
+    jadd e units "[$o]"
+    jadds e owner "${owner:-unknown}"
+    jaddn e owner_line "$oline"
+    jaddb e audited 0
+    jadd e advisories null
+    jadd e packages null
+    jadds e why "a knob service runs from it, and it holds no lockfile (uv.lock, ${LANG_OTHER_LOCKS// /, })"
+    complete=0
+    jpush trees "{$e}"
   done
   o=""
   jadd o trees "[$trees]"
@@ -3868,7 +4018,7 @@ read_dormant() {
   not_read "whether each component came with the image or was installed later: that needs the image's build date, and the guest sees neither its image's digest nor its date (the profile's Detection)"
 }
 
-# --- after the boot (run.md §6) ---------------------------------------------
+# --- after the boot (reboot-and-record.md §6) -------------------------------
 POST=""
 check() {  # <name> <ok 1|0|""> <evidence>
   local e=""
@@ -4239,6 +4389,7 @@ else
   read_pending
   read_impact
   read_dormant
+  owner_lines
 fi
 
 # The knob's own findings join the probe's. An exception covers a finding

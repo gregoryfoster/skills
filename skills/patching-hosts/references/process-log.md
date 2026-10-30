@@ -25,13 +25,13 @@ Which runs each rule came from, wherever it now lives. The 2026 entries are the 
 
 - **An absent setting is not a reading:** a default reported as a state is a finding, and the honest output is `unknown` ([readings.md](readings.md)). From 2026-09-21 broker and 2026-09-22 archiver.
 - **The needrestart drop-in goes in before the apply, with `NEEDRESTART_MODE=l` kept too.** It's proven with `needrestart -m u -b -r l`, and never without `-r l` ([run.md](run.md) §1). From 2026-09-26 broker, 2026-09-26 archiver, and 2026-09-29 address-validator, which read it in the source.
-- **The reboot is decided from needrestart's list taken after the whole run, and `reboot-required`; on exe.dev, never from a kernel** ([run.md](run.md) §4). From 2026-09-26 broker, 2026-09-26 archiver and 2026-09-27 power-map.
+- **The reboot is decided from needrestart's list taken after the whole run, and `reboot-required`; on exe.dev, never from a kernel** ([reboot-and-record.md](reboot-and-record.md) §4). From 2026-09-26 broker, 2026-09-26 archiver and 2026-09-27 power-map.
 - **A data store restarts when its processes map a patched library,** even when its own package isn't in the set ([readings.md](readings.md), the "which processes map a library in the set" row, and the profile). From 2026-09-29 watcher, and every Postgres host since.
 - **The apply's verdict comes from the exit code, `All upgrades installed` and `dpkg --audit`,** never from counting `Failed` lines ([run.md](run.md) §3, `apply.sh`). From 2026-09-28 host 6 and 2026-09-28 replicator.
 - **The security count comes from the dry run's own selection,** not from `apt list --upgradable | grep -security` (`probe.sh --dry-run-into`). From 2026-09-26 usa-wa.
 - **A data store's packages and a container runtime's major bump are held, and applied as their own steps** (the knob's hold groups, `apply.sh`). From 2026-09-26 usa-wa, 2026-09-27 power-map and 2026-09-28 host 6.
 - **Which packages restart themselves, whatever needrestart says,** is a per-package table in the profile. From 2026-09-28 host 6, 2026-09-28 replicator, 2026-09-29 address-validator and 2026-09-29 wslcb-licensing-tracker.
-- **The reboot is in-guest, and run as a detached root script;** its timer has `AccuracySec=1s` (`reboot-chain.sh`, [run.md](run.md) §5). From 2026-09-26 broker and 2026-09-29 wslcb-licensing-tracker.
+- **The reboot is in-guest, and run as a detached root script;** its timer has `AccuracySec=1s` (`reboot-chain.sh`, [reboot-and-record.md](reboot-and-record.md) §5). From 2026-09-26 broker and 2026-09-29 wslcb-licensing-tracker.
 - **Read where the journal actually is, not its `Storage=` setting.** Shutdown evidence on a volatile journal is a copy taken last in the chain ([readings.md](readings.md), the profile). From 2026-09-27 power-map, 2026-09-29 address-validator and 2026-09-29 wslcb-licensing-tracker.
 - **Every in-host automatic restarter is stopped for a data-store restart, and proven running again** (the knob's `restarter`). From 2026-09-29 wslcb-licensing-tracker.
 - **Nothing in flight, read right before each stop and inside the reboot chain** (the knob's `inflight`). From 2026-09-28 host 6 and 2026-09-29 watcher.
@@ -57,7 +57,7 @@ Which runs each rule came from, wherever it now lives. The 2026 entries are the 
 
 Call it "host N" and describe the mechanism instead ("the app fails every job in flight at boot"). Check before drafting: a landed entry stays in git history.
 
-**Third: is anything still pending?** **An entry that lists pending security updates lands only after they're applied.** It records counts and package families ("PostgreSQL 16", "a major `docker.io` bump"), never versions. A published version that's still pending tells a reader what the host is exposed to. This is the same rule as a run's own record ([run.md](run.md) §7).
+**Third: is anything still pending?** **An entry that lists pending security updates lands only after they're applied.** It records counts and package families ("PostgreSQL 16", "a major `docker.io` bump"), never versions. A published version that's still pending tells a reader what the host is exposed to. This is the same rule as a run's own record ([reboot-and-record.md](reboot-and-record.md) §7).
 
 1. Write `process-log/<year>/<date>-<host>.md`, opening with a `## Session <date> — <host>` heading. Date it by when the run closed, in UTC: the day its record was final, as its issue closed. watcher's run was on 2026-09-28 UTC, and its entry is 2026-09-29. Date a reading taken without a run by the day it was taken. Create the directory for a new year.
 2. Add one row to `process-log/<year>/index.md`. Link the date cell to the entry as a bare filename, since the index sits beside its entries. For a new year, create its index from the previous year's, and add it to the Years list above.

@@ -38,7 +38,7 @@ Not every row was read on every host. For the newer images, the unit's presence 
 
 usa-wa's image (May 2026) sat between the two: it has `exe-setup.service` but no `exeuntu` (CannObserv/usa-wa#430). The probe calls it `may-2026`. Detect each marker on its own rather than inferring one from another.
 
-On a volatile journal the reboot erases everything before it. That's how address-validator lost 51 days (CannObserv/address-validator#241, 2026-09-29), and wslcb 10 (CannObserv/wslcb-licensing-tracker#186). Copy the journal as the last step of the reboot chain ([run.md](../run.md)).
+On a volatile journal the reboot erases everything before it. That's how address-validator lost 51 days (CannObserv/address-validator#241, 2026-09-29), and wslcb 10 (CannObserv/wslcb-licensing-tracker#186). Copy the journal as the last step of the reboot chain ([reboot-and-record.md](../reboot-and-record.md)).
 
 ### `exe-init`'s layout is a separate axis
 

@@ -9,9 +9,9 @@ Usage: bash reboot-chain.sh --run DIR [--approve] [--delay SECONDS]
                             [--expect SECONDS] [--config FILE] [--host NAME]
                             [--today YYYY-MM-DD]
 
-Writes the reboot chain in references/run.md section 5 into the run's
-directory, as a 0700 root script, records its unit, and launches it
-detached, with what's left of the delay once the gate has run:
+Writes the reboot chain in references/reboot-and-record.md section 5 into
+the run's directory, as a 0700 root script, records its unit, and launches
+it detached, with what's left of the delay once the gate has run:
   systemd-run --unit=patching-hosts-reboot-<UTC> --on-active=<left>
               --timer-property=AccuracySec=1s
 By default the transient timer fired 41 s late. Without --approve it changes
@@ -610,7 +610,7 @@ if [ "$TMP_CLEARED" != 0 ]; then
 fi
 J_TMP="[$_a]"
 
-NEXT+=("After the boot: bash \"$_libdir/probe.sh\" --post-boot --run \"$run\" --config \"$config\" --host $host (run.md section 6).")
+NEXT+=("After the boot: bash \"$_libdir/probe.sh\" --post-boot --run \"$run\" --config \"$config\" --host $host (reboot-and-record.md section 6).")
 NEXT+=("If $log ends in ABORT, the chain stopped nothing: read why, then run reboot-chain.sh again once the gate would pass.")
 NEXT+=("The journal copy in $run/journal is a recovery-point file: delete it with the others, on their retention.")
 

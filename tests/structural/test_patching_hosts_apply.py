@@ -1577,7 +1577,7 @@ def test_held_steps_release_only_their_own_holds_and_showhold_ends_as_recorded(h
     out = host.run(step="redis")
     assert out["verdict"]["ok"] is True
     assert host.holds() == ["nginx"]
-    assert out["next"] == ["the reboot decision: run.md section 4"]
+    assert out["next"] == ["the reboot decision: reboot-and-record.md section 4"]
     unholds = [a for _, a, _ in host.calls("apt-mark") if a.startswith("unhold")]
     assert unholds == ["unhold postgresql-16 libpq5", "unhold redis-server"]
     assert not [a for _, a, _ in host.calls("apt-mark") if "nginx" in a]
