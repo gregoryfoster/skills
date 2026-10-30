@@ -673,7 +673,11 @@ def converge(lines: list[str]) -> list[str]:
         if why:
             # Named by its cursor field, not a line number: an earlier op can
             # move it, and a later header op would note it again (CR 939).
-            lead = next(m.group("lead") for ln in para if (m := FIELD_RE.match(ln)))
+            lead = next(
+                FIELD_RE.match(ln).group("lead")
+                for ln in para
+                if not ln[:1].isspace() and is_cursor_line(ln)
+            )
             notes.append(f"the paragraph holding {lead!r} stays a paragraph: {why}")
             continue
         items = []

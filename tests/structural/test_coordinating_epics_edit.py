@@ -783,6 +783,18 @@ def test_a_paragraph_that_cant_converge_is_noted_once(rig):
     ]
 
 
+def test_an_unconvertible_paragraph_is_named_by_its_cursor_field(rig):
+    """CR 945: not by a field line above it that no script reads."""
+    body = "**Goal:** ship\n**Last check-in:** 2026-10-28\nplain\n\n## Tier 1\n\n- [ ] #11 a\n"
+    ops = [{"op": "header", "field": "Last check-in", "value": "2026-10-29"}]
+    res = _header(rig, body, ops)
+    assert res.returncode == 0, res.stderr
+    assert summary(res)["notes"] == [
+        "op 1 (header): the paragraph holding '**Last check-in:**' stays a"
+        " paragraph: 'plain' can't become a list item"
+    ]
+
+
 def test_an_unrelated_list_keeps_its_gap(rig):
     """#399: joining the cursors to the Milestones list was finding 140's defect."""
     body = (
