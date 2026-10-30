@@ -9,7 +9,9 @@
 #   <!-- worker-report session=<id> branch=<branch> sha=<sha> status=<status> -->
 #
 # and exits on the first one it finds that carries this session's ID and was
-# written by the expected author. The repo may be public, so anyone can
+# written by the expected author. One session has two spellings: the worker
+# writes $CLAUDE_CODE_REMOTE_SESSION_ID, `cse_<id>`, while claude.ai/code shows
+# `session_<id>` in its URL. Either one given finds either one written (#524). The repo may be public, so anyone can
 # comment, and a marker from anyone else is ignored. Every status ends the
 # wait, `blocked` and `question` as surely as `done`: a watch that ended only
 # on success would leave a stuck worker looking like a busy one.
@@ -33,7 +35,8 @@ usage() {
   echo "Required:"
   echo "  --repo O/R       the repository holding the tracking issue"
   echo "  --issue N        the tracking issue's number"
-  echo "  --session ID     the worker's cloud session ID (cse_... or session_...)"
+  echo "  --session ID     the worker's cloud session ID, cse_<id> or session_<id>:"
+  echo "                   the same session, so either form finds a marker in either"
   echo "  --author LOGIN   the GitHub login the worker posts as"
   echo ""
   echo "Options:"
@@ -89,10 +92,13 @@ for pair in "--repo:$REPO" "--issue:$ISSUE" "--session:$SESSION" "--author:$AUTH
     exit 2
   fi
 done
-# The session ID is matched literally inside a regex below, so it may hold
-# only the characters a session ID has.
-if ! [[ $SESSION =~ ^[A-Za-z0-9_-]+$ ]]; then
-  echo "ERROR: --session '$SESSION' isn't a session ID" >&2
+# Only the suffix identifies the session (#524). It is spliced into a regex
+# below, so it may hold only the characters a session ID has. An ID in neither
+# form is refused: a wait for it could never match, and would only end silent.
+if [[ $SESSION =~ ^(cse|session)_([A-Za-z0-9_-]+)$ ]]; then
+  SUFFIX=${BASH_REMATCH[2]}
+else
+  echo "ERROR: --session '$SESSION' isn't a session ID: expected cse_<id> or session_<id>" >&2
   exit 2
 fi
 for pair in "--issue:$ISSUE" "--interval:$INTERVAL" "--silence:$SILENCE"; do
@@ -106,17 +112,18 @@ if [ -z "$SINCE" ]; then
 fi
 
 # gh's --jq reads these through env, so no value is spliced into the filter.
-export AR_AUTHOR=$AUTHOR AR_SESSION=$SESSION
+export AR_AUTHOR=$AUTHOR AR_SUFFIX=$SUFFIX
 # The marker must open the body (CR 512). The orchestrator posts as the same
 # user as the worker, so the author filter can't tell them apart, and a review
 # quoting the worker's last marker would otherwise end the wait that follows.
 # The $ are jq's, not the shell's: this filter is passed to gh literally.
 # shellcheck disable=SC2016
 FILTER='[.[] | select(.user.login == env.AR_AUTHOR)
-  | select(.body | test("^\\s*<!-- worker-report session=" + env.AR_SESSION + "[ >]"))][0]
+  | select(.body | test("^\\s*<!-- worker-report session=(?:cse|session)_"
+      + env.AR_SUFFIX + "[ >]"))][0]
   | if . == null then empty else
-      (.body | capture("^\\s*<!-- worker-report session=" + env.AR_SESSION
-        + "(?<rest>[^>]*)-->").rest) as $m
+      (.body | capture("^\\s*<!-- worker-report session=(?:cse|session)_"
+        + env.AR_SUFFIX + "(?<rest>[^>]*)-->").rest) as $m
       | ($m | capture("status=(?<s>[A-Za-z]+)").s // "unknown") as $s
       | ($m | capture("sha=(?<h>[0-9a-f]+)").h // "") as $h
       | "report\t\($s)\t\(.html_url)\t\($h)"
