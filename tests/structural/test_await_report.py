@@ -316,4 +316,4 @@ def test_a_session_id_in_neither_form_is_exit_2_naming_both(session, tmp_path):
     assert not (tmp_path / "polled").exists(), "gh ran: the ID was accepted"
     assert r.returncode == 2, r.stdout + r.stderr
     assert r.stdout == ""
-    assert "cse_" in r.stderr and "session_" in r.stderr, r.stderr
+    assert "expected cse_<id> or session_<id>" in r.stderr, r.stderr
