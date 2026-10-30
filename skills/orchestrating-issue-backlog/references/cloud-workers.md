@@ -153,47 +153,50 @@ posts one and stops, instead of waiting in a session that will be reclaimed.
 The two directions differ. **The orchestrator can push to a worker; a worker
 can only write to GitHub.**
 
-- **Orchestrator → worker:** post the instruction (a review, an answer) as a
-  comment on the tracking issue, then send:
-  `claude -p "Read and act on <comment URL>; its author is <login>" --cloud <session-id>`
-  This runs without a terminal and prints `{"ok":true,…}` with
-  `--output-format json`. The comment is the single, durable source; the
-  message is only the wake-up.
-- **Worker → orchestrator:** wait for the report in the background. Resolve
-  the script first: the agent's cwd is the project, not this skill (#63).
+**Orchestrator → worker:** post the instruction (a review, an answer) as a
+comment on the tracking issue, then send:
+`claude -p "Read and act on <comment URL>; its author is <login>" --cloud <session-id>`
+This runs without a terminal and prints `{"ok":true,…}` with
+`--output-format json`. The comment is the single, durable source; the
+message is only the wake-up.
 
-  ```bash
-  N=orchestrating-issue-backlog
-  for S in await-report.sh; do SD=
-    for d in scripts ".claude/skills/$N/scripts" "$HOME/.claude/skills/$N/scripts"; do
-      [ -f "$d/$S" ] && { SD="$d"; break; }
-    done
-    [ -n "$SD" ] || echo "$S not found in scripts/, .claude/skills/$N/scripts/, or ~/.claude/skills/$N/scripts/" >&2
-    echo "<$S>=${SD:?}/$S"
+**Worker → orchestrator:** wait for the report in the background. Resolve
+the script first: the agent's cwd is the project, not this skill (#63).
+
+<!-- skill:required id=skill-scripts -->
+```bash
+N=orchestrating-issue-backlog
+for S in await-report.sh; do SD=
+  for d in scripts ".claude/skills/$N/scripts" "$HOME/.claude/skills/$N/scripts"; do
+    [ -f "$d/$S" ] && { SD="$d"; break; }
   done
-  ```
+  [ -n "$SD" ] || echo "$S not found in scripts/, .claude/skills/$N/scripts/, or ~/.claude/skills/$N/scripts/" >&2
+  echo "<$S>=${SD:?}/$S"
+done
+```
 
-  then run, substituting the path it printed:
+then run, substituting the path it printed:
 
-  ```bash
-  bash "<await-report.sh>" --repo <O/R> --issue <N> --session <id> \
-    --author <login> --branch <branch> --since <round start>
-  ```
-  - `<round start>` is when **this round** began: the launch for round 1,
-    the `-p` send for each round after. Record it on the tracking issue with
-    the send. A later round's wait given the launch time ends at once on the
-    previous round's report, the same session's marker (CR 513). Leaving
-    `--since` out means "now", which is right only for a wait started at the
-    send; one re-armed after a restart or a compaction would miss a report
-    already posted.
-  - It exits on the first report carrying this session's marker from the
-    expected author. Every status ends it.
-  - With `--branch`, each push counts as activity; `--progress` prints it.
-  - After `--silence` seconds (default 3600) with no report and no push, it
-    ends with `silent` (exit 3). Then look at the session; don't re-arm blind.
+```bash
+bash "<await-report.sh>" --repo <O/R> --issue <N> --session <id> \
+  --author <login> --branch <branch> --since <round start>
+```
 
-  Run it with `run_in_background`, which gives one notification. A streaming
-  monitor expires after 30 minutes and has to be re-armed.
+- `<round start>` is when **this round** began: the launch for round 1,
+  the `-p` send for each round after. Record it on the tracking issue with
+  the send. A later round's wait given the launch time ends at once on the
+  previous round's report, the same session's marker (CR 513). Leaving
+  `--since` out means "now", which is right only for a wait started at the
+  send; one re-armed after a restart or a compaction would miss a report
+  already posted.
+- It exits on the first report carrying this session's marker from the
+  expected author. Every status ends it.
+- With `--branch`, each push counts as activity; `--progress` prints it.
+- After `--silence` seconds (default 3600) with no report and no push, it
+  ends with `silent` (exit 3). Then look at the session; don't re-arm blind.
+
+Run it with `run_in_background`, which gives one notification. A streaming
+monitor expires after 30 minutes and has to be re-armed.
 
 The worker needs no monitor of its own. `-p` already reaches it, and an idle
 VM's background work doesn't survive a reclaim.
