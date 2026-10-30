@@ -52,8 +52,10 @@ Work in a worktree off origin/main; never change the deploy checkout's branch.
 Review the brief against the code and post corrections before you build.
 Put notes for later issues under "For #N:"; list skipped verification and accepted limits. Write the post-merge host steps on the issue.
 Run the code review and fix its findings, or record each declined one with its reason, before you report.
-The report names the final SHA. Pause before shipping.
+The report names the final SHA. Pause before shipping. Never close the epic, even after the last child: the coordinator closes it.
 ```
+
+**Keep "never close the epic" on a final child's kickoff.** One run's final child thread verified, posted a summary and closed the epic itself, so the coordinator's last body write never happened and the cursors stayed stale (#502 F5). `epic-edit.sh` now refuses a closed epic without `--closed-ok` (#519).
 
 **A prompt instruction the implementer skips gets noted, and the wording adjusted. It isn't enforced** (status 42). **A review "stet" that recurs across close-outs** points to a gap in the prompt. Offer the operator a one-line addition; don't add it on your own (watcher F31, F34).
 

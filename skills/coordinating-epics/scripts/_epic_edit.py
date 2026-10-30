@@ -121,8 +121,9 @@ exit codes:
   3  refused: a foreign edit, a baseline no write or adoption of this tool
      saved (its hash is recorded beside it, in writes.jsonl), a missing anchor, a count or lint failure, a
      header line a later op removed or changed, an open issue the epic doesn't
-     list (--account [FROM]), or a new issue in the --scan report that the
-     body doesn't mention. Nothing was written.
+     list (--account [FROM]), a new issue in the --scan report that the
+     body doesn't mention, or a closed epic without --closed-ok (the message
+     names who closed it and when; a dry run notes it). Nothing was written.
   4  not confirmed. Either written (summary "written": true) but the body read
      back differs from the body sent, the read-back failed, or the baseline
      couldn't be saved; or the PATCH failed and whether it landed is unknown
@@ -1218,6 +1219,16 @@ def fetch_issue(repo: str, num: int) -> dict:
     return data if isinstance(data, dict) else {}
 
 
+def closed_state(issue: dict) -> dict | None:
+    """Who closed the epic and when, or None while it is open."""
+    if issue.get("state") != "closed":
+        return None
+    return {
+        "closed_by": (issue.get("closed_by") or {}).get("login") or "someone unnamed",
+        "closed_at": issue.get("closed_at") or "an unrecorded time",
+    }
+
+
 def fetch_body(repo: str, num: int) -> str:
     return fetch_issue(repo, num).get("body") or ""
 
@@ -1594,6 +1605,13 @@ def run(argv: list[str]) -> int:
         help="take the live body as the baseline: first use, or after you merged a foreign edit by hand",
     )
     p.add_argument(
+        "--closed-ok",
+        action="store_true",
+        help="write to a closed epic: the close-out's final write, after a child's"
+        " thread already closed it. Without it, a closed epic is refused (a dry run"
+        " only reports it)",
+    )
+    p.add_argument(
         "--account",
         nargs="?",
         const=0,
@@ -1787,6 +1805,19 @@ def run(argv: list[str]) -> int:
             live_issue.get("updated_at") or now.strftime("%Y-%m-%dT%H:%M:%SZ")
         )
         live = normalize(live_raw)  # for comparisons only
+        # A child's thread once closed the epic itself, and the editor then
+        # wrote to it without complaint (#519).
+        closed = closed_state(live_issue)
+        summary.update(state=live_issue.get("state"), **(closed or {}))
+        if closed and not a.closed_ok:
+            msg = (
+                f"the epic is closed (by {closed['closed_by']} at"
+                f" {closed['closed_at']}). If that close is right, write with"
+                " --closed-ok; if not, reopen it first"
+            )
+            if not a.dry_run:
+                raise Refused(msg)
+            print(f"NOTE {msg}", file=sys.stderr)
         live_lines = split_raw(live_raw)  # what the operations edit
         if not live:
             raise Refused(
@@ -1953,10 +1984,16 @@ def run(argv: list[str]) -> int:
 
         # Compare-and-swap, as near as the API allows (CR 258).
         # Raw, not normalized: a whitespace-only edit is an edit too (CR 274).
-        if split_raw(fetch_body(host, a.epic)) != live_lines:
+        again = fetch_issue(host, a.epic)
+        if split_raw(again.get("body") or "") != live_lines:
             raise Refused(
                 "the live body changed while this run was checking it; nothing was"
                 " written. Re-run to pick up the change"
+            )
+        if (shut := closed_state(again)) and not closed and not a.closed_ok:
+            raise Refused(
+                f"the epic was closed while this run was checking it (by"
+                f" {shut['closed_by']} at {shut['closed_at']}); nothing was written"
             )
         text = "\n".join(new) + "\n"
         fd, payload = tempfile.mkstemp(dir=None, prefix="epic-edit-", suffix=".json")
