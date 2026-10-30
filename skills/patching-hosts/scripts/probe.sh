@@ -1964,7 +1964,7 @@ lang_audit() {  # <dir> <user> <home>
 }
 
 read_language() {
-  local f u dir user line trees="" complete=1 i e o uid lf k found svc unread=0 owner oline
+  local f u dir user line trees="" complete=1 i e o uid lf k found svc unreadf="" owner oline
   local -a dirs=() units=() owners=() olines=()
   R_LANG=null
   # Every unit file the host's admin installed, and each knob service. Read
@@ -1994,7 +1994,7 @@ read_language() {
     [ -n "$f" ] || continue
     capture o as_reader cat -- "$f"
     if [ "$CAP_RC" -ne 0 ]; then
-      unread=1
+      unreadf="$unreadf"$'\n'"$f"
       continue
     fi
     # Its drop-ins after it, so a later WorkingDirectory= wins, as in
@@ -2004,7 +2004,11 @@ read_language() {
     while IFS= read -r d; do
       [ -n "$d" ] || continue
       capture line as_reader cat -- "$d"
-      [ "$CAP_RC" -ne 0 ] || o="$o"$'\n'"$line"
+      if [ "$CAP_RC" -eq 0 ]; then
+        o="$o"$'\n'"$line"
+      else
+        unreadf="$unreadf"$'\n'"$d"
+      fi
     done <<<"$dn"
     dir="" user=""
     while IFS= read -r line || [ -n "$line" ]; do
@@ -2035,7 +2039,7 @@ read_language() {
       dirs+=("$dir") units+=("${f##*/}")
     fi
   done <<<"$files"
-  if [ "$unread" -eq 1 ]; then
+  if [ -n "$unreadf" ]; then
     OWNER_UNREAD="${OWNER_UNREAD:+$OWNER_UNREAD and }unit files"
   fi
   for i in ${dirs[@]+"${!dirs[@]}"}; do
@@ -2054,6 +2058,18 @@ read_language() {
     not_read "language dependencies: audited only with --refresh-into, which takes the probe's network readings"
     return 0
   fi
+  # A unit file or drop-in it couldn't read may set the WorkingDirectory=
+  # of a tree that would otherwise vanish while the class reads complete
+  # (CR 1143, as CR 235 for a tree it can't enter).
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    if [ "$P_PRIV" = none ]; then
+      not_read "language dependencies: ${f#"$P_ROOT"} couldn't be read without root, so a WorkingDirectory= it sets wasn't seen: run the probe under sudo"
+    else
+      not_read "language dependencies: ${f#"$P_ROOT"} couldn't be read, even as root, so a WorkingDirectory= it sets wasn't seen"
+    fi
+    complete=0
+  done <<<"$unreadf"
   for i in ${dirs[@]+"${!dirs[@]}"}; do
     dir=${dirs[$i]}
     owner=${owners[$i]} oline=${olines[$i]}
