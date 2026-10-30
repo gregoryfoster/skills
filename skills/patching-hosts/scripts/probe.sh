@@ -4020,13 +4020,16 @@ read_dormant() {
 
 # --- after the boot (reboot-and-record.md §6) -------------------------------
 POST=""
-check() {  # <name> <ok 1|0|""> <evidence>
+# A failed check files a finding; the <what> an exception may cover is the
+# same reading's before a run, so the knob's line holds after the boot too
+# (#534).
+check() {  # <name> <ok 1|0|""> <evidence> [<what an exception names>]
   local e=""
   jadds e check "$1"
   jaddb e ok "$2"
   jaddsn e evidence "$3"
   jpush POST "{$e}"
-  if [ "$2" = 0 ]; then finding post-boot "post-boot:$1" "" "$1: $3"; fi
+  if [ "$2" = 0 ]; then finding post-boot "post-boot:$1" "${4:-}" "$1: $3"; fi
 }
 
 # The boot is when the tailnet's default re-applied over the node's own
@@ -4159,7 +4162,7 @@ check_depends() {
       elif [ "$t_u" -le "$t_ds" ]; then
         check "depends:$ds:$u" 1 "$u entered active before $ds"
       else
-        check "depends:$ds:$u" 0 "$u entered active after $ds: its start at this boot didn't wait for it"
+        check "depends:$ds:$u" 0 "$u entered active after $ds: its start at this boot didn't wait for it" "depends:$ds:$u"
       fi
     fi
   done
@@ -4270,7 +4273,7 @@ read_post_boot() {
         if ordering_ok "$ds" "$U_After"; then
           check "ordering:$svc" 1 "After= $ds"
         else
-          check "ordering:$svc" 0 "no After= $ds: its start at this boot succeeded by luck"
+          check "ordering:$svc" 0 "no After= $ds: its start at this boot succeeded by luck" "ordering:$svc"
         fi
       done
     else
