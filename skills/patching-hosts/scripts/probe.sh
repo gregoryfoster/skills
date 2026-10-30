@@ -1899,7 +1899,7 @@ lang_audit() {  # <dir> <user> <home>
   # The script's $1..$3 are expanded by the inner sh, from its arguments.
   # shellcheck disable=SC2016
   capture out as_user "$u" env HOME="${home:-/}" sh -c '
-    t=$(mktemp -d) || exit 2
+    t=$(mktemp -d) || exit 3
     if cp -- "$1" "$2" "$t"/ && cd "$t"; then
       timeout -k 10 60 "$3" audit --frozen --no-cache --no-python-downloads --no-config
       r=$?
@@ -1911,9 +1911,10 @@ lang_audit() {  # <dir> <user> <home>
   rc=$CAP_RC
   err=$(cat "$P_TMP/stderr" 2>/dev/null) || err=""
   # uv exits 0, 1 or 2, so 3 is the copy: nobody can't read a tree that
-  # isn't world-readable.
+  # isn't world-readable, or make a directory in a TMPDIR that's root's
+  # alone (CR 1139).
   if [ "$rc" -eq 3 ]; then
-    LA_WHY="$u couldn't copy its pyproject.toml and uv.lock${CAP_ERR:+: $CAP_ERR}"
+    LA_WHY="$u couldn't copy its pyproject.toml and uv.lock to a scratch directory${CAP_ERR:+: $CAP_ERR}"
     return 0
   fi
   case $err in
