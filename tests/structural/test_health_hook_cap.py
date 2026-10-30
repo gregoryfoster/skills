@@ -182,6 +182,11 @@ def _props(opts: list[str]) -> list[str]:
     return [opts[i + 1] for i, w in enumerate(opts) if w == "-p"]
 
 
+def _payload_calls(harness: Harness) -> list[list[str]]:
+    """The systemd-run calls that launched the driver, not a probe."""
+    return [c for c in harness.calls("systemd-run") if _split(c)[2][:1] == ["node"]]
+
+
 @pytest.fixture
 def harness(tmp_path: Path) -> Harness:
     return Harness(tmp_path)
@@ -307,7 +312,7 @@ class TestAHostThatCannotCap:
         result = harness.run(STUB_REJECT_PROPS="CPUQuota")
         assert result.returncode == 0, result.stderr
         assert result.stdout == "", result.stdout
-        assert len(harness.calls("systemd-run")) == 1, (
+        assert not _payload_calls(harness), (
             "the payload was launched through a scope the probe had already "
             "shown cannot be created"
         )
@@ -328,7 +333,7 @@ class TestAHostThatCannotCap:
         result = harness.run(STUB_MEMORY_CURRENT="[not set]")
         assert result.returncode == 0, result.stderr
         assert result.stdout == "", result.stdout
-        assert len(harness.calls("systemd-run")) == 1, (
+        assert not _payload_calls(harness), (
             "the payload was launched under a cap the probe had found systemd "
             "would not enforce"
         )
@@ -443,6 +448,98 @@ class TestACapKillIsReportedAsSuch:
         for call in harness.calls("systemd-run"):
             assert _props(_split(call)[0]) == cap.split(), call
         assert f"{CAP_LINE} (MemoryMax=64M)" in result.stdout, result.stdout
+
+
+class TestSwapIsBounded:
+    """#340: `MemoryHigh=`/`MemoryMax=` bound RAM only. Under cgroup v2 a
+    scope's `memory.swap.max` defaults to unlimited, so on a host with swap a
+    job past its cap pages out and keeps running instead of being killed, and
+    the cap-kill report never fires. Measured on co-registrar (7.7 GiB, 4 G
+    swap): a 200 MB payload finished under MemoryMax=64M, and was killed (137)
+    with MemorySwapMax=0 added.
+
+    The issue's trap: a refused property fails the probe, and a failed probe
+    runs the check uncapped. So the swap bound is dropped alone where systemd
+    refuses it, and never takes the rest of the cap with it.
+    """
+
+    @requires_node
+    def test_the_default_bounds_swap(self, harness: Harness) -> None:
+        harness.run()
+        (payload,) = _payload_calls(harness)
+        assert "MemorySwapMax=0" in _props(_split(payload)[0]), payload
+
+    @requires_node
+    def test_a_refused_swap_bound_drops_only_that_property(
+        self, harness: Harness
+    ) -> None:
+        result = harness.run(STUB_REJECT_PROPS="MemorySwapMax")
+        assert result.returncode == 0, result.stderr
+        assert result.stdout == "", (
+            "a host whose systemd refuses MemorySwapMax= would hear it in every "
+            f"session, daily (#330 trap 5): {result.stdout!r}"
+        )
+        (payload,) = _payload_calls(harness)
+        assert _props(_split(payload)[0]) == [
+            "MemoryHigh=1200M",
+            "MemoryMax=1536M",
+            "CPUQuota=100%",
+        ], payload
+        assert harness.runs() == 1
+        log = harness.hook_log()
+        assert "Unknown assignment: MemorySwapMax=0" in log, log
+        assert "memory cap unavailable" not in log, (
+            f"a refused swap bound turned the whole cap off (#340)\n{log}"
+        )
+
+    @requires_node
+    def test_the_retry_is_itself_a_probe(self, harness: Harness) -> None:
+        """Trap 2 holds after the drop: what launches is what was probed."""
+        harness.run(STUB_REJECT_PROPS="MemorySwapMax")
+        *probes, payload = harness.calls("systemd-run")
+        assert len(probes) == 2, probes
+        retry = _split(probes[-1])
+        assert retry[0] == _split(payload)[0], (probes[-1], payload)
+        assert retry[2][:2] == ["sh", "-c"], retry
+        asked = [c for c in harness.calls("systemctl") if "MemoryCurrent" in c]
+        assert [c[-1] for c in asked] == [f"{_unit(probes[-1])}.scope"], asked
+
+    @requires_node
+    def test_another_refusal_still_runs_uncapped(self, harness: Harness) -> None:
+        """Dropping the swap bound is for the swap bound: a cap refused over
+        another property is refused, as before, with systemd's reason."""
+        result = harness.run(STUB_REJECT_PROPS="CPUQuota")
+        assert result.stdout == "", result.stdout
+        assert not _payload_calls(harness), harness.calls("systemd-run")
+        assert harness.runs() == 1
+        log = harness.hook_log()
+        assert "memory cap unavailable" in log, log
+        assert "Unknown assignment: CPUQuota=100%" in log, log
+
+    @requires_node
+    def test_a_cap_without_a_swap_bound_is_probed_once(self, harness: Harness) -> None:
+        """Nothing to drop, so nothing to retry."""
+        harness.run(SOCRATICODE_HEALTH_CAP="MemoryMax=1536M", STUB_RUN_FAIL="1")
+        assert len(harness.calls("systemd-run")) == 1, harness.calls("systemd-run")
+
+    def test_every_documented_capped_command_bounds_swap(self) -> None:
+        """Row U, host-memory.md's commands and preflight's hints: an operator
+        copies these, and a copy without the bound has #340's gap."""
+        skill = HOOK.parent.parent
+        checked, missing = 0, []
+        for path in (
+            skill / "references" / "troubleshooting.md",
+            skill / "references" / "host-memory.md",
+            skill / "scripts" / "preflight.sh",
+        ):
+            text = path.read_text().replace("\\\n", " ")
+            for cmd in re.findall(r"systemd-run [^`\"\n]*", text):
+                if "MemoryMax=" in cmd:
+                    checked += 1
+                    if "-p MemorySwapMax=0" not in cmd:
+                        missing.append(f"{path.name}: {cmd}")
+        assert checked >= 5, f"found {checked} capped commands; the scan went blind"
+        assert not missing, "\n".join(missing)
 
 
 def _why_it_cannot_cap() -> str | None:

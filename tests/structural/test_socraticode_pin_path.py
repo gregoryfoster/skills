@@ -84,10 +84,11 @@ def test_preflight_default_matches_the_driver(sources: dict[str, str]) -> None:
 def test_the_documented_install_writes_where_the_driver_looks(
     sources: dict[str, str],
 ) -> None:
-    """Every `npm install --prefix` in the doc targets the same default."""
-    prefixes = re.findall(r"npm install --prefix (\S+)", sources[DOC.name])
+    """Every `npm install --save-exact --prefix` in the doc targets the same
+    default (`--save-exact` since #495, held in test_socraticode_save_exact.py)."""
+    prefixes = re.findall(r"npm install --save-exact --prefix (\S+)", sources[DOC.name])
     assert prefixes, (
-        f"{DOC.name} no longer shows an `npm install --prefix` line. "
+        f"{DOC.name} no longer shows an `npm install --save-exact --prefix` line. "
         "That command is how an operator creates the pin; without it the "
         "feature is undiscoverable from the docs."
     )

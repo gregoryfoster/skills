@@ -22,16 +22,21 @@ Install once, deliberately, under a cap:
 # Pick the version deliberately — a literal, never `latest`, or the pin floats
 # and buys nothing. This is what the plugin's own command would have resolved:
 npm view socraticode version
+# --save-exact: the pin's package.json records that literal, not ^<version>,
+# so a bare `npm update` there cannot move the pin (#495).
 
 # Linux with user systemd — the cap is the point; on a small host, run it here
 # and nowhere else. choom as in row U: a session at -1000 (below) hands that
 # score to the install, and at -1000 the cap stalls it instead of killing it.
+# MemorySwapMax=0 because MemoryMax= bounds RAM only: with swap, a job past it
+# pages out and runs on instead of being killed (#340).
 systemd-run --user --scope -p MemoryHigh=1200M -p MemoryMax=1536M \
-  choom -n 500 -- npm install --prefix ~/.socraticode/pin socraticode@<version>
+  -p MemorySwapMax=0 choom -n 500 -- \
+  npm install --save-exact --prefix ~/.socraticode/pin socraticode@<version>
 
 # Anywhere else (macOS, a host without user systemd): the install is the same,
 # just uncapped. Size the host for ~1.2 G rather than hoping.
-npm install --prefix ~/.socraticode/pin socraticode@<version>
+npm install --save-exact --prefix ~/.socraticode/pin socraticode@<version>
 ```
 
 `resolveServerLaunch()` prefers that build over the plugin's command, so no
@@ -78,7 +83,8 @@ under the cap; this builds the tree the plugin's pinned launch then uses:
 
 ```bash
 systemd-run --user --scope -p MemoryHigh=1200M -p MemoryMax=1536M \
-  choom -n 500 -- npm exec --yes --prefer-online --package=socraticode@<version> -- true
+  -p MemorySwapMax=0 choom -n 500 -- \
+  npm exec --yes --prefer-online --package=socraticode@<version> -- true
 ```
 
 From then on an exact version resolves from the npx cache without installing —
@@ -129,7 +135,7 @@ pinned, the driver is deterministic while the session goes on floating.
 | A minor or major release (`1.13.2` vs `1.14.0`) | **defect** — two feature releases writing one store, the shape [`troubleshooting.md`](troubleshooting.md) row S is about. Re-pin deliberately |
 | The registry did not answer, or no server version was recorded | **note**, worded as *NOT measured* — never silence, which would read as "no drift" |
 
-Re-pinning is the same `npm install --prefix` line with the new version —
+Re-pinning is the same `npm install --save-exact --prefix` line with the new version —
 and the same version in `SOCRATICODE_SPEC`, its npx tree warmed first. Do it
 as a decision, not on a schedule: the reason to pin was to stop an unattended
 launch from installing.
@@ -154,7 +160,8 @@ reported as stopped by its cap, and never re-run uncapped.
 `SOCRATICODE_HEALTH_CAP` sets the properties, or `off`. Set it in
 `.claude/settings.local.json`'s `env` block, since a ceiling belongs to the
 host, not to every clone of the repo. A value the probe rejects runs uncapped
-too; the log line names systemd's reason.
+too; the log line names systemd's reason. A refused `MemorySwapMax=` is the
+exception: dropped alone, and logged, so it never turns the cap off.
 
 It is defence in depth, not the fix. Pinned, the hook's launch installs nothing
 and peaks near 75 MB; the cap is for a host that never pinned, a pin that broke

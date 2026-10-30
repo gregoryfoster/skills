@@ -468,8 +468,9 @@ function sessionPinFinding({ observed, specVariable, value }) {
 // moved that is two simultaneous installs — unattended.
 //
 // Absent, it resolves nothing and the chain below is unchanged, so this is
-// inert on every host that has not pre-installed. `npm install --prefix <dir>
-// socraticode@<version>` is the layout it expects.
+// inert on every host that has not pre-installed.
+// `npm install --save-exact --prefix <dir> socraticode@<version>` is the
+// layout it expects.
 function pinDir() {
   return process.env.SOCRATICODE_PIN_DIR || joinPath(homedir(), '.socraticode', 'pin');
 }
@@ -703,7 +704,7 @@ function pinDriftFinding({ running, floatingSpec, resolves, pinPath, specVariabl
       message:
         `pinned server ${running}, but the session's plugin launches '${floatingSpec}', which resolves to `
         + `${resolves} — two different feature releases writing one store; re-pin deliberately with `
-        + `npm install --prefix ${pinPath} socraticode@${resolves}${pinSession}`,
+        + `npm install --save-exact --prefix ${pinPath} socraticode@${resolves}${pinSession}`,
     };
   }
   return note(`pinned at ${running}; the plugin's '${floatingSpec}' resolves to ${resolves} — same feature release`);
@@ -792,7 +793,7 @@ function resolveServerLaunch({ project } = {}) {
 
   die(
     'Could not resolve the socraticode server.\n' +
-    `  Pre-install a pinned one:  npm install --prefix ${pinDir()} socraticode@<version>, or\n` +
+    `  Pre-install a pinned one:  npm install --save-exact --prefix ${pinDir()} socraticode@<version>, or\n` +
     '  set SOCRATICODE_ENTRY=/abs/path/to/socraticode/dist/index.js, or\n' +
     '  install the plugin:  claude plugin install socraticode@socraticode\n' +
     '  (locate a plugin-run server with: find ~/.npm/_npx -path "*socraticode/dist/index.js")'
@@ -954,11 +955,12 @@ function indexingInProgress(text) {
 //
 // Pinned to "Full index" rather than any completed operation. codebase_index
 // always records a full index (indexProject() sets type: "full-index"
-// unconditionally, even re-indexing an existing project), while the file
-// watcher — which auto-starts on the first status call — records "Incremental
-// update" completions in this same process. Accepting either would let a
-// watcher's incremental satisfy our gate in the window before the full index
-// takes its lock.
+// unconditionally, even re-indexing an existing project), while a file
+// watcher records "Incremental update" completions in the same process.
+// Accepting either would let a watcher's incremental satisfy our gate in the
+// window before the full index takes its lock. The driver's server runs with
+// the watcher on manual (#349), since past the first completion this same pin
+// left the gate nothing to match.
 function lastOperationCompleted(text) {
   return /Last operation:\s*Full index\s*[-—–]\s*completed/i.test(text);
 }
@@ -1042,6 +1044,53 @@ function searchHasHits(text) {
 // codebase_list_projects: "No projects have been indexed yet. …"
 function listHasProjects(text) {
   return /\S/.test(text) && !/^No projects have been indexed/m.test(text);
+}
+
+// codebase_update (#483). Synchronous: the counts arrive in the reply —
+// "Updated project index: <path>", then "Added: N", "Updated: N", "Removed: N",
+// "New chunks: N" — or null when any is missing.
+function parseUpdateCounts(text) {
+  const count = (label) => {
+    const m = new RegExp(`^${label}:\\s*(\\d+)\\s*$`, 'm').exec(text);
+    return m ? Number(m[1]) : null;
+  };
+  const counts = {
+    added: count('Added'), updated: count('Updated'),
+    removed: count('Removed'), chunksCreated: count('New chunks'),
+  };
+  return Object.values(counts).includes(null) ? null : counts;
+}
+
+function updateRan(text) {
+  return /^Updated project index:/m.test(text);
+}
+
+// The update did NOT run, and the reply does not say so in its headline. 1.16.1
+// takes the index lock non-reentrantly; under another process's lock
+// updateProjectIndex returns zero counts, and index-tools still prints
+// "Updated project index", with this sentence only among the progress lines
+// (or as "Index update skipped: …" on a git-targeted run).
+function updateLockHeld(text) {
+  return /Another process is already indexing this project/i.test(text);
+}
+
+// Its other early return, the same shape (CR 1088): a reclamation barrier on
+// the project's identity — "Refusing to index: <why>" among the progress lines.
+// The refusal line, or null.
+function updateRefused(text) {
+  const m = text.match(/Refusing to index:[^\n]*/i);
+  return m ? m[0].trim() : null;
+}
+
+// A run cancelled part-way — the lock lost, or a cancellation requested
+// (CR 1095). updateProjectIndex returns cancelled: true with partial counts and
+// the headline still prints; only a progress line says so: "Update cancelled
+// …", or "Indexing cancelled …" where an update on an empty or missing
+// collection fell back to a full index. Each tells the caller to re-run. The
+// cancellation line, or null.
+function updateCancelled(text) {
+  const m = text.match(/(?:Update|Indexing) cancelled\b[^\n]*/);
+  return m ? m[0].trim() : null;
 }
 
 function parseArtifacts(text) {
@@ -2755,21 +2804,26 @@ function die(msg) { console.error(`ERROR: ${msg}`); process.exit(1); }
 // worktree. With a shared projectId that wrote a worktree's files into the
 // store once a day, from a hook whose contract is "reports; never re-indexes".
 // Upstream reads SOCRATICODE_AUTO_RESUME=off before any Docker or Qdrant
-// access. `readOnly` also stops the watcher that status and query calls start
-// on their own, so `status`, `verify` and `health-check` write no index
-// content; `index` keeps it, since a completed index starting its watcher is
-// upstream's normal sequence. Not "nothing" (#287 round 2, CR 35): upstream's
+// access. SOCRATICODE_WATCHER=manual stops the watcher that status and query
+// calls start on their own, for every command, index included (#349): once a
+// full index completed, the next status poll started one inside index's own
+// server, and its first incremental overwrote "Full index — completed", the
+// record indexSettled() waits for — a successful index polled to its timeout,
+// holding the host-local watch lock the session's server wanted. This server
+// indexes and exits; the session's server owns the watcher. So `status`,
+// `verify` and `health-check` write no index content, and `index` writes only
+// the run it asked for. Not "nothing" (#287 round 2, CR 35): upstream's
 // readiness paths still act — on a managed store codebase_status starts a
 // stopped Qdrant container, codebase_graph_status creates a project's empty
 // symbol-graph metadata collection when a graph lacks one, and verify's sample
 // search pulls a missing embedding model, onto the store's Ollama when it is
 // external.
-async function withClient(fn, { readOnly = false, project } = {}) {
+async function withClient(fn, { project } = {}) {
   const launch = resolveServerLaunch({ project });
   console.error(`[driver] server launch (${launch.source}): ${launch.command} ${launch.args.join(' ')}`);
   const client = new RpcClient(launch, {
     SOCRATICODE_AUTO_RESUME: 'off',
-    ...(readOnly ? { SOCRATICODE_WATCHER: 'manual' } : {}),
+    SOCRATICODE_WATCHER: 'manual',
   });
   try {
     await client.handshake();
@@ -2860,7 +2914,51 @@ async function cmdStatus(projectPath) {
   await withClient(async (client) => {
     const text = await client.callTool('codebase_status', { projectPath });
     process.stdout.write(text + '\n');
-  }, { readOnly: true, project: projectPath });
+  }, { project: projectPath });
+}
+
+// codebase_update through the driver's own launch (#483): the pinned server,
+// with the driver's terms for it (see withClient), in whatever cap the caller
+// runs this under — the capped path to an update outside a session, after a
+// manifest description edit say, that a host otherwise had to shim. Exits 1
+// when the update did not run: another process held the lock, a run was already
+// in progress, or the server refused. JSON on stdout, prose on stderr.
+async function cmdUpdate(projectPath) {
+  guardStore(projectPath);
+  await withClient(async (client) => {
+    console.error(`[driver] updating ${projectPath} (incremental; blocks until the server replies)`);
+    const bomb = setTimeout(() => die(`update did not complete within ${Math.round(INDEX_TIMEOUT_MS / 60000)} min`), INDEX_TIMEOUT_MS);
+    bomb.unref();
+    const reply = await client.callTool('codebase_update', { projectPath });
+    clearTimeout(bomb);
+    const counts = parseUpdateCounts(reply);
+    let refused = null;
+    if (indexAlreadyRunning(reply)) refused = 'an index of this project is already in progress in the server';
+    else if (updateLockHeld(reply)) refused = "another process holds this project's index lock — a session's server, or a concurrent index";
+    else if (updateRefused(reply)) refused = `the server refused it: ${updateRefused(reply)}`;
+    else if (!updateRan(reply) || !counts) refused = `the server did not run it. It replied:\n${reply}`;
+    // Cancelled is "did not run to completion", not "did not run": the partial
+    // counts are writes that happened, so they stay in the JSON.
+    const cancelled = refused ? null : updateCancelled(reply);
+    process.stdout.write(JSON.stringify(
+      cancelled ? { projectPath, ran: false, cancelled: true, ...counts }
+        : refused ? { projectPath, ran: false } : { projectPath, ran: true, ...counts },
+      null, 2) + '\n');
+    if (cancelled) {
+      console.error(`[driver] update did NOT run to completion: ${cancelled}`);
+      process.exitCode = 1;
+      return;
+    }
+    if (refused) {
+      console.error(`[driver] update did NOT run: ${refused}`);
+      process.exitCode = 1;
+      return;
+    }
+    console.error(
+      `[driver] updated: ${counts.added} added, ${counts.updated} updated, ${counts.removed} removed, `
+      + `${counts.chunksCreated} new chunk(s)`
+    );
+  }, { project: projectPath });
 }
 
 async function cmdIndex(projectPath) {
@@ -2880,9 +2978,10 @@ async function cmdIndex(projectPath) {
     // polling a status that would never move until INDEX_TIMEOUT_MS.
     //
     // Three outcomes, not two: "already in progress" is the concurrency guard,
-    // meaning the work we want is underway (started by the watcher, or by a
-    // concurrent run). That is a reason to poll, not to abort — the loop below
-    // already knows how to wait for someone else's run.
+    // meaning the work we want is underway in this server (with auto-resume
+    // off and the watcher on manual, #349, nothing of ours should be). That is
+    // a reason to poll, not to abort — the loop below already knows how to
+    // wait for someone else's run.
     const startResponse = await client.callTool('codebase_index', { projectPath });
     // Set when the guard fired for an INCREMENTAL update: that run won't produce
     // the full-index completion we gate on, so the real index is issued below,
@@ -3505,7 +3604,7 @@ async function cmdHealthCheck(projectPath, probePath) {
         note(unresolvedFinding(y.unresolvedPct, v.verdict));
       }
     }
-  }, { readOnly: true, project: projectPath });
+  }, { project: projectPath });
 
   // ── the session's pin, as launched (#332) ─────────────────────────────────
   // This process carries SOCRATICODE_SPEC and the session's server was seen
@@ -3729,7 +3828,7 @@ async function cmdVerify(projectPath) {
     if (!(okGraph && okSearch && okList)) die('verification failed — see lines above');
     if (lastOpFailed) die('verification failed — the last recorded operation FAILED; re-index before declaring this green');
     console.error('[driver] verify OK');
-  }, { readOnly: true, project: projectPath });
+  }, { project: projectPath });
 }
 
 function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
@@ -3743,6 +3842,12 @@ Commands:
   index    run a full fresh index; block until the run reports complete, the
            graph is READY, and context artifacts are all indexed
   status   print codebase_status once and exit
+  update   run codebase_update (incremental: re-embeds changed files and
+           artifacts) and print its counts as JSON; exit 1 when it did not
+           run — another process held the project's index lock, a run was in
+           progress, or the server refused — or was cancelled part-way, its
+           partial counts kept beside "ran": false. The capped path outside
+           a session (#483): run it under the cap as you would index.
   verify   sample codebase_search + graph_status + list_projects + a check that
            the last recorded operation did not FAIL, and on an external store
            that codebase_health reports Qdrant mode: external; exit 0/1.
@@ -3809,10 +3914,11 @@ Commands:
            declare that this environment does not carry, or carries with
            another value (from a worktree, one only the main checkout's
            settings.local.json holds); a project settings file that does not
-           parse. index, status and verify refuse to launch a server on any of
-           them, and health-check reports them and skips its server checks — a
-           launch is itself a write. A linked project's invalid projectId, or
-           two linked projects on one id, is reported and blocks nothing.
+           parse. index, update, status and verify refuse to launch a server
+           on any of them, and health-check reports them and skips its server
+           checks — a launch is itself a write. A linked project's invalid
+           projectId, or two linked projects on one id, is reported and
+           blocks nothing.
 
 projectPath defaults to the current working directory.
 
@@ -3836,7 +3942,8 @@ Env:
   SOCRATICODE_PIN_DIR prefix holding a pre-installed, pinned server, preferred over
                       the plugin's floating 'npx ... @latest' command and inert
                       when absent (default ~/.socraticode/pin; populate with
-                      'npm install --prefix <dir> socraticode@<version>')
+                      'npm install --save-exact --prefix <dir>
+                      socraticode@<version>')
   SOCRATICODE_SPEC    expanded into the plugin's definition as Claude Code does,
                       so a value that pins the session's launch pins the
                       driver's unpinned launches too (#327). The expansion
@@ -3866,8 +3973,8 @@ Exit codes:
   0  clean — the command ran and found nothing to report
   1  the command ran and found a defect (health-check, verify,
      validate-store, validate-manifest), or refused to launch a server into
-     the wrong store or collections (index, status, verify; see
-     validate-store)
+     the wrong store or collections (index, update, status, verify; see
+     validate-store), or update did not run
   2  usage
   3  the command DID NOT COMPLETE — it threw, or health-check hit its
      timeout. Nothing was measured, so this is not a clean result and it is
@@ -3947,6 +4054,7 @@ async function runCli() {
   switch (cmd) {
     case 'index': await cmdIndex(projectPath); break;
     case 'status': await cmdStatus(projectPath); break;
+    case 'update': await cmdUpdate(projectPath); break;
     case 'verify': await cmdVerify(projectPath); break;
     case 'health-check': {
       // Hard ceiling: a server that never answers must cost a bounded wait.
@@ -4059,6 +4167,7 @@ export {
   pluginServerFromVersionDir, expandVars,
   // tool-reply predicates (gotcha M)
   indexStarted, indexAlreadyRunning, runningOperationIsFullIndex,
+  parseUpdateCounts, updateRan, updateLockHeld, updateRefused, updateCancelled,
   contextIndexComplete, indexedZeroChunks,
   searchHasHits, listHasProjects,
 };

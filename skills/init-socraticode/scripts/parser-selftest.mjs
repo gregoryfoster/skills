@@ -714,7 +714,7 @@ try {
 
   const at = (o) => pinDriftFinding({ pinPath: '/PIN', floatingSpec: 'socraticode@latest', ...o });
   eq('feature gap is a defect', at({ running: '1.13.2', resolves: '1.14.0' }).severity, SEVERITY.defect);
-  eq('…and names the re-pin command', /npm install --prefix \/PIN socraticode@1\.14\.0/.test(at({ running: '1.13.2', resolves: '1.14.0' }).message), true);
+  eq('…and names the re-pin command', /npm install --save-exact --prefix \/PIN socraticode@1\.14\.0/.test(at({ running: '1.13.2', resolves: '1.14.0' }).message), true);
   eq('patch gap is only a note', at({ running: '1.13.2', resolves: '1.13.9' }).severity, SEVERITY.note);
   eq('no gap is still reported', at({ running: '1.14.0', resolves: '1.14.0' }).severity, SEVERITY.note);
   eq('silent registry says NOT measured', /NOT measured/.test(at({ running: '1.13.2', resolves: null }).message), true);
