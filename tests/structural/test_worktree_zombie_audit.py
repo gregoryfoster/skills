@@ -9,8 +9,11 @@ The repo's ship gate runs on a Mac, so no test saw it.
 
 Two tiers here, so the regression shows on either runner:
 
-- **Stubs.** `pgrep` and `ps` are stubbed on PATH in both output shapes, so the
-  BSD case is exercised on a Linux runner and the procps case on a Mac.
+- **Stubs.** `pgrep` is stubbed on PATH in both platforms' `-af` shapes. The
+  fix no longer calls it, so what the stub now catches is a return to
+  `pgrep -af`: the BSD shape fails on any runner, not only on a Mac. A `ps`
+  stub prints a canned table, which holds the width (`-ww`), failure (exit 2)
+  and name-ending cases the real `ps` can't be made to show.
 - **Real processes.** A process whose argv names a vanished worktree, found by
   whatever `ps` the runner has. These also hold the issue's second part: the
   shell that ran the audit, and its parents, are never listed, so the printed
