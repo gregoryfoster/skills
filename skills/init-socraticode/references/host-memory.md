@@ -30,8 +30,9 @@ npm view socraticode version
 # score to the install, and at -1000 the cap stalls it instead of killing it.
 # MemorySwapMax=0 because MemoryMax= bounds RAM only: with swap, a job past it
 # pages out and runs on instead of being killed (#340).
-systemd-run --user --scope -p MemoryHigh=1200M -p MemoryMax=1536M -p MemorySwapMax=0 \
-  choom -n 500 -- npm install --save-exact --prefix ~/.socraticode/pin socraticode@<version>
+systemd-run --user --scope -p MemoryHigh=1200M -p MemoryMax=1536M \
+  -p MemorySwapMax=0 choom -n 500 -- \
+  npm install --save-exact --prefix ~/.socraticode/pin socraticode@<version>
 
 # Anywhere else (macOS, a host without user systemd): the install is the same,
 # just uncapped. Size the host for ~1.2 G rather than hoping.
@@ -81,8 +82,9 @@ install at an unattended start — #295's peak, once. Warm it deliberately,
 under the cap; this builds the tree the plugin's pinned launch then uses:
 
 ```bash
-systemd-run --user --scope -p MemoryHigh=1200M -p MemoryMax=1536M -p MemorySwapMax=0 \
-  choom -n 500 -- npm exec --yes --prefer-online --package=socraticode@<version> -- true
+systemd-run --user --scope -p MemoryHigh=1200M -p MemoryMax=1536M \
+  -p MemorySwapMax=0 choom -n 500 -- \
+  npm exec --yes --prefer-online --package=socraticode@<version> -- true
 ```
 
 From then on an exact version resolves from the npx cache without installing —

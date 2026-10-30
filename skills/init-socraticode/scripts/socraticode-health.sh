@@ -136,9 +136,9 @@ Behaviour:
     host cannot cap (no systemd-run, as on macOS; no user systemd; or no
     memory controller for it — cgroup v1, or none delegated) the check runs
     uncapped, as before, and says nothing about it; a failed probe leaves one
-    log line. A refused MemorySwapMax= is dropped alone, and logged. With a pinned server the launch peaks near 75 MB and the
-    cap never binds: it is for a host that never pinned, a pin that broke, or
-    an index that grew.
+    log line. A refused MemorySwapMax= is dropped alone, and logged. With a
+    pinned server the launch peaks near 75 MB and the cap never binds: it is
+    for a host that never pinned, a pin that broke, or an index that grew.
   - Logs to <common .git>/socraticode-health.log (~64 KiB / 200 lines).
   - Exits 0 on every condition.
 

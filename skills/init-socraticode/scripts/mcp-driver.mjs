@@ -468,8 +468,9 @@ function sessionPinFinding({ observed, specVariable, value }) {
 // moved that is two simultaneous installs — unattended.
 //
 // Absent, it resolves nothing and the chain below is unchanged, so this is
-// inert on every host that has not pre-installed. `npm install --save-exact --prefix <dir>
-// socraticode@<version>` is the layout it expects.
+// inert on every host that has not pre-installed.
+// `npm install --save-exact --prefix <dir> socraticode@<version>` is the
+// layout it expects.
 function pinDir() {
   return process.env.SOCRATICODE_PIN_DIR || joinPath(homedir(), '.socraticode', 'pin');
 }
@@ -3913,10 +3914,11 @@ Commands:
            declare that this environment does not carry, or carries with
            another value (from a worktree, one only the main checkout's
            settings.local.json holds); a project settings file that does not
-           parse. index, update, status and verify refuse to launch a server on any of
-           them, and health-check reports them and skips its server checks — a
-           launch is itself a write. A linked project's invalid projectId, or
-           two linked projects on one id, is reported and blocks nothing.
+           parse. index, update, status and verify refuse to launch a server
+           on any of them, and health-check reports them and skips its server
+           checks — a launch is itself a write. A linked project's invalid
+           projectId, or two linked projects on one id, is reported and
+           blocks nothing.
 
 projectPath defaults to the current working directory.
 
@@ -3940,7 +3942,8 @@ Env:
   SOCRATICODE_PIN_DIR prefix holding a pre-installed, pinned server, preferred over
                       the plugin's floating 'npx ... @latest' command and inert
                       when absent (default ~/.socraticode/pin; populate with
-                      'npm install --save-exact --prefix <dir> socraticode@<version>')
+                      'npm install --save-exact --prefix <dir>
+                      socraticode@<version>')
   SOCRATICODE_SPEC    expanded into the plugin's definition as Claude Code does,
                       so a value that pins the session's launch pins the
                       driver's unpinned launches too (#327). The expansion
