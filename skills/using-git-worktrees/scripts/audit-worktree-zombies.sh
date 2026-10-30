@@ -95,7 +95,12 @@ PS_TABLE=$(ps -A -ww -o pid= -o ppid= -o args=) || {
 # `grep` filter would carry the pattern in its own argv and could match itself,
 # and awk's `-v` would rewrite any backslash in the path. Each candidate is
 # printed as `<pid> TAB <root>/<name> TAB <args>`, where <name> is the first
-# path component after the root — the worktree the process belongs to.
+# path component after the root — the worktree the process belongs to. <name>
+# also ends at shell punctuation (`;&|<>()'"` and backtick) and at `:`, since a
+# shell's command text writes `cd <root>/<name>; …` or `PATH=<root>/<name>:…`.
+# Keeping the `;` named a worktree that never existed, so a live session's shell
+# was listed as a zombie of it (#335). \047 is a single quote: the program sits
+# inside one.
 #
 # The audit's own ancestors are never candidates. The shell that ran it may
 # name a vanished worktree in its own command text, and so may a wrapper further
@@ -110,7 +115,7 @@ CANDIDATES=$(AUDIT_ROOT="$WORKTREE_ROOT/" AUDIT_SELF=$$ awk '
     s = args
     while ((i = index(s, root)) > 0) {
       s = substr(s, i + length(root))
-      if (match(s, "^[^/ ]+")) {
+      if (match(s, "^[^/ \t;&|<>()\047\"`:]+")) {
         n++; pid[n] = $1; wt[n] = root substr(s, 1, RLENGTH); cmd[n] = args
         break
       }
