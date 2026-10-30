@@ -177,10 +177,13 @@ class Harness:
         return log.read_text() if log.exists() else ""
 
 
-def _own_cgroup() -> str:
+def _own_cgroup(proc: Path = Path("/proc/self/cgroup")) -> str:
     """This process's cgroup v2 path, as /proc/self/cgroup's `0::` line has
-    it: "/" where there is none, as on a cgroup v1 host."""
-    for line in Path("/proc/self/cgroup").read_text().splitlines():
+    it: "/" where there is none, as on a cgroup v1 host, or no /proc at all,
+    as on macOS — the keeper's own fallback (CR 1342)."""
+    if not proc.exists():
+        return "/"
+    for line in proc.read_text().splitlines():
         if line.startswith("0::"):
             return line[3:] or "/"
     return "/"
