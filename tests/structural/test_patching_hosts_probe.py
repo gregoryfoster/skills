@@ -4261,6 +4261,58 @@ def test_post_boot_checks_a_dependency_came_up_before_its_datastore(
     assert c["ok"] is ok, c
 
 
+# #534 finding 2: the knob's exception for a missing After= covers the same
+# reading after the boot, as it does before a run. A down dependency is no
+# ordering at all, so nothing excepts it.
+@pytest.mark.parametrize(
+    "review, excepted", [("2099-01-01", True), ("2026-01-01", False)]
+)
+def test_post_boot_honours_an_ordering_exception(host, review, excepted):
+    host.knob(
+        "posture scheduled\nservice app-web.service\n"
+        "datastore postgres postgresql@16-main app\n"
+        f"exception ordering:app-web.service {review} it retries until the store is up\n"
+    )
+    host.show(
+        "app-web.service",
+        ActiveState="active",
+        NRestarts="0",
+        Result="success",
+        After="network.target",
+    )
+    out = host.run("--post-boot")
+    checks = {c["check"]: c for c in out["post_boot"]}
+    assert checks["ordering:app-web.service"]["ok"] is False
+    key = "excepted" if excepted else "findings"
+    f = _finding(out, "post-boot:ordering:app-web.service", key)
+    assert f["exception_what"] == "ordering:app-web.service"
+    if excepted:
+        assert "post-boot:ordering:app-web.service" not in _ids(out)
+        assert f["exception_line"] == 4
+
+
+@pytest.mark.parametrize(
+    "state, ts, excepted",
+    [("active", 9_000_000, True), ("inactive", 5_000_000, False)],
+    ids=["after-it", "down"],
+)
+def test_post_boot_honours_a_depends_exception_only_for_the_order(
+    host, state, ts, excepted
+):
+    host.knob(
+        "posture scheduled\ndatastore redis redis-server\ndepends redis-server tailscaled\n"
+        "exception depends:redis-server.service:tailscaled.service 2099-01-01 binds 0.0.0.0\n"
+    )
+    host.show("redis-server.service", ActiveEnterTimestampMonotonic="7000000")
+    host.show(
+        "tailscaled.service", ActiveState=state, ActiveEnterTimestampMonotonic=str(ts)
+    )
+    out = host.run("--post-boot")
+    fid = "post-boot:depends:redis-server.service:tailscaled.service"
+    assert (fid in _ids(out, "excepted")) is excepted
+    assert (fid in _ids(out)) is not excepted
+
+
 def test_post_boot_reads_the_run_it_is_given(host):
     host.write("run/log/journal/" + "a" * 32 + "/system.journal", "x")
     host.write(f"{RUN}/reboot-chain.log", COPIED)
