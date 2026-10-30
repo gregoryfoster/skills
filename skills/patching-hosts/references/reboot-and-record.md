@@ -66,6 +66,8 @@ If the reboot slips out of the window, say so, and redo the gate and the quiet-h
 
 ## 7. The record
 
+**Take the after reading last, in every run, whether it rebooted or not:** `probe.sh --refresh-into <dir>`. It's the only probe that reads the language class: `--post-boot`, `--dry-run-into` alone and `apply.sh`'s probe after each step leave it in `not_read`. A class in `not_read`, or a tree not audited (`audited: false`, `lockfile: null` among them), is recorded as *no read*, never as 0.
+
 Post the before and after readings where the knob's `records` says:
 - counts;
 - times and RSS;

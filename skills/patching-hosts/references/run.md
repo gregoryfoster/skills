@@ -7,7 +7,7 @@ The procedure ten hosts followed by hand in #313's step 0 round, and the one the
 Three, given separately:
 
 1. **The needrestart drop-in**: a repo change, then its installation.
-2. **The apply**: the bulk step, after the recovery point.
+2. **The apply**: the bulk step, after the recovery point, on a host that declares a `datastore`.
 3. **Restarts**:
    - **3(a)**: each held step that can restart a service (Postgres's cluster, Redis, containerd), with any `restarter` stopped around it. noble's `redis-server` restarts the server from its postinst on upgrade ([the profile](environments/exe-dev-exeuntu.md#packages-that-restart-their-own-services));
    - **3(b)**: the reboot.
@@ -34,7 +34,7 @@ $nrconf{restart} = 'l';
 
 ## 2. The recovery point
 
-Every host records its before-versions (below). A host that declares a `datastore` also needs a dump that has left the node before the apply. A host with none, such as a pure bus worker, has nothing to dump. `recovery-point.sh --approve --retain-until <date>` takes it, as below, and writes the record the bulk reads. Like a step, it takes minutes: run it in the background. Each disk it writes, the run's and Docker's root for a Qdrant snapshot, must hold its share with §3's 128 MiB floor still free.
+Every host records its before-versions, which the bulk writes to its run directory (below). A host that declares a `datastore` also needs a dump that has left the node before the apply. `recovery-point.sh --approve --retain-until <date>` takes it, as below, and writes the record the bulk reads from the directory passed as its `--run`. **A host with none, such as a pure bus worker, has nothing to dump, and skips `recovery-point.sh`**, which exits 3 there: `recovery-point: refused: the knob declares no datastore, so there's nothing to dump: a host with none needs only its before-versions, which apply.sh records`. Its bulk takes no `--run`: it makes `/var/backups/patching-hosts-<UTC>` itself, records the before-versions there, and prints it as its JSON's `run`, which each held step and the reboot chain take. Like a step, it takes minutes: run it in the background. Each disk it writes, the run's and Docker's root for a Qdrant snapshot, must hold its share with §3's 128 MiB floor still free.
 
 - **Prefer the host's own backup regime** when one exists and succeeded recently, for the datastores it covers: its `backup` line names them, and the rest are dumped. Start it by hand, then confirm the new object, its verification and its check-in (CannObserv/watcher#331).
   A Redis it covers is saved first, since the unit ships the RDB file as it stands ([datastores.md](datastores.md#the-recovery-point)).
