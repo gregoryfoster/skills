@@ -2405,6 +2405,42 @@ def test_a_fold_ending_on_a_foreign_edit_is_reported(adopted):
     assert [e["at"] for e in summary(res)["foreign_edits"]] == ["2026-10-14T18:09:00Z"]
 
 
+def test_a_hand_created_epic_adopted_then_written_reports_nothing(rig):
+    """CR 1195: GitHub's first edit of a body adds a node for the body as
+    created, editedAt its creation time and updatedAt the first edit's."""
+    rig.issue(
+        REPO, EPIC, created_at="2026-10-01T00:00:00Z", updated_at="2026-10-14T17:00:00Z"
+    )
+    assert rig.edit(REPO, EPIC, [], "--adopt-live").returncode == 0
+    rig.set_flag("server_now", "2026-10-14T18:00:00Z")
+    assert rig.edit(REPO, EPIC, [{"op": "tick", "ref": "#11"}]).returncode == 0
+    edits = rig.load()["repos"][REPO]["edits"][str(EPIC)]
+    assert [e["editedAt"] for e in edits] == [
+        "2026-10-01T00:00:00Z",
+        "2026-10-14T18:00:00Z",
+    ]
+    res = rig.edit(REPO, EPIC, [], "--dry-run")
+    assert summary(res)["foreign_edits"] == [], res.stderr
+
+
+def test_the_body_as_created_is_no_edit_though_auto_ticked_before_adoption(rig):
+    """CR 1195: GitHub ticks a closed child's box with no history entry, so a
+    body adopted after that differs from the one created. The created-body
+    node is judged by its editedAt alone, the creation time, and is never
+    reported; the hand edit that made it appear still is."""
+    rig.issue(
+        REPO, EPIC, created_at="2026-10-01T00:00:00Z", updated_at="2026-10-14T17:00:00Z"
+    )
+    rig.auto_edit(EPIC, BODY.replace("- [ ] #11", "- [x] #11"))
+    assert rig.edit(REPO, EPIC, [], "--adopt-live").returncode == 0
+    ticked = rig.body(REPO, EPIC)
+    rig.edit_elsewhere(EPIC, ticked + "\nstray\n", at="2026-10-14T18:20:00Z")
+    res = rig.edit(REPO, EPIC, [], "--dry-run")
+    assert summary(res)["foreign_edits"] == [
+        {"at": "2026-10-14T18:20:00Z", "editor": "gregoryfoster"}
+    ], res.stderr
+
+
 def test_an_unreadable_edit_history_is_a_warning(adopted):
     """A cloud session's proxy refuses GraphQL; the baseline checks still hold."""
     adopted.set_flag("graphql_error", "HTTP 403: GraphQL is not available")
