@@ -175,6 +175,14 @@ def test_run_md_says_what_a_run_with_nothing_pending_does():
     assert "approval 3(b)" in s
 
 
+def test_an_empty_week_needs_a_refresh_that_fetched():
+    # CR 1444: since #542 a failed source leaves refreshed false and counts
+    # against the host's own lists, where nothing pending may be months old.
+    s = " ".join(_section(RUN, "## A run with nothing pending").split())
+    assert "`pending.lists.refreshed`" in s
+    assert "`lists:refresh`" in s and "#542" in s
+
+
 # --- #542: what a failed source reads as ---------------------------------------
 
 
