@@ -14,11 +14,11 @@ An override needs real files only for what it actually changes; everything else
 symlinks into the submodule per script and tracks upstream for free:
 
 ```
-skills/shipping-work-python-fastapi/
+skills/shipping-work/
 ├── SKILL.md              real file (carries the local deltas)
 └── scripts/
     ├── pre-ship.sh       real file (a #105-style wrapper that execs upstream)
-    ├── check-status.sh   -> ../../../skills-vendor/<owner>-<repo>/skills/shipping-work-python-fastapi/scripts/check-status.sh
+    ├── check-status.sh   -> ../../../skills-vendor/<owner>-<repo>/skills/shipping-work/scripts/check-status.sh
     ├── close-issue.sh    -> symlink, likewise
     └── ...
 ```
@@ -60,7 +60,7 @@ So write **both** keys, whatever the vendor ships:
 ```yaml
 metadata:
   version: "1.4"
-  overrides: <owner>-<repo>/shipping-work-python-fastapi
+  overrides: <owner>-<repo>/shipping-work
   override-reason: "Sources /etc/consumer/.env before delegating"
   synced-from: "<owner>-<repo> 1.4 (662de71)"
 ```

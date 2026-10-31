@@ -29,7 +29,7 @@ All active skills live under `skills/`. No other top-level layout is required by
 Two situations warrant a suffix:
 
 - **Agent-specific variant** when a skill genuinely needs to diverge for one provider (e.g. provider-specific tool invocation, prompt-style tuning that materially affects behavior). Allowed suffixes: `-claude`, `-cursor`, `-copilot`, `-gemini`.
-- **Stack-specific variant** when a skill diverges along a technology axis (e.g. `reviewing-code-php`, `shipping-work-python-fastapi`). Use the language or framework as the suffix; when a single language hosts multiple genuinely-different workflows (e.g. Python FastAPI vs Python Click), include the framework in the suffix and skip the bare-language variant.
+- **Stack-specific variant** when a skill diverges along a technology axis (e.g. `reviewing-code-php`, `reviewing-code-python-fastapi`). Use the language or framework as the suffix; when a single language hosts multiple genuinely-different workflows (e.g. Python FastAPI vs Python Click), include the framework in the suffix and skip the bare-language variant.
 
 Without a sibling variant, do not add a suffix prophylactically — it adds noise without information.
 
@@ -44,10 +44,7 @@ skills/
   reviewing-code-python-fastapi/   # Python/FastAPI stack variant
   reviewing-code-python-click/     # Python/Click CLI stack variant
   reviewing-code-cursor/           # Cursor-specific agent variant (hypothetical)
-  shipping-work/                   # baseline
-  shipping-work-php/               # PHP/WordPress stack variant
-  shipping-work-python-fastapi/    # Python/FastAPI stack variant
-  shipping-work-python-click/      # Python/Click CLI stack variant
+  shipping-work/                   # one skill: detects the stack (#537)
 ```
 
 Variants share the same trigger phrases (documented in `metadata.triggers`). The runtime selects the appropriate variant. Each variant is a **complete, self-contained skill** — no inheritance between variants.

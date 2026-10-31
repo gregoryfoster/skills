@@ -87,7 +87,7 @@ A gate script that invites project-local customization must name the mechanism, 
 Every `shipping-work*/scripts/pre-ship.sh` carries this as a commented `# --- Project-local env loading (optional override point) ---` block, the worked example being the env loading a conftest with a hard DSN requirement forces. Rules the recipe encodes, each a trap a lone consumer hits:
 
 - **Delegate through the symlink** (`skills/<skill>/scripts/…`), never `skills-vendor/…`. The symlink is the stable interface; the vendor layout is submodule bookkeeping.
-- **`exec`**, so the exit code the Iron Law gates on propagates unchanged — and, for `shipping-work-python-click`, so `$0` still points at the vendored copy and its sibling helpers resolve.
+- **`exec`**, so the exit code the Iron Law gates on propagates unchanged — and, for `shipping-work`, so `$0` still points at the vendored copy and its sibling helpers (`detect-stack.sh`, `gate-stamp.sh`) resolve.
 - **Forward `"$@"`**, so `--help` reaches the real script.
 - **Guard the missing delegate and exit 2**, matching the gate's own tooling/infra code. An unpopulated submodule otherwise fails as bash's generic "No such file or directory".
 - **Parse the env file line by line; never source it** (see [skills/curating-context/scripts/measure-context.sh](../skills/curating-context/scripts/measure-context.sh)), and never `export $(cat … | xargs)`. That one-liner shipped here until [#144](https://github.com/gregoryfoster/skills/issues/144) and had three defects, each found by executing it rather than reading it:
