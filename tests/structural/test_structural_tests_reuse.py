@@ -123,6 +123,37 @@ class TestOncePerTree:
         assert _suite(repo).returncode == 0
         assert len(_calls(repo)) == 1
 
+    def test_a_real_git_hooks_pass_is_reused_from_a_plain_shell(self, repo):
+        """Through an actual `git commit`, not a simulated one.
+
+        git runs a hook with its own exec-path at the front of PATH, and
+        GIT_INDEX_FILE and friends set. The simulated test above shares one
+        environment between the two runs, so it passed while every real
+        hook-to-pre-ship pair keyed differently and re-ran the suite. This is
+        the shape that caught it.
+        """
+        hook = repo / ".git" / "hooks" / "pre-commit"
+        hook.write_text(
+            "#!/bin/sh\nPRE_COMMIT=1 exec bash scripts/structural-tests.sh\n"
+        )
+        hook.chmod(0o755)
+        (repo / "tests" / "structural" / "test_x.py").write_text("def test_h(): pass\n")
+        env = _clean_env(
+            FAKE_PYTEST_LOG=str(repo.parent / "pytest.log"),
+            PYTEST_XDIST_AUTO_NUM_WORKERS="3",
+        )
+        subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True, env=env)
+        subprocess.run(
+            ["git", "-C", str(repo), "commit", "-q", "-m", "via hook"],
+            check=True,
+            env=env,
+        )
+        assert len(_calls(repo)) == 1, "the hook ran the suite once"
+        second = _suite(repo)
+        assert second.returncode == 0
+        assert len(_calls(repo)) == 1, second.stderr
+        assert "already passed" in second.stdout
+
     def test_a_failure_records_nothing(self, repo):
         assert _suite(repo, rc=1).returncode == 1
         assert _suite(repo).returncode == 0
