@@ -1,7 +1,7 @@
 ---
 title: Gate topology — run each check once per change, at the stage that owns it, and fold shipping-work-* back into one skill
 date: 2026-10-30
-status: draft
+status: approved  # 2026-10-30; implementation starts after Wave 5 of #516 merges (D1)
 ---
 
 # Gate topology and one `shipping-work`
@@ -70,9 +70,10 @@ Three mechanisms carry the contract:
    results, 2:36). `-n 6` took 3:10 and `-n 12` took 2:40, so 8 is where it
    stops getting faster on 14 cores.
 2. **A tree-keyed pass stamp.** The key is `git write-tree` plus the lockfile
-   or requirements hash, the interpreter, the OS and the env names. Whichever
-   gate runs the full suite on a tree writes the stamp, and every later gate
-   on the same tree reuses it.
+   or requirements hash, the interpreter, the OS, the env names, and the
+   content hash of any configured untracked inputs (D5). Whichever gate runs
+   the full suite on a tree writes the stamp, and every later gate on the same
+   tree reuses it.
 3. **A worker-count resolver** (D2, below), shared by every gate.
 
 **One `shipping-work` skill** (D4) owns the contract, so cohort repos can't
@@ -116,6 +117,19 @@ drift apart again:
   is the first.
 - **D4: where the contract lives.** Inside `shipping-work`, which is
   re-aggregated as described above.
+- **D5: which untracked inputs a stamp depends on.** This varies by repo, so
+  it is configured, with recommended defaults. Resolved first match wins:
+  1. **`GATE_STAMP_INPUTS`**, a colon-separated list.
+  2. **`.skills/gate-stamp-inputs`**: one path or glob per line, `#`
+     comments. It **replaces** the default list, so a repo can also drop a
+     default.
+  3. **Default:** `.env`.
+
+  Only a content hash ever enters the key. The stamp records which inputs
+  were hashed, never their values. A configured path that doesn't exist is
+  hashed as absent, so creating it later invalidates the stamp.
+- **D6: the `reviewing-code-*` family.** It folds the same way, as a
+  follow-on: #536, sequenced after Part B ships.
 
 ## Tradeoffs / alternatives
 
@@ -167,6 +181,8 @@ the parts run in order: A, then B, then C.
    - Verify: green under a shuffled order, and at or under 3 min on this
      Mac.
 2. **Tree stamp.** `gate-stamp.sh` with `key`, `check` and `write`.
+   - The key includes the D5 inputs. Document the knob in
+     `docs/KNOBS.md`, and hold it with the knob-inventory test.
    - pre-commit writes a stamp for the index tree after a green full
      run.
    - `pre-ship.sh` checks `HEAD^{tree}` on a clean tree and skips the
@@ -263,14 +279,6 @@ the parts run in order: A, then B, then C.
 
 ## Open questions / risks
 
-- **`reviewing-code-*` has the same shape:** a baseline plus php, click and
-  fastapi. Should it be folded the same way, as a follow-on plan? Step 6
-  already removes the one script the two families duplicate. This plan
-  doesn't fold `reviewing-code-*`.
-- **A stamp is a trust boundary.** A tree-keyed pass goes stale if an
-  untracked file the suite reads changes, such as `.env`. Which untracked
-  inputs must join the key? `PRE_SHIP_ENV_NAMES` already covers env
-  names, but not their values.
 - **The ordering of doctor and refresh.** The rename map only works if the
   doctor syncs itself before it heals, in the same run. Step 8 must test
   that order directly, since a miss would leave the repo with a doctor that
