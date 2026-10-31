@@ -94,3 +94,21 @@ def test_the_knob_still_replaces_the_defaults(tmp_path):
     run_git(repo, "commit", "-m", "knob")
     result = _check(repo)
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_help_works_outside_a_repository(tmp_path):
+    """CR 1393: detection runs before argument parsing, and must not cost
+    `--help` the property every variant has — it needs no repo."""
+    import subprocess
+
+    from tests.structural.doc_check_fixtures import clean_env, script_path
+
+    result = subprocess.run(
+        ["bash", str(script_path("shipping-work")), "--help"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        env=clean_env(),
+    )
+    assert result.returncode == 0, result.stderr
+    assert "Usage:" in result.stdout
