@@ -121,8 +121,11 @@ if [[ -f "$KNOB" ]]; then
   esac
 fi
 
-# 3. auto.
-CORES=$(getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 1)
+# 3. auto. nproc first: it counts the CPUs this process's affinity allows, so a
+# container pinned to 2 CPUs on a big host is the 2-core machine it is
+# (CR 1392). getconf counts every online CPU; sysctl is macOS without
+# coreutils. A CFS quota (`docker --cpus`) is invisible to all three.
+CORES=$(nproc 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 1)
 is_count "$CORES" || CORES=1
 if [[ "$CORES" -le 2 ]]; then
   answer 0 "auto: $CORES core(s), so serial"
