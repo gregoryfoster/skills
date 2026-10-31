@@ -487,6 +487,15 @@ def test_a_chain_it_cant_record_is_never_launched(host):
             lambda h: setattr(h, "clock", TUE_1530 + 5 * 3600 + 25 * MIN),
             "isn't wholly inside one window",
         ),
+        # #421: the chain reads a dated window as the bulk does.
+        (
+            lambda h: h.knob(
+                KNOB_CHAIN.replace(
+                    "window Tue 15:00-21:00", "window 2026-09-30 15:00-21:00 TS-1"
+                )
+            ),
+            "isn't wholly inside one window",
+        ),
         (
             lambda h: h.knob(KNOB_CHAIN + "quiet 15:35-15:40\n"),
             "runs into the quiet range 15:35-15:40",
@@ -518,6 +527,7 @@ def test_a_chain_it_cant_record_is_never_launched(host):
         "already-running",
         "already-ran",
         "past-the-window",
+        "a-dated-window-on-another-day",
         "into-a-quiet-range",
         "work-in-flight",
         "dpkg-running",

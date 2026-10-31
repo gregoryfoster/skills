@@ -493,6 +493,87 @@ def test_a_window_that_wraps_past_midnight_holds_the_span(host, window, clock):
     assert out["gate"]["span"]["window"]["line"] == 3
 
 
+# #421: a week of the month, and a dated window. The run's span is 58 minutes
+# (#362), so each clock below starts it where the whole of it fits, or not.
+DAY = 86400
+# Sundays from TUE_1530's week: the 4th of September, then October's 1st to 3rd.
+SUN_27_SEP, SUN_4_OCT, SUN_11_OCT, SUN_18_OCT = (
+    TUE_1530 + (n - 2) * DAY for n in (0, 7, 14, 21)
+)
+
+
+def _at(host: Host, clock: int) -> Host:
+    """The host at another time, its dry run an hour before it."""
+    host.clock = clock
+    (host.dry / "summary").write_text(
+        f"began={clock - 3600}\nexit=0\ncount=4\nwall_seconds=540\nsecurity_only=1\n"
+    )
+    return host
+
+
+def _window_refused(out: dict) -> bool:
+    return any("isn't wholly inside one window" in r for r in out["refused"])
+
+
+@pytest.mark.parametrize(
+    "clock, holds",
+    [
+        (SUN_11_OCT, True),
+        (SUN_4_OCT, False),
+        (SUN_18_OCT, False),
+        (SUN_27_SEP, False),
+    ],
+    ids=["2nd-sunday", "1st-sunday", "3rd-sunday", "4th-sunday"],
+)
+def test_a_week_of_the_month_opens_on_that_weeks_weekday_only(host, clock, holds):
+    host.knob(KNOB.replace("window Tue 15:00-21:00", "window Sun#2 15:00-21:00"))
+    out = _at(host, clock).run(rc=0 if holds else 3)
+    assert _window_refused(out) is not holds
+    if holds:
+        w = out["gate"]["span"]["window"]
+        assert (w["weekday"], w["week"], w["date"], w["line"]) == ("Sun", 2, None, 3)
+    else:
+        assert out["gate"]["span"]["window"] is None
+        assert _changed(host) == []
+
+
+def test_a_week_of_the_month_is_the_week_its_range_starts_in(host):
+    # Opens the 2nd Sunday at 23:00 and closes the Monday after at 02:00: a
+    # Monday 00:10 is inside it, though the 12th is in no 2nd week's Sunday.
+    host.knob(KNOB.replace("window Tue 15:00-21:00", "window Sun#2 23:00-02:00"))
+    out = _at(host, SUN_11_OCT + 8 * 3600 + 40 * MIN).run()
+    assert out["gate"]["span"]["window"]["line"] == 3
+
+
+@pytest.mark.parametrize(
+    "window, clock, holds",
+    [
+        ("window 2026-09-29 15:00-21:00 TS-2026-013", TUE_1530, True),
+        # The same times on another day, the next Tuesday's included.
+        ("window 2026-09-30 15:00-21:00 TS-2026-013", TUE_1530, False),
+        ("window 2026-09-29 15:00-21:00 TS-2026-013", TUE_1530 + 7 * DAY, False),
+        # Opens the 28th at 23:00, closes the 29th at 02:00.
+        ("window 2026-09-28 23:00-02:00", TUE_1530 - 15 * 3600 - 20 * MIN, True),
+    ],
+    ids=["its-date", "another-date", "a-week-later", "wraps-past-midnight"],
+)
+def test_a_dated_window_opens_on_its_date_only(host, window, clock, holds):
+    # The weekday line goes, so only the dated one can hold the span.
+    host.knob(KNOB.replace("window Tue 15:00-21:00", window))
+    out = _at(host, clock).run(rc=0 if holds else 3)
+    assert _window_refused(out) is not holds
+    if holds:
+        w = out["gate"]["span"]["window"]
+        assert (w["date"], w["line"]) == (window.split()[1], 3)
+
+
+def test_a_past_dated_window_beside_a_weekday_one_leaves_the_host_applying(host):
+    host.knob(KNOB + "window 2026-09-01 15:00-21:00 TS-2026-001\n")
+    out = host.run()
+    assert out["verdict"]["ok"] is True
+    assert out["gate"]["span"]["window"]["line"] == 3
+
+
 def test_a_dry_run_that_counted_nothing_refuses(host):
     (host.dry / "summary").write_text("exit=0\ncount=\nwall_seconds=4\n")
     out = host.run(rc=3)

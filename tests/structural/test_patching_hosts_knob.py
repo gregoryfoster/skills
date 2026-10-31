@@ -16,6 +16,9 @@ What this file pins, against references/knob.md:
 - scalars take the most specific value, lists are replaced whole, keyed
   directives accumulate per key;
 - an exception expires the day after its review-by date;
+- a window may name a week of the month (`Sun#2`) or a date, with a reason; a
+  dated line is never replaced by a more specific scope's windows, and one
+  whose close has passed is a finding, not a reason to go report-only (#421);
 - the example in knob.md parses clean, and every directive in its table parses;
 - the example's inflight line counts a running oneshot, which is activating
   (#359);
@@ -151,6 +154,19 @@ def test_a_last_line_without_a_newline_is_read(tmp_path):
         "window Tue",  # missing range
         "window Tuesday 15:00-21:00",  # weekday spelling
         "window Tue 15:00-15:00",  # zero-length: empty or a whole day
+        # #421: a week of the month is 1 to 5, and only a dated line takes a
+        # reason; a date must be one on the calendar.
+        "window Sun#0 17:00-19:00",
+        "window Sun#6 17:00-19:00",
+        "window Sun# 17:00-19:00",
+        "window Sunday#2 17:00-19:00",
+        "window Sun#2 17:00-19:00 the second Sunday",
+        "window Tue 15:00-21:00 a reason on a weekday line",
+        "window 2026-02-29 13:55-15:55",  # 2026 isn't a leap year
+        "window 2026-04-31 13:55-15:55",
+        "window 2026-10-23",  # no range
+        "window 2026-10-23 13:55-13:55 TS-2026-013",
+        "window 26-10-23 13:55-15:55",
         "quiet 25:00-01:00",  # bad hour
         "class prod",
         "posture sometimes",
@@ -448,6 +464,144 @@ def test_a_wrapping_range_is_marked(tmp_path):
         "wraps": True,
         "line": 3,
     }
+
+
+# --- #421: a week of the month, and a dated window -------------------------------
+
+
+def test_a_week_of_the_month_is_read_beside_its_weekday(tmp_path):
+    out = _read(tmp_path, "posture scheduled\nwindow Sun#2 17:00-19:00\n")
+    assert out["findings"] == []
+    assert out["window"] == [
+        {
+            "weekday": "Sun",
+            "week": 2,
+            "date": None,
+            "start": "17:00",
+            "end": "19:00",
+            "wraps": False,
+            "reason": None,
+            "expired": False,
+            "line": 2,
+        }
+    ]
+
+
+def test_a_weekday_line_carries_no_week_date_or_reason(tmp_path):
+    out = _read(tmp_path, "posture scheduled\nwindow Tue 15:00-21:00\n")
+    [w] = out["window"]
+    assert (w["weekday"], w["week"], w["date"], w["reason"]) == ("Tue", None, None, None)
+    assert w["expired"] is False
+
+
+def test_a_dated_window_names_its_date_its_weekday_and_its_reason(tmp_path):
+    out = _read(
+        tmp_path,
+        "posture scheduled\nwindow 2026-10-23 13:55-15:55 TS-2026-013 kernel fix\n",
+    )
+    assert out["findings"] == []
+    # The weekday is the one its date falls on, so a reader that only knows
+    # weekday still reads a string; date says it opens once.
+    assert out["window"] == [
+        {
+            "weekday": "Fri",
+            "week": None,
+            "date": "2026-10-23",
+            "start": "13:55",
+            "end": "15:55",
+            "wraps": False,
+            "reason": "TS-2026-013 kernel fix",
+            "expired": False,
+            "line": 2,
+        }
+    ]
+
+
+def test_a_dated_windows_reason_is_optional(tmp_path):
+    out = _read(tmp_path, "posture scheduled\nwindow 2028-02-29 13:55-15:55\n")
+    assert out["findings"] == []
+    [w] = out["window"]
+    assert (w["date"], w["weekday"], w["reason"]) == ("2028-02-29", "Tue", None)
+
+
+def test_a_past_dated_window_is_a_finding_but_not_report_only(tmp_path):
+    text = "posture scheduled\nwindow Tue 15:00-21:00\nwindow 2026-09-29 13:55-15:55 TS-1\n"
+    on_the_day = _read(tmp_path, text, today="2026-09-29")
+    assert on_the_day["findings"] == []
+    assert on_the_day["window"][1]["expired"] is False
+    after = _read(tmp_path, text, today="2026-09-30")
+    assert _kinds(after) == ["past-window"]
+    assert after["findings"][0]["line"] == 3
+    assert "2026-09-29" in after["findings"][0]["message"]
+    assert after["window"][1]["expired"] is True
+    # A deviation to clean up, not a reason to distrust the knob.
+    assert after["report_only"] is False
+    assert after["report_only_reasons"] == []
+
+
+def test_a_dated_window_that_wraps_has_passed_only_once_its_close_has(tmp_path):
+    text = "posture scheduled\nwindow 2026-09-29 23:00-02:00\n"
+    assert _read(tmp_path, text, today="2026-09-30")["findings"] == []
+    assert _kinds(_read(tmp_path, text, today="2026-10-01")) == ["past-window"]
+
+
+def _window_lines(out: dict) -> list[int]:
+    return [w["line"] for w in out["window"]]
+
+
+def test_a_global_dated_window_adds_to_a_sections_weekday_windows(tmp_path):
+    out = _read(
+        tmp_path,
+        "posture scheduled\n"
+        "window Tue 15:00-21:00\n"
+        "window 2026-10-23 13:55-15:55 TS-2026-013\n"
+        "[host web-*]\n"
+        "window Wed 01:00-02:00\n",
+        today="2026-10-01",
+    )
+    # The section's weekday line replaces the global weekday line, and the
+    # dated line is kept beside it.
+    assert _window_lines(out) == [3, 5]
+    assert out["findings"] == []
+
+
+def test_a_sections_dated_window_adds_to_the_global_weekday_windows(tmp_path):
+    out = _read(
+        tmp_path,
+        "posture scheduled\n"
+        "window Tue 15:00-21:00\n"
+        "[host web-*]\n"
+        "window 2026-10-23 13:55-15:55 TS-2026-013\n",
+        today="2026-10-01",
+    )
+    # A dated line alone in a section declares no list to replace the global
+    # one with: the host keeps Tuesday and gains the 23rd.
+    assert _window_lines(out) == [2, 4]
+
+
+def test_dated_windows_accumulate_across_scopes_and_skip_an_unmatched_section(tmp_path):
+    out = _read(
+        tmp_path,
+        "posture scheduled\n"
+        "window 2026-10-23 13:55-15:55 global\n"
+        "[host web-*]\n"
+        "window Sun#2 17:00-19:00\n"
+        "window 2026-10-24 13:55-15:55 glob\n"
+        "[host web-1]\n"
+        "window Mon 01:00-02:00\n"
+        "window 2026-10-25 13:55-15:55 exact\n"
+        "[host db-*]\n"
+        "window 2026-10-26 13:55-15:55 another host's\n",
+        today="2026-10-01",
+    )
+    # The exact section's weekday line replaces the glob's Sun#2; every dated
+    # line that applies to the host stays.
+    assert _window_lines(out) == [2, 5, 7, 8]
+    assert [w["reason"] for w in out["window"] if w["date"]] == [
+        "global",
+        "glob",
+        "exact",
+    ]
 
 
 # --- the doc and the parser agree ------------------------------------------------
