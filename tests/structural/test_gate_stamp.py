@@ -209,6 +209,18 @@ class TestRecords:
         result = _run(repo, "write", "../../etc/passwd")
         assert result.returncode == 2
 
+    def test_check_refuses_what_is_not_a_key(self, repo):
+        """A hit means "skip the suite", so it must never come from a path.
+
+        Once the stamp directory exists, `../HEAD` resolves to the
+        repository's own HEAD file, so an unvalidated check reported it as a
+        recorded pass.
+        """
+        _run(repo, "write", _key(repo))
+        result = _run(repo, "check", "../HEAD")
+        assert result.returncode == 2
+        assert result.stdout == ""
+
     def test_list_shows_the_newest_first(self, repo):
         k1 = _key(repo)
         _run(repo, "write", k1, "--label", "first")
