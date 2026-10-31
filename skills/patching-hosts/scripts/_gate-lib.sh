@@ -168,7 +168,7 @@ SPAN_S="" SPAN_E=""
 # SPAN_WHAT names the span in a refusal, where it's more than the step's.
 SPAN_WHAT=""
 gate_span() {  # <expected seconds, or empty when unknown>
-  local S E o="" a="" r d ws we len wk os oe day q dq hit="" s_iso e_iso what=$SPAN_WHAT
+  local S E o="" a="" r d ws we len wk os oe day q dq hit="" s_iso e_iso what=$SPAN_WHAT occ md wdd
   [ -n "$what" ] || what="the step's span"
   local -a f=()
   if ! is_int "$1"; then
@@ -185,18 +185,39 @@ gate_span() {  # <expected seconds, or empty when unknown>
   jaddn o expected_seconds "$((E - S))"
   # Monday 00:00 UTC of the week holding S: 1970-01-01 was a Thursday.
   wk=$((S - ((S / 86400 + 3) % 7) * 86400 - S % 86400))
+  # A record: weekday start end wraps line week date reason expired (#421).
   for r in ${KNOB_WINDOW[@]+"${KNOB_WINDOW[@]}"}; do
     IFS=$KNOB_US read -r -a f <<<"$r"
-    dow_of d "${f[0]}"
     hm_sec ws "${f[1]}"
     hm_sec we "${f[2]}"
     len=$((we - ws))
     [ "${f[3]}" -eq 0 ] || len=$((len + 86400))
-    # Last week's occurrence too: one that wraps past Sunday midnight.
-    for os in $((wk - 7 * 86400 + d * 86400 + ws)) $((wk + d * 86400 + ws)); do
+    if [ -n "${f[6]}" ]; then
+      # A dated line opens once, on its date.
+      knob_epoch_day wdd "${f[6]}"
+      occ=$((wdd * 86400 + ws))
+    else
+      # Last week's occurrence too: one that wraps past Sunday midnight.
+      dow_of d "${f[0]}"
+      occ="$((wk - 7 * 86400 + d * 86400 + ws)) $((wk + d * 86400 + ws))"
+    fi
+    for os in $occ; do
+      # A week of the month is the one the range starts in: Sun#2 is a
+      # Sunday from the 8th to the 14th.
+      if [ -n "${f[5]}" ]; then
+        knob_mday md "$((os / 86400))"
+        [ $(((md - 1) / 7 + 1)) -eq "${f[5]}" ] || continue
+      fi
       oe=$((os + len))
       if [ -z "$hit" ] && [ "$os" -le "$S" ] && [ "$E" -le "$oe" ]; then
-        hit="{\"weekday\": \"${f[0]}\", \"start\": \"${f[1]}\", \"end\": \"${f[2]}\", \"line\": ${f[4]}}"
+        hit=""
+        jadds hit weekday "${f[0]}"
+        jaddn hit week "${f[5]}"
+        jaddsn hit date "${f[6]}"
+        jadds hit start "${f[1]}"
+        jadds hit end "${f[2]}"
+        jaddn hit line "${f[4]}"
+        hit="{$hit}"
       fi
     done
   done

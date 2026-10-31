@@ -63,7 +63,10 @@ esac
 # KNOB_REPORT_ONLY_WHY.
 #
 # Field order per record:
-#   KNOB_WINDOW     weekday start end wraps line
+#   KNOB_WINDOW     weekday start end wraps line week date reason
+#                   expired(0|1); week (1-5) for a week of the month, or
+#                   empty, and date (YYYY-MM-DD) for a dated line, whose
+#                   weekday is the one its date falls on, or empty (#421)
 #   KNOB_QUIET      weekday-or-empty start end wraps line
 #   KNOB_INFLIGHT, KNOB_HEALTH, KNOB_RECOVERY   command line
 #   KNOB_RESTARTER, KNOB_SERVICE                unit line
@@ -143,6 +146,39 @@ _knob_is_date() {
   [[ $1 =~ $re ]]
 }
 
+# A date on the calendar, from 1970 on: one a window can open on (#421).
+_knob_is_day() {
+  local _kd _km
+  _knob_is_date "$1" || return 1
+  [ "$((10#${1:0:4}))" -ge 1970 ] || return 1
+  knob_epoch_day _kd "$1"
+  knob_mday _km "$_kd"
+  [ "$_km" -eq "$((10#${1:8:2}))" ]
+}
+
+# Days since 1970-01-01 of a YYYY-MM-DD, by the proleptic Gregorian calendar
+# (Hinnant's days_from_civil), in shell arithmetic: BSD and GNU date parse a
+# date with different flags. A day that isn't on the calendar, such as the
+# 31st of April, counts on into the next month.
+knob_epoch_day() {  # <var> <YYYY-MM-DD>
+  local _y=$((10#${2:0:4})) _m=$((10#${2:5:2})) _d=$((10#${2:8:2})) _e _yoe _mp _doe
+  if [ "$_m" -gt 2 ]; then _mp=$((_m - 3)); else _mp=$((_m + 9)) _y=$((_y - 1)); fi
+  _e=$((_y / 400))
+  _yoe=$((_y - _e * 400))
+  _doe=$((_yoe * 365 + _yoe / 4 - _yoe / 100 + (153 * _mp + 2) / 5 + _d - 1))
+  printf -v "$1" '%s' "$((_e * 146097 + _doe - 719468))"
+}
+
+# The day of the month of a day since 1970-01-01 (Hinnant's civil_from_days).
+knob_mday() {  # <var> <days since 1970-01-01, not negative>
+  local _z=$(($2 + 719468)) _e _doe _yoe _doy
+  _e=$((_z / 146097))
+  _doe=$((_z - _e * 146097))
+  _yoe=$(((_doe - _doe / 1460 + _doe / 36524 - _doe / 146096) / 365))
+  _doy=$((_doe - (365 * _yoe + _yoe / 4 - _yoe / 100)))
+  printf -v "$1" '%s' "$((_doy - (153 * ((5 * _doy + 2) / 153) + 2) / 5 + 1))"
+}
+
 _knob_record() {  # <line> <sec> <dir> <key> <val>
   _KP_LINE+=("$1") _KP_SEC+=("$2") _KP_DIR+=("$3") _KP_KEY+=("$4") _KP_VAL+=("$5")
 }
@@ -169,10 +205,23 @@ _knob_directive() {  # <line> <sec> <text>
         *) _knob_malformed "$n" "posture takes automatic or scheduled" ;;
       esac ;;
     window)
-      if [ "$nt" -eq 2 ] && _knob_is_weekday "${tok[0]}" && _knob_is_time_range "${tok[1]}"; then
-        _knob_record "$n" "$sec" window "" "${tok[0]}$u$_KT_START$u$_KT_END$u$_KT_WRAPS"
+      # #421: a weekday, that weekday in one week of the month (Sun#2 is the
+      # 2nd Sunday: the 8th to the 14th), or a date, which alone may carry
+      # a reason. A dated line is recorded apart: no scope's list replaces it.
+      local wre='^(Mon|Tue|Wed|Thu|Fri|Sat|Sun)(#([1-5]))?$' wd="" wn="" wdate="" wdir=window wday
+      local -a wnames=(Thu Fri Sat Sun Mon Tue Wed)
+      if [[ ${tok[0]:-} =~ $wre ]]; then
+        wd=${BASH_REMATCH[1]} wn=${BASH_REMATCH[3]}
+      elif _knob_is_day "${tok[0]:-}"; then
+        wdate=${tok[0]} wdir=window-dated
+        knob_epoch_day wday "$wdate"
+        wd=${wnames[$((wday % 7))]}
+      fi
+      if [ -n "$wd" ] && [ "$nt" -ge 2 ] && { [ "$nt" -eq 2 ] || [ -n "$wdate" ]; } &&
+        _knob_is_time_range "${tok[1]}"; then
+        _knob_record "$n" "$sec" "$wdir" "" "$wd$u$_KT_START$u$_KT_END$u$_KT_WRAPS$u$n$u$wn$u$wdate$u${tok[*]:2}"
       else
-        _knob_malformed "$n" "window takes <weekday> <HH:MM-HH:MM>, with a weekday Mon to Sun and an end that differs from the start"
+        _knob_malformed "$n" "window takes <weekday> <HH:MM-HH:MM>, <weekday>#<week of the month, 1 to 5> <HH:MM-HH:MM>, or <YYYY-MM-DD> <HH:MM-HH:MM> [<reason>], with a weekday Mon to Sun, a date on the calendar, and an end that differs from the start"
       fi ;;
     quiet)
       local qre='^\*:([0-5][0-9])-\*:([0-5][0-9])$' qa qb qh qe
@@ -484,7 +533,7 @@ _knob_select() {  # <directive> <keyed|list>
 }
 
 _knob_resolve() {
-  local i d u=$KNOB_US step val
+  local i k d u=$KNOB_US step val
   local -a f=()
 
   _knob_select class keyed
@@ -496,12 +545,41 @@ _knob_resolve() {
   _knob_select records keyed
   for i in ${_KSEL[@]+"${_KSEL[@]}"}; do KNOB_RECORDS=${_KP_VAL[$i]} KNOB_RECORDS_LINE=${_KP_LINE[$i]}; done
 
-  for d in window quiet inflight health recovery restarter service backup caller depends; do
+  # Windows: the recurring lines are a list, replaced whole by the most
+  # specific scope that declares one; every dated line that applies to the
+  # host is added, wherever it sits (#421). In file order.
+  local wtoday wdd
+  local -a wsel=()
+  _knob_select window list
+  wsel=(${_KSEL[@]+"${_KSEL[@]}"})
+  knob_epoch_day wtoday "$KNOB_TODAY"
+  for i in ${_KP_DIR[@]+"${!_KP_DIR[@]}"}; do
+    case ${_KP_DIR[$i]} in
+      window)
+        for k in ${wsel[@]+"${wsel[@]}"}; do
+          [ "$k" != "$i" ] || KNOB_WINDOW+=("${_KP_VAL[$i]}${u}0")
+        done ;;
+      window-dated)
+        _knob_rank_of "$i"
+        [ "$_KR" -gt 0 ] || continue
+        IFS=$u read -r -a f <<<"${_KP_VAL[$i]}"
+        knob_epoch_day wdd "${f[6]}"
+        # Passed once the day it closes on has: the day itself still counts.
+        if [ "$wtoday" -gt "$((wdd + f[3]))" ]; then
+          KNOB_WINDOW+=("${_KP_VAL[$i]}${u}1")
+          _knob_finding "${f[4]}" past-window \
+            "window ${f[6]} ${f[1]}-${f[2]} has passed; remove the line, which git history keeps"
+        else
+          KNOB_WINDOW+=("${_KP_VAL[$i]}${u}0")
+        fi ;;
+    esac
+  done
+
+  for d in quiet inflight health recovery restarter service backup caller depends; do
     _knob_select "$d" list
     for i in ${_KSEL[@]+"${_KSEL[@]}"}; do
       val="${_KP_VAL[$i]}$u${_KP_LINE[$i]}"
       case $d in
-        window) KNOB_WINDOW+=("$val") ;;
         quiet) KNOB_QUIET+=("$val") ;;
         inflight) KNOB_INFLIGHT+=("$val") ;;
         health) KNOB_HEALTH+=("$val") ;;
@@ -518,7 +596,7 @@ _knob_resolve() {
   # Datastores: the winning records are one per unit and database, grouped
   # back into one entry per unit, with the line that first names it.
   local -a du=() de=() dd=() dl=()
-  local k found
+  local found
   _knob_select datastore keyed
   for i in ${_KSEL[@]+"${_KSEL[@]}"}; do
     IFS=$u read -r -a f <<<"${_KP_VAL[$i]}"

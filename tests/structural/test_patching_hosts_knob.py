@@ -490,7 +490,12 @@ def test_a_week_of_the_month_is_read_beside_its_weekday(tmp_path):
 def test_a_weekday_line_carries_no_week_date_or_reason(tmp_path):
     out = _read(tmp_path, "posture scheduled\nwindow Tue 15:00-21:00\n")
     [w] = out["window"]
-    assert (w["weekday"], w["week"], w["date"], w["reason"]) == ("Tue", None, None, None)
+    assert (w["weekday"], w["week"], w["date"], w["reason"]) == (
+        "Tue",
+        None,
+        None,
+        None,
+    )
     assert w["expired"] is False
 
 
@@ -918,7 +923,9 @@ def test_a_caller_keeps_its_own_help_and_reads_the_knob_variables(tmp_path):
     r = _source(tmp_path, knob, "", after, "--help")
     assert r.returncode == 0, r.stderr
     assert "This file is a library" not in r.stdout
-    assert r.stdout.splitlines() == ["scheduled 1 1", "Tue|15:00|21:00|0|2"]
+    # #421 appends week, date, reason and expired after the line, so the
+    # first five fields read as they always did.
+    assert r.stdout.splitlines() == ["scheduled 1 1", "Tue|15:00|21:00|0|2||||0"]
 
 
 def test_knob_load_refuses_a_date_or_host_it_cant_use(tmp_path):

@@ -23,7 +23,9 @@ Options:
 Output keys: knob, host, sections, class, posture, report_only,
 report_only_reasons, window, quiet, inflight, health, recovery, restarter, service,
 backup, caller, depends, datastore, hold, owner, image_owner, origin,
-exception, records, findings. Every value from the knob carries its line number, but a
+exception, records, findings. A window carries weekday, week (of the month,
+or null), date (a dated line's, or null), start, end, wraps, reason, expired
+and line. Every value from the knob carries its line number, but a
 datastore's databases, merged per unit, carry the line that first names the
 unit; sections are the matching headers' globs, with no line. A default
 carries line null. The grammar: references/knob.md.
@@ -149,7 +151,12 @@ js_list() {  # <strings>... -> JSON array
   printf ']'
 }
 
-o_window() { printf '{"weekday": %s, "start": %s, "end": %s, "wraps": %s, "line": %s}' "$(js "$1")" "$(js "$2")" "$(js "$3")" "$(js_bool "$4")" "$5"; }
+# #421: week is a week of the month, 1 to 5; date, a dated line's, whose
+# weekday is the one it falls on; expired, a dated line whose close has passed.
+o_window() {
+  printf '{"weekday": %s, "week": %s, "date": %s, "start": %s, "end": %s, "wraps": %s, "reason": %s, "expired": %s, "line": %s}' \
+    "$(js "$1")" "$(num_or_null "$6")" "$(js_or_null "$7")" "$(js "$2")" "$(js "$3")" "$(js_bool "$4")" "$(js_or_null "$8")" "$(js_bool "$9")" "$5"
+}
 o_quiet() { printf '{"weekday": %s, "start": %s, "end": %s, "wraps": %s, "line": %s}' "$(js_or_null "$1")" "$(js "$2")" "$(js "$3")" "$(js_bool "$4")" "$5"; }
 o_command() { printf '{"command": %s, "line": %s}' "$(js "$1")" "$2"; }
 o_unit() { printf '{"unit": %s, "line": %s}' "$(js "$1")" "$2"; }
