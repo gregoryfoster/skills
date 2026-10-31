@@ -185,6 +185,39 @@ class TestOncePerTree:
         _suite(repo, SHELLCHECK_REQUIRED="1")
         assert len(_calls(repo)) == 2
 
+    def test_pythonpath_is_a_different_tree(self, repo):
+        """It changes what pytest itself imports, and a test reads it."""
+        _suite(repo)
+        _suite(repo, PYTHONPATH=str(repo.parent / "elsewhere"))
+        assert len(_calls(repo)) == 2
+
+    @pytest.mark.parametrize("tool", ["git", "shellcheck", "bash"])
+    def test_a_host_tool_upgrade_is_a_different_tree(self, repo, tool):
+        """Same PATH, new binary behind it: a `brew upgrade` between two gates.
+
+        Stamps never expire, so an unchanged tree gated after an upgrade would
+        reuse a pass the new tool never ran. The suite branches on each of
+        these: git's version gates tests, shellcheck's is pinned, and every
+        script under test runs on PATH's bash.
+        """
+        version = repo.parent / "version"
+        version.write_text("1.0\n")
+        bin_dir = repo.parent / "toolbin"
+        bin_dir.mkdir()
+        real = shutil.which(tool)
+        rest = f'exec "{real}" "$@"' if real else "exit 127"
+        (bin_dir / tool).write_text(
+            "#!/bin/sh\n"
+            f'if [ "$1" = --version ]; then echo "version: $(cat "{version}")"; exit 0; fi\n'
+            f"{rest}\n"
+        )
+        (bin_dir / tool).chmod(0o755)
+        path = f"{bin_dir}:{os.environ['PATH']}"
+        assert _suite(repo, PATH=path).returncode == 0
+        version.write_text("2.0\n")
+        assert _suite(repo, PATH=path).returncode == 0
+        assert len(_calls(repo)) == 2
+
 
 class TestWorkers:
     def test_the_count_becomes_xdist_flags(self, repo):
