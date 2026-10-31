@@ -16,6 +16,7 @@ What this file pins, against references/knob.md:
 - scalars take the most specific value, lists are replaced whole, keyed
   directives accumulate per key;
 - an exception expires the day after its review-by date;
+- `cadence weekly|monthly` is one value, weekly by default (#529);
 - a window may name a week of the month (`Sun#2`) or a date, with a reason; a
   dated line is never replaced by a more specific scope's windows, and one
   whose close has passed is a finding, not a reason to go report-only (#421);
@@ -167,6 +168,10 @@ def test_a_last_line_without_a_newline_is_read(tmp_path):
         "window 2026-10-23",  # no range
         "window 2026-10-23 13:55-13:55 TS-2026-013",
         "window 26-10-23 13:55-15:55",
+        # #529: one of weekly or monthly.
+        "cadence",
+        "cadence daily",
+        "cadence weekly monthly",
         "quiet 25:00-01:00",  # bad hour
         "class prod",
         "posture sometimes",
@@ -609,6 +614,36 @@ def test_dated_windows_accumulate_across_scopes_and_skip_an_unmatched_section(tm
     ]
 
 
+# --- #529: the host's cadence -------------------------------------------------------
+
+
+def test_cadence_defaults_to_weekly(tmp_path):
+    out = _read(tmp_path, "posture scheduled\n")
+    assert out["cadence"] == {"value": "weekly", "line": None}
+    assert _read(tmp_path, "")["cadence"] == {"value": "weekly", "line": None}
+
+
+def test_a_cadence_line_is_one_value_the_most_specific_scope_sets(tmp_path):
+    text = "posture scheduled\ncadence monthly\n[host web-*]\ncadence weekly\n"
+    assert _read(tmp_path, text, host="db-1")["cadence"] == {
+        "value": "monthly",
+        "line": 2,
+    }
+    assert _read(tmp_path, text, host="web-1")["cadence"] == {
+        "value": "weekly",
+        "line": 4,
+    }
+
+
+def test_a_cadence_set_twice_at_one_precedence_is_a_repeat(tmp_path):
+    out = _read(tmp_path, "posture scheduled\ncadence weekly\ncadence monthly\n")
+    assert out["cadence"] == {"value": "monthly", "line": 3}
+    assert _kinds(out) == ["repeated"]
+    # No overdue-run check in v1: a cadence is read and printed, never a
+    # reason to go report-only.
+    assert out["report_only"] is False
+
+
 # --- the doc and the parser agree ------------------------------------------------
 
 
@@ -639,6 +674,7 @@ def test_the_examples_inflight_counts_a_running_oneshot():
 EVERY_DIRECTIVE = {
     "class": "class production",
     "posture": "posture scheduled",
+    "cadence": "cadence monthly",
     "window": "window Tue 15:00-21:00",
     "quiet": "quiet 07:25-08:15 Sun",
     "inflight": "inflight systemctl list-units 'app-task@*' --state=activating,active,deactivating --no-legend | wc -l",

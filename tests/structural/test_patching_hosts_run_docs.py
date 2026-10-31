@@ -8,6 +8,9 @@
 - #508, part 2: no step took the language reading after a run. The record
   names `probe.sh --refresh-into` as its last step, in every run, and a
   class or tree it couldn't read is recorded as no read, never 0.
+- #529: `scheduled` runs at the host's cadence, `cadence weekly|monthly`,
+  weekly by default, and the docs say so rather than "monthly"; run.md
+  states what a run with nothing pending does, a reboot still due included.
 """
 
 import re
@@ -125,3 +128,48 @@ def test_the_list_age_row_names_the_unpack_margin():
     # CR 1300: a ctime within an hour of os-release's is an unpack's.
     [row] = [li for li in READINGS.splitlines() if li.startswith("| List age ")]
     assert "an hour" in row
+
+
+# --- #529: the host's cadence, and the empty week ----------------------------------
+
+POLICY = (SKILL / "references" / "policy.md").read_text()
+
+
+def _description() -> str:
+    front = SKILL_MD.split("---", 2)[1]
+    [line] = [li for li in front.splitlines() if li.startswith("description: ")]
+    return line
+
+
+def _triggers() -> list[str]:
+    front = SKILL_MD.split("---", 2)[1]
+    [line] = [li for li in front.splitlines() if li.strip().startswith("triggers: ")]
+    return [t.strip() for t in line.split(":", 1)[1].split(",")]
+
+
+def test_the_description_says_the_hosts_cadence_and_keeps_every_trigger():
+    d = _description()
+    assert "monthly" not in d
+    assert "the host's cadence" in d
+    for t in _triggers():
+        assert f'"{t}"' in d, t
+
+
+def test_policy_and_knob_speak_of_the_hosts_cadence_not_a_month():
+    for name, text in (("policy.md", POLICY), ("knob.md", KNOB_MD)):
+        flat = " ".join(text.split())
+        assert "the host's cadence" in flat, name
+        for said in ("once a month", "monthly run", "monthly window", "| monthly |"):
+            assert said not in flat, f"{name}: {said}"
+    [row] = [li for li in KNOB_MD.splitlines() if li.startswith("| `cadence ")]
+    assert "weekly" in row and "Absent" in row
+
+
+def test_run_md_says_what_a_run_with_nothing_pending_does():
+    s = " ".join(_section(RUN, "## A run with nothing pending").split())
+    assert "ends at the readings and the record" in s
+    for skipped in ("no recovery point", "no callers' notice", "no window"):
+        assert skipped in s, skipped
+    # #496: an image push between runs left a reboot due with nothing pending.
+    assert "#496" in s and "`impact.reboot`" in s
+    assert "approval 3(b)" in s
