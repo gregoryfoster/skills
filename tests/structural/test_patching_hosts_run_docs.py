@@ -188,3 +188,11 @@ def test_the_refresh_row_names_apts_floor_for_error_on_any():
     row = _refresh_row()
     assert "apt 2.1.16" in row
     assert "older apt" in row
+
+
+def test_the_refresh_row_says_what_to_do_with_a_source_down_for_good():
+    # CR 1439: a dead source now stops every lane, the one-origin lane's
+    # window included, and the owner's fix is to the host's sources.
+    row = _refresh_row()
+    assert "one-origin lane" in row
+    assert "removed" in row and "owner" in row
