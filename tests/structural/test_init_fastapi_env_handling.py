@@ -13,7 +13,7 @@ Two defects, both copied into every repo the skill scaffolds:
    a production process with no use for either.
 
 The replacement is a pointer, not a third copy: the parse-don't-source
-`load_env` recipe in `shipping-work-python-fastapi/scripts/pre-ship.sh`'s
+`load_env` recipe in `shipping-work/scripts/pre-ship.sh`'s
 header. `TestThePointerRuns` runs the template's load line against that very
 recipe, so the pointer cannot name a loader that no longer exists.
 """
@@ -31,7 +31,7 @@ from .test_pre_ship_env_override import _extract_loader
 
 ROOT = Path(__file__).resolve().parents[2]
 SKILL = ROOT / "skills" / "init-project-fastapi"
-RECIPE_VARIANT = "shipping-work-python-fastapi"
+RECIPE_VARIANT = "shipping-work"
 RECIPE = f"skills/{RECIPE_VARIANT}/scripts/pre-ship.sh"
 TEMPLATE = SKILL / "references" / "agents-md-template.md"
 UNIT_DOC = SKILL / "references" / "systemd-deploy.md"
