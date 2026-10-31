@@ -35,14 +35,18 @@ SKILLS_DIR = Path(__file__).resolve().parents[2] / "skills"
 
 HEADER = "# --- Project-local env loading (optional override point) ---"
 
+# Every variant ships a real gate since #537, so every recipe is a wrapper.
 DELEGATING_VARIANTS = [
+    "shipping-work",
     "shipping-work-php",
     "shipping-work-python-click",
     "shipping-work-python-fastapi",
 ]
-ALL_VARIANTS = sorted(DELEGATING_VARIANTS + ["shipping-work"])
+ALL_VARIANTS = sorted(DELEGATING_VARIANTS)
 
-# The variants whose gate keeps a per-SHA stamp, and so reads the names.
+# The variants whose gate keeps the old per-SHA /tmp stamp, and so reads the
+# names. shipping-work keys its tree stamp on them too (gate-stamp.sh); that is
+# pinned in test_unified_pre_ship.py, since no /tmp file is there to inspect.
 STAMPED_VARIANTS = ["shipping-work-python-click", "shipping-work-python-fastapi"]
 
 # A value no assertion may ever see in output. If it shows up, the recipe or
@@ -66,8 +70,7 @@ def _git(*args: str) -> None:
 
 def _recipe(variant: str, etc_env: str = "/nonexistent-497/.env") -> str:
     """The runnable recipe: the first contiguous run of `#   ` code lines in
-    the override block, uncommented. For the delegating variants that is the
-    whole wrapper; for the stub it is the loader and the calls to it.
+    the override block, uncommented: the whole wrapper.
 
     `etc_env` stands in for the machine-wide file. The default does not exist;
     pass a real file to exercise a project whose env lives only there (CR 695).
@@ -124,19 +127,11 @@ def _run_recipe(
     variant: str, cwd: Path, etc_env: str = "/nonexistent-497/.env"
 ) -> subprocess.CompletedProcess:
     program = _recipe(variant, etc_env)
-    if variant in DELEGATING_VARIANTS:
-        # The wrapper execs the delegate through its symlink path; put the
-        # probe there so the exec lands on it.
-        delegate = cwd / "skills" / variant / "scripts" / "pre-ship.sh"
-        delegate.parent.mkdir(parents=True, exist_ok=True)
-        delegate.write_text(PROBE)
-    else:
-        # The stub's recipe runs inside the scaffolding, which has already set
-        # PROJECT_ROOT under the script's own `set -euo pipefail`.
-        program = (
-            "set -euo pipefail\n"
-            "PROJECT_ROOT=$(git rev-parse --show-toplevel)\n" + program + "\n" + PROBE
-        )
+    # The wrapper execs the delegate through its symlink path; put the probe
+    # there so the exec lands on it.
+    delegate = cwd / "skills" / variant / "scripts" / "pre-ship.sh"
+    delegate.parent.mkdir(parents=True, exist_ok=True)
+    delegate.write_text(PROBE)
     return subprocess.run(
         ["bash", "-c", program],
         cwd=str(cwd),

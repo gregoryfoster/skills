@@ -12,8 +12,10 @@
 # silently). The script exits 0 with no stdout when nothing is found.
 #
 # Shared between gather-context.sh (reviewing-code-python-click) and
-# pre-ship.sh (shipping-work-python-click) — review and ship must agree
-# on the import target, so the resolution logic lives in one place.
+# pre-ship.sh (shipping-work, and shipping-work-python-click until it is
+# retired, #537) — review and ship must agree on the import target, so the
+# resolution logic lives in one place, kept as byte-equal copies because a
+# skill may not reach into another skill's scripts.
 #
 # Exit codes:
 #   0  resolved (possibly to nothing — an empty answer is a valid one)

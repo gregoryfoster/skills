@@ -11,11 +11,12 @@ The supported shape is a wrapper: the skill's resolution loop probes `scripts/`
 first, so a project-local `scripts/pre-ship.sh` wins, loads its env, and
 delegates to the vendored script through the stable symlink path.
 
-`shipping-work` (the bare variant) is deliberately classified apart: its
-`pre-ship.sh` is a stub that exits 1 before doing any work, so there is nothing
-for a wrapper to delegate *to*. Its block says so and puts the env loading in
-the project's own override instead. Asserting the wrapper recipe there would
-enshrine advice that cannot work.
+`shipping-work` (the bare variant) was classified apart until #537: its
+`pre-ship.sh` was a stub that exited 1 before doing any work, so there was
+nothing for a wrapper to delegate *to*. It is now the one real gate, detecting
+the repo's toolchains, so the full recipe applies to it like every variant.
+What survives of the stub is its refusal: a repo with no toolchain it can
+detect is told, at exit 1, to supply a repo-root `scripts/pre-ship.sh`.
 """
 
 import re
@@ -31,19 +32,21 @@ SKILLS_DIR = Path(__file__).resolve().parents[2] / "skills"
 HEADER = "# --- Project-local env loading (optional override point) ---"
 
 # Variants shipping a real gate: a project-local override should wrap and
-# delegate, so the full recipe applies.
+# delegate, so the full recipe applies. Since #537 that is all of them.
 DELEGATING_VARIANTS = [
+    "shipping-work",
     "shipping-work-php",
     "shipping-work-python-click",
     "shipping-work-python-fastapi",
 ]
 
-# Variants whose pre-ship.sh is a stub with nothing to delegate to.
-STUB_VARIANTS = ["shipping-work"]
+# Variants that refuse a repo with no toolchain they can detect, naming the
+# repo-root remedy. Only the toolchain-detecting gate can reach that refusal.
+DETECTING_VARIANTS = ["shipping-work"]
 
-ALL_VARIANTS = sorted(DELEGATING_VARIANTS + STUB_VARIANTS)
+ALL_VARIANTS = sorted(DELEGATING_VARIANTS)
 
-# The remedy the stub must name, asserted positively
+# The remedy a refusal must name, asserted positively
 # ([#320](https://github.com/gregoryfoster/skills/issues/320)). The previous
 # guard was a blacklist of one spelling, `"local fork"`, read out of the
 # override comment block alone. The wording that actually shipped for months —
@@ -63,41 +66,38 @@ STUB_REMEDY = "scripts/pre-ship.sh"
 # purpose. A shape check blind to polarity would fail the fix rather than the
 # defect. This is a shape match, not comprehension — it is the weaker half
 # here, which is why STUB_REMEDY exists.
+#
+# STUB_REMEDY keeps its name from the stub it was written for: the refusal it
+# pins is the stub's, now reached by a repo with no detected toolchain.
 _COPY_INTO_SKILLS = re.compile(r"cop(?:y|ies|ying)\b[^\n]*\bskills/", re.I)
 _NEGATED = re.compile(
     r"\b(?:not|never|don'?t|avoid|rather than|instead of|no need)\b", re.I
 )
-_STUB_EXIT_MARKER = "# === STUB EARLY EXIT"
 
 
-def _stub_failure_message(variant: str) -> str:
-    """The echo lines the stub prints before `exit 1`.
+def _refusal_message(variant: str, tmp_path: Path) -> str:
+    """What the gate prints when it refuses a repo with no toolchain.
 
-    Scoped to the message rather than the file so the assertion pins the text
-    an operator actually reads at the moment the gate refuses, not a mention
-    of the same path in a comment further down.
+    Run, not parsed: the text an operator reads at the moment the gate
+    refuses is the text that prints, wherever in the file it lives.
     """
-    lines = _script(variant).read_text().splitlines()
-    starts = [i for i, ln in enumerate(lines) if ln.startswith(_STUB_EXIT_MARKER)]
-    assert len(starts) == 1, (
-        f"{variant}/scripts/pre-ship.sh must carry exactly one "
-        f"'{_STUB_EXIT_MARKER}' marker; found {len(starts)}."
+    repo = tmp_path / "bare"
+    repo.mkdir()
+    env = {"PATH": "/usr/bin:/bin", "HOME": str(tmp_path)}
+    subprocess.run(["git", "init", "-q", str(repo)], check=True, env=env)
+    res = subprocess.run(
+        ["bash", str(_script(variant))],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=30,
     )
-    out = []
-    for ln in lines[starts[0] :]:
-        if ln.startswith("exit "):
-            return "\n".join(out)
-        # `echo` lines only. The block also carries six comment lines, and
-        # including them let the assertion below be satisfied by a comment
-        # mentioning the remedy while the PRINTED message had lost it — which
-        # is the whole failure this guard exists to catch (CR 3).
-        if ln.startswith("echo "):
-            out.append(ln)
-    raise AssertionError(
-        f"{variant}/scripts/pre-ship.sh: no `exit` found after "
-        f"'{_STUB_EXIT_MARKER}' — the stub no longer exits where this file "
-        "thinks it does, so the message it pins may not be the one that prints."
+    assert res.returncode == 1, (
+        f"{variant}: a repo with no toolchain must exit 1, got "
+        f"{res.returncode}:\n{res.stderr}"
     )
+    return res.stderr
 
 
 def _script(variant: str) -> Path:
@@ -133,8 +133,8 @@ class TestOverrideBlockCoverage:
         assert discovered == ALL_VARIANTS, (
             f"shipping-work* variants on disk {discovered} do not match the "
             f"classified set {ALL_VARIANTS}. Add the new variant to "
-            "DELEGATING_VARIANTS (it ships a real gate) or STUB_VARIANTS (its "
-            "pre-ship.sh exits before doing work), and give it an override "
+            "DELEGATING_VARIANTS (every variant ships a real gate since #537), "
+            "and give it an override "
             "block — the block drifting to a subset of variants is the "
             "regression this file exists to prevent."
         )
@@ -157,8 +157,8 @@ class TestOverrideBlockCoverage:
                 f"{variant}/scripts/pre-ship.sh:{n} still recommends a local "
                 "fork. A fork copies the whole gate to add a few lines and "
                 "drifts silently on every submodule update. Recommend a "
-                "wrapper instead (or, for the stub, a repo-root "
-                f"{STUB_REMEDY})."
+                "wrapper instead (or, for a toolchain the gate cannot "
+                f"detect, a repo-root {STUB_REMEDY})."
             )
             if _COPY_INTO_SKILLS.search(line) and not _NEGATED.search(line):
                 raise AssertionError(
@@ -167,14 +167,14 @@ class TestOverrideBlockCoverage:
                     "That is a fork of the whole skill, which then drifts on "
                     "every submodule update. The supported mechanism is one "
                     f"file: a repo-root {STUB_REMEDY} (#301), wrapping the "
-                    "vendored gate for the delegating variants and BEING the "
-                    "gate for the stub. If this line warns against the copy "
+                    "vendored gate, or BEING the gate for a toolchain none of "
+                    "them detects. If this line warns against the copy "
                     "rather than recommending it, phrase the negation on the "
                     "same line."
                 )
 
-    @pytest.mark.parametrize("variant", STUB_VARIANTS)
-    def test_stub_failure_message_names_the_repo_root_remedy(self, variant):
+    @pytest.mark.parametrize("variant", DETECTING_VARIANTS)
+    def test_refusal_names_the_repo_root_remedy(self, variant, tmp_path):
         """The positive half, and the load-bearing one (#320).
 
         `test_does_not_recommend_a_fork` can only reject spellings someone
@@ -182,7 +182,7 @@ class TestOverrideBlockCoverage:
         prints when the gate refuses — so a reword that drops the remedy
         fails here even if it introduces no forbidden phrase at all.
         """
-        msg = _stub_failure_message(variant)
+        msg = _refusal_message(variant, tmp_path)
         assert STUB_REMEDY in msg, (
             f"{variant}/scripts/pre-ship.sh's failure message does not name "
             f"`{STUB_REMEDY}`. That is the mechanism docs/STYLE.md documents "
@@ -192,8 +192,8 @@ class TestOverrideBlockCoverage:
             "copy-into-skills/ wording survived for months. Printed:\n" + msg
         )
 
-    @pytest.mark.parametrize("variant", STUB_VARIANTS)
-    def test_stub_help_names_the_repo_root_remedy(self, variant):
+    @pytest.mark.parametrize("variant", DETECTING_VARIANTS)
+    def test_help_names_the_repo_root_remedy(self, variant):
         """`--help` is the other surface an operator reaches for, and the
         failure message now points at it by name."""
         res = subprocess.run(
@@ -380,27 +380,6 @@ class TestDelegatingVariantsCarryTheWrapperRecipe:
             f"{variant}/scripts/pre-ship.sh must document exit 2 as its "
             "tooling/infra code in --help for the recipe's `exit 2` to mean "
             "anything to an operator."
-        )
-
-
-class TestStubVariantDoesNotRecommendDelegation:
-    @pytest.mark.parametrize("variant", STUB_VARIANTS)
-    def test_no_delegate_recipe(self, variant):
-        block = _block(variant)
-        assert "$DELEGATE" not in block, (
-            f"{variant}/scripts/pre-ship.sh is a stub that exits before doing "
-            "work — a wrapper delegating to it would exec a script that "
-            "immediately errors. Its block must put the env loading in the "
-            "project's own override instead."
-        )
-
-    @pytest.mark.parametrize("variant", STUB_VARIANTS)
-    def test_says_why_the_wrapper_shape_does_not_apply(self, variant):
-        block = _block(variant)
-        assert "stub" in block.lower(), (
-            f"{variant}/scripts/pre-ship.sh block must say that this script is "
-            "a stub, so a reader who saw the wrapper recipe in a sibling "
-            "variant knows why this one differs."
         )
 
 

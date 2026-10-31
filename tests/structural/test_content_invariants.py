@@ -1397,6 +1397,21 @@ class TestPythonClickHelperByteEquality:
             f"assertion and document the intended divergence."
         )
 
+    def test_the_unified_gates_copy_is_byte_equal_too(self):
+        """The one shipping-work gate runs the import check in every uv repo
+        (#537, Step 5 row 7), from its own copy: a skill may not reach into
+        another's scripts, so the resolver is a third byte-equal copy.
+        `detect-test-dirs.sh` has no third copy — the unified gate leaves
+        test discovery to pytest (row 8)."""
+        name = "detect-import-targets.sh"
+        unified = SKILLS_DIR / "shipping-work" / "scripts" / name
+        review = SKILLS_DIR / "reviewing-code-python-click" / "scripts" / name
+        assert not unified.is_symlink()
+        assert unified.read_bytes() == review.read_bytes(), (
+            f"shipping-work/scripts/{name} differs from the click copies; "
+            "re-sync all three"
+        )
+
 
 # ---------------------------------------------------------------------------
 # Gate-script hardening (cross-variant, cross-script)
