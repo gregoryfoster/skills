@@ -307,8 +307,18 @@ the parts run in order: A, then B, then C.
        `load_env` line in AGENTS.md, a wrapper's `DELEGATE`, `forked-ok`)
        and re-running the doctor, then confirming it repointed the link and
        committing the `git add` it prints;
-     - rewriting any override to `overrides: gregoryfoster/shipping-work`;
-       archiver's bare `exec` wrapper becomes a plain symlink;
+     - **symlinks and configuration, not overrides** (user, 2026-10-31):
+       overrides have proven to fall out of sync too easily, so every
+       override of a vendored skill in the repo — the `shipping-work-*`
+       ones (archiver, wordpress, wslcb, watcher) first — is replaced by a
+       whole-directory symlink. What the override carried moves into
+       `.skills/` knobs (`doc-sections`, `doc-sensitive-paths`,
+       `import-targets`, `pre-ship-uv-args`, `test-workers`,
+       `gate-stamp-inputs`), a repo-root `scripts/pre-ship.sh` wrapper
+       (wrap, don't fork), or AGENTS.md guidance. A delta that none of
+       these can express is filed upstream as a knob request, and the
+       issue names it. It is not a reason to keep the override. Archiver's
+       bare `exec` wrapper becomes a plain symlink;
      - the repo's `.skills/test-workers`;
      - its `auditing-ci-cost` findings (Step 11). That makes one issue
        per repo, not two.

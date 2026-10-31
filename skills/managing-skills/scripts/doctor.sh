@@ -2246,7 +2246,7 @@ retire_one() {
   local link="skills/$3" dest="skills/$4" tgt newtgt refs rc dangling=0 shown n f
   if [ ! -L "$link" ]; then
     if [ -e "$link" ]; then
-      RETIRED_HELD+=("$link — retired for $new, but a directory (an override, or per-file links): rewrite it against $new by hand")
+      RETIRED_HELD+=("$link — retired for $new, but a directory (an override, or per-file links): replace it with a symlink to $new, moving its local changes into .skills/ configuration or a wrapper")
       return 1
     fi
     return 0

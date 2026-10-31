@@ -35,7 +35,7 @@ The doctor reads every vendor's map and moves both links of the chain onto `<new
 
 What it will not do, each reported instead:
 
-- **Rewrite a directory at `skills/<old>`.** An override, or a directory of per-file links, is rewritten against `<new>` by its operator. This is the same call the drift check makes when it never merges.
+- **Rewrite a directory at `skills/<old>`.** An override, or a directory of per-file links, is its operator's to replace — with a whole-directory symlink to `<new>`, its local changes moved into `.skills/` configuration, a wrapper or AGENTS.md. A copied SKILL.md is what drifts; a symlink and a knob do not. The doctor leaves the replacement to the operator, as the drift check never merges.
 - **Replace a `skills/<new>` that is not the vendor's own link.** That is a local choice. If it *is* the vendor's link, the old link is simply removed.
 - **Move a link a tracked file still names.** A wrapper's `DELEGATE="skills/<old>/scripts/pre-ship.sh"`, or the `load_env` line `init-project-fastapi` scaffolds into AGENTS.md, would break the moment the link moved. So any tracked file containing `skills/<old>/` holds the link, and the report names the files. `git grep` reads the working tree, so an uncommitted fix releases the hold on the next run. `.skills/doctor.sh` is excluded, since its comments are history. A link that already dangles is the one exception: nothing works through it, so it is repointed and the references are reported.
 
