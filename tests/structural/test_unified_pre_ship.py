@@ -222,11 +222,28 @@ class TestPython:
         assert ["check", "."] in ruff
         assert ["format", "--check", "."] in ruff
 
-    def test_import_check_from_the_project_name(self, repo):
-        """Row 7: every uv repo, `-` read as `_`."""
+    @pytest.mark.parametrize("where", ["demo_app", "src/demo_app"])
+    def test_import_check_from_the_project_name(self, repo, where):
+        """Row 7: every uv repo, `-` read as `_`, when the package is there."""
+        (repo / where).mkdir(parents=True)
+        (repo / where / "__init__.py").write_text("")
         _uv_repo(repo, '"fastapi"')
         assert _gate(repo).returncode == 0
         assert ["-c", "import demo_app"] in _uv_tool_calls(repo, "python")
+
+    def test_a_guessed_target_with_no_package_is_skipped_with_a_note(self, repo):
+        """Row 7, as revised: a guess is checked against the tree first.
+
+        Most cohort services package their code as `src` (hatch
+        `packages = ["src"]`), so `import <project name>` fails in every one
+        of them. A guess that names no directory in the repo is a wrong guess,
+        not broken packaging: it is skipped, and the note names the knob.
+        """
+        _uv_repo(repo, '"fastapi"')
+        result = _gate(repo)
+        assert result.returncode == 0, result.stderr
+        assert ["-c", "import demo_app"] not in _uv_tool_calls(repo, "python")
+        assert ".skills/import-targets" in result.stdout
 
     def test_import_targets_knob_wins(self, repo):
         _uv_repo(repo)
