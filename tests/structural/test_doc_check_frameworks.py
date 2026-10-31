@@ -112,3 +112,21 @@ def test_help_works_outside_a_repository(tmp_path):
     )
     assert result.returncode == 0, result.stderr
     assert "Usage:" in result.stdout
+
+
+@pytest.mark.parametrize(
+    ("pyproject", "extra", "nested"),
+    [
+        (FASTAPI_PYPROJECT, (), "services/ingest/alembic/versions/0002_x.py"),
+        (CLICK_PYPROJECT, (), "packages/co-core/src/co_core/api.py"),
+        (None, ("composer.json",), "bedrock/web/app/themes/co/functions.php"),
+    ],
+    ids=["fastapi", "click", "php"],
+)
+def test_a_frameworks_paths_match_at_any_depth(tmp_path, pyproject, extra, nested):
+    """#252's segment matching holds for the framework lists too: a
+    workspace or a Bedrock tree nests these paths below the root."""
+    repo = _repo(tmp_path, pyproject, [nested], extra=extra)
+    result = _check(repo)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert nested in result.stdout
