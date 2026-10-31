@@ -57,7 +57,7 @@ esac
 # Every result variable, reset.
 #
 # Scalars: KNOB_PATH, KNOB_HOST, KNOB_TODAY, KNOB_PRESENT (0|1), KNOB_CLASS,
-# KNOB_POSTURE, KNOB_IMAGE_OWNER and KNOB_RECORDS, each value with a *_LINE
+# KNOB_POSTURE, KNOB_CADENCE, KNOB_IMAGE_OWNER and KNOB_RECORDS, each value with a *_LINE
 # (empty for a default), and KNOB_REPORT_ONLY (0|1).
 # Lists of plain strings: KNOB_SECTIONS (applied, least specific first) and
 # KNOB_REPORT_ONLY_WHY.
@@ -87,6 +87,9 @@ knob_reset() {
   KNOB_PATH="" KNOB_HOST="" KNOB_TODAY="" KNOB_PRESENT=0
   KNOB_CLASS="production" KNOB_CLASS_LINE=""
   KNOB_POSTURE="automatic" KNOB_POSTURE_LINE=""
+  # #529: how often the scheduled run comes round. Read and printed only:
+  # no script checks a run against it.
+  KNOB_CADENCE="weekly" KNOB_CADENCE_LINE=""
   KNOB_IMAGE_OWNER="" KNOB_IMAGE_OWNER_LINE=""
   KNOB_RECORDS="" KNOB_RECORDS_LINE=""
   KNOB_SECTIONS=()
@@ -203,6 +206,11 @@ _knob_directive() {  # <line> <sec> <text>
       case "$nt:${tok[0]:-}" in
         1:automatic | 1:scheduled) _knob_record "$n" "$sec" posture "" "${tok[0]}" ;;
         *) _knob_malformed "$n" "posture takes automatic or scheduled" ;;
+      esac ;;
+    cadence)
+      case "$nt:${tok[0]:-}" in
+        1:weekly | 1:monthly) _knob_record "$n" "$sec" cadence "" "${tok[0]}" ;;
+        *) _knob_malformed "$n" "cadence takes weekly or monthly" ;;
       esac ;;
     window)
       # #421: a weekday, that weekday in one week of the month (Sun#2 is the
@@ -540,6 +548,8 @@ _knob_resolve() {
   for i in ${_KSEL[@]+"${_KSEL[@]}"}; do KNOB_CLASS=${_KP_VAL[$i]} KNOB_CLASS_LINE=${_KP_LINE[$i]}; done
   _knob_select posture keyed
   for i in ${_KSEL[@]+"${_KSEL[@]}"}; do KNOB_POSTURE=${_KP_VAL[$i]} KNOB_POSTURE_LINE=${_KP_LINE[$i]}; done
+  _knob_select cadence keyed
+  for i in ${_KSEL[@]+"${_KSEL[@]}"}; do KNOB_CADENCE=${_KP_VAL[$i]} KNOB_CADENCE_LINE=${_KP_LINE[$i]}; done
   _knob_select image-owner keyed
   for i in ${_KSEL[@]+"${_KSEL[@]}"}; do KNOB_IMAGE_OWNER=${_KP_VAL[$i]} KNOB_IMAGE_OWNER_LINE=${_KP_LINE[$i]}; done
   _knob_select records keyed

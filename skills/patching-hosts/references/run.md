@@ -14,6 +14,12 @@ Three, given separately:
 
    A maintainer script's restart is still a restart, so the owner approves it knowingly, not as a side effect of "the apply".
 
+## A run with nothing pending
+
+At a weekly cadence, many scheduled runs find nothing to take. **A run whose readings, from a `--refresh-into` probe, show nothing pending, with no security, no `-updates` and nothing from a followed origin, ends at the readings and the record**: no recovery point, no callers' notice, no window and no approval, since nothing changes. A quiet week costs a probe. The record says what was read, and that nothing was pending, by class.
+
+**Nothing pending doesn't mean no reboot is due.** A package installed between runs, as an image push did on notifier (#496), can leave `impact.reboot` calling for one: `required` from `/run/reboot-required` (the probe's `reboot:pending` finding), `pid1_deleted_maps` above 0, or a service in `needrestart_services`. Then the run is the reboot alone: [step 4's decision](reboot-and-record.md#4-the-reboot-decision), each `caller` told, approval 3(b), and the chain inside a window. No bulk made a run directory, so make one root-only for the chain to take, `sudo install -d -m 700 /var/backups/patching-hosts-<UTC>`.
+
 ## Before each step: the gate
 
 - **The step's whole span**, from now to now plus its expected duration, is inside a `window` and overlaps no `quiet` range. For a held step, the expected duration is the dry run's wall time. For the reboot, it's the chain's delay plus the boot and the post-boot checks. **The bulk's span is the rest of the run** (#362): the bulk at three times its dry run (replicator's took 2.2 times, wslcb's 2.5), each held step its selection reaches, and the reboot chain wherever the selection makes a reboot certain (a kernel, or a package owning a file PID 1 maps) or PID 1's files can't be read. Only PID 1 is read: [step 4](reboot-and-record.md#4-the-reboot-decision) also reboots for dbus, logind, `user@` or a data store, and a library only they map goes unpredicted. On watcher, PostgreSQL's backends mapped `libxml2`, which PID 1 doesn't. On wslcb a bulk that ended 12 minutes before the window closed left the 720 s chain no room, and the host ran 13 hours on deleted libraries. Checking only the start lets a 9-minute apply begun 5 minutes before a quiet range run into it.

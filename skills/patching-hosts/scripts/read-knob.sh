@@ -20,7 +20,7 @@ Options:
                   today, UTC)
   -h, --help      show this help
 
-Output keys: knob, host, sections, class, posture, report_only,
+Output keys: knob, host, sections, class, posture, cadence, report_only,
 report_only_reasons, window, quiet, inflight, health, recovery, restarter, service,
 backup, caller, depends, datastore, hold, owner, image_owner, origin,
 exception, records, findings. A window carries weekday, week (of the month,
@@ -199,6 +199,7 @@ printf '  "host": %s,\n' "$(js "$KNOB_HOST")"
 printf '  "sections": %s,\n' "$(js_list ${KNOB_SECTIONS[@]+"${KNOB_SECTIONS[@]}"})"
 printf '  "class": {"value": %s, "line": %s},\n' "$(js "$KNOB_CLASS")" "$(num_or_null "$KNOB_CLASS_LINE")"
 printf '  "posture": {"value": %s, "line": %s},\n' "$(js "$KNOB_POSTURE")" "$(num_or_null "$KNOB_POSTURE_LINE")"
+printf '  "cadence": {"value": %s, "line": %s},\n' "$(js "$KNOB_CADENCE")" "$(num_or_null "$KNOB_CADENCE_LINE")"
 printf '  "report_only": %s,\n' "$(js_bool "$KNOB_REPORT_ONLY")"
 printf '  "report_only_reasons": %s,\n' "$(js_list ${KNOB_REPORT_ONLY_WHY[@]+"${KNOB_REPORT_ONLY_WHY[@]}"})"
 emit_records window o_window , ${KNOB_WINDOW[@]+"${KNOB_WINDOW[@]}"}
