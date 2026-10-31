@@ -65,7 +65,7 @@ esac
 # Field order per record:
 #   KNOB_WINDOW     weekday start end wraps line
 #   KNOB_QUIET      weekday-or-empty start end wraps line
-#   KNOB_INFLIGHT, KNOB_HEALTH                  command line
+#   KNOB_INFLIGHT, KNOB_HEALTH, KNOB_RECOVERY   command line
 #   KNOB_RESTARTER, KNOB_SERVICE                unit line
 #   KNOB_BACKUP     unit covers line (space-separated, each a datastore unit
 #                   or <unit>:<db>,<db>...; backup_covers reads them)
@@ -87,7 +87,7 @@ knob_reset() {
   KNOB_IMAGE_OWNER="" KNOB_IMAGE_OWNER_LINE=""
   KNOB_RECORDS="" KNOB_RECORDS_LINE=""
   KNOB_SECTIONS=()
-  KNOB_WINDOW=() KNOB_QUIET=() KNOB_INFLIGHT=() KNOB_HEALTH=()
+  KNOB_WINDOW=() KNOB_QUIET=() KNOB_INFLIGHT=() KNOB_HEALTH=() KNOB_RECOVERY=()
   KNOB_RESTARTER=() KNOB_SERVICE=() KNOB_BACKUP=() KNOB_CALLER=() KNOB_DEPENDS=()
   KNOB_DATASTORE=() KNOB_HOLD=() KNOB_OWNER=() KNOB_ORIGIN=()
   KNOB_EXCEPTION=() KNOB_FINDING=()
@@ -194,7 +194,7 @@ _knob_directive() {  # <line> <sec> <text>
       else
         _knob_malformed "$n" "quiet takes <HH:MM-HH:MM> [<weekday>], or *:MM-*:MM for every hour, with an end that differs from the start"
       fi ;;
-    inflight | health)
+    inflight | health | recovery)
       if [ -n "$rest" ]; then
         _knob_record "$n" "$sec" "$dir" "" "$rest"
       else
@@ -496,7 +496,7 @@ _knob_resolve() {
   _knob_select records keyed
   for i in ${_KSEL[@]+"${_KSEL[@]}"}; do KNOB_RECORDS=${_KP_VAL[$i]} KNOB_RECORDS_LINE=${_KP_LINE[$i]}; done
 
-  for d in window quiet inflight health restarter service backup caller depends; do
+  for d in window quiet inflight health recovery restarter service backup caller depends; do
     _knob_select "$d" list
     for i in ${_KSEL[@]+"${_KSEL[@]}"}; do
       val="${_KP_VAL[$i]}$u${_KP_LINE[$i]}"
@@ -505,6 +505,7 @@ _knob_resolve() {
         quiet) KNOB_QUIET+=("$val") ;;
         inflight) KNOB_INFLIGHT+=("$val") ;;
         health) KNOB_HEALTH+=("$val") ;;
+        recovery) KNOB_RECOVERY+=("$val") ;;
         restarter) KNOB_RESTARTER+=("$val") ;;
         service) KNOB_SERVICE+=("$val") ;;
         backup) KNOB_BACKUP+=("$val") ;;

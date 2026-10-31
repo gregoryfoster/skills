@@ -130,6 +130,7 @@ from tests.structural.test_patching_hosts_space import (
 from tests.structural.test_patching_hosts_space import (
     DOWNLOAD,
     DPKG,
+    FLOOR,
     GROWTH,
     PEAK,
     SHOW,
@@ -140,6 +141,17 @@ from tests.structural.test_patching_hosts_space import (
 PROBE = SKILL / "scripts" / "probe.sh"
 TODAY = "2026-09-30"
 SECRET = "kSECRETVALUE123-abcdefGHIJKL"
+# What apt would fetch into the dry run's DIR/archives (#499): the format
+# noble's apt 2.8.3 prints for `apt-get --print-uris -qq`, with the sizes of
+# the tzdata, age and bison the space fixtures resolve, 2660798 bytes.
+PRINT_URIS = (
+    "'http://archive.ubuntu.com/ubuntu/pool/main/t/tzdata/tzdata_2026e-0ubuntu0.24.04.1_all.deb'"
+    " tzdata_2026e-0ubuntu0.24.04.1_all.deb 282136 MD5Sum:d04b4d9c76a0acb9f3bdd9408abb857e\n"
+    "'http://archive.ubuntu.com/ubuntu/pool/universe/a/age/age_1.1.1-1ubuntu0.24.04.3_amd64.deb'"
+    " age_1.1.1-1ubuntu0.24.04.3_amd64.deb 1629868 MD5Sum:ebd0a1a1db79453e54687d06eaf13415\n"
+    "'http://archive.ubuntu.com/ubuntu/pool/main/b/bison/bison_3.8.2+dfsg-1ubuntu0.24.04.1_amd64.deb'"
+    " bison_2%3a3.8.2+dfsg-1ubuntu0.24.04.1_amd64.deb 748794 MD5Sum:dfd0ee7383158a5021011734efd1fac7\n"
+)
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -161,6 +173,7 @@ class Host(RigHost):
         # output for tzdata, age and bison, after every case a test set.
         for cmd, glob, out in (
             ("apt-get", "-s *install --only-upgrade *", SIM),
+            ("apt-get", "--print-uris *", PRINT_URIS),
             ("apt-cache", "* show *", SHOW),
             (
                 "dpkg-query",
@@ -562,11 +575,138 @@ def test_the_pending_set_is_counted_by_class(host):
     assert p["removals"] == ["libde265-0"]
     assert p["esm"]["num_esm_apps_updates"] == 29
     assert p["esm"]["attached"] is False
-    assert p["lists"]["security_age_hours"] >= 71
-    assert _finding(out, "lists:stale")["kind"] == "risk"
+    # #493: the archive last published 3 days ago, and the lists were
+    # fetched just now, so they're current.
+    assert p["lists"]["security_last_modified_hours"] >= 71
+    assert p["lists"]["security_age_hours"] == 0
+    assert "lists:stale" not in _ids(out)
     groups = {g["step"]: g["pending"] for g in p["hold_groups"]}
     assert groups["postgres"] == ["postgresql-16", "libpq5"]
     assert groups["docker"] == []
+
+
+# --- the lists' age (#493) -----------------------------------------------------
+# apt sets a list's mtime from the archive's Last-Modified, so a quiet day for
+# noble-security read as stale lists right after a host apt-get update. What
+# moves at a fetch, measured on noble (apt 2.8.3, 2026-10-30): each InRelease's
+# ctime, at a Get and at a Hit alike, and only when it was fetched. lists/
+# partial/'s mtime moves at a failed update too, and nothing in apt writes
+# /var/lib/apt/periodic/update-success-stamp: update-notifier-common's hook
+# does, where it's installed.
+
+SECURITY_IN_RELEASE = (
+    "var/lib/apt/lists/archive.ubuntu.com_ubuntu_dists_noble-security_InRelease"
+)
+
+
+class StatHost(Host):
+    """stat answering a file's ctime as a case sets it, and as the system's
+    stat otherwise: a ctime can't be set back, nor an hour's gap slept for
+    (CR 1300)."""
+
+    STUBBED = (*Host.STUBBED, "stat")
+    FALLBACKS = {
+        **Host.FALLBACKS,
+        "stat": 'for d in /usr/bin /bin; do [ -x "$d/stat" ] && exec "$d/stat" "$@"; done; exit 127',
+    }
+
+    def ctime(self, path: str, epoch: int) -> "StatHost":
+        """PATH's ctime, as file_ctime reads it: PATH ends the argv."""
+        return self.on("stat", f"-c %Z *{path}", f"{epoch}\n")
+
+
+class LaterHost(StatHost):
+    """The probe's clock HOURS on from the tree's, so a list written now
+    reads as fetched HOURS ago: a ctime can't be set back."""
+
+    STUBBED = (*StatHost.STUBBED, "date")
+    FALLBACKS = {
+        **StatHost.FALLBACKS,
+        "date": 'for d in /bin /usr/bin; do [ -x "$d/date" ] && exec "$d/date" "$@"; done; exit 127',
+    }
+
+    def __init__(self, tmp_path, hours: int):
+        super().__init__(tmp_path)
+        self.on("date", "+%s", f"{self.now + hours * 3600 + 600}\n")
+
+
+# CR 1295: a ctime is also when a tree was unpacked, so a list that came
+# with an image would read as fetched at provisioning. The reference is a
+# file apt-get update never writes; a list it fetched is newer.
+OS_RELEASE = "usr/lib/os-release"
+
+
+def _unpacked_then_fetched(host: StatHost) -> None:
+    """The tree's own file, unpacked 5 hours before a fetch's list now."""
+    host.write(OS_RELEASE, 'NAME="Ubuntu"\n')
+    host.ctime(OS_RELEASE, host.now - 5 * 3600)
+
+
+def test_the_lists_age_from_their_fetch_not_the_archives_last_modified(tmp_path):
+    # co-processor, 2026-10-26: noble-security hadn't published for 26 h.
+    host = StatHost(tmp_path)
+    _unpacked_then_fetched(host)
+    host.write(SECURITY_IN_RELEASE, "x", age_days=26 / 24)
+    out = host.run()
+    lists = out["pending"]["lists"]
+    assert lists["security_age_hours"] == 0
+    assert lists["security_last_modified_hours"] >= 25
+    assert "fetched" in lists["source"]
+    assert "lists:stale" not in _ids(out)
+
+
+@pytest.mark.parametrize("hours, stale", [(30, True), (20, False)])
+def test_lists_fetched_more_than_a_day_ago_are_stale(tmp_path, hours, stale):
+    host = LaterHost(tmp_path, hours)
+    _unpacked_then_fetched(host)
+    host.write(SECURITY_IN_RELEASE, "x")
+    out = host.run()
+    assert out["pending"]["lists"]["security_age_hours"] == hours
+    assert ("lists:stale" in _ids(out)) is stale
+    if stale:
+        f = _finding(out, "lists:stale")
+        assert f["kind"] == "risk"
+        assert f"fetched {hours} hours ago" in f["message"]
+
+
+@pytest.mark.parametrize("reference", [True, False], ids=["unpacked", "no-reference"])
+def test_lists_unpacked_with_the_tree_age_from_their_last_modified(tmp_path, reference):
+    # The image's lists, unpacked with the tree: their ctime is the unpack's,
+    # no newer than os-release's, so it says nothing of a fetch. Without the
+    # reference file, nothing tells the two apart either.
+    host = LaterHost(tmp_path, 1)
+    host.write(SECURITY_IN_RELEASE, "x", age_days=3)
+    if reference:
+        host.write(OS_RELEASE, 'NAME="Ubuntu"\n')
+    out = host.run()
+    lists = out["pending"]["lists"]
+    assert lists["security_age_hours"] == lists["security_last_modified_hours"] >= 73
+    assert "unpack" in lists["source"]
+    assert _finding(out, "lists:stale")["kind"] == "risk"
+
+
+@pytest.mark.parametrize(
+    "gap, fetched", [(5, False), (3601, True)], ids=["within-margin", "past-margin"]
+)
+def test_a_list_within_an_hour_of_the_unpack_reads_as_unpacked(tmp_path, gap, fetched):
+    # CR 1300: an image's layers unpack over seconds (buildpack-deps:noble's
+    # top layer 1 s after os-release's), and a RUN apt-get update puts its
+    # lists in a later layer. Only a ctime past the margin is a fetch.
+    host = StatHost(tmp_path)
+    ref = host.now - 3 * 3600
+    host.write(OS_RELEASE, 'NAME="Ubuntu"\n')
+    host.ctime(OS_RELEASE, ref)
+    host.write(SECURITY_IN_RELEASE, "x", age_days=3)
+    host.ctime(SECURITY_IN_RELEASE, ref + gap)
+    out = host.run()
+    lists = out["pending"]["lists"]
+    if fetched:
+        assert lists["security_age_hours"] == (host.now - ref - gap) // 3600
+        assert "lists:stale" not in _ids(out)
+        return
+    assert lists["security_age_hours"] == lists["security_last_modified_hours"] >= 72
+    assert "an hour" in lists["source"]
+    assert _finding(out, "lists:stale")["kind"] == "risk"
 
 
 def _policy(name: str, installed: str, candidate: str, suites: list[str]) -> str:
@@ -733,6 +873,8 @@ def test_the_dry_run_sizes_what_the_run_writes_and_the_free_space_beside_it(host
 
 def test_a_run_that_wouldnt_fit_is_a_finding(host):
     _counted(host)
+    # The dry run's own download fits in DIR (#499); the run doesn't.
+    host.on("df", f"-Pk -- {host.tmp}/dry/archives", df_row(1, 9000000, "/scratch"))
     host.on("df", "-Pk -- *", df_row(9000000, 1000))
     out = host.run("--dry-run-into", str(host.tmp / "dry"))
     f = _finding(out, "dry-run:space:disk")
@@ -740,6 +882,79 @@ def test_a_run_that_wouldnt_fit_is_a_finding(host):
     assert f["message"].startswith("The run needs ")
     assert "131072 KiB floor" in f["message"]
     assert out["pending"]["dry_run"]["free_kib_root"] == 1000
+
+
+# --- the dry run's own download (#499) ----------------------------------------
+# It downloads the lane's whole selection into DIR/archives as root, so it is
+# sized first, from apt's own --print-uris against the dry run's own apt
+# config: an upper bound, since the selection isn't known until it has run.
+
+
+def test_the_dry_run_sizes_its_own_download_before_it_starts(host):
+    out = _counted(host).run("--dry-run-into", str(host.tmp / "dry"))
+    d = out["pending"]["dry_run"]
+    assert d["download_bound_kib"] == DOWNLOAD
+    assert isinstance(d["free_kib_dry_run_dir"], int)
+    calls = host.calls()
+    [i] = [
+        i
+        for i, c in enumerate(calls)
+        if c[0] == "apt-get" and c[1].startswith("--print-uris")
+    ]
+    [j] = [i for i, c in enumerate(calls) if c[0] == "unattended-upgrade"]
+    assert i < j
+    _, args, apt_config = calls[i]
+    # Where the dry run downloads, and against the lists it counts with.
+    assert apt_config == str(host.tmp / "dry" / "apt.conf") == calls[j][2]
+    assert args.endswith(" dist-upgrade")
+    assert "-o Debug::NoLocking=1" in args
+    assert "-o APT::Get::Always-Include-Phased-Updates=true" in args
+
+
+@pytest.mark.parametrize("short", [1, 0], ids=["short-1-kib", "exactly-enough"])
+def test_a_dry_run_whose_download_wouldnt_fit_doesnt_start(host, short):
+    _counted(host)
+    dry = host.tmp / "dry"
+    free = DOWNLOAD + FLOOR - short
+    host.on("df", f"-Pk -- {dry}/archives", df_row(9000000, free, "/scratch"))
+    out = host.run("--dry-run-into", str(dry))
+    if not short:
+        assert out["pending"]["dry_run"]["free_kib_dry_run_dir"] == free
+        assert host.calls("unattended-upgrade")
+        assert "dry-run" not in _ids(out)
+        return
+    f = _finding(out, "dry-run")
+    assert f["kind"] == "risk"
+    for words in (f"{DOWNLOAD} KiB", f"{FLOOR} KiB floor", "/scratch", f"{free}"):
+        assert words in f["message"], words
+    assert out["pending"]["dry_run"] is None
+    assert not host.calls("unattended-upgrade")
+    assert not (dry / "summary").exists()
+
+
+@pytest.mark.parametrize("unread", ["print-uris", "df"])
+def test_a_dry_run_whose_download_cant_be_sized_doesnt_start(host, unread):
+    _counted(host)
+    dry = host.tmp / "dry"
+    if unread == "print-uris":
+        host.on("apt-get", "--print-uris *", rc=100, stderr="E: Broken packages\n")
+    else:
+        host.on("df", f"-Pk -- {dry}/archives", rc=1)
+    out = host.run("--dry-run-into", str(dry))
+    f = _finding(out, "dry-run")
+    assert f["kind"] == "unknown"
+    assert "didn't run" in f["message"]
+    assert out["pending"]["dry_run"] is None
+    assert not host.calls("unattended-upgrade")
+
+
+def test_help_says_the_dry_run_sizes_its_download_first():
+    r = subprocess.run(
+        ["bash", str(PROBE), "--help"], capture_output=True, text=True, env=_clean_env()
+    )
+    text = " ".join(r.stdout.split())
+    assert "--print-uris" in text
+    assert "download_bound_kib" in text
 
 
 def test_a_run_that_would_cross_the_gcs_headroom_line_is_a_finding(host):
@@ -3860,7 +4075,8 @@ def _mutating(name: str, args: str) -> bool:
     """Whether one stubbed call would change the host."""
     a = args.split()
     if name == "apt-get":
-        if "-s" in a:
+        # --print-uris prints what it would fetch, and fetches nothing (#499).
+        if "-s" in a or "--print-uris" in a:
             return False
         return not (
             "update" in a
@@ -4259,6 +4475,123 @@ def test_post_boot_checks_a_dependency_came_up_before_its_datastore(
     checks = {c["check"]: c for c in host.run("--post-boot")["post_boot"]}
     c = checks["depends:redis-server.service:tailscaled.service"]
     assert c["ok"] is ok, c
+
+
+# #534 finding 2: the knob's exception for a missing After= covers the same
+# reading after the boot, as it does before a run. A down dependency is no
+# ordering at all, so nothing excepts it.
+@pytest.mark.parametrize(
+    "review, excepted", [("2099-01-01", True), ("2026-01-01", False)]
+)
+def test_post_boot_honours_an_ordering_exception(host, review, excepted):
+    host.knob(
+        "posture scheduled\nservice app-web.service\n"
+        "datastore postgres postgresql@16-main app\n"
+        f"exception ordering:app-web.service {review} it retries until the store is up\n"
+    )
+    host.show(
+        "app-web.service",
+        ActiveState="active",
+        NRestarts="0",
+        Result="success",
+        After="network.target",
+    )
+    out = host.run("--post-boot")
+    checks = {c["check"]: c for c in out["post_boot"]}
+    assert checks["ordering:app-web.service"]["ok"] is False
+    key = "excepted" if excepted else "findings"
+    f = _finding(out, "post-boot:ordering:app-web.service", key)
+    assert f["exception_what"] == "ordering:app-web.service"
+    if excepted:
+        assert "post-boot:ordering:app-web.service" not in _ids(out)
+        assert f["exception_line"] == 4
+
+
+@pytest.mark.parametrize(
+    "state, ts, excepted",
+    [("active", 9_000_000, True), ("inactive", 5_000_000, False)],
+    ids=["after-it", "down"],
+)
+def test_post_boot_honours_a_depends_exception_only_for_the_order(
+    host, state, ts, excepted
+):
+    host.knob(
+        "posture scheduled\ndatastore redis redis-server\ndepends redis-server tailscaled\n"
+        "exception depends:redis-server.service:tailscaled.service 2099-01-01 binds 0.0.0.0\n"
+    )
+    host.show("redis-server.service", ActiveEnterTimestampMonotonic="7000000")
+    host.show(
+        "tailscaled.service", ActiveState=state, ActiveEnterTimestampMonotonic=str(ts)
+    )
+    out = host.run("--post-boot")
+    fid = "post-boot:depends:redis-server.service:tailscaled.service"
+    assert (fid in _ids(out, "excepted")) is excepted
+    assert (fid in _ids(out)) is not excepted
+
+
+# --- what the probe changes (#423, #490, #501) ---------------------------------
+
+
+def test_a_recovery_line_runs_only_after_a_boot(host):
+    # A health line runs at every probe; a recovery line, with its real
+    # request and new row, never does before a run.
+    marker = host.tmp / "recovered"
+    host.knob(f"posture scheduled\nrecovery touch {marker}\nrecovery false\n")
+    out = host.run()
+    assert not marker.exists()
+    assert not [i for i in _ids(out) if "recovery" in i]
+    out = host.run("--post-boot")
+    assert marker.exists()
+    checks = {c["check"]: c for c in out["post_boot"]}
+    assert checks["recovery:2"]["ok"] is True
+    assert checks["recovery:3"]["ok"] is False
+    assert "exits 1" in checks["recovery:3"]["evidence"]
+    assert "post-boot:recovery:3" in _ids(out)
+
+
+def test_no_sudo_reads_nothing_through_sudo(host):
+    assert host.run()["probe"]["privilege"] == "sudo"
+    host.log.unlink()
+    out = host.run("--no-sudo")
+    assert out["probe"]["privilege"] == "none"
+    assert not host.calls("sudo")
+    [n] = [n for n in out["not_read"] if n.startswith("root-only readings")]
+    assert "--no-sudo" in n
+
+
+def test_help_names_no_sudo_and_what_the_probe_writes():
+    r = subprocess.run(
+        ["bash", str(PROBE), "--help"], capture_output=True, text=True, env=_clean_env()
+    )
+    text = " ".join(r.stdout.split())
+    assert "--no-sudo" in text
+    assert "probe.privilege" in text
+    assert "/var/log/ubuntu-advantage.log" in text
+
+
+# pro security-status as root appends to its log and takes its lock: under
+# systemd's ProtectSystem=strict it exits 1 within ~3 s, a traceback ending
+# in EROFS (exe.dev, ubuntu-pro-client 37.2, 2026-10-26).
+EROFS = (
+    "Traceback (most recent call last):\n"
+    '  File "/usr/lib/python3/dist-packages/uaclient/log.py", line 1, in emit\n'
+    "OSError: [Errno 30] Read-only file system: '/var/log/ubuntu-advantage.log'\n"
+)
+
+
+@pytest.mark.parametrize(
+    "stderr, read_only",
+    [(EROFS, True), ("Failed to connect to the contract server\n", False)],
+    ids=["read-only", "other"],
+)
+def test_a_pro_read_a_read_only_filesystem_stopped_says_so(host, stderr, read_only):
+    host.on("pro", "security-status --format json", rc=1, stderr=stderr)
+    out = host.run()
+    assert out["pending"]["esm"] is None
+    [n] = [n for n in out["not_read"] if n.startswith("Ubuntu Pro / ESM")]
+    assert ("read-only filesystem" in n) is read_only
+    if not read_only:
+        assert "couldn't be read" in n
 
 
 def test_post_boot_reads_the_run_it_is_given(host):

@@ -8,13 +8,17 @@ Usage: bash probe.sh [--config FILE] [--host NAME] [--root DIR] [--repo DIR]
                      [--refresh-into DIR] [--dry-run-into DIR]
                      [--lane security|maintenance|origin:<origin>]
                      [--post-boot [--run DIR]] [--session-pid PID]
-                     [--today YYYY-MM-DD]
+                     [--no-sudo] [--today YYYY-MM-DD]
 
 Reads the host and prints one JSON object on stdout: its environment, what
 updates it, the pending set by class, what an apply would touch, dormant
 components, and every finding against the posture its knob declares. It
-installs, removes, holds, restarts and configures nothing. The readings, and
-the mistake each one prevents: references/readings.md.
+installs, removes, holds, restarts and configures nothing. Run as root, the
+Ubuntu Pro read writes pro's own /var/log/ubuntu-advantage.log and
+/var/lib/ubuntu-advantage/lock, the one host state it changes. It runs the
+knob's health lines, which must be safe at any time, and its recovery lines
+only under --post-boot. The readings, and the mistake each one prevents:
+references/readings.md.
 
 Options:
   --config FILE       the knob (default: .skills/patching-hosts at the root of
@@ -39,7 +43,12 @@ Options:
   --dry-run-into DIR  count the selection with unattended-upgrade --dry-run,
                       as root, with apt's cache in DIR/archives. It downloads
                       the whole set (290 MB and 9 minutes on one host) and
-                      leaves it there for you to remove. The count is the
+                      leaves it there for you to remove. It doesn't start
+                      when that wouldn't fit: first, apt-get --print-uris
+                      sizes the whole pending set (in the one-origin lane,
+                      that origin's packages) as an upper bound,
+                      pending.dry_run.download_bound_kib, and it must fit on
+                      DIR's filesystem with 131072 KiB left. The count is the
                       security set exactly only while pending.dry_run's
                       security_only is true; wider origins, or another lane,
                       put other packages on the same line. DIR/summary holds
@@ -57,7 +66,8 @@ Options:
                       mount to its alert_at_percent, or when the GC's
                       config can't be read or parsed. A dry run that doesn't run
                       (no root, a lane the knob doesn't resolve, an
-                      unsimulated set, an origin's site unread) still exits
+                      unsimulated set, an origin's site unread, a download
+                      that wouldn't fit or can't be sized) still exits
                       0: it's a finding with id dry-run, and leaves no
                       summary
   --lane LANE         the dry run's selection, as apply.sh --lane takes it:
@@ -65,7 +75,9 @@ Options:
                       unattended-upgrades origins take; maintenance, which
                       adds Ubuntu's -updates and each origin the knob
                       follows; or origin:<origin>, one followed origin and
-                      nothing else. With --dry-run-into only
+                      nothing else, which counts only against lists this
+                      run fetched, so it takes --refresh-into too. With
+                      --dry-run-into only
   --post-boot         the checks after a reboot (reboot-and-record.md
                       section 6), not the readings before a run. Takes
                       neither --refresh-into nor --dry-run-into
@@ -76,6 +88,10 @@ Options:
                       lines are read instead
   --session-pid PID   where the session's chain to PID 1 starts (default: the
                       probe itself)
+  --no-sudo           never escalate. Without it, a non-root probe reads the
+                      root-only readings through sudo -n wherever that asks
+                      no password, and probe.privilege says sudo; with it,
+                      those readings are in not_read
   --today YYYY-MM-DD  the date exceptions expire against (default: today, UTC)
   -h, --help          show this help
 
@@ -109,6 +125,7 @@ USAGE
 }
 
 config="" host="" root=/ repo="" refresh="" dryrun="" postboot=0 session_pid="" today="" lane="" run=""
+P_NO_SUDO=0
 repo_set=0
 while [ "$#" -gt 0 ]; do
   case $1 in
@@ -128,6 +145,7 @@ while [ "$#" -gt 0 ]; do
       esac
       shift 2 ;;
     --post-boot) postboot=1; shift ;;
+    --no-sudo) P_NO_SUDO=1; shift ;;
     -h | --help) usage; exit 0 ;;
     *) echo "ERROR unknown argument: $1 (see --help)" >&2; exit 2 ;;
   esac
@@ -446,7 +464,9 @@ if [ "$P_LIVE" -ne 1 ]; then
   not_read "readings from a running system (systemctl, journalctl, docker, psql, needrestart, knob commands): ${P_ROOT:-}/run/systemd/system is absent, so nothing runs this tree"
 fi
 if [ "$P_PRIV" = none ]; then
-  not_read "root-only readings (other users' /proc maps, needrestart, the Postgres catalogs, the whole journal): not root, and sudo -n needs a password"
+  _w="sudo -n needs a password"
+  if [ "$P_NO_SUDO" -eq 1 ]; then _w="--no-sudo"; fi
+  not_read "root-only readings (other users' /proc maps, needrestart, the Postgres catalogs, the whole journal): not root, and $_w"
 fi
 
 # --- environment ------------------------------------------------------------
@@ -1597,23 +1617,86 @@ class_of() {  # <var> <origins, ", "-separated>
   fi
 }
 
+# The lists' age from their fetch, not the archive's (#493). apt sets an
+# InRelease's mtime from the archive's Last-Modified, so a quiet day for
+# noble-security read as stale lists right after an apt-get update. Its ctime
+# moves at each fetch, a Hit included, and not at a failed one (apt 2.8.3,
+# noble, 2026-10-30); lists/partial/'s mtime moves at a failed one too.
+# A ctime is also when the tree was unpacked, though (CR 1295): an image's
+# lists would read as fetched at provisioning. So it counts as a fetch only
+# when it's no older than the probe's start, or more than an hour newer than
+# os-release's, a file apt-get update never writes. An hour, because an
+# unpack isn't instant and the lists sit in a later layer than os-release's
+# (a RUN apt-get update makes them): buildpack-deps:noble's top layer
+# unpacked a second after its os-release, and exeuntu is several GB
+# (CR 1300). Erring that way costs only a quiet day's false stale reading on
+# a host fetched within the hour of its provisioning. Otherwise the age is
+# the mtime's, and says so.
+LISTS_UNPACK_MARGIN_S=3600
+LISTS_REF="" LISTS_REF_CT=""
+lists_reference() {
+  local f
+  for f in usr/lib/os-release etc/os-release; do
+    if [ -f "$P_ROOT/$f" ] && [ ! -L "$P_ROOT/$f" ]; then
+      file_ctime LISTS_REF_CT "$P_ROOT/$f"
+      if [ -n "$LISTS_REF_CT" ]; then LISTS_REF=/$f; fi
+      return 0
+    fi
+  done
+}
+
+list_fetched() {  # <var> <list file>: when it was fetched, or empty when its ctime can't say
+  local _lf_c
+  file_ctime _lf_c "$2"
+  if [ -n "$_lf_c" ] && { [ "$_lf_c" -ge "$P_NOW" ] ||
+    { [ -n "$LISTS_REF_CT" ] && [ "$_lf_c" -gt $((LISTS_REF_CT + LISTS_UNPACK_MARGIN_S)) ]; }; }; then
+    printf -v "$1" '%s' "$_lf_c"
+  else
+    printf -v "$1" '%s' ""
+  fi
+}
+
+# LISTS_FETCHED := the security list's fetch, or empty.
+LISTS_FETCHED=""
 read_lists_age() {
-  local f mt newest="" age=""
-  R_LISTS=""
+  local f mt ct newest="" age="" lm="" seen=0 src
+  R_LISTS="" LISTS_FETCHED=""
+  lists_reference
   for f in "$LISTS_DIR"/*-security_InRelease "$LISTS_DIR"/*-security_Release; do
     [ -f "$f" ] || continue
+    seen=1
     file_mtime mt "$f"
+    list_fetched ct "$f"
     if [ -n "$mt" ] && { [ -z "$newest" ] || [ "$mt" -gt "$newest" ]; }; then newest=$mt; fi
+    if [ -n "$ct" ] && { [ -z "$LISTS_FETCHED" ] || [ "$ct" -gt "$LISTS_FETCHED" ]; }; then LISTS_FETCHED=$ct; fi
   done
-  if [ -n "$newest" ]; then age=$(((P_NOW - newest) / 3600)); fi
+  if [ -n "$newest" ]; then lm=$(((P_NOW - newest) / 3600)); fi
+  src="when the security InRelease was last fetched: its ctime, which apt moves at every fetch and not at a failed one, and which is more than an hour newer than ${LISTS_REF:-os-release}'s, which no fetch writes, so no unpack spans the gap. Its mtime is the archive's Last-Modified (security_last_modified_hours)"
+  if [ -n "$LISTS_FETCHED" ]; then
+    age=$(((P_NOW - LISTS_FETCHED) / 3600))
+  elif [ "$seen" -eq 1 ]; then
+    # An unpacked list's age, as the archive's, is a bound: the list is no
+    # newer than the archive it came from.
+    age=$lm
+    if [ -n "$LISTS_REF" ]; then
+      src="the security InRelease's mtime, the archive's Last-Modified: its ctime is within an hour of $LISTS_REF's, or older, a gap an image's layered unpack can span, so it dates the tree's unpacking, not a fetch"
+    else
+      src="the security InRelease's mtime, the archive's Last-Modified: with no os-release to read, its ctime can't be told from the tree's unpacking"
+    fi
+  fi
   jadds R_LISTS dir "${LISTS_DIR#"$P_ROOT"}"
   jaddb R_LISTS refreshed "$REFRESHED"
   jaddn R_LISTS security_age_hours "$age"
-  jadds R_LISTS source "the security InRelease's mtime, which apt sets from the archive's Last-Modified"
+  jaddn R_LISTS security_last_modified_hours "$lm"
+  jadds R_LISTS source "$src"
   if [ -z "$age" ]; then
     finding unknown lists:age "" "No security InRelease under ${LISTS_DIR#"$P_ROOT"}, so the counts have no security list behind them."
   elif [ "$age" -gt 24 ] && [ "$REFRESHED" -eq 0 ]; then
-    finding risk lists:stale "" "The security list is $age hours old, so the counts measure the lists, not the host. Re-run with --refresh-into DIR."
+    if [ -n "$LISTS_FETCHED" ]; then
+      finding risk lists:stale "" "The security list was fetched $age hours ago, so the counts measure the lists, not the host. Run apt-get update, or re-run with --refresh-into DIR."
+    else
+      finding risk lists:stale "" "The security list's archive last changed $age hours ago, and when it was fetched can't be told from when the tree was unpacked (lists.source), so the counts may measure the image's lists, not the host. Run apt-get update, or re-run with --refresh-into DIR."
+    fi
   fi
 }
 
@@ -1750,6 +1833,10 @@ read_esm() {
   fi
   if have pro; then
     capture pro pro security-status --format json
+    if [ "$CAP_RC" -ne 0 ] && cap_read_only; then
+      not_read "Ubuntu Pro / ESM: pro security-status exited $CAP_RC on a read-only filesystem, writing its own log or lock (a sandbox such as ProtectSystem=strict), so it read nothing; pro itself isn't shown broken, and \"0 security pending\" never covers universe"
+      return 0
+    fi
     if [ "$CAP_RC" -eq 0 ]; then
       for k in num_esm_apps_updates num_esm_infra_updates num_universe_packages num_installed_packages; do
         re="\"$k\": *([0-9]+)"
@@ -2182,6 +2269,115 @@ conffile_states() {  # <var> <package>: VAR := a JSON array body
   printf -v "$1" '%s' "$_cs_a"
 }
 
+# What the dry run would download into DIR/archives, read before it runs
+# (#499): it fetches its whole selection there as root, and nothing after it
+# can undo a full disk. The selection isn't known until it has run, so the
+# bound is apt's own answer for the whole pending set, or in the one-origin
+# lane that origin's packages: each archive --print-uris lists, which leaves
+# out one DIR/archives already holds (apt 2.8.3, noble, 2026-10-30). It reads
+# the dry run's own apt config, so its cache and lists are the dry run's.
+DRY_BOUND="" DRY_FREE="" DRY_KIND="" DRY_WHY=""
+dry_run_fits() {  # <apt config> <the one origin's packages>: 1 with DRY_KIND and DRY_WHY when it doesn't
+  local out line size bytes=0 need
+  local -a w=() what=(dist-upgrade)
+  DRY_BOUND="" DRY_FREE="" DRY_KIND=unknown DRY_WHY=""
+  case $lane in
+    origin:*)
+      read -r -a w <<<"$2" || true
+      what=(install --only-upgrade ${w[@]+"${w[@]}"}) ;;
+  esac
+  capture out env "APT_CONFIG=$1" apt-get --print-uris -qq -o Debug::NoLocking=1 "${APT_OPTS[@]}" "${APT_SIM_PHASED[@]}" --allow-change-held-packages "${what[@]}"
+  if [ "$CAP_RC" -ne 0 ]; then
+    DRY_WHY="its download couldn't be sized: apt-get --print-uris exited $CAP_RC${CAP_ERR:+ ($CAP_ERR)}"
+    return 1
+  fi
+  # 'URI' <file> <size> <hash>, a line for each archive apt would fetch.
+  while IFS= read -r line; do
+    case $line in "'"*) ;; *) continue ;; esac
+    read -r _ _ size _ <<<"$line" || true
+    case $size in '' | *[!0-9]*)
+      DRY_WHY="its download couldn't be sized: apt-get --print-uris printed a line it doesn't read: $line"
+      return 1 ;;
+    esac
+    bytes=$((bytes + size))
+  done <<<"$out"
+  DRY_BOUND=$(((bytes + 1023) / 1024))
+  if ! fs_reading "$dryrun/archives"; then
+    DRY_WHY="the free space under $dryrun/archives couldn't be read (df -Pk), so whether its download of up to $DRY_BOUND KiB fits is unknown"
+    return 1
+  fi
+  DRY_FREE=$FS_FREE
+  need=$((DRY_BOUND + SPACE_FLOOR_KIB))
+  if [ "$FS_FREE" -lt "$need" ]; then
+    DRY_KIND=risk
+    DRY_WHY="it may download up to $DRY_BOUND KiB into $dryrun/archives (the $lane lane's pending set, as apt-get --print-uris sizes it), and $FS_MOUNT, which holds it, has $FS_FREE KiB free: less than $need KiB, that and the $SPACE_FLOOR_KIB KiB floor. Free space there, or point --dry-run-into at a filesystem with room"
+    return 1
+  fi
+}
+
+# The sites a knob origin's lists are named after: a site key itself, or
+# for an o= name, each site apt-cache policy (POLICY_OUT) lists under it.
+origin_sites() {  # <var> <key>
+  local _os_l _os_o="" _os_s=""
+  local -a _os_kv=()
+  case $2 in
+    *.*) _os_s=$2 ;;
+    *)
+      while IFS= read -r _os_l; do
+        case $_os_l in
+          *" release "*)
+            _os_o=""
+            IFS=, read -r -a _os_kv <<<"${_os_l#*release }"
+            for _os_l in ${_os_kv[@]+"${_os_kv[@]}"}; do
+              case $_os_l in o=*) _os_o=${_os_l#o=} ;; esac
+            done ;;
+          *" origin "*)
+            if [ "$_os_o" = "${2//_/ }" ] && ! in_words "${_os_l#*origin }" "$_os_s"; then
+              _os_s="$_os_s ${_os_l#*origin }"
+            fi
+            _os_o="" ;;
+        esac
+      done <<<"$POLICY_OUT" ;;
+  esac
+  printf -v "$1" '%s' "${_os_s# }"
+}
+
+# Whether every list of the origin was fetched in this run: its ctime no
+# older than the probe's start. OF_WHY := why not, and OF_KIND its kind.
+OF_WHY="" OF_KIND=""
+origin_fresh() {  # <key>
+  local sites site f c t any=0 stale=0 oldest=""
+  OF_WHY="" OF_KIND=risk
+  origin_sites sites "$1"
+  if [ -z "$sites" ]; then
+    OF_KIND=unknown
+    OF_WHY="which sites serve the origin $1 couldn't be read from apt-cache policy${POLICY_WHY:+ ($POLICY_WHY)}, so whether its lists were fetched in this run is unknown"
+    return 0
+  fi
+  for site in $sites; do
+    for f in "$LISTS_DIR/${site}_"*_InRelease "$LISTS_DIR/${site}_"*_Release; do
+      [ -f "$f" ] || continue
+      any=1
+      file_ctime c "$f"
+      if [ -n "$c" ] && [ "$c" -ge "$P_NOW" ]; then continue; fi
+      stale=1
+      list_fetched t "$f"
+      if [ -z "$t" ]; then
+        oldest=unpacked
+      elif [ "$oldest" != unpacked ] && { [ -z "$oldest" ] || [ "$t" -lt "$oldest" ]; }; then
+        oldest=$t
+      fi
+    done
+  done
+  if [ "$any" -eq 0 ]; then
+    OF_WHY="no list of $1 was fetched in this run, so its lists' age is unknown"
+  elif [ "$stale" -eq 1 ] && [ "$oldest" = unpacked ]; then
+    OF_WHY="its lists weren't fetched in this run, and when they were can't be told from the tree's unpacking"
+  elif [ "$stale" -eq 1 ]; then
+    OF_WHY="its lists were fetched $(((P_NOW - oldest) / 3600)) hours before this run"
+  fi
+}
+
 read_dry_run() {
   local o="" conf t0 t1 out rc line names="" n="" dlk="" free="" rss="" w sel=0 lnames="" lkeep="" lskip=""
   local oleft="" left_read=0 kw p rest unlisted="" prompts="" cfp="" cfs="" i k keys="" po="" hv
@@ -2232,6 +2428,16 @@ read_dry_run() {
         finding unknown dry-run "" "the $lane lane's dry run didn't run: apt-cache policy lists no origin at ${lane#origin:}, so nothing from it is pending: is its source configured?"
         return 0
       fi
+      # On the origin's lists fetched before the run, it can count an older
+      # release of its package, and that passes every gate (#523): only the
+      # origin's own lists fetched in this run count it. Not the security
+      # pocket's (CR 1296): apt-get update exits 0 when one source fails,
+      # and leaves that source's list as it was.
+      origin_fresh "${lane#origin:}"
+      if [ -n "$OF_WHY" ]; then
+        finding "$OF_KIND" dry-run "" "the $lane lane's dry run didn't run: $OF_WHY, and on lists older than the run it can count an older release of the origin's package with every gate passed (#523). Count again with --refresh-into DIR beside --dry-run-into."
+        return 0
+      fi
       origin_split lkeep lskip "$lnames" "$SIM_DIST_OUT" ;;
   esac
   {
@@ -2243,6 +2449,12 @@ read_dry_run() {
     # shellcheck disable=SC2086
     case $lane in origin:*) lane_skip_conf $lskip ;; esac
   } >"$conf"
+  if ! dry_run_fits "$conf" "$lkeep"; then
+    finding "$DRY_KIND" dry-run "" "the dry run didn't run: $DRY_WHY."
+    return 0
+  fi
+  jaddn o download_bound_kib "$DRY_BOUND"
+  jaddn o free_kib_dry_run_dir "$DRY_FREE"
   if [ -n "$lkeep$lskip" ]; then
     json_list w "$lkeep"
     jadd o origin_pending "$w"
@@ -4020,13 +4232,16 @@ read_dormant() {
 
 # --- after the boot (reboot-and-record.md §6) -------------------------------
 POST=""
-check() {  # <name> <ok 1|0|""> <evidence>
+# A failed check files a finding; the <what> an exception may cover is the
+# same reading's before a run, so the knob's line holds after the boot too
+# (#534).
+check() {  # <name> <ok 1|0|""> <evidence> [<what an exception names>]
   local e=""
   jadds e check "$1"
   jaddb e ok "$2"
   jaddsn e evidence "$3"
   jpush POST "{$e}"
-  if [ "$2" = 0 ]; then finding post-boot "post-boot:$1" "" "$1: $3"; fi
+  if [ "$2" = 0 ]; then finding post-boot "post-boot:$1" "${4:-}" "$1: $3"; fi
 }
 
 # The boot is when the tailnet's default re-applied over the node's own
@@ -4159,7 +4374,7 @@ check_depends() {
       elif [ "$t_u" -le "$t_ds" ]; then
         check "depends:$ds:$u" 1 "$u entered active before $ds"
       else
-        check "depends:$ds:$u" 0 "$u entered active after $ds: its start at this boot didn't wait for it"
+        check "depends:$ds:$u" 0 "$u entered active after $ds: its start at this boot didn't wait for it" "depends:$ds:$u"
       fi
     fi
   done
@@ -4250,7 +4465,8 @@ first_start() {  # <unit>, after unit_show read its Inactive*Timestamps: FIRST_S
 }
 
 read_post_boot() {
-  local svc ds t out line down="" i said
+  local svc ds t out line down="" i said r rc
+  local -a f=()
   check_shutdown
   for svc in $KNOB_SERVICES; do
     if unit_show "$svc" ActiveState Result NRestarts After InactiveExitTimestamp InactiveEnterTimestamp; then
@@ -4270,7 +4486,7 @@ read_post_boot() {
         if ordering_ok "$ds" "$U_After"; then
           check "ordering:$svc" 1 "After= $ds"
         else
-          check "ordering:$svc" 0 "no After= $ds: its start at this boot succeeded by luck"
+          check "ordering:$svc" 0 "no After= $ds: its start at this boot succeeded by luck" "ordering:$svc"
         fi
       done
     else
@@ -4358,6 +4574,24 @@ read_post_boot() {
     else
       health_says said "${HEALTH_RC[$i]}"
       check "health:${HEALTH_LINE[$i]}" 0 "the check on knob line ${HEALTH_LINE[$i]} $said"
+    fi
+  done
+  # A recovery line proves the path through a data store with a real request
+  # or a new row, so it runs here and around a data-store step, never at a
+  # reading before a run (#423).
+  for r in ${KNOB_RECOVERY[@]+"${KNOB_RECOVERY[@]}"}; do
+    IFS=$KNOB_US read -r -a f <<<"$r"
+    if [ "$P_LIVE" -ne 1 ] || [ -z "$P_KNOB_USER" ]; then
+      check "recovery:${f[1]}" "" "not run: a knob command needs a running system and a user who isn't root"
+      continue
+    fi
+    rc=0
+    knob_cmd "${f[0]}" >/dev/null 2>&1 </dev/null || rc=$?
+    if [ "$rc" -eq 0 ]; then
+      check "recovery:${f[1]}" 1 "exit 0"
+    else
+      health_says said "$rc"
+      check "recovery:${f[1]}" 0 "the check on knob line ${f[1]} $said"
     fi
   done
   case $R_FAILED in

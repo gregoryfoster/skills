@@ -24,7 +24,9 @@ Steps:
   <held step>  one hold group: postgres, redis, docker, or a step the knob's
                hold lines name. Stops each restarter that was active, then
                releases what the bulk held for it, runs the same command,
-               polls the health checks every second, and starts the
+               polls the health checks every second, runs each recovery
+               line once where the step restarted a declared data store
+               (or its start couldn't be read), and starts the
                restarters again: on a green step, or one that failed before
                the upgrade. After a failed upgrade they stay stopped, for
                the owner. Approval 3(a): each group is its own invocation.
@@ -89,7 +91,7 @@ Options:
 It refuses (exit 3) for each reason under refused, among them: without
 --approve; on a report-only host (no knob, no posture line, class
 ephemeral, a malformed line, a tie); without root, or as root with no
-invoking user while the knob has inflight or health commands, which never
+invoking user while the knob has inflight, health or recovery commands, which never
 run as root (run it through sudo from your own account); when a command it
 needs isn't on PATH (choom among them); when unattended-upgrade would
 reboot by itself (Automatic-Reboot), or would take more than -security
@@ -151,7 +153,10 @@ refused, gate (gate.space: the step's download, growth and peak in KiB from
 apt's metadata, each filesystem's free and need, and the GC's headroom line,
 null without its config), then what the step did: holds (the bulk's with each held
 package's candidate against the dry run's version), installed (what a held
-step installed of its group), upgrade, health, qdrant
+step installed of its group), upgrade, health, recovery (a held step's
+recovery lines, each run once after its health checks where it restarted a
+declared data store: what restarted, what couldn't be read, each line's
+exit and whether all passed, or why none ran), qdrant
 (each Qdrant datastore, and for one the held step restarted, its counts
 against the recovery point's), redis (each Redis datastore, and for one the
 held step restarted, what its log says of the shutdown before and the load
@@ -328,6 +333,7 @@ SS_APT_GET=(as_root apt-get -s)
 # plainly.
 NEXT=()
 J_GATE="" J_HOLDS=null J_UPGRADE=null J_HEALTH=null J_RESTARTERS=null J_QDRANT=null J_REDIS=null J_INSTALLED=null
+J_RECOVERY=null
 # A held group's version that differs from the dry run's (#383).
 VERSION_MOVED=()
 J_VERDICT=null J_ABORT=null J_REPROBE=null
@@ -740,6 +746,8 @@ gate_step_span() {
     IFS=$KNOB_US read -r -a f <<<"$r"
     case ${f[0]} in qdrant | redis) hh=$((h + health_within)) ;; esac
   done
+  # Each recovery line runs once after a held step, each up to its limit.
+  hh=$((hh + ${#KNOB_RECOVERY[@]} * KNOB_CMD_TIMEOUT))
   if ! is_int "$EXPECT"; then
     gate_span ""
     return 0
@@ -1100,6 +1108,7 @@ emit() {
   jadd o installed "$J_INSTALLED"
   jadd o upgrade "$J_UPGRADE"
   jadd o health "$J_HEALTH"
+  jadd o recovery "$J_RECOVERY"
   jadd o qdrant "$J_QDRANT"
   jadd o redis "$J_REDIS"
   jadd o restarters "$J_RESTARTERS"
@@ -1309,6 +1318,94 @@ poll_health() {
   J_HEALTH="{$o}"
   [ "$HEALTH_OK" -eq 1 ] ||
     fail "the health checks didn't pass twice in a row within $health_within s: read $log"
+}
+
+# Every declared data store's start, before a held step's upgrade and after
+# it (CR 1294): its unit's ActiveEnterTimestamp, and for a Qdrant line its
+# container's StartedAt too, since a docker step restarts the container under
+# a unit whose start doesn't move. "?" when it can't be read.
+DS_WHAT=() DS_BEFORE=()
+ds_start() {  # <var> <unit, or container:<name>>
+  local _ds_t="?" _ds_o
+  case $2 in
+    container:*)
+      if have docker && _ds_o=$(docker inspect --format '{{.State.StartedAt}}' -- "${2#container:}" 2>/dev/null) &&
+        [ -n "$_ds_o" ]; then _ds_t=$_ds_o; fi ;;
+    *) if unit_show "$2" ActiveEnterTimestamp; then _ds_t=$U_ActiveEnterTimestamp; fi ;;
+  esac
+  printf -v "$1" '%s' "$_ds_t"
+}
+
+ds_mark() {
+  local r u t
+  local -a f=() q=()
+  for r in ${KNOB_DATASTORE[@]+"${KNOB_DATASTORE[@]}"}; do
+    IFS=$KNOB_US read -r -a f <<<"$r"
+    unit_name u "${f[1]}"
+    ds_start t "$u"
+    DS_WHAT+=("$u") DS_BEFORE+=("$t")
+    if [ "${f[0]}" = qdrant ]; then
+      read -r -a q <<<"${f[2]}"
+      ds_start t "container:${q[0]}"
+      DS_WHAT+=("container:${q[0]}") DS_BEFORE+=("$t")
+    fi
+  done
+}
+
+# Each recovery line once, after a held step's health checks and its data
+# stores' own checks pass (#423): a real request, a new row, a cache hit,
+# which every probe would repeat if it were a health line. Only after a step
+# that restarted a declared data store (CR 1294), or one whose start couldn't
+# be read, since unread is never "didn't restart". Not after a step that
+# failed: the abort branch is already taken.
+run_recovery() {
+  local r rc a="" e="" o="" ok=1 said i t moved="" unread="" w
+  local -a f=()
+  jaddn o declared "${#KNOB_RECOVERY[@]}"
+  for i in ${DS_WHAT[@]+"${!DS_WHAT[@]}"}; do
+    ds_start t "${DS_WHAT[$i]}"
+    if [ "$t" = "?" ] || [ "${DS_BEFORE[$i]}" = "?" ]; then
+      unread="$unread ${DS_WHAT[$i]}"
+    elif [ "$t" != "${DS_BEFORE[$i]}" ]; then
+      moved="$moved ${DS_WHAT[$i]}"
+    fi
+  done
+  json_words w "$moved"
+  jadd o restarted "$w"
+  json_words w "$unread"
+  jadd o unread "$w"
+  if [ "${#FAILED[@]}" -gt 0 ] || [ "${#KNOB_RECOVERY[@]}" -eq 0 ]; then
+    jadd o checks "[]"
+    jadd o passed null
+    J_RECOVERY="{$o}"
+    return 0
+  fi
+  if [ -z "$moved$unread" ]; then
+    jadd o checks "[]"
+    jadd o passed null
+    jadds o skipped "the step restarted no declared data store, so no recovery line ran: each makes a real request or writes a row (#423)"
+    J_RECOVERY="{$o}"
+    return 0
+  fi
+  for r in "${KNOB_RECOVERY[@]}"; do
+    IFS=$KNOB_US read -r -a f <<<"$r"
+    rc=0
+    knob_cmd "${f[0]}" >/dev/null 2>&1 </dev/null || rc=$?
+    echo "apply: recovery line ${f[1]} exit $rc" >&2
+    e=""
+    jadds e command "${f[0]}"
+    jaddn e line "${f[1]}"
+    jaddn e exit "$rc"
+    jpush a "{$e}"
+    if [ "$rc" -ne 0 ]; then
+      ok=0
+      says said "$rc"
+      fail "the recovery check on knob line ${f[1]} $said after the step: the path through the data store isn't proven"
+    fi
+  done
+  jadd o checks "[$a]"
+  jaddb o passed "$ok"
+  J_RECOVERY="{$o}"
 }
 
 # The holds this run still has on, for the abort and the record: each one
@@ -1890,12 +1987,14 @@ do_held() {
     case $LANE in origin:*) LANE_TAKE=$rel ;; esac
     qdrant_mark
     redis_mark
+    ds_mark
     run_uu
     check_holds
     held_installed ${w[@]+"${w[@]}"}
     poll_health
     qdrant_after
     redis_after
+    run_recovery
   fi
   # Started again on a green step, and on one that failed before the
   # upgrade, which restarted nothing. After a failed upgrade, the owner

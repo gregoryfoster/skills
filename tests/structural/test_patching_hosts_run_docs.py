@@ -74,3 +74,54 @@ def test_an_unread_class_or_tree_is_recorded_as_no_read_never_0():
     s7 = _section(AFTER, "## 7. The record")
     assert "*no read*, never as 0" in s7
     assert "`not_read`" in s7 and "`lockfile: null`" in s7
+
+
+# #423, #490, #501: the probe reads, with named exceptions, and says where
+# the contract is stated.
+READINGS = (SKILL / "references" / "readings.md").read_text()
+KNOB_MD = (SKILL / "references" / "knob.md").read_text()
+
+
+def test_the_probes_promise_names_its_exceptions():
+    step = _step(1)
+    assert "Ubuntu Pro's own log and lock" in step
+    assert "--no-sudo" in step and "probe.privilege" in step
+    for path in ("/var/log/ubuntu-advantage.log", "/var/lib/ubuntu-advantage/lock"):
+        assert path in READINGS, path
+    assert "It changes nothing" not in step
+
+
+def test_a_health_line_is_safe_at_any_time_and_recovery_isnt_run_by_every_probe():
+    [health] = [li for li in KNOB_MD.splitlines() if li.startswith("| `health ")]
+    assert "safe and cheap at any time" in health
+    [recovery] = [li for li in KNOB_MD.splitlines() if li.startswith("| `recovery ")]
+    assert "--post-boot" in recovery
+
+
+def test_readings_name_the_dry_runs_own_download_readings():
+    # CR 1290: #499's two readings, where the dry run's cost is read.
+    [row] = [
+        li for li in READINGS.splitlines() if li.startswith("| The dry run's cost")
+    ]
+    assert "download_bound_kib" in row and "free_kib_dry_run_dir" in row
+
+
+def test_the_recovery_rule_reads_the_same_everywhere():
+    # CR 1294: only after a held step that restarted a declared data store.
+    import subprocess
+
+    rule = "restarted a declared data store"
+    [row] = [li for li in KNOB_MD.splitlines() if li.startswith("| `recovery ")]
+    help_text = subprocess.run(
+        ["bash", str(SKILL / "scripts" / "apply.sh"), "--help"],
+        capture_output=True,
+        text=True,
+    ).stdout
+    for name, text in (("knob.md", row), ("run.md", RUN), ("--help", help_text)):
+        assert rule in " ".join(text.split()), name
+
+
+def test_the_list_age_row_names_the_unpack_margin():
+    # CR 1300: a ctime within an hour of os-release's is an unpack's.
+    [row] = [li for li in READINGS.splitlines() if li.startswith("| List age ")]
+    assert "an hour" in row
