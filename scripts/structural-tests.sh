@@ -111,15 +111,38 @@ source .venv/bin/activate
 STAMP="skills/shipping-work/scripts/gate-stamp.sh"
 WORKERS="skills/shipping-work/scripts/gate-workers.sh"
 
+# PATH enters the key without git's exec-path. git runs every hook with that
+# directory prepended, so a raw PATH made the hook's stamp unreachable from the
+# shell pre-ship runs in — the first real commit + pre-ship pair re-ran the
+# whole suite. The directory holds git's own subcommands and nothing a test's
+# outcome turns on.
+key_path() {
+  local exec_path entry out=""
+  exec_path=$(git --exec-path) || return 1
+  local IFS=:
+  for entry in $PATH; do
+    if [[ "$entry" != "$exec_path" ]]; then
+      out=${out:+$out:}$entry
+    fi
+  done
+  echo "$out"
+}
+
 stamp_key() {
-  local dists args=()
+  local dists kpath args=()
   dists=$(python -c 'import importlib.metadata as m, sys; print(sys.version.split()[0], *sorted({f"{d.name}=={d.version}" for d in m.distributions()}))') || return 2
+  kpath=$(key_path) || return 2
   if [[ "${PRE_COMMIT:-}" == "1" ]]; then
     args+=(--index)
   fi
+  # GATE_STAMP_EXPLAIN=1 prints what went into the key, to diagnose a reuse
+  # that should have happened and did not.
+  if [[ "${GATE_STAMP_EXPLAIN:-}" == "1" ]]; then
+    args+=(--explain)
+  fi
   bash "$STAMP" key "${args[@]+"${args[@]}"}" \
     --env '*_REQUIRED' --env SKILL_BUDGET_EXACT --env 'SOCRATICODE_*' \
-    --env 'CTX_*' --env PATH --extra "$dists"
+    --env 'CTX_*' --extra "PATH=$kpath" --extra "$dists"
 }
 
 KEY=""

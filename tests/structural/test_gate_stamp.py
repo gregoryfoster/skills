@@ -137,6 +137,16 @@ class TestTheKeyMovesWithTheVerdictsInputs:
         assert "hunter2" not in record
 
 
+def test_explain_shows_what_went_in_but_never_an_input_value(repo):
+    (repo / ".env").write_text("TOKEN=hunter2\n")
+    result = _run(repo, "key", "--explain", "--env", "*_REQUIRED", X_REQUIRED="1")
+    assert result.returncode == 0
+    assert "gate-stamp: tree " in result.stderr
+    assert "gate-stamp: env X_REQUIRED=1" in result.stderr
+    assert "gate-stamp: input .env " in result.stderr
+    assert "hunter2" not in result.stderr + result.stdout
+
+
 class TestOnlyWhatIsOnDiskCanBeStamped:
     def test_a_tracked_change_is_exit_3(self, repo):
         (repo / "a.txt").write_text("dirty\n")

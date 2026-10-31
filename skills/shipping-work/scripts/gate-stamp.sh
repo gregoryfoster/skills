@@ -33,7 +33,7 @@
 # Stamps live under <git-common-dir>/gate-stamps/, shared by every worktree of
 # the repository; the newest 500 are kept.
 #
-# Usage: bash "<gate-stamp.sh>" key [--index] [--env PATTERN]... [--extra TEXT]...
+# Usage: bash "<gate-stamp.sh>" key [--index] [--explain] [--env PATTERN]... [--extra TEXT]...
 #        bash "<gate-stamp.sh>" check KEY
 #        bash "<gate-stamp.sh>" write KEY [--label TEXT] [--seconds N]
 #        bash "<gate-stamp.sh>" list [N]
@@ -42,7 +42,7 @@ set -euo pipefail
 KEEP=500
 
 usage() {
-  echo "Usage: bash \"$0\" key [--index] [--env PATTERN]... [--extra TEXT]..."
+  echo "Usage: bash \"$0\" key [--index] [--explain] [--env PATTERN]... [--extra TEXT]..."
   echo "       bash \"$0\" check KEY"
   echo "       bash \"$0\" write KEY [--label TEXT] [--seconds N]"
   echo "       bash \"$0\" list [N]"
@@ -52,7 +52,8 @@ usage() {
   echo ""
   echo "  key    print the stamp key for HEAD^{tree} (or, with --index, the tree"
   echo "         being committed), the OS, the --env variables, the --extra text"
-  echo "         and the untracked inputs' content hashes"
+  echo "         and the untracked inputs' content hashes. --explain prints"
+  echo "         what went into the key on stderr, to diagnose a missed reuse"
   echo "  check  exit 0 and print the record if KEY has a stamp; exit 1 if not"
   echo "  write  record a pass for KEY"
   echo "  list   print the newest N records (default 20), tab-separated"
@@ -102,10 +103,11 @@ input_patterns() {
 }
 
 key() {
-  local index=0 tree env_pats=() extras=()
+  local index=0 explain=0 tree env_pats=() extras=()
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --index) index=1; shift ;;
+      --explain) explain=1; shift ;;
       --env) [[ $# -ge 2 ]] || die "--env needs a pattern"; env_pats+=("$2"); shift 2 ;;
       --extra) [[ $# -ge 2 ]] || die "--extra needs a value"; extras+=("$2"); shift 2 ;;
       *) die "unknown key argument '$1'" ;;
@@ -191,6 +193,9 @@ key() {
       fi
     done < <(input_patterns)  # unhardened: input_patterns reads a file this script just tested for
   )
+  if [[ "$explain" -eq 1 ]]; then
+    printf 'gate-stamp: %s\n' "${material//$'\n'/$'\n'gate-stamp: }" >&2
+  fi
   git hash-object --stdin <<<"$material"
 }
 
