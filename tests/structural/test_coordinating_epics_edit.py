@@ -2806,3 +2806,9 @@ def test_each_op_moves_the_disposed_count_it_implies(rig, ops, after):
 )
 def test_a_disposition_is_a_whole_field_not_a_prefix(line, state):
     assert ee.item_state(line) == state
+
+
+def test_box_re_names_its_marker_a_marker():
+    """CR 1493: the group holds "1." and "1)" now, not only bullets."""
+    assert ee.BOX_RE.match("1. [ ] #5 x").group("marker") == "1."
+    assert ee.BOX_RE.match("- [x] #5 x").group("marker") == "-"
