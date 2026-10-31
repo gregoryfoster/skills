@@ -359,10 +359,15 @@ def is_cursor_line(line: str) -> bool:
     """A header cursor line, whose refs (Last issue seen, Next) track no issue.
 
     Only these: a tier line "- **#15:** …" or a log line "**2026-10-14:** #15 …"
-    mentions #15 (CR 278).
+    mentions #15 (CR 278). Top-level only, as #528 reads the header: an indented
+    "  - **Next:** #14" is a checklist item's sub-note, and it names #14 (#535).
     """
     m = FIELD_RE.match(line)
-    return bool(m) and m.group("field").strip().lower() in CURSOR_FIELDS
+    return (
+        bool(m)
+        and not line[:1].isspace()
+        and m.group("field").strip().lower() in CURSOR_FIELDS
+    )
 
 
 def trailing(line: str) -> str:
@@ -654,10 +659,7 @@ def paragraph_headers(lines: list[str]) -> list[tuple[int, int]]:
     return [
         (s, e)
         for s, e, kind in spans(lines)
-        if kind == "para"
-        and any(
-            not lines[j][:1].isspace() and is_cursor_line(lines[j]) for j in range(s, e)
-        )
+        if kind == "para" and any(is_cursor_line(lines[j]) for j in range(s, e))
     ]
 
 
@@ -690,9 +692,7 @@ def converge(lines: list[str]) -> list[str]:
             # Named by its cursor field, not a line number: an earlier op can
             # move it, and a later header op would note it again (CR 939).
             lead = next(
-                FIELD_RE.match(ln).group("lead")
-                for ln in para
-                if not ln[:1].isspace() and is_cursor_line(ln)
+                FIELD_RE.match(ln).group("lead") for ln in para if is_cursor_line(ln)
             )
             notes.append(f"the paragraph holding {lead!r} stays a paragraph: {why}")
             continue
@@ -730,7 +730,7 @@ def converge(lines: list[str]) -> list[str]:
 
 def holds_cursor(lines: list[str], start: int, end: int) -> bool:
     """True when a top-level line in the range is a cursor line, not a sub-note."""
-    return any(not ln[:1].isspace() and is_cursor_line(ln) for ln in lines[start:end])
+    return any(is_cursor_line(ln) for ln in lines[start:end])
 
 
 def field_lists(lines: list[str]) -> list[tuple[int, int]]:
