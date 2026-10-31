@@ -604,11 +604,56 @@ UNKNOWN_FIELD = (
 
 
 def test_a_multi_line_pr_lookup_error_is_kept_whole(rig):
-    """#410: the last line alone was `url`, which names no cause."""
-    rig.set_flag("pr_error", UNKNOWN_FIELD)
+    """#410: the last line alone was the hint, which names no cause. (Its
+    first fixture, gh 2.45's field list, is #412's one warning now.)"""
+    err = "HTTP 502: Bad Gateway (https://api.github.com/graphql)\nhint: retry"
+    rig.set_flag("pr_error", err)
     lost = [w for w in scan(rig)["warnings"] if "closing issues unread" in w]
     assert len(lost) == 1, lost
-    assert lost[0] == f"#16's closing issues unread: gh: {UNKNOWN_FIELD}"
+    assert lost[0] == f"#16's closing issues unread: gh: {err}"
+
+
+GH_245 = (
+    "gh version 2.45.0 (2025-07-18 Ubuntu 2.45.0-1ubuntu0.3)\n"
+    "https://github.com/cli/cli/releases/tag/v2.45.0"
+)
+
+
+def _more_pr_numbers(rig):
+    """Two more commits whose subjects name only numbers that aren't children."""
+    for n in (17, 18):
+        (rig.checkout / f"pr{n}").write_text(str(n))
+        git(rig.checkout, "add", ".")
+        git(rig.checkout, "commit", "-q", "-m", f"fix: part {n} (#{n})")
+
+
+def test_a_gh_without_the_closing_field_warns_once_per_scan(rig):
+    """#412: gh 2.45 rejects --json closingIssuesReferences before any lookup,
+    so every number failed alike and each added a warning carrying gh's field
+    list. Now one warning names the version, and no further PR is asked."""
+    _more_pr_numbers(rig)
+    rig.set_flag("pr_error", UNKNOWN_FIELD)
+    rig.set_flag("gh_version", GH_245)
+    r = scan(rig)
+    old = [w for w in r["warnings"] if "closingIssuesReferences" in w]
+    assert len(old) == 1, r["warnings"]
+    assert "gh 2.45.0 " in old[0] and "Available fields" not in old[0], old
+    assert not any("closing issues unread" in w for w in r["warnings"]), r
+    views = [c for c in rig.load()["calls"] if c[:2] == ["pr", "view"]]
+    assert len(views) == 1, views
+    # A subject's own refs still attribute a commit (#412's correction, #424).
+    rows = {row["subject"]: row for row in r["commits"]}
+    assert rows["fix: guard the cache (#12)"]["attribution"] == "child"
+    assert rows["feat: cache warmer (#16)"]["attribution"] == "unattributed"
+
+
+def test_an_unread_gh_version_still_warns_once(rig):
+    """#412: the version is a courtesy; the one warning doesn't depend on it."""
+    _more_pr_numbers(rig)
+    rig.set_flag("pr_error", UNKNOWN_FIELD)
+    r = scan(rig)
+    old = [w for w in r["warnings"] if "closingIssuesReferences" in w]
+    assert len(old) == 1 and old[0].startswith("this gh "), r["warnings"]
 
 
 def test_a_multi_line_cross_repo_error_is_kept_whole(rig):
@@ -969,3 +1014,12 @@ def test_a_nested_last_check_in_isnt_the_scans_since(rig):
     rig.issue(REPO, EPIC, body=body)
     r = scan(rig)
     assert r["cursors"]["since"] is None and r["updated_since"] is None
+
+
+def test_item_keys_reads_ordinal_led_and_ordered_items():
+    """#403: scan.sh attributes a commit to an item it can find."""
+    spec = importlib.util.spec_from_file_location("_scan", SCRIPTS / "_scan.py")
+    scan_mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(scan_mod)
+    lines = ["- [x] 12. #447 a", "1. [ ] #348 b", "- [ ] `#5` c"]
+    assert scan_mod.item_keys(lines, REPO) == {"acme/widgets#447", "acme/widgets#348"}
