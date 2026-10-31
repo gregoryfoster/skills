@@ -119,3 +119,9 @@ def test_the_recovery_rule_reads_the_same_everywhere():
     ).stdout
     for name, text in (("knob.md", row), ("run.md", RUN), ("--help", help_text)):
         assert rule in " ".join(text.split()), name
+
+
+def test_the_list_age_row_names_the_unpack_margin():
+    # CR 1300: a ctime within an hour of os-release's is an unpack's.
+    [row] = [li for li in READINGS.splitlines() if li.startswith("| List age ")]
+    assert "an hour" in row

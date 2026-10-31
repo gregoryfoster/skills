@@ -117,7 +117,6 @@ patching_hosts_rig.py, shared with apply.sh's tests.
 
 import os
 import subprocess
-import time
 from pathlib import Path
 
 import pytest
@@ -600,13 +599,29 @@ SECURITY_IN_RELEASE = (
 )
 
 
-class LaterHost(Host):
+class StatHost(Host):
+    """stat answering a file's ctime as a case sets it, and as the system's
+    stat otherwise: a ctime can't be set back, nor an hour's gap slept for
+    (CR 1300)."""
+
+    STUBBED = (*Host.STUBBED, "stat")
+    FALLBACKS = {
+        **Host.FALLBACKS,
+        "stat": 'for d in /usr/bin /bin; do [ -x "$d/stat" ] && exec "$d/stat" "$@"; done; exit 127',
+    }
+
+    def ctime(self, path: str, epoch: int) -> "StatHost":
+        """PATH's ctime, as file_ctime reads it: PATH ends the argv."""
+        return self.on("stat", f"-c %Z *{path}", f"{epoch}\n")
+
+
+class LaterHost(StatHost):
     """The probe's clock HOURS on from the tree's, so a list written now
     reads as fetched HOURS ago: a ctime can't be set back."""
 
-    STUBBED = (*Host.STUBBED, "date")
+    STUBBED = (*StatHost.STUBBED, "date")
     FALLBACKS = {
-        **Host.FALLBACKS,
+        **StatHost.FALLBACKS,
         "date": 'for d in /bin /usr/bin; do [ -x "$d/date" ] && exec "$d/date" "$@"; done; exit 127',
     }
 
@@ -621,14 +636,15 @@ class LaterHost(Host):
 OS_RELEASE = "usr/lib/os-release"
 
 
-def _unpacked_then_fetched(host: Host) -> None:
-    """The tree's own file, then, a second later, a fetch's list."""
+def _unpacked_then_fetched(host: StatHost) -> None:
+    """The tree's own file, unpacked 5 hours before a fetch's list now."""
     host.write(OS_RELEASE, 'NAME="Ubuntu"\n')
-    time.sleep(1.1)
+    host.ctime(OS_RELEASE, host.now - 5 * 3600)
 
 
-def test_the_lists_age_from_their_fetch_not_the_archives_last_modified(host):
+def test_the_lists_age_from_their_fetch_not_the_archives_last_modified(tmp_path):
     # co-processor, 2026-10-26: noble-security hadn't published for 26 h.
+    host = StatHost(tmp_path)
     _unpacked_then_fetched(host)
     host.write(SECURITY_IN_RELEASE, "x", age_days=26 / 24)
     out = host.run()
@@ -666,6 +682,30 @@ def test_lists_unpacked_with_the_tree_age_from_their_last_modified(tmp_path, ref
     lists = out["pending"]["lists"]
     assert lists["security_age_hours"] == lists["security_last_modified_hours"] >= 73
     assert "unpack" in lists["source"]
+    assert _finding(out, "lists:stale")["kind"] == "risk"
+
+
+@pytest.mark.parametrize(
+    "gap, fetched", [(5, False), (3601, True)], ids=["within-margin", "past-margin"]
+)
+def test_a_list_within_an_hour_of_the_unpack_reads_as_unpacked(tmp_path, gap, fetched):
+    # CR 1300: an image's layers unpack over seconds (buildpack-deps:noble's
+    # top layer 1 s after os-release's), and a RUN apt-get update puts its
+    # lists in a later layer. Only a ctime past the margin is a fetch.
+    host = StatHost(tmp_path)
+    ref = host.now - 3 * 3600
+    host.write(OS_RELEASE, 'NAME="Ubuntu"\n')
+    host.ctime(OS_RELEASE, ref)
+    host.write(SECURITY_IN_RELEASE, "x", age_days=3)
+    host.ctime(SECURITY_IN_RELEASE, ref + gap)
+    out = host.run()
+    lists = out["pending"]["lists"]
+    if fetched:
+        assert lists["security_age_hours"] == (host.now - ref - gap) // 3600
+        assert "lists:stale" not in _ids(out)
+        return
+    assert lists["security_age_hours"] == lists["security_last_modified_hours"] >= 72
+    assert "an hour" in lists["source"]
     assert _finding(out, "lists:stale")["kind"] == "risk"
 
 
