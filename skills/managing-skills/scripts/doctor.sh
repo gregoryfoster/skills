@@ -2267,6 +2267,7 @@ retired_claude_link() {
 retire_one() {
   local vroot="$1" vname="$2" old="$3" new="$4"
   local link="skills/$3" dest="skills/$4" tgt newtgt refs rc dangling=0 shown n f
+  local note=""
   if [ ! -L "$link" ]; then
     if [ -e "$link" ]; then
       RETIRED_HELD+=("$link — retired for $new, but a directory (an override, or per-file links): replace it with a symlink to $new, moving its local changes into .skills/ configuration or a wrapper")
@@ -2310,7 +2311,9 @@ retire_one() {
       RETIRED_HELD+=("$link — retired for $new; still named as skills/$old/ by $shown: point them at skills/$new/ and re-run")
       return 1
     fi
-    RETIRED_HELD+=("$link was dangling and is repointed; skills/$old/ is still named by $shown")
+    # Repointed regardless, so reported with the repointed — under "not
+    # repointed" the report contradicted itself (CR 1399).
+    note="; skills/$old/ is still named by $shown: point them at skills/$new/"
   fi
   if retired_claude_blocked "$old" "$new"; then
     return 1
@@ -2322,19 +2325,19 @@ retire_one() {
       return 1
     fi
     if [ "$CHECK_ONLY" = "1" ]; then
-      RETIRED_DONE+=("$link (removed; $dest already links $new)")
+      RETIRED_DONE+=("$link (removed; $dest already links $new)$note")
     elif rm -f "$link"; then
-      RETIRED_DONE+=("$link (removed; $dest already links $new)")
+      RETIRED_DONE+=("$link (removed; $dest already links $new)$note")
       RETIRED_PATHS+=("$link")
     fi
     return 0
   fi
   if [ "$CHECK_ONLY" = "1" ]; then
-    RETIRED_DONE+=("$link -> $dest")
+    RETIRED_DONE+=("$link -> $dest$note")
     return 0
   fi
   if ln -s "$newtgt" "$dest" && rm -f "$link"; then
-    RETIRED_DONE+=("$link -> $dest")
+    RETIRED_DONE+=("$link -> $dest$note")
     RETIRED_PATHS+=("$link" "$dest")
     return 0
   fi
