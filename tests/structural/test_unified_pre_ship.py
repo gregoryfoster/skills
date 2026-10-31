@@ -198,6 +198,12 @@ class TestWhatRuns:
         assert result.returncode == 2
         assert tool in result.stderr
 
+    def test_it_says_what_it_detected(self, repo):
+        """SKILL.md loads references/stack-<framework>.md from this line."""
+        _uv_repo(repo, '"fastapi"')
+        result = _gate(repo)
+        assert "Detected: toolchain uv, framework fastapi" in result.stdout
+
     def test_every_detected_stack_runs(self, repo):
         """Row 1: wordpress has composer AND npm."""
         _composer_repo(repo)

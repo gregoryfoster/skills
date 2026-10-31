@@ -209,6 +209,9 @@ no_gate() {
 if [[ $UV -eq 0 && $COMPOSER -eq 0 && $NPM -eq 0 ]]; then
   no_gate "no toolchain detected, so there is nothing for this gate to run."
 fi
+# SKILL.md reads this line: each `framework <name>` names the
+# references/stack-<name>.md that holds that framework's next steps.
+echo "Detected: $(awk -F'\t' '{printf "%s%s %s", (NR > 1 ? ", " : ""), $1, $2}' "$TMP/stack")"
 
 # A detected toolchain whose tool is missing is a tooling failure, not a pass.
 need() {
