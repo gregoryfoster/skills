@@ -1014,3 +1014,12 @@ def test_a_nested_last_check_in_isnt_the_scans_since(rig):
     rig.issue(REPO, EPIC, body=body)
     r = scan(rig)
     assert r["cursors"]["since"] is None and r["updated_since"] is None
+
+
+def test_item_keys_reads_ordinal_led_and_ordered_items():
+    """#403: scan.sh attributes a commit to an item it can find."""
+    spec = importlib.util.spec_from_file_location("_scan", SCRIPTS / "_scan.py")
+    scan_mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(scan_mod)
+    lines = ["- [x] 12. #447 a", "1. [ ] #348 b", "- [ ] `#5` c"]
+    assert scan_mod.item_keys(lines, REPO) == {"acme/widgets#447", "acme/widgets#348"}

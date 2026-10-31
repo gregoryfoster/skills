@@ -146,8 +146,8 @@ def test_tick_writes_reads_back_and_moves_the_baseline(adopted):
     assert res.returncode == 0, res.stderr
     s = summary(res)
     assert s["written"] and s["readback"] == "matches"
-    assert s["counts_before"] == {"open": 3, "done": 0}
-    assert s["counts_after"] == {"open": 2, "done": 1}
+    assert s["counts_before"] == {"open": 3, "done": 0, "disposed": 0}
+    assert s["counts_after"] == {"open": 2, "done": 1, "disposed": 0}
     assert "- [x] #11 first thing" in adopted.body(REPO, EPIC)
     base = (
         adopted.state_dir / "acme" / "widgets" / "10" / "last-written.md"
@@ -525,7 +525,7 @@ def test_an_adopted_epic_comes_onto_the_template_without_a_hand_edit(rig):
     ]
     res = rig.edit(REPO, EPIC, ops, "--adopt-live")
     assert res.returncode == 0, res.stderr
-    assert summary(res)["counts_after"] == {"open": 2, "done": 0}
+    assert summary(res)["counts_after"] == {"open": 2, "done": 0, "disposed": 0}
     body = rig.body(REPO, EPIC)
     assert re.fullmatch(
         r"Burn down the widget backlog\.\n\n"
@@ -1231,7 +1231,7 @@ def test_replace_section_counts_its_boxes(adopted):
     )
     assert res.returncode == 0, res.stderr
     s = summary(res)
-    assert s["counts_after"] == {"open": 1, "done": 1}
+    assert s["counts_after"] == {"open": 1, "done": 1, "disposed": 0}
     assert "acme/gadgets#3" not in adopted.body(REPO, EPIC)
 
 
@@ -2241,7 +2241,7 @@ def test_usage_errors_exit_1_before_any_fetch(adopted, ops, args):
 
 def test_boxes_inside_a_fence_are_not_counted():
     lines = ee.normalize("- [ ] #1 a\n```\n- [ ] #2 b\n```\n- [x] #3 c\n")
-    assert ee.counts(lines) == {"open": 1, "done": 1}
+    assert ee.counts(lines) == {"open": 1, "done": 1, "disposed": 0}
     with pytest.raises(ee.Refused):
         ee.find_ref_line(lines, ee.key(None, 2, REPO), REPO, want_item=True)
 
@@ -2258,7 +2258,7 @@ def test_boxes_inside_a_fence_are_not_counted():
 def test_fences_follow_commonmark(body):
     """CR 246: only #1 is outside every fence."""
     lines = ee.normalize(body)
-    assert ee.counts(lines) == {"open": 1, "done": 0}
+    assert ee.counts(lines) == {"open": 1, "done": 0, "disposed": 0}
     assert (
         ee.find_ref_line(lines, ee.key(None, 1, REPO), REPO, want_item=True)
         == len(lines) - 1
@@ -2269,7 +2269,7 @@ def test_a_backtick_fence_with_a_backtick_in_its_info_opens_nothing():
     """CR 295 (for 246): "```a`b" is an inline code span's text, not a fence."""
     lines = ee.normalize("```a`b\n- [ ] #1 a\n```\n- [ ] #2 b\n")
     assert ee.fenced(lines) == [False, False, True, True]
-    assert ee.counts(lines) == {"open": 1, "done": 0}
+    assert ee.counts(lines) == {"open": 1, "done": 0, "disposed": 0}
 
 
 @pytest.mark.parametrize(
@@ -2607,3 +2607,178 @@ def test_account_still_skips_a_top_level_next_line(rig):
     assert rig.edit(REPO, EPIC, [], "--adopt-live").returncode == 0
     res = rig.edit(REPO, EPIC, [{"op": "tick", "ref": "#11"}], "--account")
     assert res.returncode == 3 and summary(res)["unlisted"] == [14]
+
+
+# ---------------------------------------------------------------- #403
+
+ORDERED = """\
+- **Next:** #447
+
+## Order
+
+- [x] 11. #446 shipped first
+- [ ] 12. #447 then this
+- [ ] 13) #448 a parenthesis ordinal
+
+## Ordered tier
+
+1. [ ] #348 an ordered task item
+2) [x] #349 its sibling, ticked
+"""
+
+
+@pytest.mark.parametrize(
+    "line, want",
+    [
+        ("- [x] 12. #447 x", ("item", "acme/widgets#447")),
+        ("- [ ] 13) #448 x", ("item", "acme/widgets#448")),
+        ("- [ ] 12. **#447** x", ("item", "acme/widgets#447")),
+        ("- [ ] 12. acme/gadgets#3 x", ("item", "acme/gadgets#3")),
+        ("1. [ ] #348 x", ("item", "acme/widgets#348")),
+        ("2) [x] #349 x", ("item", "acme/widgets#349")),
+        ("  10. [ ] 4. #350 x", ("item", "acme/widgets#350")),
+        ("- 12. #447 x", ("bullet", "acme/widgets#447")),
+        # An ordinal needs whitespace after it, as CommonMark's ordered-list
+        # marker does: GitHub links #5 in "1.#5", but nothing leads with it.
+        ("- [ ] 1.#5 x", None),
+        # A ref in code links nothing, and #415 holds that it lists nothing:
+        # so a code-led line is no item, bullet or row either.
+        ("- [ ] `#5` x", None),
+        ("- `#5` x", None),
+        ("| `#5` | x |", None),
+        ("- [ ] 1234567890. #5 x", None),  # past CommonMark's nine digits
+        ("1. #5 not a task item", None),  # ordered, but no box: not asked
+    ],
+)
+def test_line_ref_reads_an_ordinal_and_an_ordered_marker(line, want):
+    """#403, and its two For-#403 decisions (1.#5, a code-led line)."""
+    assert ee.line_ref(line, REPO) == want
+
+
+def test_an_ordered_task_item_is_counted_and_keeps_its_marker():
+    lines = ORDERED.splitlines()
+    assert ee.counts(lines) == {"open": 3, "done": 2, "disposed": 0}
+    assert ee.set_box("1. [ ] #348 x", True) == "1. [x] #348 x"
+    assert ee.set_box("2) [x] #349 x", False) == "2) [ ] #349 x"
+    assert ee.set_box("  10. [ ] 4. #350 x", True) == "  10. [x] 4. #350 x"
+
+
+@pytest.mark.parametrize(
+    "ref, before, after",
+    [
+        ("#447", "- [ ] 12. #447 then this", "- [x] 12. #447 then this"),
+        ("#448", "- [ ] 13) #448 a parenthesis", "- [x] 13) #448 a parenthesis"),
+        ("#348", "1. [ ] #348 an ordered", "1. [x] #348 an ordered"),
+    ],
+)
+def test_tick_finds_an_ordinal_led_or_ordered_item(rig, ref, before, after):
+    """#403's repro: `tick #447` was refused, "no checklist item leads with it"."""
+    rig.issue(REPO, EPIC, body=ORDERED)
+    assert rig.edit(REPO, EPIC, [], "--adopt-live").returncode == 0
+    res = rig.edit(REPO, EPIC, [{"op": "tick", "ref": ref}])
+    assert res.returncode == 0, res.stderr
+    body = rig.body(REPO, EPIC)
+    assert after in body and before not in body, body
+    s = summary(res)
+    assert s["counts_before"] == {"open": 3, "done": 2, "disposed": 0}
+    assert s["counts_after"] == {"open": 2, "done": 3, "disposed": 0}
+
+
+def test_a_note_lands_on_an_ordinal_led_item(rig):
+    rig.issue(REPO, EPIC, body=ORDERED)
+    assert rig.edit(REPO, EPIC, [], "--adopt-live").returncode == 0
+    res = rig.edit(REPO, EPIC, [{"op": "note", "ref": "#447", "text": "ask bob"}])
+    assert res.returncode == 0, res.stderr
+    assert "- [ ] 12. #447 then this · ask bob\n" in rig.body(REPO, EPIC)
+
+
+def test_a_foreign_tick_on_an_ordered_item_is_a_tick(rig):
+    """foreign_changes reads GitHub's own tick, which keeps the "1." marker."""
+    rig.issue(REPO, EPIC, body=ORDERED)
+    assert rig.edit(REPO, EPIC, [], "--adopt-live").returncode == 0
+    rig.issue(REPO, EPIC, body=ORDERED.replace("1. [ ] #348", "1. [x] #348"))
+    res = rig.edit(REPO, EPIC, [{"op": "tick", "ref": "#447"}])
+    assert res.returncode == 3 and "--accept-ticks" in res.stderr, res.stderr
+    res = rig.edit(
+        REPO, EPIC, [{"op": "tick", "ref": "#447"}], "--accept-ticks", "#348"
+    )
+    assert res.returncode == 0, res.stderr
+    assert summary(res)["foreign_ticks"] == ["acme/widgets#348"]
+
+
+def test_a_code_led_item_is_refused_loudly_by_tick(rig):
+    """The decision above, end to end: no silent tick of a line GitHub doesn't link."""
+    rig.issue(REPO, EPIC, body="## Tier 1\n\n- [ ] `#11` first thing\n")
+    assert rig.edit(REPO, EPIC, [], "--adopt-live").returncode == 0
+    res = rig.edit(REPO, EPIC, [{"op": "tick", "ref": "#11"}])
+    assert res.returncode == 3 and "no checklist item leads with it" in res.stderr
+
+
+# ---------------------------------------------------------------- F177
+
+DISPOSED = """\
+## Tier 1
+
+- [x] #11 shipped
+- [x] #12 second thing · not planned: superseded by #14; reopen if the SDK ships
+- [x] #13 third thing · Out of epic: moved to acme/gadgets
+- [ ] #14 still open · not planned yet, ask alice
+- [x] #15 a thing that was not planned at first, then shipped
+"""
+
+
+def test_a_ticked_disposition_is_counted_apart_from_done():
+    """CannObserv/processor#24 F177 (via #475): a not-planned item could only
+    be ticked, so it counted as done. A ticked item with a " · " field that
+    starts "not planned" or "out of epic" is "disposed"; an open one is open,
+    and the words anywhere else in the line are just text."""
+    assert ee.counts(DISPOSED.splitlines()) == {"open": 1, "done": 2, "disposed": 2}
+
+
+def test_ticking_a_disposed_item_moves_it_to_disposed(rig):
+    body = DISPOSED.replace("- [x] #12", "- [ ] #12")
+    rig.issue(REPO, EPIC, body=body)
+    assert rig.edit(REPO, EPIC, [], "--adopt-live").returncode == 0
+    res = rig.edit(REPO, EPIC, [{"op": "tick", "ref": "#12"}])
+    assert res.returncode == 0, res.stderr
+    s = summary(res)
+    assert s["counts_before"] == {"open": 2, "done": 2, "disposed": 1}
+    assert s["counts_after"] == {"open": 1, "done": 2, "disposed": 2}
+
+
+@pytest.mark.parametrize(
+    "ops, after",
+    [
+        (
+            [{"op": "note", "ref": "#11", "text": "not planned: dropped"}],
+            {"open": 1, "done": 1, "disposed": 3},
+        ),
+        (
+            [{"op": "untick", "ref": "#13"}],
+            {"open": 2, "done": 2, "disposed": 1},
+        ),
+        (
+            [{"op": "set-line", "ref": "#13", "line": "- [x] #13 third thing"}],
+            {"open": 1, "done": 3, "disposed": 1},
+        ),
+        (
+            [
+                {
+                    "op": "add-line",
+                    "section": "Tier 1",
+                    "line": "- [x] #16 x · out of epic",
+                }
+            ],
+            {"open": 1, "done": 2, "disposed": 3},
+        ),
+    ],
+    ids=["note", "untick", "set-line", "add-line"],
+)
+def test_each_op_moves_the_disposed_count_it_implies(rig, ops, after):
+    """The derived counts still match what the ops imply, with the third bucket."""
+    rig.issue(REPO, EPIC, body=DISPOSED)
+    rig.issue(REPO, 16)
+    assert rig.edit(REPO, EPIC, [], "--adopt-live").returncode == 0
+    res = rig.edit(REPO, EPIC, ops)
+    assert res.returncode == 0, res.stderr
+    assert summary(res)["counts_after"] == after
