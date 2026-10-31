@@ -57,7 +57,7 @@ Read every comment on the child from the hand-off onward, and read edited commen
 **States a tick can carry:**
 - **Done with a residual.** Tick, and append `Still open: …` to the line (private-launch 31).
 - **Landed and live, recorded apart with dates.** Tick at go-live (broker 131).
-- **"Not planned".** A completed outcome; the line keeps its reasoning and its reopen trigger (status 67).
+- **"Not planned".** A completed outcome; the line keeps its reasoning and its reopen trigger (status 67). Tick it with a `not planned: …` note (or `out of epic: …`), and the editor's counts read it as `disposed`, not `done` (processor F177).
 - **A ticked line stays ticked.** A regression is a new item that links back (status 50).
 
 Verification is read-only. Never test a refusal by attempting the write on a production path. Use `stat`, `find -perm`, or a scratch copy (status 45).

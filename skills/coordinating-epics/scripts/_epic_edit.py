@@ -89,7 +89,11 @@ operations (a JSON array, from --ops FILE or --ops - for stdin):
   fixed by a header op on its field in the same call.
 
   A ref is "#N" for this repo or "owner/repo#N". A ref's line is the checklist
-  item, bullet or table row whose first token is that ref. In any text,
+  item, bullet or table row whose first token is that ref, after an optional
+  ordinal ("- [x] 12. #447"); a task item's marker may be ordered ("1. [ ]").
+  A ref in a code span leads nothing. The summary's counts read a ticked item
+  with a " · not planned" or " · out of epic" field as "disposed", apart from
+  "done"; GitHub's [x] tally is the two together. In any text,
   {now} becomes the UTC time (2026-10-14T18:03Z) and {today} the UTC date.
   With --scan FILE (scan.sh's report), {checked} becomes the report's own time
   and {last_seen} its highest number (#58). Write those two into the header's
@@ -135,7 +139,10 @@ exit codes:
      it with --adopt-live before the next edit.
 """
 
-BOX_RE = re.compile(r"^(?P<indent>\s*)(?P<bullet>[-*+]) \[(?P<mark>[ xX])\] ")
+# A task item's marker is a bullet or an ordered one, "1." or "1)", up to
+# CommonMark's nine digits: GitHub renders "1. [ ] #348" as a task item (#403).
+MARKER = r"(?:[-*+]|[0-9]{1,9}[.)])"
+BOX_RE = re.compile(r"^(?P<indent>\s*)(?P<bullet>" + MARKER + r") \[(?P<mark>[ xX])\] ")
 # GitHub links "pre-#348" and "ver.#3" as this repo's #348 and #3, so a "-" or
 # "." before the "#" is prose (#401). A "/" isn't: ref_text turns only GitHub
 # issue URLs into refs, and "https://example.com/a/#7" renders as a plain link.
@@ -147,8 +154,14 @@ NOT_IN_WORD = r"(?<![A-Za-z0-9_/])"
 OWNER_REPO = r"[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9_.-]+"
 REF_PAT = NOT_IN_WORD + r"(?:(?P<repo>" + OWNER_REPO + r"))?#(?P<num>[0-9]+)\b"
 REF_RE = re.compile(REF_PAT)
-LEAD = r"(?:~~|\*\*|\[|`)*"
-ITEM_RE = re.compile(r"^\s*[-*+] \[[ xX]\] " + LEAD + REF_PAT)
+# What may stand before a line's leading ref: markup, and an ordinal an epic
+# numbers its order with, "- [x] 12. #447" (#403). The ordinal needs whitespace
+# after it, as a list marker does, so "1.#5" leads with nothing. A backtick
+# isn't markup here: GitHub links no ref in code, and a ref only in code lists
+# nothing (#415), so a code-led line is no item, bullet or row (#403).
+MARKUP = r"(?:~~|\*\*|\[)*"
+LEAD = MARKUP + r"(?:[0-9]{1,9}[.)]\s+)?" + MARKUP
+ITEM_RE = re.compile(r"^\s*" + MARKER + r" \[[ xX]\] " + LEAD + REF_PAT)
 BULLET_RE = re.compile(r"^\s*[-*+] " + LEAD + REF_PAT)
 ROW_RE = re.compile(r"^\|\s*" + LEAD + REF_PAT)
 UNESCAPED_PIPE_RE = re.compile(r"(?<!\\)\|")
@@ -787,13 +800,36 @@ def section_tail(lines: list[str], start: int, end: int) -> int:
 
 
 def counts(lines: list[str]) -> dict[str, int]:
+    """Each item_state's count outside fences; GitHub's [x] tally is done + disposed."""
     fence = fenced(lines)
-    out = {"open": 0, "done": 0}
+    out = {"open": 0, "done": 0, "disposed": 0}
     for i, ln in enumerate(lines):
-        m = BOX_RE.match(ln)
-        if m and not fence[i]:
-            out["done" if m.group("mark") in "xX" else "open"] += 1
+        state = None if fence[i] else item_state(ln)
+        if state:
+            out[state] += 1
     return out
+
+
+# A disposition closes an item without shipping it (F177, CannObserv/processor#24
+# via #475): a field led by one of these, as a note op writes it.
+DISPOSITIONS = ("not planned", "out of epic")
+FIELD_SEP_RE = re.compile(r"\s*·\s*")
+
+
+def item_state(line: str) -> str | None:
+    """box_state, with a ticked disposition read apart as "disposed".
+
+    A not-planned item could only be ticked, so it counted as done. Ticked
+    with a " · " field that starts "not planned" or "out of epic", it is
+    disposed. An open one is open, and the words elsewhere are just text.
+    """
+    state = box_state(line)
+    if state != "done":
+        return state
+    fields = FIELD_SEP_RE.split(line.rstrip())[1:]
+    if any(f.lstrip("*_").lower().startswith(DISPOSITIONS) for f in fields):
+        return "disposed"
+    return state
 
 
 def box_state(line: str) -> str | None:
@@ -900,7 +936,7 @@ def inject(text: str, now: dt.datetime, scan: dict | None = None) -> str:
 
 
 def _delta(before: str | None, after: str | None) -> dict[str, int]:
-    d = {"open": 0, "done": 0}
+    d = {"open": 0, "done": 0, "disposed": 0}
     if before:
         d[before] -= 1
     if after:
@@ -922,7 +958,7 @@ def apply_ops(
 ) -> tuple[list[str], dict[str, int], list[str]]:
     """Apply ops in order. Returns (lines, expected count delta, notes)."""
     lines = list(body_lines)
-    expect = {"open": 0, "done": 0}
+    expect = {"open": 0, "done": 0, "disposed": 0}
     notes: list[str] = []
     converged: set[str] = set()
     # field -> (op, name, value) of the last header op that set it (#399).
@@ -936,14 +972,14 @@ def apply_ops(
                     lines, parse_ref(op["ref"], host), host, want_item=True
                 )
                 want = kind == "tick"
-                before = box_state(lines[i])
-                if (before == "done") == want:
+                if (box_state(lines[i]) == "done") == want:
                     notes.append(
                         f"{where}: {op['ref']} already {'ticked' if want else 'unticked'}"
                     )
                     continue
+                before = item_state(lines[i])
                 lines[i] = set_box(lines[i], want)
-                _add(expect, _delta(before, box_state(lines[i])))
+                _add(expect, _delta(before, item_state(lines[i])))
             elif kind == "note":
                 i = find_ref_line(lines, parse_ref(op["ref"], host), host)
                 # The editor writes the " · " itself, so a text led by one, as
@@ -973,7 +1009,10 @@ def apply_ops(
                     continue
                 sep = " " if field_end(head, row) else " · "
                 # The note goes before the line's own trailing break (CR 274).
+                # A "not planned" note on a ticked item disposes it (F177).
+                before = item_state(lines[i])
                 lines[i] = head + sep + text + close + trailing(lines[i])
+                _add(expect, _delta(before, item_state(lines[i])))
             elif kind == "set-line":
                 ref_key = parse_ref(op["ref"], host)
                 i = find_ref_line(lines, ref_key, host)
@@ -986,7 +1025,7 @@ def apply_ops(
                 if new == lines[i]:
                     notes.append(f"{where}: {op['ref']}'s line already reads so")
                     continue
-                _add(expect, _delta(box_state(lines[i]), box_state(new)))
+                _add(expect, _delta(item_state(lines[i]), item_state(new)))
                 lines[i] = new
             elif kind == "add-line":
                 new = inject(op["line"], now, scan).rstrip("\r\n")
@@ -1020,7 +1059,7 @@ def apply_ops(
                 else:
                     raise Refused("add-line needs after_ref or section")
                 lines.insert(pos, new)
-                _add(expect, _delta(None, box_state(new)))
+                _add(expect, _delta(None, item_state(new)))
             elif kind == "header":
                 field = op["field"].strip()
                 value = inject(op["value"], now, scan).strip()
