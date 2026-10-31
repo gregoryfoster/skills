@@ -2627,6 +2627,14 @@ ORDERED = """\
 """
 
 
+def _ordered(rig, body=ORDERED):
+    """The epic set to body, its issues known to the rig, and adopted."""
+    for n in (348, 349, 446, 447, 448):
+        rig.issue(REPO, n)
+    rig.issue(REPO, EPIC, body=body)
+    assert rig.edit(REPO, EPIC, [], "--adopt-live").returncode == 0
+
+
 @pytest.mark.parametrize(
     "line, want",
     [
@@ -2673,8 +2681,7 @@ def test_an_ordered_task_item_is_counted_and_keeps_its_marker():
 )
 def test_tick_finds_an_ordinal_led_or_ordered_item(rig, ref, before, after):
     """#403's repro: `tick #447` was refused, "no checklist item leads with it"."""
-    rig.issue(REPO, EPIC, body=ORDERED)
-    assert rig.edit(REPO, EPIC, [], "--adopt-live").returncode == 0
+    _ordered(rig)
     res = rig.edit(REPO, EPIC, [{"op": "tick", "ref": ref}])
     assert res.returncode == 0, res.stderr
     body = rig.body(REPO, EPIC)
@@ -2685,8 +2692,7 @@ def test_tick_finds_an_ordinal_led_or_ordered_item(rig, ref, before, after):
 
 
 def test_a_note_lands_on_an_ordinal_led_item(rig):
-    rig.issue(REPO, EPIC, body=ORDERED)
-    assert rig.edit(REPO, EPIC, [], "--adopt-live").returncode == 0
+    _ordered(rig)
     res = rig.edit(REPO, EPIC, [{"op": "note", "ref": "#447", "text": "ask bob"}])
     assert res.returncode == 0, res.stderr
     assert "- [ ] 12. #447 then this · ask bob\n" in rig.body(REPO, EPIC)
@@ -2694,8 +2700,7 @@ def test_a_note_lands_on_an_ordinal_led_item(rig):
 
 def test_a_foreign_tick_on_an_ordered_item_is_a_tick(rig):
     """foreign_changes reads GitHub's own tick, which keeps the "1." marker."""
-    rig.issue(REPO, EPIC, body=ORDERED)
-    assert rig.edit(REPO, EPIC, [], "--adopt-live").returncode == 0
+    _ordered(rig)
     rig.issue(REPO, EPIC, body=ORDERED.replace("1. [ ] #348", "1. [x] #348"))
     res = rig.edit(REPO, EPIC, [{"op": "tick", "ref": "#447"}])
     assert res.returncode == 3 and "--accept-ticks" in res.stderr, res.stderr
