@@ -37,6 +37,7 @@ COPIED = (
 
 FAKE_PYTEST = """#!/bin/sh
 echo "$*" >> "$FAKE_PYTEST_LOG"
+if [ -n "${FAKE_PYTEST_EDIT:-}" ]; then echo "# edited mid-run" >> "$FAKE_PYTEST_EDIT"; fi
 exit "${FAKE_PYTEST_RC:-0}"
 """
 
@@ -157,6 +158,21 @@ class TestOncePerTree:
     def test_a_failure_records_nothing(self, repo):
         assert _suite(repo, rc=1).returncode == 1
         assert _suite(repo).returncode == 0
+        assert len(_calls(repo)) == 2
+
+    def test_an_edit_during_the_run_records_nothing(self, repo):
+        """The key is computed again after the suite and must still match.
+
+        Otherwise a pass would be recorded for the tree the run started on,
+        which the suite never finished seeing. Restoring that tree afterwards
+        is what exposes a stamp written in error: the next run would reuse it.
+        """
+        target = repo / "tests" / "structural" / "test_x.py"
+        first = _suite(repo, FAKE_PYTEST_EDIT=str(target))
+        assert first.returncode == 0
+        assert "files changed during the run" in first.stderr
+        _git(repo, "checkout", "--", ".")
+        _suite(repo)
         assert len(_calls(repo)) == 2
 
     def test_a_dirty_tree_neither_reuses_nor_records(self, repo):
