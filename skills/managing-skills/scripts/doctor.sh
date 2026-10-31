@@ -2364,7 +2364,8 @@ report_retired() {
     echo "doctor: retired skills not repointed (#537):" >&2
     printf '  %s\n' "${RETIRED_HELD[@]}" >&2
     echo "doctor: the vendor deletes a retired skill in a later release. Advisory:" >&2
-    echo "doctor: nothing above was changed for you." >&2
+    echo "doctor: nothing above was changed for you. The rules: \"Retired skills\"" >&2
+    echo "doctor: in skills/managing-skills/references/the-doctor.md." >&2
   fi
 }
 
