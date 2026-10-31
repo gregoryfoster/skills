@@ -1484,6 +1484,13 @@ GATE_SCRIPTS = {
         "reviewing-code-python-click copy is held byte-equal to the shipping "
         "one, so both are held to the stricter role"
     ),
+    "gate-stamp.sh": (
+        "decides whether a gate re-runs its suite (#537): `check`'s exit code "
+        "is the skip, and `key`'s exit 3 is what keeps a dirty or untracked "
+        "tree from ever being stamped. Every git probe behind the key captures "
+        "its own status, because a failing `git diff` that read as 'no "
+        "difference' would certify a tree the suite never saw"
+    ),
     # This repo's own gate surface, in scope since #318.
     "python-lint.sh": (
         "gate 2/3 of this repo's ship gate and the pre-commit hook ahead of "
@@ -1515,6 +1522,11 @@ NON_GATE_SCRIPTS = {
     "gather-context.sh": (
         "reporting-only: its output is context for a human reviewer, not a "
         "branch. It carries legitimate process-substitution sites"
+    ),
+    "gate-workers.sh": (
+        "decides only how fast a suite runs, never whether it runs (#537): "
+        "its number becomes xdist's -n, a malformed knob is a loud exit 2, "
+        "and a venv without xdist runs serially and says so"
     ),
     "push.sh": (
         "an action, not a gate: `git push`'s own exit code is the verdict and "

@@ -98,6 +98,99 @@ fi
 
 # shellcheck source=/dev/null
 source .venv/bin/activate
-# `exec` replaces this shell, so pytest's exit code IS this script's — see the
-# usage block, which documents the pass-through rather than claiming a 1.
-exec pytest tests/structural/ -v
+
+# --- Reuse a pass recorded for this exact tree (#537) -------------------------
+# The hook runs the suite on what is being committed, and pre-ship runs it on
+# HEAD; both come through here, so a pass recorded by one is reused by the
+# other when the tree, the OS, the outcome-changing env and the installed
+# packages all match. The env list is every variable the suite reads that can
+# turn a skip into a run or a pass into a failure: the *_REQUIRED switches,
+# SKILL_BUDGET_EXACT, the SocratiCode and CTX overrides, and PATH, which
+# decides whether node, zsh and friends exist at all. A helper that is absent
+# or fails costs the reuse, never the run: the suite still runs, and says why.
+STAMP="skills/shipping-work/scripts/gate-stamp.sh"
+WORKERS="skills/shipping-work/scripts/gate-workers.sh"
+
+stamp_key() {
+  local dists args=()
+  dists=$(python -c 'import importlib.metadata as m, sys; print(sys.version.split()[0], *sorted({f"{d.name}=={d.version}" for d in m.distributions()}))') || return 2
+  if [[ "${PRE_COMMIT:-}" == "1" ]]; then
+    args+=(--index)
+  fi
+  bash "$STAMP" key "${args[@]+"${args[@]}"}" \
+    --env '*_REQUIRED' --env SKILL_BUDGET_EXACT --env 'SOCRATICODE_*' \
+    --env 'CTX_*' --env PATH --extra "$dists"
+}
+
+KEY=""
+if [[ -f "$STAMP" ]]; then
+  RC=0
+  KEY=$(stamp_key) || RC=$?
+  case "$RC" in
+    0) ;;
+    3) KEY="" ;;  # not stampable; gate-stamp.sh said why on stderr
+    *) echo "NOTE: no stamp key (exit $RC) — running without reuse" >&2; KEY="" ;;
+  esac
+  if [[ -n "$KEY" ]]; then
+    RC=0
+    RECORD=$(bash "$STAMP" check "$KEY") || RC=$?
+    case "$RC" in
+      0)
+        echo "structural suite: this exact tree already passed — not re-running."
+        echo "  recorded: $RECORD"
+        echo "  (GATE_STAMP=off forces a run)"
+        exit 0
+        ;;
+      1) ;;
+      *) echo "NOTE: stamp check failed (exit $RC) — running" >&2 ;;
+    esac
+  fi
+fi
+
+# --- Workers (#537, decision D2) ---------------------------------------------
+# gate-workers.sh resolves PYTEST_XDIST_AUTO_NUM_WORKERS, then
+# .skills/test-workers, then a core count shared across the gates running now.
+# A malformed setting is a 2 here: a gate that guessed past a broken knob
+# would be running a configuration nobody chose.
+N=0
+if [[ -f "$WORKERS" ]]; then
+  N=$(bash "$WORKERS" --explain) || exit 2
+fi
+PYTEST_ARGS=(tests/structural/ -q)
+if [[ -f tests/utils/gate_durations.py ]]; then
+  PYTEST_ARGS+=(-p tests.utils.gate_durations)
+fi
+SLOT=""
+if [[ "$N" -ge 2 ]]; then
+  if python -c 'import xdist' >/dev/null 2>&1; then
+    PYTEST_ARGS+=(-n "$N" --dist loadfile)
+    SLOTS=$(bash "$WORKERS" --slot-dir) && SLOT="$SLOTS/$$" && : >"$SLOT"
+  else
+    echo "NOTE: $N workers allowed, but pytest-xdist is not in .venv — running serially." >&2
+    echo "      Fix: pip install -r requirements-test.txt" >&2
+  fi
+fi
+trap '[[ -z "$SLOT" ]] || rm -f "$SLOT"' EXIT
+
+# Not `exec`: the slot has to be released and the pass recorded afterwards.
+# pytest's exit code is still this script's — the usage block documents the
+# pass-through, and pre-ship.sh relies on 5 meaning "collected nothing".
+START=$SECONDS
+RC=0
+pytest "${PYTEST_ARGS[@]}" || RC=$?
+
+# Record the pass only if the files did not move under the run: the key is
+# recomputed and must still match, so an edit made mid-suite costs the stamp
+# rather than certifying a tree the suite never saw.
+if [[ "$RC" -eq 0 && -n "$KEY" ]]; then
+  AFTER=""
+  AFTER=$(stamp_key) || true
+  if [[ "$AFTER" == "$KEY" ]]; then
+    bash "$STAMP" write "$KEY" --label "structural suite, $N workers" \
+      --seconds "$((SECONDS - START))" \
+      || echo "NOTE: the pass was not recorded; the next gate will re-run" >&2
+  else
+    echo "NOTE: files changed during the run — the pass is not recorded" >&2
+  fi
+fi
+exit "$RC"

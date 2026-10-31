@@ -248,7 +248,8 @@ mismatched ruff the suite skips loudly (`RUFF_REQUIRED=1` to fail) and the hook
 refuses to run ([#246](https://github.com/gregoryfoster/skills/issues/246)).
 
 `scripts/pre-ship.sh` is the ship gate — every pre-commit hook in one
-command, and what `shipping-work` Step 1 resolves (#318):
+command, and what `shipping-work` Step 1 resolves (#318). The suite runs in
+parallel and reuses a pass recorded for the same tree (#537):
 
 ```bash
 bash scripts/pre-ship.sh                 # budget + ruff + suite

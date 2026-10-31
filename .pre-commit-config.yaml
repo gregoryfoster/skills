@@ -43,6 +43,12 @@ repos:
         stages: [pre-commit]
         fail_fast: true
 
+      # In parallel under pytest-xdist, and recorded: a green run stamps the
+      # tree being committed, so pre-ship.sh on the same files reuses the pass
+      # instead of re-running it, and so does an amend that leaves the tree
+      # alone (#537). The worker count is gate-workers.sh's to decide —
+      # .skills/test-workers, or PYTEST_XDIST_AUTO_NUM_WORKERS from a
+      # coordinator — and GATE_STAMP=off forces a run.
       - id: structural-tests
         name: Structural Tests
         # Not an inline `source .venv/bin/activate` (#156): a linked worktree
