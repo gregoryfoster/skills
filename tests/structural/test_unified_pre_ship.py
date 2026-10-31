@@ -401,6 +401,27 @@ class TestStamp:
         _gate(repo, PRE_SHIP_ENV_NAMES="DSN TOKEN")
         assert len(_uv_tool_calls(repo, "pytest")) == 2
 
+    def test_env_names_in_any_order_are_one_key(self, repo):
+        """The names are a set: a wrapper's load order is not a different run."""
+        _uv_repo(repo)
+        _gate(repo, PRE_SHIP_ENV_NAMES="DSN TOKEN")
+        second = _gate(repo, PRE_SHIP_ENV_NAMES="TOKEN DSN")
+        assert len(_uv_tool_calls(repo, "pytest")) == 1, second.stderr
+
+    def test_a_repo_with_no_commit_runs_and_records_nothing(self, repo):
+        """HEAD does not resolve. The variants' /tmp stamp once keyed such a
+        run as `<repo>-tests-clean-HEAD`, shared by every commit-less run
+        (test_pre_ship_unresolved_head.py); the tree stamp has no key for it,
+        so the gate runs, every time, and writes nothing."""
+        (repo / "pyproject.toml").write_text('[project]\nname = "demo-app"\n')
+        (repo / "uv.lock").write_text("version = 1\n")
+        first = _gate(repo)
+        assert first.returncode == 0, first.stderr
+        _gate(repo)
+        assert len(_uv_tool_calls(repo, "pytest")) == 2
+        stamps = repo / ".git" / "gate-stamps"
+        assert not stamps.exists() or not any(stamps.iterdir())
+
     def test_an_empty_env_list_writes_no_stamp(self, repo):
         _uv_repo(repo)
         _gate(repo, PRE_SHIP_ENV_NAMES="")
