@@ -97,8 +97,17 @@ HELPERS = [
 ]
 
 
-@pytest.mark.parametrize("variant", VARIANTS)
-@pytest.mark.parametrize("script,prefix", HELPERS, ids=[h[0] for h in HELPERS])
+# The unified shipping-work gate carries a third byte-equal copy of the
+# import-target resolver (#537), and no detect-test-dirs.sh: it leaves test
+# discovery to pytest (Step 5 row 8).
+CASES = [(v, s, p) for v in VARIANTS for s, p in HELPERS] + [
+    ("shipping-work", "detect-import-targets.sh", "detect-import-targets"),
+]
+
+
+@pytest.mark.parametrize(
+    "variant,script,prefix", CASES, ids=[f"{c[0]}/{c[1]}" for c in CASES]
+)
 class TestAnUnanswerableQuestionIsNotAnEmptyAnswer:
     def test_a_resolver_that_cannot_run_exits_two(
         self, variant: str, script: str, prefix: str, project: Path
