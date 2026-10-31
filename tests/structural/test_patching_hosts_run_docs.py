@@ -173,3 +173,18 @@ def test_run_md_says_what_a_run_with_nothing_pending_does():
     # #496: an image push between runs left a reboot due with nothing pending.
     assert "#496" in s and "`impact.reboot`" in s
     assert "approval 3(b)" in s
+
+
+# --- #542: what a failed source reads as ---------------------------------------
+
+
+def _refresh_row() -> str:
+    [row] = [li for li in READINGS.splitlines() if li.startswith("| A refresh ")]
+    return row
+
+
+def test_the_refresh_row_names_apts_floor_for_error_on_any():
+    # CR 1438: an older apt refuses the option, and every refresh fails.
+    row = _refresh_row()
+    assert "apt 2.1.16" in row
+    assert "older apt" in row
