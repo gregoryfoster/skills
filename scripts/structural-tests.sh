@@ -102,12 +102,16 @@ source .venv/bin/activate
 # --- Reuse a pass recorded for this exact tree (#537) -------------------------
 # The hook runs the suite on what is being committed, and pre-ship runs it on
 # HEAD; both come through here, so a pass recorded by one is reused by the
-# other when the tree, the OS, the outcome-changing env and the installed
-# packages all match. The env list is every variable the suite reads that can
-# turn a skip into a run or a pass into a failure: the *_REQUIRED switches,
-# SKILL_BUDGET_EXACT, the SocratiCode and CTX overrides, and PATH, which
-# decides whether node, zsh and friends exist at all. A helper that is absent
-# or fails costs the reuse, never the run: the suite still runs, and says why.
+# other when the tree, the OS, the outcome-changing env, the host tools and the
+# installed packages all match. The env list is every variable the suite reads
+# that can turn a skip into a run or a pass into a failure: the *_REQUIRED
+# switches, SKILL_BUDGET_EXACT, the SocratiCode and CTX overrides, PYTHONPATH
+# (what pytest itself imports), and PATH, which decides whether node, zsh and
+# friends exist at all. PATH names a binary, not its version, and a stamp never
+# expires — so the versions of the host tools the suite branches on are keyed
+# too, or an unchanged tree gated after a `brew upgrade` reuses a pass the new
+# tool never ran (CR 1388). A helper that is absent or fails costs the reuse,
+# never the run: the suite still runs, and says why.
 STAMP="skills/shipping-work/scripts/gate-stamp.sh"
 WORKERS="skills/shipping-work/scripts/gate-workers.sh"
 
@@ -128,10 +132,24 @@ key_path() {
   echo "$out"
 }
 
+# git's version gates tests outright, shellcheck's is pinned by TestShellcheck,
+# and every script under test runs on PATH's bash. `sed -n 1p`, not `head -1`:
+# head exits early, and under pipefail the writer's SIGPIPE fails the pipe.
+tool_versions() {
+  local g b s=absent
+  g=$(git --version) || return 1
+  b=$(bash --version | sed -n 1p) || return 1
+  if command -v shellcheck >/dev/null 2>&1; then
+    s=$(shellcheck --version | sed -n 's/^version: //p') || return 1
+  fi
+  echo "tools git=[$g] shellcheck=[$s] bash=[$b]"
+}
+
 stamp_key() {
-  local dists kpath args=()
+  local dists kpath tools args=()
   dists=$(python -c 'import importlib.metadata as m, sys; print(sys.version.split()[0], *sorted({f"{d.name}=={d.version}" for d in m.distributions()}))') || return 2
   kpath=$(key_path) || return 2
+  tools=$(tool_versions) || return 2
   if [[ "${PRE_COMMIT:-}" == "1" ]]; then
     args+=(--index)
   fi
@@ -142,7 +160,8 @@ stamp_key() {
   fi
   bash "$STAMP" key "${args[@]+"${args[@]}"}" \
     --env '*_REQUIRED' --env SKILL_BUDGET_EXACT --env 'SOCRATICODE_*' \
-    --env 'CTX_*' --extra "PATH=$kpath" --extra "$dists"
+    --env 'CTX_*' --env PYTHONPATH --extra "PATH=$kpath" --extra "$tools" \
+    --extra "$dists"
 }
 
 KEY=""
