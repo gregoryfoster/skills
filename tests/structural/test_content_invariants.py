@@ -1484,6 +1484,11 @@ GATE_SCRIPTS = {
         "reviewing-code-python-click copy is held byte-equal to the shipping "
         "one, so both are held to the stricter role"
     ),
+    "detect-stack.sh": (
+        "decides which checks the ship gate runs (#537): a toolchain it "
+        "misses is a whole stack's checks silently not run, so it reads "
+        "files directly and has no producer whose failure could empty it"
+    ),
     "gate-stamp.sh": (
         "decides whether a gate re-runs its suite (#537): `check`'s exit code "
         "is the skip, and `key`'s exit 3 is what keeps a dirty or untracked "
