@@ -2787,3 +2787,22 @@ def test_each_op_moves_the_disposed_count_it_implies(rig, ops, after):
     res = rig.edit(REPO, EPIC, ops)
     assert res.returncode == 0, res.stderr
     assert summary(res)["counts_after"] == after
+
+
+@pytest.mark.parametrize(
+    "line, state",
+    [
+        # CR 1488: a "·" with no space before it separates no field.
+        ("- [x] #12 A·Not planned refactor", "done"),
+        # CR 1489: the phrase is the field, or ends at punctuation.
+        ("- [x] #12 shipped · out of epic follow-up #20 filed", "done"),
+        ("- [x] #12 shipped · not planned yet, ask alice", "done"),
+        ("- [x] #12 x · not planned", "disposed"),
+        ("- [x] #12 x · Not planned: superseded", "disposed"),
+        ("- [x] #12 x · out of epic (moved to acme/gadgets)", "disposed"),
+        ("- [x] #12 x · **not planned** — see #14", "disposed"),
+        ("- [x] #12 x · out of epic; reopen if asked", "disposed"),
+    ],
+)
+def test_a_disposition_is_a_whole_field_not_a_prefix(line, state):
+    assert ee.item_state(line) == state
