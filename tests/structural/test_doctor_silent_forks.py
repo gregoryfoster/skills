@@ -27,8 +27,8 @@ What this file pins:
   staleness is `check_override_drift`'s business (#238). Reporting every file
   in it would bury the real finding.
 - **Two ways to declare a deliberate fork**: `pre-ship.sh` by name (upstream
-  ships a stub for the bare variant, and docs/STYLE.md blesses a
-  project-supplied wrapper), and `.skills/forked-ok` for anything else —
+  documents a project-supplied wrapper, or a whole gate for a toolchain the
+  skill's cannot detect, in docs/STYLE.md), and `.skills/forked-ok` for anything else —
   **and the line the report prints is the line that file wants**, since
   pasting what you were just shown is the only workflow the message implies.
 - **Advisory in every mode, including `--check-only`**, and never healed —
@@ -251,9 +251,9 @@ class TestWhatIsNotAFork:
 
 class TestDeclaringADeliberateFork:
     def test_pre_ship_is_exempt_by_name(self, consumer: Path):
-        """Upstream ships a stub for the bare variant, and docs/STYLE.md
-        blesses a project-supplied wrapper — so a regular pre-ship.sh is the
-        documented shape, not a defect."""
+        """docs/STYLE.md documents a project-supplied wrapper, or a whole gate
+        for a toolchain the skill's cannot detect — so a regular pre-ship.sh is
+        the documented shape, not a defect."""
         _vendor_skill(consumer)
         _copy(consumer, "shipping-work", "scripts/pre-ship.sh", "echo project gate\n")
         result = _doctor(consumer)

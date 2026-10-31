@@ -4,7 +4,7 @@ description: "Finalizes work by ensuring everything is committed, pushed to the 
 compatibility: Designed for Claude (claude.ai, Claude Code, or similar). Requires git and gh CLI.
 metadata:
   author: gregoryfoster
-  version: "1.4"
+  version: "2.0"
   triggers: ship it, push GH, close GH, wrap up
 ---
 
@@ -58,7 +58,7 @@ done
 bash "${SD:?}/$S"
 ```
 
-The first line is a preflight: when `.skills/doctor.sh` is present, it heals any dangling vendor symlinks (or reports an actionable error); when absent, the group is a no-op. `|| exit 1` skips `pre-ship.sh` if the doctor reports unrecoverable state so the original "No such file or directory" noise doesn't drown out the doctor's message. The loop then resolves each script against the skill directory rather than the cwd — a bare `scripts/` path resolves relative to the project root, where the script does not exist ([#63](https://github.com/gregoryfoster/skills/issues/63)). A project-local `scripts/<name>` still wins, for that script alone: a `scripts/pre-ship.sh` — which for this variant *is* the gate, the skill's copy being a stub — must not send the other five looking beside it ([#301](https://github.com/gregoryfoster/skills/issues/301)). A script found nowhere stops the block here, by name. `pre-ship.sh` is listed last, so the final line runs it. Resolution runs *after* the doctor so a freshly healed symlink chain is visible to it.
+The first line is a preflight: when `.skills/doctor.sh` is present, it heals any dangling vendor symlinks (or reports an actionable error); when absent, the group is a no-op. `|| exit 1` skips `pre-ship.sh` if the doctor reports unrecoverable state so the original "No such file or directory" noise doesn't drown out the doctor's message. The loop then resolves each script against the skill directory rather than the cwd — a bare `scripts/` path resolves relative to the project root, where the script does not exist ([#63](https://github.com/gregoryfoster/skills/issues/63)). A project-local `scripts/<name>` still wins, for that script alone: a `scripts/pre-ship.sh` — a wrapper that loads what the project needs and execs the skill's gate, or a whole gate for a toolchain the skill's cannot detect — must not send the other five looking beside it ([#301](https://github.com/gregoryfoster/skills/issues/301)). A script found nowhere stops the block here, by name. `pre-ship.sh` is listed last, so the final line runs it. Resolution runs *after* the doctor so a freshly healed symlink chain is visible to it.
 
 In every later step a `<name.sh>` is a **placeholder** for the path printed for that script — substitute it literally (same convention as `init-project-fastapi` Phase 0). Each Bash invocation runs in a fresh shell, so nothing the block set is inherited.
 
@@ -68,13 +68,17 @@ NO CONTINUATION IF CHECKS FAIL
 
 If pre-ship fails: stop, report the failure, fix before proceeding. Do not push failing code under any circumstances.
 
+`pre-ship.sh` detects what the repo has and runs every check each toolchain owns: ruff check and format, an import check and pytest for uv; `composer validate`, `php -l` and `composer test` for composer; the declared `lint:js` / `format:js:check` / `test:js` for npm. Every check runs before it fails, naming each failure. Nothing detected is exit 1, never a pass. A pass on this exact tree is recorded and reused (`GATE_STAMP=off` forces a run). Why each check runs as it does, and the knobs: [references/gate-topology.md](references/gate-topology.md).
+
+Its first line reads `Detected: …`. For each `framework <name>` there, read that framework's file before Step 1.5 — its doc-check defaults and its Step 8 next steps: [references/stack-fastapi.md](references/stack-fastapi.md), [references/stack-click.md](references/stack-click.md), [references/stack-php.md](references/stack-php.md).
+
 ### Step 1.5 — Documentation spot-check
 
 ```bash
 bash "<doc-check.sh>"
 ```
 
-`doc-check.sh` lists files changed on this branch vs the upstream default branch and flags any that match the project's sensitive-path list (AGENTS.md, README.md, schema files, public-API directories, etc.). Entries match path *segments*, so `src/api/` also covers `packages/<pkg>/src/api/`. When sensitive paths change, the matching doc sections may need updates too. Projects tailor the list by committing `.skills/doc-sensitive-paths` at the repo root (one path per line, `#`-comments ignored); it replaces the defaults rather than extending them. The advice printed on a hit — which doc sections to spot-check — is tailored the same way, by committing `.skills/doc-sections` (one section per line, same grammar); it too replaces the defaults. Tailor both together: the list says what the gate watches and the sections say what to do about a hit, so a repo that tailors only the list gets advice written for a stack it may not have. A hit says so when exactly one of the two is tailored, naming the half that is still the default.
+`doc-check.sh` lists files changed on this branch vs the upstream default branch and flags any that match the project's sensitive-path list: AGENTS.md, README.md and each detected framework's paths (listed in its stack file), or a generic list of schema files and public-API directories when none is detected. Entries match path *segments*, so `src/api/` also covers `packages/<pkg>/src/api/`. When sensitive paths change, the matching doc sections may need updates too. Projects tailor the list by committing `.skills/doc-sensitive-paths` at the repo root (one path per line, `#`-comments ignored); it replaces the defaults rather than extending them. The advice printed on a hit — which doc sections to spot-check — is tailored the same way, by committing `.skills/doc-sections` (one section per line, same grammar); it too replaces the defaults. Tailor both together: the list says what the gate watches and the sections say what to do about a hit, so a repo that tailors only the list gets advice written for a stack it may not have. A hit says so when exactly one of the two is tailored, naming the half that is still the default.
 
 If the script exits 1: review the listed files, decide whether each requires a doc update, and either commit the docs now or note them as deliberate skips. If the script exits 2 — or any code not named here, such as 127 when its path did not resolve — the doc check did not run: investigate the underlying error rather than proceeding. One exit-2 case is worth naming: when no entry in the list matches any tracked file, the script says so instead of passing, because a list that cannot hit anything would otherwise print the same clean green as a genuinely doc-neutral branch. Fix the list; do not wave the step through. The same goes for anything the project committed under `.skills/` that the script cannot use, the directory included: a tailoring never silently reverts to the built-in defaults, so an exit 2 there means the override is unusable, not absent.
 
@@ -97,9 +101,20 @@ Common `[type]` values: `feat`, `fix`, `refactor`, `docs`, `test`, `chore`.
 
 Multiple issues: `#19, #20 [type]: <description>`
 
+### Step 2.5 — Worktree-aware merge (if applicable)
+
+If this checkout is a worktree (test: `git rev-parse --show-toplevel` differs from the main checkout, listed first in `git worktree list`):
+
+1. Commit current changes inside the worktree (Step 2 above)
+2. Invoke `using-git-worktrees` Phase 4 to merge the branch back into the main checkout before continuing
+3. The remaining steps (push, GH comments, close) run from the main checkout
+
+If this is a single (non-worktree) checkout, skip this step.
+
 ### Step 3 — Ensure on main
 
-If on a feature branch, merge to `main` first. Then continue.
+If Step 2.5 applied, the merge already happened — you're on `main` in the main checkout; continue.
+If Step 2.5 did not apply (single checkout) and you're on a feature branch, merge to `main` first.
 
 ### Step 4 — Push
 
@@ -145,7 +160,7 @@ Present a summary table:
 
 ### Step 8 — Next-steps notification
 
-After the summary table, review commits and changes shipped to identify any post-deploy work the user may need to perform. Common categories:
+After the summary table, review commits and changes shipped to identify any post-deploy work the user may need to perform. A detected framework's stack file lists its own categories; use those. Otherwise, common categories:
 
 | Category | Trigger | Example action |
 |---|---|---|

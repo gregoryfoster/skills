@@ -2,8 +2,9 @@
 
 [#318](https://github.com/gregoryfoster/skills/issues/318) made this repo a
 consumer of its own `shipping-work` skill: `scripts/pre-ship.sh` at the repo
-root is the ship gate, because the skill's own copy is a stub that cannot know
-a project's test runner.
+root is the ship gate. The skill's own copy was a stub then; since #537 it is a
+generic gate that detects a repo's toolchains, and it still knows nothing of
+this repo's context-budget gate or its structural suite.
 
 That works because of [#301](https://github.com/gregoryfoster/skills/issues/301):
 Step 1 resolves each script separately, probing `scripts/` before
@@ -44,13 +45,13 @@ ROOT_SCRIPTS = REPO_ROOT / "scripts"
 _FOR_S_IN = re.compile(r"^for S in ([^;]+); do", re.M)
 
 # The one basename repo-root scripts/ is allowed to own, with the reason.
-# docs/STYLE.md, "Project-local overrides: wrap, don't fork": the bare
-# shipping-work variant ships a stub with nothing to delegate to, so the
-# project's own file IS the gate. Every other name must keep resolving to the
-# skill.
+# docs/STYLE.md, "Project-local overrides: wrap, don't fork": a project whose
+# gate the skill's generic one cannot express supplies its own file, which IS
+# the gate. Every other name must keep resolving to the skill.
 INTENDED_OVERRIDES = {
     "pre-ship.sh": (
-        "this repo's ship gate (#318); the skill's copy is a stub that exits 1"
+        "this repo's ship gate (#318): the budget gate, ruff and the structural "
+        "suite, none of which the skill's generic gate (#537) knows about"
     ),
 }
 
@@ -168,16 +169,17 @@ def test_pre_ship_resolves_to_the_repo_root_copy():
     local = ROOT_SCRIPTS / "pre-ship.sh"
     assert local.is_file(), (
         "scripts/pre-ship.sh is missing, so Step 1 falls through to the "
-        "skill's stub, which exits 1 with 'the consuming project must supply "
-        "a ship gate'. That is #318 reopening."
+        "skill's generic gate, which runs none of this repo's own checks. "
+        "That is #318 reopening."
     )
-    stub = (
+    skill_gate = (
         REPO_ROOT / ".claude" / "skills" / "shipping-work" / "scripts" / "pre-ship.sh"
     )
-    assert stub.is_file(), (
-        "the skill's stub vanished; the override has nothing to win over"
+    assert skill_gate.is_file(), (
+        "the skill's gate vanished; the override has nothing to win over"
     )
-    assert local.read_text() != stub.read_text(), (
-        "scripts/pre-ship.sh is byte-identical to the skill's stub — it would "
-        "exit 1 on every ship. The repo-root copy must BE the gate."
+    assert local.read_text() != skill_gate.read_text(), (
+        "scripts/pre-ship.sh is byte-identical to the skill's generic gate — "
+        "this repo's own checks would never run. The repo-root copy must BE "
+        "this repo's gate."
     )
