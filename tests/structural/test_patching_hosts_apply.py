@@ -265,7 +265,7 @@ def _ready(host: Host) -> Host:
         'Unattended-Upgrade::Allowed-Origins:: "${distro_id}:${distro_codename}-security";\n',
     )
     host.on("dpkg", "--audit", "")
-    host.on("apt-get", "update", "Hit:1 http://ports.ubuntu.com noble InRelease\n")
+    host.apt_update()
     host.on("apt-get", SIM_ARGS, SIMULATION)
     host.on(
         "dpkg-query",
@@ -1454,7 +1454,7 @@ def test_a_reprobe_that_fails_says_why(host):
 
 def test_lists_that_wont_refresh_hold_nothing_and_the_bulk_can_run_again(host):
     green = host.cases["apt-get"]
-    host.cases["apt-get"] = [("update", "", 100, "", None), *green]
+    host.cases["apt-get"] = [("update*", "", 100, "", None), *green]
     out = host.run(rc=1)
     assert out["abort"]["instructions"] == [
         "Nothing was held or upgraded: fix what failed, then run this step again."
@@ -1462,6 +1462,36 @@ def test_lists_that_wont_refresh_hold_nothing_and_the_bulk_can_run_again(host):
     assert not [a for _, a, _ in host.calls("apt-mark") if a.startswith("hold")]
     host.cases["apt-get"] = green
     assert host.run()["verdict"]["ok"] is True
+
+
+def _without_update(host: Host) -> Host:
+    host.cases["apt-get"] = [
+        c for c in host.cases["apt-get"] if not c[0].startswith("update")
+    ]
+    return host
+
+
+def test_the_bulks_update_fails_on_any_source_that_fails(host):
+    # #542: apt-get update exits 0 when one source fails, and leaves that
+    # source's lists as they were: the bulk would upgrade against them.
+    _without_update(host).apt_update(failed_source=True)
+    out = host.run(rc=1)
+    assert any("apt-get update failed" in f for f in out["failed"]), out["failed"]
+    assert out["abort"]["instructions"] == [
+        "Nothing was held or upgraded: fix what failed, then run this step again."
+    ]
+    assert not [a for _, a, _ in host.calls("apt-mark") if a.startswith("hold")]
+    assert "--error-on=any" in _updates(host)[0].split()
+    assert "Failed to fetch" in host.record("apt-get-update.log")
+
+
+def test_a_bulk_whose_sources_all_fetch_runs_with_error_on_any(host):
+    assert host.run()["verdict"]["ok"] is True
+    assert [u.split() for u in _updates(host)] == [["update", "--error-on=any"]]
+
+
+def _updates(host: Host) -> list[str]:
+    return [a for _, a, _ in host.calls("apt-get") if a.split()[:1] == ["update"]]
 
 
 @pytest.mark.parametrize(

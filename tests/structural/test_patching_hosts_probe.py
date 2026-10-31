@@ -1203,6 +1203,33 @@ def test_a_refresh_writes_lists_only_into_its_scratch_directory(host):
     )
 
 
+def _update_args(host: Host) -> list[list[str]]:
+    return [
+        a.split() for _, a, _ in host.calls("apt-get") if a.split()[:1] == ["update"]
+    ]
+
+
+def test_a_refresh_with_a_source_that_failed_isnt_a_refresh(host):
+    # #542: apt-get update exits 0 when one source fails, and the pending set
+    # was counted against that source's old lists, or none.
+    host.apt_update(failed_source=True)
+    out = host.run("--refresh-into", str(host.tmp / "fresh"))
+    assert out["pending"]["lists"]["refreshed"] is False
+    f = _finding(out, "lists:refresh")
+    assert "exit 100" in f["message"]
+    [args] = _update_args(host)
+    assert "--error-on=any" in args
+
+
+def test_a_refresh_whose_sources_all_fetch_is_one(host):
+    host.apt_update()
+    out = host.run("--refresh-into", str(host.tmp / "fresh"))
+    assert out["pending"]["lists"]["refreshed"] is True
+    assert "lists:refresh" not in _ids(out)
+    [args] = _update_args(host)
+    assert args[:2] == ["update", "--error-on=any"]
+
+
 # --- language dependencies (#366, plan 6g) ------------------------------------
 
 APP = "home/exedev/app"

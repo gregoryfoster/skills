@@ -204,6 +204,39 @@ class Host:
         self.cases[cmd].append((glob, stdout, rc, stderr, script))
         return self
 
+    def apt_update(self, failed_source: bool = False) -> "Host":
+        """apt-get update as apt 2.8 answers it (#542). A source that fails to
+        fetch is a warning, and the update still exits 0, unless
+        --error-on=any is passed: then it's an error, and the exit is 100."""
+        if not failed_source:
+            return self.on(
+                "apt-get",
+                "update*",
+                "Hit:1 http://ports.ubuntu.com/ubuntu-ports noble InRelease\n"
+                "Reading package lists...\n",
+            )
+        fetch = (
+            "Failed to fetch http://ports.ubuntu.com/ubuntu-ports/dists/"
+            "noble-security/InRelease  Temporary failure resolving "
+            "'ports.ubuntu.com'"
+        )
+        ignored = (
+            "Some index files failed to download. They have been ignored, "
+            "or old ones used instead."
+        )
+        return self.on(
+            "apt-get",
+            "update*",
+            script=(
+                'echo "Hit:1 http://ports.ubuntu.com/ubuntu-ports noble InRelease"; '
+                'echo "Reading package lists..."; '
+                'case " $* " in *" --error-on=any "*) '
+                f'printf "E: %s\\nE: %s\\n" "{fetch}" "{ignored}" >&2; exit 100 ;; '
+                "esac; "
+                f'printf "W: %s\\nW: %s\\n" "{fetch}" "{ignored}" >&2; exit 0'
+            ),
+        )
+
     def redis_listens(self, pid: int = 4242, address: str = "0.0.0.0") -> "Host":
         """ss, as root reads it (#379): PID listens at ADDRESS on whichever
         port is asked, and on whichever socket path, in noble's format."""
