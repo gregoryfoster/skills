@@ -2812,3 +2812,11 @@ def test_box_re_names_its_marker_a_marker():
     """CR 1493: the group holds "1." and "1)" now, not only bullets."""
     assert ee.BOX_RE.match("1. [ ] #5 x").group("marker") == "1."
     assert ee.BOX_RE.match("- [x] #5 x").group("marker") == "-"
+
+
+def test_the_template_says_what_may_lead_an_item():
+    """CR 1490: #403 lets an ordinal lead and stops a code span leading."""
+    text = (SCRIPTS.parent / "assets" / "epic-template.md").read_text()
+    item = next(ln for ln in text.splitlines() if "**Checklist items**" in ln)
+    assert "12. #447" in item and "1. [ ]" in item, item
+    assert "code span" in item, item
