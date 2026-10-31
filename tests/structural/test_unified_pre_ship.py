@@ -14,6 +14,7 @@ test gets a fresh repo.
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -68,6 +69,10 @@ sys.exit(1 if any(f in line for f in fails) else 0)
 """
 
 ALL_TOOLS = ("uv", "composer", "php", "node", "npm")
+
+# What follows the fakes on PATH: enough for git, bash and coreutils, and
+# nowhere a user-installed uv, composer or node usually lives.
+BASE_PATH = "/usr/bin:/bin"
 
 
 def _git(repo: Path, *args: str) -> None:
@@ -136,7 +141,7 @@ def _env(repo: Path, tools=ALL_TOOLS, **env: str) -> dict:
         and k not in ("PRE_COMMIT", "PYTHONPATH")
     }
     base.update(
-        PATH=f"{fake_dir}:/usr/bin:/bin",
+        PATH=f"{fake_dir}:{BASE_PATH}",
         STUB_PYTHON=sys.executable,
         FAKE_DIR=str(fake_dir),
         TOOL_LOG=str(repo.parent / "tools.log"),
@@ -201,7 +206,16 @@ class TestWhatRuns:
         [(_uv_repo, "uv"), (_composer_repo, "composer")],
     )
     def test_a_detected_stack_with_its_tool_missing_is_exit_2(self, repo, build, tool):
-        """Row 3."""
+        """Row 3.
+
+        The fake is withheld, so only the real system directories could
+        answer: Debian's apt package installs /usr/bin/composer, and there
+        "missing" cannot be staged (CR 1397).
+        """
+        if shutil.which(tool, path=BASE_PATH):
+            pytest.skip(
+                f"{tool} is installed in {BASE_PATH}; it cannot be missing here"
+            )
         build(repo)
         result = _gate(repo, tools=[t for t in ALL_TOOLS if t != tool])
         assert result.returncode == 2
