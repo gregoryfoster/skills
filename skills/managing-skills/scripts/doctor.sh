@@ -2197,6 +2197,29 @@ retired_name_ok() {
   return 0
 }
 
+# retired_claude_blocked <old> <new> — 0, with the hold recorded, when the
+# .claude/skills half could not follow the skills/ half: an existing
+# .claude/skills/<new> that is not the link it would create. Asked before
+# anything moves, because moving skills/<old> first strands
+# .claude/skills/<old> on a target that is gone, and .claude/skills/ is not in
+# the dangling scan (CR 1398).
+retired_claude_blocked() {
+  local old="$1" new="$2" link=".claude/skills/$1" dest=".claude/skills/$2" tgt
+  if [ ! -d .claude/skills ] || [ -L .claude/skills ] || [ ! -L "$link" ]; then
+    return 1
+  fi
+  tgt="$(readlink "$link")"
+  case "$tgt" in "$old"|*/"$old") ;; *) return 1 ;; esac
+  if [ ! -L "$dest" ] && [ ! -e "$dest" ]; then
+    return 1
+  fi
+  if [ -L "$dest" ] && [ "$(readlink "$dest")" = "${tgt%"$old"}$new" ]; then
+    return 1
+  fi
+  RETIRED_HELD+=("skills/$old — retired for $new, but $dest exists and is not the link to ${tgt%"$old"}$new, so $link could not follow it")
+  return 0
+}
+
 # retired_claude_link <old> <new> — the .claude/skills half, after skills/<new>
 # exists (or, under --check-only, would).
 retired_claude_link() {
@@ -2288,6 +2311,9 @@ retire_one() {
       return 1
     fi
     RETIRED_HELD+=("$link was dangling and is repointed; skills/$old/ is still named by $shown")
+  fi
+  if retired_claude_blocked "$old" "$new"; then
+    return 1
   fi
 
   if [ -L "$dest" ] || [ -e "$dest" ]; then
