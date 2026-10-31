@@ -318,6 +318,24 @@ class TestHeld:
         assert (repo / ".claude" / "skills" / OLD / "SKILL.md").is_file()
         assert f".claude/skills/{NEW}" in r.stderr
 
+    def test_a_failed_reference_search_holds_and_says_why(self, tmp_path):
+        """CR 1402: an unread reference is not taken for none, and git's own
+        message reaches the operator, not just its exit code."""
+        repo = _consumer(tmp_path)
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        real_git = shutil.which("git") or "/usr/bin/git"
+        (bin_dir / "git").write_text(
+            "#!/usr/bin/env bash\n"
+            'if [ "$1" = "grep" ]; then echo "fatal: index file corrupt" >&2; exit 128; fi\n'
+            f'exec {real_git} "$@"\n'
+        )
+        (bin_dir / "git").chmod(0o755)
+        r = _doctor(repo, path_prefix=bin_dir)
+        assert r.returncode == 0, r.stderr
+        assert _link(repo, f"skills/{OLD}") == OLD_TARGET
+        assert "exit 128" in r.stderr and "index file corrupt" in r.stderr
+
     def test_another_vendors_skill_of_that_name_is_left_alone(self, tmp_path):
         repo = _consumer(tmp_path)
         other = repo / "skills-vendor" / "other-skills" / "skills" / OLD
