@@ -5,10 +5,13 @@ compatibility: Designed for Python FastAPI projects using uv, ruff, pytest. Requ
 metadata:
   author: gregoryfoster
   version: "1.5"
+  deprecated: "superseded by shipping-work (#537); deleted in a later release"
   triggers: ship it, push GH, close GH, wrap up
 ---
 
 # Shipping Work — Python/FastAPI
+
+> **Deprecated — use [`shipping-work`](../shipping-work/).** One skill now detects the stack and runs one gate ([#537](https://github.com/gregoryfoster/skills/issues/537)); this variant is kept only until every consuming repo is repointed, then deleted. `.skills/doctor.sh` repoints `skills/shipping-work-python-fastapi` once no tracked file names its path; what changed, row by row: [gate-topology.md](../shipping-work/references/gate-topology.md).
 
 Finalizes work: pre-ship checks, clean commit, push, GitHub issue comments, and closure. Tuned for Python FastAPI projects (uv + ruff + pytest).
 
