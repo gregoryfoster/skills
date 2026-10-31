@@ -548,7 +548,13 @@ SIMULATION = (
 )
 
 
-def test_the_pending_set_is_counted_by_class(host):
+def test_the_pending_set_is_counted_by_class(tmp_path):
+    # CR 1446: with no os-release, a list counts as fetched only from the
+    # probe's start on, and one written a second boundary before it read as
+    # unpacked (72 h). A tree unpacked two hours ago dates it as a fetch.
+    host = StatHost(tmp_path).knob("class production\nposture automatic\n")
+    host.write(OS_RELEASE, 'NAME="Ubuntu"\n')
+    host.ctime(OS_RELEASE, host.now - 2 * 3600)
     host.on("apt-get", "-s *dist-upgrade", SIMULATION)
     host.on(
         "pro",
