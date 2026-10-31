@@ -241,6 +241,15 @@ the parts run in order: A, then B, then C.
      `test_gate_producer_exit_codes`.
    - Drop the `shipping-work` rows from `VARIANT_FAMILIES`, and re-run
      `test_trigger_routing` by hand. It is billed.
+   - *Revised 2026-10-31:* the parity harness is `test_gate_parity.py` (no
+     "none" fixture: the variants never ran there, and row 2 is pinned in
+     `test_unified_pre_ship.py`). "Retarget" became "cover the unified gate
+     too": while the variants still ship, their tests stay, and every
+     property they protect gains a unified-gate case, so release 2 deletes
+     rows and nothing else. Dropping the `VARIANT_FAMILIES` rows, with the
+     xfail-keying rewrite, the description change and the billed routing
+     re-run, moves to release 2 (Step 9): it must land in the commit that
+     deletes the directories, since either half alone fails the suite.
 8. **Rename map, then release 1.**
    - The vendor ships a `retired-skills` map (`shipping-work-* →
      shipping-work`). The doctor, which syncs itself first on every run,
