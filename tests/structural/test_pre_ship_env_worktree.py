@@ -49,6 +49,9 @@ ALL_VARIANTS = sorted(DELEGATING_VARIANTS)
 # pinned in test_unified_pre_ship.py, since no /tmp file is there to inspect.
 STAMPED_VARIANTS = ["shipping-work-python-click", "shipping-work-python-fastapi"]
 
+# The recipes that export PRE_SHIP_ENV_NAMES: every gate keyed on them.
+NAME_EXPORTING = ["shipping-work", *STAMPED_VARIANTS]
+
 # A value no assertion may ever see in output. If it shows up, the recipe or
 # the gate printed a secret.
 SECRET = "sk-do-not-print-0b1c"
@@ -210,7 +213,7 @@ class TestTheRecipeFollowsWorktrees:
 
 
 class TestTheRecipeExportsTheNames:
-    @pytest.mark.parametrize("variant", STAMPED_VARIANTS)
+    @pytest.mark.parametrize("variant", NAME_EXPORTING)
     def test_the_names_loaded_reach_the_gate(self, variant, checkouts):
         primary, worktree = checkouts
         (primary / ".env").write_text(
@@ -228,7 +231,7 @@ class TestTheRecipeExportsTheNames:
         )
         assert set(line[len("NAMES=[") : -1].split()) == {"PRIMARY_ONLY", "WT_ONLY"}
 
-    @pytest.mark.parametrize("variant", STAMPED_VARIANTS)
+    @pytest.mark.parametrize("variant", NAME_EXPORTING)
     def test_no_env_file_exports_an_empty_list(self, variant, checkouts):
         _, worktree = checkouts
         r = _run_recipe(variant, worktree)
