@@ -255,6 +255,8 @@ class TestHeld:
         assert _link(repo, f"skills/{OLD}") == OLD_TARGET
         assert not (repo / "skills" / NEW).exists()
         assert "scripts/pre-ship.sh" in r.stderr
+        # CR 1403: the report is where a consumer meets the rule.
+        assert "managing-skills/references/the-doctor.md" in r.stderr
 
     def test_an_uncommitted_edit_releases_it(self, tmp_path):
         """git grep reads the working tree: fixing the reference is enough."""
