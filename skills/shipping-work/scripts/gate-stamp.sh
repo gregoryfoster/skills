@@ -91,6 +91,13 @@ disabled() {
   [[ "${GATE_STAMP:-}" == "off" ]]
 }
 
+# A key names a file under $STAMPS, so anything but hex is refused before it
+# is used as a path — by check as much as by write, since a hit there means
+# "skip the suite" (CR 1391).
+require_key() {
+  [[ "$1" =~ ^[0-9a-f]{40,64}$ ]] || die "'$1' is not a stamp key"
+}
+
 # The untracked inputs, one pattern per line.
 input_patterns() {
   if [[ -n "${GATE_STAMP_INPUTS:-}" ]]; then
@@ -201,6 +208,7 @@ key() {
 
 check() {
   [[ $# -eq 1 ]] || die "check takes exactly one KEY"
+  require_key "$1"
   if disabled; then
     echo "gate-stamp: GATE_STAMP=off — not reusing any pass" >&2
     exit 1
@@ -223,7 +231,7 @@ write() {
       *) die "unknown write argument '$1'" ;;
     esac
   done
-  [[ "$k" =~ ^[0-9a-f]{40,64}$ ]] || die "'$k' is not a stamp key"
+  require_key "$k"
   if disabled; then
     exit 0
   fi
