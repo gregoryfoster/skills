@@ -269,3 +269,21 @@ def test_the_slot_is_released(repo):
     _suite(repo)
     slots = repo / ".git" / "gate-slots"
     assert not any(slots.iterdir()) if slots.exists() else True
+
+
+def test_a_slot_that_cannot_be_taken_does_not_stop_the_run(repo):
+    """A slot only divides the cores between gates; the verdict never needs it.
+
+    Taking one was the last command of an `&&` list under `set -e`, so an
+    unwritable slot directory ended the gate with exit 1 — which pre-ship
+    reads as "no venv or test failures" — before pytest ever ran.
+    """
+    slots = repo / ".git" / "gate-slots"
+    slots.mkdir()
+    slots.chmod(0o555)
+    try:
+        result = _suite(repo)
+    finally:
+        slots.chmod(0o755)
+    assert result.returncode == 0, result.stderr
+    assert len(_calls(repo)) == 1
