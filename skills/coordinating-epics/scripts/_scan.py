@@ -403,12 +403,31 @@ def default_tip(git_dir: str, host: str, fetched: bool) -> tuple[str, str]:
     )
 
 
+# gh rejects a --json field it doesn't know before any lookup, so this answer
+# is the same for every number (#412): gh 2.45.0 gives it, 2.89.0 doesn't.
+NO_CLOSING_FIELD = 'Unknown JSON field: "closingIssuesReferences"'
+# The cache key that marks this run's gh as unable to read closing issues.
+OLD_GH = "old gh"
+
+
+def gh_version() -> str:
+    """'gh X.Y.Z' from gh --version's first line, or 'this gh' when unread."""
+    try:
+        m = re.match(r"gh version (\S+)", gh(["--version"], "reading gh's version"))
+    except Infra:
+        m = None
+    return f"gh {m.group(1)}" if m else "this gh"
+
+
 def pr_closes(num: str, host: str, cache: dict, warnings: list[str]) -> list[str]:
     """The issues a PR closes, as keys; [] when num is an issue, not a PR.
 
     Only gh's own "not a PR" answer means that. A rate limit or an auth
-    failure is a warning, not a silent "unattributed" (CR 273).
+    failure is a warning, not a silent "unattributed" (CR 273). A gh too old
+    for the field is one warning per scan, and no PR is asked again (#412).
     """
+    if cache.get(OLD_GH):
+        return []
     if num not in cache:
         try:
             data = gh_json(
@@ -416,6 +435,15 @@ def pr_closes(num: str, host: str, cache: dict, warnings: list[str]) -> list[str
                 f"reading what #{num} closes",
             )
         except Infra as e:
+            if NO_CLOSING_FIELD in (e.stderr or ""):
+                cache[OLD_GH] = True
+                warnings.append(
+                    f"{gh_version()} has no closingIssuesReferences field for"
+                    " `gh pr view --json`, so this scan attributes no commit"
+                    " through the issues a PR closes; a commit's own refs still"
+                    " attribute it. A newer gh reads them"
+                )
+                return []
             if "Could not resolve to a PullRequest" not in str(e):
                 warnings.append(f"#{num}'s closing issues unread: {gh_cause(e)}")
             cache[num] = []
@@ -530,7 +558,8 @@ def run(argv: list[str]) -> int:
             "exit codes: 0 report written; 1 usage; 2 gh failed on the epic, a listing\n"
             "or a comment read (its stderr shown). gh failing on one cross-repo ref, one\n"
             "PR's closing issues or the default branch costs only that: a warning with\n"
-            "gh's whole stderr, and exit 0.\n"
+            "gh's whole stderr, and exit 0. A gh with no closingIssuesReferences field\n"
+            "(2.45 has none) is one warning per scan, naming its version (#412).\n"
             "A git failure, or no tip for the range, costs the commit cursor only:\n"
             "commits is null, the reason (git's stderr included) is in commits_skipped\n"
             "and warnings, and the exit is 0. commits_skipped is null when the range\n"

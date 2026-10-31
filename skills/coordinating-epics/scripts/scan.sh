@@ -16,7 +16,8 @@
 # origin/HEAD, else origin/<GitHub's default branch> (#411). gh failing on
 # the epic, a listing or a comment read exits 2, with gh's own stderr on
 # stderr; on one cross-repo ref, one PR's closing issues or the default
-# branch, it is a warning with gh's whole stderr, and the exit is 0.
+# branch, it is a warning with gh's whole stderr, and the exit is 0. A gh
+# with no closingIssuesReferences field is one warning per scan (#412).
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
