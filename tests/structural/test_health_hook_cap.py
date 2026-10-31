@@ -134,10 +134,21 @@ class Harness:
         self.calls_log.touch()
         self.runs_log.touch()
 
-    def run(self, *, stubs: bool = True, **env: str) -> subprocess.CompletedProcess:
+    def run(
+        self, *, stubs: bool = True, events: str | None = None, **env: str
+    ) -> subprocess.CompletedProcess:
+        """`events` is the scope's memory.events as the payload's scope would
+        read it: served from a stand-in cgroupfs at this process's own cgroup
+        path, which the stubs, exec'ing their command, share (#527)."""
         path = os.environ.get("PATH", "")
         if stubs:
             path = f"{self.bin}{os.pathsep}{path}"
+        if events is not None:
+            fs = self.repo.parent / "cgroupfs"
+            scope = fs / _own_cgroup().lstrip("/")
+            scope.mkdir(parents=True, exist_ok=True)
+            (scope / "memory.events").write_text(events)
+            env["SOCRATICODE_HEALTH_CGROUP_FS"] = str(fs)
         return subprocess.run(
             ["bash", str(HOOK)],
             cwd=str(self.repo),
@@ -166,6 +177,26 @@ class Harness:
         return log.read_text() if log.exists() else ""
 
 
+def _own_cgroup(proc: Path = Path("/proc/self/cgroup")) -> str:
+    """This process's cgroup v2 path, as /proc/self/cgroup's `0::` line has
+    it: "/" where there is none, as on a cgroup v1 host, or no /proc at all,
+    as on macOS — the keeper's own fallback (CR 1342)."""
+    if not proc.exists():
+        return "/"
+    for line in proc.read_text().splitlines():
+        if line.startswith("0::"):
+            return line[3:] or "/"
+    return "/"
+
+
+def _driver_argv(command: list[str]) -> list[str]:
+    """The driver's argv inside a payload, past the keeper that reads the
+    scope's memory.events once it exits (#527)."""
+    if command[:2] == ["sh", "-c"] and "node" in command:
+        return command[command.index("node") :]
+    return command
+
+
 def _split(call: list[str]) -> tuple[list[str], dict[str, str], list[str]]:
     """systemd-run's options minus the unit name, choom's, and the payload."""
     opts, command = _systemd_run(call)
@@ -184,7 +215,11 @@ def _props(opts: list[str]) -> list[str]:
 
 def _payload_calls(harness: Harness) -> list[list[str]]:
     """The systemd-run calls that launched the driver, not a probe."""
-    return [c for c in harness.calls("systemd-run") if _split(c)[2][:1] == ["node"]]
+    return [
+        c
+        for c in harness.calls("systemd-run")
+        if _driver_argv(_split(c)[2])[:1] == ["node"]
+    ]
 
 
 @pytest.fixture
@@ -210,7 +245,8 @@ class TestTheProbeIsTheCall:
         )
         assert p_choom == c_choom == {"-n": "500"}, (p_choom, c_choom)
         assert p_cmd[:2] == ["sh", "-c"], p_cmd
-        assert c_cmd[0] == "node" and "health-check" in c_cmd, c_cmd
+        driver = _driver_argv(c_cmd)
+        assert driver[0] == "node" and "health-check" in driver, c_cmd
 
     @requires_node
     def test_the_probe_asks_whether_its_own_scope_is_accounted(
@@ -448,6 +484,159 @@ class TestACapKillIsReportedAsSuch:
         for call in harness.calls("systemd-run"):
             assert _props(_split(call)[0]) == cap.split(), call
         assert f"{CAP_LINE} (MemoryMax=64M)" in result.stdout, result.stdout
+
+
+# The issue's measured readings (#527): a payload held in the band between
+# MemoryHigh= and MemoryMax= for 12 minutes, under MemorySwapMax=0, and never
+# killed. Measured in a privileged systemd container (systemd 255, 3 GB swap);
+# stubbed here, since a cloud runner's user systemd delegates no memory
+# controller to throttle with.
+THROTTLED = "low 0\nhigh 20184\nmax 0\noom 0\noom_kill 0\noom_group_kill 0\n"
+THROTTLE_LINE = "throttled at its memory cap"
+INCOMPLETE = "[driver] DID NOT COMPLETE: health-check timed out after 60000ms\n"
+
+
+class TestAThrottledCheckIsReportedAsSuch:
+    """#527: past MemoryHigh=, with no swap to reclaim into, the kernel
+    throttles the scope rather than killing it. The check ends without
+    completing — its own HEALTH_TIMEOUT_MS, or killed by hand — and was
+    reported as FAILED TO RUN: no word of the cap, and none of its advice.
+    The operator's decision is option 1: report the throttle, cap unchanged.
+
+    The scope is gone once its payload exits, and its memory.events with it,
+    so the payload reads them from inside the scope before it ends."""
+
+    @requires_node
+    def test_a_timed_out_throttled_check_says_it_was_the_cap(
+        self, harness: Harness
+    ) -> None:
+        result = harness.run(events=THROTTLED, STUB_EXIT="3", STUB_STDERR=INCOMPLETE)
+        assert result.returncode == 0, result.stderr
+        assert f"{THROTTLE_LINE} (MemoryHigh=1200M)" in result.stdout, result.stdout
+        assert "FAILED TO RUN" not in result.stdout, (
+            "a check its cap throttled was reported as one that could not run, "
+            f"with no word of the cap (#527)\n{result.stdout}"
+        )
+        assert "not a clean result" in result.stdout, result.stdout
+        assert "pin it" in result.stdout, result.stdout
+        assert "SOCRATICODE_HEALTH_CAP" in result.stdout, result.stdout
+        assert CAP_LINE not in result.stdout, (
+            "nothing killed it: a throttle is not a cap kill"
+        )
+
+    @requires_node
+    def test_the_measured_hand_kill_says_so_too(self, harness: Harness) -> None:
+        """The issue's own run: killed by hand after 12 minutes in state D."""
+        result = harness.run(events=THROTTLED, STUB_EXIT="137")
+        assert THROTTLE_LINE in result.stdout, result.stdout
+        assert "FAILED TO RUN" not in result.stdout, result.stdout
+
+    @requires_node
+    def test_it_is_not_re_run_uncapped(self, harness: Harness) -> None:
+        harness.run(events=THROTTLED, STUB_EXIT="3", STUB_STDERR=INCOMPLETE)
+        assert harness.runs() == 1, harness.runs()
+        log = harness.hook_log()
+        assert THROTTLE_LINE in log and "high 20184" in log, log
+
+    @requires_node
+    def test_the_report_holds_where_swap_was_left_unbounded(
+        self, harness: Harness
+    ) -> None:
+        """CR 1338: where systemd refuses MemorySwapMax= and the hook drops
+        it (#340), the scope can reclaim into swap, and `high` still counts.
+        The report must not claim it could not."""
+        result = harness.run(
+            events=THROTTLED,
+            STUB_REJECT_PROPS="MemorySwapMax",
+            STUB_EXIT="3",
+            STUB_STDERR=INCOMPLETE,
+        )
+        assert THROTTLE_LINE in result.stdout, result.stdout
+        assert "cannot reclaim" not in result.stdout, (
+            "with swap unbounded the scope can reclaim; the throttle report "
+            f"must hold on either host (CR 1338)\n{result.stdout}"
+        )
+
+    @requires_node
+    def test_an_unthrottled_failure_is_still_a_failure_to_run(
+        self, harness: Harness
+    ) -> None:
+        result = harness.run(
+            events=THROTTLED.replace("high 20184", "high 0"), STUB_EXIT="3"
+        )
+        assert "FAILED TO RUN" in result.stdout, result.stdout
+        assert THROTTLE_LINE not in result.stdout, result.stdout
+
+    @requires_node
+    def test_an_oom_kill_in_the_scope_is_not_a_throttle(self, harness: Harness) -> None:
+        """The decision's own condition: `high` > 0 and `oom_kill` 0."""
+        result = harness.run(
+            events=THROTTLED.replace("oom_kill 0", "oom_kill 1"), STUB_EXIT="137"
+        )
+        assert THROTTLE_LINE not in result.stdout, result.stdout
+
+    @requires_node
+    def test_findings_from_a_throttled_check_print_as_before(
+        self, harness: Harness
+    ) -> None:
+        """It finished, slowly: what it measured is the report."""
+        result = harness.run(
+            events=THROTTLED,
+            STUB_EXIT="1",
+            STUB_STDERR="  - graph yield LOW — 3 edge(s) across 374 files\n",
+        )
+        assert FINDINGS_HEADER in result.stdout, result.stdout
+        assert THROTTLE_LINE not in result.stdout, result.stdout
+
+    @requires_node
+    def test_a_clean_throttled_run_is_silent(self, harness: Harness) -> None:
+        result = harness.run(events=THROTTLED)
+        assert result.stdout == "", result.stdout
+
+    @requires_node
+    def test_the_payload_reads_its_own_scope_and_leaves_nothing(
+        self, harness: Harness
+    ) -> None:
+        harness.run(events=THROTTLED, STUB_EXIT="3")
+        (payload,) = _payload_calls(harness)
+        command = _split(payload)[2]
+        assert command[:2] == ["sh", "-c"] and "memory.events" in command[2], (
+            "the driver must run under a keeper that reads the scope's "
+            f"memory.events before the scope ends: {command}"
+        )
+        leftovers = sorted(
+            p.name for p in (harness.repo / ".git").glob("socraticode-health.*.*")
+        )
+        assert not leftovers, leftovers
+
+    @requires_node
+    def test_an_uncapped_run_has_no_keeper(self, harness: Harness) -> None:
+        result = harness.run(
+            events=THROTTLED, SOCRATICODE_HEALTH_CAP="off", STUB_EXIT="3"
+        )
+        assert not harness.calls("systemd-run")
+        assert "FAILED TO RUN" in result.stdout, result.stdout
+
+    def test_a_host_without_proc_reads_the_cgroupfs_root(self, tmp_path: Path) -> None:
+        """CR 1342: macOS has no /proc, and the harness read it unconditionally,
+        so every stubbed test here failed there before the hook ran. The
+        keeper's own fallback is the root: `sed` reads nothing, and it reads
+        `$fs/memory.events`."""
+        assert _own_cgroup(tmp_path / "no-proc" / "cgroup") == "/"
+
+    def test_the_help_and_host_memory_name_the_throttle(self) -> None:
+        usage = subprocess.run(
+            ["bash", str(HOOK), "--help"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        ).stdout
+        assert "throttled" in usage, usage
+        doc = (HOOK.parent.parent / "references" / "host-memory.md").read_text()
+        assert THROTTLE_LINE in doc, (
+            "host-memory.md should say what the hook reports for a check its "
+            "cap throttled (#527)"
+        )
 
 
 class TestSwapIsBounded:
