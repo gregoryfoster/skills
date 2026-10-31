@@ -956,7 +956,10 @@ refresh_lists() {
   local out
   [ -n "$refresh" ] || return 0
   mkdir -p "$refresh/lists/partial" "$refresh/archives/partial"
-  capture2 out apt_env apt-get update -o "Dir::State::Lists=$refresh/lists/" -o "Dir::Cache::archives=$refresh/archives/" "${APT_OPTS[@]}"
+  # --error-on=any (apt 2.1.16; noble ships 2.8): without it, a source that
+  # fails to fetch is a warning, the update exits 0, and the pending set is
+  # counted against that source's old lists, or none (#542).
+  capture2 out apt_env apt-get update --error-on=any -o "Dir::State::Lists=$refresh/lists/" -o "Dir::Cache::archives=$refresh/archives/" "${APT_OPTS[@]}"
   if [ "$CAP_RC" -eq 0 ]; then
     LISTS_DIR=$refresh/lists REFRESHED=1
     LISTS_OPT=(-o "Dir::State::Lists=$refresh/lists/")
@@ -2431,8 +2434,9 @@ read_dry_run() {
       # On the origin's lists fetched before the run, it can count an older
       # release of its package, and that passes every gate (#523): only the
       # origin's own lists fetched in this run count it. Not the security
-      # pocket's (CR 1296): apt-get update exits 0 when one source fails,
-      # and leaves that source's list as it was.
+      # pocket's (CR 1296): apt-get update exited 0 when one source failed,
+      # and left that source's list as it was. --error-on=any now fails the
+      # refresh instead (#542); this reads the origin's own list either way.
       origin_fresh "${lane#origin:}"
       if [ -n "$OF_WHY" ]; then
         finding "$OF_KIND" dry-run "" "the $lane lane's dry run didn't run: $OF_WHY, and on lists older than the run it can count an older release of the origin's package with every gate passed (#523). Count again with --refresh-into DIR beside --dry-run-into."

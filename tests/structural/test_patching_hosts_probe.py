@@ -548,7 +548,13 @@ SIMULATION = (
 )
 
 
-def test_the_pending_set_is_counted_by_class(host):
+def test_the_pending_set_is_counted_by_class(tmp_path):
+    # CR 1446: with no os-release, a list counts as fetched only from the
+    # probe's start on, and one written a second boundary before it read as
+    # unpacked (72 h). A tree unpacked two hours ago dates it as a fetch.
+    host = StatHost(tmp_path).knob("class production\nposture automatic\n")
+    host.write(OS_RELEASE, 'NAME="Ubuntu"\n')
+    host.ctime(OS_RELEASE, host.now - 2 * 3600)
     host.on("apt-get", "-s *dist-upgrade", SIMULATION)
     host.on(
         "pro",
@@ -693,7 +699,9 @@ def test_a_list_within_an_hour_of_the_unpack_reads_as_unpacked(tmp_path, gap, fe
     # top layer 1 s after os-release's), and a RUN apt-get update puts its
     # lists in a later layer. Only a ctime past the margin is a fetch.
     host = StatHost(tmp_path)
-    ref = host.now - 3 * 3600
+    # CR 1445: half an hour more, so the fetch's age is mid-hour; at a whole
+    # hour less 1 s, a probe whose clock read 1 s after this one's got 3, not 2.
+    ref = host.now - 3 * 3600 - 1800
     host.write(OS_RELEASE, 'NAME="Ubuntu"\n')
     host.ctime(OS_RELEASE, ref)
     host.write(SECURITY_IN_RELEASE, "x", age_days=3)
@@ -1201,6 +1209,33 @@ def test_a_refresh_writes_lists_only_into_its_scratch_directory(host):
     assert sims and all(
         f"Dir::State::Lists={scratch.resolve()}/lists/" in s for s in sims
     )
+
+
+def _update_args(host: Host) -> list[list[str]]:
+    return [
+        a.split() for _, a, _ in host.calls("apt-get") if a.split()[:1] == ["update"]
+    ]
+
+
+def test_a_refresh_with_a_source_that_failed_isnt_a_refresh(host):
+    # #542: apt-get update exits 0 when one source fails, and the pending set
+    # was counted against that source's old lists, or none.
+    host.apt_update(failed_source=True)
+    out = host.run("--refresh-into", str(host.tmp / "fresh"))
+    assert out["pending"]["lists"]["refreshed"] is False
+    f = _finding(out, "lists:refresh")
+    assert "exit 100" in f["message"]
+    [args] = _update_args(host)
+    assert "--error-on=any" in args
+
+
+def test_a_refresh_whose_sources_all_fetch_is_one(host):
+    host.apt_update()
+    out = host.run("--refresh-into", str(host.tmp / "fresh"))
+    assert out["pending"]["lists"]["refreshed"] is True
+    assert "lists:refresh" not in _ids(out)
+    [args] = _update_args(host)
+    assert args[:2] == ["update", "--error-on=any"]
 
 
 # --- language dependencies (#366, plan 6g) ------------------------------------

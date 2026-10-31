@@ -1532,8 +1532,10 @@ do_bulk() {
     return 0
   fi
   # The host's own lists: the probe's dry run counted against a scratch copy,
-  # and on a host whose timers are masked, these may be months old.
-  if ! root_logged "$run/apt-get-update.log" apt-get update; then
+  # and on a host whose timers are masked, these may be months old. Every
+  # source must fetch: without --error-on=any, one that fails exits 0, and
+  # the bulk upgrades against its old lists (#542).
+  if ! root_logged "$run/apt-get-update.log" apt-get update --error-on=any; then
     fail "apt-get update failed: read $run/apt-get-update.log. Nothing was held or upgraded"
     return 0
   fi

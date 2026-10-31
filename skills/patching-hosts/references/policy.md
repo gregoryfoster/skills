@@ -17,9 +17,9 @@ Ubuntu's stock unattended-upgrades posture, plus one needrestart setting:
 
 It suits a host with **no local data store**. On a host with one it means unscheduled data-store restarts: `postgresql-16`'s maintainer script restarts the cluster whatever needrestart is set to, and so do others ([environments/exe-dev-exeuntu.md](environments/exe-dev-exeuntu.md)).
 
-### `scheduled`: an owner-approved monthly run
+### `scheduled`: an owner-approved run at the host's cadence
 
-The host is patched in a scheduled, gated run once a month, and the apt timers stay masked. A run is:
+The host is patched in a scheduled, gated run at the host's cadence, and the apt timers stay masked. The knob's `cadence` says which: `weekly`, the default, or `monthly` (#529). Nothing checks a run against it yet: a host that runs monthly and doesn't say so fails nothing, and its knob just under-states it. A run is:
 
 - a chosen window, clear of whatever the knob says constrains it;
 - a fresh recovery point, copied off the node, for each declared data store. A host with no data store records its before-versions;
@@ -36,10 +36,10 @@ The needrestart drop-in is part of both postures: every run relies on the hook r
 
 | Lane | Selection | Cadence |
 |---|---|---|
-| **security** | Ubuntu `-security` | daily under `automatic` (the apt timers); monthly under `scheduled` |
-| **maintenance** | the security lane's, plus Ubuntu `-updates` and each third-party origin whose policy is *follow*: `apply.sh --lane maintenance` | monthly |
+| **security** | Ubuntu `-security` | daily under `automatic` (the apt timers); the host's cadence under `scheduled` |
+| **maintenance** | the security lane's, plus Ubuntu `-updates` and each third-party origin whose policy is *follow*: `apply.sh --lane maintenance` | the host's cadence |
 
-- **Under `scheduled`, both lanes run in the same monthly window.**
+- **Under `scheduled`, both lanes run in the same window, at the host's cadence.** A week with nothing pending costs a probe ([run.md](run.md#a-run-with-nothing-pending)).
 - **A security package never waits for the maintenance lane.** docker.io 29 and containerd 2.2 shipped in `noble-security`, so holding them "for the maintenance lane" leaves a security fix with no lane at all. Deferring one is an exception, with a reason and a review-by date.
 - **Third-party origins** each get a policy in the knob: *follow* (taken in the maintenance lane), *pin* (a stated version), or *hold, with a reason*. The lane never takes a pinned or held one: a pin moves only by hand.
 - **A *follow* origin is scoped to the packages it was added for, by apt pins.** Named by its site, it selects every upgradable package that site serves. At apt's default priority, 500, which ties Ubuntu's, a package it serves under an Ubuntu name, at a higher version, replaces Ubuntu's: on noble, an unpinned NodeSource replaced Ubuntu's `nodejs` 18 with its own 22 (apt 2.8.3, 2026-10-05). So:

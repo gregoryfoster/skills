@@ -265,7 +265,7 @@ def _ready(host: Host) -> Host:
         'Unattended-Upgrade::Allowed-Origins:: "${distro_id}:${distro_codename}-security";\n',
     )
     host.on("dpkg", "--audit", "")
-    host.on("apt-get", "update", "Hit:1 http://ports.ubuntu.com noble InRelease\n")
+    host.apt_update()
     host.on("apt-get", SIM_ARGS, SIMULATION)
     host.on(
         "dpkg-query",
@@ -490,6 +490,87 @@ def test_a_window_that_wraps_past_midnight_holds_the_span(host, window, clock):
     host.knob(KNOB.replace("window Tue 15:00-21:00", window))
     host.clock = clock
     out = host.run()
+    assert out["gate"]["span"]["window"]["line"] == 3
+
+
+# #421: a week of the month, and a dated window. The run's span is 58 minutes
+# (#362), so each clock below starts it where the whole of it fits, or not.
+DAY = 86400
+# Sundays from TUE_1530's week: the 4th of September, then October's 1st to 3rd.
+SUN_27_SEP, SUN_4_OCT, SUN_11_OCT, SUN_18_OCT = (
+    TUE_1530 + (n - 2) * DAY for n in (0, 7, 14, 21)
+)
+
+
+def _at(host: Host, clock: int) -> Host:
+    """The host at another time, its dry run an hour before it."""
+    host.clock = clock
+    (host.dry / "summary").write_text(
+        f"began={clock - 3600}\nexit=0\ncount=4\nwall_seconds=540\nsecurity_only=1\n"
+    )
+    return host
+
+
+def _window_refused(out: dict) -> bool:
+    return any("isn't wholly inside one window" in r for r in out["refused"])
+
+
+@pytest.mark.parametrize(
+    "clock, holds",
+    [
+        (SUN_11_OCT, True),
+        (SUN_4_OCT, False),
+        (SUN_18_OCT, False),
+        (SUN_27_SEP, False),
+    ],
+    ids=["2nd-sunday", "1st-sunday", "3rd-sunday", "4th-sunday"],
+)
+def test_a_week_of_the_month_opens_on_that_weeks_weekday_only(host, clock, holds):
+    host.knob(KNOB.replace("window Tue 15:00-21:00", "window Sun#2 15:00-21:00"))
+    out = _at(host, clock).run(rc=0 if holds else 3)
+    assert _window_refused(out) is not holds
+    if holds:
+        w = out["gate"]["span"]["window"]
+        assert (w["weekday"], w["week"], w["date"], w["line"]) == ("Sun", 2, None, 3)
+    else:
+        assert out["gate"]["span"]["window"] is None
+        assert _changed(host) == []
+
+
+def test_a_week_of_the_month_is_the_week_its_range_starts_in(host):
+    # Opens the 2nd Sunday at 23:00 and closes the Monday after at 02:00: a
+    # Monday 00:10 is inside it, though the 12th is in no 2nd week's Sunday.
+    host.knob(KNOB.replace("window Tue 15:00-21:00", "window Sun#2 23:00-02:00"))
+    out = _at(host, SUN_11_OCT + 8 * 3600 + 40 * MIN).run()
+    assert out["gate"]["span"]["window"]["line"] == 3
+
+
+@pytest.mark.parametrize(
+    "window, clock, holds",
+    [
+        ("window 2026-09-29 15:00-21:00 TS-2026-013", TUE_1530, True),
+        # The same times on another day, the next Tuesday's included.
+        ("window 2026-09-30 15:00-21:00 TS-2026-013", TUE_1530, False),
+        ("window 2026-09-29 15:00-21:00 TS-2026-013", TUE_1530 + 7 * DAY, False),
+        # Opens the 28th at 23:00, closes the 29th at 02:00.
+        ("window 2026-09-28 23:00-02:00", TUE_1530 - 15 * 3600 - 20 * MIN, True),
+    ],
+    ids=["its-date", "another-date", "a-week-later", "wraps-past-midnight"],
+)
+def test_a_dated_window_opens_on_its_date_only(host, window, clock, holds):
+    # The weekday line goes, so only the dated one can hold the span.
+    host.knob(KNOB.replace("window Tue 15:00-21:00", window))
+    out = _at(host, clock).run(rc=0 if holds else 3)
+    assert _window_refused(out) is not holds
+    if holds:
+        w = out["gate"]["span"]["window"]
+        assert (w["date"], w["line"]) == (window.split()[1], 3)
+
+
+def test_a_past_dated_window_beside_a_weekday_one_leaves_the_host_applying(host):
+    host.knob(KNOB + "window 2026-09-01 15:00-21:00 TS-2026-001\n")
+    out = host.run()
+    assert out["verdict"]["ok"] is True
     assert out["gate"]["span"]["window"]["line"] == 3
 
 
@@ -1062,7 +1143,7 @@ def test_the_bulk_sizes_what_it_takes_and_records_it_in_the_gate(host):
     assert space_["headroom"] is None
     # After the refresh: the host's own lists, which the figures come from.
     seq = [f"{n} {a}" for n, a, _ in host.calls("apt-get")]
-    assert seq.index("apt-get update") < seq.index("apt-get " + sizes[0])
+    assert seq.index("apt-get update --error-on=any") < seq.index("apt-get " + sizes[0])
 
 
 def test_a_bulk_that_wouldnt_fit_holds_nothing_upgrades_nothing_and_can_run_again(
@@ -1233,7 +1314,7 @@ def test_the_bulk_holds_each_groups_pending_packages_and_never_the_owners(host):
     assert host.record("holds") == "postgres postgresql-16\nredis redis-server\n"
     # The lists were refreshed first, then the bulk ran with the holds on.
     changed = _changed(host)
-    assert changed[0] == "apt-get update"
+    assert changed[0] == "apt-get update --error-on=any"
     assert changed.index("apt-mark hold postgresql-16 redis-server") < changed.index(
         "unattended-upgrade -v"
     )
@@ -1373,7 +1454,7 @@ def test_a_reprobe_that_fails_says_why(host):
 
 def test_lists_that_wont_refresh_hold_nothing_and_the_bulk_can_run_again(host):
     green = host.cases["apt-get"]
-    host.cases["apt-get"] = [("update", "", 100, "", None), *green]
+    host.cases["apt-get"] = [("update*", "", 100, "", None), *green]
     out = host.run(rc=1)
     assert out["abort"]["instructions"] == [
         "Nothing was held or upgraded: fix what failed, then run this step again."
@@ -1381,6 +1462,37 @@ def test_lists_that_wont_refresh_hold_nothing_and_the_bulk_can_run_again(host):
     assert not [a for _, a, _ in host.calls("apt-mark") if a.startswith("hold")]
     host.cases["apt-get"] = green
     assert host.run()["verdict"]["ok"] is True
+
+
+def _without_update(host: Host) -> Host:
+    host.cases["apt-get"] = [
+        c for c in host.cases["apt-get"] if not c[0].startswith("update")
+    ]
+    return host
+
+
+def test_the_bulks_update_fails_on_any_source_that_fails(host):
+    # #542: apt-get update exits 0 when one source fails, and leaves that
+    # source's lists as they were: the bulk would upgrade against them.
+    _without_update(host).apt_update(failed_source=True)
+    out = host.run(rc=1)
+    why = out["verdict"]["why"]
+    assert any("apt-get update failed" in w for w in why), why
+    assert out["abort"]["instructions"] == [
+        "Nothing was held or upgraded: fix what failed, then run this step again."
+    ]
+    assert not [a for _, a, _ in host.calls("apt-mark") if a.startswith("hold")]
+    assert "--error-on=any" in _updates(host)[0].split()
+    assert "Failed to fetch" in host.record("apt-get-update.log")
+
+
+def test_a_bulk_whose_sources_all_fetch_runs_with_error_on_any(host):
+    assert host.run()["verdict"]["ok"] is True
+    assert [u.split() for u in _updates(host)] == [["update", "--error-on=any"]]
+
+
+def _updates(host: Host) -> list[str]:
+    return [a for _, a, _ in host.calls("apt-get") if a.split()[:1] == ["update"]]
 
 
 @pytest.mark.parametrize(
