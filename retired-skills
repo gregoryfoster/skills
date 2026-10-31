@@ -1,0 +1,11 @@
+# Skills this repo has retired, and what replaces each (#537).
+#
+# One "<old> <new>" pair per line; `#` starts a comment. A consuming repo's
+# .skills/doctor.sh reads this file from every vendor under skills-vendor/
+# and repoints skills/<old> and .claude/skills/<old> at <new> — see
+# skills/managing-skills/references/the-doctor.md, "Retired skills".
+#
+# An entry stays after <old> is deleted, so a straggler still heals.
+shipping-work-php             shipping-work
+shipping-work-python-fastapi  shipping-work
+shipping-work-python-click    shipping-work

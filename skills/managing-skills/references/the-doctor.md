@@ -27,6 +27,22 @@ The check walks each real `skills/<name>/` against the vendored skill of the sam
 
 Reported, never healed — a project-local divergence is sometimes the right answer, so the operator decides. Two ways to say so: `pre-ship.sh` is exempt by name (upstream ships a stub for the bare variant, and [docs/STYLE.md](https://github.com/gregoryfoster/skills/blob/main/docs/STYLE.md) blesses a project-supplied wrapper), and anything else goes in `.skills/forked-ok`, one repo-relative path per line, `#`-comments and blank lines ignored. Advisory in every mode including `--check-only`: a fork is sync debt an operator pays down on their schedule, and a probe that failed on it would push consumers toward deleting the local file rather than declaring it. The named remedy is the one from `docs/STYLE.md` — **wrap, don't fork**: a project that needs different behaviour keeps a thin local script that `exec`s the vendored one through the `skills/…` symlink.
 
+## Retired skills: the rename map
+
+A vendor that folds or renames a skill cannot simply delete the old directory: the daily refresh would leave a dangling `skills/<old>` in every consumer at once. So a retirement takes two releases ([#537](https://github.com/gregoryfoster/skills/issues/537), which folded the three `shipping-work-*` variants into `shipping-work`). The first ships the replacement and a `retired-skills` file at the vendor's root, one `<old> <new>` pair per line, with `#` comments; the second deletes `<old>`. The map outlives the deletion, so a consumer that comes back late still heals.
+
+The doctor reads every vendor's map and moves both links of the chain onto `<new>`: `skills/<old>`, when it is a whole-directory symlink into *that* vendor, and `.claude/skills/<old>` beside it. It does this before the dangling scan, so a straggler whose target is already gone is repointed instead of being sent through a submodule init that cannot bring `<old>` back. It does it again after the init if the first pass found no map, because a fresh worktree's vendor only appears then. This is the same two-call shape `sync_self` uses.
+
+What it will not do, each reported instead:
+
+- **Rewrite a directory at `skills/<old>`.** An override, or a directory of per-file links, is rewritten against `<new>` by its operator. This is the same call the drift check makes when it never merges.
+- **Replace a `skills/<new>` that is not the vendor's own link.** That is a local choice. If it *is* the vendor's link, the old link is simply removed.
+- **Move a link a tracked file still names.** A wrapper's `DELEGATE="skills/<old>/scripts/pre-ship.sh"`, or the `load_env` line `init-project-fastapi` scaffolds into AGENTS.md, would break the moment the link moved. So any tracked file containing `skills/<old>/` holds the link, and the report names the files. `git grep` reads the working tree, so an uncommitted fix releases the hold on the next run. `.skills/doctor.sh` is excluded, since its comments are history. A link that already dangles is the one exception: nothing works through it, so it is repointed and the references are reported.
+
+Nothing is committed: the report prints the `git add -A -- …` that stages exactly the paths it changed. Every mode is advisory, and `--check-only` says what it would repoint.
+
+**Timing.** A doctor that predates the map does not repoint. Its first run syncs the new doctor in, and the run after that repoints. Nothing dangles in between, because release 1 keeps `<old>`. That lag is why the map ships a release ahead of the deletion: it has to reach the doctors first.
+
 ## Why the doctor is a copy, not a symlink
 
 **The doctor is a copy, not a symlink** — deliberately. A symlink into `skills-vendor/` would itself dangle in exactly the uninitialized-submodule state the doctor exists to repair. The copy stays reachable there; the price is that upstream fixes don't arrive by submodule bump alone. Three things close that gap, in order of how much they ask of the consumer:
