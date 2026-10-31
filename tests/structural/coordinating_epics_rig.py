@@ -61,6 +61,13 @@ for frag, msg in st.get("fail_paths", {}).items():  # {"issues/99": "HTTP 502: â
     if frag in " ".join(args):
         fail(msg)
 
+if args == ["--version"]:  # answered only when a test sets gh_version
+    if "gh_version" not in st:
+        fail("unsupported")
+    save()
+    print(st["gh_version"])
+    sys.exit(0)
+
 def find(repo):  # GitHub's names are case-insensitive
     return next((v for k, v in st["repos"].items() if k.lower() == repo.lower()), None)
 
