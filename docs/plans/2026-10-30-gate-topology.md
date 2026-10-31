@@ -250,6 +250,28 @@ the parts run in order: A, then B, then C.
      xfail-keying rewrite, the description change and the billed routing
      re-run, moves to release 2 (Step 9): it must land in the commit that
      deletes the directories, since either half alone fails the suite.
+   - *Done 2026-10-31:* the unified gate now carries every property the
+     variant tests protect — #304's real-pytest marker cases, the knob,
+     CRLF and help cases, the env-name export, the resolver's exit 2, the
+     commit-less repo, segment matching per framework, and the variants'
+     next-steps categories (`test_shipping_work_stack_references.py`).
+   - **Left for Step 8 (release 1):** `init-project-fastapi` points its
+     scaffold at `shipping-work-python-fastapi`'s recipe
+     (`references/agents-md-template.md` and `SKILL.md`, whose line on the
+     per-SHA stamp is now stale) and `test_init_fastapi_env_handling.py`'s
+     `RECIPE_VARIANT` with it.
+   - **Left for release 2, in the deleting commit:** drop the variant rows
+     from every list (`test_pre_ship_env_override`, `_env_worktree`,
+     `_uv_invocation`, `test_gate_producer_exit_codes`,
+     `test_per_script_resolution`, `doc_check_fixtures`); point
+     `run_doc_check`'s default at `shipping-work` and give `CLICK_LIVE_TREE`
+     a pyproject that declares click; drop `TestBodyParity`, the per-variant
+     `TestShippingWork*` classes and the click side of
+     `TestPythonClickHelperByteEquality`; delete `test_gate_parity.py` and
+     `test_pre_ship_unresolved_head.py`; rewrite
+     `test_trigger_xfail_keying.py`'s examples on the reviewing-code family;
+     drop the `VARIANT_FAMILIES` rows and reword the baseline's "fallback"
+     description; then re-run `test_trigger_routing` (billed).
 8. **Rename map, then release 1.**
    - The vendor ships a `retired-skills` map (`shipping-work-* →
      shipping-work`). The doctor, which syncs itself first on every run,
