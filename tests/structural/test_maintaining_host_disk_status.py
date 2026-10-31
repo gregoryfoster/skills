@@ -37,3 +37,11 @@ def test_the_status_line_names_no_private_repo_or_host():
     # A cohort host is "co-<name>"; the public image co-image-base isn't one (CR 1494).
     assert not re.search(r"\bco-(?!image-base\b)[a-z]", line), line
     assert "still unproven" in line.lower(), line
+
+
+def test_the_status_line_states_the_roster_not_a_sessions_access():
+    # CR 1496: "couldn't be read" was the cloud session's reach, not the
+    # repo's state. The private repo's bump issue is read, and stays unnamed.
+    line = _status()
+    assert "couldn't be read" not in line, line
+    assert "one private repo" in line, line
