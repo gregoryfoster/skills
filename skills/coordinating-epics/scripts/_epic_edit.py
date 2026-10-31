@@ -813,7 +813,8 @@ def counts(lines: list[str]) -> dict[str, int]:
 # A disposition closes an item without shipping it (F177, CannObserv/processor#24
 # via #475): a field led by one of these, as a note op writes it.
 DISPOSITIONS = ("not planned", "out of epic")
-FIELD_SEP_RE = re.compile(r"\s*·\s*")
+# A field starts after a " · ": a "·" with no space before it is text (CR 1488).
+FIELD_SEP_RE = re.compile(r"\s+·\s*")
 
 
 def item_state(line: str) -> str | None:
