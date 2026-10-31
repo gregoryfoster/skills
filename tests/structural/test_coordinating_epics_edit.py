@@ -2563,3 +2563,47 @@ def test_field_hits_reads_top_level_lines_only():
     assert ee.field_hits(lines, "Next") == []
     assert ee.field_hits(["- **Next:** #1", "  - **Next:** x"], "next") == [0]
     assert ee.field_hits(["**Next:** #1"], "Next") == [0]  # a paragraph header too
+
+
+# ---------------------------------------------------------------- #535
+
+# #14 is named only in #11's indented sub-note: an item's note, not a cursor.
+SUB_NOTED = BODY.replace(
+    "- [ ] #11 first thing\n", "- [ ] #11 first thing\n  - **Next:** #14 ask alice\n"
+)
+
+
+def test_is_cursor_line_reads_a_top_level_line_only():
+    """#535: as #528 made the header op and scan.sh read it."""
+    assert ee.is_cursor_line("- **Next:** #12 x")
+    assert ee.is_cursor_line("**Next:** #12 x")
+    assert not ee.is_cursor_line("  - **Next:** #12 x")
+    assert not ee.is_cursor_line("- [ ] #5 foo")
+
+
+def test_a_new_issue_named_only_in_an_indented_next_sub_note_is_mentioned(rig):
+    """#535: CR 265's check dropped the sub-note as a cursor line and refused."""
+    rig.issue(REPO, EPIC, body=SUB_NOTED)
+    assert rig.edit(REPO, EPIC, [], "--adopt-live").returncode == 0
+    report = _report(rig, new_numbers=[{"number": 14, "kind": "issue"}])
+    ops = [{"op": "header", "field": "Last issue seen", "value": "{last_seen}"}]
+    res = rig.edit(REPO, EPIC, ops, "--scan", report)
+    assert res.returncode == 0, res.stderr
+
+
+def test_account_counts_an_issue_listed_only_in_an_indented_next_sub_note(rig):
+    """#535: --account called #14 unlisted. The header's own Next still isn't
+    a listing: #12 is held by its item, and the header line names no other."""
+    rig.issue(REPO, EPIC, body=SUB_NOTED)
+    assert rig.edit(REPO, EPIC, [], "--adopt-live").returncode == 0
+    res = rig.edit(REPO, EPIC, [{"op": "tick", "ref": "#11"}], "--account")
+    assert res.returncode == 0, res.stderr
+
+
+def test_account_still_skips_a_top_level_next_line(rig):
+    """#535 keeps the header's rule: "- **Next:** #14" lists nothing."""
+    body = BODY.replace("- **Next:** #12\n", "- **Next:** #14\n")
+    rig.issue(REPO, EPIC, body=body)
+    assert rig.edit(REPO, EPIC, [], "--adopt-live").returncode == 0
+    res = rig.edit(REPO, EPIC, [{"op": "tick", "ref": "#11"}], "--account")
+    assert res.returncode == 3 and summary(res)["unlisted"] == [14]
