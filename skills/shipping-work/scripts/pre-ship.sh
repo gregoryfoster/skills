@@ -326,11 +326,17 @@ key_path() {
   echo "$out"
 }
 
+# Only the detected stacks' tools: a PHP upgrade is nothing to a uv repo's
+# stamp, and a Python gate has no reason to start composer (CR 1395).
 # `sed -n 1p`, not `head -1`: head exits early, and under pipefail the
 # writer's SIGPIPE would fail the pipe.
+KEYED_TOOLS=()
+if [[ $UV -eq 1 ]]; then KEYED_TOOLS+=(uv); fi
+if [[ $COMPOSER -eq 1 ]]; then KEYED_TOOLS+=(composer php); fi
+if [[ $NPM -eq 1 ]]; then KEYED_TOOLS+=(node npm); fi
 tool_versions() {
   local t v out="tools"
-  for t in uv composer php node npm; do
+  for t in "${KEYED_TOOLS[@]}"; do
     if command -v "$t" >/dev/null 2>&1; then
       v=$("$t" --version 2>&1 | sed -n 1p) || return 1
       out="$out $t=[$v]"
