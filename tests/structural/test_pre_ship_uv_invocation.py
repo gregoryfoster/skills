@@ -39,9 +39,17 @@ import pytest
 
 SKILLS_DIR = Path(__file__).resolve().parents[2] / "skills"
 
-# The two variants that run their suite through uv.
-UV_VARIANTS = ["shipping-work-python-click", "shipping-work-python-fastapi"]
+# The gates that run their suite through uv: the two variants, and the one
+# gate that replaces them (#537), which must hold every property they did.
+UV_VARIANTS = [
+    "shipping-work",
+    "shipping-work-python-click",
+    "shipping-work-python-fastapi",
+]
 FASTAPI = "shipping-work-python-fastapi"
+# The gates that run the project's suite with integration tests deselected
+# by plugin: the fastapi variant, and the unified gate after it.
+DESELECTING = ["shipping-work", FASTAPI]
 
 KNOB = ".skills/pre-ship-uv-args"
 TOOLS = ("ruff", "python", "pytest")
@@ -53,6 +61,9 @@ TOOLS = ("ruff", "python", "pytest")
 STUB_LAUNCHER = '#!/bin/sh\nexec "$STUB_PYTHON" "$0.py" "$@"\n'
 STUB_UV = """import json, os, sys
 argv = sys.argv[1:]
+if argv == ["--version"]:  # the unified gate's stamp key asks; not a uv run
+    print("uv 0.0.0-stub")
+    sys.exit(0)
 plugin = None
 for d in filter(None, os.environ.get("PYTHONPATH", "").split(os.pathsep)):
     p = os.path.join(d, "pre_ship_not_integration.py")
@@ -132,6 +143,11 @@ def project(tmp_path: Path) -> Path:
     # and writes no per-SHA stamp into /tmp.
     (root / "tests").mkdir()
     (root / "tests" / "test_tiers.py").write_text(TIERS)
+    # The unified gate runs uv's checks only in a repo uv manages: a
+    # pyproject.toml with a uv.lock. This one has no pytest table, so it is
+    # no config candidate, and a test that writes its own replaces it.
+    (root / "pyproject.toml").write_text('[project]\nname = "mypkg"\n')
+    (root / "uv.lock").write_text("version = 1\n")
     # Click's import check reads this instead of asking uv for [project] name.
     (root / ".skills").mkdir()
     (root / ".skills" / "import-targets").write_text("mypkg\n")
@@ -206,14 +222,15 @@ CONFIGS = {
 }
 
 
+@pytest.mark.parametrize("gate", DESELECTING)
 @pytest.mark.parametrize("config", sorted(CONFIGS))
 def test_the_projects_own_marker_expression_survives(
-    config: str, project: Path
+    config: str, gate: str, project: Path
 ) -> None:
     """The power-map repro. Under `-m "not integration"` the browser tier ran."""
     name, body = CONFIGS[config]
     (project / name).write_text(body)
-    r = _run(FASTAPI, project, UV_STUB_REAL_PYTEST="1")
+    r = _run(gate, project, UV_STUB_REAL_PYTEST="1")
     assert r.returncode == 0, f"stdout={r.stdout}\nstderr={r.stderr}"
     assert _ran(project) == {"plain"}, (
         f"{config}: the project's addopts excludes the browser tier, and the "
@@ -223,7 +240,10 @@ def test_the_projects_own_marker_expression_survives(
     )
 
 
-def test_the_first_config_pytest_finds_is_the_one_honoured(project: Path) -> None:
+@pytest.mark.parametrize("gate", DESELECTING)
+def test_the_first_config_pytest_finds_is_the_one_honoured(
+    gate: str, project: Path
+) -> None:
     """pytest.ini outranks pyproject.toml in pytest's own precedence. The gate
     defers to that rather than re-implementing it."""
     (project / "pytest.ini").write_text(
@@ -232,7 +252,7 @@ def test_the_first_config_pytest_finds_is_the_one_honoured(project: Path) -> Non
     (project / "pyproject.toml").write_text(
         '[tool.pytest.ini_options]\naddopts = "-v"\n' + MARKERS_TOML
     )
-    r = _run(FASTAPI, project, UV_STUB_REAL_PYTEST="1")
+    r = _run(gate, project, UV_STUB_REAL_PYTEST="1")
     assert r.returncode == 0, f"stdout={r.stdout}\nstderr={r.stderr}"
     assert _ran(project) == {"plain"}, sorted(_ran(project))
 
@@ -242,13 +262,16 @@ def test_the_first_config_pytest_finds_is_the_one_honoured(project: Path) -> Non
     ["", "-m 'not browser'"],
     ids=["no-project-marker", "marker-that-never-names-integration"],
 )
-def test_integration_tests_stay_excluded(addopts: str, project: Path) -> None:
+@pytest.mark.parametrize("gate", DESELECTING)
+def test_integration_tests_stay_excluded(
+    addopts: str, gate: str, project: Path
+) -> None:
     """What `-m "not integration"` was for, kept: with no project marker, and
     with one that does not mention integration at all."""
     (project / "pyproject.toml").write_text(
         f'[tool.pytest.ini_options]\naddopts = "{addopts}"\n' + MARKERS_TOML
     )
-    r = _run(FASTAPI, project, UV_STUB_REAL_PYTEST="1")
+    r = _run(gate, project, UV_STUB_REAL_PYTEST="1")
     assert r.returncode == 0, f"stdout={r.stdout}\nstderr={r.stderr}"
     ran = _ran(project)
     assert not {"integration", "integration-class"} & ran, (
@@ -259,14 +282,15 @@ def test_integration_tests_stay_excluded(addopts: str, project: Path) -> None:
         assert "browser" in ran, "nothing asked for the browser tier to go"
 
 
-def test_pytest_addopts_is_honoured_too(project: Path) -> None:
+@pytest.mark.parametrize("gate", DESELECTING)
+def test_pytest_addopts_is_honoured_too(gate: str, project: Path) -> None:
     """PYTEST_ADDOPTS carries a marker the config file does not; pytest applies
     it, and the gate still removes integration on top."""
     (project / "pyproject.toml").write_text(
         '[tool.pytest.ini_options]\naddopts = ""\n' + MARKERS_TOML
     )
     r = _run(
-        FASTAPI,
+        gate,
         project,
         UV_STUB_REAL_PYTEST="1",
         PYTEST_ADDOPTS="-m 'not browser'",
@@ -275,14 +299,15 @@ def test_pytest_addopts_is_honoured_too(project: Path) -> None:
     assert _ran(project) == {"plain"}, sorted(_ran(project))
 
 
-def test_a_config_pytest_cannot_read_fails_the_gate(project: Path) -> None:
+@pytest.mark.parametrize("gate", DESELECTING)
+def test_a_config_pytest_cannot_read_fails_the_gate(gate: str, project: Path) -> None:
     """The gate reads no config, so it cannot silently drop a marker it failed
     to read: pytest reads it, and refuses (a usage error, exit 4) — which the
     gate passes through as a failure, having run nothing."""
     (project / "pyproject.toml").write_text(
         "[tool.pytest.ini_options]\naddopts = \"-m 'not browser'\n"
     )
-    r = _run(FASTAPI, project, UV_STUB_REAL_PYTEST="1")
+    r = _run(gate, project, UV_STUB_REAL_PYTEST="1")
     assert r.returncode not in (0, 5), (
         f"an unparseable pytest config passed the gate (exit {r.returncode})"
     )
@@ -305,8 +330,9 @@ def test_no_marker_expression_reaches_the_command_line(
         )
 
 
-def test_the_plugin_is_loaded_and_is_the_one_written(project: Path) -> None:
-    r = _run(FASTAPI, project)
+@pytest.mark.parametrize("gate", DESELECTING)
+def test_the_plugin_is_loaded_and_is_the_one_written(gate: str, project: Path) -> None:
+    r = _run(gate, project)
     assert r.returncode == 0, f"stdout={r.stdout}\nstderr={r.stderr}"
     (call,) = [c for c in _calls(project) if "pytest" in c["argv"]]
     argv = call["argv"]
@@ -315,7 +341,8 @@ def test_the_plugin_is_loaded_and_is_the_one_written(project: Path) -> None:
         "pytest was told to load pre_ship_not_integration, but no such module "
         f"was on its PYTHONPATH: {call}"
     )
-    assert "-x" in argv, argv
+    if gate == FASTAPI:
+        assert "-x" in argv, argv  # the unified gate drops -x (Step 5 row 10)
 
 
 # ---------------------------------------------------------------------------
