@@ -277,6 +277,11 @@ class TestHeld:
         assert r.returncode == 0, r.stderr
         assert _repointed(repo)
         assert "AGENTS.md" in r.stderr
+        # CR 1399: it was repointed, so it is reported with the repointed
+        # ones, not under "not repointed".
+        assert "not repointed" not in r.stderr, r.stderr
+        done = r.stderr.split("repointed skills their vendor retired:", 1)[1]
+        assert "AGENTS.md" in done.split("commit it:", 1)[0]
 
     def test_an_override_directory_is_reported_not_rewritten(self, tmp_path):
         repo = _consumer(tmp_path)
