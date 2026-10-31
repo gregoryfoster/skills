@@ -693,7 +693,9 @@ def test_a_list_within_an_hour_of_the_unpack_reads_as_unpacked(tmp_path, gap, fe
     # top layer 1 s after os-release's), and a RUN apt-get update puts its
     # lists in a later layer. Only a ctime past the margin is a fetch.
     host = StatHost(tmp_path)
-    ref = host.now - 3 * 3600
+    # CR 1445: half an hour more, so the fetch's age is mid-hour; at a whole
+    # hour less 1 s, a probe whose clock read 1 s after this one's got 3, not 2.
+    ref = host.now - 3 * 3600 - 1800
     host.write(OS_RELEASE, 'NAME="Ubuntu"\n')
     host.ctime(OS_RELEASE, ref)
     host.write(SECURITY_IN_RELEASE, "x", age_days=3)
