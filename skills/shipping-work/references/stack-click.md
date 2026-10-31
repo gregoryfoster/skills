@@ -17,9 +17,11 @@ elsewhere (e.g. `src/<pkg>/tests/`) sets `testpaths` in `pyproject.toml`; a
 library with no suite at all is pytest's exit 5, which the gate counts as a
 pass and says so.
 
-The import check imports the `[project] name` with `-` read as `_`. A project
-with several top-level packages, or whose distribution name is not its import
-name, lists them in `.skills/import-targets`. `reviewing-code-python-click`
+The import check imports the `[project] name` with `-` read as `_`, when
+`<name>/` or `src/<name>/` is in the tree; a guess that names nothing there is
+skipped with a note. A project with several top-level packages, or whose
+distribution name is not its import name, lists them in
+`.skills/import-targets`, which always runs. `reviewing-code-python-click`
 resolves the same targets, so review and ship agree.
 
 ## What doc-check watches by default

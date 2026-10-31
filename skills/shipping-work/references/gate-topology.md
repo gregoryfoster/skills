@@ -60,7 +60,7 @@ is the decision now in force; "Before" names which variant did what.
 | 4 | Worktree-zombie audit | All four, a warning only | Same, run once. |
 | 5 | `ruff check` | fastapi, click | Every uv repo. |
 | 6 | `ruff format --check` | fastapi only | **Every uv repo.** A repo that has never been formatted goes red once; run `ruff format` once when it moves onto this gate. |
-| 7 | Import check (`detect-import-targets.sh`) | click only | **Every uv repo**, with the click variant's rules: `.skills/import-targets`, else `[project] name` with `-` → `_`, else skipped with a note. A repo whose project name isn't its import name sets the knob. |
+| 7 | Import check (`detect-import-targets.sh`) | click only | **Every uv repo.** `.skills/import-targets` always runs. Without it, the `[project] name` (`-` read as `_`) runs only when `<name>/` or `src/<name>/` exists; otherwise it is skipped with a note naming the knob. Most services package their code as `src`, so an unguarded guess failed them out of the box. |
 | 8 | Test-directory detection (`detect-test-dirs.sh`) | click only | **Dropped from the gate.** pytest's own `testpaths` and rootdir rules decide, and exit 5 (row 9) covers a library with no suite. The script stays, because `reviewing-code-python-click` uses it. |
 | 9 | pytest exit 5 (collected nothing) | fastapi, click: a pass | Same, plus a visible NOTE. |
 | 10 | `-x` | fastapi yes, click no | **Off.** Under xdist a full run costs little more, and an agent fixes every failure in one pass instead of one per run. |

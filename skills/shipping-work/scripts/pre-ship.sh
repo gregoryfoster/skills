@@ -407,14 +407,30 @@ if [[ $UV -eq 1 ]]; then
     echo "ERROR: detect-import-targets.sh failed (exit $IMPORT_RC)" >&2
     exit 2
   fi
+  # A target the project named in .skills/import-targets always runs. One
+  # guessed from the [project] name runs only when the tree has it, as
+  # `<name>/` or `src/<name>/`: most services package their code as `src`
+  # (hatch `packages = ["src"]`), and importing a name that is nowhere in the
+  # repo tests the guess, not the packaging.
   IMPORT_TARGETS=()
+  GUESSED_AWAY=()
   while IFS= read -r pkg; do
-    [[ -n "$pkg" ]] && IMPORT_TARGETS+=("$pkg")
+    [[ -n "$pkg" ]] || continue
+    if [[ -e .skills/import-targets || -d "$pkg" || -d "src/$pkg" ]]; then
+      IMPORT_TARGETS+=("$pkg")
+    else
+      GUESSED_AWAY+=("$pkg")
+    fi
   done <"$TMP/imports"
   if [[ ${#IMPORT_TARGETS[@]} -eq 0 ]]; then
     echo ""
     echo "=== Import check ==="
-    echo "No import target (no .skills/import-targets and no [project] name). Skipping."
+    if [[ ${#GUESSED_AWAY[@]} -gt 0 ]]; then
+      echo "No package named ${GUESSED_AWAY[*]} (from the [project] name) at the root or under src/."
+      echo "Skipping. List what to import in .skills/import-targets (e.g. src) to check it."
+    else
+      echo "No import target (no .skills/import-targets and no [project] name). Skipping."
+    fi
   else
     for pkg in "${IMPORT_TARGETS[@]}"; do
       check "Import $pkg" uv_run python -c "import $pkg"

@@ -303,6 +303,11 @@ row there.
   byte-equal copy, and `TestPythonClickHelperByteEquality` holds all three.
 - `shipping-work`'s `description:` is unchanged: it is the selection surface,
   and Step 7 owns that change with the routing re-run.
+- Row 7 revised with the user after a run on a scratch clone of notifier:
+  watcher, notifier, archiver, broker and power-map package their code as
+  `src`, so `import <project name>` failed in each. A guessed target now runs
+  only when `<name>/` or `src/<name>/` exists; `.skills/import-targets`
+  always runs.
 - `pre-ship.sh` prints a `Detected: …` line, and SKILL.md loads
   `references/stack-<framework>.md` from it, so no seventh script joins the
   Step 1 resolution loop.
