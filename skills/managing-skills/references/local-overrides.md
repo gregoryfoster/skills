@@ -8,6 +8,20 @@ override's stale `SKILL.md` reintroduced
 months after it was fixed upstream, because the file carrying the fix was the
 fork.
 
+**Reach for an override last.** Overrides have proven to fall out of sync too
+easily, so the cohort is moving off them ([#537](https://github.com/gregoryfoster/skills/issues/537)).
+First, link the skill as a whole-directory symlink. Then put the project's
+differences where they can't drift:
+
+- `.skills/` knobs (the inventory is
+  [docs/KNOBS.md](https://github.com/gregoryfoster/skills/blob/main/docs/KNOBS.md));
+- a repo-root wrapper that `exec`s the vendored script (wrap, don't fork);
+- AGENTS.md guidance.
+
+If a difference fits none of these, ask upstream for a knob. Use an override
+only while that request is open. Everything below is for keeping one in sync
+until then.
+
 ## The per-script symlink shape
 
 An override needs real files only for what it actually changes; everything else
