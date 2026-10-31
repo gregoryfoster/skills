@@ -301,6 +301,18 @@ class TestHeld:
         assert (repo / "skills" / NEW / "SKILL.md").read_text() == "local\n"
         assert f"skills/{NEW}" in r.stderr
 
+    def test_a_blocked_claude_side_holds_both_links(self, tmp_path):
+        """CR 1398: moving skills/<old> first and finding .claude/skills/<new>
+        in the way left .claude/skills/<old> pointing at nothing."""
+        repo = _consumer(tmp_path)
+        (repo / ".claude" / "skills" / NEW).mkdir()
+        r = _doctor(repo)
+        assert r.returncode == 0, r.stderr
+        assert _link(repo, f"skills/{OLD}") == OLD_TARGET
+        assert not (repo / "skills" / NEW).exists()
+        assert (repo / ".claude" / "skills" / OLD / "SKILL.md").is_file()
+        assert f".claude/skills/{NEW}" in r.stderr
+
     def test_another_vendors_skill_of_that_name_is_left_alone(self, tmp_path):
         repo = _consumer(tmp_path)
         other = repo / "skills-vendor" / "other-skills" / "skills" / OLD
