@@ -342,6 +342,18 @@ tool_versions() {
       out="$out $t=[$v]"
     fi
   done
+  # The interpreter uv resolves, which uv's own version does not name: a
+  # patch upgrade under an unchanged tree is a run the stamp never saw
+  # (CR 1396). Not `uv python find`, which names a project's .venv by path,
+  # not version. stderr kept apart, since a first sync prints its progress
+  # there, and shown if the probe fails rather than discarded.
+  if [[ $UV -eq 1 ]]; then
+    v=$(uv_run python --version 2>"$TMP/python.err") || {
+      cat "$TMP/python.err" >&2
+      return 1
+    }
+    out="$out python=[$v]"
+  fi
   echo "$out"
 }
 
