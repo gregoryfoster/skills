@@ -203,16 +203,24 @@ if [[ -f tests/utils/gate_durations.py ]]; then
   PYTEST_ARGS+=(-p tests.utils.gate_durations)
 fi
 SLOT=""
+trap '[[ -z "$SLOT" ]] || rm -f "$SLOT"' EXIT
 if [[ "$N" -ge 2 ]]; then
   if python -c 'import xdist' >/dev/null 2>&1; then
     PYTEST_ARGS+=(-n "$N" --dist loadfile)
-    SLOTS=$(bash "$WORKERS" --slot-dir) && SLOT="$SLOTS/$$" && : >"$SLOT"
+    # A slot only divides the cores between gates, so failing to take one
+    # costs that accounting, never the run (CR 1390).
+    if SLOTS=$(bash "$WORKERS" --slot-dir); then
+      SLOT="$SLOTS/$$"
+      : >"$SLOT" || {
+        echo "NOTE: could not take a gate slot — running without one" >&2
+        SLOT=""
+      }
+    fi
   else
     echo "NOTE: $N workers allowed, but pytest-xdist is not in .venv — running serially." >&2
     echo "      Fix: pip install -r requirements-test.txt" >&2
   fi
 fi
-trap '[[ -z "$SLOT" ]] || rm -f "$SLOT"' EXIT
 
 # Not `exec`: the slot has to be released and the pass recorded afterwards.
 # pytest's exit code is still this script's — the usage block documents the
