@@ -811,8 +811,12 @@ def counts(lines: list[str]) -> dict[str, int]:
 
 
 # A disposition closes an item without shipping it (F177, CannObserv/processor#24
-# via #475): a field led by one of these, as a note op writes it.
-DISPOSITIONS = ("not planned", "out of epic")
+# via #475): a field that is one of these phrases, or starts with one and then
+# punctuation, as "not planned: superseded" or "out of epic (moved)". A phrase
+# going on in words, "out of epic follow-up #20 filed", is text (CR 1489).
+DISPOSITION_RE = re.compile(
+    r"[*_]*(?:not planned|out of epic)[*_]*(?:$|\s*[:;,.)(—–-])", re.I
+)
 # A field starts after a " · ": a "·" with no space before it is text (CR 1488).
 FIELD_SEP_RE = re.compile(r"\s+·\s*")
 
@@ -821,14 +825,14 @@ def item_state(line: str) -> str | None:
     """box_state, with a ticked disposition read apart as "disposed".
 
     A not-planned item could only be ticked, so it counted as done. Ticked
-    with a " · " field that starts "not planned" or "out of epic", it is
-    disposed. An open one is open, and the words elsewhere are just text.
+    with a " · " field that reads "not planned" or "out of epic", alone or
+    before punctuation, it is disposed. An open one is open, and the words elsewhere are just text.
     """
     state = box_state(line)
     if state != "done":
         return state
     fields = FIELD_SEP_RE.split(line.rstrip())[1:]
-    if any(f.lstrip("*_").lower().startswith(DISPOSITIONS) for f in fields):
+    if any(DISPOSITION_RE.match(f) for f in fields):
         return "disposed"
     return state
 
