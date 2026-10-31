@@ -113,7 +113,8 @@ def _npm_repo(repo: Path, scripts: dict) -> Path:
     return repo
 
 
-def _gate(repo: Path, tools=ALL_TOOLS, **env: str) -> subprocess.CompletedProcess:
+def _env(repo: Path, tools=ALL_TOOLS, **env: str) -> dict:
+    """The fakes on PATH, and an environment that names them."""
     fake_dir = repo.parent / "fakebin"
     fake_dir.mkdir(exist_ok=True)
     (fake_dir / "fake.py").write_text(FAKE)
@@ -138,12 +139,16 @@ def _gate(repo: Path, tools=ALL_TOOLS, **env: str) -> subprocess.CompletedProces
         PYTEST_XDIST_AUTO_NUM_WORKERS="0",
     )
     base.update(env)
+    return base
+
+
+def _gate(repo: Path, tools=ALL_TOOLS, **env: str) -> subprocess.CompletedProcess:
     return subprocess.run(
         ["bash", str(GATE)],
         cwd=repo,
         capture_output=True,
         text=True,
-        env=base,
+        env=_env(repo, tools, **env),
         timeout=120,
     )
 
@@ -396,6 +401,33 @@ class TestStamp:
         _gate(repo)
         _gate(repo, FAKE_VERSION="2.0")
         assert len(_uv_tool_calls(repo, "pytest")) == 2
+
+    def test_a_real_git_hooks_pass_is_reused_from_a_plain_shell(self, repo):
+        """CR 1394: through an actual `git commit`, not a simulated one.
+
+        Under a hook the key is the tree being committed (PRE_COMMIT=1), and
+        git runs the hook with its own exec-path first on PATH and GIT_*
+        set. structural-tests.sh needed exactly this test to find that its
+        hook's stamp was unreachable from a plain shell.
+        """
+        _uv_repo(repo)
+        hook = repo / ".git" / "hooks" / "pre-commit"
+        hook.write_text(f'#!/bin/sh\nPRE_COMMIT=1 exec bash "{GATE}"\n')
+        hook.chmod(0o755)
+        (repo / "tests" / "test_x.py").write_text("def test_h(): pass\n")
+        env = _env(repo)
+        subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True, env=env)
+        subprocess.run(
+            ["git", "-C", str(repo), "commit", "-q", "-m", "via hook"],
+            check=True,
+            env=env,
+            capture_output=True,
+        )
+        assert len(_uv_tool_calls(repo, "pytest")) == 1, "the hook ran the gate"
+        second = _gate(repo)
+        assert second.returncode == 0, second.stderr
+        assert len(_uv_tool_calls(repo, "pytest")) == 1, second.stderr
+        assert "already passed" in second.stdout
 
     def test_env_names_are_part_of_the_key(self, repo):
         """Row 16 (#497)."""
