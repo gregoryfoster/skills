@@ -525,8 +525,8 @@ _capped() {
 # at 1.42 GB, `high` ~20,000, `oom_kill` 0. That `high` count is the evidence,
 # and the scope's cgroup goes with its last process, so nothing can read it
 # afterwards. The driver runs under this keeper instead: it waits for the
-# driver, copies the counts out, and exits with the driver's status. A cap
-# kill that stops the scope stops the keeper too, and Result= says so below.
+# driver, copies the counts out, and exits with the driver's status. After a
+# cap kill it may or may not get its copy out; Result= decides either way.
 #
 # Single-quoted on purpose, as the probe's check: the keeper's `sh -c`
 # expands it. One line, so a call logged one per line stays one line. The
