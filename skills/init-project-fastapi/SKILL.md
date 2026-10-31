@@ -293,7 +293,7 @@ Symlink every vendor skill into `skills/`, install the symlink doctor, then crea
 Rules that reference cannot re-derive:
 
 - Create every link **from the repo root** with **relative** paths, using `ln -sfn` — never bare `ln -s`, which recurses into an existing directory-symlink and deposits a dangling link inside the obra submodule on name collisions (`using-git-worktrees`, `writing-plans`). `-sfn` also makes the loop idempotent on re-runs, and lets the later vendor in the loop override the earlier one.
-- Of the cross-cutting review/ship workflows, a FastAPI project takes **only** the `-python-fastapi` variants. The loop filters by pattern, so stack variants added upstream later are excluded without an edit here.
+- Of the review workflows, a FastAPI project takes **only** the `-python-fastapi` variant, and it takes the one `shipping-work`, which detects the stack; the retired `shipping-work-*` variants are skipped ([#537](https://github.com/gregoryfoster/skills/issues/537)). The loop filters by pattern, so stack variants added upstream later are excluded without an edit here.
 - `.skills/doctor.sh` must be installed in this phase. The `reviewing-*` / `shipping-*` skills preflight through it, and without the install that preflight is a silent no-op ([#65](https://github.com/gregoryfoster/skills/issues/65) found it missing in all four consumer repos).
 - Every local override `SKILL.md` declares `overrides: <vendor>/<upstream-skill-name>` and `override-reason: <one-line rationale>` in its frontmatter `metadata` block, where `<vendor>` is the submodule directory name under `skills-vendor/`.
 
@@ -348,7 +348,7 @@ Commit message body should list all key scaffold components (see AGENTS.md commi
 ### Phase 14 — Push
 
 ```bash
-bash skills/shipping-work-python-fastapi/scripts/push.sh
+bash skills/shipping-work/scripts/push.sh
 ```
 
 **If the push is rejected with `! [rejected] main -> main (fetch first)`,** the GitHub repo was created via the UI with "Add LICENSE" or "Add README" checked, leaving an unrelated initial commit on `main`. Prevent it next time by creating the repo with no LICENSE/README; recover this time by rebasing onto the remote and re-pushing:
@@ -356,7 +356,7 @@ bash skills/shipping-work-python-fastapi/scripts/push.sh
 ```bash
 # Only run when the push above was rejected for divergent history.
 git pull --rebase --allow-unrelated-histories origin main
-bash skills/shipping-work-python-fastapi/scripts/push.sh
+bash skills/shipping-work/scripts/push.sh
 ```
 
 ### Phase 15 — GitHub issue
@@ -395,7 +395,7 @@ Then present the completion table from [`references/completion-report.md`](refer
 ## Key invariants
 
 - `<SKILL_DIR>`, `<SKILL_SHA>`, and `<SKILL_TMP>` from Phase 0 are **placeholders** for literal absolute values captured once and substituted into every later phase that names them (same convention as `<PROJECT_NAME>`) — they are not inherited shell variables (each Bash invocation runs in a fresh shell). If the agent session restarts mid-bootstrap, re-run Phase 0 and use the new paths from there on.
-- The `pre-ship.sh` per-SHA stamp prefix is auto-derived from `$(basename "$(git rev-parse --show-toplevel)")` in the `shipping-work-python-fastapi` variant — no per-project substitution required (and no risk of cross-project stamp collisions).
+- `shipping-work`'s `pre-ship.sh` keeps its pass stamp under the repo's own `git rev-parse --git-common-dir`, keyed on the tree — no per-project substitution required, and no risk of cross-project stamp collisions.
 - All symlinks use **relative** paths — absolute paths break after cloning.
 - `src/core/config.py` is the single source of env access. Both `os.environ` reads and `pydantic-settings` instantiation belong there; no other module should call `os.environ.get()` for runtime configuration.
 - `configure_logging()` is called once inside the FastAPI `lifespan` context manager — never at module import time, and never in library modules.

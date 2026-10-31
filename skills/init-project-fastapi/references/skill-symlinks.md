@@ -1,10 +1,10 @@
 # `skills/` and `.claude/skills/` symlinks (Phases 10–11)
 
-Literal loops, commands, and the local-override inventory for the `init-project-fastapi` skill's Phases 10 and 11. The invariants these encode — relative paths, `ln -sfn` over bare `ln -s`, `-python-fastapi` variants only, the load-bearing doctor install, and the required override frontmatter — stay in `SKILL.md`.
+Literal loops, commands, and the local-override inventory for the `init-project-fastapi` skill's Phases 10 and 11. The invariants these encode — relative paths, `ln -sfn` over bare `ln -s`, `-python-fastapi` review variant and the one `shipping-work`, the load-bearing doctor install, and the required override frontmatter — stay in `SKILL.md`.
 
 ## Phase 10 — vendor symlinks
 
-**Vendor symlinks:** Symlink every skill from each submodule, except the cross-cutting review/ship workflows where only the `-python-fastapi` stack variant belongs in a FastAPI project. Create from within the repo root — paths must be relative from `skills/`:
+**Vendor symlinks:** Symlink every skill from each submodule, except the review workflow, where only the `-python-fastapi` stack variant belongs in a FastAPI project, and the retired `shipping-work-*` variants, which `shipping-work` replaces ([#537](https://github.com/gregoryfoster/skills/issues/537)). Create from within the repo root — paths must be relative from `skills/`:
 
 ```bash
 mkdir -p skills
@@ -14,17 +14,16 @@ mkdir -p skills
 for repo in skills-vendor/obra-superpowers skills-vendor/gregoryfoster-skills; do
   for skill_dir in "$repo"/skills/*/; do
     skill_name=$(basename "$skill_dir")
-    # Cross-cutting review/ship workflows ship as stack variants upstream.
-    # A FastAPI project wants ONLY the -python-fastapi variant of each; skip
-    # the stack-neutral name and any other stack variants. Pattern-based so
-    # future stack variants added upstream get filtered automatically.
+    # The review workflow ships as stack variants upstream: a FastAPI
+    # project wants ONLY the -python-fastapi one, so skip the stack-neutral
+    # name and any other stack variant. shipping-work is one skill that
+    # detects the stack; its shipping-work-* variants are retired (#537).
+    # Pattern-based so future stack variants get filtered automatically.
     case "$skill_name" in
-      reviewing-code|reviewing-code-*|shipping-work|shipping-work-*)
-        case "$skill_name" in
-          reviewing-code-python-fastapi|shipping-work-python-fastapi) ;;
-          *) continue ;;
-        esac
+      reviewing-code|reviewing-code-*)
+        [ "$skill_name" = reviewing-code-python-fastapi ] || continue
         ;;
+      shipping-work-*) continue ;;
     esac
     ln -sfn "../$repo/skills/$skill_name" "skills/$skill_name"
   done
@@ -41,7 +40,7 @@ bash skills-vendor/gregoryfoster-skills/skills/managing-skills/scripts/install-d
 
 ## Phase 10 — local overrides
 
-**Local overrides (1):** The cross-cutting review and ship workflows now ship as Python/FastAPI stack variants upstream (`reviewing-code-python-fastapi`, `shipping-work-python-fastapi`). Symlink those alongside the other vendor skills (Phase 10's vendor loop above selects only the `-python-fastapi` variants of these workflows) — no full-copy override needed for either workflow. The variant's `pre-ship.sh` auto-derives its per-SHA stamp prefix from the git toplevel basename, so no project-name substitution is required.
+**Local overrides (1):** The review workflow ships as a Python/FastAPI stack variant upstream (`reviewing-code-python-fastapi`), and `shipping-work` detects the stack itself. Symlink both alongside the other vendor skills (Phase 10's vendor loop above selects them) — no full-copy override needed for either workflow. `shipping-work`'s gate stamps under the repo's own git directory, so no project-name substitution is required.
 
 The remaining local override is the project-narrative skill that genuinely varies per-project:
 
@@ -57,8 +56,8 @@ Substitutions in local overrides:
 
 **Optional thin overrides** (only when the project genuinely needs them):
 - `skills/writing-plans/` — fork only if the project ships project-specific narrative content (e.g., `plan-document-reviewer-prompt.md`). The plans directory itself is configurable via `.skills/plans_dir`; do not fork just to repoint it. The forked `SKILL.md` needs `overrides: gregoryfoster-skills/writing-plans` + `override-reason:`.
-- `skills/shipping-work-python-fastapi/scripts/pre-ship.sh` — never fork it. A project that needs `/etc/<project>/.env` loaded before tests (e.g., archiver, notifier, watcher) commits a project-root `scripts/pre-ship.sh` wrapper that parses the env files and `exec`s the vendored gate; the wrapper recipe is in that script's header. A wrapper isn't a skill, so it needs no override frontmatter.
-- Step 2.5 worktree-aware merge path — fork the relevant `shipping-work-python-fastapi/SKILL.md` step if the project deploys via a worktree layout that needs a specific `cd /home/.../<project>` step. Same frontmatter requirement.
+- `skills/shipping-work/scripts/pre-ship.sh` — never fork it. A project that needs `/etc/<project>/.env` loaded before tests (e.g., archiver, notifier, watcher) commits a project-root `scripts/pre-ship.sh` wrapper that parses the env files and `exec`s the vendored gate; the wrapper recipe is in that script's header. A wrapper isn't a skill, so it needs no override frontmatter.
+- Step 2.5 worktree-aware merge path — fork the relevant `shipping-work/SKILL.md` step if the project deploys via a worktree layout that needs a specific `cd /home/.../<project>` step. Same frontmatter requirement.
 
 ## Phase 11 — `.claude/skills/` discovery symlinks
 
