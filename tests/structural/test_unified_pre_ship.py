@@ -32,7 +32,8 @@ with open(os.environ["TOOL_LOG"], "a") as log:
 line = " ".join([tool, *argv])
 fails = [f for f in os.environ.get("FAKE_FAIL", "").split(",") if f]
 if argv[:1] == ["--version"]:
-    print(f"{tool} {os.environ.get('FAKE_VERSION', '1.0')}")
+    default = os.environ.get("FAKE_VERSION", "1.0")
+    print(f"{tool} {os.environ.get('FAKE_VERSION_' + tool.upper(), default)}")
     sys.exit(0)
 if tool == "uv":
     rest = argv[1:]
@@ -428,6 +429,17 @@ class TestStamp:
         assert second.returncode == 0, second.stderr
         assert len(_uv_tool_calls(repo, "pytest")) == 1, second.stderr
         assert "already passed" in second.stdout
+
+    def test_only_the_detected_stacks_tools_are_keyed(self, repo):
+        """CR 1395: a PHP upgrade is nothing to a uv repo's stamp, and a
+        Python gate has no reason to start composer just to read a version."""
+        _uv_repo(repo)
+        _gate(repo)
+        _gate(repo, FAKE_VERSION_COMPOSER="9.9", FAKE_VERSION_PHP="9.9")
+        assert len(_uv_tool_calls(repo, "pytest")) == 1
+        asked = (repo.parent / "tools.log").read_text()
+        assert '["composer", "--version"]' not in asked
+        assert '["php", "--version"]' not in asked
 
     def test_env_names_are_part_of_the_key(self, repo):
         """Row 16 (#497)."""
