@@ -39,6 +39,9 @@ if tool == "uv":
     rest = argv[1:]
     i = next(i for i, a in enumerate(rest) if a in ("ruff", "python", "pytest"))
     t, targs = rest[i], rest[i + 1:]
+    if t == "python" and targs[:1] == ["--version"]:
+        print("Python " + os.environ.get("FAKE_PYTHON_VERSION", "3.12.0"))
+        sys.exit(0)
     if t == "python" and targs[:1] == ["-c"]:
         code = targs[1]
         if code == "import pytest_cov":
@@ -258,7 +261,9 @@ class TestPython:
         _commit(repo)
         assert _gate(repo).returncode == 0
         imports = [
-            c for c in _uv_tool_calls(repo, "python") if c[1].startswith("import ")
+            c
+            for c in _uv_tool_calls(repo, "python")
+            if len(c) > 1 and c[1].startswith("import ")
         ]
         assert [
             c[1] for c in imports if c[1] not in ("import pytest_cov", "import xdist")
@@ -429,6 +434,13 @@ class TestStamp:
         assert second.returncode == 0, second.stderr
         assert len(_uv_tool_calls(repo, "pytest")) == 1, second.stderr
         assert "already passed" in second.stdout
+
+    def test_an_interpreter_upgrade_means_no_reuse(self, repo):
+        """CR 1396: uv's version says nothing of the Python it resolves."""
+        _uv_repo(repo)
+        _gate(repo)
+        _gate(repo, FAKE_PYTHON_VERSION="3.12.9")
+        assert len(_uv_tool_calls(repo, "pytest")) == 2
 
     def test_only_the_detected_stacks_tools_are_keyed(self, repo):
         """CR 1395: a PHP upgrade is nothing to a uv repo's stamp, and a
