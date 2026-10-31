@@ -142,7 +142,7 @@ exit codes:
 # A task item's marker is a bullet or an ordered one, "1." or "1)", up to
 # CommonMark's nine digits: GitHub renders "1. [ ] #348" as a task item (#403).
 MARKER = r"(?:[-*+]|[0-9]{1,9}[.)])"
-BOX_RE = re.compile(r"^(?P<indent>\s*)(?P<bullet>" + MARKER + r") \[(?P<mark>[ xX])\] ")
+BOX_RE = re.compile(r"^(?P<indent>\s*)(?P<marker>" + MARKER + r") \[(?P<mark>[ xX])\] ")
 # GitHub links "pre-#348" and "ver.#3" as this repo's #348 and #3, so a "-" or
 # "." before the "#" is prose (#401). A "/" isn't: ref_text turns only GitHub
 # issue URLs into refs, and "https://example.com/a/#7" renders as a plain link.
@@ -848,7 +848,7 @@ def set_box(line: str, done: bool) -> str:
     m = BOX_RE.match(line)
     assert m
     mark = "x" if done else " "
-    return f"{m.group('indent')}{m.group('bullet')} [{mark}] " + line[m.end() :]
+    return f"{m.group('indent')}{m.group('marker')} [{mark}] " + line[m.end() :]
 
 
 LIST_ITEM_RE = re.compile(r"^\s*(?:[-*+]|(?P<num>\d{1,9})[.)])(?:[ \t]|$)")
