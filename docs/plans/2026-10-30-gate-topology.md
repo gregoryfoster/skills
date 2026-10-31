@@ -280,10 +280,33 @@ the parts run in order: A, then B, then C.
    - The variants stay, marked deprecated, so nothing dangles.
    - Update AGENTS.md, README, `docs/CONVENTIONS.md`, `docs/KNOBS.md`
      and the `init-project-fastapi` references to the single name.
+   - *Done 2026-10-31:* the map is `retired-skills` at the repo root. The
+     doctor (`repoint_retired`) moves `skills/<old>` and
+     `.claude/skills/<old>` onto `<new>` before its dangling scan, and again
+     after an init when that pass found no map
+     (`test_doctor_retired_skills.py`). One rule was added in implementation:
+     a tracked file naming `skills/<old>/` **holds** the link unless it
+     already dangles. Every fastapi consumer's scaffolded AGENTS.md
+     `load_env` line and every wrapper's `DELEGATE` names the variant path,
+     and repointing under them would break the gate in every consumer at
+     once. So in most of the cohort the repoint lands when the Step 9 issue
+     rewrites those lines and re-runs the doctor, not unattended. The
+     variants carry `metadata.deprecated` and a banner, with descriptions
+     unchanged; `init-project-fastapi` scaffolds `shipping-work`.
+     `docs/CONVENTIONS.md` names a variant only in a historical incident,
+     so it is unchanged.
+   - **Added to release 2's deleting commit:** STYLE.md's canonical
+     `FIND_RC` pointer (only the PHP variant's `pre-ship.sh` carries it;
+     the relative-link test will fail on the deletion); README's three
+     deprecated rows and KNOBS' deprecated readers; and the `shipping-work`
+     description, which still says "fallback of last resort".
 9. **Cohort migration, then release 2.**
    - File one issue per repo (per-action authorization applies). Each
      issue covers:
-     - confirming that the doctor repointed the link;
+     - rewriting every tracked `skills/shipping-work-*/` path (the
+       `load_env` line in AGENTS.md, a wrapper's `DELEGATE`, `forked-ok`)
+       and re-running the doctor, then confirming it repointed the link and
+       committing the `git add` it prints;
      - rewriting any override to `overrides: gregoryfoster/shipping-work`;
        archiver's bare `exec` wrapper becomes a plain symlink;
      - the repo's `.skills/test-workers`;
@@ -349,6 +372,16 @@ row there.
   doctor syncs itself before it heals, in the same run. Step 8 must test
   that order directly, since a miss would leave the repo with a doctor that
   doesn't know the map yet.
+  *Resolved in Step 8:* "the same run" is not achievable, and not needed.
+  A doctor that predates the map has no repoint code, so even once it has
+  synced, it cannot repoint in that run. The run after does
+  (`TestADoctorThatPredatesTheMap`), and nothing dangles in between because
+  release 1 keeps the variants. Hook consumers skip even that lag, since
+  the hook re-installs the doctor right after a bump (#299). The only real
+  requirement is that release 1 reaches every consumer's doctor before
+  release 2 deletes anything. A repo that jumps straight from pre-release-1
+  to release 2 fails one doctor run ("still dangling"), then heals on the
+  next.
 - **Watcher runs integration tests in its ship gate.** The unified gate keeps
   integration tests out. Watcher's repo-root `pre-ship.sh` wrapper stays its
   own business, but the Step 9 issue should say so explicitly.
