@@ -1143,7 +1143,7 @@ def test_the_bulk_sizes_what_it_takes_and_records_it_in_the_gate(host):
     assert space_["headroom"] is None
     # After the refresh: the host's own lists, which the figures come from.
     seq = [f"{n} {a}" for n, a, _ in host.calls("apt-get")]
-    assert seq.index("apt-get update") < seq.index("apt-get " + sizes[0])
+    assert seq.index("apt-get update --error-on=any") < seq.index("apt-get " + sizes[0])
 
 
 def test_a_bulk_that_wouldnt_fit_holds_nothing_upgrades_nothing_and_can_run_again(
@@ -1314,7 +1314,7 @@ def test_the_bulk_holds_each_groups_pending_packages_and_never_the_owners(host):
     assert host.record("holds") == "postgres postgresql-16\nredis redis-server\n"
     # The lists were refreshed first, then the bulk ran with the holds on.
     changed = _changed(host)
-    assert changed[0] == "apt-get update"
+    assert changed[0] == "apt-get update --error-on=any"
     assert changed.index("apt-mark hold postgresql-16 redis-server") < changed.index(
         "unattended-upgrade -v"
     )
@@ -1476,7 +1476,8 @@ def test_the_bulks_update_fails_on_any_source_that_fails(host):
     # source's lists as they were: the bulk would upgrade against them.
     _without_update(host).apt_update(failed_source=True)
     out = host.run(rc=1)
-    assert any("apt-get update failed" in f for f in out["failed"]), out["failed"]
+    why = out["verdict"]["why"]
+    assert any("apt-get update failed" in w for w in why), why
     assert out["abort"]["instructions"] == [
         "Nothing was held or upgraded: fix what failed, then run this step again."
     ]
