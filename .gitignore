@@ -12,6 +12,7 @@ htmlcov/
 .env
 env
 tests/benchmarks/results/*.jsonl
-.claude/worktrees/# Per-machine Claude Code settings, e.g. the cloud environment `claude --cloud`
+.claude/worktrees/
+# Per-machine Claude Code settings, e.g. the cloud environment `claude --cloud`
 # uses here (#479): an account-personal ID, meaningless in anyone else's clone.
 .claude/settings.local.json
