@@ -57,6 +57,52 @@ DOC_SECTIONS=(
   "AGENTS.md: project structure, conventions, skill inventory"
   "README.md: orientation + curated links into canonical docs; only the README-owned bits (e.g. top-level CLI list, two-line quick start) should change here"
 )
+
+# Framework defaults (#537, plan Step 5 row 23). The per-stack copies of this
+# script differed only in the two lists above, so this one asks
+# detect-stack.sh for the repo's frameworks and, when it finds any, watches
+# AGENTS.md, README.md and exactly the paths each framework's copy watched,
+# and names each one's inventory in the AGENTS.md advice. A repo with no
+# framework keeps the generic lists above. The .skills/ files still REPLACE
+# whichever defaults apply. A copy shipped without detect-stack.sh keeps the
+# generic lists too; one whose detect-stack.sh fails is a tooling failure.
+DETECT="$(cd "$(dirname "$0")" && pwd)/detect-stack.sh"
+if [[ -f "$DETECT" ]]; then
+  STACK=$(bash "$DETECT") || {
+    echo "ERROR: detect-stack.sh failed (exit $?), so the default path list is unknown." >&2
+    exit 2
+  }
+  FRAMEWORK_PATHS=()
+  INVENTORIES=""
+  for fw in fastapi click php; do
+    grep -qx "framework	$fw" <<<"$STACK" || continue
+    case "$fw" in
+      fastapi)
+        FRAMEWORK_PATHS+=("CHANGELOG.md" "pyproject.toml" "uv.lock" "schema.sql"
+          "alembic/versions/" "deploy/" "src/api/" "src/models/" "src/core/"
+          ".env.example")
+        INVENTORIES="$INVENTORIES, route table" ;;
+      click)
+        FRAMEWORK_PATHS+=("pyproject.toml" "uv.lock" "src/" ".env.example")
+        INVENTORIES="$INVENTORIES, command inventory" ;;
+      php)
+        FRAMEWORK_PATHS+=("composer.json" "composer.lock" "package.json"
+          "web/app/themes/" "web/app/plugins/" "web/app/acf-json/" ".env.example")
+        INVENTORIES="$INVENTORIES, CPT/Skills tables" ;;
+    esac
+  done
+  if [[ ${#FRAMEWORK_PATHS[@]} -gt 0 ]]; then
+    SENSITIVE_PATHS=("AGENTS.md" "README.md")
+    for p in "${FRAMEWORK_PATHS[@]}"; do
+      seen=0
+      for q in "${SENSITIVE_PATHS[@]}"; do
+        if [[ "$q" == "$p" ]]; then seen=1; fi
+      done
+      if [[ $seen -eq 0 ]]; then SENSITIVE_PATHS+=("$p"); fi
+    done
+    DOC_SECTIONS[0]="${DOC_SECTIONS[0]}$INVENTORIES"
+  fi
+fi
 # ------------------------------------------------------------------------------
 
 usage() {
