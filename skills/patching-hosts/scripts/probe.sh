@@ -1624,9 +1624,15 @@ class_of() {  # <var> <origins, ", "-separated>
 # noble, 2026-10-30); lists/partial/'s mtime moves at a failed one too.
 # A ctime is also when the tree was unpacked, though (CR 1295): an image's
 # lists would read as fetched at provisioning. So it counts as a fetch only
-# when it's no older than the probe's start, or newer than os-release's, a
-# file apt-get update never writes. Otherwise the age is the mtime's, and
-# says so.
+# when it's no older than the probe's start, or more than an hour newer than
+# os-release's, a file apt-get update never writes. An hour, because an
+# unpack isn't instant and the lists sit in a later layer than os-release's
+# (a RUN apt-get update makes them): buildpack-deps:noble's top layer
+# unpacked a second after its os-release, and exeuntu is several GB
+# (CR 1300). Erring that way costs only a quiet day's false stale reading on
+# a host fetched within the hour of its provisioning. Otherwise the age is
+# the mtime's, and says so.
+LISTS_UNPACK_MARGIN_S=3600
 LISTS_REF="" LISTS_REF_CT=""
 lists_reference() {
   local f
@@ -1643,7 +1649,7 @@ list_fetched() {  # <var> <list file>: when it was fetched, or empty when its ct
   local _lf_c
   file_ctime _lf_c "$2"
   if [ -n "$_lf_c" ] && { [ "$_lf_c" -ge "$P_NOW" ] ||
-    { [ -n "$LISTS_REF_CT" ] && [ "$_lf_c" -gt "$LISTS_REF_CT" ]; }; }; then
+    { [ -n "$LISTS_REF_CT" ] && [ "$_lf_c" -gt $((LISTS_REF_CT + LISTS_UNPACK_MARGIN_S)) ]; }; }; then
     printf -v "$1" '%s' "$_lf_c"
   else
     printf -v "$1" '%s' ""
@@ -1665,7 +1671,7 @@ read_lists_age() {
     if [ -n "$ct" ] && { [ -z "$LISTS_FETCHED" ] || [ "$ct" -gt "$LISTS_FETCHED" ]; }; then LISTS_FETCHED=$ct; fi
   done
   if [ -n "$newest" ]; then lm=$(((P_NOW - newest) / 3600)); fi
-  src="when the security InRelease was last fetched: its ctime, which apt moves at every fetch and not at a failed one, and which is newer than ${LISTS_REF:-os-release}'s, which no fetch writes. Its mtime is the archive's Last-Modified (security_last_modified_hours)"
+  src="when the security InRelease was last fetched: its ctime, which apt moves at every fetch and not at a failed one, and which is more than an hour newer than ${LISTS_REF:-os-release}'s, which no fetch writes, so no unpack spans the gap. Its mtime is the archive's Last-Modified (security_last_modified_hours)"
   if [ -n "$LISTS_FETCHED" ]; then
     age=$(((P_NOW - LISTS_FETCHED) / 3600))
   elif [ "$seen" -eq 1 ]; then
@@ -1673,7 +1679,7 @@ read_lists_age() {
     # newer than the archive it came from.
     age=$lm
     if [ -n "$LISTS_REF" ]; then
-      src="the security InRelease's mtime, the archive's Last-Modified: its ctime is no newer than $LISTS_REF's, so it dates the tree's unpacking, not a fetch"
+      src="the security InRelease's mtime, the archive's Last-Modified: its ctime is within an hour of $LISTS_REF's, or older, a gap an image's layered unpack can span, so it dates the tree's unpacking, not a fetch"
     else
       src="the security InRelease's mtime, the archive's Last-Modified: with no os-release to read, its ctime can't be told from the tree's unpacking"
     fi
