@@ -5,8 +5,9 @@ per-agent figure), then `.skills/test-workers` (off | auto | a number), then
 auto — serial on 2 cores or fewer (every exe.dev VM), otherwise
 min(8, cores / (active gates + 1)), with a result under 2 meaning serial.
 
-The core count is faked by a `getconf` earlier on PATH, so these run the same
-on a 2-vCPU VM and a 14-core Mac. No API calls; each test gets a fresh repo.
+The core count is faked by an `nproc` and a `getconf` earlier on PATH, so
+these run the same on a 2-vCPU VM and a 14-core Mac. No API calls; each test
+gets a fresh repo.
 """
 
 import os
@@ -37,13 +38,17 @@ def repo(tmp_path: Path) -> Path:
     return repo
 
 
-def _fake_cores(tmp_path: Path, cores: int) -> str:
-    """A PATH whose `getconf` reports `cores`, ahead of the real one."""
+def _fake_cores(tmp_path: Path, cores: int, online: int | None = None) -> str:
+    """A PATH whose `nproc` reports `cores`, ahead of the real one.
+
+    `getconf` reports `online` (default: the same): every CPU the host has,
+    which a CPU-pinned container may not be allowed to use.
+    """
     bin_dir = tmp_path / "fakebin"
     bin_dir.mkdir(exist_ok=True)
-    getconf = bin_dir / "getconf"
-    getconf.write_text(f"#!/bin/sh\necho {cores}\n")
-    getconf.chmod(0o755)
+    for tool, count in (("nproc", cores), ("getconf", online or cores)):
+        (bin_dir / tool).write_text(f"#!/bin/sh\necho {count}\n")
+        (bin_dir / tool).chmod(0o755)
     return f"{bin_dir}:{os.environ['PATH']}"
 
 
@@ -103,6 +108,14 @@ class TestAuto:
     @pytest.mark.parametrize(("cores", "expected"), [(1, 0), (2, 0), (3, 3), (14, 8)])
     def test_the_core_count_decides(self, repo, tmp_path, cores, expected):
         assert _answer(repo, PATH=_fake_cores(tmp_path, cores)) == expected
+
+    def test_the_cpus_it_may_use_not_the_cpus_online(self, repo, tmp_path):
+        """A container pinned to 2 CPUs on a 14-core host is a 2-core machine.
+
+        getconf counts every online CPU; nproc counts the ones this process's
+        affinity allows, which is what a worker pool actually gets.
+        """
+        assert _answer(repo, PATH=_fake_cores(tmp_path, 2, online=14)) == 0
 
     def test_a_live_gate_takes_its_share(self, repo, tmp_path):
         path = _fake_cores(tmp_path, 14)
