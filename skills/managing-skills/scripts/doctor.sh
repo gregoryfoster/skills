@@ -2293,7 +2293,10 @@ retire_one() {
   rc=0
   refs="$(git grep -l -F -e "skills/$old/" -- . ':(exclude).skills/doctor.sh' 2>/dev/null)" || rc=$?
   if [ "$rc" -gt 1 ] && [ "$dangling" = "0" ]; then
-    RETIRED_HELD+=("$link — retired for $new; could not search for references to it (git grep exit $rc)")
+    # git's own first line, from a reporting-only re-run: the exit code alone
+    # leaves the operator nothing to act on (CR 1402).
+    f="$(git grep -l -F -e "skills/$old/" -- . 2>&1 >/dev/null | head -n 1)" || true
+    RETIRED_HELD+=("$link — retired for $new; could not search for references to it (git grep exit $rc${f:+: $f})")
     return 1
   fi
   if [ -n "$refs" ]; then
