@@ -34,5 +34,6 @@ def test_the_status_line_is_dated_and_names_its_roster():
 def test_the_status_line_names_no_private_repo_or_host():
     line = _status()
     assert "provisioner" not in line.lower(), line
-    assert not re.search(r"\bco-[a-z]", line), line
+    # A cohort host is "co-<name>"; the public image co-image-base isn't one (CR 1494).
+    assert not re.search(r"\bco-(?!image-base\b)[a-z]", line), line
     assert "still unproven" in line.lower(), line
