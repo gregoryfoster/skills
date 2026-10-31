@@ -1856,10 +1856,11 @@ class TestTheTranscriptionAgainstARunningServer:
         pytest.skip(reason)
 
     @pytest.fixture(scope="class")
-    def server(self) -> tuple[Path, str]:
+    @classmethod
+    def server(cls) -> tuple[Path, str]:
         found = _installed_server_dist()
         if found is None:
-            self._require_or_skip(
+            cls._require_or_skip(
                 "no socraticode build found in the npx cache "
                 "(~/.npm/_npx/*/node_modules/socraticode); set SOCRATICODE_DIST "
                 "to a checkout's dist/ to run the artifact-walk parity check"
@@ -1867,7 +1868,7 @@ class TestTheTranscriptionAgainstARunningServer:
         dist, version = found
         parts = tuple(int(n) for n in re.findall(r"\d+", version)[:2])
         if parts < (1, 13):
-            self._require_or_skip(
+            cls._require_or_skip(
                 f"socraticode {version} predates 1.13, where the artifact walk "
                 "gained the ignore chain (SocratiCode#117). The driver mirrors "
                 "the 1.13+ behaviour on purpose, so disagreement here would be "

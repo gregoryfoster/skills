@@ -280,7 +280,8 @@ class TestDegradedVariant:
     """#107: empty graph output must not read as 'no dependents'."""
 
     @pytest.fixture(scope="class")
-    def degraded(self, blocks: list[str]) -> str:
+    @classmethod
+    def degraded(cls, blocks: list[str]) -> str:
         return blocks[1]
 
     def test_warns_empty_is_failure(self, degraded: str) -> None:
@@ -319,7 +320,8 @@ class TestOverflowDocTemplate:
     """What the block gave up has to land somewhere, or the split lost it."""
 
     @pytest.fixture(scope="class")
-    def doc_text(self) -> str:
+    @classmethod
+    def doc_text(cls) -> str:
         assert DOC_REF.exists(), (
             f"{DOC_REF} is missing — the trimmed block links {OVERFLOW_DOC} and "
             "this reference is the template that writes it"
@@ -552,15 +554,18 @@ class TestOverflowDocHasARepoSpecificRegion:
     """
 
     @pytest.fixture(scope="class")
-    def doc_text(self) -> str:
+    @classmethod
+    def doc_text(cls) -> str:
         return DOC_REF.read_text()
 
     @pytest.fixture(scope="class")
-    def skill_md(self) -> str:
+    @classmethod
+    def skill_md(cls) -> str:
         return SKILL_MD.read_text()
 
     @pytest.fixture(scope="class")
-    def rerun_ref(self) -> str:
+    @classmethod
+    def rerun_ref(cls) -> str:
         path = SKILL_DIR / "references" / "audit-rerun.md"
         assert path.exists(), f"{path} is missing"
         return path.read_text()

@@ -2413,7 +2413,8 @@ class TestTheScheduledExactGate:
     """
 
     @pytest.fixture(scope="class")
-    def workflow(self) -> dict:
+    @classmethod
+    def workflow(cls) -> dict:
         assert EXACT_WORKFLOW.is_file(), (
             f"{EXACT_WORKFLOW.relative_to(REPO_ROOT)} is missing, so nothing "
             f"runs {EXACT_ENV} on a schedule and the exact contract is "
