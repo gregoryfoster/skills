@@ -212,7 +212,7 @@ This project's preferences for `brainstorming` and `writing-plans`. Both are lin
 - **When:** an explicit "brainstorm" / "design this", a new feature, or ambiguous scope. A bug fix with an agreed cause, a directed task with no design ambiguity, or more work on an approved design needs no brainstorming.
 - **Design doc:** `docs/plans/YYYY-MM-DD-<topic>-design.md` (or `.skills/plans_dir`), committed as `#<n> docs: add design doc for <topic>`. Goal, approved approach, key decisions with rationale, out of scope.
 - **After approval:** `gh issue create` (summary, the design doc's path, scope), then `using-git-worktrees` for a feature branch.
-- **Plan:** `writing-plans` only for multi-session work or work across subsystems; otherwise straight to TDD.
+- **Plan:** after a design, `writing-plans` isn't automatic (obra's `brainstorming` makes it the next step). Its own Phase 1 decides: multi-session work or work across subsystems gets a plan; otherwise straight to TDD.
 
 ## Conventions
 
