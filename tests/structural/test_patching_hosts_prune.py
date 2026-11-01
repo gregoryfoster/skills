@@ -47,6 +47,8 @@ that apt-get, systemctl and gpasswd change.
 
 import copy
 import json
+import marshal
+import shlex
 import subprocess
 import sys
 
@@ -63,18 +65,22 @@ TODAY = "2026-09-29"
 PAST = "2026-09-28"
 FUTURE = "2026-10-29"
 
-# One script for every command the scripts ask the host, over a JSON state.
+# One script for every command the scripts ask the host, over a JSON-shaped
+# state that crosses as marshal: each call is a fresh interpreter, and `import
+# json` (which pulls in re) was ~9 ms of a ~20 ms call (#538). fnmatch imports
+# re too, so it loads only in the branch that globs.
 FAKE = r"""
-import fnmatch, json, os, sys
+import marshal, os, sys
 state = sys.argv[1]
-db = json.load(open(state))
+with open(state, "rb") as f:
+    db = marshal.load(f)
 pk, units = db["packages"], db["units"]
 cmd, args = sys.argv[2], sys.argv[3:]
 
 
 def save():
-    with open(state, "w") as f:
-        json.dump(db, f)
+    with open(state, "wb") as f:
+        marshal.dump(db, f)
 
 
 def after(flag):
@@ -205,6 +211,8 @@ if cmd == "systemctl":
             print("%s=%s" % (p, vals.get(p, "")))
         sys.exit(0)
     if verb == "list-units":
+        import fnmatch
+
         for n in sorted(units):
             if fnmatch.fnmatch(n, args[-1]):
                 print("%s loaded %s running x" % (n, units[n]["active"]))
@@ -452,23 +460,35 @@ class Host(ApplyHost):
 
     def __init__(self, tmp_path, fixture: dict, **kw):
         super().__init__(tmp_path, **kw)
-        self.db = self.state / "host.json"
+        self.db = self.state / "host.marshal"
         self.fake = self.tmp / "fakehost.py"
         self.fake.write_text(FAKE)
         self.host_state = copy.deepcopy(fixture)
+        argv = " ".join(shlex.quote(a) for a in self.fake_argv())
         for cmd in FAKED:
             self.on(
-                cmd, "*", script=f'exec python3 "{self.fake}" "{self.db}" {cmd} "$@"'
+                cmd,
+                "*",
+                script=f'exec {argv} "{self.fake}" "{self.db}" {cmd} "$@"',
             )
         self.on("dpkg", "--audit", "")
         self.knob("class production\nposture scheduled\n")
         self.run_dir = tmp_path / "prune-run"
 
+    @staticmethod
+    def fake_argv() -> list[str]:
+        """The fake's interpreter: the one that wrote its state, since
+        marshal's format is the interpreter's own, without site or any
+        PYTHON* variable, which it needs neither of (#538)."""
+        return [sys.executable, "-I", "-S"]
+
     def write_state(self) -> None:
-        self.db.write_text(json.dumps(self.host_state))
+        # Through JSON first, so the fake sees exactly what a JSON state gave
+        # it (tuples as lists, and nothing JSON can't carry).
+        self.db.write_bytes(marshal.dumps(json.loads(json.dumps(self.host_state))))
 
     def read_state(self) -> dict:
-        return json.loads(self.db.read_text())
+        return marshal.loads(self.db.read_bytes())
 
     def declare(self, *lines: str) -> "Host":
         self.knob(
