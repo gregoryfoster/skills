@@ -1,6 +1,6 @@
 ---
 name: init-project-fastapi
-description: Bootstraps a new FastAPI project with the full CannObserv agent tooling foundation — SSH deploy key, pyproject.toml, FastAPI skeleton, structured logging, TDD scaffold, vendor skill submodules, local skill overrides, and GitHub issue tracking. Use when starting a new service in the CannObserv org.
+description: Bootstraps a new FastAPI project with the full CannObserv agent tooling foundation — SSH deploy key, pyproject.toml, FastAPI skeleton, structured logging, TDD scaffold, vendor skill submodules and GitHub issue tracking. Use when starting a new service in the CannObserv org.
 compatibility: Designed for Claude. Requires git, gh CLI, ssh-keygen, uv. Must run inside an initialized git repository.
 metadata:
   author: gregoryfoster
@@ -288,14 +288,13 @@ git submodule add https://github.com/obra/superpowers.git skills-vendor/obra-sup
 
 ### Phase 10 — `skills/` directory
 
-Symlink every vendor skill into `skills/`, install the symlink doctor, then create the local overrides — loops, override inventory, and the optional thin-override list in [`references/skill-symlinks.md`](references/skill-symlinks.md).
+Symlink every vendor skill into `skills/` and install the symlink doctor; no local override — loops, and where former overrides' content goes, in [`references/skill-symlinks.md`](references/skill-symlinks.md).
 
 Rules that reference cannot re-derive:
 
 - Create every link **from the repo root** with **relative** paths, using `ln -sfn` — never bare `ln -s`, which recurses into an existing directory-symlink and deposits a dangling link inside the obra submodule on name collisions (`using-git-worktrees`, `writing-plans`). `-sfn` also makes the loop idempotent on re-runs, and lets the later vendor in the loop override the earlier one.
 - Of the review workflows, a FastAPI project takes **only** the `-python-fastapi` variant, and it takes the one `shipping-work`, which detects the stack; the retired `shipping-work-*` variants are skipped ([#537](https://github.com/gregoryfoster/skills/issues/537)). The loop filters by pattern, so stack variants added upstream later are excluded without an edit here.
 - `.skills/doctor.sh` must be installed in this phase. The `reviewing-*` / `shipping-*` skills preflight through it, and without the install that preflight is a silent no-op ([#65](https://github.com/gregoryfoster/skills/issues/65) found it missing in all four consumer repos).
-- Every local override `SKILL.md` declares `overrides: <vendor>/<upstream-skill-name>` and `override-reason: <one-line rationale>` in its frontmatter `metadata` block, where `<vendor>` is the submodule directory name under `skills-vendor/`.
 
 ### Phase 11 — `.claude/skills/` symlinks
 

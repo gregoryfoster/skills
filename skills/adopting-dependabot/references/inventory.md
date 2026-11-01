@@ -81,3 +81,8 @@ can't outlive its reason:
 The sweep resolves each import by its longest dotted prefix, so a namespace
 like `google` doesn't let one declared distribution pass the rest. It needs the
 environment synced from the lockfile.
+
+With **0 runtime declarations** (a stdlib-only tree), skip this asset: nothing
+is left to sweep, and its guard-the-guard, `test_sweep_finds_imports`, fails
+as "swept no third-party import", correctly. Adopt it when the first one lands
+(CannObserv/index#23 left it out for this reason).

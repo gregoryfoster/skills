@@ -1511,6 +1511,13 @@ GATE_SCRIPTS = {
         "its own status, because a failing `git diff` that read as 'no "
         "difference' would certify a tree the suite never saw"
     ),
+    "run-deploy-command.sh": (
+        "its exit code decides whether Step 6 closes anything (#345): 0 lets "
+        "a production requirement pass the HARD-GATE, 1 closes nothing, and "
+        "3 (no knob) is the only code that means 'no deploy configured'. The "
+        "deploy command's own output and stderr reach the session unfiltered, "
+        "and every git probe behind the pushed-SHA check captures its status"
+    ),
     # This repo's own gate surface, in scope since #318.
     "python-lint.sh": (
         "gate 2/3 of this repo's ship gate and the pre-commit hook ahead of "

@@ -32,6 +32,7 @@ forking a skill.
 |---|---|---|---|---|
 | `doctor.sh` | executable script | every `reviewing-*` / `shipping-*` preflight, `init-*` | n/a — it *is* the implementation | no preflight; the calling step is a no-op |
 | `worktree_root` | single-line path | `using-git-worktrees`, `managing-skills` | env `WORKTREE_ROOT` wins, then this file | `<repo-root>/.worktrees/` |
+| `deploy_command` | one command line of whitespace-separated words, no shell syntax; blank lines and whole-line `#`-comments ignored | `shipping-work`'s `run-deploy-command.sh` (Steps 3, 6 and 8, [#345](https://github.com/gregoryfoster/skills/issues/345)) | no env var; read from the primary checkout, like `worktree_root`, and run from its root with the pushed SHA appended as the last argument | today's Step 8: migrate and restart are listed and offered by hand; present but unusable is exit 2, never absent |
 | `worktree_venv` | single word: `link` or `none` | `using-git-worktrees` | replaces the default | `link` — the primary checkout's `.venv` is symlinked in |
 | `default_branch` | single-line ref name | `using-git-worktrees` | first step of a 3-step resolution | falls to `origin/HEAD`, then `main` |
 | `plans_dir` | single-line path | `writing-plans`, `orchestrating-issue-backlog`, `init-project-fastapi` | env `PLANS_DIR` wins, then this file | `<repo-root>/docs/plans/` |

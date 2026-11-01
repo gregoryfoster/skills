@@ -390,3 +390,92 @@ def test_a_source_dir_with_no_third_party_import_fails_its_own_check(tmp_path):
     test.write_text(_adapt(test.read_text(), SOURCE_DIRS='("src", "scripts")'))
     proc = _pytest(root, "tests/ci/test_dependency_imports.py")
     assert proc.returncode == 1 and "under scripts/" in proc.stdout, proc.stdout
+
+
+# --- #543: an unknown key, a long line, and phase 3 on a tree with no deps ---------
+
+# One typo at each level Dependabot reads. Every one passes the asset's other
+# guards (the limit stays above the batch, the interval and prefix stay set),
+# so only a key allowlist can catch it, and a rejected config opens nothing.
+KEY_TYPOS = {
+    "top-level": ACTIONS_WITH_COMPOSITE + "enable-beta-ecosystem: true\n",
+    "block": ACTIONS_WITH_COMPOSITE.replace(
+        "open-pull-requests-limit: 10", "open-pull-request-limit: 10"
+    ),
+    "block-cooldown": ACTIONS_WITH_COMPOSITE + "    cooldwon:\n      default-days: 7\n",
+    "schedule": ACTIONS_WITH_COMPOSITE.replace(
+        '      interval: "weekly"\n', '      interval: "weekly"\n      timezon: "UTC"\n'
+    ),
+    "cooldown": ACTIONS_WITH_COMPOSITE + "    cooldown:\n      default_days: 7\n",
+    "commit-message": ACTIONS_WITH_COMPOSITE.replace(
+        '      prefix: "chore"\n',
+        '      prefix: "chore"\n      prefix-developement: "chore"\n',
+    ),
+    "group": ACTIONS_WITH_COMPOSITE
+    + '    groups:\n      actions:\n        pattern: ["*"]\n',
+}
+
+
+@pytest.mark.parametrize("level", list(KEY_TYPOS))
+def test_a_misspelled_key_fails_the_key_guard(tmp_path, level):
+    """#543: Dependabot rejects the whole config over one unknown key."""
+    root = _dependabot_repo(tmp_path, KEY_TYPOS[level])
+    proc = _pytest(root, "tests/ci/test_dependabot.py")
+    assert proc.returncode == 1, f"{level} typo passed every guard:\n{proc.stdout}"
+    assert "test_every_key_is_one_dependabot_reads" in proc.stdout, proc.stdout
+
+
+# Every level the allowlist reads, spelled right: the guard must not punish it.
+EVERY_LEVEL = ACTIONS_WITH_COMPOSITE.replace(
+    '      interval: "weekly"\n',
+    '      interval: "weekly"\n      day: "monday"\n      time: "05:00"\n'
+    '      timezone: "UTC"\n',
+).replace(
+    '      prefix: "chore"\n', '      prefix: "chore"\n      include: "scope"\n'
+) + (
+    "    cooldown:\n      default-days: 7\n"
+    '    labels: ["dependencies"]\n'
+    "    groups:\n      actions:\n"
+    '        applies-to: version-updates\n        patterns: ["*"]\n'
+    '        update-types: ["minor", "patch"]\n'
+)
+
+
+def test_every_documented_level_passes_the_key_guard(tmp_path):
+    root = _dependabot_repo(tmp_path, EVERY_LEVEL)
+    proc = _pytest(root, "tests/ci/test_dependabot.py")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+
+
+ASSET_LINE_LENGTH = 100
+
+
+@pytest.mark.parametrize("asset", sorted(p.name for p in ASSETS.glob("*.py")))
+def test_no_asset_line_is_over_100_columns(asset):
+    """#543: a copy stays verbatim under a consumer's 100-column ruff."""
+    long = [
+        f"{asset}:{n}: {len(line)}"
+        for n, line in enumerate((ASSETS / asset).read_text().splitlines(), 1)
+        if len(line) > ASSET_LINE_LENGTH
+    ]
+    assert not long, f"over {ASSET_LINE_LENGTH} columns: {long}"
+
+
+def test_the_import_sweep_has_nothing_to_guard_with_no_runtime_deps(tmp_path):
+    """Why phase 3 skips the asset on a stdlib-only tree: its guard-the-guard fails."""
+    root = _imports_repo(tmp_path, deps="")
+    _write(root, {"src/app/__init__.py": "import json\n"})
+    test = root / "tests/ci/test_dependency_imports.py"
+    test.write_text(_adapt(test.read_text(), NEEDED_WITHOUT_IMPORT="{}"))
+    proc = _pytest(root, "tests/ci/test_dependency_imports.py")
+    assert proc.returncode == 1 and "test_sweep_finds_imports" in proc.stdout, (
+        proc.stdout
+    )
+
+
+def test_phase_3_says_to_skip_the_sweep_with_no_runtime_declarations():
+    """#543: on 0 runtime declarations, skip the asset until the first one lands."""
+    inventory = (SKILLS_DIR / "adopting-dependabot/references/inventory.md").read_text()
+    phase3 = inventory.split("## Phase 3", 1)[1].split("\n## ", 1)[0]
+    assert re.search(r"\*\*(0|no) runtime declarations?\*\*", phase3), phase3
+    assert "skip" in phase3.lower() and "first one lands" in phase3, phase3
