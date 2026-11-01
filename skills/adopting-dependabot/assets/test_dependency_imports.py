@@ -39,7 +39,7 @@ SOURCE_DIRS: tuple[str, ...] = ("src",)
 # The witness is what keeps an entry honest: drop the last `Form(` and
 # python-multipart stays declared for nothing, unless a test checks it.
 NEEDED_WITHOUT_IMPORT: dict[str, tuple[str, str, str]] = {
-    # "asyncpg": ("src/**/*.py", "postgresql+asyncpg", "SQLAlchemy loads the driver the URL names."),
+    # "asyncpg": ("src/**/*.py", "postgresql+asyncpg", "SQLAlchemy loads the URL's driver."),
     # "uvicorn": ("deploy/*.service", "uvicorn ", "The server the unit file runs."),
     # "python-multipart": ("src/**/*.py", "Form(", "FastAPI parses every Form(...) body with it."),
 }
@@ -55,7 +55,9 @@ _RUNTIME = frozenset(
 
 
 def _first_party() -> frozenset[str]:
-    """This repo's own top-level packages: at the root, in each source dir, and the dirs themselves."""
+    """This repo's own top-level packages.
+
+    At the root, in each source dir, and the source dirs themselves."""
     names = {p.parent.name for p in REPO_ROOT.glob("*/__init__.py")}
     for directory in SOURCE_DIRS:
         base = REPO_ROOT / directory

@@ -8,8 +8,12 @@ Dependabot's config fails silently. A mistyped ecosystem, a wrong directory
 or a missing ``schedule.interval`` produces no PRs and no error anywhere a
 person looks, and a quiet bot reads as "no updates available". Past
 ``open-pull-requests-limit`` (default 5) it opens no more version updates,
-and says so nowhere (security updates have their own fixed limit of 10): notifier's dev-tools group and SDK
-table went silent for five weeks that way (CannObserv/notifier#103).
+and says so nowhere (security updates have their own fixed limit of 10):
+notifier's dev-tools group and SDK table went silent for five weeks that way
+(CannObserv/notifier#103). One unknown key, a misspelled optional one
+included, makes Dependabot reject the whole config, so every key is checked
+against the set it reads: GitHub's options reference as of 2026-10-30. A key
+GitHub adds later fails here until this file adds it (gregoryfoster/skills#543).
 
 Pure file reads plus ``git ls-files``: no network.
 """
@@ -50,6 +54,61 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 CONFIG = REPO_ROOT / ".github" / "dependabot.yml"
 WORKFLOWS = REPO_ROOT / ".github" / "workflows"
 PACKAGE_ECOSYSTEMS = {"uv", "pip"}
+
+# Every key Dependabot reads, per level: GitHub's Dependabot options reference,
+# read 2026-10-30 (ported from CannObserv/index#23). ``reviewers`` is gone from
+# github.com's reference (CODEOWNERS replaced it), so it is not here.
+TOP_KEYS = {
+    "version",
+    "updates",
+    "registries",
+    "multi-ecosystem-groups",
+    "enable-beta-ecosystems",
+}
+BLOCK_KEYS = {
+    "package-ecosystem",
+    "directory",
+    "directories",
+    "schedule",
+    "allow",
+    "assignees",
+    "commit-message",
+    "cooldown",
+    "exclude-paths",
+    "groups",
+    "ignore",
+    "insecure-external-code-execution",
+    "labels",
+    "milestone",
+    "multi-ecosystem-group",
+    "open-pull-requests-limit",
+    "pull-request-branch-name",
+    "rebase-strategy",
+    "registries",
+    "target-branch",
+    "vendor",
+    "versioning-strategy",
+}
+NESTED_KEYS = {
+    "schedule": {"interval", "day", "time", "timezone", "cronjob"},
+    "cooldown": {
+        "default-days",
+        "semver-major-days",
+        "semver-minor-days",
+        "semver-patch-days",
+        "include",
+        "exclude",
+    },
+    "commit-message": {"prefix", "prefix-development", "include"},
+}
+GROUP_KEYS = {
+    "applies-to",
+    "dependency-type",
+    "exclude-patterns",
+    "group-by",
+    "patterns",
+    "update-types",
+}
 
 _ACTION = re.compile(r"^([\w.-]+/[\w.-]+)(?:/[^@]*)?@.+$")
 _USES_LINE = re.compile(r"^\s*(?:-\s+)?uses:\s*(\S+)(.*)$")
@@ -180,6 +239,51 @@ def test_config_exists() -> None:
     assert CONFIG.is_file(), "no .github/dependabot.yml: nothing proposes a bump"
 
 
+def _unknown_keys(config: dict) -> list[str]:
+    """Every key Dependabot doesn't read, as a dotted path."""
+    bad = [k for k in config if k not in TOP_KEYS]
+    for i, block in enumerate(config.get("updates") or []):
+        where = f"updates[{i}]"
+        bad += [f"{where}.{k}" for k in block if k not in BLOCK_KEYS]
+        for key, allowed in NESTED_KEYS.items():
+            bad += [
+                f"{where}.{key}.{k}" for k in block.get(key) or {} if k not in allowed
+            ]
+        for name, group in (block.get("groups") or {}).items():
+            bad += [
+                f"{where}.groups.{name}.{k}" for k in group or {} if k not in GROUP_KEYS
+            ]
+    return bad
+
+
+def test_every_key_is_one_dependabot_reads() -> None:
+    bad = _unknown_keys(_load())
+    assert not bad, (
+        "Dependabot rejects the whole config over one unknown key, and every "
+        f"update stops: {bad}"
+    )
+
+
+def test_the_key_check_reads_every_level() -> None:
+    """Guard the guard: a typo at each level is caught."""
+    block = {
+        "package-ecosystem": "uv",
+        "open-pull-request-limit": 10,
+        "schedule": {"intervall": "weekly"},
+        "cooldown": {"default_days": 7},
+        "commit-message": {"prefx": "chore"},
+        "groups": {"dev-tools": {"dependency_type": "development"}},
+    }
+    assert _unknown_keys({"version": 2, "update": [], "updates": [block]}) == [
+        "update",
+        "updates[0].open-pull-request-limit",
+        "updates[0].schedule.intervall",
+        "updates[0].cooldown.default_days",
+        "updates[0].commit-message.prefx",
+        "updates[0].groups.dev-tools.dependency_type",
+    ]
+
+
 def test_config_is_version_2() -> None:
     """Version 1 configs are dead; Dependabot ignores them without erroring."""
     assert _load().get("version") == 2
@@ -217,7 +321,9 @@ def test_commits_follow_the_repo_convention(block: dict) -> None:
 
 
 def test_actions_block_covers_every_workflow_and_action() -> None:
-    """``/`` scans .github/workflows/ and a root action.yml; any other action.yml needs its directory."""
+    """``/`` scans .github/workflows/ and a root action.yml.
+
+    Any other action.yml needs its directory listed."""
     if "github-actions" not in ENABLED:
         pytest.skip("github-actions isn't enabled")
     expected = {"/"} | {

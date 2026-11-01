@@ -7,6 +7,7 @@ failure it prevents. The guard test pins each one.
 | Key | The silent failure | Evidence |
 |---|---|---|
 | `version: 2` | Version 1 configs are ignored without an error | |
+| any key | One Dependabot doesn't read, a misspelled optional one included (`open-pull-request-limit`, `cooldwon`), and it rejects the **whole** config, visibly only in its own tab: no update of any kind runs. The guard checks every key at every level against GitHub's options reference as of 2026-10-30; a key GitHub adds later fails it until the asset adds it | CannObserv/index#23, gregoryfoster/skills#543 |
 | `package-ecosystem` | A typo (`github_actions`, `python`) opens nothing, and reads as "no updates available" | notifier#33 |
 | `directory` / `directories` | `/` is what scans `.github/workflows/`, and the `action.yml` at the root. `/.github/workflows` is silence. An `action.yml` in any other directory (a composite action under `.github/actions/`) needs that directory listed | notifier#33 |
 | `schedule.interval` | Missing, and Dependabot rejects the block, visibly only in its own tab | notifier#33 |
