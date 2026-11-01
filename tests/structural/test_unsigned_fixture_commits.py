@@ -210,6 +210,30 @@ class TestTheMirror:
         unsigned_git.restore(done, environ)
         assert environ == {"HOME": str(tmp_path), "GIT_CONFIG_GLOBAL": str(own)}
 
+    def test_a_home_it_cannot_list_still_gets_the_unsigned_config(
+        self, tmp_path, monkeypatch
+    ):
+        """CR 1588: an unreadable HOME errored the whole session at configure.
+        As root a mode can't deny the listing, so the listing itself fails."""
+        from tests.utils import unsigned_git
+
+        real = tmp_path / "real"
+        real.mkdir()
+        listdir = Path.iterdir
+
+        def iterdir(self):
+            if self == real:
+                raise PermissionError(13, "Permission denied", str(self))
+            return listdir(self)
+
+        monkeypatch.setattr(Path, "iterdir", iterdir)
+        environ = {"HOME": str(real)}
+        done = unsigned_git.isolate(environ)
+        assert done is not None
+        assert "gpgSign = false" in (Path(environ["HOME"]) / ".gitconfig").read_text()
+        unsigned_git.restore(done, environ)
+        assert environ == {"HOME": str(real)}
+
     def test_an_isolated_session_is_not_isolated_again(self, tmp_path):
         from tests.utils import unsigned_git
 
