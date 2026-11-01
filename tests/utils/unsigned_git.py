@@ -69,10 +69,15 @@ def isolate(environ=os.environ) -> Isolation | None:
     done = Isolation(Path(tempfile.mkdtemp(prefix="skills-tests-home-")))
     home = done.root / "home"
     home.mkdir()
-    if real.is_dir():
-        for entry in real.iterdir():
-            if entry.name != ".gitconfig":
-                (home / entry.name).symlink_to(entry)
+    # A HOME it can't list mirrors nothing but still gets the unsigned config:
+    # signing off matters more than a test reading HOME (CR 1588).
+    try:
+        entries = list(real.iterdir()) if real.is_dir() else []
+    except OSError:
+        entries = []
+    for entry in entries:
+        if entry.name != ".gitconfig":
+            (home / entry.name).symlink_to(entry)
     # A missing include is silently skipped by git, which is the right answer
     # for a caller with no global config.
     (home / ".gitconfig").write_text(
