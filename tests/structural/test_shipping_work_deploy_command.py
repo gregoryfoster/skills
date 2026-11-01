@@ -318,3 +318,10 @@ def test_step_8_says_what_a_check_exit_2_means_before_the_offer():
     step8 = _section("### Step 8")
     item2 = next(ln for ln in step8.splitlines() if ln.startswith("2. "))
     assert "--check" in item2 and "exits 2" in item2, item2
+
+
+def test_the_grammar_says_a_bare_word_is_looked_up_on_path():
+    """CR 1541: `deploy.sh` alone is a PATH lookup, the likeliest knob typo."""
+    text = (SKILL / "references" / "deploy-command.md").read_text()
+    grammar = next(ln for ln in text.split("\n- ") if ln.startswith("**Grammar.**"))
+    assert "PATH" in grammar and "scripts/deploy.sh" in grammar, grammar
