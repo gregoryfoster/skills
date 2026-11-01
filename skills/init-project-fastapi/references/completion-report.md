@@ -21,6 +21,6 @@ Then present a completion table. Branch-point rows show the choice made (or "ski
 | Deploy unit | `<DEPLOY_TARGET>` — when systemd: `deploy/<PROJECT_NAME>.service` (User=`<DEPLOY_USER>`, WorkingDirectory=`<DEPLOY_HOME>`) |
 | Private wheelhouse | `<PRIVATE_WHEELHOUSE>` — when find-links: `scripts/sync_wheelhouse.py`, `[tool.uv] find-links`, `.wheelhouse/.gitkeep`, ExecStartPre/WIF sync (per `DEPLOY_TARGET`/`GITHUB_CI`) |
 | Vendor submodules | `gregoryfoster/skills`, `obra/superpowers` |
-| Skills | Local overrides + vendor skills symlinked (review/ship workflows: `-python-fastapi` variants only) + `.claude/skills/` discovery symlinks + `.skills/doctor.sh` |
+| Skills | Vendor skills symlinked, no local override (review: `-python-fastapi` only; one `shipping-work`) + `.claude/skills/` discovery symlinks + `.skills/doctor.sh` |
 | GH issue | #1 closed |
 | Phase 0 scratch | Cleaned up (`<SKILL_TMP>` removed) |

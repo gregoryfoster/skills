@@ -1,6 +1,6 @@
 # `skills/` and `.claude/skills/` symlinks (Phases 10–11)
 
-Literal loops, commands, and the local-override inventory for the `init-project-fastapi` skill's Phases 10 and 11. The invariants these encode — relative paths, `ln -sfn` over bare `ln -s`, `-python-fastapi` review variant and the one `shipping-work`, the load-bearing doctor install, and the required override frontmatter — stay in `SKILL.md`.
+Literal loops, commands, and where former overrides' content goes, for the `init-project-fastapi` skill's Phases 10 and 11. The invariants these encode — relative paths, `ln -sfn` over bare `ln -s`, `-python-fastapi` review variant and the one `shipping-work`, and the load-bearing doctor install — stay in `SKILL.md`.
 
 ## Phase 10 — vendor symlinks
 
@@ -38,26 +38,36 @@ done
 bash skills-vendor/gregoryfoster-skills/skills/managing-skills/scripts/install-doctor.sh
 ```
 
-## Phase 10 — local overrides
+## Phase 10 — no local overrides
 
-**Local overrides (1):** The review workflow ships as a Python/FastAPI stack variant upstream (`reviewing-code-python-fastapi`), and `shipping-work` detects the stack itself. Symlink both alongside the other vendor skills (Phase 10's vendor loop above selects them) — no full-copy override needed for either workflow. `shipping-work`'s gate stamps under the repo's own git directory, so no project-name substitution is required.
+**No local override.** The scaffold uses symlinks plus configuration, not overrides: an override stops receiving upstream's changes without saying so (#537 step 9, [#540](https://github.com/gregoryfoster/skills/issues/540)). The vendor loop above already links everything a FastAPI project uses, including obra's `brainstorming`, `writing-plans`, `reviewing-code-python-fastapi` and `shipping-work`, which detects the stack itself.
 
-The remaining local override is the project-narrative skill that genuinely varies per-project:
+What each former override carried goes here instead:
 
-| Override | Files |
+| Was | Now |
 |---|---|
-| `skills/brainstorming/` | `SKILL.md` |
+| `skills/brainstorming/`, a copy of power-map's with its header renamed | obra's `brainstorming`, linked. Its project deltas are in the scaffolded AGENTS.md's **Design & Planning** section (`agents-md-template.md`). Every session loads AGENTS.md (`CLAUDE.md` is `@AGENTS.md`), and obra's skill reads the project before it asks, so it sees them first |
+| a thin `writing-plans` fork for project narrative | the same AGENTS.md section. The plans directory is `.skills/plans_dir`; never fork to repoint it |
+| a forked `shipping-work/SKILL.md` Step 2.5 for a worktree deploy layout | `.skills/deploy_command` ([#345](https://github.com/gregoryfoster/skills/issues/345)): `shipping-work` offers to run the project's own deploy command, from the primary checkout, after the push |
+| `skills/shipping-work/scripts/pre-ship.sh` | never fork it. A project that needs `/etc/<project>/.env` loaded before tests (e.g., archiver, notifier, watcher) commits a project-root `scripts/pre-ship.sh` wrapper that parses the env files and `exec`s the vendored gate; the wrapper recipe is in `skills/shipping-work/scripts/pre-ship.sh`'s header. A wrapper isn't a skill, so it needs no override frontmatter |
 
-Substitutions in local overrides:
-- Skill headers: `— power-map` → `— <PROJECT_NAME>`
-- All other content: verbatim
+If a project later needs an override anyway, the frontmatter rules and the re-sync procedure are `managing-skills`' (its `references/local-overrides.md`).
 
-> **Override frontmatter is required.** Every local override `SKILL.md` (both the row above and any thin overrides below) must declare `overrides: <vendor>/<upstream-skill-name>` and `override-reason: <one-line rationale>` in its frontmatter `metadata` block. The `<vendor>` token matches the submodule directory name under `skills-vendor/` (e.g. `gregoryfoster-skills`, `obra-superpowers`). See AGENTS.md § Required override frontmatter in the upstream `gregoryfoster/skills` repo for the canonical wording.
+### Retiring an existing `skills/brainstorming/` override
 
-**Optional thin overrides** (only when the project genuinely needs them):
-- `skills/writing-plans/` — fork only if the project ships project-specific narrative content (e.g., `plan-document-reviewer-prompt.md`). The plans directory itself is configurable via `.skills/plans_dir`; do not fork just to repoint it. The forked `SKILL.md` needs `overrides: gregoryfoster-skills/writing-plans` + `override-reason:`.
-- `skills/shipping-work/scripts/pre-ship.sh` — never fork it. A project that needs `/etc/<project>/.env` loaded before tests (e.g., archiver, notifier, watcher) commits a project-root `scripts/pre-ship.sh` wrapper that parses the env files and `exec`s the vendored gate; the wrapper recipe is in that script's header. A wrapper isn't a skill, so it needs no override frontmatter.
-- Step 2.5 worktree-aware merge path — fork the relevant `shipping-work/SKILL.md` step if the project deploys via a worktree layout that needs a specific `cd /home/.../<project>` step. Same frontmatter requirement.
+For a repo this skill scaffolded before #540. #537's step-9 issues point here.
+
+1. **Move the narrative first.** The override's `override-reason:` lists its project deltas. Write each one that still holds into AGENTS.md's **Design & Planning** section, as a project preference: obra's skill lets the human partner's preferences override its defaults. A delta upstream now covers, or one the repo no longer follows, is dropped, and the commit says which.
+2. **Replace the directory with the link**, from the repo root. `.claude/skills/brainstorming` already points at `../../skills/brainstorming`, so it follows:
+
+```bash
+git rm -r -q skills/brainstorming
+mkdir -p skills # git rm removes skills/ if that was its last entry
+ln -sfn ../skills-vendor/obra-superpowers/skills/brainstorming skills/brainstorming
+git add skills/brainstorming
+```
+
+3. **Check.** Drop any `.skills/forked-ok` entry for it, and run `.skills/doctor.sh`: `brainstorming` is a link now, not an override, so its drift findings no longer name it. Commit both changes together, as `#<n> chore: retire the brainstorming override (#540)`.
 
 ## Phase 11 — `.claude/skills/` discovery symlinks
 
