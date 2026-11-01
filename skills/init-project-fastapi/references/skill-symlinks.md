@@ -40,7 +40,7 @@ bash skills-vendor/gregoryfoster-skills/skills/managing-skills/scripts/install-d
 
 ## Phase 10 — no local overrides
 
-**No local override.** The scaffold uses symlinks plus configuration, not overrides: an override stops receiving upstream's changes without saying so (#537 step 9, [#540](https://github.com/gregoryfoster/skills/issues/540)). The vendor loop above already links everything a FastAPI project uses, including obra's `brainstorming`, `writing-plans`, `reviewing-code-python-fastapi` and `shipping-work`, which detects the stack itself.
+**No local override.** The scaffold uses symlinks plus configuration, not overrides: an override stops receiving upstream's changes without saying so (#537 step 9, [#540](https://github.com/gregoryfoster/skills/issues/540)). The vendor loop above already links everything a FastAPI project uses, including obra's `brainstorming`, and gregoryfoster's `writing-plans` (the later vendor wins that name), `reviewing-code-python-fastapi` and `shipping-work`, which detects the stack itself.
 
 What each former override carried goes here instead:
 
