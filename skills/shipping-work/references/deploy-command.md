@@ -55,9 +55,10 @@ codes. CannObserv/status's deploy uses 1 for "failed, switched back" and 4 for
 "a target is left on a build that doesn't answer". The skill doesn't need to
 know them: any non-zero exit means stop and report.
 
-**`--check` runs nothing.** It is Step 8's offer line, and a project's
-`.skills/doctor.sh` can call it to check that the named command exists and is
-executable.
+**`--check` runs nothing.** It is Step 8's offer line. A project's CI or its
+own `scripts/pre-ship.sh` wrapper can also run it, to check that the named
+command exists and is executable. Not `.skills/doctor.sh`: that file is a
+vendored copy, and its own sync rewrites it.
 
 ## What the knob changes
 
