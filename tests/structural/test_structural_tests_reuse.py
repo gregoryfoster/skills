@@ -20,6 +20,7 @@ script asks it for the installed-package list and whether xdist imports.
 No API calls; each test gets a fresh repo.
 """
 
+import fnmatch
 import os
 import re
 import shutil
@@ -62,11 +63,21 @@ def _stamp_env_patterns() -> list[str]:
 
 
 def _clean_env(**extra: str) -> dict:
+    """The caller's environment, less what would decide a test's outcome.
+
+    That is git's own variables (#189), the stamp and hook switches, the
+    worker count, and every variable the stamp key reads: a caller exporting
+    one put it in both runs of a "different env, different tree" test, so the
+    key matched and the second run was reused (#544). `extra` is applied
+    after the scrub, so a test still sets any of them explicitly.
+    """
+    keyed = _stamp_env_patterns()
     env = {
         k: v
         for k, v in os.environ.items()
         if not k.startswith(("GIT_", "GATE_STAMP", "PRE_COMMIT"))
         and k != "PYTEST_XDIST_AUTO_NUM_WORKERS"
+        and not any(fnmatch.fnmatchcase(k, pat) for pat in keyed)
     }
     env.update(extra)
     return env
