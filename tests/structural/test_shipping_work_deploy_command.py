@@ -304,3 +304,10 @@ def test_the_fastapi_stack_drops_its_migrate_and_restart_rows_under_the_knob():
 def test_the_generic_step_8_names_no_project():
     """The generic table hard-coded `systemctl restart power-map`."""
     assert "power-map" not in _section("### Step 8")
+
+
+def test_the_reference_sends_no_edit_into_the_self_syncing_doctor():
+    """CR 1539: .skills/doctor.sh is a vendored copy its own sync rewrites."""
+    text = (SKILL / "references" / "deploy-command.md").read_text()
+    assert ".skills/doctor.sh` can call" not in text
+    assert "--check" in text and "CI" in text
