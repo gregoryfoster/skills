@@ -48,7 +48,7 @@ Determine which GitHub issue(s) to close (priority order):
 ```bash
 N=shipping-work
 { [ ! -x .skills/doctor.sh ] || bash .skills/doctor.sh; } || exit 1
-for S in doc-check.sh check-status.sh push.sh comment-issue.sh close-issue.sh pre-ship.sh; do SD=
+for S in doc-check.sh check-status.sh push.sh comment-issue.sh close-issue.sh run-deploy-command.sh pre-ship.sh; do SD=
   for d in scripts ".claude/skills/$N/scripts" "$HOME/.claude/skills/$N/scripts"; do
     [ -f "$d/$S" ] && { SD="$d"; break; }
   done
@@ -58,7 +58,7 @@ done
 bash "${SD:?}/$S"
 ```
 
-The first line is a preflight: when `.skills/doctor.sh` is present, it heals any dangling vendor symlinks (or reports an actionable error); when absent, the group is a no-op. `|| exit 1` skips `pre-ship.sh` if the doctor reports unrecoverable state so the original "No such file or directory" noise doesn't drown out the doctor's message. The loop then resolves each script against the skill directory rather than the cwd — a bare `scripts/` path resolves relative to the project root, where the script does not exist ([#63](https://github.com/gregoryfoster/skills/issues/63)). A project-local `scripts/<name>` still wins, for that script alone: a `scripts/pre-ship.sh` — a wrapper that loads what the project needs and execs the skill's gate, or a whole gate for a toolchain the skill's cannot detect — must not send the other five looking beside it ([#301](https://github.com/gregoryfoster/skills/issues/301)). A script found nowhere stops the block here, by name. `pre-ship.sh` is listed last, so the final line runs it. Resolution runs *after* the doctor so a freshly healed symlink chain is visible to it.
+The first line is a preflight: when `.skills/doctor.sh` is present, it heals any dangling vendor symlinks (or reports an actionable error); when absent, the group is a no-op. `|| exit 1` skips `pre-ship.sh` if the doctor reports unrecoverable state so the original "No such file or directory" noise doesn't drown out the doctor's message. The loop then resolves each script against the skill directory rather than the cwd — a bare `scripts/` path resolves relative to the project root, where the script does not exist ([#63](https://github.com/gregoryfoster/skills/issues/63)). A project-local `scripts/<name>` still wins, for that script alone: a `scripts/pre-ship.sh` — a wrapper that loads what the project needs and execs the skill's gate, or a whole gate for a toolchain the skill's cannot detect — must not send the other six looking beside it ([#301](https://github.com/gregoryfoster/skills/issues/301)). A script found nowhere stops the block here, by name. `pre-ship.sh` is listed last, so the final line runs it. Resolution runs *after* the doctor so a freshly healed symlink chain is visible to it.
 
 In every later step a `<name.sh>` is a **placeholder** for the path printed for that script — substitute it literally (same convention as `init-project-fastapi` Phase 0). Each Bash invocation runs in a fresh shell, so nothing the block set is inherited.
 
@@ -116,6 +116,8 @@ If this is a single (non-worktree) checkout, skip this step.
 If Step 2.5 applied, the merge already happened — you're on `main` in the main checkout; continue.
 If Step 2.5 did not apply (single checkout) and you're on a feature branch, merge to `main` first.
 
+Without `.skills/deploy_command`, a checkout that is a unit's `WorkingDirectory=` is production: merging into it *is* deploying. With the knob set, production runs what the deploy command builds, so a local merge deploys nothing.
+
 ### Step 4 — Push
 
 ```bash
@@ -139,11 +141,14 @@ Comment must include:
 
 ### Step 6 — Close GitHub issues
 
+With `.skills/deploy_command` set, run Step 8 first and close after it: a requirement about what production runs can't be checked before the deploy.
+
 <HARD-GATE>
 Before closing any issue, verify the original requirements against what was implemented:
 1. Re-read the issue body
 2. Confirm each stated requirement is addressed in commits
 3. If any requirement is missing: do NOT close — ask the user whether to descope or continue
+4. With `.skills/deploy_command` set: if a requirement concerns what production runs, the deploy has run and exited 0 in this session. A failed deploy closes nothing
 </HARD-GATE>
 
 ```bash
@@ -158,16 +163,22 @@ Present a summary table:
 |---|---|---|---|
 | #19 | ... | ✅ Closed | Summary posted |
 
-### Step 8 — Next-steps notification
+### Step 8 — Deploy, or next-steps notification
 
-After the summary table, review commits and changes shipped to identify any post-deploy work the user may need to perform. A detected framework's stack file lists its own categories; use those. Otherwise, common categories:
+**With `.skills/deploy_command` set**, the project deploys through its own command, and this step runs after Step 5, before Step 6 ([references/deploy-command.md](references/deploy-command.md)):
+
+1. List the rows below that apply, **minus** the DB migration and service restart rows: the command owns them. Do a row the new code needs first, such as an env var it reads, before the deploy.
+2. `bash "<run-deploy-command.sh>" --check` prints the command line, with the pushed SHA last. Offer to run it, once. On a yes, run `bash "<run-deploy-command.sh>"`.
+3. Report its exit status and the tail of its output. Exit 1 is a failed deploy: quote the command's own exit code and output verbatim, and close nothing. Exit 2 means nothing ran; fix what it names. A command that detaches without waiting exits 0 once the deploy has *started*, so check production the project's own way before Step 6.
+
+**Without it** (`--check` exits 3), after the summary table, review commits and changes shipped to identify any post-deploy work the user may need to perform. A detected framework's stack file lists its own categories; use those. Otherwise, common categories:
 
 | Category | Trigger | Example action |
 |---|---|---|
 | DB migration | `schema.sql` changed, new table/column/index | `apply_schema` or restart service |
-| Service restart | Any production code change (no auto-reload) | `systemctl restart power-map` or gunicorn signal |
+| Service restart | Any production code change (no auto-reload) | `systemctl restart <project>` or gunicorn signal |
 | Data migration | New normalizer, field rename, backfill script | Run the relevant `scripts/` file |
-| Env var / secret | New config key added | Add to `/etc/power-map/env` and restart |
+| Env var / secret | New config key added | Add to `/etc/<project>/env` and restart |
 | Index bootstrap | New unique index on dirty table | Deduplicate first, then re-run `apply_schema` |
 
 Present only the items that apply. Be specific — name the file, table, or command. Example:

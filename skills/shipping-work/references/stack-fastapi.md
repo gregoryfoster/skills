@@ -24,6 +24,12 @@ along with its structure and conventions. `.skills/doc-sensitive-paths` and
 | Env var / secret | New config key | Add to `/etc/<project>/env` and restart |
 | Dev-server cleanup | Worktree shutdown | `fuser -k <port>/tcp` for the project's port |
 
+With `.skills/deploy_command` set, the deploy command owns both DB migration
+rows and the service restart row, so drop them. Don't run `alembic upgrade
+head` from the checkout either: it migrates live outside the deploy's order.
+The env var row's "and restart" becomes the deploy
+([deploy-command.md](deploy-command.md)).
+
 ## Env files
 
 A service whose tests read secrets wraps the gate rather than forking it:
