@@ -311,3 +311,10 @@ def test_the_reference_sends_no_edit_into_the_self_syncing_doctor():
     text = (SKILL / "references" / "deploy-command.md").read_text()
     assert ".skills/doctor.sh` can call" not in text
     assert "--check" in text and "CI" in text
+
+
+def test_step_8_says_what_a_check_exit_2_means_before_the_offer():
+    """CR 1540: an unusable knob or unpushed HEAD must stop the offer."""
+    step8 = _section("### Step 8")
+    item2 = next(ln for ln in step8.splitlines() if ln.startswith("2. "))
+    assert "--check" in item2 and "exits 2" in item2, item2
