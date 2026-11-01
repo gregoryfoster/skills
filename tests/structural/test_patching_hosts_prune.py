@@ -48,6 +48,7 @@ that apt-get, systemctl and gpasswd change.
 import copy
 import json
 import subprocess
+import sys
 
 import pytest
 
@@ -557,6 +558,40 @@ def _ran(out: dict) -> list[str]:
         for a in out["actions"]
         if not a.startswith(("mkdir ", "write "))
     ]
+
+
+# --- the fake host's own cost (#538) --------------------------------------------
+
+
+def test_the_fake_host_starts_without_importing_json_or_re(tmp_path):
+    """A prune run asks the fake host about 22 times, and each answer is a
+    fresh interpreter: that start was this file's whole cost (52 s serial,
+    profiled). `import json` pulls in `re` and cost ~9 ms of each ~20 ms
+    call, so the state crosses as marshal, and fnmatch, which also imports
+    re, loads only for the one branch that globs."""
+    h = Host(tmp_path, DOCKER)
+    h.write_state()
+    r = subprocess.run(
+        [sys.executable, "-I", "-S", "-X", "importtime", str(h.fake), str(h.db)]
+        + ["dpkg-query", "-W", "-f", "x"],
+        capture_output=True,
+        text=True,
+    )
+    assert r.returncode == 0, r.stderr
+    imported = {
+        line.rsplit("|", 1)[-1].strip()
+        for line in r.stderr.splitlines()
+        if line.startswith("import time:") and "|" in line
+    }
+    assert imported, r.stderr
+    assert not imported & {"json", "re", "fnmatch"}, sorted(imported)
+
+
+def test_the_fake_host_runs_on_this_interpreter_isolated():
+    """marshal's format is the interpreter's own, so the fake must be the
+    interpreter that wrote its state; -I -S skips site and every PYTHON*
+    variable, which it needs neither of."""
+    assert Host.fake_argv() == [sys.executable, "-I", "-S"]
 
 
 # --- the command lines ----------------------------------------------------------
