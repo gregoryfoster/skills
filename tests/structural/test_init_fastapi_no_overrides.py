@@ -165,3 +165,14 @@ def test_the_plan_bullet_defers_to_writing_plans_own_phase_1():
     plan = next(ln for ln in section.splitlines() if ln.startswith("- **Plan:**"))
     assert "Phase 1" in plan, plan
     assert "only for" not in plan, plan
+
+
+def test_each_linked_skill_names_its_vendor():
+    """CR 1542: the loop's later vendor wins `writing-plans`, not obra."""
+    section = _phase_10_overrides()
+    lead = next(
+        ln for ln in section.splitlines() if ln.startswith("**No local override.**")
+    )
+    assert (
+        "obra's `brainstorming`" in lead and "gregoryfoster's `writing-plans`" in lead
+    ), lead
