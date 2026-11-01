@@ -20,7 +20,9 @@ script asks it for the installed-package list and whether xdist imports.
 No API calls; each test gets a fresh repo.
 """
 
+import fnmatch
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -42,12 +44,40 @@ exit "${FAKE_PYTEST_RC:-0}"
 """
 
 
+def _stamp_env_patterns() -> list[str]:
+    """Every `--env PATTERN` structural-tests.sh hands the stamp key.
+
+    Parsed rather than copied, so the scrub below cannot fall behind the key
+    (#544). A pattern quoted any other way, or built from a variable, is left
+    unparsed — and the count test below then fails, rather than this list
+    quietly coming up short.
+    """
+    text = (REPO_ROOT / "scripts" / "structural-tests.sh").read_text()
+    code = "\n".join(
+        line for line in text.splitlines() if not line.lstrip().startswith("#")
+    )
+    return [
+        quoted or bare
+        for quoted, bare in re.findall(r"--env (?:'([^']+)'|([A-Za-z0-9_*]+))", code)
+    ]
+
+
 def _clean_env(**extra: str) -> dict:
+    """The caller's environment, less what would decide a test's outcome.
+
+    That is git's own variables (#189), the stamp and hook switches, the
+    worker count, and every variable the stamp key reads: a caller exporting
+    one put it in both runs of a "different env, different tree" test, so the
+    key matched and the second run was reused (#544). `extra` is applied
+    after the scrub, so a test still sets any of them explicitly.
+    """
+    keyed = _stamp_env_patterns()
     env = {
         k: v
         for k, v in os.environ.items()
         if not k.startswith(("GIT_", "GATE_STAMP", "PRE_COMMIT"))
         and k != "PYTEST_XDIST_AUTO_NUM_WORKERS"
+        and not any(fnmatch.fnmatchcase(k, pat) for pat in keyed)
     }
     env.update(extra)
     return env
@@ -201,6 +231,23 @@ class TestOncePerTree:
         _suite(repo, SHELLCHECK_REQUIRED="1")
         assert len(_calls(repo)) == 2
 
+    @pytest.mark.parametrize(
+        "name", ["SHELLCHECK_REQUIRED", "SKILL_BUDGET_EXACT", "SOCRATICODE_X"]
+    )
+    def test_a_callers_export_does_not_decide_the_outcome(
+        self, repo, monkeypatch, name
+    ):
+        """The documented gate exports SHELLCHECK_REQUIRED=1 itself (#544).
+
+        A caller's export reached both runs, so the key matched and the second
+        run was reused: the test went red under the very invocation the repo
+        documents, and green without it.
+        """
+        monkeypatch.setenv(name, "1")
+        _suite(repo)
+        _suite(repo, **{name: "1"})
+        assert len(_calls(repo)) == 2
+
     def test_pythonpath_is_a_different_tree(self, repo):
         """It changes what pytest itself imports, and a test reads it."""
         _suite(repo)
@@ -259,6 +306,49 @@ class TestWorkers:
         )
         assert result.returncode == 2
         assert _calls(repo) == []
+
+
+class TestTheScrubFollowsTheKey:
+    """`_clean_env` drops every variable the stamp key reads (#544).
+
+    The patterns come from `structural-tests.sh` itself, so one added to the
+    key is scrubbed without anyone editing this file.
+    """
+
+    def test_every_env_flag_in_the_script_is_parsed(self):
+        text = (REPO_ROOT / "scripts" / "structural-tests.sh").read_text()
+        code = "\n".join(
+            line for line in text.splitlines() if not line.lstrip().startswith("#")
+        )
+        assert len(_stamp_env_patterns()) == code.count("--env ")
+
+    def test_the_known_patterns_are_among_them(self):
+        assert {
+            "*_REQUIRED",
+            "SKILL_BUDGET_EXACT",
+            "SOCRATICODE_*",
+            "CTX_*",
+            "PYTHONPATH",
+        } <= set(_stamp_env_patterns())
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "SHELLCHECK_REQUIRED",
+            "RUFF_REQUIRED",
+            "SKILL_BUDGET_EXACT",
+            "SOCRATICODE_X",
+            "CTX_X",
+            "PYTHONPATH",
+        ],
+    )
+    def test_a_keyed_variable_is_dropped(self, monkeypatch, name):
+        monkeypatch.setenv(name, "1")
+        assert name not in _clean_env()
+
+    def test_an_explicit_value_still_reaches_the_run(self, monkeypatch):
+        monkeypatch.setenv("SHELLCHECK_REQUIRED", "1")
+        assert _clean_env(SHELLCHECK_REQUIRED="0")["SHELLCHECK_REQUIRED"] == "0"
 
 
 def test_pytests_exit_code_passes_through(repo):

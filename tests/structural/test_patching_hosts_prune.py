@@ -41,13 +41,17 @@ Beyond that list:
   purge still asks for it (CR 195).
 
 Each case runs from a copy of the skill's scripts, against a fake host: one
-script answers dpkg-query, apt-get, systemctl and the rest from a JSON state
-that apt-get, systemctl and gpasswd change.
+script answers dpkg-query, apt-get, systemctl and the rest from a JSON-shaped
+state, which crosses as marshal (#538), that apt-get, systemctl and gpasswd
+change.
 """
 
 import copy
 import json
+import marshal
+import shlex
 import subprocess
+import sys
 
 import pytest
 
@@ -62,18 +66,22 @@ TODAY = "2026-09-29"
 PAST = "2026-09-28"
 FUTURE = "2026-10-29"
 
-# One script for every command the scripts ask the host, over a JSON state.
+# One script for every command the scripts ask the host, over a JSON-shaped
+# state that crosses as marshal: each call is a fresh interpreter, and `import
+# json` (which pulls in re) was ~9 ms of a ~20 ms call (#538). fnmatch imports
+# re too, so it loads only in the branch that globs.
 FAKE = r"""
-import fnmatch, json, os, sys
+import marshal, os, sys
 state = sys.argv[1]
-db = json.load(open(state))
+with open(state, "rb") as f:
+    db = marshal.load(f)
 pk, units = db["packages"], db["units"]
 cmd, args = sys.argv[2], sys.argv[3:]
 
 
 def save():
-    with open(state, "w") as f:
-        json.dump(db, f)
+    with open(state, "wb") as f:
+        marshal.dump(db, f)
 
 
 def after(flag):
@@ -204,6 +212,8 @@ if cmd == "systemctl":
             print("%s=%s" % (p, vals.get(p, "")))
         sys.exit(0)
     if verb == "list-units":
+        import fnmatch
+
         for n in sorted(units):
             if fnmatch.fnmatch(n, args[-1]):
                 print("%s loaded %s running x" % (n, units[n]["active"]))
@@ -451,23 +461,35 @@ class Host(ApplyHost):
 
     def __init__(self, tmp_path, fixture: dict, **kw):
         super().__init__(tmp_path, **kw)
-        self.db = self.state / "host.json"
+        self.db = self.state / "host.marshal"
         self.fake = self.tmp / "fakehost.py"
         self.fake.write_text(FAKE)
         self.host_state = copy.deepcopy(fixture)
+        argv = " ".join(shlex.quote(a) for a in self.fake_argv())
         for cmd in FAKED:
             self.on(
-                cmd, "*", script=f'exec python3 "{self.fake}" "{self.db}" {cmd} "$@"'
+                cmd,
+                "*",
+                script=f'exec {argv} "{self.fake}" "{self.db}" {cmd} "$@"',
             )
         self.on("dpkg", "--audit", "")
         self.knob("class production\nposture scheduled\n")
         self.run_dir = tmp_path / "prune-run"
 
+    @staticmethod
+    def fake_argv() -> list[str]:
+        """The fake's interpreter: the one that wrote its state, since
+        marshal's format is the interpreter's own, without site or any
+        PYTHON* variable, which it needs neither of (#538)."""
+        return [sys.executable, "-I", "-S"]
+
     def write_state(self) -> None:
-        self.db.write_text(json.dumps(self.host_state))
+        # Through JSON first, so the fake sees exactly what a JSON state gave
+        # it (tuples as lists, and nothing JSON can't carry).
+        self.db.write_bytes(marshal.dumps(json.loads(json.dumps(self.host_state))))
 
     def read_state(self) -> dict:
-        return json.loads(self.db.read_text())
+        return marshal.loads(self.db.read_bytes())
 
     def declare(self, *lines: str) -> "Host":
         self.knob(
@@ -557,6 +579,40 @@ def _ran(out: dict) -> list[str]:
         for a in out["actions"]
         if not a.startswith(("mkdir ", "write "))
     ]
+
+
+# --- the fake host's own cost (#538) --------------------------------------------
+
+
+def test_the_fake_host_starts_without_importing_json_or_re(tmp_path):
+    """A prune run asks the fake host about 22 times, and each answer is a
+    fresh interpreter: that start was this file's whole cost (52 s serial,
+    profiled). `import json` pulls in `re` and cost ~9 ms of each ~20 ms
+    call, so the state crosses as marshal, and fnmatch, which also imports
+    re, loads only for the one branch that globs."""
+    h = Host(tmp_path, DOCKER)
+    h.write_state()
+    r = subprocess.run(
+        [sys.executable, "-I", "-S", "-X", "importtime", str(h.fake), str(h.db)]
+        + ["dpkg-query", "-W", "-f", "x"],
+        capture_output=True,
+        text=True,
+    )
+    assert r.returncode == 0, r.stderr
+    imported = {
+        line.rsplit("|", 1)[-1].strip()
+        for line in r.stderr.splitlines()
+        if line.startswith("import time:") and "|" in line
+    }
+    assert imported, r.stderr
+    assert not imported & {"json", "re", "fnmatch"}, sorted(imported)
+
+
+def test_the_fake_host_runs_on_this_interpreter_isolated():
+    """marshal's format is the interpreter's own, so the fake must be the
+    interpreter that wrote its state; -I -S skips site and every PYTHON*
+    variable, which it needs neither of."""
+    assert Host.fake_argv() == [sys.executable, "-I", "-S"]
 
 
 # --- the command lines ----------------------------------------------------------

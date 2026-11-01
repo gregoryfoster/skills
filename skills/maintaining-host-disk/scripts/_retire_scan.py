@@ -14,10 +14,12 @@ import subprocess
 import sys
 
 # The retire list (#425 step 1), as what a unit or cron line can be matched
-# by: a script's basename, or a unit's own name. references/retiring.md
-# carries the same list with what each one did; a test holds them together.
+# by: a script's basename, or a unit's own name, without its suffix. A tool
+# run as `python -m` has no basename to match, so it is listed by its units
+# (#548). references/retiring.md carries the same list with what each one
+# did; a test holds them together.
 RETIRE_LIST = (
-    ("wslcb", "disk_hygiene.py", ("disk_hygiene.py",)),
+    ("wslcb", "wslcb-disk-hygiene", ("wslcb-disk-hygiene", "wslcb-task@disk-hygiene")),
     ("address-validator", "disk-hygiene.sh", ("disk-hygiene.sh",)),
     ("address-validator", "docker-prune", ("docker-prune", "docker-prune.sh")),
     ("watcher", "cleanup.sh", ("cleanup.sh",)),
@@ -669,9 +671,17 @@ def main():
             for wwhere, wline in wrapper_lines(root, cmd):
                 for repo, entry, word in match(wline):
                     hits.setdefault((repo, entry), (word, wwhere, wline))
-        for repo, entry, word in match("", stem):
-            first = commands[0] if commands else (unit["where"], "")
-            hits.setdefault((repo, entry), (word, *first))
+        names = [stem]
+        # A timer's Unit= that has no file of its own names a template's
+        # instance (wslcb-task@disk-hygiene.service): nothing else carries
+        # that name, so the timer that starts it does (#548).
+        target = setting(unit, "Unit") if name.endswith(".timer") else None
+        if target and (scope, target) not in units:
+            names.append(target.rsplit(".", 1)[0])
+        for own in names:
+            for repo, entry, word in match("", own):
+                first = commands[0] if commands else (unit["where"], "")
+                hits.setdefault((repo, entry), (word, *first))
         for (repo, entry), (word, where, cmd) in sorted(hits.items()):
             timer = timer_for(units, scope, name) if name.endswith(".service") else None
             dirs = scope_dirs(root, scope)

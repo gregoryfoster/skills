@@ -508,7 +508,7 @@ def test_a_signal_after_staging_is_made_still_removes_it(tmp_path, capsys):
     previous = signal.signal(signal.SIGTERM, unhandled)
     try:
         rc, out, into = run_main(
-            module, tmp_path, capsys, lambda: os.kill(os.getpid(), signal.SIGTERM)
+            module, tmp_path, capsys, lambda: signal.raise_signal(signal.SIGTERM)
         )
         restored = signal.getsignal(signal.SIGTERM)
     finally:
@@ -651,14 +651,14 @@ def test_a_second_signal_during_cleanup_is_ignored(tmp_path, capsys, monkeypatch
     real = module.remove_tree
 
     def remove_tree(path):
-        os.kill(os.getpid(), signal.SIGTERM)  # a second TERM, mid-cleanup
+        signal.raise_signal(signal.SIGTERM)  # a second TERM, mid-cleanup
         return real(path)
 
     monkeypatch.setattr(module, "remove_tree", remove_tree)
     previous = guarded(signal.SIGTERM)
     try:
         rc, out, into = run_main(
-            module, tmp_path, capsys, lambda: os.kill(os.getpid(), signal.SIGTERM)
+            module, tmp_path, capsys, lambda: signal.raise_signal(signal.SIGTERM)
         )
     finally:
         signal.signal(signal.SIGTERM, previous)
@@ -677,7 +677,7 @@ def test_a_signal_between_mkdir_and_its_record_still_removes_staging(
 
     def mkdir(path, *a, **k):
         real_mkdir(path, *a, **k)
-        os.kill(os.getpid(), signal.SIGTERM)
+        signal.raise_signal(signal.SIGTERM)
 
     monkeypatch.setattr(module.os, "mkdir", mkdir)
     staging, made = str(tmp_path / "staging"), []
@@ -751,7 +751,7 @@ def test_a_signal_landing_between_the_ignores_still_ends_in_json(
         previous = real_signal(signum, handler)
         if handler is signal.SIG_IGN and not sent:
             sent.append(signum)
-            os.kill(os.getpid(), signal.SIGINT)
+            signal.raise_signal(signal.SIGINT)
         return previous
 
     monkeypatch.setattr(module.signal, "signal", signal_then_interrupt)
