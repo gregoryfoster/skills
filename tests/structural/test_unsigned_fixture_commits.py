@@ -178,7 +178,7 @@ class TestTheMirror:
         assert (home / ".cache" / "kept").read_text() == "x"
         assert (home / ".npmrc").read_text() == "y"
         name = subprocess.run(
-            ["git", "config", "--global", "user.name"],
+            ["git", "config", "--includes", "--global", "user.name"],
             capture_output=True,
             text=True,
             env={"HOME": str(home), "PATH": os.environ["PATH"]},
@@ -199,7 +199,7 @@ class TestTheMirror:
         assert environ["GIT_CONFIG_GLOBAL"] != str(own)
         sign, name = (
             subprocess.run(
-                ["git", "config", "--global", key],
+                ["git", "config", "--includes", "--global", key],
                 capture_output=True,
                 text=True,
                 env={**environ, "PATH": os.environ["PATH"]},
