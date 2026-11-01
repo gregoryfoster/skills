@@ -168,7 +168,7 @@ Present a summary table:
 **With `.skills/deploy_command` set**, the project deploys through its own command, and this step runs after Step 5, before Step 6 ([references/deploy-command.md](references/deploy-command.md)):
 
 1. List the rows below that apply, **minus** the DB migration and service restart rows: the command owns them. Do a row the new code needs first, such as an env var it reads, before the deploy.
-2. `bash "<run-deploy-command.sh>" --check` prints the command line, with the pushed SHA last. Offer to run it, once. On a yes, run `bash "<run-deploy-command.sh>"`.
+2. `bash "<run-deploy-command.sh>" --check` prints the command line, with the pushed SHA last. If it exits 2, fix what it names before offering. Offer to run it, once. On a yes, run `bash "<run-deploy-command.sh>"`.
 3. Report its exit status and the tail of its output. Exit 1 is a failed deploy: quote the command's own exit code and output verbatim, and close nothing. Exit 2 means nothing ran; fix what it names. A command that detaches without waiting exits 0 once the deploy has *started*, so check production the project's own way before Step 6.
 
 **Without it** (`--check` exits 3), after the summary table, review commits and changes shipped to identify any post-deploy work the user may need to perform. A detected framework's stack file lists its own categories; use those. Otherwise, common categories:
