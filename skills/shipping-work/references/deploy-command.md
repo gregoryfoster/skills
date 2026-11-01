@@ -26,7 +26,9 @@ setsid -w scripts/deploy.sh
 
 - **Grammar.** One command line of whitespace-separated words. Blank lines and
   whole-line `#` comments are ignored. There's no shell evaluation, so a pipe,
-  a redirect or `&&` belongs in the project's script, not here.
+  a redirect or `&&` belongs in the project's script, not here. A first word
+  without a `/` is looked up on `PATH`, so a repo script needs its path:
+  `scripts/deploy.sh` or `./deploy.sh`, never a bare `deploy.sh`.
 - **The SHA.** `run-deploy-command.sh` appends the SHA that was pushed as the
   last argument (the operator's decision, 2026-10-30). The line above runs as
   `setsid -w scripts/deploy.sh <sha>`. HEAD must equal its upstream, so only
