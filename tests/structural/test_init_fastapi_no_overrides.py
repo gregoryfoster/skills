@@ -157,3 +157,11 @@ def test_skill_md_no_longer_creates_overrides():
     assert "then create the local overrides" not in text
     assert "local skill overrides" not in text
     assert "Every local override `SKILL.md` declares" not in text
+
+
+def test_the_plan_bullet_defers_to_writing_plans_own_phase_1():
+    """CR 1538: AGENTS.md must not overrule writing-plans' Iron Law, only obra's handoff."""
+    section = _template_body().split("## Design & Planning", 1)[1].split("\n## ", 1)[0]
+    plan = next(ln for ln in section.splitlines() if ln.startswith("- **Plan:**"))
+    assert "Phase 1" in plan, plan
+    assert "only for" not in plan, plan
