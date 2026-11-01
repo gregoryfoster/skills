@@ -41,8 +41,9 @@ Beyond that list:
   purge still asks for it (CR 195).
 
 Each case runs from a copy of the skill's scripts, against a fake host: one
-script answers dpkg-query, apt-get, systemctl and the rest from a JSON state
-that apt-get, systemctl and gpasswd change.
+script answers dpkg-query, apt-get, systemctl and the rest from a JSON-shaped
+state, which crosses as marshal (#538), that apt-get, systemctl and gpasswd
+change.
 """
 
 import copy
