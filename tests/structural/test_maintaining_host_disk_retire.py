@@ -86,11 +86,31 @@ def host(tmp_path):
         f"{sysd}/maint.service.d/override.conf",
         "[Service]\nExecStart=\nExecStart=/srv/watcher/cleanup.sh\n",
     )
-    # wslcb's, from cron
+    # wslcb's, as wslcb ran it before its retirement (#548): a timer that
+    # starts an instance of a template, which runs a module with python -m,
+    # so no script basename appears anywhere
     write(
         root,
-        "etc/cron.d/wslcb",
-        "# disk\n15 4 * * * exedev /home/exedev/wslcb/.venv/bin/python /home/exedev/wslcb/scripts/disk_hygiene.py\n",
+        f"{sysd}/wslcb-disk-hygiene.timer",
+        "[Timer]\nOnCalendar=Sun *-*-* 03:00:00\nUnit=wslcb-task@disk-hygiene.service\n",
+    )
+    enable(root, "wslcb-disk-hygiene.timer")
+    write(
+        root,
+        f"{sysd}/wslcb-task@.service",
+        "[Service]\nType=oneshot\nExecStart=/home/exedev/wslcb-licensing-tracker/"
+        ".venv/bin/python -m wslcb_licensing_tracker.cli %i\n",
+    )
+    write(
+        root,
+        f"{sysd}/wslcb-task@disk-hygiene.service.d/override.conf",
+        "[Service]\nNice=10\nIOSchedulingClass=idle\n",
+    )
+    # address-validator's disk-hygiene.sh, from cron
+    write(
+        root,
+        "etc/cron.d/address-validator",
+        "# disk\n15 4 * * * exedev /home/exedev/address-validator/infra/disk-hygiene.sh\n",
     )
     # the canonical GC: installed, its GC timer enabled; never a match or a candidate
     for path, (data, _mode) in rig.gc_files().items():
@@ -137,7 +157,8 @@ def test_finds_each_retire_list_implementation(host):
         ("broker", "prune_editor_builds.sh"),
         ("address-validator", "docker-prune"),
         ("watcher", "cleanup.sh"),
-        ("wslcb", "disk_hygiene.py"),
+        ("address-validator", "disk-hygiene.sh"),
+        ("wslcb", "wslcb-disk-hygiene"),
     }
 
 
@@ -157,8 +178,37 @@ def test_reports_where_and_whether_it_runs(host):
         found[("watcher", "cleanup.sh")]["where"]
         == "etc/systemd/system/maint.service.d/override.conf:3"
     )
-    cron = found[("wslcb", "disk_hygiene.py")]
-    assert cron["kind"] == "cron" and cron["where"] == "etc/cron.d/wslcb:2"
+    cron = found[("address-validator", "disk-hygiene.sh")]
+    assert cron["kind"] == "cron"
+    assert cron["where"] == "etc/cron.d/address-validator:2"
+
+
+def test_wslcb_is_found_by_its_unit_names_not_a_basename(host):
+    """#548: wslcb ran `python -m wslcb_licensing_tracker.cli %i` from a
+    template, so the old `disk_hygiene.py` entry matched nothing and the real
+    host's check said `found: []`. Its timer is the tooling; the template runs
+    every other wslcb task too, so it is never found."""
+    out = check(host)
+    (timer,) = units_found(out, "wslcb-disk-hygiene.timer")
+    assert (timer["repo"], timer["entry"]) == ("wslcb", "wslcb-disk-hygiene")
+    assert timer["match"] == "wslcb-disk-hygiene"
+    assert timer["enabled"] is True
+    assert units_found(out, "wslcb-task@.service") == []
+    names = {c.get("unit") for c in out["candidates"]}
+    assert "wslcb-disk-hygiene.timer" not in names
+
+
+def test_a_timer_starting_wslcbs_instance_is_found_whatever_its_name(host):
+    """The instance has no unit file of its own, only the template's, so it
+    is matched through the Unit= of the timer that starts it."""
+    write(
+        host,
+        "etc/systemd/system/weekly.timer",
+        "[Timer]\nOnCalendar=weekly\nUnit=wslcb-task@disk-hygiene.service\n",
+    )
+    (timer,) = units_found(check(host), "weekly.timer")
+    assert (timer["repo"], timer["entry"]) == ("wslcb", "wslcb-disk-hygiene")
+    assert timer["match"] == "wslcb-task@disk-hygiene"
 
 
 def test_canonical_gc_is_neither_found_nor_a_candidate(host):
@@ -370,16 +420,14 @@ def test_etc_drop_in_that_blanks_a_lower_units_command_unfinds_it(host):
 
 
 def test_lower_drop_in_on_an_etc_unit_is_read(host):
-    write(
-        host, "etc/systemd/system/wslcb-gc.service", "[Service]\nExecStart=/bin/true\n"
-    )
+    write(host, "etc/systemd/system/usa-gc.service", "[Service]\nExecStart=/bin/true\n")
     write(
         host,
-        "usr/local/lib/systemd/system/wslcb-gc.service.d/10-run.conf",
-        "[Service]\nExecStart=\nExecStart=/srv/wslcb/scripts/disk_hygiene.py\n",
+        "usr/local/lib/systemd/system/usa-gc.service.d/10-run.conf",
+        "[Service]\nExecStart=\nExecStart=/srv/usa-wa/scripts/disk-gc.sh\n",
     )
-    found = units_found(check(host), "wslcb-gc.service")
-    assert [(f["repo"], f["entry"]) for f in found] == [("wslcb", "disk_hygiene.py")]
+    found = units_found(check(host), "usa-gc.service")
+    assert [(f["repo"], f["entry"]) for f in found] == [("usa-wa", "disk-gc.sh")]
 
 
 def test_same_named_drop_in_in_etc_wins(host):
@@ -459,7 +507,7 @@ def test_secrets_in_commands_never_reach_stdout(host):
         host,
         "etc/cron.d/hygiene",
         '0 3 * * * root curl -H "Authorization: Bearer cronsecret" '
-        "https://example.com/ping/abcsecret; /srv/wslcb/disk_hygiene.py "
+        "https://example.com/ping/abcsecret; /srv/usa-wa/disk-gc.sh "
         "--api-key=keysecret\n",
     )
     write(
@@ -479,7 +527,7 @@ def test_secrets_in_commands_never_reach_stdout(host):
     assert "hc-ping.com" in unit["command"]
     (cron,) = [f for f in out["found"] if f["where"].startswith("etc/cron.d/hygiene")]
     assert cron["where"] == "etc/cron.d/hygiene:1"
-    assert cron["match"] == "disk_hygiene.py"
+    assert cron["match"] == "disk-gc.sh"
 
 
 # --- CR 525: more ways discovery missed a tool -------------------------------
@@ -611,7 +659,7 @@ def test_a_drop_in_that_blanks_the_command_unfinds_it(host):
     write(
         host,
         "etc/systemd/system/old-hygiene.service",
-        "[Service]\nExecStart=/srv/wslcb/disk_hygiene.py\n",
+        "[Service]\nExecStart=/srv/usa-wa/disk-gc.sh\n",
     )
     write(
         host,
@@ -706,7 +754,7 @@ def test_more_secret_shapes_never_reach_stdout(host, command, secret):
     write(
         host,
         "etc/cron.d/backup",
-        f"0 4 * * * root {command}; /srv/wslcb/disk_hygiene.py\n",
+        f"0 4 * * * root {command}; /srv/usa-wa/disk-gc.sh\n",
     )
     result = rig.run(RETIRE, "--root", host)
     assert result.returncode == 0, result.stderr
@@ -724,7 +772,7 @@ def test_a_mysql_flag_on_another_command_is_kept(host):
     write(
         host,
         "etc/cron.d/mk",
-        "0 4 * * * root mkdir -p /var/x; /srv/wslcb/disk_hygiene.py\n",
+        "0 4 * * * root mkdir -p /var/x; /srv/usa-wa/disk-gc.sh\n",
     )
     (found,) = [f for f in check(host)["found"] if f["where"] == "etc/cron.d/mk:1"]
     assert "mkdir -p /var/x" in found["command"]
@@ -767,7 +815,7 @@ def test_554a_a_masked_timer_does_not_enable_its_service(host):
 def test_554b_a_cron_d_file_with_a_dot_in_its_name_never_runs(host):
     """Debian's cron applies run-parts' naming to /etc/cron.d: hygiene.bak
     is skipped, so it is found but not enabled."""
-    write(host, "etc/cron.d/hygiene.bak", "0 3 * * * root /srv/wslcb/disk_hygiene.py\n")
+    write(host, "etc/cron.d/hygiene.bak", "0 3 * * * root /srv/usa-wa/disk-gc.sh\n")
     (found,) = [
         f for f in check(host)["found"] if f["where"] == "etc/cron.d/hygiene.bak:1"
     ]
