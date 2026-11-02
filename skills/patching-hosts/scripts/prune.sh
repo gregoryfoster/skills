@@ -272,7 +272,11 @@ gate_plan() {
   if is_int "$PLAN_TAKEN"; then iso_utc taken "$PLAN_TAKEN"; jadds o taken "$taken"; else jadd o taken null; fi
   jadd J_GATE plan "{$o}"
   if ! prune_component "$component"; then
-    refuse "the plan names $component, a component the probe doesn't know"
+    if [ -n "$C_WHY" ]; then
+      refuse "the plan names $component: $C_WHY"
+    else
+      refuse "the plan names $component, a component the probe doesn't know"
+    fi
     return 0
   fi
   [ -z "$PLAN_BAD" ] || refuse "the plan holds lines prune-plan.sh doesn't write ($PLAN_BAD): take a fresh one"
