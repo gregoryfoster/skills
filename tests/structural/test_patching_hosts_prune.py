@@ -1766,6 +1766,44 @@ def test_a_remove_of_a_plan_that_takes_orphans_is_refused(tmp_path):
     assert host.changes() == []
 
 
+# --- CR 1646: what apt drags along is a component's too ------------------------
+
+LIBPQ = copy.deepcopy(POSTGRES)
+LIBPQ["packages"]["libpq5"] = {"state": "ii", "version": "16.2"}
+LIBPQ_DRAGS = ["postgresql-16", "postgresql", "postgresql-client-16"]
+
+
+def test_an_apt_package_whose_removal_takes_a_components_is_refused(tmp_path):
+    # The roots leave out clients and libraries on purpose, but apt's purge
+    # of libpq5 takes the server as a reverse dependency, and with it every
+    # cluster, with none of postgres's guards.
+    host = _host(tmp_path, LIBPQ, "apt:libpq5")
+    host.host_state["packages"]["libpq5"]["drags"] = LIBPQ_DRAGS
+    out = host.plan("apt:libpq5", rc=2)
+    assert "postgresql-16 is postgres's" in out["stderr"], out["stderr"]
+    assert "use --component postgres" in out["stderr"]
+    assert not (tmp_path / "apt:libpq5.plan").exists()
+
+
+def test_a_plan_whose_removal_takes_a_components_since_is_refused(tmp_path):
+    host = _host(tmp_path, LIBPQ, "apt:libpq5").declare(f"removed:libpq5 {PAST} soaked")
+    assert host.plan("apt:libpq5")["packages"]["dragged_along"] == []
+    host.host_state["packages"]["libpq5"]["drags"] = LIBPQ_DRAGS
+    out = host.prune("purge", rc=3)
+    refused = out["refused"]
+    assert any("postgresql-16 is postgres's" in r for r in refused), refused
+    assert host.changes() == []
+
+
+def test_an_orphan_a_component_owns_is_refused_only_when_taken(tmp_path):
+    host = _fwupd(tmp_path, orphans=3)
+    host.host_state["packages"]["containerd"] = {"state": "ii", "version": "2.2.1"}
+    host.host_state["packages"]["fwupd"]["orphans"].append("containerd")
+    assert "containerd" in host.plan("apt:fwupd")["autoremove_would_take"]
+    out = host.plan("apt:fwupd", "--take-orphans", rc=2)
+    assert "containerd is docker's" in out["stderr"], out["stderr"]
+
+
 # --- CR 1650: a refused apt: name leaves no component's values behind -----------
 
 
