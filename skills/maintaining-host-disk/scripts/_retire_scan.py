@@ -8,6 +8,7 @@ import argparse
 import json
 import os
 import re
+import shlex
 import signal
 import stat
 import subprocess
@@ -37,10 +38,11 @@ BY_HAND = (
     ),
 )
 # Units LOOKALIKE would offer that are known not to be disk tooling, as
-# (repo, unit name without its suffix, the word its command runs, why). A
+# (repo, unit name without its suffix, the module its command runs, why). A
 # service is reported under not_disk, apart from the candidates, only with
-# that name and that word in every Exec line it has; a timer only when the
-# service it starts is. Anything else stays a candidate (#548).
+# that name and every Exec line it has running that module and nothing else
+# (runs_only); a timer only when the service it starts is. Anything else
+# stays a candidate (#548, CR 1642).
 # references/retiring.md names each one; a test holds them together.
 NOT_DISK = (
     (
@@ -286,9 +288,31 @@ def redact(command):
 # name.
 TOKEN_RES = {
     tok: re.compile(r"(^|[/\s'\"`;&|()<>])" + re.escape(tok) + r"($|[\s'\"`;&|()<>])")
-    for tok in [t for _r, _e, tokens in RETIRE_LIST for t in tokens]
-    + [word for _r, _u, word, _w in NOT_DISK]
+    for _repo, _entry, tokens in RETIRE_LIST
+    for tok in tokens
 }
+
+# A module run and nothing else: `[uv run] <python> -m <module> [args]`,
+# each arg a plain word. No shell, no `;` (systemd's own command separator
+# in older releases), no `&&` or `|`, so no second command rides along.
+PYTHON = re.compile(r"(?:\S*/)?python3?(?:\.\d+)?\Z")
+PLAIN_ARG = re.compile(r"[\w./=:,@%+-]+\Z")
+
+
+def runs_only(command, module):
+    """Whether an Exec line runs `module` with python, and nothing else."""
+    try:
+        words = shlex.split(command)
+    except ValueError:
+        return False
+    if words[:2] and os.path.basename(words[0]) == "uv" and words[1:2] == ["run"]:
+        words = words[2:]
+    return (
+        len(words) >= 3
+        and PYTHON.match(words[0]) is not None
+        and words[1:3] == ["-m", module]
+        and all(PLAIN_ARG.match(w) for w in words[3:])
+    )
 
 
 def match(command, stem=None):
@@ -311,11 +335,11 @@ def not_disk(units, scope, name):
         target = setting(unit, "Unit") or name[: -len(".timer")] + ".service"
         return not_disk(units, scope, target) if target.endswith(".service") else None
     lines = exec_lines(unit)
-    for repo, own, word, why in NOT_DISK:
+    for repo, own, module, why in NOT_DISK:
         if (
             name == f"{own}.service"
             and lines
-            and all(TOKEN_RES[word].search(cmd) for _where, cmd in lines)
+            and all(runs_only(cmd, module) for _where, cmd in lines)
         ):
             return repo, why
     return None
