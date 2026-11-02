@@ -438,6 +438,7 @@ MAPS = _maps(LIBC)
 OWNERS = {LIBC: "libc6", LIBXML2: "libxml2", LIBDBUS: "libdbus-1-3"}
 PG_UNIT = "postgresql@16-main.service"
 PG_CGROUP = f"/system.slice/system-postgresql.slice/{PG_UNIT}"
+UMBRELLA = "postgresql.service"
 USER_UNIT = "user@1000.service"
 USER_CGROUP = f"/user.slice/user-1000.slice/{USER_UNIT}"
 
@@ -465,13 +466,13 @@ def _step4(host: Host, units: dict) -> Host:
     its processes: each PID's maps, None for a map root can't read, or
     "gone" for a process its cgroup lists that has since exited. user@
     units are the ones systemctl lists, and their processes sit in a child
-    cgroup, as a user manager's do."""
-    users = "".join(
-        f"{u} loaded active running User Manager\n"
-        for u in units
-        if u.startswith("user@")
-    )
-    host.on("systemctl", "list-units*user@*", users)
+    cgroup, as a user manager's do. So are the postgresql@ clusters, which
+    Ubuntu's umbrella postgresql.service starts (CR 1640)."""
+    for kind, what in (("user@", "User Manager"), ("postgresql@", "PostgreSQL")):
+        listed = "".join(
+            f"{u} loaded active running {what}\n" for u in units if u.startswith(kind)
+        )
+        host.on("systemctl", f"list-units*{kind}*", listed)
     for unit, (cgroup, procs) in units.items():
         host.on("systemctl", f"show*ControlGroup*-- {unit}", f"ControlGroup={cgroup}\n")
         if not cgroup:
@@ -588,6 +589,18 @@ BULK_ONLY, BULK_AND_CHAIN = 1920, 2640
             True,
             f"libxml2, which owns a file {PG_UNIT}'s processes map",
         ),
+        # CR 1640: the knob names Ubuntu's umbrella, postgresql.service, an
+        # active (exited) oneshot whose cgroup holds no process. Its
+        # clusters' backends are the postgresql@ units'.
+        (
+            "libxml2 tzdata",
+            {
+                UMBRELLA: ("/system.slice/postgresql.service", {}),
+                PG_UNIT: (PG_CGROUP, {812: MAPS, 813: _maps(LIBC, LIBXML2)}),
+            },
+            True,
+            f"libxml2, which owns a file {PG_UNIT}'s processes map",
+        ),
     ],
     ids=[
         "datastore-backend",
@@ -595,6 +608,7 @@ BULK_ONLY, BULK_AND_CHAIN = 1920, 2640
         "user-unreadable",
         "not-running",
         "certain-over-unknown",
+        "umbrella-unit",
     ],
 )
 def test_the_bulk_predicts_a_reboot_from_what_step_4_reboots_for(
@@ -603,8 +617,9 @@ def test_the_bulk_predicts_a_reboot_from_what_step_4_reboots_for(
     # #365: the prediction read PID 1's maps alone, while step 4 also reboots
     # for dbus, logind, user@ and each data store, so a library only they map
     # left the chain out of the bulk's span.
-    host.knob(KNOB + "datastore postgres postgresql@16-main app\n")
-    _recovery(host, f"dump postgres {PG_UNIT} app {SHA_A} /var/backups/app-1.dump")
+    ds = UMBRELLA if UMBRELLA in units else PG_UNIT
+    host.knob(KNOB + f"datastore postgres {ds.removesuffix('.service')} app\n")
+    _recovery(host, f"dump postgres {ds} app {SHA_A} /var/backups/app-1.dump")
     (host.dry / "dry-run.log").write_text(
         f"Packages that will be upgraded: {selection}\n"
     )
