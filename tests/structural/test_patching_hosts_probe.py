@@ -3318,6 +3318,16 @@ def _proc(host: Host, pid: int, comm: str, args: str, uid: int = 0, exe=None) ->
         # A role is a word, never a glob: [g]uestd matches the file guestd
         # in the probe's working directory.
         ({77: ("exe-init", "[g]uestd")}, "unknown", ["[g]uestd"]),
+        # CR 1649: root's resident exe-init with another option first isn't
+        # an invocation to skip: its role is unknown, never init-only.
+        (
+            {77: ("exe-init", "--log-level=debug guestd")},
+            "unknown",
+            ["--log-level=debug"],
+        ),
+        # CR 1652: the platform's binary with a role, run by a user, isn't
+        # the resident one: root's alone is.
+        ({93: ("exe-init", "guestd", 1000)}, "init-only", []),
     ],
     ids=[
         "guestd",
@@ -3328,6 +3338,8 @@ def _proc(host: Host, pid: int, comm: str, args: str, uid: int = 0, exe=None) ->
         "operators-version-as-root",
         "not-the-platforms",
         "role-not-globbed",
+        "leading-option",
+        "a-users-guestd",
     ],
 )
 def test_an_exe_dev_host_reports_exe_inits_layout(host, procs, layout, roles):
@@ -3350,6 +3362,17 @@ def test_an_exe_init_whose_binary_cant_be_read_makes_the_layout_unknown(host):
     out = host.run()
     assert out["environment"]["exe_init"]["layout"] == "unknown"
     assert any("/proc/77/exe" in n for n in out["not_read"]), out["not_read"]
+
+
+def test_an_exe_init_whose_owner_cant_be_read_makes_the_layout_unknown(host):
+    # CR 1652: with no status to name its owner, whether it's root's is
+    # unknown, never skipped.
+    _exe_dev(host)
+    _proc(host, 77, "exe-init", "guestd")
+    (host.root / "proc" / "77" / "status").unlink()
+    out = host.run()
+    assert out["environment"]["exe_init"]["layout"] == "unknown"
+    assert any("/proc/77/status" in n for n in out["not_read"]), out["not_read"]
 
 
 @AS_ROOT

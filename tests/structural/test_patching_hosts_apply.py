@@ -637,25 +637,42 @@ def test_the_bulk_predicts_a_reboot_from_what_step_4_reboots_for(
 @pytest.mark.parametrize(
     "units",
     [
-        # PID 1 is never gone: its maps unread are unknown, as before #365.
+        # PID 1 is never gone: its maps unread are unknown, as before #365,
+        # though here even root finds no /proc/1.
         {},
         # Another process /proc doesn't show this user, as hidepid=2 hides
-        # it, is gone only if root can't see it either.
+        # it, is gone only if root can't see it either: root's test -e
+        # finds it (CR 1651).
         {"dbus.service": ("/system.slice/dbus.service", {600: "gone"})},
     ],
     ids=["pid-1", "hidden-process"],
 )
-def test_a_process_proc_hides_from_the_user_isnt_taken_as_exited(tmp_path, units):
+def test_a_process_proc_hides_from_the_user_isnt_taken_as_exited(host, units):
     # CR 1643: the "exited since" check ran as the user, so under hidepid=2
-    # an unread map was skipped as exited, PID 1's included.
-    host = _ready(Host(tmp_path, sudo=False))
-    shutil.rmtree(host.root / "proc" / "1")
+    # an unread map was skipped as exited, PID 1's included. Otherwise PID 1
+    # maps libc alone, so only the hidden process can leave it unknown.
+    if units:
+        host.pid1_maps.write_text(MAPS)
+    else:
+        shutil.rmtree(host.root / "proc" / "1")
+    # Root's view of /proc: an external test, which the shell's own [ never
+    # reaches, finds /proc/600 where the user's view has nothing. Anything
+    # else it's asked goes to the system's test.
+    host.STUBBED = (*host.STUBBED, "test")
+    host.FALLBACKS = {
+        **host.FALLBACKS,
+        "test": 'for d in /bin /usr/bin; do [ -x "$d/test" ] && exec "$d/test" "$@"; done; exit 2',
+    }
+    host.cases["test"] = [("-e */proc/600", "", 0, "", None)]
     quiet = {u: ("", {}) for u in QUIET}
     _step4(_owners(host), {**quiet, **units})
     (host.dry / "dry-run.log").write_text("Packages that will be upgraded: libxml2\n")
-    out = host.run(rc=3)
-    assert any(r.startswith("no root") for r in out["refused"])
-    assert out["gate"]["run_span"]["reboot"] is None, out["gate"]["run_span"]
+    host.clock = TUE_1530 - 30 * MIN
+    r = host.run()["gate"]["run_span"]
+    assert r["reboot"] is None, r
+    assert r["run_seconds"] == BULK_AND_CHAIN
+    pid = "1" if not units else "600"
+    assert f"/proc/{pid}/maps" in r["reboot_why"]
 
 
 def test_a_bulk_whose_dry_run_left_no_log_is_refused(host):
