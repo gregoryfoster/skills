@@ -309,8 +309,12 @@ TOKEN_RES = {
 # or `[-][uv run] <python> /abs/<script> [args]`, each arg a plain word. No
 # shell, no `;` (systemd's own command separator in older releases), no `&&`
 # or `|`, so no second command rides along. `-` is systemd's
-# ignore-the-exit prefix; any other prefix fails.
-PYTHON = re.compile(r"(?:\S*/)?python3?(?:\.\d+)?\Z")
+# ignore-the-exit prefix; any other prefix fails, since the interpreter and
+# uv must each be a bare name or an absolute path: `@` would make the next
+# word argv[0], and `+`, `!` and `:` change privileges or expansion
+# (CR 1653).
+PYTHON = re.compile(r"(?:/(?:\S*/)?)?python3?(?:\.\d+)?\Z")
+UV = re.compile(r"(?:/(?:\S*/)?)?uv\Z")
 PLAIN_ARG = re.compile(r"[\w./=:,@%+-]+\Z")
 
 
@@ -323,7 +327,7 @@ def runs_only(command, runs):
         return False
     if words and words[0].startswith("-"):
         words[0] = words[0][1:]
-    if words[:2] and os.path.basename(words[0]) == "uv" and words[1:2] == ["run"]:
+    if words[:2] and UV.match(words[0]) and words[1:2] == ["run"]:
         words = words[2:]
     if not words or PYTHON.match(words[0]) is None:
         return False
@@ -357,9 +361,12 @@ def not_disk(units, scope, name):
     if name.endswith(".timer"):
         target = setting(unit, "Unit") or name[: -len(".timer")] + ".service"
         return not_disk(units, scope, target) if target.endswith(".service") else None
+    # An Exec* key it doesn't know may run something: fail closed. Two are
+    # settings, not commands (CR 1655): ExecPaths= (sandboxing) and
+    # ExecSearchPath= (where a bare command name is looked up).
     texts = [unit["text"]] + [t for _w, t in unit.get("dropins", [])]
     if any(
-        k.startswith("Exec") and k not in EXEC_KEYS
+        k.startswith("Exec") and k not in EXEC_KEYS + ("ExecPaths", "ExecSearchPath")
         for text in texts
         for k, _v, _n in directives(text)
     ):
