@@ -113,8 +113,9 @@ its list refresh, and stops there with nothing held: exit 1); when the
 step's span, from now to now plus its expected duration,
 isn't wholly inside one window or overlaps a quiet range (the bulk's span is
 the rest of the run: itself, each held step its selection reaches, and the
-reboot chain's 720 s wherever a kernel or a package owning a file PID 1 maps
-makes a reboot certain, or PID 1's files can't be read; so the bulk also
+reboot chain's 720 s wherever a kernel, or a package owning a file mapped
+by PID 1, dbus, logind, a user@ or a datastore unit's processes, makes a
+reboot certain, or one of those maps can't be read; so the bulk also
 refuses when the dry run left no dry-run.log); while an
 automatic apt run is in progress, or apt-daily-upgrade.timer could start
 one inside the span (apt-daily.timer isn't read: on noble its 12-hour
@@ -679,18 +680,110 @@ DRY_SEL=""
 # reboot-chain.sh's default span: its 120 s delay and 600 s for the boot and
 # the post-boot checks.
 CHAIN_SPAN=720
-# Read where PID 1's mapped files are; a test points it at a fixture.
-PID1_MAPS=/proc/1/maps
+# Where processes and the units' cgroups are read; a test points them at a
+# fixture.
+PROC_DIR=/proc
+CGROUP_DIR=/sys/fs/cgroup
 
-# Whether the bulk's selection makes a reboot certain: a kernel, or a package
-# owning a file PID 1 maps, as libc6 and systemd do. On wslcb, PID 1 mapped
-# 15 deleted libraries after the bulk. Only PID 1 is read: reboot-and-record.md's step 4
-# also reboots for dbus, logind, user@ or a data store, and a library only
-# they map isn't predicted, as watcher's PostgreSQL mapped libxml2 (CR 214,
-# CR 215). 0 predicted, 1 not, 2 unknown, with REBOOT_WHY saying why.
+# The processes a unit runs: every one in its cgroup and the cgroups below
+# it, where a user manager's sit (init.scope, app.slice). MainPID alone
+# misses PostgreSQL's backends. A unit that isn't running has no cgroup and
+# runs nothing. 1 with RB_WHY where its cgroup can't be read.
+RB_WHY=""
+# unit_show sets it by name.
+U_ControlGroup=""
+reboot_pids() {  # <var> <unit>: VAR := its PIDs, space-separated
+  local _rp_cg _rp_fs _rp_f _rp_x _rp_p _rp_out=""
+  printf -v "$1" '%s' ""
+  if ! unit_show "$2" ControlGroup; then
+    RB_WHY="systemctl couldn't show $2's ControlGroup"
+    return 1
+  fi
+  [ -n "$U_ControlGroup" ] || return 0
+  _rp_cg=$CGROUP_DIR$U_ControlGroup
+  if [ ! -d "$_rp_cg" ]; then
+    RB_WHY="$2's cgroup, $_rp_cg, isn't there"
+    return 1
+  fi
+  capture _rp_fs find "$_rp_cg" -name cgroup.procs
+  if [ "$CAP_RC" -ne 0 ]; then
+    RB_WHY="$2's cgroup, $_rp_cg, couldn't be listed${CAP_ERR:+: $CAP_ERR}"
+    return 1
+  fi
+  while IFS= read -r _rp_f; do
+    [ -n "$_rp_f" ] || continue
+    if ! _rp_x=$(cat -- "$_rp_f" 2>/dev/null); then
+      # A child cgroup removed since the listing held nothing more.
+      [ -e "$_rp_f" ] || continue
+      RB_WHY="$_rp_f couldn't be read"
+      return 1
+    fi
+    for _rp_p in $_rp_x; do _rp_out="$_rp_out $_rp_p"; done
+  done <<<"$_rp_fs"
+  printf -v "$1" '%s' "${_rp_out# }"
+}
+
+# Whether a package in the selection owns a file these processes map: 0
+# with REBOOT_WHY naming it and WHO, 1 not, 2 with RB_WHY where a map that
+# could have decided it can't be read. Each map is read as root, since
+# another user's is "Permission denied" otherwise. A process that exited
+# since its cgroup was read maps nothing.
+reboot_maps() {  # <the selection> <who> <pid>...
+  local _rm_sel=$1 _rm_who=$2 _rm_pid _rm_maps _rm_out _rm_line _rm_p _rm_owners="" _rm_paths="" _rm_unk="" _rm_v=maps
+  local -a _rm_ps=()
+  # "PID 1 maps", "dbus.service's processes map".
+  case $_rm_who in *s) _rm_v=map ;; esac
+  shift 2
+  for _rm_pid in "$@"; do
+    capture _rm_maps as_root cat -- "$PROC_DIR/$_rm_pid/maps"
+    if [ "$CAP_RC" -ne 0 ]; then
+      [ -e "$PROC_DIR/$_rm_pid" ] || continue
+      [ -n "$_rm_unk" ] || _rm_unk="$PROC_DIR/$_rm_pid/maps ($_rm_who) couldn't be read as root"
+      continue
+    fi
+    while read -r _ _ _ _ _ _rm_p _; do
+      case $_rm_p in /*) in_words "$_rm_p" "$_rm_paths" || _rm_paths="$_rm_paths $_rm_p" ;; esac
+    done <<<"$_rm_maps"
+  done
+  read -r -a _rm_ps <<<"$_rm_paths" || true
+  if [ "${#_rm_ps[@]}" -gt 0 ]; then
+    # Exit 1 means some path has no package: the others still print.
+    capture _rm_out dpkg-query -S "${_rm_ps[@]}"
+    if [ "$CAP_RC" -gt 1 ]; then
+      RB_WHY="dpkg-query -S over the files $_rm_who $_rm_v exited $CAP_RC"
+      return 2
+    fi
+    while IFS= read -r _rm_line; do
+      case $_rm_line in diversion* | "") continue ;; esac
+      _rm_line=${_rm_line%%: /*}
+      _rm_line=${_rm_line//,/ }
+      for _rm_p in $_rm_line; do _rm_owners="$_rm_owners ${_rm_p%%:*}"; done
+    done <<<"$_rm_out"
+    for _rm_p in $_rm_sel; do
+      if in_words "$_rm_p" "$_rm_owners"; then
+        REBOOT_WHY="$_rm_p, which owns a file $_rm_who $_rm_v"
+        return 0
+      fi
+    done
+  fi
+  if [ -n "$_rm_unk" ]; then
+    RB_WHY=$_rm_unk
+    return 2
+  fi
+  return 1
+}
+
+# Whether the bulk's selection makes a reboot certain (#362, #365): a
+# kernel, or a package owning a file mapped by a process
+# reboot-and-record.md's step 4 reboots for. That's PID 1 (on wslcb it
+# mapped 15 deleted libraries after the bulk), the dbus daemon,
+# systemd-logind, every user@ and each datastore unit: watcher's PostgreSQL
+# backends mapped libxml2, which PID 1 doesn't. 0 predicted, 1 not, 2
+# unknown, with REBOOT_WHY saying why. A map that can't be read makes it
+# unknown, unless another decides it.
 predict_reboot() {  # <the selection, space-separated>
-  local maps out line p owners="" paths=""
-  local -a ps=()
+  local p r u pids list unknown="" rc
+  local -a units=(dbus.service systemd-logind.service) f=()
   REBOOT_WHY=""
   for p in $1; do
     case $p in linux-image-*)
@@ -698,34 +791,44 @@ predict_reboot() {  # <the selection, space-separated>
       return 0 ;;
     esac
   done
-  capture maps as_root cat -- "$PID1_MAPS"
+  rc=0
+  reboot_maps "$1" "PID 1" 1 || rc=$?
+  case $rc in
+    0) return 0 ;;
+    2) unknown=$RB_WHY ;;
+  esac
+  capture list systemctl list-units --plain --no-legend --full -- 'user@*.service'
   if [ "$CAP_RC" -ne 0 ]; then
-    REBOOT_WHY="$PID1_MAPS couldn't be read as root"
-    return 2
+    unknown=${unknown:-"systemctl couldn't list the user@ units${CAP_ERR:+: $CAP_ERR}"}
+  else
+    while read -r u _; do
+      case $u in user@*.service) units+=("$u") ;; esac
+    done <<<"$list"
   fi
-  while read -r _ _ _ _ _ p _; do
-    case $p in /*) in_words "$p" "$paths" || paths="$paths $p" ;; esac
-  done <<<"$maps"
-  read -r -a ps <<<"$paths" || true
-  [ "${#ps[@]}" -gt 0 ] || return 1
-  # Exit 1 means some path has no package: the others still print.
-  capture out dpkg-query -S "${ps[@]}"
-  if [ "$CAP_RC" -gt 1 ]; then
-    REBOOT_WHY="dpkg-query -S over PID 1's files exited $CAP_RC"
-    return 2
-  fi
-  while IFS= read -r line; do
-    case $line in diversion* | "") continue ;; esac
-    line=${line%%: /*}
-    line=${line//,/ }
-    for p in $line; do owners="$owners ${p%%:*}"; done
-  done <<<"$out"
-  for p in $1; do
-    if in_words "$p" "$owners"; then
-      REBOOT_WHY="$p, which owns a file PID 1 maps"
-      return 0
-    fi
+  for r in ${KNOB_DATASTORE[@]+"${KNOB_DATASTORE[@]}"}; do
+    IFS=$KNOB_US read -r -a f <<<"$r"
+    unit_name u "${f[1]}"
+    in_words "$u" "${units[*]}" || units+=("$u")
   done
+  for u in "${units[@]}"; do
+    if ! reboot_pids pids "$u"; then
+      unknown=${unknown:-$RB_WHY}
+      continue
+    fi
+    [ -n "$pids" ] || continue
+    rc=0
+    # Its PIDs are words.
+    # shellcheck disable=SC2086
+    reboot_maps "$1" "$u's processes" $pids || rc=$?
+    case $rc in
+      0) return 0 ;;
+      2) unknown=${unknown:-$RB_WHY} ;;
+    esac
+  done
+  if [ -n "$unknown" ]; then
+    REBOOT_WHY=$unknown
+    return 2
+  fi
   return 1
 }
 

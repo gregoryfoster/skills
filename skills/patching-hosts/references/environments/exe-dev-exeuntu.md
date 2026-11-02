@@ -9,7 +9,7 @@ The guest can't see its own image digest (CannObserv/broker#65, 2026-09-25), and
 - its commit, `org.opencontainers.image.revision`;
 - its channel, `org.opencontainers.image.version`: `main` on 11 hosts, `nightly` on 2.
 
-The probe doesn't read `image.conf` yet, so it detects the image by markers. It reads each one on its own, and names the profile and the generation in `environment.profile`.
+The probe reports the three labels in `environment.image_conf` (#388), each null where the file lacks it or can't be read. It still detects the image by markers, since `image.conf` comes with the platform's `/exe.dev/` and an offline tree of the image has none. It reads each marker on its own, and names the profile and the generation in `environment.profile`.
 
 The platform's exist only on an exe.dev VM:
 - the kernel's `init=/exe.dev/bin/exe-init` in `/proc/cmdline`;
@@ -50,7 +50,7 @@ Read across 13 cohort hosts on 2026-10-01 (#346):
 | op-ssh + memd | usa-wa's, May 2026 | `exe-init op-ssh` and `exe-init memd`; no `exe-scroll` | `sshd-session`, under exe.dev's `sshd` |
 | guestd | every image from 2026-08-25 | `exe-init guestd`, with `exe-scroll` | `exe-init`, until the session is reparented to PID 1 |
 
-The April image has `exe-setup.service`, so its markers date it `may-2026`, but its layout is init-only: the layout doesn't follow the generation. exe.dev's `sshd` and a resident `exe-init` read adj -1000 on every host. What a session reads is under [Sessions and OOM](#sessions-and-oom).
+The April image has `exe-setup.service`, so its markers date it `may-2026`, but its layout is init-only: the layout doesn't follow the generation. So the probe reads it from what's resident, in `environment.exe_init` (#388): `guestd`, `op-ssh+memd` or `init-only`, with each resident `exe-init`'s role. A role it doesn't know is `unknown`, and so is a `/proc` that hides PID 1, since it would hide `exe-init` too. exe.dev's `sshd` and a resident `exe-init` read adj -1000 on every host. What a session reads is under [Sessions and OOM](#sessions-and-oom).
 
 `exe-init --version` prints `exe-init version <build>`. Where it prints `next-dev (HEAD) linux/amd64` (two Feb-2026 hosts) or `unknown` (one guestd host), the version names no build, so hash the binary: `14fd603` is `6403375d…` (#313).
 

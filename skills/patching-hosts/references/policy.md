@@ -118,7 +118,7 @@ exception <what> <review-by YYYY-MM-DD> <reason>
 
 The rest take no exception, because each is fixed where it is:
 - a provisioning leftover the host can fix, such as a setup script on disk that isn't contained;
-- a knob gap: an undeclared restarter (unless found only through what the scan couldn't read or a script line it matched, above), backup regime or third-party origin;
+- a knob gap: an undeclared restarter (unless found only through what the scan couldn't read or a script line it matched, above), backup regime or third-party origin, or a `datastore redis` line with no user where the Redis's config sets the users, which the recovery point or the chain would refuse (`redis-login:<unit>`, #458);
 - a failing health check;
 - a pending reboot.
 

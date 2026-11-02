@@ -115,6 +115,7 @@ stub logs its argv, which is what the no-writes test reads. The rig is
 patching_hosts_rig.py, shared with apply.sh's tests.
 """
 
+import json
 import os
 import subprocess
 from pathlib import Path
@@ -3183,6 +3184,133 @@ def test_an_offline_image_tree_is_matched_by_its_files(tmp_path):
     assert p["markers"]["linux_image_packages"] == 1
 
 
+# --- exe.dev's platform files (#388, items 1 and 5) ------------------------------
+# The guest can't see its image's digest, but /exe.dev/etc/image.conf holds
+# the image's OCI config, labels included: its build time, its commit and its
+# channel. The values are the test VM's of #346, 2026-09-30.
+
+LABELS = {
+    "created": "2026-09-29T17:09:11.717Z",
+    "revision": "1b74aabd1c7082239c73dc9fe249fcf04634c765",
+    "version": "nightly",
+}
+OCI = {
+    "architecture": "amd64",
+    "os": "linux",
+    "config": {
+        "Env": ["PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin"],
+        "Labels": {
+            "org.opencontainers.image.created": LABELS["created"],
+            "org.opencontainers.image.revision": LABELS["revision"],
+            "org.opencontainers.image.source": "https://github.com/boldsoftware/exe",
+            "org.opencontainers.image.version": LABELS["version"],
+        },
+    },
+}
+
+
+def _exe_dev(host: Host) -> Host:
+    """An exe.dev VM, as the platform's own markers name it."""
+    (host.root / "exe.dev" / "etc").mkdir(parents=True)
+    host.write("proc/cmdline", "root=/dev/vda init=/exe.dev/bin/exe-init\n")
+    return host
+
+
+@pytest.mark.parametrize("indent", [None, 2], ids=["compact", "indented"])
+def test_an_exe_dev_host_reports_its_images_labels(host, indent):
+    _exe_dev(host).write("exe.dev/etc/image.conf", json.dumps(OCI, indent=indent))
+    c = host.run()["environment"]["image_conf"]
+    assert c == {"path": "/exe.dev/etc/image.conf", "present": True, **LABELS}
+
+
+def test_a_label_image_conf_lacks_is_null_never_a_default(host):
+    oci = json.loads(json.dumps(OCI))
+    del oci["config"]["Labels"]["org.opencontainers.image.version"]
+    _exe_dev(host).write("exe.dev/etc/image.conf", json.dumps(oci))
+    c = host.run()["environment"]["image_conf"]
+    assert c["version"] is None
+    assert c["revision"] == LABELS["revision"]
+
+
+# A runner as root reads a 0000 file, as the probe would through sudo.
+AS_ROOT = pytest.mark.skipif(os.geteuid() == 0, reason="root reads a mode-0000 file")
+
+
+@AS_ROOT
+def test_an_image_conf_that_cant_be_read_is_not_read(tmp_path):
+    host = Host(tmp_path, sudo=False).knob("class production\nposture automatic\n")
+    _exe_dev(host).write("exe.dev/etc/image.conf", json.dumps(OCI), mode=0o000)
+    out = host.run()
+    c = out["environment"]["image_conf"]
+    assert c["present"] is True
+    assert (c["created"], c["revision"], c["version"]) == (None, None, None)
+    assert any("/exe.dev/etc/image.conf" in n for n in out["not_read"]), out["not_read"]
+
+
+def test_an_exe_dev_host_without_image_conf_says_so(host):
+    c = _exe_dev(host).run()["environment"]["image_conf"]
+    assert c == {
+        "path": "/exe.dev/etc/image.conf",
+        "present": False,
+        "created": None,
+        "revision": None,
+        "version": None,
+    }
+
+
+def test_a_host_no_profile_matches_reads_no_exe_dev_file(host):
+    env = host.run()["environment"]
+    assert env["image_conf"] is None
+    assert env["exe_init"] is None
+
+
+# exe-init's layout is a separate axis from the generation (the profile):
+# what's resident decides it.
+@pytest.mark.parametrize(
+    "procs, layout",
+    [
+        ({77: ("exe-init", "guestd"), 78: ("exe-scroll", "")}, "guestd"),
+        ({77: ("exe-init", "op-ssh"), 79: ("exe-init", "memd")}, "op-ssh+memd"),
+        ({}, "init-only"),
+        # A role the profile doesn't know: never guessed.
+        ({77: ("exe-init", "something-new")}, "unknown"),
+    ],
+    ids=["guestd", "op-ssh-memd", "init-only", "unknown-role"],
+)
+def test_an_exe_dev_host_reports_exe_inits_layout(host, procs, layout):
+    _exe_dev(host)
+    for pid, (comm, role) in procs.items():
+        host.write(f"proc/{pid}/comm", comm + "\n")
+        argv = [f"/exe.dev/bin/{comm}", *([role] if role else [])]
+        host.write(f"proc/{pid}/cmdline", "".join(a + "\0" for a in argv).encode())
+    e = host.run()["environment"]["exe_init"]
+    assert e["layout"] == layout
+    assert sorted(r["role"] for r in e["resident"]) == sorted(
+        r for c, r in procs.values() if c == "exe-init"
+    )
+
+
+@AS_ROOT
+def test_exe_inits_layout_is_unknown_where_proc_hides_other_processes(host):
+    # hidepid hides PID 1 as it hides exe-init: no exe-init seen isn't
+    # init-only then.
+    _exe_dev(host)
+    (host.root / "proc" / "1" / "comm").chmod(0o000)
+    out = host.run()
+    assert out["environment"]["exe_init"]["layout"] == "unknown"
+    assert any("exe-init's layout" in n for n in out["not_read"]), out["not_read"]
+
+
+def test_an_offline_image_tree_reads_no_layout(tmp_path):
+    h = Host(tmp_path, live=False).knob("posture scheduled\n")
+    h.write("etc/passwd", EXEDEV_PASSWD)
+    h.write("usr/local/bin/init", INIT_WRAPPER)
+    out = h.run()
+    assert out["environment"]["profile"]["name"] == "exe-dev-exeuntu"
+    assert out["environment"]["exe_init"]["layout"] is None
+    assert any("exe-init's layout" in n for n in out["not_read"]), out["not_read"]
+
+
 # --- dormant components ---------------------------------------------------------
 
 
@@ -4486,6 +4614,81 @@ def test_a_depends_line_naming_no_datastore_is_a_knob_finding(host):
     out = host.run()
     f = _finding(out, "depends:redis-server.service:tailscaled.service")
     assert "which no datastore line declares" in f["message"]
+
+
+# --- a Redis whose config sets the users (#458) -----------------------------------
+# Host 6's knob named no user for its Redis, whose redis.conf set an inline
+# user line: the recovery point refused it, three hours before the window,
+# and no probe before it had said so.
+
+REDIS_USER_LINE = "user default on >other ~* +@all\n"
+REDIS_ACLFILE = "aclfile /etc/redis/users.acl\n"
+
+
+@pytest.mark.parametrize(
+    "line, conf, extra, cause",
+    [
+        # Nothing covers it: the recovery point's dump needs a login.
+        ("redis-server", REDIS_USER_LINE, "", "a user line in /etc/redis/redis.conf"),
+        ("redis-server", REDIS_ACLFILE, "", "its aclfile"),
+        # A backup line covers its dump, and its stop doesn't persist it, so
+        # the chain must SAVE it.
+        (
+            "redis-server",
+            REDIS_USER_LINE + 'save ""\n',
+            "backup redis-backup.timer redis-server\n",
+            "a user line in /etc/redis/redis.conf",
+        ),
+        # A user on the line, nothing setting the users, or a backup line
+        # with save points: nothing refuses.
+        ("redis-server ops /etc/redis/ops.key", REDIS_USER_LINE, "", None),
+        ("redis-server", "requirepass mine\n", "", None),
+        (
+            "redis-server",
+            REDIS_USER_LINE,
+            "backup redis-backup.timer redis-server\n",
+            None,
+        ),
+    ],
+    ids=["user-line", "aclfile", "chain-save", "has-user", "no-users", "covered"],
+)
+def test_a_redis_line_with_no_user_where_its_config_sets_the_users_is_a_finding(
+    host, line, conf, extra, cause
+):
+    host.knob(f"posture scheduled\ndatastore redis {line}\n{extra}")
+    host.write("etc/redis/redis.conf", "port 6379\nrequirepass nobodys\n" + conf)
+    host.show(
+        "redis-server.service",
+        ExecStart="{ path=/usr/bin/redis-server ; argv[]=/usr/bin/redis-server /etc/redis/redis.conf ; }",
+    )
+    out = host.run()
+    fid = "redis-login:redis-server.service"
+    if cause is None:
+        assert fid not in _ids(out)
+        return
+    f = _finding(out, fid)
+    assert f["kind"] == "knob"
+    assert f"{cause} sets the users" in f["message"]
+    # The fix, in the knob's own words.
+    assert "datastore redis redis-server <user> <key-file>" in f["message"]
+
+
+def test_a_redis_whose_config_includes_another_file_says_its_users_are_unread(host):
+    host.knob("posture scheduled\ndatastore redis redis-server\n")
+    host.write(
+        "etc/redis/redis.conf",
+        "port 6379\nrequirepass nobodys\ninclude /etc/redis/local.conf\n",
+    )
+    host.show(
+        "redis-server.service",
+        ExecStart="{ path=/usr/bin/redis-server ; argv[]=/usr/bin/redis-server /etc/redis/redis.conf ; }",
+    )
+    out = host.run()
+    assert "redis-login:redis-server.service" not in _ids(out)
+    assert any(
+        "redis-server.service" in n and "/etc/redis/redis.conf includes" in n
+        for n in out["not_read"]
+    ), out["not_read"]
 
 
 @pytest.mark.parametrize(

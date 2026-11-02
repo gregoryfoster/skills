@@ -71,8 +71,9 @@ inflight command prints anything but 0; when a Postgres datastore's cluster
 can't be found, isn't online, or its port can't be read, so a stopped
 cluster blocks the reboot; when a running Redis's unit isn't the process ss
 finds listening at its address, or the chain must SAVE it and has no login
-to (an aclfile, and no user and key file on its datastore line), or its key
-file can't be read as root; and when a Qdrant's unit isn't active or its
+to (an aclfile or a user line in its config sets the users, and its
+datastore line has no user and key file), or its key file can't be read as
+root; and when a Qdrant's unit isn't active or its
 container isn't running.
 
 Output: one JSON object on stdout. Keys: reboot_chain, refused, gate, chain
