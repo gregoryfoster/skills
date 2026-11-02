@@ -782,7 +782,7 @@ reboot_maps() {  # <the selection> <who> <pid>...
 # unknown, with REBOOT_WHY saying why. A map that can't be read makes it
 # unknown, unless another decides it.
 predict_reboot() {  # <the selection, space-separated>
-  local p r u pids list unknown="" rc
+  local p r u k kinds pids list unknown="" rc
   local -a units=(dbus.service systemd-logind.service) f=()
   REBOOT_WHY=""
   for p in $1; do
@@ -797,18 +797,27 @@ predict_reboot() {  # <the selection, space-separated>
     0) return 0 ;;
     2) unknown=$RB_WHY ;;
   esac
-  capture list systemctl list-units --plain --no-legend --full -- 'user@*.service'
-  if [ "$CAP_RC" -ne 0 ]; then
-    unknown=${unknown:-"systemctl couldn't list the user@ units${CAP_ERR:+: $CAP_ERR}"}
-  else
-    while read -r u _; do
-      case $u in user@*.service) units+=("$u") ;; esac
-    done <<<"$list"
-  fi
+  # Each user@, and where a datastore line names Ubuntu's umbrella
+  # postgresql.service, each cluster's postgresql@: the umbrella is an
+  # active (exited) oneshot, so its own cgroup holds no process (CR 1640).
+  kinds=user@
   for r in ${KNOB_DATASTORE[@]+"${KNOB_DATASTORE[@]}"}; do
     IFS=$KNOB_US read -r -a f <<<"$r"
     unit_name u "${f[1]}"
     in_words "$u" "${units[*]}" || units+=("$u")
+    if [ "${f[0]}" = postgres ] && [ "$u" = postgresql.service ]; then kinds="user@ postgresql@"; fi
+  done
+  for k in $kinds; do
+    capture list systemctl list-units --plain --no-legend --full -- "$k*.service"
+    if [ "$CAP_RC" -ne 0 ]; then
+      unknown=${unknown:-"systemctl couldn't list the $k units${CAP_ERR:+: $CAP_ERR}"}
+      continue
+    fi
+    while read -r u _; do
+      case $u in
+        "$k"*.service) in_words "$u" "${units[*]}" || units+=("$u") ;;
+      esac
+    done <<<"$list"
   done
   for u in "${units[@]}"; do
     if ! reboot_pids pids "$u"; then
