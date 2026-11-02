@@ -141,7 +141,11 @@ def test_not_disk_says_whose_it_is_and_why(power_map):
     assert service["repo"] == "power-map"
     assert service["kind"] == "systemd" and service["scope"] == "system"
     assert service["where"] == f"{SYSD}/power-map-prune.service:10"
-    assert service["command"] == "uv run python -m scripts.prune --execute"
+    # Every Exec* line, ExecStart first (CR 1647): the check-in shows too.
+    assert service["command"] == (
+        "uv run python -m scripts.prune --execute "
+        "-/usr/bin/python3 /home/exedev/power-map/scripts/status_checkin.py %n"
+    )
     assert "database rows" in service["why"]
 
 
