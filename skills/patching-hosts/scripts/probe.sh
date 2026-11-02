@@ -950,7 +950,7 @@ read_image_conf() {
 EXE_INIT_BIN=/exe.dev/bin/exe-init
 R_EXE_INIT=null
 read_exe_init() {
-  local o="" f pid comm args role res="" layout="init-only" e k v uid exe unread=""
+  local o="" f pid comm args role rest res="" layout="init-only" e k v uid exe unread=""
   R_EXE_INIT=null
   [ "$PROFILE" = exe-dev-exeuntu ] || return 0
   jadds o source "/proc/*/comm, cmdline, status and exe"
@@ -975,12 +975,15 @@ read_exe_init() {
     pid=${f%/comm}
     pid=${pid##*/}
     cmdline_of args "$pid"
-    role=""
-    read -r _ role _ <<<"$args" || true
-    # A query, such as the profile's exe-init --version, is an invocation,
-    # not a resident. Any other leading option is a role the layout doesn't
-    # know, so it reads unknown (CR 1649).
-    case $role in --version | -v | --help | -h) continue ;; esac
+    role="" rest=""
+    read -r _ role rest <<<"$args" || true
+    # A query alone, such as the profile's exe-init --version, is an
+    # invocation, not a resident. Any other leading option, or a query
+    # word with more after it (-v for verbose), is a role the layout
+    # doesn't know, so it reads unknown (CR 1649, CR 1654).
+    case $role in
+      --version | -v | --help | -h) [ -n "$rest" ] || continue ;;
+    esac
     uid=""
     if [ -r "$P_ROOT/proc/$pid/status" ]; then
       while read -r k v _; do
