@@ -634,6 +634,30 @@ def test_the_bulk_predicts_a_reboot_from_what_step_4_reboots_for(
     assert r["run_seconds"] == (BULK_ONLY if reboot is False else BULK_AND_CHAIN)
 
 
+@pytest.mark.parametrize(
+    "units",
+    [
+        # PID 1 is never gone: its maps unread are unknown, as before #365.
+        {},
+        # Another process /proc doesn't show this user, as hidepid=2 hides
+        # it, is gone only if root can't see it either.
+        {"dbus.service": ("/system.slice/dbus.service", {600: "gone"})},
+    ],
+    ids=["pid-1", "hidden-process"],
+)
+def test_a_process_proc_hides_from_the_user_isnt_taken_as_exited(tmp_path, units):
+    # CR 1643: the "exited since" check ran as the user, so under hidepid=2
+    # an unread map was skipped as exited, PID 1's included.
+    host = _ready(Host(tmp_path, sudo=False))
+    shutil.rmtree(host.root / "proc" / "1")
+    quiet = {u: ("", {}) for u in QUIET}
+    _step4(_owners(host), {**quiet, **units})
+    (host.dry / "dry-run.log").write_text("Packages that will be upgraded: libxml2\n")
+    out = host.run(rc=3)
+    assert any(r.startswith("no root") for r in out["refused"])
+    assert out["gate"]["run_span"]["reboot"] is None, out["gate"]["run_span"]
+
+
 def test_a_bulk_whose_dry_run_left_no_log_is_refused(host):
     (host.dry / "dry-run.log").unlink()
     out = host.run(rc=3)
