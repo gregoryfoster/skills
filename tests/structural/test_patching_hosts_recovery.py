@@ -164,6 +164,9 @@ def test_help_names_the_gates_and_the_record():
         "  3  refused",
     ):
         assert word in r.stdout, word
+    # CR 1644: wrapped to the file's own width, 80 at most.
+    wide = [line for line in r.stdout.splitlines() if len(line) > 80]
+    assert not wide, wide
 
 
 @pytest.mark.parametrize(
