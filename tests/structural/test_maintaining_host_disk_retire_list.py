@@ -77,3 +77,15 @@ def test_each_doc_row_is_in_the_script():
         assert (row[0], entry) in scripted, (
             f"{DOC.name} lists {row[0]} {row[1]}, and the script doesn't"
         )
+
+
+def test_each_not_disk_entry_is_named_in_the_doc():
+    """#548: a unit the check reports under `not_disk` rather than as a
+    candidate is named, with its repo, where the doc says what `not_disk` is."""
+    text = DOC.read_text()
+    section = text.split("## What the check automates", 1)[1].split("\n## ", 1)[0]
+    (bullet,) = [line for line in section.splitlines() if "**not_disk:**" in line]
+    for repo, unit, _command, _why in scan_module().NOT_DISK:
+        assert repo in bullet and f"`{unit}`" in bullet, (
+            f"{DOC.name}'s not_disk line doesn't name {repo}'s {unit}"
+        )
