@@ -309,8 +309,12 @@ TOKEN_RES = {
 # or `[-][uv run] <python> /abs/<script> [args]`, each arg a plain word. No
 # shell, no `;` (systemd's own command separator in older releases), no `&&`
 # or `|`, so no second command rides along. `-` is systemd's
-# ignore-the-exit prefix; any other prefix fails.
-PYTHON = re.compile(r"(?:\S*/)?python3?(?:\.\d+)?\Z")
+# ignore-the-exit prefix; any other prefix fails, since the interpreter and
+# uv must each be a bare name or an absolute path: `@` would make the next
+# word argv[0], and `+`, `!` and `:` change privileges or expansion
+# (CR 1653).
+PYTHON = re.compile(r"(?:/(?:\S*/)?)?python3?(?:\.\d+)?\Z")
+UV = re.compile(r"(?:/(?:\S*/)?)?uv\Z")
 PLAIN_ARG = re.compile(r"[\w./=:,@%+-]+\Z")
 
 
@@ -323,7 +327,7 @@ def runs_only(command, runs):
         return False
     if words and words[0].startswith("-"):
         words[0] = words[0][1:]
-    if words[:2] and os.path.basename(words[0]) == "uv" and words[1:2] == ["run"]:
+    if words[:2] and UV.match(words[0]) and words[1:2] == ["run"]:
         words = words[2:]
     if not words or PYTHON.match(words[0]) is None:
         return False
