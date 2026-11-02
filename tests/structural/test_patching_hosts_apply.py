@@ -56,7 +56,9 @@ Plan step 8b, from wslcb-licensing-tracker's run: the bulk's span is the rest
 of the run, the bulk at three times its dry run, each held step its
 selection reaches, and the reboot chain wherever a kernel or a package
 owning a file PID 1 maps makes a reboot certain, or PID 1's files can't be
-read (#362).
+read (#362). #365 widened the maps to what reboot-and-record.md's step 4
+reboots for: dbus, logind, each user@ and each datastore unit, every
+process in its cgroup.
 
 #390, free space: each step is gated on what it writes, read from apt's
 metadata (test_patching_hosts_space.py has the reckoning), against apt's
@@ -161,17 +163,19 @@ class Host(RigHost):
         self.scripts = tmp_path / "scripts"
         shutil.copytree(SKILL / "scripts", self.scripts)
         (self.scripts / "probe.sh").write_text(STUB_PROBE)
-        # PID 1's mapped files, from a fixture: absent, the reboot is
-        # unknown, and the bulk's span budgets for it (#362).
+        # The processes' mapped files and the units' cgroups, from the
+        # fixture root: PID 1's maps absent, the reboot is unknown, and the
+        # bulk's span budgets for it (#362, #365).
         self.pid1_maps = self.root / "proc" / "1" / "maps"
         apply_sh = self.scripts / "apply.sh"
         text = apply_sh.read_text()
-        assert text.count("\nPID1_MAPS=/proc/1/maps\n") == 1
-        apply_sh.write_text(
-            text.replace(
-                "\nPID1_MAPS=/proc/1/maps\n", f"\nPID1_MAPS='{self.pid1_maps}'\n"
-            )
-        )
+        for line, path in (
+            ("PROC_DIR=/proc", self.root / "proc"),
+            ("CGROUP_DIR=/sys/fs/cgroup", self.root / "sys" / "fs" / "cgroup"),
+        ):
+            assert text.count(f"\n{line}\n") == 1
+            text = text.replace(f"\n{line}\n", f"\n{line.split('=')[0]}='{path}'\n")
+        apply_sh.write_text(text)
         # The disk GC's config, from a fixture: absent unless a test writes it.
         self.gc_conf = tmp_path / "disk-gc.conf"
         lib = self.scripts / "_probe-lib.sh"
@@ -2139,6 +2143,8 @@ def test_a_whole_run_never_unmasks_enables_reboots_removes_or_purges(host):
                 "stop",
                 "start",
                 "show",
+                # The user@ units, whose maps the reboot's prediction reads (#365).
+                "list-units",
             ), args
         if name == "apt-get":
             assert words[0] in ("update", "-s"), args
