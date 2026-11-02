@@ -6,16 +6,18 @@ set -euo pipefail
 
 usage() {
   cat <<'USAGE'
-Usage: bash prune-plan.sh --component NAME [--out FILE] [--config FILE]
-                          [--host NAME] [--today YYYY-MM-DD]
+Usage: bash prune-plan.sh --component NAME [--take-orphans] [--out FILE]
+                          [--config FILE] [--host NAME] [--today YYYY-MM-DD]
 
-For one component the probe knows, prints what pruning it would take
+For one component the probe knows, or any apt package named as
+apt:PACKAGE[,PACKAGE...], prints what pruning it would take
 (references/pruning.md), and changes nothing:
   - the units, sockets, timers and path units its packages ship, with each
     one's state now: what the disable stage stops, disables and masks;
   - the packages apt-get -s remove and apt-get -s purge would take, what
     the purge drags along besides its roots, and any held;
-  - what a later autoremove would take that it doesn't take now;
+  - what a later autoremove would take that it doesn't take now, or with
+    --take-orphans, those orphans taken by name with the rest;
   - what else installed depends on them;
   - the lines in their purge scripts that delete, as rm, rmdir, deluser,
     delgroup, userdel or groupdel (a deletion any other way isn't seen),
@@ -32,7 +34,14 @@ conffiles, Postgres clusters and group members. A stage refuses when the
 host no longer matches it, so an approval binds to exactly what it names.
 
 Options:
-  --component NAME   docker, postgres, redis, nginx, ollama or qdrant
+  --component NAME   docker, postgres, redis, nginx, ollama or qdrant, or
+                     apt:PACKAGE[,PACKAGE...] for any other apt package: its
+                     units are the ones its packages ship, and the knob's
+                     stage lines call it by the list after apt:
+  --take-orphans     take what the packages alone leave no longer required,
+                     each named under packages.orphans, as a stage takes the
+                     rest: never by an autoremove, and apt's orphans from
+                     before stay. Off by default: read the list
   --out FILE         write the plan here (a new file, mode 600: one that
                      exists is a usage error). A write that fails is removed
   --config FILE      the knob (default: .skills/patching-hosts at the root of
@@ -43,7 +52,8 @@ Options:
   --today YYYY-MM-DD the date exceptions expire against (default: today, UTC)
   -h, --help         show this help
 
-Output: one JSON object on stdout. Keys: prune_plan, units, packages,
+Output: one JSON object on stdout. Keys: prune_plan (with the name the
+knob calls it), units, packages (with orphans),
 reverse_depends, autoremove_would_take, purge_scripts, debconf, paths,
 conffiles, clusters, group, residue, stage, plan_file, not_read. A read
 that only shows something (what depends on it, debconf, autoremove, sizes)
@@ -52,7 +62,8 @@ and failed is under not_read.
 Exit codes:
   0  the plan is printed, and written with --out
   1  a read the plan stands on failed: the package list, apt's
-     simulations, a unit list, the conffiles or a purge script. Only
+     simulations (with --take-orphans, its autoremove's too), a unit
+     list, the conffiles or a purge script. Only
      prune_plan and error are printed, and no plan is written. Or --out
      couldn't be written
   2  usage error, an unreadable knob, or a library missing: nothing on
@@ -61,6 +72,7 @@ USAGE
 }
 
 component="" out="" config="" host="" today=""
+take_orphans=0
 while [ "$#" -gt 0 ]; do
   case $1 in
     --component | --out | --config | --host | --today)
@@ -73,16 +85,17 @@ while [ "$#" -gt 0 ]; do
         --today) today=$2 ;;
       esac
       shift 2 ;;
+    --take-orphans) take_orphans=1; shift ;;
     -h | --help) usage; exit 0 ;;
     *) echo "ERROR unknown argument: $1 (see --help)" >&2; exit 2 ;;
   esac
 done
 
 if [ -z "$component" ]; then
-  echo "ERROR --component is required: docker, postgres, redis, nginx, ollama or qdrant" >&2
+  echo "ERROR --component is required: docker, postgres, redis, nginx, ollama, qdrant or apt:<package>" >&2
   exit 2
 fi
-case $out$config in *[[:cntrl:]]*)
+case $component$out$config in *[[:cntrl:]]*)
   echo "ERROR an argument holds a control character" >&2
   exit 2 ;;
 esac
@@ -121,14 +134,20 @@ ME=prune-plan
 # shellcheck source=_prune-lib.sh
 . "$_libdir/_prune-lib.sh"
 
+# Every line parsed below is C-locale output, and so is the JSON builder's
+# '?' for a byte that isn't printable ASCII. A package name's range is
+# C's too.
+export LC_ALL=C
+
 if ! prune_component "$component"; then
-  echo "ERROR --component takes one the probe knows: $PRUNE_COMPONENTS" >&2
+  echo "ERROR --component takes one the probe knows, $PRUNE_COMPONENTS, or apt:<package>[,<package>...] by its Debian name" >&2
   exit 2
 fi
-
-# Every line parsed below is C-locale output, and so is the JSON builder's
-# '?' for a byte that isn't printable ASCII.
-export LC_ALL=C
+if [ "$take_orphans" -eq 1 ] && [ -n "$C_UNIT" ]; then
+  echo "ERROR --take-orphans: $component comes from outside apt, so nothing is orphaned" >&2
+  exit 2
+fi
+PRUNE_ORPHANS=$take_orphans
 
 [ -n "$host" ] || host=$(hostname)
 if [ -z "$config" ]; then
@@ -167,6 +186,7 @@ if [ "$_rc" -ne 0 ]; then plan_error "$D_WHY"; fi
 J="" _x="" _y="" _n=0
 _o=""
 jadds _o component "$component"
+jadds _o name "$C_NAME"
 jadds _o host "$host"
 jadds _o knob "$config"
 jaddb _o installed "$D_PRESENT"
@@ -214,10 +234,12 @@ pkg_list _x ${D_PURGE[@]+"${D_PURGE[@]}"}
 jadd _o purge "$_x"
 _drag=""
 for _p in ${D_PURGE[@]+"${D_PURGE[@]}"}; do
-  in_words "${_p%% *}" "$D_ROOTS $D_RESIDUE" || _drag="$_drag ${_p%% *}"
+  in_words "${_p%% *}" "$D_ROOTS $D_RESIDUE $D_TAKEN" || _drag="$_drag ${_p%% *}"
 done
 json_words _x "$_drag"
 jadd _o dragged_along "$_x"
+json_words _x "$D_TAKEN"
+jadd _o orphans "$_x"
 json_words _x "$D_HELD"
 jadd _o held "$_x"
 jadd J packages "{$_o}"
@@ -355,7 +377,7 @@ json_words _x "$D_RESIDUE"
 jadd J residue "$_x"
 
 # The stage the knob declares, and what comes next (policy.md).
-calendar "$component"
+calendar "$C_NAME"
 _o=""
 jadds _o declared "$CAL_STAGE"
 jaddsn _o review_by "$CAL_REVIEW"

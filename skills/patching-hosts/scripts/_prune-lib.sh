@@ -13,10 +13,13 @@ prune_lib_usage() {
 Usage: . _prune-lib.sh    (sourced by prune-plan.sh and prune.sh; running it
                           does nothing)
 
-  PRUNE_COMPONENTS          the components it knows
-  prune_component NAME      C_ROOTS, C_CONFIG, C_DATA, C_GROUP, and for one
-                            from outside apt C_UNIT and C_BINARY; 1 for a
-                            name the probe doesn't know
+  PRUNE_COMPONENTS          the components it knows, besides apt:<package>
+  PRUNE_ORPHANS             1 to take what the roots alone orphan (a
+                            plan's --take-orphans), by name; 0 by default
+  prune_component NAME      C_NAME, C_ROOTS, C_CONFIG, C_DATA, C_GROUP, and
+                            for one from outside apt C_UNIT and C_BINARY; 1
+                            for a name the probe doesn't know. NAME may be
+                            apt:<package>[,<package>...]: C_NAME is the list
   read_packages             PKG_NAME, PKG_STATE: every package dpkg knows;
                             1 when it can't list them
   path_kib VAR PATH         PATH's size in KiB, as root; empty only when it
@@ -48,18 +51,30 @@ case "${0##*/}" in
 esac
 
 PRUNE_COMPONENTS="docker postgres redis nginx ollama qdrant"
+PRUNE_ORPHANS=0
 
 # Each component the probe knows: the package globs that are it (a server,
 # never a client or a library other packages use), its config and its data,
 # and the group whose members it lets in. watcher's Docker removal left
 # exedev in the docker group, root-equivalent the moment Docker came back
 # (policy.md). Ollama and Qdrant come from outside apt: a unit and a binary.
-C_ROOTS="" C_CONFIG="" C_DATA="" C_GROUP="" C_UNIT="" C_BINARY=""
+# Any other apt package is apt:<package>[,<package>...], fwupd on the
+# exeuntu images (#370): its units are the ones its packages ship, and it
+# has no config or data directory of its own. C_NAME is what the knob's
+# stage lines and the run's directory call it: the list after apt:, as
+# wslcb's hand-run purged:fwupd did. Each is a Debian package name, so no
+# word of it is a glob or anything a shell reads as more.
+PRUNE_APT_RE='^[a-z0-9][a-z0-9+.-]+(,[a-z0-9][a-z0-9+.-]+)*$'
+C_NAME="" C_ROOTS="" C_CONFIG="" C_DATA="" C_GROUP="" C_UNIT="" C_BINARY=""
 # unit_show sets it by name.
 U_LoadState=""
 prune_component() {  # <name>
-  C_ROOTS="" C_CONFIG="" C_DATA="" C_GROUP="" C_UNIT="" C_BINARY=""
+  C_NAME=$1 C_ROOTS="" C_CONFIG="" C_DATA="" C_GROUP="" C_UNIT="" C_BINARY=""
   case $1 in
+    apt:*)
+      C_NAME=${1#apt:}
+      [[ $C_NAME =~ $PRUNE_APT_RE ]] || { C_NAME=""; return 1; }
+      C_ROOTS=${C_NAME//,/ } ;;
     docker)
       C_ROOTS='docker.io docker-ce docker-ce-cli docker-ce-rootless-extras docker-buildx-plugin docker-compose-plugin docker-compose containerd containerd.io runc'
       C_CONFIG=/etc/docker C_DATA='/var/lib/docker /var/lib/containerd' C_GROUP=docker ;;
@@ -79,7 +94,7 @@ prune_component() {  # <name>
     qdrant)
       C_UNIT=qdrant.service C_BINARY=/usr/local/bin/qdrant
       C_CONFIG=/etc/qdrant C_DATA=/var/lib/qdrant ;;
-    *) return 1 ;;
+    *) C_NAME=""; return 1 ;;
   esac
 }
 
@@ -334,14 +349,18 @@ path_kib() {  # <var> <path>
 # apt-mark holds: apt-get -s takes them, but apt-get -y refuses to
 # ("Held packages were changed and -y was used without
 # --allow-change-held-packages", measured on noble).
+# With PRUNE_ORPHANS=1, D_TAKEN names what purging the roots alone leaves
+# "no longer required", less what autoremove would take already: a later
+# autoremove's, taken now by name with the roots. For fwupd on exeuntu
+# that is 53 of 54, apt's own 3 from before left alone (#370).
 D_ROOTS="" D_RESIDUE="" D_UNITS=() D_REMOVE=() D_PURGE=() D_INST="" D_WHY="" D_HELD="" D_ORPHANS=""
 D_CONFIG="" D_DATA="" D_SIZES="" D_MEMBERS="" D_GROUP_EXISTS=0 D_UNPACKAGED=0 D_PRESENT=0
-D_CONFFILES="" D_UNSAVED=()
+D_CONFFILES="" D_UNSAVED=() D_TAKEN=""
 derive() {  # <name>
-  local _d_i _d_p _d_u _d_k _d_names="" _d_line _d_pn=""
+  local _d_i _d_p _d_u _d_k _d_names="" _d_line _d_pn="" _d_want _d_x _d_y _d_now=""
   D_ROOTS="" D_RESIDUE="" D_UNITS=() D_REMOVE=() D_PURGE=() D_INST="" D_WHY="" D_HELD="" D_ORPHANS=""
   D_CONFIG="" D_DATA="" D_SIZES="" D_MEMBERS="" D_GROUP_EXISTS=0 D_UNPACKAGED=0 D_PRESENT=0
-  D_CONFFILES="" D_UNSAVED=() D_CLUSTERS="" D_CLUSTERS_WHY="" SIZES_UNREAD=""
+  D_CONFFILES="" D_UNSAVED=() D_CLUSTERS="" D_CLUSTERS_WHY="" SIZES_UNREAD="" D_TAKEN=""
   prune_component "$1" || return 1
   if [ -n "$C_UNIT" ]; then
     D_UNPACKAGED=1
@@ -365,16 +384,37 @@ derive() {  # <name>
     done
     D_ROOTS=${D_ROOTS# } D_RESIDUE=${D_RESIDUE# }
     if [ -n "$D_ROOTS$D_RESIDUE" ]; then D_PRESENT=1; fi
+    _d_want=$D_ROOTS
+    if [ "$PRUNE_ORPHANS" -eq 1 ] && [ -n "$D_ROOTS" ]; then
+      # A word list, each a package name.
+      # shellcheck disable=SC2086
+      if ! apt_sim purge $D_ROOTS; then
+        D_WHY=$SIM_WHY
+        return 2
+      fi
+      _d_x=$SIM_ORPHANS
+      capture _d_y apt-get -s autoremove
+      if [ "$CAP_RC" -ne 0 ]; then
+        D_WHY="apt-get -s autoremove failed: ${CAP_ERR:-exit $CAP_RC}"
+        return 2
+      fi
+      while read -r _d_line _d_p _d_k; do
+        if [ "$_d_line" = Remv ]; then _d_now="$_d_now $_d_p"; fi
+      done <<<"$_d_y"
+      for _d_p in $_d_x; do in_words "$_d_p" "$_d_now" || D_TAKEN="$D_TAKEN $_d_p"; done
+      D_TAKEN=${D_TAKEN# }
+      _d_want="$D_ROOTS $D_TAKEN"
+    fi
     # Word lists, each a package name.
     # shellcheck disable=SC2086
-    if ! apt_sim remove $D_ROOTS; then
+    if ! apt_sim remove $_d_want; then
       D_WHY=$SIM_WHY
       return 2
     fi
     D_REMOVE=(${SIM_SET[@]+"${SIM_SET[@]}"}) D_INST=$SIM_INST
     # Word lists, each a package name.
     # shellcheck disable=SC2086
-    if ! apt_sim purge $D_ROOTS $D_RESIDUE; then
+    if ! apt_sim purge $_d_want $D_RESIDUE; then
       D_WHY=$SIM_WHY
       return 2
     fi
@@ -446,13 +486,16 @@ calendar() {  # <name>
   done
 }
 
-# What a plan binds: the packages, the units, the conffiles the savepoint
-# takes, Postgres's clusters and their data, and the group's members. A
-# stage refuses when a fresh derive gives other lines.
+# What a plan binds: the packages, the orphans it takes, the holds, the
+# units, the conffiles the savepoint takes, Postgres's clusters and their
+# data, and the group's members. A stage refuses when a fresh derive gives
+# other lines: --release-hold releases only the holds the owner saw.
 signature() {  # <var>
   local _sg_s="" _sg_x _sg_y
   for _sg_x in $D_ROOTS; do _sg_s="${_sg_s}root $_sg_x"$'\n'; done
   for _sg_x in $D_RESIDUE; do _sg_s="${_sg_s}residue $_sg_x"$'\n'; done
+  for _sg_x in $D_TAKEN; do _sg_s="${_sg_s}orphan $_sg_x"$'\n'; done
+  for _sg_x in $D_HELD; do _sg_s="${_sg_s}held $_sg_x"$'\n'; done
   for _sg_x in ${D_UNITS[@]+"${D_UNITS[@]}"}; do _sg_s="${_sg_s}unit $_sg_x"$'\n'; done
   for _sg_x in ${D_REMOVE[@]+"${D_REMOVE[@]}"}; do _sg_s="${_sg_s}remove ${_sg_x%% *}"$'\n'; done
   for _sg_x in ${D_PURGE[@]+"${D_PURGE[@]}"}; do _sg_s="${_sg_s}purge ${_sg_x%% *}"$'\n'; done
@@ -471,6 +514,8 @@ write_plan() {  # <host> <component>
   printf '%s\n' "$PLAN_HEADER"
   printf 'component %s\nhost %s\ntaken %s\n' "$2" "$1" "$P_NOW"
   if [ "$D_UNPACKAGED" -eq 1 ]; then printf 'unpackaged %s %s\n' "$C_UNIT" "$C_BINARY"; fi
+  # A fresh derive takes the orphans again only where the plan did.
+  if [ "$PRUNE_ORPHANS" -eq 1 ]; then printf 'orphans taken\n'; fi
   signature _wp_sig
   printf '%s' "$_wp_sig"
   for _wp_x in ${D_REMOVE[@]+"${D_REMOVE[@]}"}; do printf 'version %s\n' "$_wp_x"; done
@@ -481,10 +526,12 @@ write_plan() {  # <host> <component>
 
 PLAN_COMPONENT="" PLAN_HOST="" PLAN_TAKEN="" PLAN_SIG="" PLAN_CONFIG="" PLAN_DATA=""
 PLAN_GROUP="" PLAN_UNPACKAGED=0 PLAN_VERSIONS="" PLAN_BAD="" PLAN_CONFFILES="" PLAN_CLUSTERS=""
+PLAN_ORPHANS=0 PLAN_HELD=""
 read_plan() {  # <file>: returns 1 when it can't be read or isn't a plan
   local _rd_t _rd_l _rd_k _rd_a _rd_b _rd_n=0
   PLAN_COMPONENT="" PLAN_HOST="" PLAN_TAKEN="" PLAN_SIG="" PLAN_CONFIG="" PLAN_DATA=""
   PLAN_GROUP="" PLAN_UNPACKAGED=0 PLAN_VERSIONS="" PLAN_BAD="" PLAN_CONFFILES="" PLAN_CLUSTERS=""
+  PLAN_ORPHANS=0 PLAN_HELD=""
   [ -f "$1" ] && [ -r "$1" ] || return 1
   _rd_t=$(cat -- "$1") || return 1
   while IFS= read -r _rd_l; do
@@ -498,7 +545,16 @@ read_plan() {  # <file>: returns 1 when it can't be read or isn't a plan
       component:) PLAN_COMPONENT=$_rd_a ;;
       host:) PLAN_HOST=$_rd_a ;;
       taken:) PLAN_TAKEN=$_rd_a ;;
-      root: | residue: | unit: | remove: | purge:) PLAN_SIG="$PLAN_SIG$_rd_l"$'\n' ;;
+      root: | residue: | orphan: | unit: | remove: | purge:) PLAN_SIG="$PLAN_SIG$_rd_l"$'\n' ;;
+      held:)
+        PLAN_SIG="$PLAN_SIG$_rd_l"$'\n'
+        PLAN_HELD="$PLAN_HELD $_rd_a" ;;
+      orphans:)
+        if [ "$_rd_a" = taken ]; then
+          PLAN_ORPHANS=1
+        else
+          PLAN_BAD="${PLAN_BAD:+$PLAN_BAD; }line $_rd_n"
+        fi ;;
       conffile:)
         PLAN_SIG="$PLAN_SIG$_rd_l"$'\n'
         PLAN_CONFFILES="$PLAN_CONFFILES $_rd_a" ;;
@@ -515,4 +571,5 @@ read_plan() {  # <file>: returns 1 when it can't be read or isn't a plan
     esac
   done <<<"$_rd_t"
   PLAN_CONFIG=${PLAN_CONFIG# } PLAN_DATA=${PLAN_DATA# } PLAN_CONFFILES=${PLAN_CONFFILES# }
+  PLAN_HELD=${PLAN_HELD# }
 }
