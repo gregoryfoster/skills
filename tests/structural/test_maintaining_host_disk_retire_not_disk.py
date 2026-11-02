@@ -177,6 +177,44 @@ def test_a_drop_in_that_replaces_the_command_makes_it_a_candidate(power_map):
     assert "power-map-prune.service" in units(check(power_map)["candidates"])
 
 
+def replace_exec_start(root, command):
+    write(
+        root,
+        f"{SYSD}/power-map-prune.service.d/override.conf",
+        f"[Service]\nExecStart=\nExecStart={command}\n",
+    )
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        '/bin/sh -c "python -m scripts.prune && find /var/cache/pm -mtime +7 -delete"',
+        "uv run python -m scripts.prune --execute ; /usr/bin/find /var/cache/pm -delete",
+        "uv run python -m scripts.prune --execute; rm -rf /var/cache/pm",
+    ],
+)
+def test_cr1642_its_module_beside_another_command_is_a_candidate(power_map, command):
+    """CR 1642: the word anywhere in the line vouched for a shell that also
+    deletes files. Only the module run, and nothing else, is vouched for."""
+    replace_exec_start(power_map, command)
+    out = check(power_map)
+    assert "power-map-prune.service" in units(out["candidates"])
+    assert units(out["not_disk"]) == set()
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "uv run python -m scripts.prune --execute",
+        "/home/exedev/power-map/.venv/bin/python -m scripts.prune --execute",
+        "/usr/bin/python3 -m scripts.prune --execute --request-log-retention-days 30",
+    ],
+)
+def test_cr1642_the_module_run_alone_is_vouched_for(power_map, command):
+    replace_exec_start(power_map, command)
+    assert "power-map-prune.service" in units(check(power_map)["not_disk"])
+
+
 def test_the_command_under_another_unit_name_stays_a_candidate(tmp_path):
     """The list vouches for power-map's unit, not for every `scripts.prune`:
     another repo's module of that name may well prune disk."""
