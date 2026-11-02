@@ -3266,28 +3266,90 @@ def test_a_host_no_profile_matches_reads_no_exe_dev_file(host):
 
 # exe-init's layout is a separate axis from the generation (the profile):
 # what's resident decides it.
+EXE_INIT = "/exe.dev/bin/exe-init"
+
+
+def _proc(host: Host, pid: int, comm: str, args: str, uid: int = 0, exe=None) -> None:
+    """A process: its comm, its argv (/exe.dev/bin/<comm> and ARGS), the
+    owner its status names, and its exe link, to EXE or the argv's binary."""
+    host.write(f"proc/{pid}/comm", comm + "\n")
+    host.write(
+        f"proc/{pid}/status", f"Name:\t{comm}\nUid:\t{uid}\t{uid}\t{uid}\t{uid}\n"
+    )
+    argv = [f"/exe.dev/bin/{comm}", *args.split()]
+    host.write(f"proc/{pid}/cmdline", "".join(a + "\0" for a in argv).encode())
+    host.link(f"proc/{pid}/exe", exe or argv[0])
+
+
 @pytest.mark.parametrize(
-    "procs, layout",
+    "procs, layout, roles",
     [
-        ({77: ("exe-init", "guestd"), 78: ("exe-scroll", "")}, "guestd"),
-        ({77: ("exe-init", "op-ssh"), 79: ("exe-init", "memd")}, "op-ssh+memd"),
-        ({}, "init-only"),
+        (
+            {77: ("exe-init", "guestd"), 78: ("exe-scroll", "")},
+            "guestd",
+            ["guestd"],
+        ),
+        (
+            {77: ("exe-init", "op-ssh"), 79: ("exe-init", "memd")},
+            "op-ssh+memd",
+            ["memd", "op-ssh"],
+        ),
+        ({}, "init-only", []),
         # A role the profile doesn't know: never guessed.
-        ({77: ("exe-init", "something-new")}, "unknown"),
+        ({77: ("exe-init", "something-new")}, "unknown", ["something-new"]),
+        # CR 1645: the operator's own exe-init --version, which the profile
+        # says to run, as exedev or under sudo, isn't resident.
+        (
+            {77: ("exe-init", "guestd"), 90: ("exe-init", "--version", 1000)},
+            "guestd",
+            ["guestd"],
+        ),
+        (
+            {77: ("exe-init", "guestd"), 91: ("exe-init", "--version")},
+            "guestd",
+            ["guestd"],
+        ),
+        # A process named exe-init that isn't the platform's binary.
+        (
+            {92: ("exe-init", "guestd", 0, "/home/exedev/exe-init")},
+            "init-only",
+            [],
+        ),
+        # A role is a word, never a glob: [g]uestd matches the file guestd
+        # in the probe's working directory.
+        ({77: ("exe-init", "[g]uestd")}, "unknown", ["[g]uestd"]),
     ],
-    ids=["guestd", "op-ssh-memd", "init-only", "unknown-role"],
+    ids=[
+        "guestd",
+        "op-ssh-memd",
+        "init-only",
+        "unknown-role",
+        "operators-version",
+        "operators-version-as-root",
+        "not-the-platforms",
+        "role-not-globbed",
+    ],
 )
-def test_an_exe_dev_host_reports_exe_inits_layout(host, procs, layout):
+def test_an_exe_dev_host_reports_exe_inits_layout(host, procs, layout, roles):
     _exe_dev(host)
-    for pid, (comm, role) in procs.items():
-        host.write(f"proc/{pid}/comm", comm + "\n")
-        argv = [f"/exe.dev/bin/{comm}", *([role] if role else [])]
-        host.write(f"proc/{pid}/cmdline", "".join(a + "\0" for a in argv).encode())
+    (host.tmp / "guestd").write_text("")
+    for pid, p in procs.items():
+        _proc(host, pid, *p)
     e = host.run()["environment"]["exe_init"]
     assert e["layout"] == layout
-    assert sorted(r["role"] for r in e["resident"]) == sorted(
-        r for c, r in procs.values() if c == "exe-init"
-    )
+    assert sorted(r["role"] for r in e["resident"]) == roles
+
+
+def test_an_exe_init_whose_binary_cant_be_read_makes_the_layout_unknown(host):
+    # CR 1645: /proc/<pid>/exe is root's alone to read; one even root can't
+    # read is never taken as the platform's binary, or as not.
+    _exe_dev(host)
+    _proc(host, 77, "exe-init", "guestd")
+    (host.root / "proc" / "77" / "exe").unlink()
+    host.write("proc/77/exe", "not a link")
+    out = host.run()
+    assert out["environment"]["exe_init"]["layout"] == "unknown"
+    assert any("/proc/77/exe" in n for n in out["not_read"]), out["not_read"]
 
 
 @AS_ROOT
