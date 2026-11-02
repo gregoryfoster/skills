@@ -215,6 +215,55 @@ def test_cr1642_the_module_run_alone_is_vouched_for(power_map, command):
     assert "power-map-prune.service" in units(check(power_map)["not_disk"])
 
 
+@pytest.mark.parametrize(
+    "key", ["ExecStopPost", "ExecReload", "ExecCondition", "ExecSomethingNew"]
+)
+def test_cr1647_a_deletion_under_any_exec_key_is_a_candidate(power_map, key):
+    """CR 1647: only four Exec keys were read, so a drop-in's
+    ExecStopPost= (or ExecReload=, ExecCondition=) deletion left the unit
+    vouched for. Every Exec* key counts, one the scan doesn't know too."""
+    write(
+        power_map,
+        f"{SYSD}/power-map-prune.service.d/override.conf",
+        f"[Service]\n{key}=/usr/bin/find /var/cache/pm -mtime +7 -delete\n",
+    )
+    out = check(power_map)
+    assert units(out["not_disk"]) == set()
+    assert {"power-map-prune.service", "power-map-prune.timer"} <= units(
+        out["candidates"]
+    )
+
+
+def test_cr1647_its_co_status_check_in_is_vouched_for(power_map):
+    """power-map's real unit carries `ExecStopPost=-/usr/bin/python3
+    …/scripts/status_checkin.py %n`, an HTTP check-in that removes nothing:
+    with every Exec key read, it must not unvouch the unit. Another script
+    in its place does."""
+    out = check(power_map)
+    assert "power-map-prune.service" in units(out["not_disk"])
+    write(
+        power_map,
+        f"{SYSD}/power-map-prune.service.d/override.conf",
+        "[Service]\nExecStopPost=\nExecStopPost=-/usr/bin/python3 "
+        "/home/exedev/power-map/scripts/tidy_cache.py %n\n",
+    )
+    assert "power-map-prune.service" in units(check(power_map)["candidates"])
+
+
+def test_cr1647_a_lookalike_in_exec_stop_post_is_found(tmp_path):
+    """The wider read serves the rest of the scan too: a retire-list tool
+    run from ExecStopPost is found, not missed."""
+    root = tmp_path / "root"
+    write(
+        root,
+        f"{SYSD}/app.service",
+        "[Service]\nExecStart=/srv/app/run\nExecStopPost=/srv/watcher/cleanup.sh\n",
+    )
+    (found,) = check(root)["found"]
+    assert (found["repo"], found["entry"]) == ("watcher", "cleanup.sh")
+    assert found["where"] == f"{SYSD}/app.service:3"
+
+
 def test_the_command_under_another_unit_name_stays_a_candidate(tmp_path):
     """The list vouches for power-map's unit, not for every `scripts.prune`:
     another repo's module of that name may well prune disk."""
