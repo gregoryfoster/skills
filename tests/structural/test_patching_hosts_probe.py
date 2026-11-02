@@ -3328,6 +3328,11 @@ def _proc(host: Host, pid: int, comm: str, args: str, uid: int = 0, exe=None) ->
         # CR 1652: the platform's binary with a role, run by a user, isn't
         # the resident one: root's alone is.
         ({93: ("exe-init", "guestd", 1000)}, "init-only", []),
+        # CR 1654: -v with a role after it is an option, verbose say, not
+        # the query exe-init -v alone would be.
+        ({77: ("exe-init", "-v guestd")}, "unknown", ["-v"]),
+        # The query alone, as root, isn't resident.
+        ({77: ("exe-init", "guestd"), 94: ("exe-init", "-h")}, "guestd", ["guestd"]),
     ],
     ids=[
         "guestd",
@@ -3340,6 +3345,8 @@ def _proc(host: Host, pid: int, comm: str, args: str, uid: int = 0, exe=None) ->
         "role-not-globbed",
         "leading-option",
         "a-users-guestd",
+        "short-option-with-a-role",
+        "short-query-alone",
     ],
 )
 def test_an_exe_dev_host_reports_exe_inits_layout(host, procs, layout, roles):
