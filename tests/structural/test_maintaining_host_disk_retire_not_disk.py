@@ -332,3 +332,25 @@ def test_cr1653_a_prefix_other_than_one_dash_is_a_candidate(power_map, key, comm
     out = check(power_map)
     assert units(out["not_disk"]) == set()
     assert "power-map-prune.service" in units(out["candidates"])
+
+
+@pytest.mark.parametrize(
+    "setting",
+    ["ExecPaths=/home/exedev/power-map", "ExecSearchPath=/usr/local/bin:/usr/bin"],
+)
+def test_cr1655_a_sandbox_or_search_path_setting_keeps_it_vouched_for(
+    power_map, setting
+):
+    """CR 1655: ExecPaths= and ExecSearchPath= start with `Exec` but run
+    nothing, so a hardening drop-in setting one is no reason to unvouch."""
+    write(
+        power_map,
+        f"{SYSD}/power-map-prune.service.d/hardening.conf",
+        f"[Service]\n{setting}\n",
+    )
+    out = check(power_map)
+    assert units(out["not_disk"]) == {
+        "power-map-prune.service",
+        "power-map-prune.timer",
+    }
+    assert units(out["candidates"]) == set()
