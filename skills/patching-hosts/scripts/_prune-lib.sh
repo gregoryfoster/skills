@@ -22,6 +22,8 @@ Usage: . _prune-lib.sh    (sourced by prune-plan.sh and prune.sh; running it
                             apt:<package>[,<package>...]: C_NAME is the list.
                             1 with C_WHY for a package or a name one of the
                             components owns
+  roots_of VAR NAME         a component's package globs, setting no C_*
+  owned_by VAR PACKAGE      the component whose globs match PACKAGE, or empty
   read_packages             PKG_NAME, PKG_STATE: every package dpkg knows;
                             1 when it can't list them
   path_kib VAR PATH         PATH's size in KiB, as root; empty only when it
@@ -74,48 +76,69 @@ PRUNE_APT_RE='^[a-z0-9][a-z0-9+.-]+(,[a-z0-9][a-z0-9+.-]+)*$'
 C_NAME="" C_ROOTS="" C_CONFIG="" C_DATA="" C_GROUP="" C_UNIT="" C_BINARY="" C_WHY=""
 # unit_show sets it by name.
 U_LoadState=""
+# Each component's package globs, apart from its other values, so a check
+# of a package against all six sets no C_* (CR 1650).
+roots_of() {  # <var> <component>: its package globs; empty from outside apt
+  local _ro=""
+  case $2 in
+    docker) _ro='docker.io docker-ce docker-ce-cli docker-ce-rootless-extras docker-buildx-plugin docker-compose-plugin docker-compose containerd containerd.io runc' ;;
+    postgres) _ro='postgresql postgresql-[0-9]* postgresql-contrib postgresql-common' ;;
+    redis) _ro='redis redis-server' ;;
+    nginx) _ro='nginx nginx-common nginx-core nginx-full nginx-light nginx-extras libnginx-mod-*' ;;
+  esac
+  printf -v "$1" '%s' "$_ro"
+}
+
+owned_by() {  # <var> <package>: the component whose globs match it, or empty
+  local _ob_c _ob_r
+  printf -v "$1" '%s' ""
+  for _ob_c in $PRUNE_COMPONENTS; do
+    roots_of _ob_r "$_ob_c"
+    [ -n "$_ob_r" ] || continue
+    if glob_match "$2" "$_ob_r"; then
+      printf -v "$1" '%s' "$_ob_c"
+      return 0
+    fi
+  done
+  return 0
+}
+
 prune_component() {  # <name>
-  local _pc_n _pc_p _pc_c _pc_l
-  C_NAME=$1 C_ROOTS="" C_CONFIG="" C_DATA="" C_GROUP="" C_UNIT="" C_BINARY="" C_WHY=""
+  local _pc_n _pc_p _pc_c
+  C_NAME="" C_ROOTS="" C_CONFIG="" C_DATA="" C_GROUP="" C_UNIT="" C_BINARY="" C_WHY=""
   case $1 in
     apt:*)
-      _pc_n=${1#apt:} C_NAME=""
+      _pc_n=${1#apt:}
       [[ $_pc_n =~ $PRUNE_APT_RE ]] || return 1
-      _pc_l=${_pc_n//,/ }
-      for _pc_c in $PRUNE_COMPONENTS; do
-        if [ "$_pc_n" = "$_pc_c" ]; then
-          C_WHY="$1 would share $_pc_c's knob lines and run directory: use --component $_pc_c"
-          return 1
-        fi
-        prune_component "$_pc_c"
-        for _pc_p in $_pc_l; do
-          glob_match "$_pc_p" "$C_ROOTS" || continue
-          C_NAME="" C_ROOTS="" C_CONFIG="" C_DATA="" C_GROUP="" C_UNIT="" C_BINARY=""
+      if in_words "$_pc_n" "$PRUNE_COMPONENTS"; then
+        C_WHY="$1 would share $_pc_n's knob lines and run directory: use --component $_pc_n"
+        return 1
+      fi
+      for _pc_p in ${_pc_n//,/ }; do
+        owned_by _pc_c "$_pc_p"
+        if [ -n "$_pc_c" ]; then
           C_WHY="$_pc_p is $_pc_c's: use --component $_pc_c, whose guards cover its data, its clusters and its group"
           return 1
-        done
+        fi
       done
-      C_NAME=$_pc_n C_ROOTS=$_pc_l C_CONFIG="" C_DATA="" C_GROUP="" C_UNIT="" C_BINARY="" ;;
-    docker)
-      C_ROOTS='docker.io docker-ce docker-ce-cli docker-ce-rootless-extras docker-buildx-plugin docker-compose-plugin docker-compose containerd containerd.io runc'
-      C_CONFIG=/etc/docker C_DATA='/var/lib/docker /var/lib/containerd' C_GROUP=docker ;;
-    postgres)
-      C_ROOTS='postgresql postgresql-[0-9]* postgresql-contrib postgresql-common'
-      # postgresql-common's purge script deletes its createcluster.conf.
-      C_CONFIG='/etc/postgresql /etc/postgresql-common' C_DATA=/var/lib/postgresql ;;
-    redis)
-      C_ROOTS='redis redis-server'
-      C_CONFIG=/etc/redis C_DATA=/var/lib/redis ;;
-    nginx)
-      C_ROOTS='nginx nginx-common nginx-core nginx-full nginx-light nginx-extras libnginx-mod-*'
-      C_CONFIG=/etc/nginx C_DATA='/var/www /var/log/nginx' ;;
+      C_NAME=$_pc_n C_ROOTS=${_pc_n//,/ } ;;
+    docker | postgres | redis | nginx)
+      C_NAME=$1
+      roots_of C_ROOTS "$1"
+      case $1 in
+        docker) C_CONFIG=/etc/docker C_DATA='/var/lib/docker /var/lib/containerd' C_GROUP=docker ;;
+        # postgresql-common's purge script deletes its createcluster.conf.
+        postgres) C_CONFIG='/etc/postgresql /etc/postgresql-common' C_DATA=/var/lib/postgresql ;;
+        redis) C_CONFIG=/etc/redis C_DATA=/var/lib/redis ;;
+        nginx) C_CONFIG=/etc/nginx C_DATA='/var/www /var/log/nginx' ;;
+      esac ;;
     ollama)
-      C_UNIT=ollama.service C_BINARY=/usr/local/bin/ollama
+      C_NAME=$1 C_UNIT=ollama.service C_BINARY=/usr/local/bin/ollama
       C_DATA=/usr/share/ollama C_GROUP=ollama ;;
     qdrant)
-      C_UNIT=qdrant.service C_BINARY=/usr/local/bin/qdrant
+      C_NAME=$1 C_UNIT=qdrant.service C_BINARY=/usr/local/bin/qdrant
       C_CONFIG=/etc/qdrant C_DATA=/var/lib/qdrant ;;
-    *) C_NAME="" C_WHY=""; return 1 ;;
+    *) return 1 ;;
   esac
 }
 
