@@ -3318,6 +3318,13 @@ def _proc(host: Host, pid: int, comm: str, args: str, uid: int = 0, exe=None) ->
         # A role is a word, never a glob: [g]uestd matches the file guestd
         # in the probe's working directory.
         ({77: ("exe-init", "[g]uestd")}, "unknown", ["[g]uestd"]),
+        # CR 1649: root's resident exe-init with another option first isn't
+        # an invocation to skip: its role is unknown, never init-only.
+        (
+            {77: ("exe-init", "--log-level=debug guestd")},
+            "unknown",
+            ["--log-level=debug"],
+        ),
     ],
     ids=[
         "guestd",
@@ -3328,6 +3335,7 @@ def _proc(host: Host, pid: int, comm: str, args: str, uid: int = 0, exe=None) ->
         "operators-version-as-root",
         "not-the-platforms",
         "role-not-globbed",
+        "leading-option",
     ],
 )
 def test_an_exe_dev_host_reports_exe_inits_layout(host, procs, layout, roles):
