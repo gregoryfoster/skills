@@ -61,14 +61,22 @@ def clean_env() -> dict:
     return env
 
 
+# The stubs' shell: dash where the system has one, else /bin/sh. On Ubuntu
+# that is the same shell, since /bin/sh is dash. On macOS /bin/sh is a launcher
+# that execs bash, and a run makes dozens of stub calls, so dash cut a probe
+# run's CPU by about a fifth there (#538).
+STUB_SHELL = "/bin/dash" if os.access("/bin/dash", os.X_OK) else "/bin/sh"
+
 # Its fields split on the record separator: psql's own -F is the unit
 # separator.
-DISPATCH = """#!/bin/sh
-name=${0##*/}
+DISPATCH = (
+    f"#!{STUB_SHELL}\n"
+    + """name=${0##*/}
 printf '%s\\036%s\\036%s\\n' "$name" "$*" "${APT_CONFIG:-}" >> "$STUB_LOG"
 . "$STUB_CASES/$name"
 exit 1
 """
+)
 _DISPATCHER: list[Path] = []
 
 
