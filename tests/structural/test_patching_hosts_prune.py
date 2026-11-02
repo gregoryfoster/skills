@@ -165,7 +165,9 @@ if cmd == "apt-get":
         )
         sys.exit(100)
     if sim:
+        # What the request takes itself is never "no longer required".
         orphans = gone + [o for n in want for o in pk.get(n, {}).get("orphans", [])]
+        orphans = [o for i, o in enumerate(orphans) if o not in want and o not in orphans[:i]]
         if orphans:
             print(
                 "The following packages were automatically installed and are"
@@ -196,6 +198,15 @@ if cmd == "apt-get":
             "%s %s %s" % (kind, os.environ.get("DEBIAN_FRONTEND", ""), os.environ.get("NEEDRESTART_MODE", ""))
         )
         save()
+    sys.exit(0)
+if cmd == "apt-mark":
+    for n in args[1:]:
+        p = pk.get(n)
+        if p and args[0] == "unhold" and p["state"] == "hi":
+            p["state"] = "ii"
+        elif p and args[0] == "hold" and p["state"] == "ii":
+            p["state"] = "hi"
+    save()
     sys.exit(0)
 if cmd == "systemctl":
     verb = args[0]
@@ -292,6 +303,7 @@ sys.exit(1)
 FAKED = (
     "dpkg-query",
     "apt-get",
+    "apt-mark",
     "apt-cache",
     "systemctl",
     "getent",
@@ -303,7 +315,7 @@ FAKED = (
     "pg_lsclusters",
 )
 # What changes the host, as the stub log records it.
-MUTATING = ("apt-get", "gpasswd", "groupdel", "rm", "tar")
+MUTATING = ("apt-get", "apt-mark", "gpasswd", "groupdel", "rm", "tar")
 SYSTEMCTL_MUTATING = ("stop", "disable", "mask", "start", "enable", "unmask", "restart")
 
 
@@ -422,6 +434,66 @@ OLLAMA = {
     "groups": {"ollama": ["exedev"]},
     "paths": {"/usr/local/bin/ollama": 51200, "/usr/share/ollama": 10},
 }
+# fwupd on the exeuntu images (#370, #392): held by its owner, its three
+# units masked since the image was built, and its motd conffile deleted.
+# Purging it orphans 53 packages (CannObserv/wslcb-licensing-tracker#193),
+# named here by the families that issue lists and padded with stand-ins, so
+# the purge's shape is 54; and apt's own 3 orphans from before stay.
+FWUPD_UNITS = ("fwupd-refresh.service", "fwupd-refresh.timer", "fwupd.service")
+FWUPD_ORPHANS = [
+    "libfwupd2",
+    "fwupd-signed",
+    "secureboot-db",
+    "sbsigntool",
+    "libflashrom1",
+    "libgusb2",
+    "libjcat1",
+    "libxmlb2",
+    "modemmanager",
+    "libmbim-glib4",
+    "libqmi-glib5",
+    "udisks2",
+    "libblockdev3",
+    "bolt",
+    "usb-modeswitch",
+    "tcl",
+    "libtss2-esys-3.0.2-0t64",
+    *(f"fwupd-orphan-{i:02d}" for i in range(36)),
+]
+BEFORE_ORPHANS = ["bridge-utils", "dns-root-data", "dnsmasq-base"]
+# The orphans whose units a disable takes with fwupd's.
+ORPHAN_UNITS = {
+    "modemmanager": _unit(LIB + "ModemManager.service", active="inactive"),
+    "udisks2": _unit(LIB + "udisks2.service", "disabled", "inactive"),
+    "bolt": _unit(LIB + "bolt.service", "static", "inactive"),
+}
+FWUPD = {
+    "packages": {
+        "fwupd": {
+            "state": "hi",
+            "version": "1.9.34",
+            "files": [LIB + u for u in FWUPD_UNITS]
+            + ["/usr/lib/systemd/system-shutdown/fwupd.shutdown"],
+            "conffiles": ["/etc/fwupd/fwupd.conf", "/etc/update-motd.d/85-fwupd"],
+            "orphans": FWUPD_ORPHANS,
+        },
+        **{n: {"state": "ii", "version": "1.0"} for n in FWUPD_ORPHANS},
+        **{
+            n: {"state": "ii", "version": "1.0", "files": [u["fragment"]]}
+            for n, u in ORPHAN_UNITS.items()
+        },
+        **{n: {"state": "ii", "version": "1.0"} for n in BEFORE_ORPHANS},
+    },
+    "units": {
+        **{u: _unit(LIB + u, "masked", "inactive") for u in FWUPD_UNITS},
+        **{u["fragment"].rsplit("/", 1)[1]: u for u in ORPHAN_UNITS.values()},
+    },
+    "autoremovable": BEFORE_ORPHANS,
+    "groups": {},
+    # The deleted conffile isn't there to keep.
+    "paths": {"/etc/fwupd/fwupd.conf": 4},
+}
+FWUPD_PURGE = "apt-get purge -y -o APT::Get::AutomaticRemove=false fwupd"
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -622,7 +694,15 @@ def test_help_names_the_stages_and_the_exit_codes():
     for script, words in (
         (
             PLAN,
-            ("--component", "--out", "apt-get -s remove", "debconf", "2 usage error"),
+            (
+                "--component",
+                "apt:PACKAGE[,PACKAGE...]",
+                "--take-orphans",
+                "--out",
+                "apt-get -s remove",
+                "debconf",
+                "2 usage error",
+            ),
         ),
         (
             PRUNE,
@@ -632,6 +712,7 @@ def test_help_names_the_stages_and_the_exit_codes():
                 "remove",
                 "purge",
                 "--purge-data",
+                "--release-hold",
                 "never an autoremove",
                 "3 refused",
             ),
@@ -654,6 +735,18 @@ def test_help_names_the_stages_and_the_exit_codes():
     [
         (PLAN, [], "--component is required"),
         (PLAN, ["--component", "apache2"], "one the probe knows"),
+        # An apt package by its Debian name, and nothing a shell or a glob
+        # would read as more.
+        (PLAN, ["--component", "apt:"], "apt:<package>"),
+        (PLAN, ["--component", "apt:fwupd,"], "apt:<package>"),
+        (PLAN, ["--component", "apt:Fwupd"], "apt:<package>"),
+        (PLAN, ["--component", "apt:fwupd*"], "apt:<package>"),
+        (PLAN, ["--component", "ollama", "--take-orphans"], "outside apt"),
+        (
+            PRUNE,
+            ["--stage", "disable", "--plan", "p", "--release-hold"],
+            "--release-hold belongs to --stage purge",
+        ),
         (PRUNE, ["--plan", "p"], "--stage takes"),
         (PRUNE, ["--stage", "disable"], "--plan FILE is required"),
         (
@@ -1458,3 +1551,184 @@ def test_a_plan_its_unchanged_host_still_matches_is_good_until_it_is_a_day_old(
     host.plan("nginx")
     host.clock = TUE_1530 + DAY - 60
     assert host.prune("disable")["verdict"]["ok"] is True
+
+
+# --- an apt package outside the six (#370): fwupd on exeuntu --------------------
+
+
+def _fwupd(tmp_path, *lines: str, orphans: int = len(FWUPD_ORPHANS)) -> Host:
+    """fwupd as the exeuntu images ship it. A case that needs only some of
+    its orphans takes fewer: each costs the fake host two calls a run."""
+    host = _host(tmp_path, FWUPD, "apt:fwupd").declare(*lines)
+    host.host_state["packages"]["fwupd"]["orphans"] = FWUPD_ORPHANS[:orphans]
+    return host
+
+
+def _fwupd_units(orphans: list[str]) -> list[str]:
+    """The disable's order: fwupd's timer, then each package's services."""
+    units = ["fwupd-refresh.timer", "fwupd-refresh.service", "fwupd.service"]
+    for n in orphans:
+        if n in ORPHAN_UNITS:
+            units.append(ORPHAN_UNITS[n]["fragment"].removeprefix(LIB))
+    return units
+
+
+def test_an_apt_package_is_planned_by_name_its_orphans_only_when_asked(tmp_path):
+    host = _fwupd(tmp_path)
+    out = host.plan("apt:fwupd")
+    assert out["prune_plan"]["component"] == "apt:fwupd"
+    # The knob's stage lines and the run's directory use the package list.
+    assert out["prune_plan"]["name"] == "fwupd"
+    assert [u["unit"] for u in out["units"]] == _fwupd_units([])
+    assert {u["enabled"] for u in out["units"]} == {"masked"}
+    pk = out["packages"]
+    assert pk["roots"] == ["fwupd"] and pk["held"] == ["fwupd"]
+    assert [p["package"] for p in pk["purge"]] == ["fwupd"]
+    assert pk["orphans"] == []
+    # Advisory without the flag: a later autoremove's, never a stage's.
+    assert out["autoremove_would_take"] == FWUPD_ORPHANS
+    # The image deleted the motd conffile: there's nothing of it to keep.
+    assert out["conffiles"] == ["/etc/fwupd/fwupd.conf"]
+    assert out["paths"] == [] and out["group"]["name"] is None
+    assert out["stage"]["next"] == "disable"
+    assert host.changes() == []
+
+    out = host.plan("apt:fwupd", "--take-orphans")
+    pk = out["packages"]
+    assert pk["orphans"] == FWUPD_ORPHANS
+    # 54: fwupd and its 53 orphans, each by name, and not apt's 3 from before.
+    assert [p["package"] for p in pk["purge"]] == ["fwupd", *FWUPD_ORPHANS]
+    assert [p["package"] for p in pk["remove"]] == ["fwupd", *FWUPD_ORPHANS]
+    assert pk["dragged_along"] == []
+    assert out["autoremove_would_take"] == []
+    # Their units are the disable's too.
+    assert [u["unit"] for u in out["units"]] == _fwupd_units(FWUPD_ORPHANS)
+    plan = (tmp_path / "apt:fwupd.plan").read_text().splitlines()
+    assert "orphans taken" in plan and "orphan libfwupd2" in plan
+    assert "held fwupd" in plan
+    assert not [x for x in plan if x.split(" ")[-1] in BEFORE_ORPHANS]
+
+
+def test_units_the_image_masked_are_recorded_and_not_disabled_again(tmp_path):
+    host = _fwupd(tmp_path)
+    host.plan("apt:fwupd")
+    out = host.prune("disable")
+    assert out["verdict"] == {"ok": True, "why": []}
+    # The record is the whole stage: every unit was masked already.
+    assert out["actions"] == [f"write {host.run_dir}/masks"]
+    assert host.changes() == []
+    assert (host.run_dir / "masks").read_text() == "".join(
+        f"masked {u}\n" for u in _fwupd_units([])
+    )
+    assert oct((host.run_dir / "masks").stat().st_mode & 0o777) == "0o600"
+    assert any("exception disabled:fwupd 2026-10-29 <reason>" in n for n in out["next"])
+    assert any("Already masked" in n for n in out["next"])
+
+
+def test_a_disable_with_the_orphans_takes_their_units_and_records_the_masks(
+    tmp_path,
+):
+    orphans = FWUPD_ORPHANS[:14]
+    host = _fwupd(tmp_path, orphans=14)
+    host.plan("apt:fwupd", "--take-orphans")
+    out = host.prune("disable")
+    assert out["verdict"]["ok"] is True
+    theirs = " ".join(_fwupd_units(orphans)[3:])
+    assert theirs == "ModemManager.service udisks2.service bolt.service"
+    assert out["actions"] == [
+        f"systemctl stop -- {theirs}",
+        f"systemctl disable -- {theirs}",
+        f"systemctl mask -- {theirs}",
+        f"write {host.run_dir}/masks",
+    ]
+    assert host.changes() == _ran(out)
+    for u in _fwupd_units(orphans):
+        assert host.host_state["units"][u]["enabled"] == "masked", u
+
+
+def test_fwupd_purges_exactly_its_54_with_the_hold_released_just_before(tmp_path):
+    host = _fwupd(tmp_path, f"disabled:fwupd {PAST} the image masked it at build")
+    host.plan("apt:fwupd", "--take-orphans")
+    assert host.prune("savepoint")["verdict"]["ok"] is True
+    # The deleted conffile isn't asked of tar.
+    assert f"tar -cf {host.run_dir}/config.tar /etc/fwupd/fwupd.conf" in host.changes()
+
+    host.plan("apt:fwupd", "--take-orphans")
+    out = host.prune("purge", "--savepoint", str(host.run_dir), "--release-hold")
+    assert out["verdict"] == {"ok": True, "why": []}, out["verdict"]
+    # The release is the command just before the purge: no bulk between.
+    assert host.changes()[-2:] == [
+        "apt-mark unhold fwupd",
+        " ".join([FWUPD_PURGE, *FWUPD_ORPHANS]),
+    ]
+    assert set(host.host_state["packages"]) == set(BEFORE_ORPHANS)
+    assert any("exception purged:fwupd" in n for n in out["next"])
+
+
+def test_a_held_package_is_purged_only_with_release_hold(tmp_path):
+    host = _fwupd(tmp_path, f"disabled:fwupd {PAST} soaked", orphans=0)
+    host.plan("apt:fwupd")
+    host.prune("savepoint")
+    host.plan("apt:fwupd")
+    out = host.prune("purge", "--savepoint", str(host.run_dir), rc=3)
+    assert any(
+        "apt-mark holds fwupd" in r and "--release-hold" in r for r in out["refused"]
+    ), out["refused"]
+    assert not [c for c in host.changes() if c.startswith(("apt-get", "apt-mark"))]
+
+    # Nothing held: a flag that would release nothing is another approval.
+    host.host_state["packages"]["fwupd"]["state"] = "ii"
+    host.plan("apt:fwupd")
+    out = host.prune("purge", "--savepoint", str(host.run_dir), "--release-hold", rc=3)
+    assert any("no package the plan takes is held" in r for r in out["refused"]), out[
+        "refused"
+    ]
+
+
+def test_a_purge_that_fails_after_the_release_says_to_hold_it_again(tmp_path):
+    host = _fwupd(tmp_path, f"disabled:fwupd {PAST} soaked", orphans=0)
+    host.plan("apt:fwupd")
+    host.prune("savepoint")
+    host.plan("apt:fwupd")
+    host.host_state["fail"] = "Sub-process /usr/bin/dpkg returned an error code (1)"
+    out = host.prune("purge", "--savepoint", str(host.run_dir), "--release-hold", rc=1)
+    assert [d["exit"] for d in out["done"]] == [0, 100]
+    assert any("apt-mark hold fwupd" in n for n in out["next"]), out["next"]
+
+
+def _another_orphan(s: dict) -> None:
+    s["packages"]["libgcab-1.0-0"] = {"state": "ii", "version": "1"}
+    s["packages"]["fwupd"]["orphans"].append("libgcab-1.0-0")
+
+
+@pytest.mark.parametrize(
+    "change, differs",
+    [
+        # apt now orphans one more: the simulation differs from the plan.
+        (_another_orphan, "> orphan libgcab-1.0-0"),
+        # A hold placed since: the approval didn't see it.
+        (lambda s: s["packages"]["libfwupd2"].update(state="hi"), "> held libfwupd2"),
+    ],
+    ids=["another-orphan", "a-new-hold"],
+)
+def test_orphans_or_holds_that_differ_from_the_plan_are_drift(
+    tmp_path, change, differs
+):
+    host = _fwupd(tmp_path, f"disabled:fwupd {PAST} soaked", orphans=3)
+    host.plan("apt:fwupd", "--take-orphans")
+    host.prune("savepoint")
+    host.plan("apt:fwupd", "--take-orphans")
+    change(host.host_state)
+    out = host.prune("purge", "--savepoint", str(host.run_dir), "--release-hold", rc=3)
+    assert differs in out["gate"]["drift"]["differs"], out["gate"]
+    assert not [c for c in host.changes() if c.startswith(("apt-get", "apt-mark"))]
+
+
+def test_a_remove_of_a_plan_that_takes_orphans_is_refused(tmp_path):
+    # Their config would stay behind as residue no later plan names.
+    host = _fwupd(tmp_path, f"disabled:fwupd {PAST} soaked", orphans=3)
+    host.host_state["packages"]["fwupd"]["state"] = "ii"
+    host.plan("apt:fwupd", "--take-orphans")
+    out = host.prune("remove", rc=3)
+    assert any("take the savepoint path" in r for r in out["refused"]), out["refused"]
+    assert host.changes() == []
