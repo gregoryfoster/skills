@@ -39,8 +39,8 @@ JSON says which entries are by hand only.
               are never offered
   not_disk    units that look like disk tooling but are known not to be
               (references/retiring.md names them): repo and why, beside a
-              candidate's keys. Only that unit name running nothing but its
-              known command; anything else is a candidate
+              candidate's keys. Only that unit name, every Exec* line one
+              of its known commands; anything else is a candidate
   by_hand     retire-list entries with no fixed name to match
   canonical   whether the GC is installed, its VERSION, and each timer:
               enabled, disabled, masked (it never runs, whatever links

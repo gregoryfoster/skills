@@ -977,8 +977,10 @@ read_exe_init() {
     cmdline_of args "$pid"
     role=""
     read -r _ role _ <<<"$args" || true
-    # An option, such as --version, is an invocation, not a role.
-    case $role in -*) continue ;; esac
+    # A query, such as the profile's exe-init --version, is an invocation,
+    # not a resident. Any other leading option is a role the layout doesn't
+    # know, so it reads unknown (CR 1649).
+    case $role in --version | -v | --help | -h) continue ;; esac
     uid=""
     if [ -r "$P_ROOT/proc/$pid/status" ]; then
       while read -r k v _; do

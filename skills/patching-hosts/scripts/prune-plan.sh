@@ -66,7 +66,9 @@ Exit codes:
      list, the conffiles or a purge script. Only
      prune_plan and error are printed, and no plan is written. Or --out
      couldn't be written
-  2  usage error, an unreadable knob, or a library missing: nothing on
+  2  usage error, among them an apt: component whose removal, or
+     with --take-orphans whose orphans, take a package one of the six
+     owns; an unreadable knob, or a library missing: nothing on
      stdout
 USAGE
 }
@@ -181,6 +183,10 @@ plan_error() {  # <why>
 
 _rc=0
 derive "$component" || _rc=$?
+if [ "$_rc" -eq 3 ]; then
+  echo "ERROR --component $component: $D_WHY" >&2
+  exit 2
+fi
 if [ "$_rc" -ne 0 ]; then plan_error "$D_WHY"; fi
 
 # --- what it prints -----------------------------------------------------------

@@ -80,7 +80,8 @@ while a keep: exception stands; when the host no longer matches the plan;
 for remove or purge, when apt would install anything, while a package
 manager runs, dpkg --audit isn't clean or one of its packages is held
 (for a purge, unless --release-hold), or of a component from outside apt;
-for a remove of a plan that takes orphans; for --release-hold with
+for a remove of a plan that takes orphans; for an apt: component whose
+removal now takes a package one of the six owns; for --release-hold with
 nothing held; for a --purge-data path the plan doesn't
 name; for a purge whose packages' purge scripts can't be read, or delete a
 data path --purge-data doesn't name, or of postgres while a cluster's data
@@ -410,7 +411,10 @@ gate_drift() {
   local rc=0 now want o="" l a=""
   [ "$PLAN_OK" -eq 1 ] || return 0
   derive "$component" || rc=$?
-  if [ "$rc" -ne 0 ]; then
+  if [ "$rc" -eq 3 ]; then
+    refuse "$D_WHY"
+    return 0
+  elif [ "$rc" -ne 0 ]; then
     refuse "the host couldn't be read again: $D_WHY"
     return 0
   fi

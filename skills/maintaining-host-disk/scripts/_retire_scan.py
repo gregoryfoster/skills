@@ -38,17 +38,20 @@ BY_HAND = (
     ),
 )
 # Units LOOKALIKE would offer that are known not to be disk tooling, as
-# (repo, unit name without its suffix, the module its command runs, why). A
+# (repo, unit name without its suffix, what its Exec lines may run, why). A
 # service is reported under not_disk, apart from the candidates, only with
-# that name and every Exec line it has running that module and nothing else
-# (runs_only); a timer only when the service it starts is. Anything else
-# stays a candidate (#548, CR 1642).
+# that name and every Exec* line it has, drop-ins merged, running one of
+# those and nothing else (runs_only); a timer only when the service it
+# starts is. Anything else, an Exec* key EXEC_KEYS doesn't know included,
+# stays a candidate (#548, CR 1642, CR 1647).
 # references/retiring.md names each one; a test holds them together.
 NOT_DISK = (
     (
         "power-map",
         "power-map-prune",
-        "scripts.prune",
+        # The module, and the co-status check-in every power-map timer's
+        # service runs from ExecStopPost=: an HTTP POST that removes nothing.
+        ("-m scripts.prune", "scripts/status_checkin.py"),
         "deletes database rows past their TTL (tombstones, the request log), "
         "not disk; power-map's disk tooling is prune_disk.py",
     ),
@@ -69,7 +72,17 @@ GC_DIR = "usr/local/lib/cannobserv/disk-gc"
 LOOKALIKE = re.compile(
     r"disk|prune|clean|hygiene|headroom|vacuum|(^|[^a-z])gc([^a-z]|$)", re.I
 )
-EXEC_KEYS = ("ExecStart", "ExecStartPre", "ExecStartPost", "ExecStop")
+# Every command a service's systemd runs, ExecStart first so `where` names
+# it (CR 1647: a deletion in ExecStopPost= is as real as one in ExecStart=).
+EXEC_KEYS = (
+    "ExecStart",
+    "ExecStartPre",
+    "ExecStartPost",
+    "ExecStop",
+    "ExecStopPost",
+    "ExecReload",
+    "ExecCondition",
+)
 REPORT_LINES = 500
 MAX_GC_JSON = 4 * 1024 * 1024
 UNREADABLE = []
@@ -292,27 +305,37 @@ TOKEN_RES = {
     for tok in tokens
 }
 
-# A module run and nothing else: `[uv run] <python> -m <module> [args]`,
-# each arg a plain word. No shell, no `;` (systemd's own command separator
-# in older releases), no `&&` or `|`, so no second command rides along.
+# One known run and nothing else: `[-][uv run] <python> -m <module> [args]`
+# or `[-][uv run] <python> /abs/<script> [args]`, each arg a plain word. No
+# shell, no `;` (systemd's own command separator in older releases), no `&&`
+# or `|`, so no second command rides along. `-` is systemd's
+# ignore-the-exit prefix; any other prefix fails.
 PYTHON = re.compile(r"(?:\S*/)?python3?(?:\.\d+)?\Z")
 PLAIN_ARG = re.compile(r"[\w./=:,@%+-]+\Z")
 
 
-def runs_only(command, module):
-    """Whether an Exec line runs `module` with python, and nothing else."""
+def runs_only(command, runs):
+    """Whether an Exec line runs one of `runs` with python, and nothing
+    else: `-m <module>`, or a script by an absolute path ending in it."""
     try:
         words = shlex.split(command)
     except ValueError:
         return False
+    if words and words[0].startswith("-"):
+        words[0] = words[0][1:]
     if words[:2] and os.path.basename(words[0]) == "uv" and words[1:2] == ["run"]:
         words = words[2:]
-    return (
-        len(words) >= 3
-        and PYTHON.match(words[0]) is not None
-        and words[1:3] == ["-m", module]
-        and all(PLAIN_ARG.match(w) for w in words[3:])
-    )
+    if not words or PYTHON.match(words[0]) is None:
+        return False
+    for run in runs:
+        if run.startswith("-m "):
+            n, ok = 3, words[1:3] == run.split()
+        else:
+            script = words[1] if len(words) > 1 else ""
+            n, ok = 2, script.startswith("/") and script.endswith("/" + run)
+        if ok and all(PLAIN_ARG.match(w) for w in words[n:]):
+            return True
+    return False
 
 
 def match(command, stem=None):
@@ -334,12 +357,19 @@ def not_disk(units, scope, name):
     if name.endswith(".timer"):
         target = setting(unit, "Unit") or name[: -len(".timer")] + ".service"
         return not_disk(units, scope, target) if target.endswith(".service") else None
+    texts = [unit["text"]] + [t for _w, t in unit.get("dropins", [])]
+    if any(
+        k.startswith("Exec") and k not in EXEC_KEYS
+        for text in texts
+        for k, _v, _n in directives(text)
+    ):
+        return None
     lines = exec_lines(unit)
-    for repo, own, module, why in NOT_DISK:
+    for repo, own, runs, why in NOT_DISK:
         if (
             name == f"{own}.service"
             and lines
-            and all(runs_only(cmd, module) for _where, cmd in lines)
+            and all(runs_only(cmd, runs) for _where, cmd in lines)
         ):
             return repo, why
     return None
