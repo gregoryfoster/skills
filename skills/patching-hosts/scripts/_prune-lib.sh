@@ -19,7 +19,9 @@ Usage: . _prune-lib.sh    (sourced by prune-plan.sh and prune.sh; running it
   prune_component NAME      C_NAME, C_ROOTS, C_CONFIG, C_DATA, C_GROUP, and
                             for one from outside apt C_UNIT and C_BINARY; 1
                             for a name the probe doesn't know. NAME may be
-                            apt:<package>[,<package>...]: C_NAME is the list
+                            apt:<package>[,<package>...]: C_NAME is the list.
+                            1 with C_WHY for a package or a name one of the
+                            components owns
   read_packages             PKG_NAME, PKG_STATE: every package dpkg knows;
                             1 when it can't list them
   path_kib VAR PATH         PATH's size in KiB, as root; empty only when it
@@ -63,18 +65,37 @@ PRUNE_ORPHANS=0
 # has no config or data directory of its own. C_NAME is what the knob's
 # stage lines and the run's directory call it: the list after apt:, as
 # wslcb's hand-run purged:fwupd did. Each is a Debian package name, so no
-# word of it is a glob or anything a shell reads as more.
+# word of it is a glob or anything a shell reads as more. A package one of
+# the six owns is that component's, never apt:'s: as apt:postgresql-16 its
+# purge would drop every cluster with no data guard, and its group would
+# stay (CR 1641). Nor may the name be a component's, whose knob lines and
+# run directory it would share. C_WHY says which to use instead.
 PRUNE_APT_RE='^[a-z0-9][a-z0-9+.-]+(,[a-z0-9][a-z0-9+.-]+)*$'
-C_NAME="" C_ROOTS="" C_CONFIG="" C_DATA="" C_GROUP="" C_UNIT="" C_BINARY=""
+C_NAME="" C_ROOTS="" C_CONFIG="" C_DATA="" C_GROUP="" C_UNIT="" C_BINARY="" C_WHY=""
 # unit_show sets it by name.
 U_LoadState=""
 prune_component() {  # <name>
-  C_NAME=$1 C_ROOTS="" C_CONFIG="" C_DATA="" C_GROUP="" C_UNIT="" C_BINARY=""
+  local _pc_n _pc_p _pc_c _pc_l
+  C_NAME=$1 C_ROOTS="" C_CONFIG="" C_DATA="" C_GROUP="" C_UNIT="" C_BINARY="" C_WHY=""
   case $1 in
     apt:*)
-      C_NAME=${1#apt:}
-      [[ $C_NAME =~ $PRUNE_APT_RE ]] || { C_NAME=""; return 1; }
-      C_ROOTS=${C_NAME//,/ } ;;
+      _pc_n=${1#apt:} C_NAME=""
+      [[ $_pc_n =~ $PRUNE_APT_RE ]] || return 1
+      _pc_l=${_pc_n//,/ }
+      for _pc_c in $PRUNE_COMPONENTS; do
+        if [ "$_pc_n" = "$_pc_c" ]; then
+          C_WHY="$1 would share $_pc_c's knob lines and run directory: use --component $_pc_c"
+          return 1
+        fi
+        prune_component "$_pc_c"
+        for _pc_p in $_pc_l; do
+          glob_match "$_pc_p" "$C_ROOTS" || continue
+          C_NAME="" C_ROOTS="" C_CONFIG="" C_DATA="" C_GROUP="" C_UNIT="" C_BINARY=""
+          C_WHY="$_pc_p is $_pc_c's: use --component $_pc_c, whose guards cover its data, its clusters and its group"
+          return 1
+        done
+      done
+      C_NAME=$_pc_n C_ROOTS=$_pc_l C_CONFIG="" C_DATA="" C_GROUP="" C_UNIT="" C_BINARY="" ;;
     docker)
       C_ROOTS='docker.io docker-ce docker-ce-cli docker-ce-rootless-extras docker-buildx-plugin docker-compose-plugin docker-compose containerd containerd.io runc'
       C_CONFIG=/etc/docker C_DATA='/var/lib/docker /var/lib/containerd' C_GROUP=docker ;;
@@ -94,7 +115,7 @@ prune_component() {  # <name>
     qdrant)
       C_UNIT=qdrant.service C_BINARY=/usr/local/bin/qdrant
       C_CONFIG=/etc/qdrant C_DATA=/var/lib/qdrant ;;
-    *) C_NAME=""; return 1 ;;
+    *) C_NAME="" C_WHY=""; return 1 ;;
   esac
 }
 

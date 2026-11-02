@@ -741,6 +741,22 @@ def test_help_names_the_stages_and_the_exit_codes():
         (PLAN, ["--component", "apt:fwupd,"], "apt:<package>"),
         (PLAN, ["--component", "apt:Fwupd"], "apt:<package>"),
         (PLAN, ["--component", "apt:fwupd*"], "apt:<package>"),
+        # CR 1641: a package one of the six owns is that component's, whose
+        # guards cover its data, its clusters and its group.
+        (PLAN, ["--component", "apt:postgresql-16"], "use --component postgres"),
+        (
+            PLAN,
+            [
+                "--component",
+                "apt:postgresql,postgresql-16,postgresql-common,postgresql-client-16",
+            ],
+            "use --component postgres",
+        ),
+        (PLAN, ["--component", "apt:fwupd,containerd"], "use --component docker"),
+        (PLAN, ["--component", "apt:libnginx-mod-stream"], "use --component nginx"),
+        # Its name would share the component's knob lines and run directory.
+        (PLAN, ["--component", "apt:redis"], "use --component redis"),
+        (PLAN, ["--component", "apt:qdrant"], "use --component qdrant"),
         (PLAN, ["--component", "ollama", "--take-orphans"], "outside apt"),
         (
             PRUNE,
@@ -1392,6 +1408,16 @@ def _drift_package(h):
             lambda h: h.declare(f"removed:nginx {PAST} soaked"),
             "nginx-common's purge script deletes /var/log/nginx (postrm line 3",
         ),
+        # CR 1641: a plan naming a component's package as apt: is no plan.
+        (
+            "disable",
+            lambda h: (h.tmp / "nginx.plan").write_text(
+                (h.tmp / "nginx.plan")
+                .read_text()
+                .replace("component nginx", "component apt:nginx-common")
+            ),
+            "nginx-common is nginx's: use --component nginx",
+        ),
     ],
     ids=[
         "report-only",
@@ -1415,6 +1441,7 @@ def _drift_package(h):
         "drift",
         "a-removal-that-installs",
         "a-purge-script-deleting-data",
+        "a-components-package-as-apt",
     ],
 )
 def test_a_stage_it_shouldnt_run_is_refused(tmp_path, stage, setup, refused):

@@ -140,6 +140,7 @@ ME=prune-plan
 export LC_ALL=C
 
 if ! prune_component "$component"; then
+  if [ -n "$C_WHY" ]; then echo "ERROR --component $C_WHY" >&2; exit 2; fi
   echo "ERROR --component takes one the probe knows, $PRUNE_COMPONENTS, or apt:<package>[,<package>...] by its Debian name" >&2
   exit 2
 fi
