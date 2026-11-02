@@ -77,8 +77,10 @@ The primitives these scripts reach a host through:
                             returns 1, every U_<PROP> empty, when it can't
   redis_conf UNIT           RC_* := what a Redis unit's file, read as root,
                             and its own arguments set: port, bind, socket,
-                            logfile, dir, dbfilename, save, appendonly, and
-                            whether an aclfile or an include is there
+                            logfile, dir, dbfilename, save, appendonly,
+                            whether an aclfile or a user line sets the users
+                            (RC_ACL_WHY says which), and whether an include
+                            is there
   redis_persistence VAR     aof, rdb, none or unknown, from redis_conf
   hold_group_versions VAR SIM
                             "<pkg>=<version>" for each pending package a hold
@@ -1203,10 +1205,15 @@ qdrant_loss() {  # <url> <key-file> <the counts before>
 #   keeps its default save points, and save lines add up (measured on 7.0).
 # - RC_ACL is 1 where an aclfile or a user line sets the users: requirepass
 #   then isn't what logs in, and a login with it only adds to ACL LOG.
-# - RC_INCLUDE is 1 where an include line may set any of it, and RC_READ is
-#   0 where the unit names a file root couldn't read.
+#   RC_ACL_WHY says which, for a message: host 6's redis.conf had an inline
+#   user line and no aclfile, and a refusal naming an aclfile sent its owner
+#   looking for one (#458).
+# - RC_INCLUDE is 1 where an include line may set any of it, RC_INCLUDE_IN
+#   says where the first one is, and RC_READ is 0 where the unit names a
+#   file root couldn't read. An included file isn't read.
 RC_CONF="" RC_PORT="" RC_BIND="" RC_SOCK="" RC_LOGFILE="" RC_DIR="" RC_DBFILENAME=""
-RC_SAVE="" RC_AOF="" RC_ACL=0 RC_INCLUDE=0 RC_READ=1
+RC_SAVE="" RC_AOF="" RC_ACL=0 RC_ACL_WHY="" RC_INCLUDE=0 RC_INCLUDE_IN="" RC_READ=1
+_RC_ACLFILE=0 _RC_USER_IN=""
 # unit_show sets them by name.
 U_ExecStart="" U_MainPID=""
 _rc_unq() {  # <var> <value>: one pair of quotes off, as Redis reads it
@@ -1217,7 +1224,7 @@ _rc_unq() {  # <var> <value>: one pair of quotes off, as Redis reads it
   esac
   printf -v "$1" '%s' "$_ru"
 }
-_rc_set() {  # <key> <value>
+_rc_set() {  # <key> <value> <where it's set, for a message>
   local _rs
   _rc_unq _rs "$2"
   case $1 in
@@ -1230,15 +1237,17 @@ _rc_set() {  # <key> <value>
     [Ss][Aa][Vv][Ee]) if [ -n "$_rs" ]; then RC_SAVE=on; else RC_SAVE=off; fi ;;
     [Aa][Pp][Pp][Ee][Nn][Dd][Oo][Nn][Ll][Yy])
       case $_rs in [Yy][Ee][Ss]) RC_AOF=yes ;; *) RC_AOF=no ;; esac ;;
-    [Aa][Cc][Ll][Ff][Ii][Ll][Ee] | [Uu][Ss][Ee][Rr]) RC_ACL=1 ;;
-    [Ii][Nn][Cc][Ll][Uu][Dd][Ee]) RC_INCLUDE=1 ;;
+    [Aa][Cc][Ll][Ff][Ii][Ll][Ee]) RC_ACL=1 _RC_ACLFILE=1 ;;
+    [Uu][Ss][Ee][Rr]) RC_ACL=1 _RC_USER_IN=${_RC_USER_IN:-$3} ;;
+    [Ii][Nn][Cc][Ll][Uu][Dd][Ee]) RC_INCLUDE=1 RC_INCLUDE_IN=${RC_INCLUDE_IN:-$3} ;;
   esac
 }
 redis_conf() {  # <unit>
   local _rf_t="" _rf_w _rf_l _rf_k _rf_v _rf_i
   local -a _rf_a=()
   RC_CONF="" RC_PORT="" RC_BIND="" RC_SOCK="" RC_LOGFILE="" RC_DIR=""
-  RC_DBFILENAME=dump.rdb RC_SAVE=on RC_AOF=no RC_ACL=0 RC_INCLUDE=0 RC_READ=1
+  RC_DBFILENAME=dump.rdb RC_SAVE=on RC_AOF=no RC_ACL=0 RC_ACL_WHY="" RC_INCLUDE=0 RC_INCLUDE_IN="" RC_READ=1
+  _RC_ACLFILE=0 _RC_USER_IN=""
   if unit_show "$1" ExecStart; then
     _rf_t=${U_ExecStart#*argv[]=}
     _rf_t=${_rf_t%% ;*}
@@ -1253,20 +1262,27 @@ redis_conf() {  # <unit>
     while IFS= read -r _rf_l; do
       read -r _rf_k _rf_v _rf_w <<<"$_rf_l" || true
       case $_rf_k in '' | '#'*) continue ;; esac
-      _rc_set "$_rf_k" "$_rf_v"
+      _rc_set "$_rf_k" "$_rf_v" "$RC_CONF"
     done <<<"$_rf_t"
   fi
   for ((_rf_i = 0; _rf_i < ${#_rf_a[@]}; _rf_i++)); do
     _rf_w=${_rf_a[_rf_i]}
     case $_rf_w in
-      --port | --bind | --unixsocket | --logfile | --dir | --dbfilename | --save | --appendonly | --aclfile | --include)
+      --port | --bind | --unixsocket | --logfile | --dir | --dbfilename | --save | --appendonly | --aclfile | --user | --include)
         # An empty argument (--save "") reads as none at all: the next
         # word is then another option, not its value.
         _rf_v=${_rf_a[_rf_i + 1]:-}
         case $_rf_v in --*) _rf_v="" ;; esac
-        _rc_set "${_rf_w#--}" "$_rf_v" ;;
+        _rc_set "${_rf_w#--}" "$_rf_v" "$1's ExecStart" ;;
     esac
   done
+  if [ "$_RC_ACLFILE" -eq 1 ] && [ -n "$_RC_USER_IN" ]; then
+    RC_ACL_WHY="its aclfile and a user line in $_RC_USER_IN set the users"
+  elif [ "$_RC_ACLFILE" -eq 1 ]; then
+    RC_ACL_WHY="its aclfile sets the users"
+  elif [ -n "$_RC_USER_IN" ]; then
+    RC_ACL_WHY="a user line in $_RC_USER_IN sets the users"
+  fi
 }
 
 # How a Redis persists what it holds, from redis_conf: aof under appendonly

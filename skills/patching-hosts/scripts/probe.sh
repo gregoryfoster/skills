@@ -3567,6 +3567,45 @@ read_backups() {
   done
 }
 
+# A datastore redis line with no user, on a Redis whose config sets the
+# users (an aclfile or a user line), has no login: the recovery point
+# refuses its dump unless a backup line covers it, and the chain refuses
+# it where its stop wouldn't persist it. Raised here, before the run (#458):
+# host 6 learned it at the recovery point, 3 hours before its window. The
+# knob's line is the fix, so no exception covers it.
+read_redis_logins() {
+  local r u p needs="" covers=""
+  local -a f=()
+  for r in ${KNOB_BACKUP[@]+"${KNOB_BACKUP[@]}"}; do
+    backup_covers "$r"
+    covers="$covers $BC_COVERS"
+  done
+  for r in ${KNOB_DATASTORE[@]+"${KNOB_DATASTORE[@]}"}; do
+    IFS=$KNOB_US read -r -a f <<<"$r"
+    if [ "${f[0]}" != redis ] || [ -n "${f[2]:-}" ]; then continue; fi
+    unit_name u "${f[1]}"
+    redis_conf "$u"
+    if [ "$RC_READ" -eq 0 ]; then
+      not_read "whether $u's config sets its users, so that its datastore line needs a user: $RC_CONF couldn't be read as root"
+      continue
+    elif [ "$RC_ACL" -ne 1 ]; then
+      if [ "$RC_INCLUDE" -eq 1 ]; then
+        not_read "whether $u's users are set in a file $RC_INCLUDE_IN includes, which isn't read: if they are, its requirepass logs nobody in, and its datastore line needs a user and key file"
+      fi
+      continue
+    fi
+    needs=""
+    in_words "$u" "$covers" || needs="the recovery point can't BGSAVE it for its dump"
+    redis_persistence p
+    case $p in
+      none) needs="${needs:+$needs, and }the reboot chain can't SAVE it before a stop that wouldn't persist it" ;;
+      unknown) needs="${needs:+$needs, and }the reboot chain can't SAVE it before a stop that may not persist it" ;;
+    esac
+    [ -n "$needs" ] || continue
+    finding knob "redis-login:$u" "" "datastore redis ${f[1]} (knob line ${f[3]}) names no user, and $RC_ACL_WHY, so its requirepass isn't one to try: $needs, so each refuses. Give the line a user and key file, datastore redis ${f[1]} <user> <key-file> (knob.md)."
+  done
+}
+
 health_says() {  # <var> <exit status>: how a knob check ended, in words
   if [ "$2" = 124 ]; then
     printf -v "$1" 'times out after %s s' "$KNOB_CMD_TIMEOUT"
@@ -3708,6 +3747,7 @@ read_impact() {
   read_depends
   read_restarters
   read_backups
+  read_redis_logins
   read_health pre-run
   read_reboot pre-run
   jadd o maps "$R_MAPS"

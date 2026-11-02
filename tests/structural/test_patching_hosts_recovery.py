@@ -40,7 +40,8 @@ Beyond that list:
 - a Redis is dumped only where what redis-cli reaches is the unit's own
   process: its main PID listens at the address, as ss reads it as root,
   with no login (#379);
-- a dump needs a login: under an aclfile, requirepass is never tried, and
+- a dump needs a login: where an aclfile or a user line sets the users,
+  requirepass is never tried, the refusal names which (#458), and
   the knob's user logs in with its key file, which never reaches an argv;
   a refused login is tried once, and named.
 
