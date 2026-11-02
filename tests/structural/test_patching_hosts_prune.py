@@ -586,6 +586,10 @@ class Host(ApplyHost):
             rc,
         )
         self.host_state = self.read_state()
+        if rc == 2:
+            # A usage refusal prints nothing on stdout, only why.
+            assert r.stdout == "", r.stdout
+            return {"stderr": r.stderr}
         return json.loads(r.stdout if rc else self.result.stdout)
 
     def plan(self, component: str, *args: str, rc: int = 0) -> dict:
@@ -609,6 +613,7 @@ class Host(ApplyHost):
         rc: int = 0,
         approve: bool = True,
         component: str = "",
+        run: bool = True,
     ) -> dict:
         plan = self.tmp / f"{component or self.component}.plan"
         cmd = [
@@ -619,7 +624,7 @@ class Host(ApplyHost):
             "--plan",
             str(plan),
         ]
-        cmd += ["--run", str(self.run_dir), *args]
+        cmd += [*(["--run", str(self.run_dir)] if run else []), *args]
         if approve:
             cmd.append("--approve")
         return self._run(cmd, rc)
@@ -1758,4 +1763,19 @@ def test_a_remove_of_a_plan_that_takes_orphans_is_refused(tmp_path):
     host.plan("apt:fwupd", "--take-orphans")
     out = host.prune("remove", rc=3)
     assert any("take the savepoint path" in r for r in out["refused"]), out["refused"]
+    assert host.changes() == []
+
+
+# --- CR 1650: a refused apt: name leaves no component's values behind -----------
+
+
+@pytest.mark.parametrize("name", ["apt:redis", "apt:qdrant", "apt:postgresql-16"])
+def test_a_refused_apt_plan_runs_under_no_components_directory(tmp_path, name):
+    host = _host(tmp_path, NGINX, "nginx")
+    host.plan("nginx")
+    plan = tmp_path / "nginx.plan"
+    plan.write_text(plan.read_text().replace("component nginx", f"component {name}"))
+    out = host.prune("disable", rc=3, run=False)
+    assert out["prune"]["run"] == "/var/backups/patching-hosts-prune-unknown"
+    assert any(r.startswith(f"the plan names {name}: ") for r in out["refused"])
     assert host.changes() == []
