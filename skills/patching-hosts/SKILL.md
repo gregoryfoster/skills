@@ -67,7 +67,7 @@ done
 
 Steps 4–7 in full, with each trap: [run.md](references/run.md), then [reboot-and-record.md](references/reboot-and-record.md). The probe's `environment.profile` names the environment profile the host matches, and its image generation. That profile holds the environment's quirks: which packages restart themselves, `/tmp`, clean-shutdown evidence. The one so far: [environments/exe-dev-exeuntu.md](references/environments/exe-dev-exeuntu.md).
 
-**A dormant component** is pruned apart from the run, one stage at a time: disable, then remove, then purge, each after the last one's soak, and a savepoint lets the purge skip the remove. `bash "<prune-plan.sh>" --component <name> --out <file>` reads what it would take; `bash "<prune.sh>" --stage <stage> --plan <file>` prints the stage's commands, and with `--approve` runs exactly those. The calendar, what each purge script deletes, and the traps: [pruning.md](references/pruning.md).
+**A dormant component** is pruned apart from the run, one stage at a time: disable, then remove, then purge, each after the last one's soak, and a savepoint lets the purge skip the remove. `bash "<prune-plan.sh>" --component <name> --out <file>` reads what it would take, for a component the probe names or any other apt package as `apt:<package>`; `bash "<prune.sh>" --stage <stage> --plan <file>` prints the stage's commands, and with `--approve` runs exactly those. The calendar, what each purge script deletes, and the traps: [pruning.md](references/pruning.md).
 
 ## Hosts no profile matches
 

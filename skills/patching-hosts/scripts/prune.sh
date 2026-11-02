@@ -7,8 +7,8 @@ usage() {
   cat <<'USAGE'
 Usage: bash prune.sh --stage disable|savepoint|remove|purge --plan FILE
                      [--approve] [--savepoint DIR] [--purge-data PATH]...
-                     [--run DIR] [--config FILE] [--host NAME]
-                     [--today YYYY-MM-DD]
+                     [--release-hold] [--run DIR] [--config FILE]
+                     [--host NAME] [--today YYYY-MM-DD]
 
 Runs one stage of a prune (references/pruning.md) on exactly what the plan
 names. Without --approve it changes nothing, and prints every command the
@@ -24,7 +24,9 @@ but for the savepoint, which may come while the disable soaks:
   disable    stop, disable and mask the units its packages ship, each in one
              systemctl call, so systemd orders the stops. A unit whose file
              is under /etc/systemd/system is stopped and disabled but not
-             masked: the mask would be that very path
+             masked: the mask would be that very path. A unit masked
+             already, as an image masks fwupd's, is left as it is and
+             recorded in the run's masks file
   savepoint  a tarball of its config and its packages' other conffiles, and
              its packages' versions, as root at mode 600 in the run's
              directory. Its data stays with you: dump it off the node
@@ -35,7 +37,9 @@ but for the savepoint, which may come while the disable soaks:
              dropped and the group deleted, then each --purge-data path.
              Each package's own purge script runs too: the plan lists what
              each one deletes, and where one deletes a data path, the purge
-             refuses until --purge-data names it
+             refuses until --purge-data names it. With --release-hold,
+             apt-mark unhold of the plan's held packages runs just before
+             apt-get, so no bulk can reach them in between
 With a savepoint, the purge may follow the disable's soak, and the remove
 stage is skipped: that leaves no config, and no rc package, behind.
 
@@ -50,9 +54,14 @@ Options:
                        path the plan names. Repeatable. Without it, its
                        data stays. Every Postgres cluster's data must be
                        named before a purge of postgres
+  --release-hold       (purge) release the holds the plan names, as the
+                       command just before the purge. A hold kept a package
+                       off the bulk; released any earlier, the next bulk
+                       reaches it
   --run DIR            where the logs and the savepoint go, an absolute path
                        without whitespace
-                       (default: /var/backups/patching-hosts-prune-<component>)
+                       (default: /var/backups/patching-hosts-prune-<name>,
+                       the name the knob calls it: fwupd for apt:fwupd)
   --config FILE        the knob (default: .skills/patching-hosts at the root
                        of the repo around the current directory, or in the
                        current directory outside a repo)
@@ -69,8 +78,10 @@ hours old or dated in the future, or one naming anything outside the
 component; for a stage the knob's calendar hasn't reached, or any stage
 while a keep: exception stands; when the host no longer matches the plan;
 for remove or purge, when apt would install anything, while a package
-manager runs, dpkg --audit isn't clean or one of its packages is held, or
-of a component from outside apt; for a --purge-data path the plan doesn't
+manager runs, dpkg --audit isn't clean or one of its packages is held
+(for a purge, unless --release-hold), or of a component from outside apt;
+for a remove of a plan that takes orphans; for --release-hold with
+nothing held; for a --purge-data path the plan doesn't
 name; for a purge whose packages' purge scripts can't be read, or delete a
 data path --purge-data doesn't name, or of postgres while a cluster's data
 isn't named or its clusters can't be listed; and for a stage the plan gives
@@ -94,6 +105,7 @@ USAGE
 }
 
 approve=0 stage="" plan="" savepoint="" run="" config="" host="" today=""
+release_hold=0
 purge_data=()
 while [ "$#" -gt 0 ]; do
   case $1 in
@@ -111,6 +123,7 @@ while [ "$#" -gt 0 ]; do
       esac
       shift 2 ;;
     --approve) approve=1; shift ;;
+    --release-hold) release_hold=1; shift ;;
     -h | --help) usage; exit 0 ;;
     *) echo "ERROR unknown argument: $1 (see --help)" >&2; exit 2 ;;
   esac
@@ -126,6 +139,10 @@ if [ -z "$plan" ]; then
 fi
 if [ "$stage" != purge ] && [ -n "$savepoint${purge_data[*]-}" ]; then
   echo "ERROR --savepoint and --purge-data belong to --stage purge" >&2
+  exit 2
+fi
+if [ "$stage" != purge ] && [ "$release_hold" -eq 1 ]; then
+  echo "ERROR --release-hold belongs to --stage purge: the release runs just before it" >&2
   exit 2
 fi
 for _v in "$plan" "$savepoint" "$run" "$config" ${purge_data[@]+"${purge_data[@]}"}; do
@@ -205,13 +222,15 @@ if [ -n "$_clock" ] && [[ $today > $_clock ]]; then
 fi
 # It acts on the running system, never on a tree.
 P_LIVE=1
-# unit_show sets it by name.
-U_FragmentPath=""
+# unit_show sets these by name.
+U_FragmentPath="" U_UnitFileState="" U_ActiveState=""
 
 component=""
 if read_plan "$plan"; then component=$PLAN_COMPONENT; fi
 prune_component "$component" || true
-[ -n "$run" ] || run=/var/backups/patching-hosts-prune-${component:-unknown}
+# A fresh derive takes the orphans again only where the plan did.
+PRUNE_ORPHANS=$PLAN_ORPHANS
+[ -n "$run" ] || run=/var/backups/patching-hosts-prune-${C_NAME:-unknown}
 
 # --- the gate -------------------------------------------------------------------
 # No function here ends on a bare `[ … ] && …`: a function that returns
@@ -237,6 +256,7 @@ gate_host() {
     remove | purge) for t in apt-get dpkg; do have "$t" || refuse "$t isn't on PATH"; done ;;
     savepoint) for t in tar sha256sum; do have "$t" || refuse "$t isn't on PATH"; done ;;
   esac
+  if [ "$release_hold" -eq 1 ]; then have apt-mark || refuse "apt-mark isn't on PATH"; fi
 }
 
 # The plan is this host's, fresh, and names only what the component is.
@@ -274,6 +294,11 @@ gate_plan() {
     case $stage in
       remove | purge) refuse "$component comes from outside apt: remove its unit, binary and data by hand (pruning.md)" ;;
     esac
+  fi
+  # A removed orphan's config is residue no later plan names: its roots'
+  # purge no longer orphans it.
+  if [ "$stage" = remove ] && [ "$PLAN_ORPHANS" -eq 1 ]; then
+    refuse "the plan takes $component's orphans, and a remove would leave their config behind where no later plan names it: take the savepoint path, --stage savepoint, then --stage purge --savepoint DIR"
   fi
   # A Postgres cluster's data is a path the plan names too, wherever it is.
   while read -r x p; do
@@ -325,7 +350,7 @@ gate_savepoint() {  # <dir>: whether it holds this component's savepoint; SP_WHY
 gate_calendar() {
   local o="" d
   [ "$PLAN_OK" -eq 1 ] || return 0
-  calendar "$component"
+  calendar "$C_NAME"
   d=$CAL_STAGE
   jadds o declared "$d"
   jaddsn o review_by "$CAL_REVIEW"
@@ -335,11 +360,11 @@ gate_calendar() {
   jadd J_GATE calendar "{$o}"
   case $stage:$d in
     disable:keep | savepoint:keep | remove:keep | purge:keep)
-      refuse "the knob keeps $component until $CAL_REVIEW (exception keep:$component, line $CAL_LINE)" ;;
+      refuse "the knob keeps $component until $CAL_REVIEW (exception keep:$C_NAME, line $CAL_LINE)" ;;
     disable:none | disable:disabled) ;;
     disable:*) refuse "$component is already $d: nothing to disable" ;;
     savepoint:disabled | savepoint:removed) ;;
-    savepoint:*) refuse "disable $component first, and declare exception disabled:$component <review-by> <reason>" ;;
+    savepoint:*) refuse "disable $component first, and declare exception disabled:$C_NAME <review-by> <reason>" ;;
     remove:disabled)
       [ "$CAL_PASSED" = 1 ] ||
         refuse "$component is soaking until $CAL_REVIEW: the remove waits for it. An earlier review-by date shortens the soak" ;;
@@ -399,7 +424,16 @@ gate_drift() {
   case $stage in
     remove | purge)
       [ -z "$D_INST" ] || refuse "apt would install $D_INST to take $component away: no stage runs a removal that installs"
-      [ -z "$D_HELD" ] || refuse "apt-mark holds $D_HELD, and apt-get -y won't remove a held package. A hold is its owner's: release it with apt-mark unhold $D_HELD first, if that's the owner's call" ;;
+      if [ -n "$D_HELD" ] && [ "$release_hold" -eq 0 ]; then
+        if [ "$stage" = purge ]; then
+          refuse "apt-mark holds $D_HELD, and apt-get -y won't remove a held package. A hold is its owner's: --release-hold runs apt-mark unhold $D_HELD just before the purge, if that's the owner's call"
+        else
+          refuse "apt-mark holds $D_HELD, and apt-get -y won't remove a held package. A hold is its owner's: release it with apt-mark unhold $D_HELD first, if that's the owner's call"
+        fi
+      fi
+      if [ -z "$D_HELD" ] && [ "$release_hold" -eq 1 ]; then
+        refuse "--release-hold, but no package the plan takes is held: run the purge without it"
+      fi ;;
   esac
   jaddb o matches "$([ "$now" = "$want" ] && echo 1 || echo 0)"
   jadd J_GATE drift "{$o}"
@@ -499,7 +533,7 @@ names_of() {  # <var> <sig kind>: the plan's packages of that kind, space-separa
   done <<<"$PLAN_SIG"
   printf -v "$1" '%s' "${_no_s# }"
 }
-MASKS_SKIPPED="" _units="" _pk="" TAR_ACT=""
+MASKS_SKIPPED="" MASKED_ALREADY="" _units="" _pk="" _held="" TAR_ACT=""
 if [ "$PLAN_OK" -eq 1 ]; then
   _members=""
   while read -r _k _g _m; do
@@ -509,20 +543,28 @@ if [ "$PLAN_OK" -eq 1 ]; then
     disable)
       # One systemctl call each, so systemd orders the stops itself: dockerd
       # before the containerd it runs on, whatever order apt lists them in.
+      # A unit masked already, as the exeuntu image masks fwupd's, has
+      # nothing to disable: it's recorded, and stopped only if it runs.
       names_of _units unit
-      _masks=""
+      _stops="" _offs="" _masks=""
       for _u in $_units; do
+        unit_show "$_u" FragmentPath UnitFileState ActiveState || true
+        if [ "$U_UnitFileState" = masked ]; then
+          MASKED_ALREADY="$MASKED_ALREADY $_u"
+          case $U_ActiveState in inactive | failed) ;; *) _stops="$_stops $_u" ;; esac
+          continue
+        fi
+        _stops="$_stops $_u" _offs="$_offs $_u"
         # A unit file under /etc can't be masked: the mask is that very path.
-        unit_show "$_u" FragmentPath || true
         case $U_FragmentPath in
           /etc/systemd/system/*) MASKS_SKIPPED="$MASKS_SKIPPED $_u" ;;
           *) _masks="$_masks $_u" ;;
         esac
       done
-      if [ -n "$_units" ]; then
-        ACT+=("systemctl stop -- $_units" "systemctl disable -- $_units")
-        [ -z "$_masks" ] || ACT+=("systemctl mask --${_masks}")
-      fi ;;
+      [ -z "$_stops" ] || ACT+=("systemctl stop --$_stops")
+      [ -z "$_offs" ] || ACT+=("systemctl disable --$_offs")
+      [ -z "$_masks" ] || ACT+=("systemctl mask --$_masks")
+      [ -z "$MASKED_ALREADY" ] || ACT+=("write $run/masks") ;;
     savepoint)
       # An earlier attempt's record goes first: a tar that fails now must
       # leave no record vouching for its tarball.
@@ -540,6 +582,12 @@ if [ "$PLAN_OK" -eq 1 ]; then
       for _m in $_members; do ACT+=("gpasswd -d $_m $PLAN_GROUP"); done ;;
     purge)
       names_of _pk purge
+      # The release is the command just before apt's, so no bulk can reach
+      # the package between them (#370). gate_drift refused it unless held.
+      names_of _held held
+      if [ -n "$_pk" ] && [ "$release_hold" -eq 1 ] && [ -n "$_held" ]; then
+        ACT+=("apt-mark unhold $_held")
+      fi
       [ -z "$_pk" ] || ACT+=("$APT_ENV apt-get purge $APT_OPT $_pk")
       for _m in $_members; do ACT+=("gpasswd -d $_m $PLAN_GROUP"); done
       [ -z "$PLAN_GROUP" ] || ACT+=("groupdel $PLAN_GROUP")
@@ -555,7 +603,7 @@ if [ "$PLAN_OK" -eq 1 ] && [ "${#ACT[@]}" -eq 0 ]; then
     disable) _why="no unit of $component is left to disable: if a fresh plan shows it isn't installed, there's nothing to prune" ;;
     remove)
       if [ -n "$D_RESIDUE" ]; then
-        _why="no package of $component is left to remove, only residue ($D_RESIDUE): the purge comes next, so replace the knob's line with exception removed:$component <review-by> <reason>"
+        _why="no package of $component is left to remove, only residue ($D_RESIDUE): the purge comes next, so replace the knob's line with exception removed:$C_NAME <review-by> <reason>"
       else
         _why="no package of $component is left to remove: if a fresh plan shows it isn't installed, there's nothing to prune"
       fi ;;
@@ -563,7 +611,7 @@ if [ "$PLAN_OK" -eq 1 ] && [ "${#ACT[@]}" -eq 0 ]; then
       if [ -n "$PLAN_DATA" ]; then
         _why="no package, group or member of $component is left to purge, and its data is still there ($PLAN_DATA): delete it with --purge-data, or keep it"
       else
-        _why="nothing of $component is left to purge: replace the knob's stage line with exception purged:$component <review-by> <reason>"
+        _why="nothing of $component is left to purge: replace the knob's stage line with exception purged:$C_NAME <review-by> <reason>"
       fi ;;
     *) _why="the plan gives the $stage stage nothing to run" ;;
   esac
@@ -606,16 +654,21 @@ run_act() {  # <action>: runs it as root, its output to the log; sets RC
     "write $run/savepoint")
       printf 'component %s\nhost %s\ntaken %s\nconfig.tar %s\n' "$component" "$host" "$P_NOW" "$SP_SHA" |
         root_write "$run/savepoint" >"$_ra_o" 2>&1 || RC=$? ;;
+    "write $run/masks")
+      # A word list, each a unit name.
+      # shellcheck disable=SC2086
+      printf 'masked %s\n' $MASKED_ALREADY | root_write "$run/masks" >"$_ra_o" 2>&1 || RC=$? ;;
     *) as_root "${_ra_w[@]}" >"$_ra_o" 2>&1 || RC=$? ;;
   esac
   { printf '$ %s\n' "$_ra"; cat "$_ra_o"; } | root_append "$log" || true
 }
 
-SP_SHA="" _done="" RC=0
+SP_SHA="" _done="" RC=0 HOLD_RELEASED=0
 for _act in ${ACT[@]+"${ACT[@]}"}; do
   [ "${#FAILED[@]}" -eq 0 ] || [ "$stage" = disable ] || break
   RC=0
   run_act "$_act"
+  if [ "$_act" = "apt-mark unhold $_held" ] && [ "$RC" -eq 0 ]; then HOLD_RELEASED=1; fi
   if [ "$_act" = "$TAR_ACT" ] && [ "$RC" -eq 0 ]; then
     capture SP_SHA as_root sha256sum "$run/config.tar"
     SP_SHA=${SP_SHA%% *}
@@ -679,12 +732,16 @@ day_after() {  # <var> <days>: the date that many days from now
 }
 if [ "${#FAILED[@]}" -gt 0 ]; then
   NEXT+=("The stage didn't finish: read $log and the failures above before anything else. A disable is undone with systemctl unmask, then enable for the units the plan recorded as enabled and start for those it recorded as active (pruning.md).")
+  if [ "$HOLD_RELEASED" -eq 1 ]; then
+    NEXT+=("Its hold was released before the purge: where one of $_held is still installed, hold it again with apt-mark hold $_held, or the next bulk reaches it.")
+  fi
 else
   case $stage in
     disable)
       day_after _d 30
-      NEXT+=("Declare it in the knob: exception disabled:$component $_d <reason>. The remove waits for that date, as does a purge after a savepoint.")
+      NEXT+=("Declare it in the knob: exception disabled:$C_NAME $_d <reason>. The remove waits for that date, as does a purge after a savepoint.")
       [ -z "$MASKS_SKIPPED" ] || NEXT+=("Not masked, since its unit file is under /etc/systemd/system:$MASKS_SKIPPED. It's stopped and disabled.")
+      [ -z "$MASKED_ALREADY" ] || NEXT+=("Already masked, so left as they were and recorded in $run/masks:$MASKED_ALREADY. Where every unit was, the soak is the owner's to shorten in the knob.")
       NEXT+=("To undo it: systemctl unmask each unit under actions, then enable only those the plan recorded as enabled, and start only those it recorded as active: the rest were off before (pruning.md).") ;;
     savepoint)
       [ -z "$PLAN_DATA" ] || NEXT+=("The savepoint holds no data: dump $PLAN_DATA off the node yourself, with a stated retention, before the purge.")
@@ -692,10 +749,10 @@ else
       NEXT+=("The purge may follow the disable's soak: bash \"$_libdir/prune.sh\" --stage purge --savepoint $run --plan <a fresh plan>.") ;;
     remove)
       day_after _d 30
-      NEXT+=("Replace the knob's disabled:$component line with: exception removed:$component $_d <reason>. The purge waits for that date.") ;;
+      NEXT+=("Replace the knob's disabled:$C_NAME line with: exception removed:$C_NAME $_d <reason>. The purge waits for that date.") ;;
     purge)
       day_after _d 90
-      NEXT+=("Replace the knob's line with: exception purged:$component $_d <reason>. It stays until the base image stops shipping $component.")
+      NEXT+=("Replace the knob's line with: exception purged:$C_NAME $_d <reason>. It stays until the base image stops shipping $C_NAME.")
       for _p in $PLAN_DATA $PLAN_CONFIG; do
         in_words "$_p" "${purge_data[*]-}" && continue
         path_kib _k "$_p"
