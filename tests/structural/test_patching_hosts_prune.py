@@ -586,6 +586,10 @@ class Host(ApplyHost):
             rc,
         )
         self.host_state = self.read_state()
+        if rc == 2:
+            # A usage refusal prints nothing on stdout, only why.
+            assert r.stdout == "", r.stdout
+            return {"stderr": r.stderr}
         return json.loads(r.stdout if rc else self.result.stdout)
 
     def plan(self, component: str, *args: str, rc: int = 0) -> dict:
@@ -609,6 +613,7 @@ class Host(ApplyHost):
         rc: int = 0,
         approve: bool = True,
         component: str = "",
+        run: bool = True,
     ) -> dict:
         plan = self.tmp / f"{component or self.component}.plan"
         cmd = [
@@ -619,7 +624,7 @@ class Host(ApplyHost):
             "--plan",
             str(plan),
         ]
-        cmd += ["--run", str(self.run_dir), *args]
+        cmd += [*(["--run", str(self.run_dir)] if run else []), *args]
         if approve:
             cmd.append("--approve")
         return self._run(cmd, rc)
@@ -1758,4 +1763,57 @@ def test_a_remove_of_a_plan_that_takes_orphans_is_refused(tmp_path):
     host.plan("apt:fwupd", "--take-orphans")
     out = host.prune("remove", rc=3)
     assert any("take the savepoint path" in r for r in out["refused"]), out["refused"]
+    assert host.changes() == []
+
+
+# --- CR 1646: what apt drags along is a component's too ------------------------
+
+LIBPQ = copy.deepcopy(POSTGRES)
+LIBPQ["packages"]["libpq5"] = {"state": "ii", "version": "16.2"}
+LIBPQ_DRAGS = ["postgresql-16", "postgresql", "postgresql-client-16"]
+
+
+def test_an_apt_package_whose_removal_takes_a_components_is_refused(tmp_path):
+    # The roots leave out clients and libraries on purpose, but apt's purge
+    # of libpq5 takes the server as a reverse dependency, and with it every
+    # cluster, with none of postgres's guards.
+    host = _host(tmp_path, LIBPQ, "apt:libpq5")
+    host.host_state["packages"]["libpq5"]["drags"] = LIBPQ_DRAGS
+    out = host.plan("apt:libpq5", rc=2)
+    assert "postgresql-16 is postgres's" in out["stderr"], out["stderr"]
+    assert "use --component postgres" in out["stderr"]
+    assert not (tmp_path / "apt:libpq5.plan").exists()
+
+
+def test_a_plan_whose_removal_takes_a_components_since_is_refused(tmp_path):
+    host = _host(tmp_path, LIBPQ, "apt:libpq5").declare(f"removed:libpq5 {PAST} soaked")
+    assert host.plan("apt:libpq5")["packages"]["dragged_along"] == []
+    host.host_state["packages"]["libpq5"]["drags"] = LIBPQ_DRAGS
+    out = host.prune("purge", rc=3)
+    refused = out["refused"]
+    assert any("postgresql-16 is postgres's" in r for r in refused), refused
+    assert host.changes() == []
+
+
+def test_an_orphan_a_component_owns_is_refused_only_when_taken(tmp_path):
+    host = _fwupd(tmp_path, orphans=3)
+    host.host_state["packages"]["containerd"] = {"state": "ii", "version": "2.2.1"}
+    host.host_state["packages"]["fwupd"]["orphans"].append("containerd")
+    assert "containerd" in host.plan("apt:fwupd")["autoremove_would_take"]
+    out = host.plan("apt:fwupd", "--take-orphans", rc=2)
+    assert "containerd is docker's" in out["stderr"], out["stderr"]
+
+
+# --- CR 1650: a refused apt: name leaves no component's values behind -----------
+
+
+@pytest.mark.parametrize("name", ["apt:redis", "apt:qdrant", "apt:postgresql-16"])
+def test_a_refused_apt_plan_runs_under_no_components_directory(tmp_path, name):
+    host = _host(tmp_path, NGINX, "nginx")
+    host.plan("nginx")
+    plan = tmp_path / "nginx.plan"
+    plan.write_text(plan.read_text().replace("component nginx", f"component {name}"))
+    out = host.prune("disable", rc=3, run=False)
+    assert out["prune"]["run"] == "/var/backups/patching-hosts-prune-unknown"
+    assert any(r.startswith(f"the plan names {name}: ") for r in out["refused"])
     assert host.changes() == []
