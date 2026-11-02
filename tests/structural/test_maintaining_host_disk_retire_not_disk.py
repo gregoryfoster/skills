@@ -303,3 +303,54 @@ def test_each_report_key_in_the_help_starts_its_description_at_column_15():
     assert {k for k, _ in keys} >= {"found", "candidates", "not_disk", "by_hand"}
     for key, gap in keys:
         assert len("  " + key + gap) == 14, f"{key}'s description is misaligned"
+
+
+@pytest.mark.parametrize(
+    "key, command",
+    [
+        (
+            "ExecStopPost",
+            "@/usr/bin/python3 /home/exedev/power-map/scripts/status_checkin.py "
+            "/srv/cache/wipe_old.py",
+        ),
+        ("ExecStart", "+/usr/bin/python3 -m scripts.prune --execute"),
+        ("ExecStart", "!!/usr/bin/python3 -m scripts.prune --execute"),
+        ("ExecStart", "--/usr/bin/python3 -m scripts.prune --execute"),
+        ("ExecStart", "+/usr/local/bin/uv run python -m scripts.prune --execute"),
+    ],
+)
+def test_cr1653_a_prefix_other_than_one_dash_is_a_candidate(power_map, key, command):
+    """CR 1653: the interpreter's pattern took any prefix glued to its path.
+    `@` makes the second word argv[0], so `@python3 status_checkin.py
+    wipe_old.py` runs python as wipe_old.py's interpreter; `+`, `!`, `!!`
+    and `:` change privileges or expansion. Only systemd's `-` is vouched."""
+    write(
+        power_map,
+        f"{SYSD}/power-map-prune.service.d/override.conf",
+        f"[Service]\n{key}=\n{key}={command}\n",
+    )
+    out = check(power_map)
+    assert units(out["not_disk"]) == set()
+    assert "power-map-prune.service" in units(out["candidates"])
+
+
+@pytest.mark.parametrize(
+    "setting",
+    ["ExecPaths=/home/exedev/power-map", "ExecSearchPath=/usr/local/bin:/usr/bin"],
+)
+def test_cr1655_a_sandbox_or_search_path_setting_keeps_it_vouched_for(
+    power_map, setting
+):
+    """CR 1655: ExecPaths= and ExecSearchPath= start with `Exec` but run
+    nothing, so a hardening drop-in setting one is no reason to unvouch."""
+    write(
+        power_map,
+        f"{SYSD}/power-map-prune.service.d/hardening.conf",
+        f"[Service]\n{setting}\n",
+    )
+    out = check(power_map)
+    assert units(out["not_disk"]) == {
+        "power-map-prune.service",
+        "power-map-prune.timer",
+    }
+    assert units(out["candidates"]) == set()
