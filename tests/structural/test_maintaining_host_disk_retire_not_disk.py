@@ -12,6 +12,7 @@ The unit text is power-map's own (infra/, at 8d6de1e8), comments dropped.
 """
 
 import os
+import re
 
 import pytest
 
@@ -201,3 +202,13 @@ def test_a_timer_whose_service_is_missing_stays_a_candidate(tmp_path):
 def test_the_help_names_not_disk():
     help_text = rig.run(RETIRE, "--help").stdout
     assert "not_disk" in help_text.split("candidates", 1)[1].split("canonical", 1)[0]
+
+
+def test_each_report_key_in_the_help_starts_its_description_at_column_15():
+    """CR 1638: the not_disk paragraph's edit took a space from by_hand's line."""
+    help_text = rig.run(RETIRE, "--help").stdout
+    block = help_text.split("\n  found", 1)[1].split("\nOptions:", 1)[0]
+    keys = re.findall(r"^  ([a-z_]+)( +)\S", "  found" + block, re.M)
+    assert {k for k, _ in keys} >= {"found", "candidates", "not_disk", "by_hand"}
+    for key, gap in keys:
+        assert len("  " + key + gap) == 14, f"{key}'s description is misaligned"
