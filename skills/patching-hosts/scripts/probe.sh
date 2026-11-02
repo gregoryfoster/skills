@@ -899,9 +899,101 @@ read_profile() {
   R_PROFILE=$o
 }
 
+# exe.dev's own files, read on an exe.dev host alone (#388). image.conf is
+# the image's OCI config, and its labels the only image identity the guest
+# can read: the build's time, its commit, and its channel (main or
+# nightly). A label the file lacks, or a file that can't be read, is null,
+# never a default.
+IMAGE_CONF=/exe.dev/etc/image.conf
+R_IMAGE=null
+image_label() {  # <var> <JSON text> <label>: VAR := its value, or empty
+  local _il
+  _il=$(printf '%s\n' "$2" | grep -o "\"${3//./\\.}\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" | head -n 1) || _il=""
+  _il=${_il%\"}
+  printf -v "$1" '%s' "${_il##*\"}"
+}
+read_image_conf() {
+  local o="" t="" l v ok=0
+  R_IMAGE=null
+  [ "$PROFILE" = exe-dev-exeuntu ] || return 0
+  jadds o path "$IMAGE_CONF"
+  if [ ! -e "$P_ROOT$IMAGE_CONF" ]; then
+    jaddb o present 0
+  else
+    jaddb o present 1
+    capture t as_reader cat -- "$P_ROOT$IMAGE_CONF"
+    if [ "$CAP_RC" -eq 0 ]; then
+      ok=1
+    else
+      not_read "the exe.dev image's labels: $IMAGE_CONF couldn't be read, even as root${CAP_ERR:+ ($CAP_ERR)}"
+    fi
+  fi
+  for l in created revision version; do
+    v=""
+    if [ "$ok" -eq 1 ]; then image_label v "$t" "org.opencontainers.image.$l"; fi
+    jaddsn o "$l" "$v"
+  done
+  R_IMAGE="{$o}"
+}
+
+# exe-init's layout, from what's resident: a separate axis from the image's
+# generation (the profile's "exe-init's layout is a separate axis"). None
+# resident is init only, exe-init op-ssh and memd are the May-2026 layout,
+# and exe-init guestd is every image's from 2026-08-25. Unknown where a
+# role isn't one of those, or where /proc hides other users' processes, as
+# hidepid would hide exe-init with PID 1.
+R_EXE_INIT=null
+read_exe_init() {
+  local o="" f pid comm args role roles="" res="" layout e
+  R_EXE_INIT=null
+  [ "$PROFILE" = exe-dev-exeuntu ] || return 0
+  jadds o source "/proc/*/comm and cmdline"
+  if [ "$P_LIVE" -ne 1 ]; then
+    jadd o layout null
+    jadd o resident null
+    R_EXE_INIT="{$o}"
+    not_read "exe-init's layout: nothing runs this tree"
+    return 0
+  fi
+  if [ ! -r "$P_ROOT/proc/1/comm" ]; then
+    jadds o layout unknown
+    jadd o resident null
+    R_EXE_INIT="{$o}"
+    not_read "exe-init's layout: /proc/1/comm can't be read, so /proc may hide the processes that would show it"
+    return 0
+  fi
+  for f in "$P_ROOT"/proc/[0-9]*/comm; do
+    [ -r "$f" ] || continue
+    IFS= read -r comm <"$f" || true
+    [ "$comm" = exe-init ] || continue
+    pid=${f%/comm}
+    pid=${pid##*/}
+    cmdline_of args "$pid"
+    read -r _ role _ <<<"$args" || true
+    e=""
+    jaddn e pid "$pid"
+    jaddsn e role "$role"
+    jpush res "{$e}"
+    roles="$roles ${role:-?}"
+  done
+  layout="init-only"
+  for role in $roles; do
+    case $layout:$role in
+      init-only:guestd | guestd:guestd) layout=guestd ;;
+      init-only:op-ssh | init-only:memd | op-ssh+memd:op-ssh | op-ssh+memd:memd) layout=op-ssh+memd ;;
+      *) layout=unknown ;;
+    esac
+  done
+  jadds o layout "$layout"
+  jadd o resident "[$res]"
+  R_EXE_INIT="{$o}"
+}
+
 read_environment() {
   local o="" lt=""
   read_profile
+  read_image_conf
+  read_exe_init
   read_boot
   read_journal
   if live_cmd systemd-analyze; then
@@ -912,6 +1004,8 @@ read_environment() {
   read_setup
   read_tmp
   jadd o profile "{$R_PROFILE}"
+  jadd o image_conf "$R_IMAGE"
+  jadd o exe_init "$R_EXE_INIT"
   jadd o boot "{$R_BOOT}"
   jadd o journal "{$R_JOURNAL}"
   jaddsn o pid1_log_target "$lt"

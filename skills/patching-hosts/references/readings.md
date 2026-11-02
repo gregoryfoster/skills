@@ -18,6 +18,8 @@ The probe reads the root-only readings through `sudo -n`, so it never prompts, a
 | Reading | How | Mistake it prevents |
 |---|---|---|
 | Which profile, and which image generation | markers, not a digest ([environments/exe-dev-exeuntu.md](environments/exe-dev-exeuntu.md)) | assuming the newer image's `exe-setup`, journal and `/tmp` rule on an older host, or its `exe-init` layout from its generation |
+| The exe.dev image's identity | `/exe.dev/etc/image.conf`'s OCI labels `org.opencontainers.image.created`, `.revision` and `.version` (`main` or `nightly`), in `environment.image_conf` (#388) | dating an image by markers alone, when the guest can read its build time, commit and channel |
+| `exe-init`'s layout | the `exe-init` processes resident and their roles, from `/proc/<pid>/comm` and `cmdline`: `guestd`, `op-ssh+memd` or `init-only`, in `environment.exe_init` (#388) | inferring the layout from the generation: the April 2026 image dates `may-2026` and is init-only |
 | Boot time | `/proc/stat` btime | `who -b` was wrong on three hosts |
 | **Where the journal actually lives** | files under `/var/log/journal`; `systemctl is-enabled systemd-journal-flush`; the days the oldest entry reaches back | `Storage=persistent` with the flush masked: address-validator's 51 days were lost at the reboot |
 | PID 1's log target | `systemd-analyze get-log-target` | expecting PID 1's lines as clean-shutdown evidence when it logs to `console` |
