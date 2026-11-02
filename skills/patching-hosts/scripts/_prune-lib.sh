@@ -41,7 +41,8 @@ Usage: . _prune-lib.sh    (sourced by prune-plan.sh and prune.sh; running it
                             or D_CLUSTERS_WHY
   derive NAME               D_*: the component as the host stands now; 1 for
                             a name it doesn't know, 2 with D_WHY for a read
-                            that failed
+                            that failed, 3 with D_WHY for an apt: component
+                            whose removal takes a package one of the six owns
   calendar NAME             CAL_*: the prune stage the knob declares for it
   signature VAR             the lines a plan and a fresh derive must share
   write_plan HOST COMPONENT the plan file's lines, on stdout
@@ -465,6 +466,20 @@ derive() {  # <name>
     D_PURGE=(${SIM_SET[@]+"${SIM_SET[@]}"}) D_INST="$D_INST $SIM_INST" D_ORPHANS=$SIM_ORPHANS
     D_INST=${D_INST# }
     D_INST=${D_INST% }
+    # An apt: component takes nothing one of the six owns, however apt
+    # comes to take it: their globs leave out clients and libraries, so a
+    # purge of libpq5 takes postgresql-16 as a reverse dependency, and an
+    # orphan taken may be containerd. Their guards are the component's
+    # alone (CR 1646).
+    case $1 in apt:*)
+      for _d_line in ${D_REMOVE[@]+"${D_REMOVE[@]}"} ${D_PURGE[@]+"${D_PURGE[@]}"}; do
+        owned_by _d_x "${_d_line%% *}"
+        if [ -n "$_d_x" ]; then
+          D_WHY="apt would take ${_d_line%% *} with $C_NAME, and ${_d_line%% *} is $_d_x's: use --component $_d_x, whose guards cover its data, its clusters and its group"
+          return 3
+        fi
+      done ;;
+    esac
     for _d_line in ${D_REMOVE[@]+"${D_REMOVE[@]}"}; do _d_names="$_d_names ${_d_line%% *}"; done
     for _d_line in ${D_PURGE[@]+"${D_PURGE[@]}"}; do
       for _d_i in ${PKG_NAME[@]+"${!PKG_NAME[@]}"}; do
