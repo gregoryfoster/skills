@@ -729,7 +729,7 @@ reboot_pids() {  # <var> <unit>: VAR := its PIDs, space-separated
 # another user's is "Permission denied" otherwise. A process that exited
 # since its cgroup was read maps nothing.
 reboot_maps() {  # <the selection> <who> <pid>...
-  local _rm_sel=$1 _rm_who=$2 _rm_pid _rm_maps _rm_out _rm_line _rm_p _rm_owners="" _rm_paths="" _rm_unk="" _rm_v=maps
+  local _rm_sel=$1 _rm_who=$2 _rm_pid _rm_maps _rm_out _rm_line _rm_p _rm_owners="" _rm_paths="" _rm_unk="" _rm_v=maps _rm_rc
   local -a _rm_ps=()
   # "PID 1 maps", "dbus.service's processes map".
   case $_rm_who in *s) _rm_v=map ;; esac
@@ -737,7 +737,15 @@ reboot_maps() {  # <the selection> <who> <pid>...
   for _rm_pid in "$@"; do
     capture _rm_maps as_root cat -- "$PROC_DIR/$_rm_pid/maps"
     if [ "$CAP_RC" -ne 0 ]; then
-      [ -e "$PROC_DIR/$_rm_pid" ] || continue
+      # Exited only where root, too, finds no /proc entry: hidepid=2 hides
+      # other users' processes from the user, PID 1's included, and PID 1
+      # never exits (CR 1643). test's 1 is "not there"; anything else,
+      # such as as_root's 126 without root, can't say.
+      if [ "$_rm_pid" != 1 ]; then
+        _rm_rc=0
+        as_root test -e "$PROC_DIR/$_rm_pid" || _rm_rc=$?
+        [ "$_rm_rc" -ne 1 ] || continue
+      fi
       [ -n "$_rm_unk" ] || _rm_unk="$PROC_DIR/$_rm_pid/maps ($_rm_who) couldn't be read as root"
       continue
     fi
