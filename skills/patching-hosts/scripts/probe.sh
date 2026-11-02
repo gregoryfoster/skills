@@ -860,7 +860,7 @@ read_profile() {
   if [ "$dir" -eq 1 ] || [ "$init" = 1 ]; then platform=1; fi
   if [ "$account" -eq 1 ] || [ "$wrapper" -eq 1 ]; then image=1; fi
   if [ "$platform" -eq 1 ] || [ "$image" -eq 1 ]; then
-    PROFILE=exe-dev-exeuntu
+    PROFILE="exe-dev-exeuntu"
     # Only the image's markers date it: on the platform alone, the image
     # could be another. The generations differ by these two (the profile's
     # table).
@@ -942,12 +942,18 @@ read_image_conf() {
 # and exe-init guestd is every image's from 2026-08-25. Unknown where a
 # role isn't one of those, or where /proc hides other users' processes, as
 # hidepid would hide exe-init with PID 1.
+# Resident means root's process running the platform's own binary, with a
+# role: not the operator's `exe-init --version`, which the profile says to
+# run, nor another binary named exe-init (CR 1645). /proc/<pid>/exe is
+# root's alone to read, so it's read as root where it must be, and one that
+# can't be read makes the layout unknown.
+EXE_INIT_BIN=/exe.dev/bin/exe-init
 R_EXE_INIT=null
 read_exe_init() {
-  local o="" f pid comm args role roles="" res="" layout e
+  local o="" f pid comm args role res="" layout="init-only" e k v uid exe unread=""
   R_EXE_INIT=null
   [ "$PROFILE" = exe-dev-exeuntu ] || return 0
-  jadds o source "/proc/*/comm and cmdline"
+  jadds o source "/proc/*/comm, cmdline, status and exe"
   if [ "$P_LIVE" -ne 1 ]; then
     jadd o layout null
     jadd o resident null
@@ -969,21 +975,43 @@ read_exe_init() {
     pid=${f%/comm}
     pid=${pid##*/}
     cmdline_of args "$pid"
+    role=""
     read -r _ role _ <<<"$args" || true
+    # An option, such as --version, is an invocation, not a role.
+    case $role in -*) continue ;; esac
+    uid=""
+    if [ -r "$P_ROOT/proc/$pid/status" ]; then
+      while read -r k v _; do
+        if [ "$k" = Uid: ]; then uid=$v; fi
+      done <"$P_ROOT/proc/$pid/status"
+    fi
+    if [ -z "$uid" ]; then
+      unread="${unread:+$unread, }/proc/$pid/status"
+      continue
+    fi
+    [ "$uid" = 0 ] || continue
+    capture exe readlink -- "$P_ROOT/proc/$pid/exe"
+    if [ "$CAP_RC" -ne 0 ]; then capture exe as_root readlink -- "$P_ROOT/proc/$pid/exe"; fi
+    if [ "$CAP_RC" -ne 0 ]; then
+      unread="${unread:+$unread, }/proc/$pid/exe"
+      continue
+    fi
+    # A binary swapped since it started still ran the platform's.
+    [ "${exe% (deleted)}" = "$EXE_INIT_BIN" ] || continue
     e=""
     jaddn e pid "$pid"
     jaddsn e role "$role"
     jpush res "{$e}"
-    roles="$roles ${role:-?}"
-  done
-  layout="init-only"
-  for role in $roles; do
     case $layout:$role in
       init-only:guestd | guestd:guestd) layout=guestd ;;
       init-only:op-ssh | init-only:memd | op-ssh+memd:op-ssh | op-ssh+memd:memd) layout=op-ssh+memd ;;
       *) layout=unknown ;;
     esac
   done
+  if [ -n "$unread" ]; then
+    layout=unknown
+    not_read "exe-init's layout: $unread couldn't be read, even as root, so whether that exe-init is the platform's resident one is unknown"
+  fi
   jadds o layout "$layout"
   jadd o resident "[$res]"
   R_EXE_INIT="{$o}"
