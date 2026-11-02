@@ -4488,6 +4488,81 @@ def test_a_depends_line_naming_no_datastore_is_a_knob_finding(host):
     assert "which no datastore line declares" in f["message"]
 
 
+# --- a Redis whose config sets the users (#458) -----------------------------------
+# Host 6's knob named no user for its Redis, whose redis.conf set an inline
+# user line: the recovery point refused it, three hours before the window,
+# and no probe before it had said so.
+
+REDIS_USER_LINE = "user default on >other ~* +@all\n"
+REDIS_ACLFILE = "aclfile /etc/redis/users.acl\n"
+
+
+@pytest.mark.parametrize(
+    "line, conf, extra, cause",
+    [
+        # Nothing covers it: the recovery point's dump needs a login.
+        ("redis-server", REDIS_USER_LINE, "", "a user line in /etc/redis/redis.conf"),
+        ("redis-server", REDIS_ACLFILE, "", "its aclfile"),
+        # A backup line covers its dump, and its stop doesn't persist it, so
+        # the chain must SAVE it.
+        (
+            "redis-server",
+            REDIS_USER_LINE + 'save ""\n',
+            "backup redis-backup.timer redis-server\n",
+            "a user line in /etc/redis/redis.conf",
+        ),
+        # A user on the line, nothing setting the users, or a backup line
+        # with save points: nothing refuses.
+        ("redis-server ops /etc/redis/ops.key", REDIS_USER_LINE, "", None),
+        ("redis-server", "requirepass mine\n", "", None),
+        (
+            "redis-server",
+            REDIS_USER_LINE,
+            "backup redis-backup.timer redis-server\n",
+            None,
+        ),
+    ],
+    ids=["user-line", "aclfile", "chain-save", "has-user", "no-users", "covered"],
+)
+def test_a_redis_line_with_no_user_where_its_config_sets_the_users_is_a_finding(
+    host, line, conf, extra, cause
+):
+    host.knob(f"posture scheduled\ndatastore redis {line}\n{extra}")
+    host.write("etc/redis/redis.conf", "port 6379\nrequirepass nobodys\n" + conf)
+    host.show(
+        "redis-server.service",
+        ExecStart="{ path=/usr/bin/redis-server ; argv[]=/usr/bin/redis-server /etc/redis/redis.conf ; }",
+    )
+    out = host.run()
+    fid = "redis-login:redis-server.service"
+    if cause is None:
+        assert fid not in _ids(out)
+        return
+    f = _finding(out, fid)
+    assert f["kind"] == "knob"
+    assert f"{cause} sets the users" in f["message"]
+    # The fix, in the knob's own words.
+    assert "datastore redis redis-server <user> <key-file>" in f["message"]
+
+
+def test_a_redis_whose_config_includes_another_file_says_its_users_are_unread(host):
+    host.knob("posture scheduled\ndatastore redis redis-server\n")
+    host.write(
+        "etc/redis/redis.conf",
+        "port 6379\nrequirepass nobodys\ninclude /etc/redis/local.conf\n",
+    )
+    host.show(
+        "redis-server.service",
+        ExecStart="{ path=/usr/bin/redis-server ; argv[]=/usr/bin/redis-server /etc/redis/redis.conf ; }",
+    )
+    out = host.run()
+    assert "redis-login:redis-server.service" not in _ids(out)
+    assert any(
+        "redis-server.service" in n and "/etc/redis/redis.conf includes" in n
+        for n in out["not_read"]
+    ), out["not_read"]
+
+
 @pytest.mark.parametrize(
     "ts, state, ok",
     [
