@@ -92,8 +92,9 @@ can't be read, or a Redis to dump isn't the process ss finds listening at
 its address, can't say where its RDB file is, refuses the login, or has none
 to make (an aclfile or a user line in its config sets the users, and its
 datastore line has no user and key file), or its key file can't be read as
-root; when a Qdrant's container isn't running, its storage's size can't be read, its key file can't be read, or its collections
-can't be listed; when a backup line names a datastore, or a database, no
+root; when a Qdrant's container isn't running, its storage's size can't be
+read, its key file can't be read, or its collections can't be listed; when
+a backup line names a datastore, or a database, no
 datastore line declares, or names a Postgres unit whole whose datastore
 lines name more than one database, and so doesn't say which it takes
 (#480); and when the run's filesystem has less free space than the data it
