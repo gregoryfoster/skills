@@ -361,9 +361,12 @@ def not_disk(units, scope, name):
     if name.endswith(".timer"):
         target = setting(unit, "Unit") or name[: -len(".timer")] + ".service"
         return not_disk(units, scope, target) if target.endswith(".service") else None
+    # An Exec* key it doesn't know may run something: fail closed. Two are
+    # settings, not commands (CR 1655): ExecPaths= (sandboxing) and
+    # ExecSearchPath= (where a bare command name is looked up).
     texts = [unit["text"]] + [t for _w, t in unit.get("dropins", [])]
     if any(
-        k.startswith("Exec") and k not in EXEC_KEYS
+        k.startswith("Exec") and k not in EXEC_KEYS + ("ExecPaths", "ExecSearchPath")
         for text in texts
         for k, _v, _n in directives(text)
     ):
