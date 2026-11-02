@@ -36,6 +36,21 @@ BY_HAND = (
         "each one's ExecStart by hand",
     ),
 )
+# Units LOOKALIKE would offer that are known not to be disk tooling, as
+# (repo, unit name without its suffix, the word its command runs, why). A
+# service is reported under not_disk, apart from the candidates, only with
+# that name and that word in every Exec line it has; a timer only when the
+# service it starts is. Anything else stays a candidate (#548).
+# references/retiring.md names each one; a test holds them together.
+NOT_DISK = (
+    (
+        "power-map",
+        "power-map-prune",
+        "scripts.prune",
+        "deletes database rows past their TTL (tombstones, the request log), "
+        "not disk; power-map's disk tooling is prune_disk.py",
+    ),
+)
 
 SYSTEM_DIRS = (
     "etc/systemd/system",
@@ -271,8 +286,8 @@ def redact(command):
 # name.
 TOKEN_RES = {
     tok: re.compile(r"(^|[/\s'\"`;&|()<>])" + re.escape(tok) + r"($|[\s'\"`;&|()<>])")
-    for _repo, _entry, tokens in RETIRE_LIST
-    for tok in tokens
+    for tok in [t for _r, _e, tokens in RETIRE_LIST for t in tokens]
+    + [word for _r, _u, word, _w in NOT_DISK]
 }
 
 
@@ -285,6 +300,25 @@ def match(command, stem=None):
         if words:
             hits.append((repo, entry, words[0]))
     return hits
+
+
+def not_disk(units, scope, name):
+    """(repo, why) for a unit the NOT_DISK list vouches for, else None."""
+    unit = units.get((scope, name))
+    if unit is None:
+        return None
+    if name.endswith(".timer"):
+        target = setting(unit, "Unit") or name[: -len(".timer")] + ".service"
+        return not_disk(units, scope, target) if target.endswith(".service") else None
+    lines = exec_lines(unit)
+    for repo, own, word, why in NOT_DISK:
+        if (
+            name == f"{own}.service"
+            and lines
+            and all(TOKEN_RES[word].search(cmd) for _where, cmd in lines)
+        ):
+            return repo, why
+    return None
 
 
 def wanted(root, scope_dirs, unit):
@@ -658,7 +692,7 @@ def main():
         )
 
     units = scan_units(root)
-    found, candidates, matched = [], [], set()
+    found, candidates, known, matched = [], [], [], set()
     for (scope, name), unit in sorted(units.items()):
         if name.startswith(CANONICAL):
             continue
@@ -714,13 +748,20 @@ def main():
         lines = exec_lines(unit)
         text = " ".join(c for _w, c in lines)
         if LOOKALIKE.search(name) or LOOKALIKE.search(text):
+            entry = {
+                "kind": "systemd",
+                "scope": scope,
+                "unit": name,
+                "where": lines[0][0] if lines else unit["where"],
+                "command": redact(text),
+            }
+            vouched = not_disk(units, scope, name)
+            if vouched:
+                known.append({"repo": vouched[0], **entry, "why": vouched[1]})
+                continue
             candidates.append(
                 {
-                    "kind": "systemd",
-                    "scope": scope,
-                    "unit": name,
-                    "where": lines[0][0] if lines else unit["where"],
-                    "command": redact(text),
+                    **entry,
                     "why": "its name or command looks like disk tooling; read what it removes",
                 }
             )
@@ -776,6 +817,7 @@ def main():
         "canonical": canonical(root),
         "found": found,
         "candidates": candidates,
+        "not_disk": known,
         "by_hand": [{"repo": r, "entry": e, "why": w} for r, e, w in BY_HAND],
         "gc_report": report,
         "unreadable": sorted({os.path.relpath(p, root) for p in UNREADABLE}),
