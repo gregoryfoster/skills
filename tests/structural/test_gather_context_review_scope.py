@@ -243,6 +243,22 @@ class TestTheReviewBase:
         assert "origin/HEAD" in header, header
         assert len(body) == 1 and body[0].startswith("(none"), body
 
+    @pytest.mark.parametrize("variant", VARIANTS)
+    def test_a_failed_git_is_incomplete_not_none(self, variant, tmp_path, home):
+        """A repo with no commit yet: `git diff HEAD` fails. The list must
+        say it is incomplete and leave git's error on stderr, not read the
+        failure as an empty answer — the silent-empty class #549 is."""
+        repo = tmp_path / "unborn"
+        repo.mkdir()
+        git(repo, "init", "-q", "-b", "main")
+        (repo / "a.txt").write_text("untracked\n")
+        r = _run(variant, repo, home)
+        assert r.returncode == 0, r.stderr
+        _, body = _section(r.stdout)
+        assert body and body[-1].startswith("(incomplete"), body
+        assert "a.txt" in body, body
+        assert "HEAD" in r.stderr, r.stderr
+
 
 class TestArguments:
     @pytest.mark.parametrize("variant", VARIANTS)
