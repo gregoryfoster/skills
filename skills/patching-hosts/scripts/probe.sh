@@ -860,7 +860,7 @@ read_profile() {
   if [ "$dir" -eq 1 ] || [ "$init" = 1 ]; then platform=1; fi
   if [ "$account" -eq 1 ] || [ "$wrapper" -eq 1 ]; then image=1; fi
   if [ "$platform" -eq 1 ] || [ "$image" -eq 1 ]; then
-    PROFILE=exe-dev-exeuntu
+    PROFILE="exe-dev-exeuntu"
     # Only the image's markers date it: on the platform alone, the image
     # could be another. The generations differ by these two (the profile's
     # table).
@@ -899,9 +899,134 @@ read_profile() {
   R_PROFILE=$o
 }
 
+# exe.dev's own files, read on an exe.dev host alone (#388). image.conf is
+# the image's OCI config, and its labels the only image identity the guest
+# can read: the build's time, its commit, and its channel (main or
+# nightly). A label the file lacks, or a file that can't be read, is null,
+# never a default.
+IMAGE_CONF=/exe.dev/etc/image.conf
+R_IMAGE=null
+image_label() {  # <var> <JSON text> <label>: VAR := its value, or empty
+  local _il
+  _il=$(printf '%s\n' "$2" | grep -o "\"${3//./\\.}\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" | head -n 1) || _il=""
+  _il=${_il%\"}
+  printf -v "$1" '%s' "${_il##*\"}"
+}
+read_image_conf() {
+  local o="" t="" l v ok=0
+  R_IMAGE=null
+  [ "$PROFILE" = exe-dev-exeuntu ] || return 0
+  jadds o path "$IMAGE_CONF"
+  if [ ! -e "$P_ROOT$IMAGE_CONF" ]; then
+    jaddb o present 0
+  else
+    jaddb o present 1
+    capture t as_reader cat -- "$P_ROOT$IMAGE_CONF"
+    if [ "$CAP_RC" -eq 0 ]; then
+      ok=1
+    else
+      not_read "the exe.dev image's labels: $IMAGE_CONF couldn't be read, even as root${CAP_ERR:+ ($CAP_ERR)}"
+    fi
+  fi
+  for l in created revision version; do
+    v=""
+    if [ "$ok" -eq 1 ]; then image_label v "$t" "org.opencontainers.image.$l"; fi
+    jaddsn o "$l" "$v"
+  done
+  R_IMAGE="{$o}"
+}
+
+# exe-init's layout, from what's resident: a separate axis from the image's
+# generation (the profile's "exe-init's layout is a separate axis"). None
+# resident is init only, exe-init op-ssh and memd are the May-2026 layout,
+# and exe-init guestd is every image's from 2026-08-25. Unknown where a
+# role isn't one of those, or where /proc hides other users' processes, as
+# hidepid would hide exe-init with PID 1.
+# Resident means root's process running the platform's own binary, with a
+# role: not the operator's `exe-init --version`, which the profile says to
+# run, nor another binary named exe-init (CR 1645). /proc/<pid>/exe is
+# root's alone to read, so it's read as root where it must be, and one that
+# can't be read makes the layout unknown.
+EXE_INIT_BIN=/exe.dev/bin/exe-init
+R_EXE_INIT=null
+read_exe_init() {
+  local o="" f pid comm args role rest res="" layout="init-only" e k v uid exe unread=""
+  R_EXE_INIT=null
+  [ "$PROFILE" = exe-dev-exeuntu ] || return 0
+  jadds o source "/proc/*/comm, cmdline, status and exe"
+  if [ "$P_LIVE" -ne 1 ]; then
+    jadd o layout null
+    jadd o resident null
+    R_EXE_INIT="{$o}"
+    not_read "exe-init's layout: nothing runs this tree"
+    return 0
+  fi
+  if [ ! -r "$P_ROOT/proc/1/comm" ]; then
+    jadds o layout unknown
+    jadd o resident null
+    R_EXE_INIT="{$o}"
+    not_read "exe-init's layout: /proc/1/comm can't be read, so /proc may hide the processes that would show it"
+    return 0
+  fi
+  for f in "$P_ROOT"/proc/[0-9]*/comm; do
+    [ -r "$f" ] || continue
+    IFS= read -r comm <"$f" || true
+    [ "$comm" = exe-init ] || continue
+    pid=${f%/comm}
+    pid=${pid##*/}
+    cmdline_of args "$pid"
+    role="" rest=""
+    read -r _ role rest <<<"$args" || true
+    # A query alone, such as the profile's exe-init --version, is an
+    # invocation, not a resident. Any other leading option, or a query
+    # word with more after it (-v for verbose), is a role the layout
+    # doesn't know, so it reads unknown (CR 1649, CR 1654).
+    case $role in
+      --version | -v | --help | -h) [ -n "$rest" ] || continue ;;
+    esac
+    uid=""
+    if [ -r "$P_ROOT/proc/$pid/status" ]; then
+      while read -r k v _; do
+        if [ "$k" = Uid: ]; then uid=$v; fi
+      done <"$P_ROOT/proc/$pid/status"
+    fi
+    if [ -z "$uid" ]; then
+      unread="${unread:+$unread, }/proc/$pid/status"
+      continue
+    fi
+    [ "$uid" = 0 ] || continue
+    capture exe readlink -- "$P_ROOT/proc/$pid/exe"
+    if [ "$CAP_RC" -ne 0 ]; then capture exe as_root readlink -- "$P_ROOT/proc/$pid/exe"; fi
+    if [ "$CAP_RC" -ne 0 ]; then
+      unread="${unread:+$unread, }/proc/$pid/exe"
+      continue
+    fi
+    # A binary swapped since it started still ran the platform's.
+    [ "${exe% (deleted)}" = "$EXE_INIT_BIN" ] || continue
+    e=""
+    jaddn e pid "$pid"
+    jaddsn e role "$role"
+    jpush res "{$e}"
+    case $layout:$role in
+      init-only:guestd | guestd:guestd) layout=guestd ;;
+      init-only:op-ssh | init-only:memd | op-ssh+memd:op-ssh | op-ssh+memd:memd) layout=op-ssh+memd ;;
+      *) layout=unknown ;;
+    esac
+  done
+  if [ -n "$unread" ]; then
+    layout=unknown
+    not_read "exe-init's layout: $unread couldn't be read, even as root, so whether that exe-init is the platform's resident one is unknown"
+  fi
+  jadds o layout "$layout"
+  jadd o resident "[$res]"
+  R_EXE_INIT="{$o}"
+}
+
 read_environment() {
   local o="" lt=""
   read_profile
+  read_image_conf
+  read_exe_init
   read_boot
   read_journal
   if live_cmd systemd-analyze; then
@@ -912,6 +1037,8 @@ read_environment() {
   read_setup
   read_tmp
   jadd o profile "{$R_PROFILE}"
+  jadd o image_conf "$R_IMAGE"
+  jadd o exe_init "$R_EXE_INIT"
   jadd o boot "{$R_BOOT}"
   jadd o journal "{$R_JOURNAL}"
   jaddsn o pid1_log_target "$lt"
@@ -3567,6 +3694,45 @@ read_backups() {
   done
 }
 
+# A datastore redis line with no user, on a Redis whose config sets the
+# users (an aclfile or a user line), has no login: the recovery point
+# refuses its dump unless a backup line covers it, and the chain refuses
+# it where its stop wouldn't persist it. Raised here, before the run (#458):
+# host 6 learned it at the recovery point, 3 hours before its window. The
+# knob's line is the fix, so no exception covers it.
+read_redis_logins() {
+  local r u p needs="" covers=""
+  local -a f=()
+  for r in ${KNOB_BACKUP[@]+"${KNOB_BACKUP[@]}"}; do
+    backup_covers "$r"
+    covers="$covers $BC_COVERS"
+  done
+  for r in ${KNOB_DATASTORE[@]+"${KNOB_DATASTORE[@]}"}; do
+    IFS=$KNOB_US read -r -a f <<<"$r"
+    if [ "${f[0]}" != redis ] || [ -n "${f[2]:-}" ]; then continue; fi
+    unit_name u "${f[1]}"
+    redis_conf "$u"
+    if [ "$RC_READ" -eq 0 ]; then
+      not_read "whether $u's config sets its users, so that its datastore line needs a user: $RC_CONF couldn't be read as root"
+      continue
+    elif [ "$RC_ACL" -ne 1 ]; then
+      if [ "$RC_INCLUDE" -eq 1 ]; then
+        not_read "whether $u's users are set in a file $RC_INCLUDE_IN includes, which isn't read: if they are, its requirepass logs nobody in, and its datastore line needs a user and key file"
+      fi
+      continue
+    fi
+    needs=""
+    in_words "$u" "$covers" || needs="the recovery point can't BGSAVE it for its dump"
+    redis_persistence p
+    case $p in
+      none) needs="${needs:+$needs, and }the reboot chain can't SAVE it before a stop that wouldn't persist it" ;;
+      unknown) needs="${needs:+$needs, and }the reboot chain can't SAVE it before a stop that may not persist it" ;;
+    esac
+    [ -n "$needs" ] || continue
+    finding knob "redis-login:$u" "" "datastore redis ${f[1]} (knob line ${f[3]}) names no user, and $RC_ACL_WHY, so its requirepass isn't one to try: $needs, so each refuses. Give the line a user and key file, datastore redis ${f[1]} <user> <key-file> (knob.md)."
+  done
+}
+
 health_says() {  # <var> <exit status>: how a knob check ended, in words
   if [ "$2" = 124 ]; then
     printf -v "$1" 'times out after %s s' "$KNOB_CMD_TIMEOUT"
@@ -3708,6 +3874,7 @@ read_impact() {
   read_depends
   read_restarters
   read_backups
+  read_redis_logins
   read_health pre-run
   read_reboot pre-run
   jadd o maps "$R_MAPS"

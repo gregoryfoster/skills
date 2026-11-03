@@ -9,12 +9,12 @@ The guest can't see its own image digest (CannObserv/broker#65, 2026-09-25), and
 - its commit, `org.opencontainers.image.revision`;
 - its channel, `org.opencontainers.image.version`: `main` on 11 hosts, `nightly` on 2.
 
-The probe doesn't read `image.conf` yet, so it detects the image by markers. It reads each one on its own, and names the profile and the generation in `environment.profile`.
+The probe reports the three labels in `environment.image_conf` (#388), each null where the file lacks it or can't be read. It still detects the image by markers, since `image.conf` comes with the platform's `/exe.dev/` and an offline tree of the image has none. It reads each marker on its own, and names the profile and the generation in `environment.profile`.
 
 The platform's exist only on an exe.dev VM:
 - the kernel's `init=/exe.dev/bin/exe-init` in `/proc/cmdline`;
 - `/exe.dev/`, which the platform supplies at boot. The image doesn't carry it. `/exe.dev/etc/init-style` (it reads `metadata`) appears from the May-2026 image on, and `/exe.dev/etc/shelley-version` from the August one;
-- a platform kernel (6.12.93 in the round), with no installed `linux-image-*` package.
+- a platform kernel (6.12.93 in the round), with no installed `linux-image-*` package. It can change at any reboot ([below](#update-channels)).
 
 The image's are in any tree of it, so they're all an offline read sees. Their dates come from [boldsoftware/exeuntu](https://github.com/boldsoftware/exeuntu)'s history, read 2026-10-01:
 - the `exedev` account, named "exe.dev user", and `/usr/local/bin/init`, the init wrapper that names the image: since its import (`6f88f30`, 2026-01-22);
@@ -50,7 +50,7 @@ Read across 13 cohort hosts on 2026-10-01 (#346):
 | op-ssh + memd | usa-wa's, May 2026 | `exe-init op-ssh` and `exe-init memd`; no `exe-scroll` | `sshd-session`, under exe.dev's `sshd` |
 | guestd | every image from 2026-08-25 | `exe-init guestd`, with `exe-scroll` | `exe-init`, until the session is reparented to PID 1 |
 
-The April image has `exe-setup.service`, so its markers date it `may-2026`, but its layout is init-only: the layout doesn't follow the generation. exe.dev's `sshd` and a resident `exe-init` read adj -1000 on every host. What a session reads is under [Sessions and OOM](#sessions-and-oom).
+The April image has `exe-setup.service`, so its markers date it `may-2026`, but its layout is init-only: the layout doesn't follow the generation. So the probe reads it from what's resident, in `environment.exe_init` (#388): `guestd`, `op-ssh+memd` or `init-only`, with each resident `exe-init`'s role. Resident means root's process running `/exe.dev/bin/exe-init` with a role, so the `exe-init --version` below doesn't count. A role it doesn't know is `unknown`, and so is an `exe` link root can't read, or a `/proc` that hides PID 1, since it would hide `exe-init` too. exe.dev's `sshd` and a resident `exe-init` read adj -1000 on every host. What a session reads is under [Sessions and OOM](#sessions-and-oom).
 
 `exe-init --version` prints `exe-init version <build>`. Where it prints `next-dev (HEAD) linux/amd64` (two Feb-2026 hosts) or `unknown` (one guestd host), the version names no build, so hash the binary: `14fd603` is `6403375d…` (#313).
 
@@ -60,26 +60,12 @@ The April image has `exe-setup.service`, so its markers date it `may-2026`, but 
 |---|---|---|
 | apt (Ubuntu archive + security) | **off**: 5 units are masked, `apt-daily.timer`, `apt-daily-upgrade.timer`, `unattended-upgrades.service` and both `update-notifier` timers. That holds on all 13 cohort hosts read, usa-wa's May image included, and every mask predates its VM, so each came with the image (#346, 2026-10-01). So do exeuntu `main` at `ae8be4d` (#313, 2026-09-24) and the image built from `1b74aabd` (read 2026-10-01) | the host's run ([policy.md](../policy.md)) |
 | `APT::Periodic::Enable` | **0**, from `/etc/apt/apt.conf.d/docker-disable-periodic-update`, a Docker-base-image file. It makes the timers no-ops even when they're unmasked (CannObserv/archiver#278). A policy that turns them on must set `"1"` in a file sorting after it. | image |
-| Kernel | the platform's; no guest kernel, so a kernel never decides a reboot | platform |
+| Kernel | the platform's; no guest kernel, so a kernel never decides a reboot. **It can change at any reboot, in-guest ones included:** host 6, co-status, notifier and co-processor each came back on a newer build, with the image unchanged (2026-10-20 to 10-26). `markers.kernel` holds only for the boot it's read on | platform |
 | `exeuntu update` | the agent binaries the image ships under `/usr/local/bin` | image / platform |
 | Third-party apt | NodeSource or Tailscale on some hosts; not on others | per origin ([policy.md](../policy.md)) |
 | Outside apt | `uv`, `claude`, `codex`, `gh`, `shelley`, container images, repo-installed pins | image, or the repo that installed it |
 
-**Tailscale**, where a host has it, goes in the maintenance lane: `origin pkgs.tailscale.com follow` in the knob, by its site. Upgrading tailscaled drops the host's tailnet path, so it waits for a planned window, unless a security bulletin expedites it into an out-of-cycle one. Tailscale publishes them at `https://tailscale.com/security-bulletins`, with a feed at `https://tailscale.com/security-bulletins/index.xml` (read 2026-10-02; the latest was TS-2026-011, 2026-08-18). Whoever watches it should open one tracking issue per bulletin in the image owner's repo (the knob's `image-owner`), which fans out to the hosts that run Tailscale. Each host takes the fix in an expedited run, `apply.sh --lane origin:pkgs.tailscale.com`. The run isn't done until `tailscale version --daemon` prints a `Daemon:` line that matches its `Client:` line, or the reprobe's `updates.tailscale.daemon_version` matches its `version`: until tailscaled restarts, the old one is what runs. Plain `tailscale version` reads only the client, and never warns ([run.md](../run.md#3-the-apply-in-held-steps)). Tailscale's own auto-update would skip all of that, so the probe reports it ([policy.md](../policy.md)). **Turn it off for the tailnet, not only on the node.** On co-replicator, `tailscale set --auto-update=false` held through tailscaled's own restart in the `tailscale` step. Then, at the reboot that followed, tailscaled logged `using tailnet default auto-update setting: true` and set `Apply` true again (2026-10-06, CannObserv/replicator#131). Whether the boot or the newer daemon triggered it is unmeasured.
-
-**Scope Tailscale's origin with apt pins**, as every followed origin is ([policy.md](../policy.md#two-lanes)): a `Package: *` pin for its site below 500, and a package pin above 500 for `tailscale` and for `tailscale-archive-keyring`, which apt installed with it. In a file under `/etc/apt/preferences.d/`:
-
-```
-Package: *
-Pin: origin pkgs.tailscale.com
-Pin-Priority: 100
-
-Package: tailscale tailscale-archive-keyring
-Pin: origin pkgs.tailscale.com
-Pin-Priority: 600
-```
-
-Measured on noble with apt 2.8.3 against Tailscale's own repository (2026-10-05). Unpinned, the probe reported `unscoped:pkgs.tailscale.com` and both packages as `unpinned:`. With `tailscale` pinned alone, the keyring was still `unpinned:`. With both pinned, it reported neither, and apt still took a pending `tailscale`.
+**Tailscale**, where a host has it: its lane, its security bulletins, its own auto-update, what an upgrade's tailnet drop costs, and its apt pins are in [exe-dev-tailscale.md](exe-dev-tailscale.md).
 
 `20auto-upgrades` may say `1`/`1` while all of the above holds. Read the effective value with `apt-config shell E APT::Periodic::Enable`, never the file.
 
@@ -96,6 +82,7 @@ The needrestart drop-in (`$nrconf{restart} = 'l';`) governs needrestart's apt ho
 | `libc6` / `systemd` | PID 1 re-executes itself | replicator, watcher, address-validator, wslcb |
 | `systemd` | the user manager re-executes, and journald and timesyncd restart | wslcb. On address-validator, needrestart still listed journald and timesyncd after the apply, so they hadn't restarted there. |
 | `redis-server` | restarts the server from its postinst on upgrade (read in noble's 7.0.15-1ubuntu0.24.04.4, 2026-09-30); not measured in the round | — |
+| `tailscale` | restarts `tailscaled` from its postinst (`deb-systemd-invoke restart 'tailscaled.service'`), whatever needrestart's mode. needrestart in list mode then reported nothing to restart: the restart had happened already (#432) | co-provisioner, co-processor, co-status, co-index, usa-wa |
 | `packagekit` | D-Bus-activated, not restarted | — |
 
 A data store needs a restart when its processes map a library in the set (`libc6`, `libssl3t64`, `libxml2`, `libsystemd0`), **even if its own package isn't in the set**. That was true on watcher, address-validator and wslcb.
@@ -164,7 +151,12 @@ So a copy isn't the recovery point: that's the data store's own ([run.md](../run
 
 - `docker-clean` empties apt's `.deb` cache after every run, so a rollback fetches the recorded version from snapshot.ubuntu.com.
 - The ingress is exe.dev's own `sshd` in `init.scope`. `ssh.service` is disabled and `ssh.socket` masked, so an openssh-server upgrade touches nothing live (power-map, address-validator, wslcb).
-- **The Feb-2026 image deleted `fwupd`'s conffile `/etc/update-motd.d/85-fwupd`,** and masks `fwupd.service` and `fwupd-refresh.timer`. When a new `fwupd` changes that conffile, unattended-upgrade passes it over at a conffile prompt and exits 1, though dpkg itself would keep the deletion without asking. The probe names it as `dry-run:conffile:fwupd`. wslcb held it, as `exception held:fwupd`, and it's a prune candidate on a VM with no firmware of its own (CannObserv/wslcb-licensing-tracker#192, 2026-10-07).
+- **Every exeuntu image read for it so far, Feb-2026 and `may-2026`, deletes `fwupd`'s conffile `/etc/update-motd.d/85-fwupd`,** and masks its three units, `fwupd.service`, `fwupd-refresh.service` and `fwupd-refresh.timer`, at the image's build. When a new `fwupd` changes that conffile, unattended-upgrade passes it over at a conffile prompt and exits 1, though dpkg itself would keep the deletion without asking. Read with the trap:
+  - the Feb-2026 image, on wslcb, 2026-10-07: fwupd 1.9.33 installed, 2.0.20 pending in `-updates`, the masks dated 2026-02-06 (CannObserv/wslcb-licensing-tracker#192, CannObserv/wslcb-licensing-tracker#193);
+  - `may-2026`, on usa-wa, 2026-10-14: 1.9.34 installed, 2.0.20 pending, the masks dated May 23 (CannObserv/usa-wa#497, #392);
+  - `may-2026`, on host 6, 2026-10-20: the same exit at the same conffile (#460).
+
+  The probe's `dry-run:conffile:fwupd` catches it on any image: it reads the dry run, not the generation. On host 6's newer-generation VM, 2026-10-26, fwupd wasn't pending, so the dry run couldn't show the trap either way (#489). Hosts held it, as `exception held:fwupd`, or purged it: it's a prune candidate on a VM with no firmware of its own (CannObserv/wslcb-licensing-tracker#193, CannObserv/usa-wa#497). Both purges ran by hand; `prune-plan.sh --component apt:fwupd --take-orphans` plans one now ([pruning.md](../pruning.md#any-other-apt-package)). **A hold doesn't move with the host:** on host 6's new VM, `apt-mark showhold` was empty while the knob still declared `held:fwupd`, and the probe raised nothing, since fwupd wasn't pending (#489).
 - nginx ships with the image, disabled, and was in the security set on six hosts: patched for nothing. A dormant-component candidate ([policy.md](../policy.md)).
 - **Docker is socket-activated:** the image disables `docker.service` and enables `docker.socket`, so the first `docker` call starts dockerd (read in the image built from `1b74aabd`, 2026-10-01). Don't ask an idle Docker anything you'd want to read as idle. And a restart policy does nothing at boot: a container with `unless-stopped` stayed down after a reboot until dockerd was started, which is why power-map's qdrant waited for first use. A host whose containers must come back by themselves needs `docker.service` enabled, the owner's change.
 

@@ -90,10 +90,11 @@ existing --run isn't mode 0700; once the run's bulk has started; when
 cluster or a database can't be found, a cluster isn't online or its port
 can't be read, or a Redis to dump isn't the process ss finds listening at
 its address, can't say where its RDB file is, refuses the login, or has none
-to make (an aclfile, and no user and key file on its datastore line), or its
-key file can't be read as root; when a Qdrant's container isn't running, its
-storage's size can't be read, its key file can't be read, or its collections
-can't be listed; when a backup line names a datastore, or a database, no
+to make (an aclfile or a user line in its config sets the users, and its
+datastore line has no user and key file), or its key file can't be read as
+root; when a Qdrant's container isn't running, its storage's size can't be
+read, its key file can't be read, or its collections can't be listed; when
+a backup line names a datastore, or a database, no
 datastore line declares, or names a Postgres unit whole whose datastore
 lines name more than one database, and so doesn't say which it takes
 (#480); and when the run's filesystem has less free space than the data it
@@ -595,10 +596,11 @@ gate_datastores() {
         refuse "datastore redis $u: $REDIS_WHY"
         continue
       fi
-      # A dump needs a login, for BGSAVE: never one Redis's aclfile makes
-      # nobody's, so a failed one doesn't reach ACL LOG (#379).
+      # A dump needs a login, for BGSAVE: never one an aclfile or a user
+      # line makes nobody's, so a failed one doesn't reach ACL LOG (#379).
+      # The probe raises redis-login:<unit> for it before the run (#458).
       if [ "$REDIS_LOGIN" = none ]; then
-        refuse "datastore redis $u: its dump needs a login, to BGSAVE, and its aclfile sets the users, so its requirepass isn't one to try. Give its datastore line a user and key file (datastore redis <unit> <user> <key-file>), or cover it with a backup line"
+        refuse "datastore redis $u: its dump needs a login, to BGSAVE, and $RC_ACL_WHY, so its requirepass isn't one to try. Give its datastore line a user and key file (datastore redis <unit> <user> <key-file>), or cover it with a backup line"
         continue
       fi
       if ! redis_key_ok; then

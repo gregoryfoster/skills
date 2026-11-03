@@ -968,11 +968,28 @@ def test_an_acld_redis_whose_stop_persists_it_needs_no_login(host, lines, persis
     assert "systemctl stop -- redis-server.service" in host.sequence()
 
 
-def test_an_acld_redis_the_chain_must_save_needs_a_user_and_key_file(host):
-    (host.tmp / "redis.conf").write_text(ACL_CONF + 'save ""\n')
+@pytest.mark.parametrize(
+    "conf, cause, not_cause",
+    [
+        (ACL_CONF, "its aclfile sets the users", "user line"),
+        # #458: an inline user line, and no aclfile, as host 6's redis.conf.
+        (
+            "port 6380\nrequirepass nobodys\nuser default on >other ~* +@all\n",
+            "a user line in {conf} sets the users",
+            "aclfile",
+        ),
+    ],
+    ids=["aclfile", "user-line"],
+)
+def test_an_acld_redis_the_chain_must_save_needs_a_user_and_key_file(
+    host, conf, cause, not_cause
+):
+    (host.tmp / "redis.conf").write_text(conf + 'save ""\n')
     out = host.reboot(rc=3)
     [why] = [r for r in out["refused"] if "redis-server" in r]
     assert "no save points and no appendonly" in why
+    assert cause.format(conf=host.tmp / "redis.conf") in why
+    assert not_cause not in why
     assert "datastore redis <unit> <user> <key-file>" in why
     # Its requirepass is never tried: a refused login is an ACL LOG entry.
     assert host.calls("redis-cli") == []

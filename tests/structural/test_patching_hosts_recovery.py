@@ -40,7 +40,8 @@ Beyond that list:
 - a Redis is dumped only where what redis-cli reaches is the unit's own
   process: its main PID listens at the address, as ss reads it as root,
   with no login (#379);
-- a dump needs a login: under an aclfile, requirepass is never tried, and
+- a dump needs a login: where an aclfile or a user line sets the users,
+  requirepass is never tried, the refusal names which (#458), and
   the knob's user logs in with its key file, which never reaches an argv;
   a refused login is tried once, and named.
 
@@ -163,6 +164,9 @@ def test_help_names_the_gates_and_the_record():
         "  3  refused",
     ):
         assert word in r.stdout, word
+    # CR 1644: wrapped to the file's own width, 80 at most.
+    wide = [line for line in r.stdout.splitlines() if len(line) > 80]
+    assert not wide, wide
 
 
 @pytest.mark.parametrize(
@@ -700,13 +704,33 @@ def test_a_bgsave_redis_refuses_fails_at_once_with_its_reply(tmp_path):
 # password nobody holds: each refused login is an ACL LOG entry.
 
 ACL_CONF = "port 6379\naclfile /etc/redis/users.acl\nrequirepass nobodys\n"
+# #458: host 6's Redis had no aclfile. Its redis.conf set requirepass, then
+# an inline user line, and included a second file.
+USER_CONF = (
+    "port 6379\nrequirepass nobodys\nuser default on >other ~* +@all\n"
+    "include /etc/redis/local.conf\n"
+)
 
 
-def test_an_acld_redis_with_no_user_isnt_dumped_and_no_login_is_tried(tmp_path):
-    host = _redis(_ready(Host(tmp_path)), conf=ACL_CONF)
+@pytest.mark.parametrize(
+    "conf, cause, not_cause",
+    [
+        (ACL_CONF, "its aclfile sets the users", "user line"),
+        (USER_CONF, "a user line in {conf} sets the users", "aclfile"),
+    ],
+    ids=["aclfile", "user-line"],
+)
+def test_an_acld_redis_with_no_user_isnt_dumped_and_no_login_is_tried(
+    tmp_path, conf, cause, not_cause
+):
+    host = _redis(_ready(Host(tmp_path)), conf=conf)
     out = host.recover(rc=3)
     [why] = [r for r in out["refused"] if "redis-server" in r]
     assert "its dump needs a login, to BGSAVE" in why
+    # The refusal names what it read: an owner who looks for an aclfile and
+    # finds none has reason to distrust it (#458).
+    assert cause.format(conf=host.tmp / "redis.conf") in why
+    assert not_cause not in why
     assert "datastore redis <unit> <user> <key-file>" in why
     assert "or cover it with a backup line" in why
     assert host.calls("redis-cli") == []

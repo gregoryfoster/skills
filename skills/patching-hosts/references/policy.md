@@ -89,7 +89,7 @@ exception <what> <review-by YYYY-MM-DD> <reason>
 
 - A passed review-by date **expires** the exception, and the deviation becomes a finding again.
 - Keeping a dormant component is an exception: `exception keep:<component> <review-by> <reason>`.
-- Each prune stage is declared the same way, as `disabled:<component>`, `removed:<component>` or `purged:<component>`. The review-by date is the prune calendar: when it passes, the probe proposes the next stage. A `purged:` line stays until the base image stops shipping the component.
+- Each prune stage is declared the same way, as `disabled:<component>`, `removed:<component>` or `purged:<component>`. The review-by date is the prune calendar: when it passes, the probe proposes the next stage for a component it reads, one of the six. An `apt:<package>` component's stage lines prompt nothing, so its next stage is `prune-plan.sh`'s `stage` ([pruning.md](pruning.md#any-other-apt-package)). A `purged:` line stays until the base image stops shipping the component.
 - **A package hold is declared as `held:<package>`.** A hold on a package in the pending set defers its update, and a security package never waits without an exception ([Two lanes](#two-lanes)). So an undeclared hold on a pending package is a finding, whether the owner placed it or an aborted run left it ([run.md](run.md)).
 
 **What `<what>` names.** Each probe finding an exception can cover carries it as `exception_what`:
@@ -118,7 +118,7 @@ exception <what> <review-by YYYY-MM-DD> <reason>
 
 The rest take no exception, because each is fixed where it is:
 - a provisioning leftover the host can fix, such as a setup script on disk that isn't contained;
-- a knob gap: an undeclared restarter (unless found only through what the scan couldn't read or a script line it matched, above), backup regime or third-party origin;
+- a knob gap: an undeclared restarter (unless found only through what the scan couldn't read or a script line it matched, above), backup regime or third-party origin, or a `datastore redis` line with no user where the Redis's config sets the users, which the recovery point or the chain would refuse (`redis-login:<unit>`, #458);
 - a failing health check;
 - a pending reboot.
 

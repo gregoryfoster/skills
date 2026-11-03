@@ -8,6 +8,7 @@ import argparse
 import json
 import os
 import re
+import shlex
 import signal
 import stat
 import subprocess
@@ -36,6 +37,25 @@ BY_HAND = (
         "each one's ExecStart by hand",
     ),
 )
+# Units LOOKALIKE would offer that are known not to be disk tooling, as
+# (repo, unit name without its suffix, what its Exec lines may run, why). A
+# service is reported under not_disk, apart from the candidates, only with
+# that name and every Exec* line it has, drop-ins merged, running one of
+# those and nothing else (runs_only); a timer only when the service it
+# starts is. Anything else, an Exec* key EXEC_KEYS doesn't know included,
+# stays a candidate (#548, CR 1642, CR 1647).
+# references/retiring.md names each one; a test holds them together.
+NOT_DISK = (
+    (
+        "power-map",
+        "power-map-prune",
+        # The module, and the co-status check-in every power-map timer's
+        # service runs from ExecStopPost=: an HTTP POST that removes nothing.
+        ("-m scripts.prune", "scripts/status_checkin.py"),
+        "deletes database rows past their TTL (tombstones, the request log), "
+        "not disk; power-map's disk tooling is prune_disk.py",
+    ),
+)
 
 SYSTEM_DIRS = (
     "etc/systemd/system",
@@ -52,7 +72,17 @@ GC_DIR = "usr/local/lib/cannobserv/disk-gc"
 LOOKALIKE = re.compile(
     r"disk|prune|clean|hygiene|headroom|vacuum|(^|[^a-z])gc([^a-z]|$)", re.I
 )
-EXEC_KEYS = ("ExecStart", "ExecStartPre", "ExecStartPost", "ExecStop")
+# Every command a service's systemd runs, ExecStart first so `where` names
+# it (CR 1647: a deletion in ExecStopPost= is as real as one in ExecStart=).
+EXEC_KEYS = (
+    "ExecStart",
+    "ExecStartPre",
+    "ExecStartPost",
+    "ExecStop",
+    "ExecStopPost",
+    "ExecReload",
+    "ExecCondition",
+)
 REPORT_LINES = 500
 MAX_GC_JSON = 4 * 1024 * 1024
 UNREADABLE = []
@@ -275,6 +305,42 @@ TOKEN_RES = {
     for tok in tokens
 }
 
+# One known run and nothing else: `[-][uv run] <python> -m <module> [args]`
+# or `[-][uv run] <python> /abs/<script> [args]`, each arg a plain word. No
+# shell, no `;` (systemd's own command separator in older releases), no `&&`
+# or `|`, so no second command rides along. `-` is systemd's
+# ignore-the-exit prefix; any other prefix fails, since the interpreter and
+# uv must each be a bare name or an absolute path: `@` would make the next
+# word argv[0], and `+`, `!` and `:` change privileges or expansion
+# (CR 1653).
+PYTHON = re.compile(r"(?:/(?:\S*/)?)?python3?(?:\.\d+)?\Z")
+UV = re.compile(r"(?:/(?:\S*/)?)?uv\Z")
+PLAIN_ARG = re.compile(r"[\w./=:,@%+-]+\Z")
+
+
+def runs_only(command, runs):
+    """Whether an Exec line runs one of `runs` with python, and nothing
+    else: `-m <module>`, or a script by an absolute path ending in it."""
+    try:
+        words = shlex.split(command)
+    except ValueError:
+        return False
+    if words and words[0].startswith("-"):
+        words[0] = words[0][1:]
+    if words[:2] and UV.match(words[0]) and words[1:2] == ["run"]:
+        words = words[2:]
+    if not words or PYTHON.match(words[0]) is None:
+        return False
+    for run in runs:
+        if run.startswith("-m "):
+            n, ok = 3, words[1:3] == run.split()
+        else:
+            script = words[1] if len(words) > 1 else ""
+            n, ok = 2, script.startswith("/") and script.endswith("/" + run)
+        if ok and all(PLAIN_ARG.match(w) for w in words[n:]):
+            return True
+    return False
+
 
 def match(command, stem=None):
     """(repo, entry, word) for each entry a command, or a unit's own name
@@ -285,6 +351,35 @@ def match(command, stem=None):
         if words:
             hits.append((repo, entry, words[0]))
     return hits
+
+
+def not_disk(units, scope, name):
+    """(repo, why) for a unit the NOT_DISK list vouches for, else None."""
+    unit = units.get((scope, name))
+    if unit is None:
+        return None
+    if name.endswith(".timer"):
+        target = setting(unit, "Unit") or name[: -len(".timer")] + ".service"
+        return not_disk(units, scope, target) if target.endswith(".service") else None
+    # An Exec* key it doesn't know may run something: fail closed. Two are
+    # settings, not commands (CR 1655): ExecPaths= (sandboxing) and
+    # ExecSearchPath= (where a bare command name is looked up).
+    texts = [unit["text"]] + [t for _w, t in unit.get("dropins", [])]
+    if any(
+        k.startswith("Exec") and k not in EXEC_KEYS + ("ExecPaths", "ExecSearchPath")
+        for text in texts
+        for k, _v, _n in directives(text)
+    ):
+        return None
+    lines = exec_lines(unit)
+    for repo, own, runs, why in NOT_DISK:
+        if (
+            name == f"{own}.service"
+            and lines
+            and all(runs_only(cmd, runs) for _where, cmd in lines)
+        ):
+            return repo, why
+    return None
 
 
 def wanted(root, scope_dirs, unit):
@@ -658,7 +753,7 @@ def main():
         )
 
     units = scan_units(root)
-    found, candidates, matched = [], [], set()
+    found, candidates, known, matched = [], [], [], set()
     for (scope, name), unit in sorted(units.items()):
         if name.startswith(CANONICAL):
             continue
@@ -714,13 +809,20 @@ def main():
         lines = exec_lines(unit)
         text = " ".join(c for _w, c in lines)
         if LOOKALIKE.search(name) or LOOKALIKE.search(text):
+            entry = {
+                "kind": "systemd",
+                "scope": scope,
+                "unit": name,
+                "where": lines[0][0] if lines else unit["where"],
+                "command": redact(text),
+            }
+            vouched = not_disk(units, scope, name)
+            if vouched:
+                known.append({"repo": vouched[0], **entry, "why": vouched[1]})
+                continue
             candidates.append(
                 {
-                    "kind": "systemd",
-                    "scope": scope,
-                    "unit": name,
-                    "where": lines[0][0] if lines else unit["where"],
-                    "command": redact(text),
+                    **entry,
                     "why": "its name or command looks like disk tooling; read what it removes",
                 }
             )
@@ -776,6 +878,7 @@ def main():
         "canonical": canonical(root),
         "found": found,
         "candidates": candidates,
+        "not_disk": known,
         "by_hand": [{"repo": r, "entry": e, "why": w} for r, e, w in BY_HAND],
         "gc_report": report,
         "unreadable": sorted({os.path.relpath(p, root) for p in UNREADABLE}),

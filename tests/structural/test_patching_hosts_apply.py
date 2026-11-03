@@ -56,7 +56,9 @@ Plan step 8b, from wslcb-licensing-tracker's run: the bulk's span is the rest
 of the run, the bulk at three times its dry run, each held step its
 selection reaches, and the reboot chain wherever a kernel or a package
 owning a file PID 1 maps makes a reboot certain, or PID 1's files can't be
-read (#362).
+read (#362). #365 widened the maps to what reboot-and-record.md's step 4
+reboots for: dbus, logind, each user@ and each datastore unit, every
+process in its cgroup.
 
 #390, free space: each step is gated on what it writes, read from apt's
 metadata (test_patching_hosts_space.py has the reckoning), against apt's
@@ -161,17 +163,19 @@ class Host(RigHost):
         self.scripts = tmp_path / "scripts"
         shutil.copytree(SKILL / "scripts", self.scripts)
         (self.scripts / "probe.sh").write_text(STUB_PROBE)
-        # PID 1's mapped files, from a fixture: absent, the reboot is
-        # unknown, and the bulk's span budgets for it (#362).
-        self.pid1_maps = tmp_path / "pid1-maps"
+        # The processes' mapped files and the units' cgroups, from the
+        # fixture root: PID 1's maps absent, the reboot is unknown, and the
+        # bulk's span budgets for it (#362, #365).
+        self.pid1_maps = self.root / "proc" / "1" / "maps"
         apply_sh = self.scripts / "apply.sh"
         text = apply_sh.read_text()
-        assert text.count("\nPID1_MAPS=/proc/1/maps\n") == 1
-        apply_sh.write_text(
-            text.replace(
-                "\nPID1_MAPS=/proc/1/maps\n", f"\nPID1_MAPS='{self.pid1_maps}'\n"
-            )
-        )
+        for line, path in (
+            ("PROC_DIR=/proc", self.root / "proc"),
+            ("CGROUP_DIR=/sys/fs/cgroup", self.root / "sys" / "fs" / "cgroup"),
+        ):
+            assert text.count(f"\n{line}\n") == 1
+            text = text.replace(f"\n{line}\n", f"\n{line.split('=')[0]}='{path}'\n")
+        apply_sh.write_text(text)
         # The disk GC's config, from a fixture: absent unless a test writes it.
         self.gc_conf = tmp_path / "disk-gc.conf"
         lib = self.scripts / "_probe-lib.sh"
@@ -416,7 +420,84 @@ def test_a_span_that_starts_inside_a_window_but_runs_past_its_close_is_refused(h
 
 
 LIBC = "/usr/lib/x86_64-linux-gnu/libc.so.6"
-MAPS = f"7f00-7f01 r-xp 00000000 fd:01 1234 {LIBC}\n7f02-7f03 rw-p 00000000 00:00 0 [heap]\n"
+LIBXML2 = "/usr/lib/x86_64-linux-gnu/libxml2.so.2.9.14"
+LIBDBUS = "/usr/lib/x86_64-linux-gnu/libdbus-1.so.3.32.4"
+
+
+def _maps(*paths: str) -> str:
+    """A /proc/<pid>/maps of PATHS, with an anonymous mapping besides."""
+    rows = [
+        f"7f0{i}-7f1{i} r-xp 00000000 fd:01 123{i} {p}" for i, p in enumerate(paths)
+    ]
+    return "\n".join([*rows, "7f20-7f21 rw-p 00000000 00:00 0 [heap]"]) + "\n"
+
+
+MAPS = _maps(LIBC)
+# Each library's package, as dpkg-query -S answers it. A path it doesn't
+# know is "no path found" and exit 1, and the others still print.
+OWNERS = {LIBC: "libc6", LIBXML2: "libxml2", LIBDBUS: "libdbus-1-3"}
+PG_UNIT = "postgresql@16-main.service"
+PG_CGROUP = f"/system.slice/system-postgresql.slice/{PG_UNIT}"
+UMBRELLA = "postgresql.service"
+USER_UNIT = "user@1000.service"
+USER_CGROUP = f"/user.slice/user-1000.slice/{USER_UNIT}"
+
+
+def _owners(host: Host) -> Host:
+    cases = " ".join(
+        f'*/{Path(p).name}) echo "{o}:amd64: $f" ;;' for p, o in OWNERS.items()
+    )
+    host.on(
+        "dpkg-query",
+        "-S *",
+        script=(
+            "shift; rc=0; for f; do case $f in "
+            + cases
+            + ' *) echo "dpkg-query: no path found matching pattern $f" >&2; rc=1 ;; '
+            "esac; done; exit $rc"
+        ),
+    )
+    return host
+
+
+def _step4(host: Host, units: dict) -> Host:
+    """What reboot-and-record.md's step 4 reboots for beside PID 1 (#365).
+    UNITS maps each unit to its ControlGroup ("" when it isn't running) and
+    its processes: each PID's maps, None for a map root can't read, or
+    "gone" for a process its cgroup lists that has since exited. user@
+    units are the ones systemctl lists, and their processes sit in a child
+    cgroup, as a user manager's do. So are the postgresql@ clusters, which
+    Ubuntu's umbrella postgresql.service starts (CR 1640)."""
+    for kind, what in (("user@", "User Manager"), ("postgresql@", "PostgreSQL")):
+        listed = "".join(
+            f"{u} loaded active running {what}\n" for u in units if u.startswith(kind)
+        )
+        host.on("systemctl", f"list-units*{kind}*", listed)
+    for unit, (cgroup, procs) in units.items():
+        host.on("systemctl", f"show*ControlGroup*-- {unit}", f"ControlGroup={cgroup}\n")
+        if not cgroup:
+            continue
+        cg = host.root / "sys" / "fs" / "cgroup" / cgroup.lstrip("/")
+        leaf = cg / "init.scope" if unit.startswith("user@") else cg
+        leaf.mkdir(parents=True, exist_ok=True)
+        if leaf != cg:
+            (cg / "cgroup.procs").write_text("")
+        (leaf / "cgroup.procs").write_text("".join(f"{p}\n" for p in procs))
+        for pid, maps in procs.items():
+            if maps == "gone":
+                continue
+            host.write(f"proc/{pid}/status", f"Name:\tp{pid}\n")
+            if maps is not None:
+                host.write(f"proc/{pid}/maps", maps)
+    return host
+
+
+# dbus and logind mapping libc alone, and no user@ running: what the PID 1
+# cases read beside PID 1.
+QUIET = {
+    "dbus.service": ("/system.slice/dbus.service", {600: MAPS}),
+    "systemd-logind.service": ("/system.slice/systemd-logind.service", {610: MAPS}),
+}
 
 
 @pytest.mark.parametrize(
@@ -443,7 +524,7 @@ def test_the_bulks_span_is_the_rest_of_the_run(
     )
     if maps is not None:
         host.pid1_maps.write_text(maps)
-    host.on("dpkg-query", "-S *", f"libc6:amd64: {LIBC}\n")
+    _step4(_owners(host), QUIET)
     host.clock = TUE_1530 - 30 * MIN
     out = host.run()
     r = out["gate"]["run_span"]
@@ -452,6 +533,146 @@ def test_the_bulks_span_is_the_rest_of_the_run(
         assert why in r["reboot_why"]
     assert r["run_seconds"] == seconds
     assert out["gate"]["span"]["expected_seconds"] == seconds
+
+
+# The bulk alone, at 3 times its 540 s dry run plus 300 s of health checks,
+# and that with the reboot chain's 720 s.
+BULK_ONLY, BULK_AND_CHAIN = 1920, 2640
+
+
+@pytest.mark.parametrize(
+    "selection, units, reboot, why",
+    [
+        # Watcher's case (process log 2026-09-29): PostgreSQL's backends map
+        # libxml2, and PID 1 doesn't. The cluster's main process maps libc
+        # alone, so its backends are read too, from the unit's cgroup.
+        (
+            "libxml2 tzdata",
+            {PG_UNIT: (PG_CGROUP, {812: MAPS, 813: _maps(LIBC, LIBXML2)})},
+            True,
+            f"libxml2, which owns a file {PG_UNIT}'s processes map",
+        ),
+        # A library only the dbus daemon maps.
+        (
+            "libdbus-1-3 tzdata",
+            {
+                "dbus.service": (
+                    "/system.slice/dbus.service",
+                    {600: _maps(LIBC, LIBDBUS)},
+                )
+            },
+            True,
+            "libdbus-1-3, which owns a file dbus.service's processes map",
+        ),
+        # A user@ process whose maps root can't read: the chain is budgeted.
+        (
+            "libxml2 tzdata",
+            {USER_UNIT: (USER_CGROUP, {1500: None})},
+            None,
+            f"{USER_UNIT}'s",
+        ),
+        # A unit that isn't running, and a process that exited after its
+        # cgroup was read, map nothing.
+        (
+            "libxml2 tzdata",
+            {PG_UNIT: ("", {}), USER_UNIT: (USER_CGROUP, {1500: "gone", 1501: MAPS})},
+            False,
+            None,
+        ),
+        # A map that decides it outweighs one that can't be read.
+        (
+            "libxml2 tzdata",
+            {
+                USER_UNIT: (USER_CGROUP, {1500: None}),
+                PG_UNIT: (PG_CGROUP, {813: _maps(LIBXML2)}),
+            },
+            True,
+            f"libxml2, which owns a file {PG_UNIT}'s processes map",
+        ),
+        # CR 1640: the knob names Ubuntu's umbrella, postgresql.service, an
+        # active (exited) oneshot whose cgroup holds no process. Its
+        # clusters' backends are the postgresql@ units'.
+        (
+            "libxml2 tzdata",
+            {
+                UMBRELLA: ("/system.slice/postgresql.service", {}),
+                PG_UNIT: (PG_CGROUP, {812: MAPS, 813: _maps(LIBC, LIBXML2)}),
+            },
+            True,
+            f"libxml2, which owns a file {PG_UNIT}'s processes map",
+        ),
+    ],
+    ids=[
+        "datastore-backend",
+        "dbus-only",
+        "user-unreadable",
+        "not-running",
+        "certain-over-unknown",
+        "umbrella-unit",
+    ],
+)
+def test_the_bulk_predicts_a_reboot_from_what_step_4_reboots_for(
+    host, selection, units, reboot, why
+):
+    # #365: the prediction read PID 1's maps alone, while step 4 also reboots
+    # for dbus, logind, user@ and each data store, so a library only they map
+    # left the chain out of the bulk's span.
+    ds = UMBRELLA if UMBRELLA in units else PG_UNIT
+    host.knob(KNOB + f"datastore postgres {ds.removesuffix('.service')} app\n")
+    _recovery(host, f"dump postgres {ds} app {SHA_A} /var/backups/app-1.dump")
+    (host.dry / "dry-run.log").write_text(
+        f"Packages that will be upgraded: {selection}\n"
+    )
+    host.pid1_maps.write_text(MAPS)
+    _step4(_owners(host), {**QUIET, PG_UNIT: ("", {}), **units})
+    host.clock = TUE_1530 - 30 * MIN
+    out = host.run("--offnode-sha256", SHA_A)
+    r = out["gate"]["run_span"]
+    assert r["reboot"] is reboot, r["reboot_why"]
+    if why:
+        assert why in r["reboot_why"]
+    assert r["run_seconds"] == (BULK_ONLY if reboot is False else BULK_AND_CHAIN)
+
+
+@pytest.mark.parametrize(
+    "units",
+    [
+        # PID 1 is never gone: its maps unread are unknown, as before #365,
+        # though here even root finds no /proc/1.
+        {},
+        # Another process /proc doesn't show this user, as hidepid=2 hides
+        # it, is gone only if root can't see it either: root's test -e
+        # finds it (CR 1651).
+        {"dbus.service": ("/system.slice/dbus.service", {600: "gone"})},
+    ],
+    ids=["pid-1", "hidden-process"],
+)
+def test_a_process_proc_hides_from_the_user_isnt_taken_as_exited(host, units):
+    # CR 1643: the "exited since" check ran as the user, so under hidepid=2
+    # an unread map was skipped as exited, PID 1's included. Otherwise PID 1
+    # maps libc alone, so only the hidden process can leave it unknown.
+    if units:
+        host.pid1_maps.write_text(MAPS)
+    else:
+        shutil.rmtree(host.root / "proc" / "1")
+    # Root's view of /proc: an external test, which the shell's own [ never
+    # reaches, finds /proc/600 where the user's view has nothing. Anything
+    # else it's asked goes to the system's test.
+    host.STUBBED = (*host.STUBBED, "test")
+    host.FALLBACKS = {
+        **host.FALLBACKS,
+        "test": 'for d in /bin /usr/bin; do [ -x "$d/test" ] && exec "$d/test" "$@"; done; exit 2',
+    }
+    host.cases["test"] = [("-e */proc/600", "", 0, "", None)]
+    quiet = {u: ("", {}) for u in QUIET}
+    _step4(_owners(host), {**quiet, **units})
+    (host.dry / "dry-run.log").write_text("Packages that will be upgraded: libxml2\n")
+    host.clock = TUE_1530 - 30 * MIN
+    r = host.run()["gate"]["run_span"]
+    assert r["reboot"] is None, r
+    assert r["run_seconds"] == BULK_AND_CHAIN
+    pid = "1" if not units else "600"
+    assert f"/proc/{pid}/maps" in r["reboot_why"]
 
 
 def test_a_bulk_whose_dry_run_left_no_log_is_refused(host):
@@ -1978,6 +2199,8 @@ def test_a_whole_run_never_unmasks_enables_reboots_removes_or_purges(host):
                 "stop",
                 "start",
                 "show",
+                # The user@ units, whose maps the reboot's prediction reads (#365).
+                "list-units",
             ), args
         if name == "apt-get":
             assert words[0] in ("update", "-s"), args

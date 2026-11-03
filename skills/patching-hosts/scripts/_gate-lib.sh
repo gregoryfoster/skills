@@ -45,7 +45,8 @@ The gate_* functions add their readings to the caller's J_GATE.
                             REDIS_CONF := the file the unit starts from, and
                             REDIS_LOGIN := key (the knob's USER), conf
                             (default, with requirepass) or none (an aclfile
-                            and no USER); RC_* as redis_conf sets them
+                            or a user line sets the users, and no USER);
+                            RC_* as redis_conf sets them
   redis_cli CMD...          redis-cli at REDIS_ARGS, as root, logged in as
                             REDIS_LOGIN says, with the password root's own sh
                             reads from KEY-FILE or REDIS_CONF
@@ -373,8 +374,9 @@ pg_port() {  # <var> <unit>
 # redis-cli reaches the server the unit starts, through the address its own
 # config file binds: a host may bind only its tailnet address. A command
 # that needs a login logs in as the knob's user, with its key file, or else
-# as default with the file's requirepass, except under an aclfile, which
-# makes requirepass nobody's (#379). A password never leaves its file:
+# as default with the file's requirepass, except where an aclfile or a user
+# line sets the users, which makes requirepass nobody's (#379, #458). A
+# password never leaves its file:
 # redis_cli, and the chain when it runs, read it into REDISCLI_AUTH as
 # root, so it reaches no argv and no output.
 REDIS_ARGS=() REDIS_CONF="" REDIS_LOGIN="" REDIS_USER="" REDIS_KEY=""
@@ -418,7 +420,7 @@ redis_conn() {  # <unit> [<user> <key-file>]
 redis_as() {  # <var>
   case $REDIS_LOGIN in
     key) printf -v "$1" '%s' "$REDIS_USER" ;;
-    none) printf -v "$1" '%s' "no user: its aclfile sets the users, so its requirepass isn't one to log in with" ;;
+    none) printf -v "$1" '%s' "no user: $RC_ACL_WHY, so its requirepass isn't one to log in with" ;;
     *) printf -v "$1" '%s' "default, with its file's requirepass" ;;
   esac
 }
@@ -494,7 +496,7 @@ redis_refused() {  # <unit> <command> <its stdout>
     NOAUTH* | WRONGPASS* | "AUTH failed"*)
       case $REDIS_LOGIN in
         key) REDIS_WHY="$1 refused $2 to the login as $REDIS_USER ($_rr): check its key file, $REDIS_KEY" ;;
-        none) REDIS_WHY="$1 refused $2 without a login ($_rr), and its aclfile sets the users, so its requirepass isn't one to try: give its datastore line a user and key file (datastore redis <unit> <user> <key-file>), or cover it with a backup line" ;;
+        none) REDIS_WHY="$1 refused $2 without a login ($_rr), and $RC_ACL_WHY, so its requirepass isn't one to try: give its datastore line a user and key file (datastore redis <unit> <user> <key-file>), or cover it with a backup line" ;;
         *) REDIS_WHY="$1 refused $2 to the login as default, with its file's requirepass ($_rr): give its datastore line a user and key file (datastore redis <unit> <user> <key-file>), or cover it with a backup line" ;;
       esac ;;
     *) return 1 ;;
