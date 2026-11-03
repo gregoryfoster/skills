@@ -97,8 +97,10 @@ Behaviour:
     pushed is invisible to CI, to every other clone and to every fresh
     worktree; where a service reads the checkout it can refuse to start.
     If the push fails the commit is rolled back so the checkout matches the
-    remote, and the next session retries. Never pulls, never force-pushes,
-    and never touches a commit this hook did not write.
+    remote — the pointer, the vendored content and .skills/doctor.sh
+    alike — and the next session retries. A run that cannot push does not
+    refresh either. Never pulls, never force-pushes, and never touches a
+    commit this hook did not write.
   - Logs to .git/skills-update.log (bounded to ~64 KiB / 200 lines).
   - Exits 0 on every non-fatal condition.
 
@@ -205,12 +207,13 @@ MSG_SUB='chore: update skills submodules'
 MSG_DOC='chore: refresh .skills/doctor.sh'
 MSG_BOTH='chore: update skills submodules and refresh .skills/doctor.sh'
 
-# Set when a push fails, and read for the rest of the run. A rollback leaves
-# the refreshed submodule content in the working tree, so the very next thing
-# this script would otherwise do is re-stage it, re-commit it, and re-attempt
-# the push it has just been refused — two network waits inside a hook with a
-# 120s ceiling, and the same warning twice. One refusal is enough information
-# for one run.
+# Set when a push fails or is refused, and read for the rest of the run: it
+# stops the refresh itself, not only the commit (#550). Without it the very
+# next thing this script would do after a rollback is fetch the content
+# forward again, re-stage it, re-commit it and re-attempt the push it has just
+# been refused — two network waits inside a hook with a 120s ceiling, the
+# same warning twice, and a checkout left with content ahead of its pointer.
+# One refusal is enough information for one run.
 PUSH_BLOCKED=0
 
 # ------------------------------------------------- unpushed reconcile (#293)
@@ -247,9 +250,17 @@ PUSH_BLOCKED=0
 # authority than moving a submodule pointer. A stale consumer gets no bump,
 # loudly, until a human syncs — and that is an acceptable trade because the
 # rollback is the fix here and the push is the optimization. The service was
-# stranded by `ahead 1`, not by a stale skills pin, and a rollback leaves the
-# refreshed submodule *content* in the working tree (only the recorded
-# pointer reverts), so the skills themselves keep working either way.
+# stranded by `ahead 1`, not by a stale skills pin.
+#
+# A rollback undoes the WHOLE bump: the recorded pointer, the vendored content
+# and the doctor (_restore_bump). It used to revert only the pointer, leaving
+# the refreshed content checked out "so the skills keep working either way".
+# That holds only while an update is backward-compatible with the consumer's
+# repo-side config, and #550 measured where it is not: wslcb's rollback on
+# 2026-10-29 left content carrying #480, which refuses a knob grammar that
+# repo's committed config still used, so its vendored patching-hosts refused
+# the repo's own knob until a human synced. A stale consumer keeps the older
+# skills, content and pointer together, until a session can share the bump.
 _reconcile_unpushed() {
   [ "$BRANCH" = "main" ] || return 0
   # Already refused once this run. Asking again costs a second network wait
@@ -389,15 +400,17 @@ _reconcile_unpushed() {
   done < <(git diff --name-only -z "HEAD~$ahead" HEAD 2>/dev/null || true)
 
   if git reset -q --soft "HEAD~$ahead" 2>>"$LOG"; then
-    _log "unpushed: push failed — rolled $ahead commit(s) back; the refreshed content stays in the working tree and the next session retries"
+    _log "unpushed: push failed — rolled $ahead commit(s) back, vendored content with them; the next session retries"
     echo "skills update: could not push to $remote — rolled $ahead commit(s) back so this checkout matches $upstream_name (see $LOG)" >&2
     if [ "${#paths[@]}" -gt 0 ]; then
       # Same move as the commit step's failure path: leave the index as we
       # found it. A .skills/doctor.sh that was untracked before the commit
       # goes back to untracked rather than sitting staged in an index the
-      # operator never touched. After the report above, so a warning that
-      # this unstage fell short follows the rollback it belongs to.
-      _unstage "a rolled-back push" "${paths[@]}"
+      # operator never touched. Then the content goes back to the pointer
+      # the reset restored (#550), bounded to these paths. After the report
+      # above, so a warning that either fell short follows the rollback it
+      # belongs to.
+      _restore_bump "a rolled-back push" "${paths[@]}"
     fi
   else
     _log "unpushed: push failed AND rollback failed — $BRANCH is still $ahead commit(s) ahead of $upstream_name"
@@ -490,6 +503,51 @@ $1
   return 1
 }
 
+# _restore_bump <after> <path>... — undo a pointer bump this hook made but
+# cannot keep (#550): a rolled-back push, or a killed refresh's leftovers.
+# Unstages the paths, then puts each registered skills-vendor/ submodule among
+# them back on the commit the index now records, then reinstalls the doctor
+# from the restored vendored installer — so content, pointer and doctor go
+# back together. Called only once REGISTERED is resolved.
+#
+# The doctor is reinstalled rather than checked out, so each case lands where
+# it was: one tracked before the bump matches its committed copy again, and
+# one untracked before it — unstaged back to untracked just above — is
+# rewritten in place to the version the restored pointer ships, which is what
+# _install_doctor's call site 1 writes at every session anyway.
+#
+# `--checkout`, because a plain `git submodule update -- <path>` honours a
+# configured `submodule.<name>.update`: with merge, rebase or none it exits 0
+# and leaves the newer content checked out (measured, git 2.54 — the older
+# recorded commit is already contained in the newer one). `--no-fetch`,
+# because the recorded commit was checked out here before the bump, and this
+# runs inside a session start. Neither `--remote` nor `--merge`, and never
+# `-f`: a checkout carries a local edit across where it can and refuses where
+# it cannot, and a refusal is said on stderr — the content is then still
+# ahead of its pointer, and the session needs to know.
+_restore_bump() {
+  local after="$1" p gitlinks=()
+  shift
+  _unstage "$after" "$@"
+  for p in "$@"; do
+    if _listed "$p" "$REGISTERED"; then
+      gitlinks+=("$p")
+    fi
+  done
+  [ "${#gitlinks[@]}" -gt 0 ] || return 0
+  if {
+    echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] restore ${gitlinks[*]} to the recorded pointer after $after:"
+    git submodule update --checkout --no-fetch -- "${gitlinks[@]}" 2>&1
+  } >>"$LOG"; then
+    _log "restored ${gitlinks[*]} to the recorded pointer after $after"
+  else
+    _log "could not restore ${gitlinks[*]} after $after — content is ahead of the recorded pointer"
+    echo "skills update: ${gitlinks[*]} is ahead of the recorded pointer after $after — repo-side config may not match it until synced: git submodule update --checkout -- ${gitlinks[*]} (see $LOG)" >&2 || true
+  fi
+  _install_doctor
+  return 0
+}
+
 # The day's lock, written by every run that ENDS — success or failure — and by
 # no run that is killed part way (#555). Checked, not `|| true` (#193): this
 # one write IS the once-per-day contract, and the guard reads nothing else. A
@@ -577,23 +635,35 @@ STAGED_EOF
     return 0
   fi
 
-  if [ "${#own[@]}" -eq 0 ]; then
-    # Killed before its `git add`, or after its commit: nothing of the
-    # hook's is staged, and the marker has nothing left to say.
-    rm -f "$STAGING" 2>/dev/null || true
-    return 0
-  fi
-
   if [ "$others" -gt 0 ]; then
     _log "heal: a killed refresh left ${own[*]} staged beside $others path(s) it did not stage — leaving the index alone"
     return 0
   fi
 
-  _log "heal: a killed refresh left ${own[*]} staged — unstaging"
-  _unstage "a killed refresh" "${own[@]}"
+  # The whole bump goes back, not only its staging (#550): a kill after the
+  # update leaves the content ahead of the pointer whether or not it got as
+  # far as `git add`, and a session that cannot redo the bump (main carrying
+  # an operator's unpushed commit, a pin refusal) would otherwise keep it so.
+  # When this session can redo it, it does, from a checkout that agrees.
+  # Every path the marker names, staged or not: an unstage of a path with
+  # nothing staged is a no-op, and a submodule already on its pointer is too.
+  local marked_paths=()
+  while IFS= read -r spath; do
+    [ -n "$spath" ] || continue
+    marked_paths+=("$spath")
+  done <<LISTED_EOF
+$listed
+LISTED_EOF
+  if [ "${#marked_paths[@]}" -gt 0 ]; then
+    if [ "${#own[@]}" -gt 0 ]; then
+      _log "heal: a killed refresh left ${own[*]} staged — undoing its bump"
+    fi
+    _restore_bump "a killed refresh" "${marked_paths[@]}"
+  fi
   # Kept while anything of the hook's is still staged, so the next session
   # tries again; _unstage has already said so on stderr.
-  if git diff --cached --quiet --ignore-submodules=none -- "${own[@]}" 2>/dev/null; then
+  if [ "${#own[@]}" -eq 0 ] ||
+    git diff --cached --quiet --ignore-submodules=none -- "${own[@]}" 2>/dev/null; then
     rm -f "$STAGING" 2>/dev/null || true
   fi
   return 0
@@ -734,6 +804,25 @@ $REGISTERED
 REGISTERED_EOF
 fi
 
+# This run has already established it cannot share a commit — the remote
+# refused a push, or `main` carries commits this hook did not write and must
+# not publish on the operator's behalf. Committing anyway would manufacture
+# exactly the unpushed commit the reconcile step exists to prevent (#293).
+#
+# And it does not refresh either (#550). It used to, skipping only the
+# commit, on the premise that refreshed content in the working tree keeps the
+# skills working while the pointer waits. That premise is what #550
+# disproved: content ahead of its pointer can refuse the repo's own config.
+# So the checkout stays on its recorded pointer — the one a rollback this run
+# has just restored, or the one main has carried all along — until a session
+# that can share the bump makes it. After the pin parse, so a malformed pin
+# is still reported; a completed run, so the day is spent.
+if [ "$PUSH_BLOCKED" = "1" ]; then
+  _log "refresh skipped — this run cannot share what it would commit, and a refresh it cannot commit would leave the content ahead of the pointer; the bump waits for a session that can"
+  _stamp_lock
+  exit 0
+fi
+
 # The refresh begins. The day's lock is NOT stamped here; it used to be, so
 # that a transient failure (a network blip) would not retry and re-log at every
 # same-day session — and that damping is kept for every run that ends, failure
@@ -865,19 +954,6 @@ fi
 # Nothing this hook is allowed to stage. An empty pathspec would widen every
 # git call below to the whole repo, so stop here instead.
 if [ "${#COMMIT_PATHS[@]}" -eq 0 ]; then
-  _finish_refresh
-  exit 0
-fi
-
-# This run has already established it cannot share a commit — the remote
-# refused a push, or `main` carries commits this hook did not write and must
-# not publish on the operator's behalf. Committing anyway would manufacture
-# exactly the unpushed commit the reconcile step exists to prevent (#293).
-# Nothing is lost by waiting: the refreshed submodule content is already in
-# the working tree, so the skills themselves work today, and the pointer gets
-# recorded by the first session that can actually share it.
-if [ "$PUSH_BLOCKED" = "1" ]; then
-  _log "commit skipped — this run cannot share what it would commit; the pointer bump waits for a session that can"
   _finish_refresh
   exit 0
 fi
