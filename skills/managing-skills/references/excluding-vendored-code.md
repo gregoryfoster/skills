@@ -65,7 +65,9 @@ Copy them from there; one copy cannot drift.
 `.skills/doctor.sh` warns when the root ruff config never names
 `skills-vendor` in its top-level table. The root config is the file ruff
 itself would read, in the order above, and for `pyproject.toml` the top-level
-table is `[tool.ruff]`. The doctor stays silent when there is no
+table is `[tool.ruff]`. A dotted key in that table, such as `lint.exclude`,
+belongs to a sub-table and does not count, any more than `[tool.ruff.lint]`
+does. The doctor stays silent when there is no
 `skills-vendor/` directory or no ruff config at the root. Its warning prints
 the `extend-exclude` line to add, or, where that table already has an
 `extend-exclude`, says to append `"skills-vendor/"` to it: a second
@@ -77,4 +79,4 @@ review. Only ruff is read: ty is non-gating where `init-project-fastapi`
 scaffolds it, and pytest's config can live in several files.
 
 To lint the vendor on purpose, say so in a comment in that table that names
-`skills-vendor`. The doctor counts any mention there as covered.
+`skills-vendor`. The doctor counts any other mention there as covered.
