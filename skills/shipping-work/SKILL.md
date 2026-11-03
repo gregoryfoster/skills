@@ -111,7 +111,7 @@ If this checkout is a worktree (test: `git rev-parse --show-toplevel` differs fr
 
 If this is a single (non-worktree) checkout, skip this step.
 
-**`pr` mode:** `bash "<merge-mode.sh>"` prints `direct` (no `.skills/merge_mode`: this procedure as written) or `pr`, where work lands through a PR merged on GitHub and each step's `pr` line below replaces what it names ([references/pr-mode.md](references/pr-mode.md)). Exit 2: the knob is unusable; fix it, never read it as `direct`. Here: no Phase 4 merge; stay on the branch, in the worktree or not. A PR already merged starts the post-merge pass (Step 8) instead.
+**`pr` mode:** check it in either checkout shape. `bash "<merge-mode.sh>"` prints `direct` (no `.skills/merge_mode`: this procedure as written) or `pr`, where work lands through a PR merged on GitHub and each step's `pr` line below replaces what it names ([references/pr-mode.md](references/pr-mode.md)). Exit 2: the knob is unusable; fix it, never read it as `direct`. Here: no Phase 4 merge; stay on the branch, in the worktree or not. A PR already merged starts the post-merge pass (Step 8) instead.
 
 ### Step 3 — Ensure on main
 

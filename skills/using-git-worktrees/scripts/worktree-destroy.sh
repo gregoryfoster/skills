@@ -376,7 +376,7 @@ pr_merge_evidence() {
 #     it has: a stale ref can miss a merge, never invent one.
 #   * A squash or rebase merge writes new commits, so ancestry fails for a
 #     branch that IS merged. Then a merged PR is the evidence — see
-#     pr_merge_evidence below. Only with the default base: `--base <ref>`
+#     pr_merge_evidence above. Only with the default base: `--base <ref>`
 #     names a ref as-is (a local `batch/<x>`), which no PR targets.
 # Read only when the merge check runs: --descoped skips both.
 BASE_REF=""
