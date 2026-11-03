@@ -37,6 +37,8 @@ Example:
 git submodule add https://github.com/gregoryfoster/skills.git skills-vendor/gregoryfoster-skills
 ```
 
+Then exclude `skills-vendor/` from every tool that walks the tree (ruff, ty, pytest), or a refresh can turn a local lint red over code you must not edit: [references/excluding-vendored-code.md](references/excluding-vendored-code.md).
+
 #### Step 2 — Symlink desired skills
 
 Create relative symlinks from the project's `skills/` directory to the submodule:
@@ -139,7 +141,7 @@ git commit -m "chore: update skill submodules"
 
 `--init` is not optional. Without it, a submodule missing from `.git/config` — vendored content on disk, nothing registered — is skipped in silence and git still exits `0`, so the run reports success with the pointer unmoved ([#176](https://github.com/gregoryfoster/skills/issues/176)).
 
-No follow-up step is needed to refresh `.skills/doctor.sh` — it re-syncs itself on its next run and the auto-refresh hook re-installs it on session start. Re-run Step 2c's installer only to collapse the one-run lag when iterating on the doctor itself.
+`.skills/doctor.sh` keeps itself current (Step 2c). Re-run its installer only to collapse the one-run lag when iterating on the doctor itself.
 
 ### Installing the auto-refresh hook
 
@@ -272,7 +274,4 @@ block for each — a rung-by-rung ladder for auth failures, a smaller
 
 **Self-budget:** held to a **6,000-token ratchet (estimate and exact)** by
 `tests/structural/test_skill_self_budget.py` — the repo's ordinary standard, not
-an exception to it. This file carried a named 8,750 exception until two curation
-passes created `references/` and demoted five units into it, ending 35% smaller
-and under the standard, so the exception was deleted rather than lowered.
-Growing this file means demoting again.
+an exception to it. Growing this file means demoting again.
