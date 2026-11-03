@@ -682,9 +682,7 @@ class TestAnOpenPrAlwaysWins:
         assert "updated PR #8" in r.stdout
 
     @pytest.mark.skipif(shutil.which("jq") is None, reason="the fake gh runs --jq")
-    def test_a_forks_pr_from_a_same_named_branch_is_not_this_jobs(
-        self, tmp_path: Path
-    ):
+    def test_a_forks_pr_from_a_same_named_branch_is_not_this_jobs(self, tmp_path: Path):
         rig = Rig(tmp_path, knob="pr\n")
         fork = {"number": 9, "state": "OPEN", "headRefOid": "f" * 40}
         (rig.gh / "prs.json").write_text(

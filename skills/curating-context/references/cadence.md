@@ -257,10 +257,13 @@ ship is refused too, so a repo that needs one needs the other.
   took (an open PR's, or a run's whose PR was never opened), each run merges
   its row *into* that branch. Those rows stay first and in order, the default
   branch comes in with the row, and the push is a fast-forward, so the PR
-  never conflicts with its base. When the branch's tip was the head of a PR
-  that merged or closed, the branch restarts at the default branch plus the
-  row. A merged PR's rows are already there, and a squash merge would
-  otherwise carry them twice; a closed PR was a no.
+  never conflicts with its base. When no PR is open and the branch's tip was
+  the head of a PR that merged or closed, the branch restarts at the default
+  branch plus the row. A merged PR's rows are already there, and a squash
+  merge would otherwise carry them twice; a closed PR was a no. An open PR
+  always wins, even when a closed one shares its head. Only this repo's PRs
+  count: `gh pr list --head` matches a branch *name*, so a fork's PR from a
+  branch of the same name is filtered out by `isCrossRepository`.
 - **A refused push is reported once.** On the PR's branch a refusal is a
   rule or a concurrent push, not a race a rebase fixes. A `GH013` or
   protected-branch refusal is named as one, and nothing is retried.

@@ -1284,8 +1284,10 @@ pr_push_block() {
             pr)
               PR_BRANCH=context/weekly-measurement
               ROW=$(git rev-parse HEAD)
-              # Every PR from the branch, any state. gh failing is not "none".
-              PRS=$(gh pr list --head "$PR_BRANCH" --base "$BRANCH" --state all --json number,state,headRefOid --jq '.[] | "\(.number) \(.state) \(.headRefOid)"') || {
+              # Every PR from the branch, any state, and only this repo's:
+              # --head matches a branch name, a fork's included. gh failing
+              # is not "none".
+              PRS=$(gh pr list --head "$PR_BRANCH" --base "$BRANCH" --state all --json number,state,headRefOid,isCrossRepository --jq '.[] | select(.isCrossRepository | not) | "\(.number) \(.state) \(.headRefOid)"') || {
                 echo "::error::gh pr list failed, so which measurement PR is open is unknown — the row was not pushed."
                 exit 1; }
               REMOTE=$(git ls-remote origin "refs/heads/$PR_BRANCH") || {
@@ -1301,7 +1303,9 @@ pr_push_block() {
                   ENDED=$N
                 fi
               done <<<"$PRS"
-              if [ -n "$TIP" ] && [ -z "$ENDED" ]; then
+              # An open PR always wins: one closed and another opened from the
+              # same head leaves a finished PR at the tip of an open one's rows.
+              if [ -n "$TIP" ] && { [ -n "$OPEN" ] || [ -z "$ENDED" ]; }; then
                 # The branch carries rows no finished PR took: an open PR's, or
                 # a run's whose PR was never opened. Merge the row INTO it, so
                 # those rows stay first and in order and $BRANCH comes in with
@@ -1316,8 +1320,9 @@ pr_push_block() {
                   exit 1; }
               fi
               # Otherwise the branch restarts at $BRANCH plus this row: it is
-              # absent, or its tip was a finished PR's head, merged (its rows
-              # are on $BRANCH; a squash would carry them twice) or closed.
+              # absent, or no PR is open and its tip was a finished PR's head,
+              # merged (its rows are on $BRANCH; a squash would carry them
+              # twice) or closed.
               #
               # The lease is the tip read above; empty means "must not exist".
               # A refusal is reported once and never retried: it is a rule or a
