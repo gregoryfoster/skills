@@ -70,7 +70,8 @@ refusal.
   close it before the deploy ran, which the HARD-GATE's item 4 forbids. The
   post-merge pass closes it once the deploy exits 0.
 - **Step 5.** Each issue comment links the PR (`PR #<m>: <url>`) beside the
-  usual bullets.
+  usual bullets, above the `Follow-up:`, `Known limits:` and `For #N:`
+  sections.
 - **Step 6.** Close nothing. The merge closes the `Closes` issues.
 - **Step 7.** The Status column reads `PR #<m> open, awaiting review`. A
   `Refs` issue reads `PR #<m> open; closes after the deploy`.

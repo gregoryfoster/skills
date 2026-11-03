@@ -143,9 +143,15 @@ bash "<comment-issue.sh>" <number> "<summary>"
 Comment must include:
 - What was implemented (2–4 bullets)
 - Key commit SHAs or commit range
-- Any follow-up items or known limitations
 
-**`pr` mode:** the comment links the PR.
+Then up to three sections, last and in this order. A `coordinating-epics` check-in harvests them, so spell the leads exactly:
+- `**Follow-up:**` work left for later, with its issue if filed
+- `**Known limits:**` what shipped unverified, or without something
+- `**For #N:**` a note for later issue N, one lead per issue
+
+Each lead is its own line, a blank line before it, its notes list items under it (a plain paragraph falls outside it). Leave an empty section out; never write "none".
+
+**`pr` mode:** the comment links the PR, above the sections.
 
 ### Step 6 — Close GitHub issues
 
