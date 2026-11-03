@@ -11,8 +11,9 @@ How the knob reaches the workflow (the call #560's brief left open):
 
 - **At install time it picks the shape.** `install-cadence.sh` reads the
   primary checkout's knob with merge-mode.sh's grammar. `direct` or absent
-  renders today's bytes; `pr` renders today's bytes plus four insertions:
-  `pull-requests: write`, a `Read the merge mode` step, `GH_TOKEN` on the
+  renders today's bytes; `pr` renders today's bytes plus five insertions:
+  `pull-requests: write`, a `Read the merge mode` step, a step that merges
+  the open PR's rows in before the sweep (CR 1803), `GH_TOKEN` on the
   commit step, and the PR path after `# --- push ---`. Widening the token for
   every consumer was the other option, and it would have changed every
   direct repo's workflow, which the decision rules out.
@@ -33,6 +34,7 @@ import difflib
 import json
 import os
 import re
+import shutil
 import stat
 import subprocess
 from pathlib import Path
@@ -44,12 +46,15 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 SCRIPTS = REPO_ROOT / "skills" / "curating-context" / "scripts"
 INSTALL_CADENCE = SCRIPTS / "install-cadence.sh"
 MERGE_TOKEN_COUNTS = SCRIPTS / "merge-token-counts.sh"
+RECORD_TELEMETRY = SCRIPTS / "record-telemetry.sh"
+CHECK_SEAMS = SCRIPTS / "check-seams.sh"
 MERGE_MODE_SH = REPO_ROOT / "skills" / "shipping-work" / "scripts" / "merge-mode.sh"
 THIS_REPOS_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "context-cadence.yml"
 
 LEDGER = ".skills/context-metrics.jsonl"
 PR_BRANCH = "context/weekly-measurement"
 READ_STEP = "Read the merge mode"
+TAKE_STEP = "Take in the measurement PR's rows"
 COMMIT_STEP = "Commit the row"
 
 
@@ -121,12 +126,25 @@ def _steps(rendered: str) -> dict[str, str]:
 FAKE_GH = r"""#!/usr/bin/env bash
 # A stand-in for gh: logs every call. `pr list` prints $FAKE_GH/prs, one PR
 # per line as the workflow's --jq shapes it: `<number> <STATE> <head oid>`.
+# With $FAKE_GH/prs.json instead it answers as gh does: the array cut down to
+# the --json fields, then the --jq filter, run by jq.
 # `pr create` records an OPEN PR whose head is the pushed HEAD, unless
 # $FAKE_GH/create_err exists, whose text it prints to stderr.
 printf '%s\n' "$*" >>"$FAKE_GH/calls"
 case "$1 $2" in
   "pr list")
     [ ! -f "$FAKE_GH/list_err" ] || { cat "$FAKE_GH/list_err" >&2; exit 1; }
+    if [ -f "$FAKE_GH/prs.json" ]; then
+      fields='' filter='.'
+      while [ $# -gt 0 ]; do
+        case $1 in --json) fields=$2; shift ;; --jq) filter=$2; shift ;; esac
+        shift
+      done
+      jq -r --arg f "$fields" \
+        "map(with_entries(select(.key as \$k | \$f | split(\",\") | index(\$k)))) | $filter" \
+        "$FAKE_GH/prs.json"
+      exit
+    fi
     cat "$FAKE_GH/prs" 2>/dev/null
     exit 0 ;;
   "pr create")
@@ -163,6 +181,8 @@ class Rig:
         seed = self.clone("seed")
         (seed / ".skills").mkdir()
         (seed / LEDGER).write_text(self.row("2026-10-01") + "\n")
+        # The policy file the seam sweep reads; the measurement is a payload.
+        (seed / "AGENTS.md").write_text("# Agents\n")
         (seed / ".gitattributes").write_text(
             f"{LEDGER} merge=union\n"
             ".skills/context-token-ratio merge=ours\n"
@@ -176,7 +196,59 @@ class Rig:
 
     @staticmethod
     def row(ts: str) -> str:
-        return json.dumps({"ts": ts, "repo": "r", "tokens": 100}, sort_keys=True)
+        """A row record-telemetry.sh takes as a predecessor."""
+        return json.dumps(
+            {
+                "ts": ts,
+                "repo": "r",
+                "file": "AGENTS.md",
+                "tokens": 100,
+                "tokens_exact": True,
+            },
+            sort_keys=True,
+        )
+
+    def record(self, repo: Path, ts: str, tokens: int) -> None:
+        """Append this run's row as the Measure and record step does: the
+        real record-telemetry.sh, on a measurement of `tokens`, dated `ts`."""
+        from tests.structural.test_telemetry_amend import _payload
+
+        shim = self.tmp / "date-shim"
+        if not shim.exists():
+            shim.mkdir()
+            real = shutil.which("date")
+            (shim / "date").write_text(
+                "#!/bin/sh\n"
+                'if [ "$1" = "+%Y-%m-%d" ]; then echo "$FAKE_TODAY"; '
+                f'else exec "{real}" "$@"; fi\n'
+            )
+            (shim / "date").chmod(0o755)
+        r = subprocess.run(
+            ["bash", str(RECORD_TELEMETRY), "--baseline=scheduled", "--ledger", LEDGER],
+            input=_payload(tokens),
+            cwd=repo,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            env=_env(FAKE_TODAY=ts, PATH=f"{shim}{os.pathsep}{os.environ['PATH']}"),
+        )
+        assert r.returncode == 0, r.stdout + r.stderr
+
+    @staticmethod
+    def sweep_interval(repo: Path) -> str:
+        """The interval the seam sweep spans from this checkout's ledger, as
+        the workflow runs it (`--base-ledger`)."""
+        r = subprocess.run(
+            ["bash", str(CHECK_SEAMS), "--base-ledger", LEDGER],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            env=_env(),
+        )
+        found = re.findall(r"^seam_interval: (\S+)$", r.stdout, re.M)
+        assert found, r.stdout + r.stderr
+        return found[-1]
 
     def clone(self, name: str) -> Path:
         d = self.tmp / name
@@ -201,10 +273,16 @@ class Rig:
             env=env,
         )
 
-    def run(self, ts: str, mode_env: str | None = None) -> subprocess.CompletedProcess:
-        """One scheduled run: a fresh clone of main, the knob read (when the
-        render has that step), one row appended, the commit step run."""
+    def run(
+        self, ts: str, mode_env: str | None = None, tokens: int | None = None
+    ) -> subprocess.CompletedProcess:
+        """One scheduled run: a fresh clone of main, the knob read and the
+        PR's rows taken in (when the render has those steps), one row
+        appended, the commit step run. With `tokens`, the row is recorded by
+        record-telemetry.sh, and the seam sweep's interval is read first, as
+        the workflow orders them; without, it is appended by hand."""
         self.runs += 1
+        steps = _steps(self.rendered)
         runner = self.clone(f"runner{self.runs}")
         gh_env = self.tmp / f"github_env{self.runs}"
         gh_env.write_text("")
@@ -215,7 +293,7 @@ class Rig:
             MERGE_TOKEN_COUNTS_SH=str(MERGE_TOKEN_COUNTS),
             PATH=f"{self.gh / 'bin'}{os.pathsep}{os.environ['PATH']}",
         )
-        if READ_STEP in _steps(self.rendered):
+        if READ_STEP in steps:
             read = self.step(READ_STEP, runner, env)
             assert read.returncode == 0, read.stdout + read.stderr
             for line in gh_env.read_text().splitlines():
@@ -223,9 +301,23 @@ class Rig:
                 env[k] = v
         if mode_env is not None:
             env["MERGE_MODE"] = mode_env
-        led = runner / LEDGER
-        led.write_text(led.read_text() + self.row(ts) + "\n")
+        self.take = None
+        if TAKE_STEP in steps:
+            self.take = self.step(TAKE_STEP, runner, env)
+            if self.take.returncode:
+                return self.take
+        self.runner = runner
+        if tokens is None:
+            led = runner / LEDGER
+            led.write_text(led.read_text() + self.row(ts) + "\n")
+        else:
+            self.interval = self.sweep_interval(runner)
+            self.record(runner, ts, tokens)
         return self.step(COMMIT_STEP, runner, env)
+
+    def rows(self, ref: str) -> list[dict]:
+        out = _git(self.origin, "show", f"{ref}:{LEDGER}")
+        return [json.loads(ln) for ln in out.splitlines() if ln.strip()]
 
     def show(self, ref: str) -> list[str]:
         out = subprocess.run(
@@ -646,6 +738,174 @@ class TestThePrPath:
         assert PR_BRANCH in r.stdout
 
 
+class TestAnOpenPrAlwaysWins:
+    """CR 1804: a finished PR whose head is the tip set ENDED even when an
+    OPEN PR shared that tip (one PR closed, another opened from the same
+    head), so the run restarted the branch over the open PR's rows and then
+    said it had updated that PR. And gh's --head matches a branch NAME, so a
+    fork's PR from a same-named branch was read as this job's."""
+
+    def test_a_closed_pr_sharing_the_open_prs_tip_does_not_restart_it(
+        self, tmp_path: Path
+    ):
+        rig = Rig(tmp_path, knob="pr\n")
+        assert rig.run("2026-10-08").returncode == 0
+        tip = _git(rig.origin, "rev-parse", PR_BRANCH)
+        (rig.gh / "prs").write_text(f"7 CLOSED {tip}\n8 OPEN {tip}\n")
+        r = rig.run("2026-10-15")
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert rig.show(PR_BRANCH) == ["2026-10-01", "2026-10-08", "2026-10-15"], (
+            "the open PR's rows were force-pushed away"
+        )
+        assert "updated PR #8" in r.stdout
+
+    @pytest.mark.skipif(shutil.which("jq") is None, reason="the fake gh runs --jq")
+    def test_a_forks_pr_from_a_same_named_branch_is_not_this_jobs(self, tmp_path: Path):
+        rig = Rig(tmp_path, knob="pr\n")
+        fork = {"number": 9, "state": "OPEN", "headRefOid": "f" * 40}
+        (rig.gh / "prs.json").write_text(
+            json.dumps([dict(fork, isCrossRepository=True)])
+        )
+        r = rig.run("2026-10-08")
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "PR #9" not in r.stdout, "a fork's PR was read as this job's"
+        assert [c for c in rig.calls() if c.startswith("pr create")]
+
+    @pytest.mark.skipif(shutil.which("jq") is None, reason="the fake gh runs --jq")
+    def test_a_same_repo_pr_still_counts(self, tmp_path: Path):
+        """The filter's other half: it keeps this repo's own PR."""
+        rig = Rig(tmp_path, knob="pr\n")
+        assert rig.run("2026-10-08").returncode == 0
+        tip = _git(rig.origin, "rev-parse", PR_BRANCH)
+        (rig.gh / "prs.json").write_text(
+            json.dumps(
+                [
+                    {
+                        "number": 7,
+                        "state": "OPEN",
+                        "headRefOid": tip,
+                        "isCrossRepository": False,
+                    }
+                ]
+            )
+        )
+        r = rig.run("2026-10-15")
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "updated PR #7" in r.stdout
+        assert rig.show(PR_BRANCH) == ["2026-10-01", "2026-10-08", "2026-10-15"]
+
+
+def _repair_dry_run(repo: Path) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["bash", str(RECORD_TELEMETRY), "--repair", "--dry-run", "--ledger", LEDGER],
+        cwd=repo,
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env=_env(),
+    )
+
+
+class TestEachRowFollowsItsTruePredecessor:
+    """CR 1803: the job checks out the default branch, whose ledger lacks the
+    open PR's rows. Measured there, every row after the first took its
+    delta_days and delta_tokens, and the seam sweep its --base-ledger
+    interval, from the last MERGED row: the workflow's own delta check
+    warned on every run while the PR was open, and the merge landed the
+    wrong deltas."""
+
+    def test_the_second_weeks_row_is_measured_after_the_first(self, tmp_path: Path):
+        """The reviewer's reproduction: two scheduled runs a week apart with
+        the PR left open, each row recorded by the real record-telemetry.sh."""
+        rig = Rig(tmp_path, knob="pr\n")
+        first = rig.run("2026-10-08", tokens=110)
+        assert first.returncode == 0, first.stdout + first.stderr
+        week1 = rig.rows(PR_BRANCH)[-1]
+        assert (week1["delta_days"], week1["delta_tokens"]) == (7, 10)
+
+        second = rig.run("2026-10-15", tokens=125)
+        assert second.returncode == 0, second.stdout + second.stderr
+        rows = rig.rows(PR_BRANCH)
+        assert [r["ts"] for r in rows] == ["2026-10-01", "2026-10-08", "2026-10-15"]
+        assert (rows[-1]["delta_days"], rows[-1]["delta_tokens"]) == (7, 15), (
+            "week 2's deltas are against the default branch's last row, not the PR's"
+        )
+        assert rig.interval == f"{week1['repo_commit']}..worktree", (
+            "the seam sweep spans the interval since the last MERGED row"
+        )
+        # The job's own Check the recorded deltas step, on what it pushed.
+        check = _repair_dry_run(rig.runner)
+        assert check.returncode == 0, check.stderr
+        assert check.stdout == "", check.stdout
+
+    def test_the_row_names_a_commit_the_default_branch_keeps(self, tmp_path: Path):
+        """The branch comes in with --no-commit, so the row's repo_commit is
+        the default branch's tip, which a squash merge cannot take away from
+        the next run's sweep."""
+        rig = Rig(tmp_path, knob="pr\n")
+        assert rig.run("2026-10-08", tokens=110).returncode == 0
+        main_tip = _git(rig.origin, "rev-parse", "main")
+        r = rig.run("2026-10-15", tokens=125)
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert main_tip.startswith(rig.rows(PR_BRANCH)[-1]["repo_commit"])
+        assert "measuring after the rows" in rig.take.stdout
+
+    def test_with_nothing_on_the_branch_nothing_is_taken_in(self, tmp_path: Path):
+        rig = Rig(tmp_path, knob="pr\n")
+        r = rig.run("2026-10-08", tokens=110)
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "no rows on" in rig.take.stdout
+
+    def test_a_finished_prs_rows_are_not_taken_in(self, tmp_path: Path):
+        """Closed is a no: the row is measured after the default branch."""
+        rig = Rig(tmp_path, knob="pr\n")
+        assert rig.run("2026-10-08", tokens=110).returncode == 0
+        tip = _git(rig.origin, "rev-parse", PR_BRANCH)
+        (rig.gh / "prs").write_text(f"7 CLOSED {tip}\n")
+        r = rig.run("2026-10-15", tokens=125)
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "no rows on" in rig.take.stdout
+        assert rig.rows(PR_BRANCH)[-1]["delta_days"] == 14
+
+    def test_gh_failing_spends_no_measurement(self, tmp_path: Path):
+        rig = Rig(tmp_path, knob="pr\n")
+        (rig.gh / "list_err").write_text("HTTP 502\n")
+        r = rig.run("2026-10-08")
+        assert r.returncode == 1, r.stdout
+        assert "nothing was measured" in r.stdout
+
+    def test_the_take_and_the_push_decide_the_pr_the_same_way(self, tmp_path: Path):
+        """Two readers of one decision. The push reads it again, since a PR
+        can merge during the run, so they must read it identically."""
+        steps = _steps(_render(tmp_path, "pr\n"))
+
+        def decision(script: str) -> list[str]:
+            lines = [ln.strip() for ln in script.splitlines()]
+            start = next(i for i, ln in enumerate(lines) if ln.startswith("PRS=$("))
+            end = next(
+                i for i, ln in enumerate(lines) if ln.startswith('if [ -n "$TIP" ]')
+            )
+            return [
+                ln.split(" || {")[0]
+                for ln in lines[start : end + 1]
+                if ln and not ln.startswith(("echo ", "exit ", "#"))
+            ]
+
+        take, push = decision(steps[TAKE_STEP]), decision(steps[COMMIT_STEP])
+        assert take == push
+        assert any("isCrossRepository" in ln for ln in take)
+
+    def test_the_rows_come_in_before_the_sweep_and_after_the_preflight(
+        self, tmp_path: Path
+    ):
+        doc = yaml.safe_load(_render(tmp_path, "pr\n"))
+        names = [s.get("name", "") for s in doc["jobs"]["measure"]["steps"]]
+        take = names.index(TAKE_STEP)
+        assert names.index("Preflight the credential") < take
+        assert take < names.index("Sweep the seams and the counts")
+
+
 # --- install, --check, and a knob that changes after install ---------------
 
 
@@ -710,6 +970,45 @@ class TestInstallAndCheck:
         # The knob is untracked here, and the job reads the committed one.
         assert "commit .skills/merge_mode" in r.stdout.lower()
 
+    def test_a_pr_knob_committed_as_direct_is_not_committed_as_it_reads(
+        self, tmp_path: Path
+    ):
+        """CR 1810: tracked is not committed. With `direct` committed and the
+        working file edited to `pr`, the installer rendered pr and said
+        nothing, while the job reads the committed `direct`."""
+        repo = _init(tmp_path / "r")
+        _knob(repo, "direct\n")
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-qm", "knob")
+        _knob(repo, "pr\n")
+        r = _install(repo)
+        assert r.returncode == 0, r.stderr
+        assert READ_STEP in (repo / ".github/workflows/context-cadence.yml").read_text()
+        assert "not committed" in r.stdout
+        check = _install(repo, "--check")
+        assert "not committed" in check.stdout, check.stdout
+
+    def test_a_pr_knob_committed_as_it_reads_says_nothing_more(self, tmp_path: Path):
+        repo = _init(tmp_path / "r")
+        _knob(repo, "pr\n")
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-qm", "knob")
+        r = _install(repo)
+        assert r.returncode == 0, r.stderr
+        assert "not committed" not in r.stdout
+        assert "not committed" not in _install(repo, "--check").stdout
+
+    def test_a_staged_but_uncommitted_pr_knob_is_not_committed(self, tmp_path: Path):
+        repo = _init(tmp_path / "r")
+        (repo / "README.md").write_text("x\n")
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-qm", "init")
+        _knob(repo, "pr\n")
+        _git(repo, "add", "-A")
+        r = _install(repo)
+        assert r.returncode == 0, r.stderr
+        assert "not committed" in r.stdout
+
     def test_a_direct_install_prints_todays_closing_text(self, tmp_path: Path):
         # Same basename, so the same derived cron.
         a = _install(_init(tmp_path / "a" / "r"))
@@ -723,7 +1022,7 @@ class TestInstallAndCheck:
     def test_a_template_that_moved_an_anchor_renders_nothing_for_pr(
         self, tmp_path: Path
     ):
-        """The pr shape is spliced in after four anchor lines. A template edit
+        """The pr shape is spliced in after five anchor lines. A template edit
         that moved one must fail the render, not install a pr workflow
         missing a piece, and must leave the installed file as it was."""
         broken = tmp_path / "scripts" / "install-cadence.sh"

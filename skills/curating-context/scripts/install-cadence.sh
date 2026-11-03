@@ -46,7 +46,8 @@ Options:
                    A ninth line, the checkout pin, says what a re-render
                    would write over the installed actions/checkout line
                    (#373); it is not a guarantee and never sets the exit.
-                   Exit 0 all present, 3 any missing.
+                   Exit 0 all present, 3 any missing, or a merge mode it
+                   reports UNUSABLE or STALE.
   --uninstall      Remove the workflow file AND every merge attribute it
                    installed, leaving .gitattributes as it found it (the file
                    itself goes only if nothing else was in it). The recorded
@@ -62,8 +63,9 @@ Merge mode (#560):
   The primary checkout's .skills/merge_mode (#342) picks what renders. Absent
   or `direct`: the workflow below, exactly as before. `pr`: the same workflow
   plus `pull-requests: write`, a step that reads the committed knob at run
-  time, and a push to context/weekly-measurement that opens or updates one PR
-  instead of pushing to the default branch. Present but unusable refuses
+  time, one that merges the open PR's rows in before the measurement, and a
+  push to context/weekly-measurement that opens or updates one PR instead of
+  pushing to the default branch. Present but unusable refuses
   (exit 5) before anything is written. --check reports a knob the installed
   workflow does not match. Design: references/cadence.md.
 
@@ -114,9 +116,11 @@ Exit codes:
   0  installed, uninstalled, unchanged, or printed
   1  usage error, or not in a git repo
   2  could not rewrite .gitattributes — nothing was changed
-  3  --check only: a workflow, merge attribute or merge driver is missing
+  3  --check only: a workflow, merge attribute or merge driver is missing,
+     or .skills/merge_mode is unusable, or says pr under a direct render
   4  could not set a merge driver — its calibration attribute is inert
-  5  .skills/merge_mode is present but unusable — nothing was changed
+  5  install or --print only: .skills/merge_mode is present but unusable —
+     nothing was changed (--check reports it as 3; --uninstall ignores it)
 USAGE
 }
 
@@ -292,11 +296,17 @@ if [ -f "$WF" ]; then
   fi
 fi
 
-# Whether the knob is committed: the job reads the checked-out file, so an
-# untracked `pr` renders the PR path and then runs it as `direct`.
+# Whether the knob is committed AS IT READS: the job reads the checked-out
+# file, so an untracked `pr` renders the PR path and then runs it as
+# `direct`. In the index is not enough (CR 1810): `direct` committed with the
+# working file edited to `pr`, or `pr` staged and in no commit, renders pr
+# and runs direct too. ls-files catches the untracked file, which diff
+# against HEAD does not show; the diff catches the rest.
 knob_tracked() {
   env -u GIT_DIR -u GIT_WORK_TREE git -C "$KNOB_PRIMARY" ls-files --error-unmatch \
-    -- .skills/merge_mode >/dev/null 2>&1
+    -- .skills/merge_mode >/dev/null 2>&1 \
+    && env -u GIT_DIR -u GIT_WORK_TREE git -C "$KNOB_PRIMARY" diff --quiet HEAD \
+      -- .skills/merge_mode >/dev/null 2>&1
 }
 
 # ONE definition, above the mode dispatch, because --check reads this and
@@ -620,9 +630,9 @@ if [ "$MODE" = "check" ]; then
     pr:*)
       echo "merge mode:         pr (one standing PR from context/weekly-measurement)"
       if ! knob_tracked; then
-        echo "                    .skills/merge_mode is not committed, and the job"
-        echo "                    reads the committed file: until it is, runs push"
-        echo "                    to the default branch."
+        echo "                    .skills/merge_mode is not committed as it reads,"
+        echo "                    and the job reads the committed file: until it"
+        echo "                    is, runs push to the default branch."
       fi ;;
     *:pr)
       echo "merge mode:         direct, under a workflow rendered for pr: runs follow"
@@ -1212,7 +1222,7 @@ YAML
 
 # --- merge_mode pr (#560) ---------------------------------------------------
 #
-# A repo whose .skills/merge_mode says `pr` gets the workflow above plus four
+# A repo whose .skills/merge_mode says `pr` gets the workflow above plus five
 # insertions, and nothing in it removed or rewritten. `direct` or absent gets
 # render_direct's bytes untouched: the decision on #560 is "today's behaviour,
 # byte for byte", and this split keeps it by construction rather than by care.
@@ -1266,6 +1276,60 @@ pr_read_step() {
 YAML
 }
 
+pr_take_step() {
+  cat <<'YAML'
+
+      # merge_mode pr (#560): the checkout is the default branch, whose ledger
+      # lacks the rows still on context/weekly-measurement. Measured there, a
+      # row took its deltas, and the seam sweep its --base-ledger interval,
+      # from the last MERGED row: the delta check warned on every run while
+      # the PR stayed open, and the merge landed those deltas. So when the
+      # push below would keep the branch, it is merged in before the sweep.
+      # --no-commit: HEAD stays the default branch's tip, so the row's
+      # repo_commit is a commit that branch keeps, and the commit step
+      # records the merge with the row. Which PR is decided as the push
+      # decides it, and the push decides again: a PR can merge mid-run.
+      - name: Take in the measurement PR's rows
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          [ "${MERGE_MODE:-}" = pr ] || { echo "merge mode ${MERGE_MODE:-unset}: no PR's rows to take in"; exit 0; }
+          BRANCH="${GITHUB_REF_NAME:-$(git branch --show-current)}"
+          PR_BRANCH=context/weekly-measurement
+          PRS=$(gh pr list --head "$PR_BRANCH" --base "$BRANCH" --state all --json number,state,headRefOid,isCrossRepository --jq '.[] | select(.isCrossRepository | not) | "\(.number) \(.state) \(.headRefOid)"') || {
+            echo "::error::gh pr list failed, so which measurement PR is open is unknown — nothing was measured."
+            exit 1; }
+          REMOTE=$(git ls-remote origin "refs/heads/$PR_BRANCH") || {
+            echo "::error::could not read $PR_BRANCH from origin — nothing was measured."
+            exit 1; }
+          TIP=${REMOTE%%[[:space:]]*}
+          OPEN='' ENDED=''
+          while read -r N S OID; do
+            [ -n "$N" ] || continue
+            if [ "$S" = OPEN ]; then
+              OPEN=${OPEN:-$N}
+            elif [ -n "$TIP" ] && [ "$OID" = "$TIP" ]; then
+              ENDED=$N
+            fi
+          done <<<"$PRS"
+          if [ -n "$TIP" ] && { [ -n "$OPEN" ] || [ -z "$ENDED" ]; }; then
+            # The commit step sets these too; the merge needs them now.
+            git config user.name  "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git config merge.ours.driver true
+            git config merge.context-counts.driver "bash \"$MERGE_TOKEN_COUNTS_SH\" %O %A %B %P"
+            { git fetch -q origin "+refs/heads/$PR_BRANCH:refs/remotes/origin/$PR_BRANCH" \
+              && git merge -q --no-commit --no-ff "$TIP"; } || {
+              echo "::error::could not merge $PR_BRANCH in — nothing was measured."
+              git diff --name-only --diff-filter=U | sed 's/^/::error::  conflicted: /'
+              exit 1; }
+            echo "measuring after the rows on $PR_BRANCH${OPEN:+ (PR #$OPEN)}"
+          else
+            echo "no rows on $PR_BRANCH to take in: the row is measured after $BRANCH's"
+          fi
+YAML
+}
+
 pr_commit_env() {
   cat <<'YAML'
         env:
@@ -1284,8 +1348,10 @@ pr_push_block() {
             pr)
               PR_BRANCH=context/weekly-measurement
               ROW=$(git rev-parse HEAD)
-              # Every PR from the branch, any state. gh failing is not "none".
-              PRS=$(gh pr list --head "$PR_BRANCH" --base "$BRANCH" --state all --json number,state,headRefOid --jq '.[] | "\(.number) \(.state) \(.headRefOid)"') || {
+              # Every PR from the branch, any state, and only this repo's:
+              # --head matches a branch name, a fork's included. gh failing
+              # is not "none".
+              PRS=$(gh pr list --head "$PR_BRANCH" --base "$BRANCH" --state all --json number,state,headRefOid,isCrossRepository --jq '.[] | select(.isCrossRepository | not) | "\(.number) \(.state) \(.headRefOid)"') || {
                 echo "::error::gh pr list failed, so which measurement PR is open is unknown — the row was not pushed."
                 exit 1; }
               REMOTE=$(git ls-remote origin "refs/heads/$PR_BRANCH") || {
@@ -1301,11 +1367,15 @@ pr_push_block() {
                   ENDED=$N
                 fi
               done <<<"$PRS"
-              if [ -n "$TIP" ] && [ -z "$ENDED" ]; then
+              # An open PR always wins: one closed and another opened from the
+              # same head leaves a finished PR at the tip of an open one's rows.
+              if [ -n "$TIP" ] && { [ -n "$OPEN" ] || [ -z "$ENDED" ]; }; then
                 # The branch carries rows no finished PR took: an open PR's, or
                 # a run's whose PR was never opened. Merge the row INTO it, so
                 # those rows stay first and in order and $BRANCH comes in with
                 # the row: the PR never conflicts with the branch it targets.
+                # The take-in step merged this tip in before the measurement,
+                # so unless the branch moved since, this is a fast-forward.
                 { git fetch -q origin "+refs/heads/$PR_BRANCH:refs/remotes/origin/$PR_BRANCH" \
                   && git checkout -q --detach "$TIP"; } || {
                   echo "::error::could not check out $PR_BRANCH — the row was not pushed."
@@ -1316,8 +1386,9 @@ pr_push_block() {
                   exit 1; }
               fi
               # Otherwise the branch restarts at $BRANCH plus this row: it is
-              # absent, or its tip was a finished PR's head, merged (its rows
-              # are on $BRANCH; a squash would carry them twice) or closed.
+              # absent, or no PR is open and its tip was a finished PR's head,
+              # merged (its rows are on $BRANCH; a squash would carry them
+              # twice) or closed.
               #
               # The lease is the tip read above; empty means "must not exist".
               # A refusal is reported once and never retried: it is a rule or a
@@ -1358,7 +1429,7 @@ pr_push_block() {
 YAML
 }
 
-# Splices the four fragments above into the direct render, each after its
+# Splices the five fragments above into the direct render, each after its
 # anchor line. Every anchor must be met exactly once: a template edit that
 # moved one would otherwise render a pr workflow missing a piece, silently.
 add_pr_mode() {
@@ -1368,12 +1439,13 @@ add_pr_mode() {
     case "$line" in
       "  contents: write") pr_permissions; met="$met p" ;;
       "        run: '[ ! -x .skills/doctor.sh ] || bash .skills/doctor.sh'") pr_read_step; met="$met r" ;;
+      "        run: bash \"\$MEASURE_CONTEXT_SH\" --check-credential") pr_take_step; met="$met t" ;;
       "      - name: Commit the row") pr_commit_env; met="$met e" ;;
       "          # --- push ---") pr_push_block; met="$met b" ;;
     esac
   done
-  [ "$met" = " p r e b" ] || {
-    echo "ERROR the pr render met its anchors as '$met', not ' p r e b': the template moved under it" >&2
+  [ "$met" = " p r t e b" ] || {
+    echo "ERROR the pr render met its anchors as '$met', not ' p r t e b': the template moved under it" >&2
     return 1; }
 }
 
@@ -1468,9 +1540,9 @@ A PR opened with GITHUB_TOKEN starts no pull_request workflow. If a required
 check blocks its merge, close and reopen the PR to start them."
   if ! knob_tracked; then
     PR_NOTE="$PR_NOTE
-The job reads the COMMITTED knob, and .skills/merge_mode is not committed:
-commit .skills/merge_mode with the workflow, or the runs push to the default
-branch."
+The job reads the COMMITTED knob, and .skills/merge_mode is not committed as
+it reads: commit .skills/merge_mode with the workflow, or the runs push to
+the default branch."
   fi
   # The blank line before "Then run it once by hand" that DRIVER_NOTE gets.
   PR_NOTE="$PR_NOTE
