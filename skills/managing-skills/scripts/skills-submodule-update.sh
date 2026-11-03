@@ -146,7 +146,8 @@ LOG="$gitdir/skills-update.log"
 # commit block ends with nothing of the hook's left staged. Its first line
 # names the run that owns it, `pid <PID> <epoch seconds>`; then one path per
 # line — the ones that run may stage — so a later session can tell what the
-# hook staged from what a human did. See _heal_staged and _marker_owner_live.
+# hook staged from what a human did; a heal that has said a killed run's
+# staging on stderr appends `noted`. See _heal_staged and _marker_owner_live.
 STAGING="$gitdir/skills-update.staging"
 # How long a marker's owner can be believed alive (CR 1789): the hook's 120 s
 # ceiling plus margin. Past it, a live PID is a reused one — an unrelated
@@ -868,9 +869,11 @@ _stamp_lock() {
 # here. In `direct` mode the first refresh this version completes on main
 # commits it through its own pathspec; `pr` mode never commits in this
 # checkout, so its refresh says so on stderr instead, with the reset that
-# clears it (_pr_note_staged, CR 1791). With a marker, the heal acts only when every
-# staged path is one the marker names; anything else staged beside them is
-# someone's work, so the whole index is left alone and the marker kept.
+# clears it (_pr_note_staged, CR 1791). With a marker, the heal unstages only
+# when every staged path is one the marker names; anything else staged beside
+# them is someone's work, so the whole index is left alone — the content still
+# goes back on the pointer the index records (CR 1801) — and the marker is
+# kept while the hook's own paths stay staged.
 _heal_staged() {
   [ "$BRANCH" = "main" ] || return 0
 
@@ -884,8 +887,9 @@ _heal_staged() {
       return 0
     fi
     marked=1
-    # The paths, without the owner line or a pr-mode run's `mode pr`.
-    listed="$(grep -v -e '^pid ' -e '^mode ' "$STAGING" 2>>"$LOG")" || rc=$?
+    # The paths, without the owner line, a pr-mode run's `mode pr`, or the
+    # `noted` an earlier heal appended (CR 1801).
+    listed="$(grep -v -e '^pid ' -e '^mode ' -e '^noted$' "$STAGING" 2>>"$LOG")" || rc=$?
     if [ "$rc" -gt 1 ]; then
       _log "heal: could not read $STAGING (grep exited $rc) — leaving the index alone"
       return 0
@@ -931,17 +935,6 @@ STAGED_EOF
     return 0
   fi
 
-  # `own` is empty when the kill fell before `git add`, and an empty array's
-  # expansion is an unbound variable under bash 3.2's `set -u` (CR 1800).
-  if [ "$others" -gt 0 ]; then
-    if [ "${#own[@]}" -gt 0 ]; then
-      _log "heal: a killed refresh left ${own[*]} staged beside $others path(s) it did not stage — leaving the index alone"
-    else
-      _log "heal: a killed refresh staged nothing, and $others path(s) it did not stage are staged — leaving the index alone"
-    fi
-    return 0
-  fi
-
   # The whole bump goes back, not only its staging (#550): a kill after the
   # update leaves the content ahead of the pointer whether or not it got as
   # far as `git add`, and a session that cannot redo the bump (main carrying
@@ -949,14 +942,43 @@ STAGED_EOF
   # When this session can redo it, it does, from a checkout that agrees.
   # Every path the marker names, staged or not: an unstage of a path with
   # nothing staged is a no-op, and a submodule already on its pointer is too.
-  local marked_paths=()
+  local marked_paths=() gitlinks=() p
   while IFS= read -r spath; do
     [ -n "$spath" ] || continue
     marked_paths+=("$spath")
   done <<LISTED_EOF
 $listed
 LISTED_EOF
-  if [ "${#marked_paths[@]}" -gt 0 ]; then
+
+  # Someone else's work staged beside the hook's keeps the index as it is,
+  # but not the content (CR 1801): `git submodule update --checkout` writes
+  # no index, so the content still goes back — onto the pointer the index
+  # records, which for a gitlink the killed run staged is that run's bump;
+  # _restore_content's log says which. The hook's staging left in place is
+  # said on stderr once per killed run, not at every session while the
+  # human's work stays staged: the marker gets a `noted` line, and the
+  # refresh that redoes the bump writes a fresh marker. `own` is empty when
+  # the kill fell before `git add`, and an empty array's expansion is an
+  # unbound variable under bash 3.2's `set -u` (CR 1800).
+  if [ "$others" -gt 0 ]; then
+    if [ "${#own[@]}" -gt 0 ]; then
+      _log "heal: a killed refresh left ${own[*]} staged beside $others path(s) it did not stage — leaving the index alone; the content goes back on the pointer the index records"
+      if ! grep -qx 'noted' "$STAGING" 2>/dev/null; then
+        for p in "${own[@]}"; do
+          if _listed "$p" "$REGISTERED"; then
+            gitlinks+=("$p")
+          fi
+        done
+        echo "skills update: a refresh killed part way left ${own[*]} staged beside $others staged path(s) it did not stage, so the index is left as it is; the next refresh to complete commits them through its own pathspec. To drop them instead: git reset -q -- ${own[*]}${gitlinks[0]:+ && git submodule update --checkout -- ${gitlinks[*]}} (see $LOG)" >&2 || true
+        printf 'noted\n' >>"$STAGING" 2>/dev/null || true
+      fi
+    else
+      _log "heal: a killed refresh staged nothing, and $others path(s) it did not stage are staged — leaving the index alone; the content goes back on its pointer"
+    fi
+    if [ "${#marked_paths[@]}" -gt 0 ]; then
+      _restore_content "a killed refresh" "${marked_paths[@]}"
+    fi
+  elif [ "${#marked_paths[@]}" -gt 0 ]; then
     if [ "${#own[@]}" -gt 0 ]; then
       _log "heal: a killed refresh left ${own[*]} staged — undoing its bump"
     fi
