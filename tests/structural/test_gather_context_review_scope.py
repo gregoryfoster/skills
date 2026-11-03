@@ -325,6 +325,44 @@ class TestTheFirstDefaultBranchRefDecides:
         assert "main)" not in header, header
 
 
+class TestPathsGitWouldQuoteOrMisread:
+    """CR 1807. With git's default core.quotePath a non-ASCII path is listed
+    C-quoted (`"sub dir/caf\\303\\251.php"`), a name no file has and one the
+    PHP variant's `\\.php$` filter drops; and `git diff --name-only HEAD`
+    with no `--` fails as ambiguous when a file is named HEAD."""
+
+    @pytest.mark.parametrize("variant", VARIANTS)
+    def test_a_non_ascii_path_is_listed_as_named(self, variant, clone, home):
+        _committed_branch(clone, "sub dir/café.php")
+        r = _run(variant, clone, home)
+        assert r.returncode == 0, r.stderr
+        _, body = _section(r.stdout)
+        assert body == ["sub dir/café.php"], body
+
+    def test_php_lints_a_non_ascii_php_file(self, clone, home):
+        _committed_branch(clone, "sub dir/café.php")
+        r = _run("reviewing-code-php", clone, home)
+        assert r.returncode == 0, r.stderr
+        assert "php-stub -l sub dir/café.php" in r.stdout, (
+            "the PHP variant skipped a changed PHP file whose name git quoted "
+            f"(CR 1807):\n{r.stdout}"
+        )
+
+    @pytest.mark.parametrize("variant", VARIANTS)
+    def test_a_file_named_head_is_listed_not_a_failure(self, variant, clone, home):
+        """On main with everything pushed the base is HEAD itself, the name
+        the new file shares."""
+        (clone / "HEAD").write_text("a file, not a revision\n")
+        r = _run(variant, clone, home)
+        assert r.returncode == 0, r.stderr
+        header, body = _section(r.stdout)
+        assert body == ["HEAD"], (
+            f"{variant}: an untracked file named HEAD made the list {body!r}; "
+            f"git's stderr:\n{r.stderr}"
+        )
+        assert "its own merge base with origin/HEAD" in header, header
+
+
 class TestArguments:
     @pytest.mark.parametrize("variant", VARIANTS)
     @pytest.mark.parametrize("arg", ["origin/main..HEAD", "main", "-h", "--base"])
