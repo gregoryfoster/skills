@@ -739,7 +739,7 @@ day_after() {  # <var> <days>: the date that many days from now
   printf -v "$1" '%s' "${_da%%T*}"
 }
 if [ "${#FAILED[@]}" -gt 0 ]; then
-  NEXT+=("The stage didn't finish: read $log and the failures above before anything else. A disable is undone with systemctl unmask, then enable for the units the plan recorded as enabled and start for those it recorded as active (pruning.md).")
+  NEXT+=("The stage didn't finish: read $log and the failures above before anything else. A disable is undone with systemctl unmask of each unit under actions, not those in $run/masks, which were masked before it, then enable only for the units the plan recorded as enabled and start only for those it recorded as active (pruning.md).")
   if [ "$HOLD_RELEASED" -eq 1 ]; then
     NEXT+=("Its hold was released before the purge: where one of $_held is still installed, hold it again with apt-mark hold $_held, or the next bulk reaches it.")
   fi
