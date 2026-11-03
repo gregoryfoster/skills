@@ -152,12 +152,12 @@ Pulls upstream submodule changes once per calendar day, on `main` only, and auto
 - Skips silently on any branch other than `main`.
 - Skips silently if the project has no `skills-vendor/` directory.
 - Scopes updates to `skills-vendor/` — never touches other submodules a project may have.
-- Logs to `.git/skills-update.log` (auto-truncated to the last 200 lines once it crosses 64 KiB).
+- Logs to `.git/skills-update.log` (truncated to the last 200 lines past 64 KiB).
 - Matches diff scope to add scope, so unrelated dirty work cannot be absorbed and empty commits cannot be created. Exactly two paths are ever staged: `skills-vendor/` and, when present, `.skills/doctor.sh` — never `.skills/` wholesale, which would sweep in operator config like `.skills/plans_dir` and `.skills/worktree_root`.
 - Commit message names what changed: `chore: update skills submodules`, `chore: refresh .skills/doctor.sh`, or both.
-- Pushes what it commits; a failed push is rolled back rather than left unpushed.
+- Pushes what it commits, rolling back a failed push; under `.skills/merge_mode` `pr`, opens one PR.
 - **Installs/updates `.skills/doctor.sh`** every session on any branch, so a deleted doctor self-heals, and again after a refresh so a bump commits the doctor it ships (#299); **commits it** only past the `main` and once-per-day gates (#86). The first vendored installer to succeed wins; all failing reaches stderr (#300). Not in a fresh worktree, whose `skills-vendor/*` is empty.
-- To verify the hook is running, check `.git/skills-update.log` after a session start on `main`. Lines beginning `unexpected hook error` come from the ERR-trap backstop and mark an unanticipated failure path; the hook still exits 0.
+- To verify the hook is running, check `.git/skills-update.log` after a session start on `main`. Lines beginning `unexpected hook error` come from the ERR-trap backstop; the hook still exits 0.
 
 **Run the installer. Do not hand-execute the steps below.**
 

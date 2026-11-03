@@ -66,7 +66,7 @@ The retry is a **reconcile pass that runs at every session start, ahead of the o
 - **One refusal per run.** The block above is set once and read for the rest of the run. Without it, the refresh after a rollback would fetch the content forward again, and the commit step re-stage it, re-commit it and re-attempt the push just refused — two network waits inside a 120s ceiling, and the same warning twice.
 - **It never pulls.** Landing a bump on a checkout that is behind would mean advancing local `main`, and on a deployed VM `main` *is* the running code; a SessionStart hook updating deployed application code is a far larger authority than moving a submodule pointer. A stale consumer gets no bump, loudly, until a human syncs.
 - **The commit is scoped to a pathspec**, not left to sweep the index. `SKILL.md`'s "matches diff scope to add scope" was true of the *add* and of unstaged dirty work, but `git commit` with no pathspec commits the whole index — so anything the operator had staged before the session began went into the hook's commit under the hook's own message. A local wart while the hook only committed; a published one now that it pushes. The pathspec is what is actually staged under the hook's paths, not the path list itself: `git commit -- <path>` fails outright on a path git does not know, and `.skills/doctor.sh` is exactly that where a consumer gitignores `.skills/`, so passing the list verbatim fails the whole commit there and strands the submodule bump too.
-- **It never force-pushes**, in any spelling, and uses an explicit refspec rather than a bare `git push` — under `push.default=matching` that pushes every matching branch.
+- **It never force-pushes `main`**, in any spelling (in [`pr` mode](auto-refresh-hook/pr-mode.md) it replaces only its own branch, under a lease), and uses an explicit refspec rather than a bare `git push` — under `push.default=matching` that pushes every matching branch.
 
 The rollback is the fix here and the push is the optimization: the service was stranded by `ahead 1`, not by a stale skills pin.
 
@@ -84,9 +84,13 @@ A stale consumer keeps the older skills until a session that can share the bump 
 
 ### What to expect where it cannot push
 
-Where `main` is protected, or the hook has no push credentials, every push is rejected and rolled back, so the pointer never advances and the skills freeze at the vendored commit — loudly, on stderr, every session. That is the intended degradation: a consumer that cannot share a bump should not be silently accumulating them.
+Where `main` is protected, or the hook has no push credentials, every push is rejected and rolled back, so the pointer never advances and the skills freeze at the vendored commit — loudly, on stderr, once a day. That is the intended degradation: a consumer that cannot share a bump should not be silently accumulating them. When a repository rule or branch protection refused it (`GH013`, `GH006`), the stderr line names the rule and the remedy: [`pr` mode](auto-refresh-hook/pr-mode.md).
 
 `.skills/doctor.sh` warns whenever `main` is ahead of its upstream, which is the only cohort-wide sensor that can exist for this — an unpushed commit lives on exactly one machine, so nothing reachable through the GitHub API can see it.
+
+## In `pr` mode ([#560](https://github.com/gregoryfoster/skills/issues/560))
+
+With `.skills/merge_mode` `pr` the hook never pushes to `main`: it proposes the bump as one pull request from `skills/submodule-refresh`, which later sessions update, and the checkout's content stays on its recorded pointer. How, and what it does when `gh` or a rule stands in the way: [auto-refresh-hook/pr-mode.md](auto-refresh-hook/pr-mode.md).
 
 ## A run killed part way ([#555](https://github.com/gregoryfoster/skills/issues/555))
 

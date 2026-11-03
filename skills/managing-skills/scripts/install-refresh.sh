@@ -52,7 +52,9 @@ exec bash "$SELF_DIR/install-hook.sh" \
 the pointer bumps — then pushes them. An unpushed commit is invisible to CI,
 to other clones and to every fresh worktree, and where a service reads the
 checkout it can refuse to start (#293). A push that fails is rolled back, so
-the checkout never diverges; the hook never pulls, never force-pushes, and
-never touches a commit it did not write. To confirm it ran, check
-.git/skills-update.log after a session start on main.' \
+the checkout never diverges; the hook never pulls, never force-pushes main,
+and never touches a commit it did not write. With .skills/merge_mode pr it
+pushes nothing to main and proposes the bump as one pull request instead
+(#560). To confirm it ran, check .git/skills-update.log after a session start
+on main.' \
   "$@"

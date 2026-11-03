@@ -99,8 +99,14 @@ Behaviour:
     If the push fails the commit is rolled back so the checkout matches the
     remote — the pointer, the vendored content and .skills/doctor.sh
     alike — and the next session retries. A run that cannot push does not
-    refresh either. Never pulls, never force-pushes, and never touches a
-    commit this hook did not write.
+    refresh either. Never pulls, never force-pushes main, and never touches
+    a commit this hook did not write.
+  - With .skills/merge_mode 'pr' (read from the primary checkout, #560),
+    never pushes to main: the bump is proposed as ONE pull request from
+    skills/submodule-refresh, which later sessions update, and the
+    checkout's content stays on main's recorded pointer. Needs gh. A
+    refusal is reported once and not retried. A knob that is present but
+    unusable is never read as 'direct': no refresh until it is fixed.
   - Logs to .git/skills-update.log (bounded to ~64 KiB / 200 lines).
   - Exits 0 on every non-fatal condition.
 
@@ -146,6 +152,11 @@ STAGING="$gitdir/skills-update.staging"
 # ceiling plus margin. Past it, a live PID is a reused one — an unrelated
 # process, or one in another PID namespace — and the marker is stale.
 MARKER_MAX_AGE=300
+# merge_mode pr (#560): the private index the pull request's commit is built
+# in, so the checkout's own index is never written; and the one branch the
+# hook proposes from.
+PR_INDEX="$gitdir/skills-update.pr-index"
+PR_BRANCH="skills/submodule-refresh"
 
 # Nothing to refresh if the project doesn't use the skills-vendor/ pattern.
 [ -d skills-vendor ] || exit 0
@@ -236,6 +247,79 @@ _unstage() {
 # same reason the commit is, but it runs before the lock, so it cannot wait
 # for the `exit 0` gate to have computed this.
 BRANCH="$(git symbolic-ref --short HEAD 2>/dev/null || true)"
+
+# ------------------------------------------------------ merge_mode (#342, #560)
+# How this project lands work on its default branch: `direct` (absent means
+# direct) or `pr`. In `pr` mode the hook never pushes to main; it proposes its
+# bump as one pull request (_pr_refresh, below).
+#
+# Inline, not a call to shipping-work's merge-mode.sh: this file is read by
+# bash while `git submodule update` rewrites the vendored tree (see the brace
+# note at the top), it can be installed as a copy rather than a symlink
+# (install-hook.sh), and a consumer need not vendor shipping-work at all.
+# tests/structural/test_refresh_hook_pr_mode.py holds it to merge-mode.sh's
+# answers on the same inputs test_cadence_merge_mode.py uses.
+#
+# Read from the primary checkout (the first `git worktree list` entry), as
+# merge-mode.sh does: an untracked knob does not exist in a linked worktree.
+# Present but unusable is `unusable`, never `direct` — the run then neither
+# pushes nor refreshes, and says why.
+MERGE_MODE="direct"
+MERGE_MODE_ERR=""
+_read_merge_mode() {
+  local wt primary knob remedy line word="" count=0 words
+  MERGE_MODE="unusable"
+  MERGE_MODE_ERR=""
+  remedy="write one word, 'pr' or 'direct', or delete the file for the default ('direct')"
+  wt="$(git worktree list --porcelain 2>/dev/null)" || {
+    MERGE_MODE_ERR="git worktree list failed, so .skills/merge_mode could not be read"
+    return 0
+  }
+  primary=${wt%%$'\n'*}
+  primary=${primary#worktree }
+  if [ ! -d "$primary" ]; then
+    MERGE_MODE_ERR="could not resolve the primary checkout (got '$primary') to read .skills/merge_mode"
+    return 0
+  fi
+  knob="$primary/.skills/merge_mode"
+  if [ ! -e "$knob" ] && [ ! -L "$knob" ]; then
+    MERGE_MODE="direct"
+    return 0
+  fi
+  if ! { [ -f "$knob" ] && [ -r "$knob" ]; }; then
+    MERGE_MODE_ERR="$knob is present but not a readable file: $remedy"
+    return 0
+  fi
+  if ! exec 3<"$knob"; then
+    MERGE_MODE_ERR="could not open $knob: $remedy"
+    return 0
+  fi
+  while IFS= read -r line <&3 || [ -n "$line" ]; do
+    line=${line%$'\r'}
+    read -r -a words <<<"$line" || true
+    [ "${#words[@]}" -gt 0 ] || continue
+    case ${words[0]} in \#*) continue ;; esac
+    count=$((count + ${#words[@]}))
+    word=${words[0]}
+  done
+  exec 3<&-
+  if [ "$count" -eq 0 ]; then
+    MERGE_MODE_ERR="$knob names no mode: $remedy"
+  elif [ "$count" -ne 1 ]; then
+    MERGE_MODE_ERR="$knob has $count words; it takes one: $remedy"
+  else
+    case $word in
+      pr | direct) MERGE_MODE="$word" ;;
+      *) MERGE_MODE_ERR="$knob says '$word', which is not a merge mode: $remedy" ;;
+    esac
+  fi
+  return 0
+}
+# Read on main only: every path that acts on it is main-only, so a session on
+# any other branch runs exactly as before the knob.
+if [ "$BRANCH" = "main" ]; then
+  _read_merge_mode
+fi
 
 # The commit subjects this hook authors. Named once because two places read
 # them: the commit step at the bottom, and the reconcile step's authorship
@@ -340,6 +424,13 @@ _reconcile_unpushed() {
     esac
   done < <(git log --no-show-signature --format=%s '@{u}..HEAD' 2>/dev/null || true)
 
+  # Not `direct`: this hook pushes nothing to $BRANCH (#560). Its guards and
+  # its messages differ, so it has its own pass.
+  if [ "$MERGE_MODE" != "direct" ]; then
+    _reconcile_pr "$ahead" "$seen" "$unknown" "$upstream_name"
+    return 0
+  fi
+
   # `--no-show-signature` above, because this count is compared against
   # rev-list's: with `log.showSignature = true` — an ordinary setting where
   # signing is mandated — git prepends verification lines to each SIGNED
@@ -400,7 +491,13 @@ _reconcile_unpushed() {
     return 0
   fi
 
-  local paths
+  local paths log_before=0
+  # Where this push's output starts in $LOG, so a refusal can be read back
+  # from it (#560). A read only: what is written, and when, is unchanged.
+  if [ -f "$LOG" ]; then
+    log_before="$(wc -c <"$LOG" 2>/dev/null | tr -d ' ')" || log_before=0
+  fi
+  case "$log_before" in '' | *[!0-9]*) log_before=0 ;; esac
   if {
     echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] push $ahead unpushed commit(s) to $upstream_name:"
     # Explicit refspec, never a bare `git push`: under push.default=matching
@@ -440,7 +537,14 @@ _reconcile_unpushed() {
 
   if git reset -q --soft "HEAD~$ahead" 2>>"$LOG"; then
     _log "unpushed: push failed — rolled $ahead commit(s) back, vendored content with them; the next session retries"
-    echo "skills update: could not push to $remote — rolled $ahead commit(s) back so this checkout matches $upstream_name (see $LOG)" >&2
+    # A repository rule or branch protection (GH013, GH006) is not an outage
+    # the next session's retry outlives: say which rule, and the knob that
+    # answers it (#560). Every other failure keeps the line it always had.
+    if _rule_refusal "$(tail -c +$((log_before + 1)) "$LOG" 2>/dev/null || true)"; then
+      echo "skills update: could not push to $remote — a repository rule refused it ($RULE_TEXT), so $BRANCH takes changes by pull request here: write pr to .skills/merge_mode and this hook proposes its bump as one pull request instead; rolled $ahead commit(s) back so this checkout matches $upstream_name (see $LOG)" >&2
+    else
+      echo "skills update: could not push to $remote — rolled $ahead commit(s) back so this checkout matches $upstream_name (see $LOG)" >&2
+    fi
     if [ "${#paths[@]}" -gt 0 ]; then
       # Same move as the commit step's failure path: leave the index as we
       # found it. A .skills/doctor.sh that was untracked before the commit
@@ -454,6 +558,79 @@ _reconcile_unpushed() {
   else
     _log "unpushed: push failed AND rollback failed — $BRANCH is still $ahead commit(s) ahead of $upstream_name"
     echo "skills update: $BRANCH is $ahead unpushed commit(s) ahead of $upstream_name and could be neither pushed nor rolled back — fix by hand (see $LOG)" >&2
+  fi
+  return 0
+}
+
+# _rule_refusal <push output> — true when a repository rule or branch
+# protection refused the push, and sets RULE_TEXT to its code and the rule it
+# named: GitHub prints `GH013: Repository rule violations found` with each rule
+# as a `remote: - <rule>` line, and legacy protection prints `GH006: Protected
+# branch update failed` with the rule as a second `remote: error:` line.
+RULE_TEXT=""
+_rule_refusal() {
+  local text="$1" code rule
+  RULE_TEXT=""
+  case "$text" in
+    *GH013*) code="GH013" ;;
+    *GH006*) code="GH006" ;;
+    *"rotected branch"*) code="protected branch" ;;
+    *) return 1 ;;
+  esac
+  rule="$(awk '/^remote: - / { sub(/^remote: - /, ""); sub(/[ \r]+$/, ""); print; exit }' <<<"$text" 2>/dev/null || true)"
+  if [ -z "$rule" ]; then
+    rule="$(awk '/^remote: error: / && !/GH0[0-9][0-9]/ { sub(/^remote: error: /, ""); sub(/[ \r]+$/, ""); print; exit }' <<<"$text" 2>/dev/null || true)"
+  fi
+  RULE_TEXT="$code${rule:+: $rule}"
+  return 0
+}
+
+# _reconcile_pr <ahead> <seen> <unknown> <upstream> — the unpushed pass when
+# merge_mode is not `direct` (#560). Nothing is ever pushed to $BRANCH here.
+#
+# `pr`: commits this hook wrote and never pushed — left by a run from before
+# the repo set `pr` — are rolled back with their content (#550), and the pull
+# request path redoes the bump from the default branch's tip. Moving them onto
+# the PR branch instead would publish a bump an older run verified, on a parent
+# that may not be the default branch's. Anything not wholly this hook's is left
+# alone: the PR is built on @{u}, so an operator's unpushed work is never in
+# it, and _pr_refresh refuses where main and @{u} disagree on the hook's paths.
+#
+# HEAD moves by compare-and-swap (`update-ref <new> <old>`), not `reset --soft
+# HEAD~N`: two sessions starting together both reach this pass ahead of the
+# in-progress marker, and a relative reset run twice would roll back a commit
+# that is not this hook's. The second swap fails instead, and is logged.
+#
+# `unusable`: neither pushed nor rolled back. The refresh, which runs once a
+# day, is where that is reported.
+_reconcile_pr() {
+  local ahead="$1" seen="$2" unknown="$3" upstream_name="$4" merges head target rpath paths=()
+  if [ "$MERGE_MODE" != "pr" ]; then
+    _log "unpushed: $BRANCH is $ahead commit(s) ahead of $upstream_name, and .skills/merge_mode is unusable — neither pushing nor rolling back until it reads pr or direct"
+    return 0
+  fi
+  if [ "$seen" -ne "$ahead" ] || [ "$unknown" -gt 0 ]; then
+    _log "unpushed: $BRANCH is $ahead commit(s) ahead of $upstream_name, not all confirmed as this hook's — merge_mode is pr, so nothing is pushed or rolled back"
+    return 0
+  fi
+  merges="$(git rev-list --count --merges '@{u}..HEAD' 2>/dev/null || true)"
+  if [ "$merges" != "0" ]; then
+    _log "unpushed: merge_mode is pr, and @{u}..HEAD holds merge commit(s) — not rolling back"
+    return 0
+  fi
+  head="$(git rev-parse --verify -q HEAD 2>/dev/null)" || return 0
+  target="$(git rev-parse --verify -q "HEAD~$ahead" 2>/dev/null)" || return 0
+  while IFS= read -r -d '' rpath; do
+    paths+=("$rpath")
+  done < <(git diff --name-only -z "$target" "$head" 2>/dev/null || true)
+  if git update-ref -m "skills update: merge_mode pr, roll back $ahead unpushed hook commit(s)" HEAD "$target" "$head" 2>>"$LOG"; then
+    _log "unpushed: merge_mode is pr — rolled back $ahead commit(s) this hook made on $BRANCH; a pull request proposes the bump instead"
+    echo "skills update: merge_mode is pr — rolled back $ahead unpushed commit(s) this hook made on $BRANCH; it proposes the bump as a pull request instead (see $LOG)" >&2
+    if [ "${#paths[@]}" -gt 0 ]; then
+      _restore_bump "a pr-mode rollback" "${paths[@]}"
+    fi
+  else
+    _log "unpushed: merge_mode is pr, and rolling back $ahead commit(s) this hook made on $BRANCH failed (HEAD moved, or git refused)"
   fi
   return 0
 }
@@ -573,10 +750,20 @@ $1
 # `-f`: a checkout carries a local edit across where it can and refuses where
 # it cannot, and a refusal is said on stderr — the content is then still
 # ahead of its pointer, and the session needs to know.
+#
+# _restore_content is the second half alone, for merge_mode pr (#560): that
+# path never stages anything in the checkout's index, so nothing staged under
+# these paths is the hook's to unstage. The checkout is to the commit the
+# index records, so an operator's own staged bump is kept, content and all.
 _restore_bump() {
-  local after="$1" p gitlinks=()
+  local after="$1"
   shift
   _unstage "$after" "$@"
+  _restore_content "$after" "$@"
+}
+_restore_content() {
+  local after="$1" p gitlinks=()
+  shift
   for p in "$@"; do
     if _listed "$p" "$REGISTERED"; then
       gitlinks+=("$p")
@@ -651,13 +838,19 @@ _heal_staged() {
       return 0
     fi
     marked=1
-    # The paths, without the owner line.
-    listed="$(grep -v '^pid ' "$STAGING" 2>>"$LOG")" || rc=$?
+    # The paths, without the owner line or a pr-mode run's `mode pr`.
+    listed="$(grep -v -e '^pid ' -e '^mode ' "$STAGING" 2>>"$LOG")" || rc=$?
     if [ "$rc" -gt 1 ]; then
       _log "heal: could not read $STAGING (grep exited $rc) — leaving the index alone"
       return 0
     fi
     rc=0
+    # A pr-mode run (#560) never stages in this index, so whatever is staged
+    # is not its own: only its content goes back, and its private index goes.
+    if grep -qx 'mode pr' "$STAGING" 2>/dev/null; then
+      _heal_pr "$listed"
+      return 0
+    fi
   fi
 
   # --ignore-submodules=none: a diff.ignoreSubmodules or .gitmodules `ignore`
@@ -723,6 +916,27 @@ LISTED_EOF
     git diff --cached --quiet --ignore-submodules=none -- "${own[@]}" 2>/dev/null; then
     rm -f "$STAGING" 2>/dev/null || true
   fi
+  return 0
+}
+
+# _heal_pr <marked paths> — a killed pr-mode refresh's leftovers (#560): the
+# vendored content it moved, the doctor it reinstalled, and its private index
+# (with git's lock on it — its owner is dead, which is how this was reached).
+# The marker goes too: a restore git refuses is said on stderr, and the next
+# refresh runs the same restore again.
+_heal_pr() {
+  local spath marked_paths=()
+  while IFS= read -r spath; do
+    [ -n "$spath" ] || continue
+    marked_paths+=("$spath")
+  done <<LISTED_EOF
+$1
+LISTED_EOF
+  _log "heal: a killed pr-mode refresh left $STAGING — putting the content back on the recorded pointer"
+  if [ "${#marked_paths[@]}" -gt 0 ]; then
+    _restore_content "a killed refresh" "${marked_paths[@]}"
+  fi
+  rm -f "$PR_INDEX" "$PR_INDEX.lock" "$STAGING" 2>/dev/null || true
   return 0
 }
 
@@ -880,6 +1094,76 @@ if [ "$PUSH_BLOCKED" = "1" ]; then
   exit 0
 fi
 
+# merge_mode (#560). Present but unusable is never `direct`: no refresh, said
+# once — here, behind the day's lock — not at every session start.
+if [ "$MERGE_MODE" = "unusable" ]; then
+  _log "refresh skipped — $MERGE_MODE_ERR"
+  echo "skills update: no refresh — .skills/merge_mode is unusable, and is never read as direct: $MERGE_MODE_ERR (see $LOG)" >&2
+  _stamp_lock
+  exit 0
+fi
+
+# `pr`: what the pull request needs that is local and cheap, checked before
+# the refresh moves anything — gh on PATH, and an upstream for main. Each
+# refusal is said once and spends the day, as any run that ends does.
+PR_REMOTE=""
+PR_MERGE=""
+PR_BASE_BRANCH=""
+PR_UPSTREAM=""
+PR_GH_REPO=""
+# _gh_repo_of <remote url> — `host/owner/repo` for gh's --repo, or nothing
+# when the URL is not a host's (a local path): gh then resolves the repo from
+# the checkout's remotes, which works where there is one.
+_gh_repo_of() {
+  local url="$1" rest host path
+  case "$url" in
+    *://*)
+      rest=${url#*://}
+      rest=${rest#*@}
+      host=${rest%%/*}
+      host=${host%%:*}
+      path=${rest#*/}
+      ;;
+    *@*:*)
+      rest=${url#*@}
+      host=${rest%%:*}
+      path=${rest#*:}
+      ;;
+    *) return 0 ;;
+  esac
+  path=${path%/}
+  path=${path%.git}
+  [ -n "$host" ] || return 0
+  case "$path" in
+    '' | /* | */*/*) return 0 ;;
+    */*) printf '%s/%s\n' "$host" "$path" ;;
+  esac
+  return 0
+}
+_pr_preflight() {
+  if ! command -v gh >/dev/null 2>&1; then
+    _log "pr: gh not found on PATH — merge_mode is pr, and the pull request is opened with gh; no refresh this run"
+    echo "skills update: .skills/merge_mode is pr, but gh is not on this hook's PATH, so no pull request can be opened — no refresh this run; install gh and run gh auth login (see $LOG)" >&2
+    return 1
+  fi
+  PR_REMOTE="$(git config --get "branch.$BRANCH.remote" 2>/dev/null || true)"
+  PR_MERGE="$(git config --get "branch.$BRANCH.merge" 2>/dev/null || true)"
+  if [ -z "$PR_REMOTE" ] || [ -z "$PR_MERGE" ]; then
+    _log "pr: $BRANCH has no upstream — merge_mode is pr, and the pull request needs a base; no refresh this run"
+    echo "skills update: .skills/merge_mode is pr, but $BRANCH has no upstream to propose a pull request against — no refresh this run (see $LOG)" >&2
+    return 1
+  fi
+  PR_BASE_BRANCH="${PR_MERGE#refs/heads/}"
+  PR_UPSTREAM="$PR_REMOTE/$PR_BASE_BRANCH"
+  # The configured URL, not `git remote get-url`, which expands insteadOf.
+  PR_GH_REPO="$(_gh_repo_of "$(git config --get "remote.$PR_REMOTE.url" 2>/dev/null || true)")"
+  return 0
+}
+if [ "$MERGE_MODE" = "pr" ] && ! _pr_preflight; then
+  _stamp_lock
+  exit 0
+fi
+
 # The refresh begins. The day's lock is NOT stamped here; it used to be, so
 # that a transient failure (a network blip) would not retry and re-log at every
 # same-day session — and that damping is kept for every run that ends, failure
@@ -920,6 +1204,10 @@ _claim_marker() {
     set -o noclobber
     {
       printf 'pid %s %s\n' "$$" "$(date +%s)"
+      # A pr-mode run says so: its heal restores content and unstages nothing.
+      if [ "$MERGE_MODE" = "pr" ]; then
+        printf 'mode pr\n'
+      fi
       printf '%s\n' "${REFRESH_PATHS[@]}"
     } > "$STAGING"
   ) 2>/dev/null
@@ -990,6 +1278,10 @@ elif ! {
   git submodule update --init --remote --merge -- "${UPDATE_PATHS[@]}" 2>&1
 } >>"$LOG"; then
   echo "skills update failed (see $LOG)" >&2
+  # In pr mode a part-way update must not stay checked out (#560).
+  if [ "$MERGE_MODE" = "pr" ]; then
+    _restore_content "a failed pr-mode refresh" "${REFRESH_PATHS[@]}"
+  fi
   # A failure that ran to completion: it spends the day (see above).
   _finish_refresh
   exit 0
@@ -1040,6 +1332,296 @@ fi
 # Nothing this hook is allowed to stage. An empty pathspec would widen every
 # git call below to the whole repo, so stop here instead.
 if [ "${#COMMIT_PATHS[@]}" -eq 0 ]; then
+  _finish_refresh
+  exit 0
+fi
+
+# ------------------------------------------------------ merge_mode pr (#560)
+# The refresh above ran in place, as it always has: the same update, the same
+# post-bump doctor install (#299), the same pins. From here a `pr` run records
+# the bump in a commit built in a private index, never in the checkout's own,
+# puts the content back on main's recorded pointer (#550), and only THEN
+# touches the network: pushes that commit to skills/submodule-refresh and opens
+# a pull request for it if none is open. Local main never moves; the content
+# always agrees with its pointer, except between the update and the restore,
+# which the marker covers (_heal_pr). Annotated in
+# references/auto-refresh-hook/pr-mode.md.
+#
+# Why in place rather than fetching inside each submodule and writing the new
+# gitlinks without checking them out: `--remote --merge --init` and the pins
+# would have to be re-implemented, and the doctor that rides the commit must be
+# the one the new pointer's own installer writes, which needs that installer
+# checked out.
+
+# Every path this hook may write, as a list and as an array: the registered
+# skills-vendor/ submodules and the doctor.
+PR_HOOK_LIST="$REGISTERED
+.skills/doctor.sh"
+PR_HOOK_PATHS=()
+while IFS= read -r REG_PATH; do
+  [ -n "$REG_PATH" ] || continue
+  PR_HOOK_PATHS+=("$REG_PATH")
+done <<PRHOOK_EOF
+$PR_HOOK_LIST
+PRHOOK_EOF
+
+_gh() {
+  if [ -n "$PR_GH_REPO" ]; then
+    GH_PROMPT_DISABLED=1 GH_NO_UPDATE_NOTIFIER=1 gh "$@" --repo "$PR_GH_REPO"
+  else
+    GH_PROMPT_DISABLED=1 GH_NO_UPDATE_NOTIFIER=1 gh "$@"
+  fi
+}
+
+# _pr_restore — the content back on main's recorded pointer, the doctor with it.
+_pr_restore() {
+  _restore_content "a pr-mode refresh" "${REFRESH_PATHS[@]}"
+}
+
+# _pr_tree <commit> <path>... — a tree: <commit>'s, with each path as the
+# working tree has it. The add is the commit step's own (`|| true` for the same
+# gitignored-.skills/ reason), in the private index.
+_pr_tree() {
+  local base="$1" tree
+  shift
+  rm -f "$PR_INDEX" "$PR_INDEX.lock" 2>/dev/null || true
+  GIT_INDEX_FILE="$PR_INDEX" git read-tree "$base" 2>>"$LOG" || return 1
+  GIT_INDEX_FILE="$PR_INDEX" git add -- "$@" >>"$LOG" 2>&1 || true
+  tree="$(GIT_INDEX_FILE="$PR_INDEX" git write-tree 2>>"$LOG")" || return 1
+  rm -f "$PR_INDEX" 2>/dev/null || true
+  printf '%s\n' "$tree"
+}
+
+# _pr_graft <commit> <tree> <path>... — a tree: <commit>'s, with each path as
+# <tree> has it.
+_pr_graft() {
+  local base="$1" from="$2" entries tree
+  shift 2
+  rm -f "$PR_INDEX" "$PR_INDEX.lock" 2>/dev/null || true
+  GIT_INDEX_FILE="$PR_INDEX" git read-tree "$base" 2>>"$LOG" || return 1
+  entries="$(git ls-tree -r "$from" -- "$@" 2>>"$LOG")" || return 1
+  if [ -n "$entries" ]; then
+    GIT_INDEX_FILE="$PR_INDEX" git update-index --index-info <<<"$entries" 2>>"$LOG" || return 1
+  fi
+  tree="$(GIT_INDEX_FILE="$PR_INDEX" git write-tree 2>>"$LOG")" || return 1
+  rm -f "$PR_INDEX" 2>/dev/null || true
+  printf '%s\n' "$tree"
+}
+
+# _pr_same_bump <a> <b> — true when two commits make the same change to the
+# hook's paths: from the same pointers and doctor, to the same. False when
+# either is not here to read.
+_pr_same_bump() {
+  if [ -z "$1" ] || [ -z "$2" ]; then
+    return 1
+  fi
+  git diff --quiet --ignore-submodules=none "$1" "$2" -- "${PR_HOOK_PATHS[@]}" </dev/null 2>/dev/null || return 1
+  git diff --quiet --ignore-submodules=none "$1^" "$2^" -- "${PR_HOOK_PATHS[@]}" </dev/null 2>/dev/null || return 1
+  return 0
+}
+
+# _pr_hook_commit <commit> — true when it is a commit this hook writes: one
+# parent, one of the three subjects, and nothing changed outside the hook's
+# paths. A human's fix on the PR fails it, and is never replaced.
+_pr_hook_commit() {
+  local parents subject changed p
+  parents="$(git rev-list --parents -n 1 "$1" 2>/dev/null)" || return 1
+  case "$parents" in
+    *" "*" "*) return 1 ;;
+    *" "*) : ;;
+    *) return 1 ;;
+  esac
+  subject="$(git log -1 --no-show-signature --format=%s "$1" 2>/dev/null)" || return 1
+  case "$subject" in
+    "$MSG_SUB" | "$MSG_DOC" | "$MSG_BOTH") : ;;
+    *) return 1 ;;
+  esac
+  changed="$(git diff --name-only --ignore-submodules=none "$1^" "$1" 2>/dev/null)" || return 1
+  while IFS= read -r p; do
+    [ -n "$p" ] || continue
+    _listed "$p" "$PR_HOOK_LIST" || return 1
+  done <<CHANGED_EOF
+$changed
+CHANGED_EOF
+  return 0
+}
+
+# _pr_refused <what> <output> — a push or gh call that failed, said once on
+# stderr. Never retried: a rule, a credential or a concurrent push is not
+# answered by asking again, and the run ends after it.
+_pr_refused() {
+  local what="$1" out="$2" first
+  first="$(awk 'NF { sub(/[ \r]+$/, ""); print; exit }' <<<"$out" 2>/dev/null || true)"
+  if _rule_refusal "$out"; then
+    _log "pr: $what refused by a rule ($RULE_TEXT)"
+    echo "skills update: a repository rule refused $what ($RULE_TEXT) — merge_mode pr needs $PR_BRANCH pushable, so exempt that branch from the rule; not retried (see $LOG)" >&2
+  else
+    _log "pr: $what failed: $first"
+    echo "skills update: $what failed${first:+: $first} — not retried this run (see $LOG)" >&2
+  fi
+}
+
+# _pr_publish <commit> <subject> — the commit onto $PR_BRANCH, and ONE pull
+# request for it.
+_pr_publish() {
+  local c="$1" msg="$2" prs rc=0 tip_line tip n s oid open="" declined="" out
+  # Every PR from the branch, any state. gh failing is not "none".
+  prs="$(_gh pr list --head "$PR_BRANCH" --base "$PR_BASE_BRANCH" --state all \
+    --json number,state,headRefOid --jq '.[] | "\(.number) \(.state) \(.headRefOid)"' 2>&1)" || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    { echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] gh pr list exited $rc:"; printf '%s\n' "$prs"; } >>"$LOG" 2>/dev/null || true
+    _pr_refused "gh pr list (is gh authenticated? gh auth status)" "$prs"
+    return 0
+  fi
+  tip_line="$(git ls-remote "$PR_REMOTE" "refs/heads/$PR_BRANCH" 2>>"$LOG")" || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    _pr_refused "reading $PR_BRANCH from $PR_REMOTE" "git ls-remote exited $rc"
+    return 0
+  fi
+  tip=${tip_line%%[[:space:]]*}
+  while read -r n s oid; do
+    case "$n" in '' | *[!0-9]*) continue ;; esac
+    if [ "$s" = "OPEN" ]; then
+      open=${open:-$n}
+    elif [ "$s" = "CLOSED" ] && [ -z "$declined" ] && _pr_same_bump "$oid" "$c"; then
+      declined=$n
+    fi
+  done <<PRS_EOF
+$prs
+PRS_EOF
+
+  # An open PR's branch is replaced only while it is still the hook's own.
+  if [ -n "$open" ] && [ -n "$tip" ]; then
+    if ! git cat-file -e "$tip^{commit}" 2>/dev/null; then
+      if ! { echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] fetch $PR_BRANCH to read PR #$open's tip:"; git fetch -q --no-tags "$PR_REMOTE" "refs/heads/$PR_BRANCH" 2>&1; } >>"$LOG"; then
+        _pr_refused "fetching $PR_BRANCH" "git fetch failed"
+        return 0
+      fi
+    fi
+    if ! _pr_hook_commit "$tip"; then
+      _log "pr: PR #$open's branch $PR_BRANCH carries a commit this hook did not write — leaving it"
+      echo "skills update: PR #$open's branch $PR_BRANCH carries a commit this hook did not write, so it is left as it is — merge or close it, and a later session proposes any newer bump (see $LOG)" >&2
+      return 0
+    fi
+  fi
+  # Closed unmerged, the same change: a human's no. The next upstream change
+  # is proposed again; .skills/skills-pin is how to hold one for good.
+  if [ -z "$open" ] && [ -n "$declined" ]; then
+    _log "pr: PR #$declined proposed this same bump and was closed unmerged — not proposing it again"
+    return 0
+  fi
+
+  if [ -n "$tip" ] && _pr_same_bump "$tip" "$c"; then
+    _log "pr: $PR_BRANCH already proposes this bump — nothing to push"
+  else
+    # The lease is the tip just read; empty means "must not exist". Never a
+    # plain --force: a push landing between the read and here is refused.
+    rc=0
+    out="$(git push --force-with-lease="refs/heads/$PR_BRANCH:$tip" "$PR_REMOTE" "$c:refs/heads/$PR_BRANCH" 2>&1)" || rc=$?
+    { echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] push the bump to $PR_BRANCH:"; [ -z "$out" ] || printf '%s\n' "$out"; } >>"$LOG" 2>/dev/null || true
+    if [ "$rc" -ne 0 ]; then
+      _pr_refused "the push to $PR_BRANCH" "$out"
+      return 0
+    fi
+  fi
+  if [ -n "$open" ]; then
+    _log "pr: PR #$open proposes the bump"
+    return 0
+  fi
+  rc=0
+  out="$(_gh pr create --head "$PR_BRANCH" --base "$PR_BASE_BRANCH" --title "$msg" --body "$PR_BODY" 2>&1)" || rc=$?
+  { echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] gh pr create exited $rc:"; [ -z "$out" ] || printf '%s\n' "$out"; } >>"$LOG" 2>/dev/null || true
+  if [ "$rc" -eq 0 ]; then
+    _log "pr: opened $out"
+  else
+    case "$out" in
+      *"already exists"*) _log "pr: a pull request from $PR_BRANCH already exists — another session opened it" ;;
+      *) _pr_refused "gh pr create (the bump is on $PR_BRANCH; a later session retries)" "$out" ;;
+    esac
+  fi
+  return 0
+}
+
+PR_BODY='Proposed by the skills auto-refresh hook (managing-skills), because .skills/merge_mode is pr here: the hook never pushes to the default branch.
+
+Later sessions update this branch in place, at most once a day, while this pull request is open and its branch holds only the hook'"'"'s commit. Closing it unmerged declines this bump; the next upstream change is proposed again. To hold one submodule at a commit, use .skills/skills-pin.'
+
+# _pr_refresh — the whole pr path, from the refreshed working tree.
+_pr_refresh() {
+  local bumped head_tree base base_tree tree rc=0 msg moves c
+  # 1. The bump, read off the working tree onto HEAD.
+  bumped="$(_pr_tree HEAD "${COMMIT_PATHS[@]}")" || rc=$?
+  # 2. The content goes back before anything else, success or not.
+  _pr_restore
+  if [ "$rc" -ne 0 ] || [ -z "$bumped" ]; then
+    _log "pr: could not record the bump in $PR_INDEX — nothing proposed"
+    rm -f "$PR_INDEX" "$PR_INDEX.lock" 2>/dev/null || true
+    return 0
+  fi
+  head_tree="$(git rev-parse --verify -q 'HEAD^{tree}' 2>/dev/null || true)"
+  if [ "$bumped" = "$head_tree" ]; then
+    _log "pr: nothing to propose — $BRANCH already records the refreshed pointers and doctor"
+    return 0
+  fi
+  # 3. The base: the default branch as the remote has it now. A fetch, never
+  # a pull — local main does not move.
+  if ! { echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] fetch $PR_UPSTREAM to base the pull request on:"; git fetch -q --no-tags "$PR_REMOTE" "$PR_MERGE" 2>&1; } >>"$LOG"; then
+    _pr_refused "fetching $PR_UPSTREAM" "git fetch failed"
+    return 0
+  fi
+  base="$(git rev-parse --verify -q '@{u}^{commit}' 2>/dev/null)" || {
+    _log "pr: @{u} does not resolve after the fetch — nothing proposed"
+    return 0
+  }
+  # 4. A checkout behind on the hook's paths gets no bump: the bump was made
+  # from HEAD's pointers, and the base records others (a merged refresh PR
+  # not yet pulled, a pin changed upstream).
+  rc=0
+  git diff --quiet --ignore-submodules=none "$base" HEAD -- "${PR_HOOK_PATHS[@]}" .skills/skills-pin 2>>"$LOG" || rc=$?
+  if [ "$rc" -eq 1 ]; then
+    _log "pr: $BRANCH and $PR_UPSTREAM record different skills-vendor/ pointers, doctor or pin — no bump until $BRANCH is pulled"
+    echo "skills update: $BRANCH and $PR_UPSTREAM record different skills-vendor/ pointers, doctor or pin, so no bump is proposed — pull $BRANCH (or drop an unpushed bump on it), and a later session proposes any newer one (see $LOG)" >&2
+    return 0
+  elif [ "$rc" -ne 0 ]; then
+    _log "pr: could not compare $BRANCH with $PR_UPSTREAM (git diff exited $rc) — nothing proposed"
+    return 0
+  fi
+  # 5. The pull request's commit: the base, with the bump.
+  tree="$(_pr_graft "$base" "$bumped" "${COMMIT_PATHS[@]}")" || {
+    _log "pr: could not build the pull request's tree — nothing proposed"
+    rm -f "$PR_INDEX" "$PR_INDEX.lock" 2>/dev/null || true
+    return 0
+  }
+  base_tree="$(git rev-parse --verify -q "$base^{tree}" 2>/dev/null || true)"
+  if [ "$tree" = "$base_tree" ]; then
+    _log "pr: nothing to propose — $PR_UPSTREAM already records this refresh"
+    return 0
+  fi
+  if ! git diff --quiet --ignore-submodules=none "$base" "$tree" -- skills-vendor/ 2>/dev/null; then
+    if ! git diff --quiet "$base" "$tree" -- .skills/doctor.sh 2>/dev/null; then
+      msg="$MSG_BOTH"
+    else
+      msg="$MSG_SUB"
+    fi
+  else
+    msg="$MSG_DOC"
+  fi
+  moves="$(git diff --raw --ignore-submodules=none "$base" "$tree" -- skills-vendor/ 2>/dev/null |
+    awk -F '\t' '{ split($1, f, " "); printf "%s: %s -> %s\n", $2, f[3], f[4] }' || true)"
+  # The subject is exactly one of the three, so _pr_hook_commit knows it again.
+  [ -n "$moves" ] || moves="(the doctor only)"
+  c="$(git commit-tree "$tree" -p "$base" -m "$msg" -m "$moves" 2>>"$LOG")" || {
+    _log "pr: git commit-tree failed — nothing proposed"
+    return 0
+  }
+  _log "pr: proposing $c on $PR_UPSTREAM ($msg)"
+  # 6. The network, with the checkout already back on its pointer.
+  _pr_publish "$c" "$msg"
+  return 0
+}
+
+if [ "$MERGE_MODE" = "pr" ]; then
+  _pr_refresh
   _finish_refresh
   exit 0
 fi
