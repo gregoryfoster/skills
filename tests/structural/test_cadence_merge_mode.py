@@ -33,6 +33,7 @@ import difflib
 import json
 import os
 import re
+import shutil
 import stat
 import subprocess
 from pathlib import Path
@@ -121,12 +122,25 @@ def _steps(rendered: str) -> dict[str, str]:
 FAKE_GH = r"""#!/usr/bin/env bash
 # A stand-in for gh: logs every call. `pr list` prints $FAKE_GH/prs, one PR
 # per line as the workflow's --jq shapes it: `<number> <STATE> <head oid>`.
+# With $FAKE_GH/prs.json instead it answers as gh does: the array cut down to
+# the --json fields, then the --jq filter, run by jq.
 # `pr create` records an OPEN PR whose head is the pushed HEAD, unless
 # $FAKE_GH/create_err exists, whose text it prints to stderr.
 printf '%s\n' "$*" >>"$FAKE_GH/calls"
 case "$1 $2" in
   "pr list")
     [ ! -f "$FAKE_GH/list_err" ] || { cat "$FAKE_GH/list_err" >&2; exit 1; }
+    if [ -f "$FAKE_GH/prs.json" ]; then
+      fields='' filter='.'
+      while [ $# -gt 0 ]; do
+        case $1 in --json) fields=$2; shift ;; --jq) filter=$2; shift ;; esac
+        shift
+      done
+      jq -r --arg f "$fields" \
+        "map(with_entries(select(.key as \$k | \$f | split(\",\") | index(\$k)))) | $filter" \
+        "$FAKE_GH/prs.json"
+      exit
+    fi
     cat "$FAKE_GH/prs" 2>/dev/null
     exit 0 ;;
   "pr create")
@@ -644,6 +658,65 @@ class TestThePrPath:
         assert count.read_text().count("x") == 1, "the refusal was retried"
         assert "GH013" in r.stdout + r.stderr
         assert PR_BRANCH in r.stdout
+
+
+class TestAnOpenPrAlwaysWins:
+    """CR 1804: a finished PR whose head is the tip set ENDED even when an
+    OPEN PR shared that tip (one PR closed, another opened from the same
+    head), so the run restarted the branch over the open PR's rows and then
+    said it had updated that PR. And gh's --head matches a branch NAME, so a
+    fork's PR from a same-named branch was read as this job's."""
+
+    def test_a_closed_pr_sharing_the_open_prs_tip_does_not_restart_it(
+        self, tmp_path: Path
+    ):
+        rig = Rig(tmp_path, knob="pr\n")
+        assert rig.run("2026-10-08").returncode == 0
+        tip = _git(rig.origin, "rev-parse", PR_BRANCH)
+        (rig.gh / "prs").write_text(f"7 CLOSED {tip}\n8 OPEN {tip}\n")
+        r = rig.run("2026-10-15")
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert rig.show(PR_BRANCH) == ["2026-10-01", "2026-10-08", "2026-10-15"], (
+            "the open PR's rows were force-pushed away"
+        )
+        assert "updated PR #8" in r.stdout
+
+    @pytest.mark.skipif(shutil.which("jq") is None, reason="the fake gh runs --jq")
+    def test_a_forks_pr_from_a_same_named_branch_is_not_this_jobs(
+        self, tmp_path: Path
+    ):
+        rig = Rig(tmp_path, knob="pr\n")
+        fork = {"number": 9, "state": "OPEN", "headRefOid": "f" * 40}
+        (rig.gh / "prs.json").write_text(
+            json.dumps([dict(fork, isCrossRepository=True)])
+        )
+        r = rig.run("2026-10-08")
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "PR #9" not in r.stdout, "a fork's PR was read as this job's"
+        assert [c for c in rig.calls() if c.startswith("pr create")]
+
+    @pytest.mark.skipif(shutil.which("jq") is None, reason="the fake gh runs --jq")
+    def test_a_same_repo_pr_still_counts(self, tmp_path: Path):
+        """The filter's other half: it keeps this repo's own PR."""
+        rig = Rig(tmp_path, knob="pr\n")
+        assert rig.run("2026-10-08").returncode == 0
+        tip = _git(rig.origin, "rev-parse", PR_BRANCH)
+        (rig.gh / "prs.json").write_text(
+            json.dumps(
+                [
+                    {
+                        "number": 7,
+                        "state": "OPEN",
+                        "headRefOid": tip,
+                        "isCrossRepository": False,
+                    }
+                ]
+            )
+        )
+        r = rig.run("2026-10-15")
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "updated PR #7" in r.stdout
+        assert rig.show(PR_BRANCH) == ["2026-10-01", "2026-10-08", "2026-10-15"]
 
 
 # --- install, --check, and a knob that changes after install ---------------
