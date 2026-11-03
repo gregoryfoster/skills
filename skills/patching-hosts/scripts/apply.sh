@@ -111,8 +111,12 @@ up), where /etc/cannobserv/disk-gc/disk-gc.conf is there, or that file
 can't be read or parsed (the bulk reads these after
 its list refresh, and stops there with nothing held: exit 1); when the
 step's span, from now to now plus its expected duration,
-isn't wholly inside one window or overlaps a quiet range (the bulk's span is
-the rest of the run: itself, each held step its selection reaches, and the
+isn't wholly inside one window or overlaps a quiet range (a held step's
+span is the dry run's wall time, plus --health-within where the knob has
+health lines, --health-within more where a datastore line names a Qdrant or
+a Redis, and 60 s for each recovery line; the bulk's span is the rest of
+the run: itself, at three times the dry run plus --health-within where the
+knob has health lines, each held step its selection reaches, and the
 reboot chain's 720 s wherever a kernel, or a package owning a file mapped
 by PID 1, dbus, logind, a user@ or a datastore unit's processes, makes a
 reboot certain, or one of those maps can't be read; so the bulk also
