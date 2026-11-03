@@ -64,6 +64,8 @@ Verification is read-only. Never test a refusal by attempting the write on a pro
 
 ## 2. Harvest
 
+**Read the closing comment's sections first.** `shipping-work` Step 5 ends it with `**Follow-up:**`, `**Known limits:**` and one `**For #N:**` per later issue, each a bold lead over list items, left out when empty. `For #N:` items go to issue N, `Known limits:` to the limitations and verification debt below, `Follow-up:` to the re-scan. A comment from a repo whose `shipping-work` predates them has none, so read its prose. Either way, read on: notes also land outside the closing comment.
+
 From the closing comment, the PR, and every comment since the hand-off:
 - **Contract diffs.** Diff the contract the epic assumed against the one that shipped (a lock order, a status code, a request shape), and write the difference to every downstream child and to the design doc. One run called this the most valuable thing its coordinator did (archiver 14).
 - **`For #N:` notes,** moved to the issue they name. That issue's thread won't read this one's comments (archiver 19, 32). Take each note's latest state across all comments, the closing comment's `For #<epic>:` section, and asides in prose (private-backlog 103, 110).
