@@ -40,12 +40,19 @@ set -euo pipefail
 # where it fires and exits 0 in the subshell — measured, the checked
 # `$(git status …) || STATUS_RC=$?` below then reads rc 0, and a failed status
 # becomes "nothing to commit".
+#
+# A panic once the refresh has begun spends the day, as any run that ends does
+# (#555): the lock used to be stamped before the refresh, so an error there was
+# already damped, and a deterministic one must not re-run at every session.
 # Called by the ERR trap below; shellcheck does not count a trap as a call.
 # shellcheck disable=SC2329
 _hook_panic() {
   local rc=$?
   echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] unexpected hook error (rc=$rc)" \
     >> "${LOG:-/dev/null}" 2>/dev/null || true
+  if [ "${REFRESH_BEGUN:-0}" = "1" ]; then
+    _stamp_lock || true
+  fi
   exit 0
 }
 trap _hook_panic ERR
@@ -59,7 +66,11 @@ Once-per-day refresh of skills-vendor/ git submodules. Designed for
 invocation as a Claude Code SessionStart hook — never blocks a session.
 
 Behaviour:
-  - Runs at most once per UTC day (.git/skills-update.lock).
+  - Runs at most once per UTC day (.git/skills-update.lock). The day is
+    spent when a run ends, not when it starts: a run killed part way
+    leaves it for the next session, which first undoes any staging the
+    killed run left behind (.git/skills-update.staging marks a refresh in
+    progress).
   - Runs only on the main branch.
   - Scopes the submodule update to skills-vendor/ — never touches other
     submodules.
@@ -123,6 +134,11 @@ done
 gitdir="$(git rev-parse --git-dir 2>/dev/null)" || exit 0
 LOCK="$gitdir/skills-update.lock"
 LOG="$gitdir/skills-update.log"
+# A refresh in progress (#555): written before the update, removed once the
+# commit block ends with nothing of the hook's left staged. One path per line —
+# the ones this run may stage — so a later session can tell what the hook
+# staged from what a human did. See _heal_staged.
+STAGING="$gitdir/skills-update.staging"
 
 # Nothing to refresh if the project doesn't use the skills-vendor/ pattern.
 [ -d skills-vendor ] || exit 0
@@ -146,11 +162,16 @@ _log() {
 # discarded, git's stderr in $LOG its only trace. A reset that fails leaves
 # the paths staged with nothing said where a session looks — the state
 # CannObserv/power-map was found in on 2026-09-18, both paths staged beneath
-# this hook's own "unstaging" line. The cause is still unknown: #306's
-# in-place rewrite was measured and ruled out, and an index.lock held by
-# another git process would produce it (measured: the reset exits 128). So
-# this checks the outcome, not a cause: whatever is still staged under the
-# paths is named on stderr, with the command that clears it.
+# this hook's own "unstaging" line. The cause is not proven. #306's in-place
+# rewrite was measured and ruled out; an index.lock held by another git
+# process would produce it (measured: the reset exits 128); and so might a
+# kill that lands inside this very reset — #555 found the VS Code extension
+# killing session-start hooks about 2 s in. A kill earlier, between `git add`
+# and the end of `git commit`, leaves the same two paths staged but WITHOUT
+# the "unstaging" line power-map's log carried; _heal_staged undoes that one
+# at the next session. So this checks the outcome, not a cause: whatever is
+# still staged under the paths is named on stderr, with the command that
+# clears it.
 #
 # It sees the index as the reset left it. Something that re-stages later — a
 # hook running `git add`, a framework restoring its stash — is past it.
@@ -209,11 +230,14 @@ PUSH_BLOCKED=0
 #
 # Runs on EVERY session, ahead of the once-per-day lock, rather than as a
 # `git push` bolted onto the commit below. Three things that shape buys:
-#   - the lock is stamped BEFORE the work, deliberately, so a push that
-#     failed on the commit path would wait a whole UTC day to retry;
-#   - the harness can kill this hook between commit and push — a timeout
-#     SIGKILL, which the ERR trap cannot catch — leaving exactly the state
-#     this exists to prevent. A separate pass heals it at the next session;
+#   - the lock is spent by any run that ends, success or failure, so a push
+#     that failed on the commit path would wait a whole UTC day to retry;
+#   - the hook can be killed at any point, by a signal no trap here can
+#     answer: the harness's timeout, or — every window (re)connect, about
+#     2 s in — the VS Code extension's config-cache process shutting down
+#     (#555). A kill between commit and push leaves exactly the state this
+#     exists to prevent, and this pass heals it at the next session. A kill
+#     before the commit ends is _heal_staged's, just below;
 #   - consumers are stranded today. This reaches them with nobody visiting
 #     the machine.
 #
@@ -445,12 +469,149 @@ trap _report_doctor_install EXIT
 # both gates, further down (#86).
 _install_doctor
 
+# Submodules git actually knows about, restricted to this hook's scope. Pins
+# are validated against this rather than against the filesystem — a directory
+# under skills-vendor/ that isn't a registered submodule can't be pinned
+# because it can't be updated either. Resolved up here, ahead of the gates,
+# because _heal_staged reads it too (#555).
+REGISTERED="$(git config -f .gitmodules --get-regexp '^submodule\..*\.path$' 2>/dev/null |
+  awk '$2 ~ /^skills-vendor\// {print $2}' || true)"
+
+# _listed <path> <newline-separated list> — true when the list holds the path
+# as a whole line.
+_listed() {
+  case "
+$2
+" in
+    *"
+$1
+"*) return 0 ;;
+  esac
+  return 1
+}
+
+# The day's lock, written by every run that ENDS — success or failure — and by
+# no run that is killed part way (#555). Checked, not `|| true` (#193): this
+# one write IS the once-per-day contract, and the guard reads nothing else. A
+# read-only or root-owned .git, or a full disk, and the stamp never lands, the
+# guard falls through next session, and the whole refresh runs again — every
+# session, forever, with nothing said. That is the defect #187 fixed in
+# socraticode-health.sh, the script this file's pin comment names as its twin;
+# the shape is copied from it. Reported, never fatal: a SessionStart hook must
+# not block, so a failed stamp degrades to noisier reporting.
+_stamp_lock() {
+  if ! date -u +%Y%m%d > "$LOCK" 2>/dev/null; then
+    _log "could not stamp $LOCK — the once-per-day guard is off until this is fixed"
+    echo "skills update: cannot write $LOCK; this refresh will repeat every session (see $LOG)" >&2 || true
+  fi
+  return 0
+}
+
+# ------------------------------------------- a killed refresh's staging (#555)
+# The VS Code extension starts a short-lived "config cache" CLI process at
+# every window (re)connect. It runs the SessionStart hooks and shuts down about
+# 2-3 s later, killing what is still running; the real session starts its own
+# run about a second after. A refresh fetching a hundred upstream commits, then
+# committing through a consumer's pre-commit framework (about 1 s even with
+# every hook skipped), does not fit. Killed between `git add` and the end of
+# `git commit`, it leaves this hook's paths STAGED: the state
+# CannObserv/address-validator was found in on 2026-11-01, and the next bare
+# `git commit` anyone makes there absorbs the bump under their own message.
+#
+# Undone here, every session on main, ahead of the lock — the session after a
+# kill is usually the real one, a second later. Unstaged rather than
+# committed: the lock is now spent only when a run ends, so this same session
+# redoes the bump, and nothing is committed that this run has not verified.
+#
+# Only what the hook staged is touched, and the marker is how it knows. A
+# human's own `git add skills-vendor/<v>` — a manual bump — stages exactly the
+# hook's paths, so "every staged path is one this hook would commit" cannot
+# tell the two apart. With no marker, the index is left alone and the state is
+# logged: a checkout left staged by a hook from before #555 is not undone
+# here, but the first refresh this version completes on main commits it
+# through its own pathspec. With a marker, the heal acts only when every
+# staged path is one the marker names; anything else staged beside them is
+# someone's work, so the whole index is left alone and the marker kept.
+_heal_staged() {
+  [ "$BRANCH" = "main" ] || return 0
+
+  local listed="" marked=0 staged_now rc=0 spath own=() others=0 hook_paths
+  if [ -f "$STAGING" ]; then
+    marked=1
+    listed="$(cat "$STAGING" 2>>"$LOG")" || rc=$?
+    if [ "$rc" -ne 0 ]; then
+      _log "heal: could not read $STAGING (cat exited $rc) — leaving the index alone"
+      return 0
+    fi
+  fi
+
+  # --ignore-submodules=none: a diff.ignoreSubmodules or .gitmodules `ignore`
+  # setting would otherwise hide the very gitlink this looks for.
+  staged_now="$(git diff --cached --name-only --ignore-submodules=none 2>>"$LOG")" || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    _log "heal: could not read the index (git diff exited $rc) — leaving it alone"
+    return 0
+  fi
+
+  if [ "$marked" = "1" ]; then
+    hook_paths="$listed"
+  else
+    hook_paths="$REGISTERED
+.skills/doctor.sh"
+  fi
+  while IFS= read -r spath; do
+    [ -n "$spath" ] || continue
+    if _listed "$spath" "$hook_paths"; then
+      own+=("$spath")
+    else
+      others=$((others + 1))
+    fi
+  done <<STAGED_EOF
+$staged_now
+STAGED_EOF
+
+  if [ "$marked" = "0" ]; then
+    if [ "${#own[@]}" -gt 0 ]; then
+      _log "heal: ${own[*]} staged with no in-progress marker — a manual bump, or a hook from before #555; not this hook's to undo, leaving the index alone"
+    fi
+    return 0
+  fi
+
+  if [ "${#own[@]}" -eq 0 ]; then
+    # Killed before its `git add`, or after its commit: nothing of the
+    # hook's is staged, and the marker has nothing left to say.
+    rm -f "$STAGING" 2>/dev/null || true
+    return 0
+  fi
+
+  if [ "$others" -gt 0 ]; then
+    _log "heal: a killed refresh left ${own[*]} staged beside $others path(s) it did not stage — leaving the index alone"
+    return 0
+  fi
+
+  _log "heal: a killed refresh left ${own[*]} staged — unstaging"
+  _unstage "a killed refresh" "${own[@]}"
+  # Kept while anything of the hook's is still staged, so the next session
+  # tries again; _unstage has already said so on stderr.
+  if git diff --cached --quiet --ignore-submodules=none -- "${own[@]}" 2>/dev/null; then
+    rm -f "$STAGING" 2>/dev/null || true
+  fi
+  return 0
+}
+
+# Ahead of _reconcile_unpushed: a failed push's rollback re-stages its range
+# with `reset --soft`, and the paths it then unstages are derived from that
+# range alone. Healed first, the index it starts from holds nothing a killed
+# run left there.
+_heal_staged
+
 # Call site 1 of 2: every session, ahead of both gates. This is the pass that
 # heals a checkout some earlier run left stranded — a push killed by the
-# harness timeout, a push that failed while the remote was unreachable, or a
-# commit made by a version of this hook that had no push step at all. Behind
-# the once-per-day lock it would retry at most once a day; behind the branch
-# gate it would never run at all on the sessions that matter.
+# harness timeout or the extension's shutdown (#555), a push that failed while
+# the remote was unreachable, or a commit made by a version of this hook that
+# had no push step at all. Behind the once-per-day lock it would retry at most
+# once a day; behind the branch gate it would never run at all on the
+# sessions that matter.
 _reconcile_unpushed
 
 # Lock check: once per UTC day. UTC matches the log timestamp timezone so
@@ -488,13 +649,7 @@ fi
 # env var, then committed file, then a default of "no pins".
 PIN_FILE="${SKILLS_PIN_FILE:-.skills/skills-pin}"
 
-# Submodules git actually knows about, restricted to this hook's scope. Pins
-# are validated against this rather than against the filesystem — a directory
-# under skills-vendor/ that isn't a registered submodule can't be pinned
-# because it can't be updated either.
-REGISTERED="$(git config -f .gitmodules --get-regexp '^submodule\..*\.path$' 2>/dev/null |
-  awk '$2 ~ /^skills-vendor\// {print $2}' || true)"
-
+# Pins are validated against REGISTERED, resolved above the gates.
 PINNED=""      # space-fenced membership set: " path1  path2 "
 PIN_COUNT=0    # entry lines seen, valid or not
 PIN_REFUSE=0   # an entry this hook cannot honour ⇒ move nothing this run
@@ -579,23 +734,49 @@ $REGISTERED
 REGISTERED_EOF
 fi
 
-# Stamp the lock BEFORE the update so a transient failure (e.g. network
-# blip) doesn't cause the hook to retry-and-relog on every same-day session.
-# A failure today defers recovery to tomorrow's UTC day; the trade-off
-# preserves the once-per-day invariant for both success and failure.
+# The refresh begins. The day's lock is NOT stamped here; it used to be, so
+# that a transient failure (a network blip) would not retry and re-log at every
+# same-day session — and that damping is kept for every run that ends, failure
+# included: each way out of the update-and-commit block below goes through
+# _finish_refresh. What changed is a run killed part way (#555). Stamped up
+# here, it spent the day before doing the work, and the real session that
+# starts a second after the extension's config-cache process exited at the
+# once-per-day guard; recovery waited a UTC day, and the next day's run landed
+# in the same 2 s window. Unstamped, the next session redoes it.
 #
-# Checked, not `|| true` (#193). This one write IS the once-per-day contract:
-# the guard at the top reads nothing else. A read-only or root-owned .git, or
-# a full disk, and the stamp never lands, the guard falls through next session,
-# and the whole refresh runs again — every session, forever, with nothing said.
-# That is the same defect #187 fixed in socraticode-health.sh, the script this
-# file's own pin comment names as its twin; the shape below is copied from it.
-# Reported, never fatal: a SessionStart hook must not block, so a failed stamp
-# degrades to noisier reporting rather than to no session.
-if ! date -u +%Y%m%d > "$LOCK" 2>/dev/null; then
-  _log "could not stamp $LOCK — the once-per-day guard is off until this is fixed"
-  echo "skills update: cannot write $LOCK; this refresh will repeat every session (see $LOG)" >&2
+# The marker goes down first, naming every path this run may stage — the
+# unpinned registered submodules and the doctor — so a kill anywhere from here
+# to the end of the commit leaves _heal_staged the evidence it needs. Checked:
+# a marker that never lands costs only the heal, so it is logged, not fatal.
+REFRESH_PATHS=()
+if [ "$PIN_COUNT" -eq 0 ]; then
+  while IFS= read -r REG_PATH; do
+    [ -n "$REG_PATH" ] || continue
+    REFRESH_PATHS+=("$REG_PATH")
+  done <<REGISTERED_EOF
+$REGISTERED
+REGISTERED_EOF
+elif [ "${#UPDATE_PATHS[@]}" -gt 0 ]; then
+  REFRESH_PATHS=("${UPDATE_PATHS[@]}")
 fi
+REFRESH_PATHS+=(.skills/doctor.sh)
+if ! printf '%s\n' "${REFRESH_PATHS[@]}" > "$STAGING" 2>/dev/null; then
+  _log "could not write $STAGING — a run killed before its commit ends will not have its staging undone"
+fi
+REFRESH_BEGUN=1
+HOOK_ADDED=0
+
+# Every way out of the refresh from here on. The marker goes unless this run's
+# own `git add` left something of the hook's still staged — a commit that
+# failed and could not be unstaged — in which case the next session's
+# _heal_staged tries the unstage again. Then the day is spent.
+_finish_refresh() {
+  if [ "$HOOK_ADDED" = "0" ] ||
+    git diff --cached --quiet --ignore-submodules=none -- "${REFRESH_PATHS[@]}" 2>/dev/null; then
+    rm -f "$STAGING" 2>/dev/null || true
+  fi
+  _stamp_lock
+}
 
 # Scope the update to the unpinned skills-vendor/ paths — never touch other
 # submodules, and never a pinned one.
@@ -603,7 +784,7 @@ fi
 # `--init` is what makes this hook work on a half-healed checkout: content
 # present under skills-vendor/, nothing registered in .git/config. Without it
 # git skips every such submodule and exits **0** — so the guard below passes,
-# no pointer moves, and the lock (stamped above, deliberately) is spent. A
+# no pointer moves, and the day's lock is spent on a run that did nothing. A
 # consumer sat in that state for days reporting success (#176).
 #
 # How loudly git skips depends on the pathspec, which is worth knowing because
@@ -634,6 +815,8 @@ elif ! {
   git submodule update --init --remote --merge -- "${UPDATE_PATHS[@]}" 2>&1
 } >>"$LOG"; then
   echo "skills update failed (see $LOG)" >&2
+  # A failure that ran to completion: it spends the day (see above).
+  _finish_refresh
   exit 0
 else
   # Post-condition, because the failure mode of #176 was a *silent* one: git
@@ -682,6 +865,7 @@ fi
 # Nothing this hook is allowed to stage. An empty pathspec would widen every
 # git call below to the whole repo, so stop here instead.
 if [ "${#COMMIT_PATHS[@]}" -eq 0 ]; then
+  _finish_refresh
   exit 0
 fi
 
@@ -694,6 +878,7 @@ fi
 # recorded by the first session that can actually share it.
 if [ "$PUSH_BLOCKED" = "1" ]; then
   _log "commit skipped — this run cannot share what it would commit; the pointer bump waits for a session that can"
+  _finish_refresh
   exit 0
 fi
 
@@ -732,6 +917,11 @@ if [ "$STATUS_RC" -eq 0 ] && [ -n "$STATUS_OUT" ]; then
     # the ignored path but still stages everything else, so submodule bumps
     # keep getting committed there. Tightening this into a hard failure
     # would silently strand those consumers.
+    #
+    # From this add to the end of the commit is the window the 11-01 kill
+    # landed in (#555): the marker written above is what lets the next
+    # session undo it.
+    HOOK_ADDED=1
     git add -- "${COMMIT_PATHS[@]}" 2>&1 || true
     if ! git diff --cached --quiet -- "${COMMIT_PATHS[@]}" 2>/dev/null; then
       # Name what actually changed. A doctor-only refresh recorded as
@@ -791,6 +981,12 @@ if [ "$STATUS_RC" -eq 0 ] && [ -n "$STATUS_OUT" ]; then
     fi
   } >>"$LOG" || true
 fi
+
+# The update-and-commit block has ended: the day is spent here, and not
+# before, so a run killed anywhere above leaves it for the next session
+# (#555). Ahead of the push, which _reconcile_unpushed retries at every
+# session regardless of the lock.
+_finish_refresh
 
 # Call site 2 of 2: push what this run just committed. Cheap when call site 1
 # already found nothing — it re-reads a count and returns. Separate from the

@@ -180,9 +180,7 @@ class TestTheLock:
 
 
 class TestTheHeal:
-    def test_a_run_that_cannot_redo_the_bump_still_undoes_the_staging(
-        self, consumer
-    ):
+    def test_a_run_that_cannot_redo_the_bump_still_undoes_the_staging(self, consumer):
         """Main carries an operator's unpushed commit, so this run will not
         commit (#293) — the bump the killed run staged would otherwise sit in
         the index for the operator's next bare `git commit` to absorb."""

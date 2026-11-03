@@ -15,7 +15,7 @@ Two details in that merge are load-bearing, and `install-hook.sh` carries the fu
 
 - **The command is anchored on `$CLAUDE_PROJECT_DIR`**, not the hook process's cwd ([#110](https://github.com/gregoryfoster/skills/issues/110)). The `${CLAUDE_PROJECT_DIR:-.}` fallback matters: unset, a bare `"$CLAUDE_PROJECT_DIR/…"` becomes `bash "/.claude/hooks/…"` and errors on every session start, where `.` degrades to exactly the old behaviour.
 - **The strip matches the script path, not the whole command.** An equality test would skip an entry written in the older cwd-relative form — duplicating the hook, and leaving the original unremovable by the uninstall filter.
-- **The entry carries an explicit `timeout`, and a re-run keeps whatever is already there** ([#259](https://github.com/gregoryfoster/skills/issues/259)). Each hook's figure lives in its `<hook>.install` manifest — 120 for this one and for `socraticode-health.sh`, both of which reach the network; 5 for `socraticode-reminder.sh`, which is one `echo` — so the constants stay beside the hook they configure rather than in a branch inside the installer. Without a `timeout` the harness default applies, and for a hook that stamps a once-per-UTC-day lock *before* doing its work, a kill consumes the day's attempt and reports nothing: silent-when-clean becomes indistinguishable from silent-when-killed, with no retry until tomorrow. And because the merge is dedupe-then-append, it used to rebuild the entry from constants and *discard* a `timeout` a consumer had added by hand — the repair silently undone by the tool that prescribed it. A value already on the entry now wins over the flag; the run names both numbers, and `--check` reports the disagreement without failing on it.
+- **The entry carries an explicit `timeout`, and a re-run keeps whatever is already there** ([#259](https://github.com/gregoryfoster/skills/issues/259)). Each hook's figure lives in its `<hook>.install` manifest — 120 for this one and for `socraticode-health.sh`, both of which reach the network; 5 for `socraticode-reminder.sh`, which is one `echo` — so the constants stay beside the hook they configure rather than in a branch inside the installer. Without a `timeout` the harness default applies, and for a hook that stamps a once-per-UTC-day lock *before* doing its work — `socraticode-health.sh` does, and this one did until [#555](#a-run-killed-part-way-555) — a kill consumes the day's attempt and reports nothing: silent-when-clean becomes indistinguishable from silent-when-killed, with no retry until tomorrow. And because the merge is dedupe-then-append, it used to rebuild the entry from constants and *discard* a `timeout` a consumer had added by hand — the repair silently undone by the tool that prescribed it. A value already on the entry now wins over the flag; the run names both numbers, and `--check` reports the disagreement without failing on it.
 
 </details>
 
@@ -52,8 +52,8 @@ This is [#86](https://github.com/gregoryfoster/skills/issues/86)'s defect one le
 
 The retry is a **reconcile pass that runs at every session start, ahead of the once-per-day lock and the `main` gate** — not a `git push` bolted onto the commit step. Three things a bolted-on push does not cover:
 
-- The lock is stamped *before* the work, deliberately, so a push that failed on the commit path would wait a whole UTC day to retry.
-- The harness can kill this hook between commit and push — a `timeout` SIGKILL, which the ERR-trap backstop cannot catch — leaving exactly the state the fix exists to prevent. A separate pass heals it at the next session.
+- Any run that ends spends the day's lock, failure included, so a push that failed on the commit path would wait a whole UTC day to retry.
+- The hook can be killed at any point by a signal no trap can answer — the harness's `timeout`, or the VS Code extension's shutdown about 2 s in ([#555](#a-run-killed-part-way-555)). A kill between commit and push leaves exactly the state the fix exists to prevent, and a separate pass heals it at the next session.
 - Consumers stranded by an older vendored copy of the hook are healed with nobody visiting the machine.
 
 ### The guards
@@ -76,9 +76,18 @@ Where `main` is protected, or the hook has no push credentials, every push is re
 
 `.skills/doctor.sh` warns whenever `main` is ahead of its upstream, which is the only cohort-wide sensor that can exist for this — an unpushed commit lives on exactly one machine, so nothing reachable through the GitHub API can see it.
 
+## A run killed part way ([#555](https://github.com/gregoryfoster/skills/issues/555))
+
+The VS Code extension starts a short-lived "config cache" CLI process at every window (re)connect. It runs the SessionStart hooks and shuts down about 2–3 s later, killing what is still running; the real session runs them again about a second after. A refresh that fetches a hundred upstream commits and then commits through a consumer's pre-commit framework does not fit. CannObserv/address-validator was killed there twice: after `git add`, leaving `.skills/doctor.sh` and the gitlink staged, and after the submodule update, leaving the content ahead of the pointer. Both times the killed run had already stamped the day's lock, so the real session's run exited at the guard, and the next try fell in the same window a day later.
+
+- **The lock is spent when a run ends, not when it starts.** Every way out of the update-and-commit block stamps it, failures included, so a network blip still does not retry at every same-day session. A run killed part way leaves it, and the next session, usually the real one a second later, redoes the refresh.
+- **A killed run's staging is undone at the next session**, on `main`, ahead of the lock and the reconcile pass. It is unstaged rather than committed: the same session redoes the bump, and nothing is committed that the run did not just verify.
+- **Only what the hook staged is touched.** A human's manual bump (`git add skills-vendor/<v>`) stages exactly the hook's paths, so the paths alone cannot tell the two apart. Before the update the hook writes `.git/skills-update.staging`, naming every path the run may stage, and removes it once the commit block ends with none of them left staged. The heal acts only when that marker exists and every staged path is one it names. Anything else staged beside them is someone's work, so the whole index is left alone and the condition logged. With no marker, a staged hook path is logged and left alone. That includes a checkout left staged by a hook from before #555, which the first refresh this version completes on `main` commits through its own pathspec.
+- **A kill that strands git's own `index.lock`** (SIGKILL inside `git commit`) is not cleared: the hook cannot tell it from a live git process's lock. The unstage fails, and stderr names what is still staged and the `git reset` that clears it, as [below](#an-unstage-is-checked-not-assumed-311).
+
 ## An unstage is checked, not assumed ([#311](https://github.com/gregoryfoster/skills/issues/311))
 
-Both failure paths end by unstaging the hook's paths, so the index goes back as the hook found it: a commit that failed, and a push that failed and was rolled back. Each used a `git reset` whose exit status was discarded, with git's stderr in the log as its only trace. CannObserv/power-map was found on 2026-09-18 with both paths still staged beneath the hook's own "unstaging" line, and the cause is still unknown. #306's in-place rewrite was measured and ruled out, and an `index.lock` held by another git process reproduces the state (the reset exits 128). So the hook checks the outcome, whatever the cause: after the reset it reads the index back and names on stderr anything still staged under its paths, with the `git reset` that clears it. The check sees the index as the reset left it. A hook or framework that re-stages later is past it, and the log line after "commit failed" is where git's reason lands if it recurs.
+Both failure paths end by unstaging the hook's paths, so the index goes back as the hook found it: a commit that failed, and a push that failed and was rolled back. Each used a `git reset` whose exit status was discarded, with git's stderr in the log as its only trace. CannObserv/power-map was found on 2026-09-18 with both paths still staged beneath the hook's own "unstaging" line, and the cause is not proven. #306's in-place rewrite was measured and ruled out; an `index.lock` held by another git process reproduces the state (the reset exits 128); and a kill landing inside the reset itself might, now that [#555](#a-run-killed-part-way-555) has found session-start hooks killed about 2 s in. A kill *before* the commit fails leaves the same two paths staged but no "unstaging" line, so on its own it does not match power-map's log. So the hook checks the outcome, whatever the cause: after the reset it reads the index back and names on stderr anything still staged under its paths, with the `git reset` that clears it. The check sees the index as the reset left it. A hook or framework that re-stages later is past it, and the log line after "commit failed" is where git's reason lands if it recurs.
 
 ## Uninstalling by hand
 
@@ -113,8 +122,8 @@ git add .claude/settings.json
 git commit -m "chore: disable skills auto-refresh hook"
 ```
 
-You may also want to delete the hook's files in `.git/` if you don't plan to reinstall. `skills-status.err` is a transient stderr scratch file the hook removes itself — it only survives a run that died mid-flight:
+You may also want to delete the hook's files in `.git/` if you don't plan to reinstall. `skills-status.err` and `skills-update.staging` are transient files the hook removes itself — they only survive a run that died mid-flight:
 
 ```bash
-rm -f .git/skills-update.lock .git/skills-update.log .git/skills-status.err
+rm -f .git/skills-update.lock .git/skills-update.log .git/skills-status.err .git/skills-update.staging
 ```
