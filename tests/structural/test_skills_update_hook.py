@@ -839,7 +839,7 @@ class TestUnhonourablePinRefusesTheRefresh:
 # `git submodule update --remote --merge` skips a submodule that is not
 # registered in .git/config, prints "not initialized", and exits **0**. The
 # hook's `if !` guard passes, nothing is committed, and the day's lock — which
-# is stamped before the update, deliberately — is already consumed. Found in
+# a run that ends spends, success or not (#555) — is consumed. Found in
 # a consumer checkout that had been "succeeding" this way for days.
 # --------------------------------------------------------------------------
 
