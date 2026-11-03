@@ -46,7 +46,8 @@ Options:
                    A ninth line, the checkout pin, says what a re-render
                    would write over the installed actions/checkout line
                    (#373); it is not a guarantee and never sets the exit.
-                   Exit 0 all present, 3 any missing.
+                   Exit 0 all present, 3 any missing, or a merge mode it
+                   reports UNUSABLE or STALE.
   --uninstall      Remove the workflow file AND every merge attribute it
                    installed, leaving .gitattributes as it found it (the file
                    itself goes only if nothing else was in it). The recorded
@@ -115,9 +116,11 @@ Exit codes:
   0  installed, uninstalled, unchanged, or printed
   1  usage error, or not in a git repo
   2  could not rewrite .gitattributes — nothing was changed
-  3  --check only: a workflow, merge attribute or merge driver is missing
+  3  --check only: a workflow, merge attribute or merge driver is missing,
+     or .skills/merge_mode is unusable, or says pr under a direct render
   4  could not set a merge driver — its calibration attribute is inert
-  5  .skills/merge_mode is present but unusable — nothing was changed
+  5  install or --print only: .skills/merge_mode is present but unusable —
+     nothing was changed (--check reports it as 3; --uninstall ignores it)
 USAGE
 }
 
