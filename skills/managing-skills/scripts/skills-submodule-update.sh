@@ -146,7 +146,8 @@ LOG="$gitdir/skills-update.log"
 # commit block ends with nothing of the hook's left staged. Its first line
 # names the run that owns it, `pid <PID> <epoch seconds>`; then one path per
 # line — the ones that run may stage — so a later session can tell what the
-# hook staged from what a human did. See _heal_staged and _marker_owner_live.
+# hook staged from what a human did; a heal that has said a killed run's
+# staging on stderr appends `noted`. See _heal_staged and _marker_owner_live.
 STAGING="$gitdir/skills-update.staging"
 # How long a marker's owner can be believed alive (CR 1789): the hook's 120 s
 # ceiling plus margin. Past it, a live PID is a reused one — an unrelated
@@ -193,18 +194,39 @@ _log() {
 #
 # Alive means `kill -0` reaches the PID and the marker is younger than
 # MARKER_MAX_AGE. A SIGKILL or SIGTERM leaves the marker behind with its owner
-# gone, which is exactly the leftover the heal exists for. A marker this run
-# could not parse, or one naming this run's own PID (reused), is not live.
+# gone, which is exactly the leftover the heal exists for. A marker naming
+# this run's own PID (reused) is not live.
+#
+# Nor, once it is a few seconds old, is one this run cannot parse. Younger, it
+# is a claim still being written (CR 1808): noclobber's open creates the file
+# before its first byte lands, and a second session reading it in between
+# found no `pid` line, took it for dead, and both refreshed. The claim now
+# writes it with no fork inside the redirect, so that window is microseconds;
+# _marker_being_written covers what is left of it, and is reached only for an
+# unparseable marker, so its `stat` costs a normal run nothing. Both ways
+# bounded: an mtime more than 2 s ahead (a clock set back) is not believed.
 MARKER_OWNER=""
+_marker_being_written() {
+  local now mtime
+  now="$(date +%s 2>/dev/null)" || return 1
+  # GNU and busybox take -c; BSD's (macOS) refuses it with nothing on stdout.
+  mtime="$(stat -c %Y "$STAGING" 2>/dev/null || stat -f %m "$STAGING" 2>/dev/null)" || return 1
+  case "$mtime" in '' | *[!0-9]*) return 1 ;; esac
+  [ $((now - mtime)) -le 2 ] && [ $((mtime - now)) -le 2 ]
+}
 _marker_owner_live() {
   local head tag pid started now
   MARKER_OWNER=""
   [ -f "$STAGING" ] || return 1
   head="$(head -n 1 "$STAGING" 2>/dev/null)" || return 1
   read -r tag pid started <<<"$head" || true
-  [ "$tag" = "pid" ] || return 1
-  case "$pid" in '' | *[!0-9]*) return 1 ;; esac
-  case "$started" in '' | *[!0-9]*) return 1 ;; esac
+  case "$pid" in '' | *[!0-9]*) tag="" ;; esac
+  case "$started" in '' | *[!0-9]*) tag="" ;; esac
+  if [ "$tag" != "pid" ]; then
+    _marker_being_written || return 1
+    MARKER_OWNER="unknown: its marker is still being written"
+    return 0
+  fi
   [ "$pid" != "$$" ] || return 1
   now="$(date +%s 2>/dev/null)" || return 1
   [ $((now - started)) -le "$MARKER_MAX_AGE" ] || return 1
@@ -669,8 +691,9 @@ _reconcile_pr() {
 # managing-skills is the fallback when the first fails; the loop used to break
 # after the first attempt either way, leaving a stale doctor with one $LOG line
 # as its only trace. When every installer fails, that reaches stderr — the
-# channel every other failure here uses — once per run although this is called
-# up to three times, and only when the run's LAST call failed (#300 CR 14).
+# channel every other failure here uses — once per run although a run can call
+# this several times (three call sites, the third once per restore), and only
+# when the run's LAST call failed (#300 CR 14, CR 1809).
 # Warning from call site 1 on the spot was false whenever call site 2 then
 # succeeded: a broken pre-bump installer that the bump replaces with a working
 # one leaves a freshly installed and committed doctor, which "left as it was"
@@ -868,9 +891,11 @@ _stamp_lock() {
 # here. In `direct` mode the first refresh this version completes on main
 # commits it through its own pathspec; `pr` mode never commits in this
 # checkout, so its refresh says so on stderr instead, with the reset that
-# clears it (_pr_note_staged, CR 1791). With a marker, the heal acts only when every
-# staged path is one the marker names; anything else staged beside them is
-# someone's work, so the whole index is left alone and the marker kept.
+# clears it (_pr_note_staged, CR 1791). With a marker, the heal unstages only
+# when every staged path is one the marker names; anything else staged beside
+# them is someone's work, so the whole index is left alone — the content still
+# goes back on the pointer the index records (CR 1801) — and the marker is
+# kept while the hook's own paths stay staged.
 _heal_staged() {
   [ "$BRANCH" = "main" ] || return 0
 
@@ -884,8 +909,9 @@ _heal_staged() {
       return 0
     fi
     marked=1
-    # The paths, without the owner line or a pr-mode run's `mode pr`.
-    listed="$(grep -v -e '^pid ' -e '^mode ' "$STAGING" 2>>"$LOG")" || rc=$?
+    # The paths, without the owner line, a pr-mode run's `mode pr`, or the
+    # `noted` an earlier heal appended (CR 1801).
+    listed="$(grep -v -e '^pid ' -e '^mode ' -e '^noted$' "$STAGING" 2>>"$LOG")" || rc=$?
     if [ "$rc" -gt 1 ]; then
       _log "heal: could not read $STAGING (grep exited $rc) — leaving the index alone"
       return 0
@@ -931,11 +957,6 @@ STAGED_EOF
     return 0
   fi
 
-  if [ "$others" -gt 0 ]; then
-    _log "heal: a killed refresh left ${own[*]} staged beside $others path(s) it did not stage — leaving the index alone"
-    return 0
-  fi
-
   # The whole bump goes back, not only its staging (#550): a kill after the
   # update leaves the content ahead of the pointer whether or not it got as
   # far as `git add`, and a session that cannot redo the bump (main carrying
@@ -943,14 +964,43 @@ STAGED_EOF
   # When this session can redo it, it does, from a checkout that agrees.
   # Every path the marker names, staged or not: an unstage of a path with
   # nothing staged is a no-op, and a submodule already on its pointer is too.
-  local marked_paths=()
+  local marked_paths=() gitlinks=() p
   while IFS= read -r spath; do
     [ -n "$spath" ] || continue
     marked_paths+=("$spath")
   done <<LISTED_EOF
 $listed
 LISTED_EOF
-  if [ "${#marked_paths[@]}" -gt 0 ]; then
+
+  # Someone else's work staged beside the hook's keeps the index as it is,
+  # but not the content (CR 1801): `git submodule update --checkout` writes
+  # no index, so the content still goes back — onto the pointer the index
+  # records, which for a gitlink the killed run staged is that run's bump;
+  # _restore_content's log says which. The hook's staging left in place is
+  # said on stderr once per killed run, not at every session while the
+  # human's work stays staged: the marker gets a `noted` line, and the
+  # refresh that redoes the bump writes a fresh marker. `own` is empty when
+  # the kill fell before `git add`, and an empty array's expansion is an
+  # unbound variable under bash 3.2's `set -u` (CR 1800).
+  if [ "$others" -gt 0 ]; then
+    if [ "${#own[@]}" -gt 0 ]; then
+      _log "heal: a killed refresh left ${own[*]} staged beside $others path(s) it did not stage — leaving the index alone; the content goes back on the pointer the index records"
+      if ! grep -qx 'noted' "$STAGING" 2>/dev/null; then
+        for p in "${own[@]}"; do
+          if _listed "$p" "$REGISTERED"; then
+            gitlinks+=("$p")
+          fi
+        done
+        echo "skills update: a refresh killed part way left ${own[*]} staged beside $others staged path(s) it did not stage, so the index is left as it is; the next refresh to complete commits them through its own pathspec. To drop them instead: git reset -q -- ${own[*]}${gitlinks[0]:+ && git submodule update --checkout -- ${gitlinks[*]}} (see $LOG)" >&2 || true
+        printf 'noted\n' >>"$STAGING" 2>/dev/null || true
+      fi
+    else
+      _log "heal: a killed refresh staged nothing, and $others path(s) it did not stage are staged — leaving the index alone; the content goes back on its pointer"
+    fi
+    if [ "${#marked_paths[@]}" -gt 0 ]; then
+      _restore_content "a killed refresh" "${marked_paths[@]}"
+    fi
+  elif [ "${#marked_paths[@]}" -gt 0 ]; then
     if [ "${#own[@]}" -gt 0 ]; then
       _log "heal: a killed refresh left ${own[*]} staged — undoing its bump"
     fi
@@ -1245,17 +1295,25 @@ REFRESH_PATHS+=(.skills/doctor.sh)
 # so this run leaves; a dead owner's — kept by a heal whose unstage failed —
 # is replaced. In a subshell, so noclobber stays out of the rest of the run
 # (and `$$` there is still this run's PID).
+#
+# The whole content is built first, `date` and all, and written by one
+# builtin `printf` (CR 1808): with the fork inside the redirect, the file sat
+# empty for as long as `date` took, and a second session reading it then saw
+# no owner. _marker_owner_live believes an unparseable marker for its first
+# 2 s, which covers the open-to-write gap that remains.
 _claim_marker() {
+  local body p
+  body="pid $$ $(date +%s 2>/dev/null || true)"
+  # A pr-mode run says so: its heal restores content and unstages nothing.
+  if [ "$MERGE_MODE" = "pr" ]; then
+    body="$body"$'\n'"mode pr"
+  fi
+  for p in "${REFRESH_PATHS[@]}"; do
+    body="$body"$'\n'"$p"
+  done
   (
     set -o noclobber
-    {
-      printf 'pid %s %s\n' "$$" "$(date +%s)"
-      # A pr-mode run says so: its heal restores content and unstages nothing.
-      if [ "$MERGE_MODE" = "pr" ]; then
-        printf 'mode pr\n'
-      fi
-      printf '%s\n' "${REFRESH_PATHS[@]}"
-    } > "$STAGING"
+    printf '%s\n' "$body" > "$STAGING"
   ) 2>/dev/null
 }
 if ! _claim_marker; then
@@ -1551,6 +1609,7 @@ _pr_refused() {
 # request for it.
 _pr_publish() {
   local c="$1" msg="$2" prs rc=0 tip_line tip n s oid open="" declined="" out
+  local unread=() refspecs=() pr missing
   # Every PR from the branch, any state. gh failing is not "none".
   prs="$(_gh pr list --head "$PR_BRANCH" --base "$PR_BASE_BRANCH" --state all \
     --json number,state,headRefOid --jq '.[] | "\(.number) \(.state) \(.headRefOid)"' 2>&1)" || rc=$?
@@ -1569,12 +1628,48 @@ _pr_publish() {
     case "$n" in '' | *[!0-9]*) continue ;; esac
     if [ "$s" = "OPEN" ]; then
       open=${open:-$n}
-    elif [ "$s" = "CLOSED" ] && [ -z "$declined" ] && _pr_same_bump "$oid" "$c"; then
-      declined=$n
+    elif [ "$s" = "CLOSED" ] && [ -z "$declined" ] && [ -n "$oid" ]; then
+      if ! git cat-file -e "$oid^{commit}" 2>/dev/null; then
+        unread+=("$n $oid")
+      elif _pr_same_bump "$oid" "$c"; then
+        declined=$n
+      fi
     fi
   done <<PRS_EOF
 $prs
 PRS_EOF
+
+  # A closed PR's head this clone never had — another clone proposed it, or
+  # gc pruned it once the branch was deleted — compared as "not the same" and
+  # a declined bump was proposed again (CR 1802). GitHub keeps every PR's head
+  # at refs/pull/<n>/head on the base repo, so it is fetched from there, all
+  # in one fetch, and only when nothing else has settled the answer. Unable to
+  # fetch, the run proposes nothing: a PR a human may already have closed is
+  # a visible write, and waiting costs a day — the next day's run checks again.
+  if [ -z "$open" ] && [ -z "$declined" ] && [ "${#unread[@]}" -gt 0 ]; then
+    refspecs=()
+    for pr in "${unread[@]}"; do
+      refspecs+=("refs/pull/${pr%% *}/head")
+    done
+    rc=0
+    { echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] fetch ${refspecs[*]} to read closed PRs' heads:"; git fetch -q --no-tags "$PR_REMOTE" "${refspecs[@]}" 2>&1; } >>"$LOG" || rc=$?
+    missing=""
+    for pr in "${unread[@]}"; do
+      n=${pr%% *}
+      oid=${pr#* }
+      if [ "$rc" -ne 0 ] || ! git cat-file -e "$oid^{commit}" 2>/dev/null; then
+        missing=${missing:-$n}
+      elif _pr_same_bump "$oid" "$c"; then
+        declined=$n
+        break
+      fi
+    done
+    if [ -z "$declined" ] && [ -n "$missing" ]; then
+      _log "pr: could not fetch closed PR #$missing's head from $PR_REMOTE — whether it declined this bump is unknown, so nothing is proposed this run"
+      echo "skills update: could not fetch closed PR #$missing's head from $PR_REMOTE to check whether it declined this bump, so nothing is proposed this run; the next day's refresh checks again (see $LOG)" >&2
+      return 0
+    fi
+  fi
 
   # An open PR's branch is replaced only while it is still the hook's own.
   if [ -n "$open" ] && [ -n "$tip" ]; then

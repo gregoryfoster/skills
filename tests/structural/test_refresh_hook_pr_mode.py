@@ -23,6 +23,7 @@ whose pre-receive hook stands in for the ruleset. Not available here: a real
 no-bypass ruleset, a real `gh`, a real VS Code session.
 """
 
+import copy
 import os
 import re
 import shutil
@@ -850,3 +851,109 @@ class TestTheDoctorReportAfterARestore:
             f"said it had left it as it was:\n{result.stderr}"
         )
         assert "restored pointer" in result.stderr, result.stderr
+
+
+def _second_clone(c, tmp_path):
+    """Another machine's clone of the same consumer, made before any PR, so
+    the hook's PR commits were never in its object store."""
+    b = tmp_path / "work-b"
+    git(tmp_path, "clone", "-q", "--recurse-submodules", str(c.origin), str(b))
+    git(b, "config", "core.hooksPath", str(b / ".git" / "hooks"))
+    other = copy.copy(c)
+    other.path = b
+    return other
+
+
+def _decline(c, *, keep_branch: bool, pull_ref: bool = True) -> str:
+    """The open PR closed unmerged, as GitHub records it: `refs/pull/<n>/head`
+    on the base repo keeps its head, whether or not the branch is deleted.
+
+    The head is re-made on the remote with the same tree, parent and message
+    but another date — the same bump, written by another clone. Without that,
+    a second clone running in the same second builds a byte-identical commit
+    (commit-tree, same tree, parent, identity and timestamp), already has the
+    "missing" head, and never exercises the fetch: measured on Linux."""
+    prs = c.gh / "prs"
+    n, _, _ = prs.read_text().split()
+    made_here = _origin(c, PR_BRANCH)
+    env = clean_env()
+    env["GIT_AUTHOR_DATE"] = env["GIT_COMMITTER_DATE"] = "2001-01-01T00:00:00Z"
+    head = subprocess.run(
+        [
+            "git",
+            "commit-tree",
+            f"{made_here}^{{tree}}",
+            "-p",
+            f"{made_here}^",
+            "-m",
+            git(c.origin, "log", "-1", "--format=%B", made_here).stdout,
+        ],
+        cwd=c.origin,
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    git(c.origin, "update-ref", f"refs/heads/{PR_BRANCH}", head)
+    prs.write_text(f"{n} CLOSED {head}\n")
+    if pull_ref:
+        git(c.origin, "update-ref", f"refs/pull/{n}/head", head)
+    if not keep_branch:
+        git(c.origin, "update-ref", "-d", f"refs/heads/{PR_BRANCH}")
+    return n
+
+
+class TestADeclineMadeElsewhere:
+    """CR 1802: the declined-bump check compared the closed PR's head with
+    this run's commit, and a head not in this clone's object store — the PR
+    was proposed from another clone, or gc pruned it after the branch was
+    deleted — compared as "not the same", so a declined bump was proposed
+    again. The head is fetched from `refs/pull/<n>/head` first."""
+
+    def test_a_second_clone_does_not_propose_a_declined_bump(
+        self, pr_consumer, tmp_path
+    ):
+        """The reviewer's reproduction: the branch kept, the PR closed, and a
+        clone that never saw the PR's commit."""
+        c = pr_consumer
+        other = _second_clone(c, tmp_path)
+        assert run_hook(c).returncode == 0
+        _decline(c, keep_branch=True)
+
+        result = run_hook(other)
+
+        assert result.returncode == 0, result.stderr
+        assert len(_creates(c.gh)) == 1, "a declined bump was proposed again"
+        assert "closed unmerged" in log_text(other), log_text(other)
+
+    def test_the_branch_deleted_after_closing(self, pr_consumer, tmp_path):
+        c = pr_consumer
+        other = _second_clone(c, tmp_path)
+        assert run_hook(c).returncode == 0
+        _decline(c, keep_branch=False)
+
+        result = run_hook(other)
+
+        assert result.returncode == 0, result.stderr
+        assert len(_creates(c.gh)) == 1, "a declined bump was proposed again"
+        assert _origin(c, PR_BRANCH) == "", "the declined bump was pushed again"
+
+    def test_a_head_that_cannot_be_fetched_proposes_nothing_this_run(
+        self, pr_consumer, tmp_path
+    ):
+        """Unable to tell, the run proposes nothing and says so once: a
+        proposal a human already closed is a visible write, and the next
+        day's run checks again."""
+        c = pr_consumer
+        other = _second_clone(c, tmp_path)
+        assert run_hook(c).returncode == 0
+        n = _decline(c, keep_branch=False, pull_ref=False)
+
+        result = run_hook(other)
+
+        assert result.returncode == 0, result.stderr
+        assert len(_creates(c.gh)) == 1
+        assert result.stderr.count(f"PR #{n}") == 1, result.stderr + log_text(other)
+        assert "declined" in result.stderr, result.stderr
+        assert lock(other).read_text().strip() == today()
+        _assert_content_matches_pointer(other)

@@ -23,8 +23,13 @@ Coverage:
 - a marker owned by a live process, past the age bound
                                          → stale: healed
 - a fresh marker whose owner is dead     → healed
+- a second run while the first's claim is mid-write (CR 1808)
+                                         → exactly one refresh
+- a marker with no `pid` line, under 2 s old by mtime
+                                         → left alone; older, healed
 """
 
+import os
 import subprocess
 import time
 
@@ -172,3 +177,66 @@ class TestAStaleMarkerIsHealed:
         assert staged(c) == []
         assert content(c) == gitlink(c) == c.before
         assert not (c.path / MARKER).exists()
+
+
+class TestTheClaimIsWrittenWhole:
+    """CR 1808: `noclobber` creates the marker, then the claim used to fork
+    `date +%s` for the first line's epoch. A second session reaching the
+    marker in that window read a zero-byte file — no `pid` line, so not
+    live — and both refreshed. The epoch is computed before the file is
+    opened now, so the write has no fork inside it; and a marker with no
+    parseable `pid` line is believed live for its first ~2 s by mtime."""
+
+    def test_a_slow_date_inside_the_claim_lets_no_second_run_in(self, consumer):
+        """The reviewer's reproduction: `date +%s` slowed once, for the first
+        run's claim; the second session starts the moment the marker exists."""
+        flag = consumer.path.parent / "slow-date"
+        shim = consumer.bindir / "date"
+        shim.write_text(
+            "#!/bin/bash\n"
+            f'if [ "$1" = "+%s" ] && [ -f "{flag}" ]; then rm -f "{flag}"; sleep 3; fi\n'
+            'exec /bin/date "$@"\n'
+        )
+        shim.chmod(0o755)
+        flag.write_text("")
+        marker = consumer.path / MARKER
+
+        first = start_hook(consumer)
+        _wait_for(marker)
+        second = finish_hook(start_hook(consumer))
+        first_done = finish_hook(first)
+
+        assert first_done.returncode == 0, first_done.stderr
+        assert second.returncode == 0, second.stderr
+        log = log_text(consumer)
+        assert log.count("submodule update (") == 1, "both sessions refreshed:\n" + log
+        assert "in flight" in log, log
+        assert gitlink(consumer) == consumer.after
+        assert ahead(consumer) == 0
+
+    def test_a_fresh_marker_with_no_pid_line_is_left_alone(self, consumer):
+        """A marker still being written: no `pid` line yet, mtime now."""
+        (consumer.path / MARKER).write_text("")
+
+        result = run_hook(consumer)
+
+        assert result.returncode == 0, result.stderr
+        assert (consumer.path / MARKER).exists()
+        assert gitlink(consumer) == consumer.before
+        assert _stamp(consumer) != today(), "a run that left it spent the day"
+        assert "in flight" in log_text(consumer), log_text(consumer)
+
+    def test_an_old_marker_with_no_pid_line_is_dead(self, consumer):
+        """Past the window it is a killed claim's leftover: healed, and the
+        refresh runs."""
+        marker = consumer.path / MARKER
+        marker.write_text("")
+        old = time.time() - 60
+        os.utime(marker, (old, old))
+
+        result = run_hook(consumer)
+
+        assert result.returncode == 0, result.stderr
+        assert not marker.exists()
+        assert gitlink(consumer) == consumer.after
+        assert ahead(consumer) == 0
