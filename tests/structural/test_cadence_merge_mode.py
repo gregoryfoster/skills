@@ -970,6 +970,45 @@ class TestInstallAndCheck:
         # The knob is untracked here, and the job reads the committed one.
         assert "commit .skills/merge_mode" in r.stdout.lower()
 
+    def test_a_pr_knob_committed_as_direct_is_not_committed_as_it_reads(
+        self, tmp_path: Path
+    ):
+        """CR 1810: tracked is not committed. With `direct` committed and the
+        working file edited to `pr`, the installer rendered pr and said
+        nothing, while the job reads the committed `direct`."""
+        repo = _init(tmp_path / "r")
+        _knob(repo, "direct\n")
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-qm", "knob")
+        _knob(repo, "pr\n")
+        r = _install(repo)
+        assert r.returncode == 0, r.stderr
+        assert READ_STEP in (repo / ".github/workflows/context-cadence.yml").read_text()
+        assert "not committed" in r.stdout
+        check = _install(repo, "--check")
+        assert "not committed" in check.stdout, check.stdout
+
+    def test_a_pr_knob_committed_as_it_reads_says_nothing_more(self, tmp_path: Path):
+        repo = _init(tmp_path / "r")
+        _knob(repo, "pr\n")
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-qm", "knob")
+        r = _install(repo)
+        assert r.returncode == 0, r.stderr
+        assert "not committed" not in r.stdout
+        assert "not committed" not in _install(repo, "--check").stdout
+
+    def test_a_staged_but_uncommitted_pr_knob_is_not_committed(self, tmp_path: Path):
+        repo = _init(tmp_path / "r")
+        (repo / "README.md").write_text("x\n")
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-qm", "init")
+        _knob(repo, "pr\n")
+        _git(repo, "add", "-A")
+        r = _install(repo)
+        assert r.returncode == 0, r.stderr
+        assert "not committed" in r.stdout
+
     def test_a_direct_install_prints_todays_closing_text(self, tmp_path: Path):
         # Same basename, so the same derived cron.
         a = _install(_init(tmp_path / "a" / "r"))
