@@ -194,18 +194,39 @@ _log() {
 #
 # Alive means `kill -0` reaches the PID and the marker is younger than
 # MARKER_MAX_AGE. A SIGKILL or SIGTERM leaves the marker behind with its owner
-# gone, which is exactly the leftover the heal exists for. A marker this run
-# could not parse, or one naming this run's own PID (reused), is not live.
+# gone, which is exactly the leftover the heal exists for. A marker naming
+# this run's own PID (reused) is not live.
+#
+# Nor, once it is a few seconds old, is one this run cannot parse. Younger, it
+# is a claim still being written (CR 1808): noclobber's open creates the file
+# before its first byte lands, and a second session reading it in between
+# found no `pid` line, took it for dead, and both refreshed. The claim now
+# writes it with no fork inside the redirect, so that window is microseconds;
+# _marker_being_written covers what is left of it, and is reached only for an
+# unparseable marker, so its `stat` costs a normal run nothing. Both ways
+# bounded: an mtime more than 2 s ahead (a clock set back) is not believed.
 MARKER_OWNER=""
+_marker_being_written() {
+  local now mtime
+  now="$(date +%s 2>/dev/null)" || return 1
+  # GNU and busybox take -c; BSD's (macOS) refuses it with nothing on stdout.
+  mtime="$(stat -c %Y "$STAGING" 2>/dev/null || stat -f %m "$STAGING" 2>/dev/null)" || return 1
+  case "$mtime" in '' | *[!0-9]*) return 1 ;; esac
+  [ $((now - mtime)) -le 2 ] && [ $((mtime - now)) -le 2 ]
+}
 _marker_owner_live() {
   local head tag pid started now
   MARKER_OWNER=""
   [ -f "$STAGING" ] || return 1
   head="$(head -n 1 "$STAGING" 2>/dev/null)" || return 1
   read -r tag pid started <<<"$head" || true
-  [ "$tag" = "pid" ] || return 1
-  case "$pid" in '' | *[!0-9]*) return 1 ;; esac
-  case "$started" in '' | *[!0-9]*) return 1 ;; esac
+  case "$pid" in '' | *[!0-9]*) tag="" ;; esac
+  case "$started" in '' | *[!0-9]*) tag="" ;; esac
+  if [ "$tag" != "pid" ]; then
+    _marker_being_written || return 1
+    MARKER_OWNER="unknown: its marker is still being written"
+    return 0
+  fi
   [ "$pid" != "$$" ] || return 1
   now="$(date +%s 2>/dev/null)" || return 1
   [ $((now - started)) -le "$MARKER_MAX_AGE" ] || return 1
@@ -1273,17 +1294,25 @@ REFRESH_PATHS+=(.skills/doctor.sh)
 # so this run leaves; a dead owner's — kept by a heal whose unstage failed —
 # is replaced. In a subshell, so noclobber stays out of the rest of the run
 # (and `$$` there is still this run's PID).
+#
+# The whole content is built first, `date` and all, and written by one
+# builtin `printf` (CR 1808): with the fork inside the redirect, the file sat
+# empty for as long as `date` took, and a second session reading it then saw
+# no owner. _marker_owner_live believes an unparseable marker for its first
+# 2 s, which covers the open-to-write gap that remains.
 _claim_marker() {
+  local body p
+  body="pid $$ $(date +%s 2>/dev/null || true)"
+  # A pr-mode run says so: its heal restores content and unstages nothing.
+  if [ "$MERGE_MODE" = "pr" ]; then
+    body="$body"$'\n'"mode pr"
+  fi
+  for p in "${REFRESH_PATHS[@]}"; do
+    body="$body"$'\n'"$p"
+  done
   (
     set -o noclobber
-    {
-      printf 'pid %s %s\n' "$$" "$(date +%s)"
-      # A pr-mode run says so: its heal restores content and unstages nothing.
-      if [ "$MERGE_MODE" = "pr" ]; then
-        printf 'mode pr\n'
-      fi
-      printf '%s\n' "${REFRESH_PATHS[@]}"
-    } > "$STAGING"
+    printf '%s\n' "$body" > "$STAGING"
   ) 2>/dev/null
 }
 if ! _claim_marker; then
