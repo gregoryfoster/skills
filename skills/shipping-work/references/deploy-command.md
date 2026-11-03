@@ -49,7 +49,7 @@ setsid -w scripts/deploy.sh
 |---|---|---|
 | 0 | the command exited 0 (`--check`: the knob is usable, and the line is printed) | report the tail of its output; Step 6 may close |
 | 1 | the command exited non-zero; its own code is printed | report the code and output verbatim, and close no issue |
-| 2 | nothing ran: the knob is unusable, HEAD isn't what was pushed, or git failed | fix what it names; a present but unusable knob never reads as absent |
+| 2 | nothing ran: the knob (or `.skills/merge_mode`) is unusable, HEAD isn't what was pushed, in `pr` mode HEAD isn't the default branch, or git failed | fix what it names; a present but unusable knob never reads as absent |
 | 3 | no knob | today's Step 8: the next-steps table |
 
 **Non-zero means failure, whatever the code.** The project documents its own
@@ -67,6 +67,12 @@ vendored copy, and its own sync rewrites it.
 - **Step 3.** With the knob set, a local merge into the main checkout deploys
   nothing, so it is safe. Without it, a checkout that is a unit's
   `WorkingDirectory=` is production, and merging into it *is* deploying.
+- **In `pr` mode** (`.skills/merge_mode`, [pr-mode.md](pr-mode.md)) the
+  deploy waits for the post-merge pass, and the script refuses (exit 2)
+  unless HEAD is on the default branch as well as equal to its upstream. A
+  pushed feature branch passes the upstream check, so without this the
+  branch tip would deploy unreviewed. Absent or `direct`, the branch isn't
+  checked: Step 3 has already put the agent on the default branch.
 - **Step 8 runs before Step 6.** When an issue's "Done when" is about what
   production runs, the HARD-GATE can pass only after the deploy, so Step 8
   moves between Steps 5 and 6.

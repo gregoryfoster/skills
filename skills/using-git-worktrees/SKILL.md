@@ -12,8 +12,6 @@ metadata:
 
 A workflow for parallel branch checkouts via `git worktree`. Standardizes creation, lifecycle, and cleanup so multiple branches can be worked on without colliding.
 
-**Activation triggers:** "create worktree", "new worktree", "destroy worktree", "merge worktree", "wt".
-
 ## The Iron Law
 
 ```
@@ -45,7 +43,7 @@ The skill's `scripts/` directory is not at the project root — it ships inside 
 <!-- skill:required id=skill-scripts -->
 ```bash
 N=using-git-worktrees
-for S in resolve-worktree-root.sh worktree-create.sh worktree-list.sh worktree-destroy.sh audit-worktree-zombies.sh; do SD=
+for S in resolve-worktree-root.sh worktree-create.sh worktree-list.sh worktree-destroy.sh audit-worktree-zombies.sh merge-mode.sh; do SD=
   for d in scripts ".claude/skills/$N/scripts" "$HOME/.claude/skills/$N/scripts"; do
     [ -f "$d/$S" ] && { SD="$d"; break; }
   done
@@ -74,7 +72,7 @@ A worktree inherits no virtualenv, so `worktree-create.sh` symlinks the main che
 echo none > .skills/worktree_venv    # `link` (default) | `none`
 ```
 
-Set it to `none` when **the main checkout is also a running service's `WorkingDirectory=`**. The symlink then hands every worktree one shared *mutable* environment while isolating it in every other respect, and the service's own tooling rewrites that environment under a worktree's test run. Two symptoms identify the case (uv 0.10.4; the shape generalizes to any tool whose *run* verb reinstalls the project):
+Set it to `none` when **the main checkout is also a running service's `WorkingDirectory=`** (with `.skills/deploy_command` set, the service runs what the deploy built, so this holds only if something still runs `uv` here). The symlink then hands every worktree one shared *mutable* environment while isolating it in every other respect, and the service's own tooling rewrites that environment under a worktree's test run. Two symptoms identify the case (uv 0.10.4; the shape generalizes to any tool whose *run* verb reinstalls the project):
 
 - **`uv run` reinstalls the project.** A readiness timer running `uv run …` in the main checkout restamps `importlib.metadata.version(...)` to *main's* version mid-run, so a worktree suite on a bumped version fails `assert '0.38.0' == '0.37.0'` in a full run and passes in isolation.
 - **`uv sync` prunes groups it was not asked for.** An `ExecStartPre=uv sync` deletes an opt-in dependency group whose test modules `pytest.importorskip` at module scope. Those become skips, not errors: hundreds of tests silently stop running against a suite that still reports green.
@@ -147,8 +145,10 @@ When the branch is ready:
 1. Commit and push from inside the worktree
 2. `cd` to the main checkout — its path is the first row of `bash "<worktree-list.sh>"` (or `git worktree list | head -n1 | awk '{print $1}'`)
 3. `git switch main` (or the project's default branch)
-4. `git merge <branch>` — or open a PR if the project requires review; consult AGENTS.md for the project's PR-vs-direct-merge policy
+4. `git merge <branch>`
 5. Confirm the merge succeeded before Phase 5
+
+**`pr` mode** (`bash "<merge-mode.sh>"` prints `pr` from `.skills/merge_mode`; exit 2 is an unusable knob, never `direct`): no local merge. Push, then open the PR or hand off to `shipping-work`; once it merges, pull the main checkout and run Phase 5 ([references/pr-mode.md](references/pr-mode.md)).
 
 If the branch is **descoped** (will not be merged), document why before Phase 5: a one-line note in the related issue or PR. The descope reason is required input to `worktree-destroy.sh --descoped <reason>`.
 
@@ -163,11 +163,11 @@ bash "<worktree-destroy.sh>" <branch> --unlock       # only when the destroy rep
 bash "<worktree-destroy.sh>" <branch> --dry-run      # preview the decision, change nothing
 ```
 
-Flags are position-independent here too, so `--force <branch>` works — the flag-first habit `worktree-create.sh` teaches carries over.
+Flags are position-independent here too: `--force <branch>` works, as with `worktree-create.sh`.
 
 The script:
 - **Finds the worktree by branch**, via `git worktree list --porcelain`, so any layout works regardless of how the directory leaf is named. Only when the branch has no registered worktree does it fall back to the `<root>/<slug>` scheme `worktree-create.sh` uses, so a mistyped branch still names a concrete path.
-- Verifies the branch is an ancestor of the base ref (the actual "merged" check, not just "pushed"). Default base resolution: `.skills/default_branch` → origin's HEAD → `main`, preferring `origin/<base>` over local `<base>` so unpublished local merges don't fool the gate. Pass `--base <ref>` to verify against an explicit non-default integration branch instead (e.g., `batch/<x>` in a multi-agent orchestration); the supplied ref is used as-given. Refuses if the branch is not merged AND `--descoped <reason>` was not supplied.
+- Verifies the branch is an ancestor of the base ref (the actual "merged" check, not just "pushed"). Default base resolution: `.skills/default_branch` → origin's HEAD → `main`, preferring `origin/<base>` over local `<base>` so unpublished local merges don't fool the gate. Pass `--base <ref>` to verify against an explicit non-default integration branch instead (e.g., `batch/<x>` in a multi-agent orchestration); the supplied ref is used as-given. Refuses if the branch is not merged AND `--descoped <reason>` was not supplied. In `pr` mode it fetches first and also accepts a merged PR headed at the tip (squash, rebase); gh failing is exit 2.
 - Refuses to destroy the worktree it is being run from. `cd` to the main checkout first.
 - If `<worktree>/.port` exists, kills any process bound to that port via `lsof -ti tcp:<port>` (portable to macOS + Linux). Falls back to a warning if `lsof` isn't installed.
 - Runs `git worktree remove <path>` (or `git worktree remove --force <path>` if `--force` was supplied)
@@ -203,11 +203,12 @@ Wrappers must not silently bypass the Iron Law gates. If the wrapper genuinely n
 
 - `git worktree list` is authoritative — never maintain a separate registry
 - A branch may be deleted while a worktree on it exists; reattach with `git worktree repair` if you need to recover
-- Bare repositories: out of scope; the consumers covered by this skill are all non-bare
+- Bare repositories: out of scope; every consumer here is non-bare
 
 ## Detail Docs
 
 - [references/destroy-flags.md](references/destroy-flags.md) — when each `worktree-destroy.sh` flag is the right instrument, and what each does not cover
+- [references/pr-mode.md](references/pr-mode.md) — `pr` mode: Phase 4, and destroy's merged-PR evidence
 
 **Self-budget:** held to a **6,000-token ratchet (estimate and exact)** by
 `tests/structural/test_skill_self_budget.py` — both readings must clear it, so
