@@ -1812,7 +1812,7 @@ if [ "$STATUS_RC" -eq 0 ] && [ -n "$STATUS_OUT" ]; then
         # spent.
         git commit -m "$MSG" -- "${STAGED_PATHS[@]}" 2>&1 || {
           echo "commit failed — undoing the bump: unstaging, then the content and the doctor back on the recorded pointer"
-          echo "skills update: the commit failed (git's words in $LOG), so the bump is undone — content, pointer and doctor; the next day's refresh tries again" >&2 || true
+          echo "skills update: the commit failed (git's words in $LOG), so this run undoes its bump — the staging, the vendored content and the doctor; anything it cannot put back is said separately. The next day's refresh tries again" >&2 || true
           _unstage "a failed commit" "${COMMIT_PATHS[@]}"
           _restore_content "a failed commit" "${REFRESH_PATHS[@]}"
         }
