@@ -154,6 +154,21 @@ class TestWhatRuns:
         result = _gate(repo)
         assert "Detected: toolchain uv, framework fastapi" in result.stdout
 
+    def test_it_says_when_a_workspaces_framework_is_undetermined(self, repo):
+        """#552: a uv workspace whose members it can't read says so on the
+        line, where it once printed no framework at all."""
+        (repo / "pyproject.toml").write_text(
+            '[project]\nname = "ws"\ndependencies = ["cli"]\n\n'
+            '[tool.uv.workspace]\nmembers = ["services/*"]\n'
+        )
+        (repo / "uv.lock").write_text("version = 1\n")
+        (repo / "tests").mkdir()
+        (repo / "tests" / "test_x.py").write_text("def test_x(): pass\n")
+        _commit(repo)
+        result = _gate(repo)
+        assert "Detected: toolchain uv, undetermined framework" in result.stdout
+        assert "services/*" in result.stderr
+
     def test_every_detected_stack_runs(self, repo):
         """Row 1: wordpress has composer AND npm."""
         _composer_repo(repo)

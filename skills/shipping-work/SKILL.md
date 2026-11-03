@@ -70,7 +70,7 @@ If pre-ship fails: stop, report the failure, fix before proceeding. Do not push 
 
 `pre-ship.sh` detects what the repo has and runs every check each toolchain owns: ruff check and format, an import check and pytest for uv; `composer validate`, `php -l` and `composer test` for composer; the declared `lint:js` / `format:js:check` / `test:js` for npm. Every check runs before it fails, naming each failure. Nothing detected is exit 1, never a pass. A pass on this exact tree is recorded and reused (`GATE_STAMP=off` forces a run). Why each check runs as it does, and the knobs: [references/gate-topology.md](references/gate-topology.md).
 
-Its first line reads `Detected: …`. For each `framework <name>` there, read that framework's file before Step 1.5 — its doc-check defaults and its Step 8 next steps: [references/stack-fastapi.md](references/stack-fastapi.md), [references/stack-click.md](references/stack-click.md), [references/stack-php.md](references/stack-php.md).
+Its first line reads `Detected: …`. For each `framework <name>` there, read that framework's file before Step 1.5 — its doc-check defaults and its Step 8 next steps: [references/stack-fastapi.md](references/stack-fastapi.md), [references/stack-click.md](references/stack-click.md), [references/stack-php.md](references/stack-php.md). On `undetermined framework`, judge from the members' dependencies.
 
 ### Step 1.5 — Documentation spot-check
 
