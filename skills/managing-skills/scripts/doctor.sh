@@ -581,8 +581,11 @@ check_vendor_lint_exclude() {
     return 0
   fi
   # none: pyproject.toml has no ruff table, so ruff is not configured here.
+  # extend: uncovered, and the table already has an extend-exclude, so the fix
+  # is an append: a second extend-exclude line is a duplicate TOML key, which
+  # ruff refuses for the whole file (CR 1806).
   verdict="$(awk -v want="$table" '
-    BEGIN { cur = ""; seen = (want == ""); hit = 0 }
+    BEGIN { cur = ""; seen = (want == ""); hit = 0; ext = 0 }
     /^[[:space:]]*\[/ {
       cur = $0
       sub(/^[[:space:]]*\[+[[:space:]]*/, "", cur)
@@ -590,16 +593,23 @@ check_vendor_lint_exclude() {
       if (want != "" && (cur == want || index(cur, want ".") == 1)) seen = 1
       next
     }
+    cur == want && /^[[:space:]]*extend-exclude[[:space:]]*=/ { ext = 1 }
     cur == want && /skills-vendor/ { hit = 1 }
-    END { print (!seen ? "none" : (hit ? "covered" : "uncovered")) }
+    END { print (!seen ? "none" : (hit ? "covered" : (ext ? "extend" : "uncovered"))) }
   ' "$cfg" 2>/dev/null || true)"
-  [ "$verdict" = "uncovered" ] || return 0
+  case "$verdict" in uncovered|extend) ;; *) return 0 ;; esac
 
   echo "doctor: $cfg configures ruff without excluding skills-vendor/, so 'ruff" >&2
   echo "doctor:   check .' and 'ruff format --check .' read vendored code this repo" >&2
   echo "doctor:   must not edit, with this repo's ruff. A refresh can turn them red" >&2
-  echo "doctor:   with no local change (#336). Add to $where:" >&2
-  echo "doctor:     extend-exclude = [\"skills-vendor/\"]" >&2
+  if [ "$verdict" = "extend" ]; then
+    echo "doctor:   with no local change (#336). Append \"skills-vendor/\" to the" >&2
+    echo "doctor:   existing extend-exclude array in $where; a second" >&2
+    echo "doctor:   extend-exclude line is a duplicate key, which ruff refuses." >&2
+  else
+    echo "doctor:   with no local change (#336). Add to $where:" >&2
+    echo "doctor:     extend-exclude = [\"skills-vendor/\"]" >&2
+  fi
   echo "doctor:   ty and pytest want the same: managing-skills'" >&2
   echo "doctor:   references/excluding-vendored-code.md." >&2
   return 0

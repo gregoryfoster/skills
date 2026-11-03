@@ -190,10 +190,9 @@ class TestAnExistingExtendExclude:
         )
         flat = " ".join(
             ln.removeprefix("doctor:").strip() for ln in result.stderr.splitlines()
-        )
+        ).lower()
         assert (
-            'append "skills-vendor/" to the existing extend-exclude array in '
-            + where
+            'append "skills-vendor/" to the existing extend-exclude array in ' + where
             in flat
         ), result.stderr
 

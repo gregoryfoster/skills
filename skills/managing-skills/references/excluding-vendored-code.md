@@ -66,7 +66,10 @@ Copy them from there; one copy cannot drift.
 `skills-vendor` in its top-level table. The root config is the file ruff
 itself would read, in the order above, and for `pyproject.toml` the top-level
 table is `[tool.ruff]`. The doctor stays silent when there is no
-`skills-vendor/` directory or no ruff config at the root.
+`skills-vendor/` directory or no ruff config at the root. Its warning prints
+the `extend-exclude` line to add, or, where that table already has an
+`extend-exclude`, says to append `"skills-vendor/"` to it: a second
+`extend-exclude` is a duplicate key, and ruff refuses the whole file.
 
 The warning is advisory in every mode, `--check-only` included, and never
 changes the exit code. The gap is in the repo's tooling, not in the diff under
