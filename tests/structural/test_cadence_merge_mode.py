@@ -662,3 +662,35 @@ class TestInstallAndCheck:
         assert a.returncode == b.returncode == 0
         assert a.stdout == b.stdout
         assert "pull request" not in a.stdout.lower()
+
+    def test_a_template_that_moved_an_anchor_renders_nothing_for_pr(
+        self, tmp_path: Path
+    ):
+        """The pr shape is spliced in after four anchor lines. A template edit
+        that moved one must fail the render, not install a pr workflow
+        missing a piece, and must leave the installed file as it was."""
+        broken = tmp_path / "scripts" / "install-cadence.sh"
+        broken.parent.mkdir()
+        text = INSTALL_CADENCE.read_text()
+        assert text.count("          # --- push ---\n") == 1
+        broken.write_text(text.replace("          # --- push ---\n", ""))
+        (broken.parent / "merge-token-counts.sh").write_text(
+            MERGE_TOKEN_COUNTS.read_text()
+        )
+        repo = self._installed(tmp_path, None)
+        wf = repo / ".github" / "workflows" / "context-cadence.yml"
+        before = wf.read_text()
+        _knob(repo, "pr\n")
+        for args in (["--print"], []):
+            r = subprocess.run(
+                ["bash", str(broken), *args],
+                cwd=repo,
+                capture_output=True,
+                text=True,
+                timeout=60,
+                env=_env(),
+            )
+            assert r.returncode != 0, r.stdout
+            assert "anchors" in r.stderr, r.stderr
+            assert "Read the merge mode" not in r.stdout
+        assert wf.read_text() == before, "a failed render touched the workflow"

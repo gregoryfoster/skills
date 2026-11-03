@@ -58,6 +58,15 @@ Options:
                    schedule is derived from the repo identity.
   -h, --help       Show this help and exit 0.
 
+Merge mode (#560):
+  The primary checkout's .skills/merge_mode (#342) picks what renders. Absent
+  or `direct`: the workflow below, exactly as before. `pr`: the same workflow
+  plus `pull-requests: write`, a step that reads the committed knob at run
+  time, and a push to context/weekly-measurement that opens or updates one PR
+  instead of pushing to the default branch. Present but unusable refuses
+  (exit 5) before anything is written. --check reports a knob the installed
+  workflow does not match. Design: references/cadence.md.
+
 What it does:
   Ensures .gitattributes carries `<ledger> merge=union`.
   The ledger is append-only, so a scheduled append racing a human commit lands
@@ -82,7 +91,8 @@ What it does:
        skills-vendor/, which dangles without them),
     2. preflights the credential FIRST,
     3. sweeps seams, measures once with --exact, records a `baseline` row,
-    4. commits that one JSONL line to the default branch,
+    4. commits that one JSONL line to the default branch (with merge_mode
+       `pr`, to one standing PR instead),
     5. emits ::warning:: when the POLICY FILE OR ANY LIVE REFERENCE DOC is over
        budget, when seams accrued, or when a rot-prone count went unjudged, and
        ::notice:: for each file approaching its budget (#273).
@@ -106,6 +116,7 @@ Exit codes:
   2  could not rewrite .gitattributes — nothing was changed
   3  --check only: a workflow, merge attribute or merge driver is missing
   4  could not set a merge driver — its calibration attribute is inert
+  5  .skills/merge_mode is present but unusable — nothing was changed
 USAGE
 }
 
@@ -211,6 +222,82 @@ if [ -f "$WF" ]; then
     esac
   fi
 fi
+
+# .skills/merge_mode (#342) picks which workflow renders (#560): `pr` adds the
+# PR path, `direct` or absent renders today's bytes. Read with merge-mode.sh's
+# grammar and from the same place, the primary checkout (the first `git
+# worktree list` entry): an untracked knob does not exist in a linked
+# worktree. Inline, not a call to that script: it ships in shipping-work and
+# using-git-worktrees, and a consumer need not vendor either.
+# tests/structural/test_cadence_merge_mode.py holds this reader, and the
+# workflow's own, to merge-mode.sh's answers.
+#
+# Present but unusable is never `direct`: --print and an install refuse (exit
+# 5) before writing anything, and --check reports it.
+KNOB_MODE="absent"   # absent | direct | pr | unusable
+KNOB_ERR=""
+KNOB_PRIMARY=""
+read_merge_mode() {
+  local wt knob remedy line word="" count=0 words
+  remedy="write one word, 'pr' or 'direct', or delete the file for the default ('direct')"
+  wt="$(git -C "$ROOT" worktree list --porcelain)" || {
+    KNOB_MODE="unusable"; KNOB_ERR="git worktree list failed"; return 0; }
+  KNOB_PRIMARY=${wt%%$'\n'*}
+  KNOB_PRIMARY=${KNOB_PRIMARY#worktree }
+  [ -d "$KNOB_PRIMARY" ] || {
+    KNOB_MODE="unusable"
+    KNOB_ERR="could not resolve the primary checkout (got '$KNOB_PRIMARY')"
+    return 0; }
+  knob="$KNOB_PRIMARY/.skills/merge_mode"
+  if [ ! -e "$knob" ] && [ ! -L "$knob" ]; then
+    return 0
+  fi
+  KNOB_MODE="unusable"
+  { [ -f "$knob" ] && [ -r "$knob" ]; } || {
+    KNOB_ERR="$knob is present but not a readable file: $remedy"; return 0; }
+  if ! exec 3<"$knob"; then
+    KNOB_ERR="could not open $knob: $remedy"; return 0
+  fi
+  while IFS= read -r line <&3 || [ -n "$line" ]; do
+    line=${line%$'\r'}
+    read -r -a words <<<"$line"
+    [ "${#words[@]}" -gt 0 ] || continue
+    case ${words[0]} in \#*) continue ;; esac
+    count=$((count + ${#words[@]}))
+    word=${words[0]}
+  done
+  exec 3<&-
+  if [ "$count" -eq 0 ]; then
+    KNOB_ERR="$knob names no mode: $remedy"
+  elif [ "$count" -ne 1 ]; then
+    KNOB_ERR="$knob has $count words; it takes one: $remedy"
+  else
+    case $word in
+      pr | direct) KNOB_MODE="$word" ;;
+      *) KNOB_ERR="$knob says '$word', which is not a merge mode: $remedy" ;;
+    esac
+  fi
+}
+read_merge_mode
+RENDER_MODE="direct"
+[ "$KNOB_MODE" != "pr" ] || RENDER_MODE="pr"
+
+# Which shape is installed, read back like the ledger and the pin: the pr
+# render is the only one with this step.
+INSTALLED_MODE="none"   # none | direct | pr
+if [ -f "$WF" ]; then
+  INSTALLED_MODE="direct"
+  if grep -qF -- '- name: Read the merge mode' "$WF"; then
+    INSTALLED_MODE="pr"
+  fi
+fi
+
+# Whether the knob is committed: the job reads the checked-out file, so an
+# untracked `pr` renders the PR path and then runs it as `direct`.
+knob_tracked() {
+  env -u GIT_DIR -u GIT_WORK_TREE git -C "$KNOB_PRIMARY" ls-files --error-unmatch \
+    -- .skills/merge_mode >/dev/null 2>&1
+}
 
 # ONE definition, above the mode dispatch, because --check reads this and
 # ensure_attr writes it. They lived forty lines apart with the string typed
@@ -519,6 +606,30 @@ if [ "$MODE" = "check" ]; then
     echo "workflow:           MISSING ($WF_PATH)"
     rc=3
   fi
+  # Printed only when there is something to say, so a repo with the knob
+  # absent or `direct` reads exactly the report it always did (#560).
+  case "$KNOB_MODE:$INSTALLED_MODE" in
+    unusable:*)
+      echo "merge mode:         UNUSABLE — $KNOB_ERR"
+      rc=3 ;;
+    pr:direct)
+      echo "merge mode:         STALE — .skills/merge_mode says pr, but the installed"
+      echo "                    workflow pushes to the default branch, which a"
+      echo "                    PR-only ruleset refuses. Re-run install-cadence.sh."
+      rc=3 ;;
+    pr:*)
+      echo "merge mode:         pr (one standing PR from context/weekly-measurement)"
+      if ! knob_tracked; then
+        echo "                    .skills/merge_mode is not committed, and the job"
+        echo "                    reads the committed file: until it is, runs push"
+        echo "                    to the default branch."
+      fi ;;
+    *:pr)
+      echo "merge mode:         direct, under a workflow rendered for pr: runs follow"
+      echo "                    the committed knob and push to the default branch."
+      echo "                    Re-run install-cadence.sh to drop pull-requests: write."
+      ;;
+  esac
   if has_attr "$ATTR_LINE"; then
     echo "ledger union merge: yes ($ATTR_LINE)"
   else
@@ -807,7 +918,7 @@ ensure_driver() {
   DRIVER_STATE="set"
 }
 
-render() {
+render_direct() {
   cat <<YAML
 name: context-cadence
 
@@ -1099,11 +1210,199 @@ $CHECKOUT_LINE
 YAML
 }
 
+# --- merge_mode pr (#560) ---------------------------------------------------
+#
+# A repo whose .skills/merge_mode says `pr` gets the workflow above plus four
+# insertions, and nothing in it removed or rewritten. `direct` or absent gets
+# render_direct's bytes untouched: the decision on #560 is "today's behaviour,
+# byte for byte", and this split keeps it by construction rather than by care.
+# Widening the token for every consumer instead would have put
+# `pull-requests: write` into every direct repo's workflow.
+#
+# Quoted heredocs, so nothing below is escaped for this script: what is
+# written is what runs. Each is spliced in after one anchor line of the
+# direct render, and add_pr_mode refuses a render that misses an anchor.
+
+pr_permissions() {
+  cat <<'YAML'
+  # pull-requests: write because .skills/merge_mode said `pr` when this was
+  # rendered (#560): the row goes to one standing PR, not the default branch.
+  pull-requests: write
+YAML
+}
+
+pr_read_step() {
+  cat <<'YAML'
+
+      # .skills/merge_mode (#342), read from this checkout with merge-mode.sh's
+      # grammar: one word, blank lines and whole-line `#` comments ignored.
+      # Inline because a consumer need not vendor shipping-work, which ships
+      # that script. Absent is `direct`. Present but unusable fails HERE, before
+      # the credential is spent, and is never read as `direct` (#560).
+      - name: Read the merge mode
+        run: |
+          K=.skills/merge_mode
+          R="write one word, 'pr' or 'direct', or delete the file for the default ('direct')"
+          M=direct
+          if [ -e "$K" ] || [ -L "$K" ]; then
+            { [ -f "$K" ] && [ -r "$K" ]; } || { echo "::error::$K is present but not a readable file: $R"; exit 2; }
+            M='' N=0
+            while IFS= read -r L || [ -n "$L" ]; do
+              L=${L%$'\r'}
+              read -r -a W <<<"$L"
+              [ "${#W[@]}" -gt 0 ] || continue
+              case ${W[0]} in \#*) continue ;; esac
+              N=$((N + ${#W[@]})) M=${W[0]}
+            done <"$K"
+            [ "$N" -gt 0 ] || { echo "::error::$K names no mode: $R"; exit 2; }
+            [ "$N" -eq 1 ] || { echo "::error::$K has $N words; it takes one: $R"; exit 2; }
+            case $M in
+              pr | direct) ;;
+              *) echo "::error::$K says '$M', which is not a merge mode: $R"; exit 2 ;;
+            esac
+          fi
+          echo "merge mode: $M"
+          echo "MERGE_MODE=$M" >>"$GITHUB_ENV"
+YAML
+}
+
+pr_commit_env() {
+  cat <<'YAML'
+        env:
+          GH_TOKEN: ${{ github.token }}
+YAML
+}
+
+pr_push_block() {
+  cat <<'YAML'
+          # merge_mode pr (#560): the row goes to ONE standing PR from
+          # context/weekly-measurement, never straight to $BRANCH, which a
+          # PR-only ruleset refuses. Annotated in curating-context's
+          # references/cadence.md. `direct` falls through to the loop below.
+          case "${MERGE_MODE:-}" in
+            direct) ;;
+            pr)
+              PR_BRANCH=context/weekly-measurement
+              ROW=$(git rev-parse HEAD)
+              # Every PR from the branch, any state. gh failing is not "none".
+              PRS=$(gh pr list --head "$PR_BRANCH" --base "$BRANCH" --state all --json number,state,headRefOid --jq '.[] | "\(.number) \(.state) \(.headRefOid)"') || {
+                echo "::error::gh pr list failed, so which measurement PR is open is unknown — the row was not pushed."
+                exit 1; }
+              REMOTE=$(git ls-remote origin "refs/heads/$PR_BRANCH") || {
+                echo "::error::could not read $PR_BRANCH from origin — the row was not pushed."
+                exit 1; }
+              TIP=${REMOTE%%[[:space:]]*}
+              OPEN='' ENDED=''
+              while read -r N S OID; do
+                [ -n "$N" ] || continue
+                if [ "$S" = OPEN ]; then
+                  OPEN=${OPEN:-$N}
+                elif [ -n "$TIP" ] && [ "$OID" = "$TIP" ]; then
+                  ENDED=$N
+                fi
+              done <<<"$PRS"
+              if [ -n "$TIP" ] && [ -z "$ENDED" ]; then
+                # The branch carries rows no finished PR took: an open PR's, or
+                # a run's whose PR was never opened. Merge the row INTO it, so
+                # those rows stay first and in order and $BRANCH comes in with
+                # the row: the PR never conflicts with the branch it targets.
+                { git fetch -q origin "+refs/heads/$PR_BRANCH:refs/remotes/origin/$PR_BRANCH" \
+                  && git checkout -q --detach "$TIP"; } || {
+                  echo "::error::could not check out $PR_BRANCH — the row was not pushed."
+                  exit 1; }
+                git merge -q --no-edit -m "chore: weekly context measurement" "$ROW" || {
+                  echo "::error::merging the row into $PR_BRANCH failed — the row was not pushed."
+                  git diff --name-only --diff-filter=U | sed 's/^/::error::  conflicted: /'
+                  exit 1; }
+              fi
+              # Otherwise the branch restarts at $BRANCH plus this row: it is
+              # absent, or its tip was a finished PR's head, merged (its rows
+              # are on $BRANCH; a squash would carry them twice) or closed.
+              #
+              # The lease is the tip read above; empty means "must not exist".
+              # A refusal is reported once and never retried: it is a rule or a
+              # concurrent push, and rebasing answers neither.
+              PUSH_OUT=$(mktemp)
+              if ! git push --force-with-lease="refs/heads/$PR_BRANCH:$TIP" origin "HEAD:refs/heads/$PR_BRANCH" >"$PUSH_OUT" 2>&1; then
+                cat "$PUSH_OUT"
+                echo "::error::push to $PR_BRANCH refused — the row was not pushed."
+                if grep -qE 'GH013|protected branch' "$PUSH_OUT"; then
+                  echo "::error::A ruleset or branch protection covers $PR_BRANCH too. Exempt it: this job only opens a PR from it."
+                fi
+                exit 1
+              fi
+              cat "$PUSH_OUT"
+              if [ -n "$OPEN" ]; then
+                echo "updated PR #$OPEN with this run's row"
+                exit 0
+              fi
+              # A PR opened with GITHUB_TOKEN starts no pull_request workflow,
+              # so a required check never runs on it until a human acts.
+              CREATE_ERR=$(mktemp)
+              gh pr create --base "$BRANCH" --head "$PR_BRANCH" \
+                --title "chore: weekly context measurement" \
+                --body "Opened by the context-cadence workflow, because .skills/merge_mode is pr. Each run appends its row to this branch while this PR is open. It was opened with GITHUB_TOKEN, so no pull_request workflow runs on it: if a required check blocks the merge, close and reopen this PR to start them." \
+                2>"$CREATE_ERR" && exit 0
+              cat "$CREATE_ERR"
+              echo "::error::the row is on $PR_BRANCH, but no PR was opened for it. The next run keeps it and tries again."
+              if grep -q 'not permitted to create or approve pull requests' "$CREATE_ERR"; then
+                echo "::error::Turn on Settings > Actions > General > Workflow permissions > \"Allow GitHub Actions to create and approve pull requests\" (an organization can hold it off at its own level), then re-run this workflow."
+              fi
+              exit 1
+              ;;
+            *)
+              echo "::error::no merge mode (MERGE_MODE='${MERGE_MODE:-}'): the Read the merge mode step did not run — the row was not pushed."
+              exit 1
+              ;;
+          esac
+YAML
+}
+
+# Splices the four fragments above into the direct render, each after its
+# anchor line. Every anchor must be met exactly once: a template edit that
+# moved one would otherwise render a pr workflow missing a piece, silently.
+add_pr_mode() {
+  local line met=""
+  while IFS= read -r line || [ -n "$line" ]; do
+    printf '%s\n' "$line"
+    case "$line" in
+      "  contents: write") pr_permissions; met="$met p" ;;
+      "        run: '[ ! -x .skills/doctor.sh ] || bash .skills/doctor.sh'") pr_read_step; met="$met r" ;;
+      "      - name: Commit the row") pr_commit_env; met="$met e" ;;
+      "          # --- push ---") pr_push_block; met="$met b" ;;
+    esac
+  done
+  [ "$met" = " p r e b" ] || {
+    echo "ERROR the pr render met its anchors as '$met', not ' p r e b': the template moved under it" >&2
+    return 1; }
+}
+
+render() {
+  if [ "$RENDER_MODE" != pr ]; then
+    render_direct
+    return
+  fi
+  local out
+  out="$(render_direct | add_pr_mode)" || return 1
+  printf '%s\n' "$out"
+}
+
+# An unusable knob renders nothing and writes nothing. Here, after --check and
+# --uninstall, which never render: neither needs the knob to do its job.
+if [ "$KNOB_MODE" = "unusable" ]; then
+  echo "ERROR $KNOB_ERR" >&2
+  echo "      Nothing was rendered or written (#560)." >&2
+  exit 5
+fi
+
 if [ "$MODE" = "print" ]; then
   render
   exit 0
 fi
 
+# Rendered once up front: a failing render must not leave the redirect below
+# holding a truncated workflow.
+render >/dev/null
 mkdir -p "$(dirname "$WF")"
 if [ -f "$WF" ] && render | cmp -s - "$WF"; then
   echo "unchanged: $WF_PATH is already current (schedule: $CRON)"
@@ -1157,6 +1456,27 @@ this installer wrote are inert until they are:
   $COUNTS_DRIVER_FIX" ;;
 esac
 
+PR_NOTE=""
+if [ "$RENDER_MODE" = "pr" ]; then
+  PR_NOTE="
+pr mode (.skills/merge_mode): each run pushes context/weekly-measurement and
+opens or updates one PR instead of pushing to the default branch. GitHub must
+let it open that PR, or the job fails with the row left on the branch:
+  Settings > Actions > General > Workflow permissions >
+  \"Allow GitHub Actions to create and approve pull requests\"
+A PR opened with GITHUB_TOKEN starts no pull_request workflow. If a required
+check blocks its merge, close and reopen the PR to start them."
+  if ! knob_tracked; then
+    PR_NOTE="$PR_NOTE
+The job reads the COMMITTED knob, and .skills/merge_mode is not committed:
+commit .skills/merge_mode with the workflow, or the runs push to the default
+branch."
+  fi
+  # The blank line before "Then run it once by hand" that DRIVER_NOTE gets.
+  PR_NOTE="$PR_NOTE
+"
+fi
+
 cat <<NEXT
 
 The secret is REQUIRED — without it this job records nothing, silently:
@@ -1169,7 +1489,7 @@ run, or the race it prevents is already lost when it lands.
   git commit -m "chore: schedule the weekly context measurement"
 
 $DRIVER_NOTE
-
+$PR_NOTE
 Then run it once by hand before trusting the schedule:
   gh workflow run context-cadence.yml
 NEXT
