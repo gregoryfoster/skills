@@ -80,11 +80,14 @@ cd "$PROJECT_ROOT"
 # main as its base and listed other people's commits. A base of HEAD means no
 # commit lies beyond that ref, and the list is the working tree alone. So
 # @{upstream} is read only when no default-branch ref has a merge base, as in
-# a repo whose default branch has another name.
+# a repo whose default branch has another name, or a shallow clone.
 #
 # _cd_why says why the list is the working tree only, for its header and its
-# empty line: HEAD is its own merge base (CR 1788), or no candidate shares
-# history with HEAD at all.
+# empty line: HEAD is its own merge base (CR 1788), a shallow clone's fetched
+# history holds no merge base (CR 1812), or no candidate shares history with
+# HEAD at all. In a shallow clone the default branch's merge base can lie
+# beyond the fetched history, so reaching @{upstream} there says so: its base
+# is the last push, not the branch's fork point.
 _cd_base=""
 _cd_head=$(git rev-parse HEAD 2>/dev/null) || _cd_head=""
 for _ref in origin/HEAD origin/main origin/master main master "@{upstream}"; do
@@ -100,6 +103,15 @@ elif [ "$_cd_base" = "$_cd_head" ]; then
   _cd_why="HEAD is its own merge base with $_ref, so no commit lies beyond it"
 else
   _cd_ref=$_ref
+fi
+if [ "$_ref" = "@{upstream}" ] &&
+  [ "$(git rev-parse --is-shallow-repository 2>/dev/null)" = true ]; then
+  if [ "$_cd_base" = HEAD ]; then
+    _cd_why="shallow clone: no merge base in fetched history; git fetch --unshallow, or name the range"
+    _cd_fix=""
+  else
+    _cd_ref="@{upstream}; shallow clone: no default-branch merge base in fetched history"
+  fi
 fi
 
 echo "=== Project root ==="
