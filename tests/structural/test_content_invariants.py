@@ -1518,6 +1518,13 @@ GATE_SCRIPTS = {
         "deploy command's own output and stderr reach the session unfiltered, "
         "and every git probe behind the pushed-SHA check captures its status"
     ),
+    "merge-mode.sh": (
+        "its answer decides whether Step 3 merges locally or Step 4 opens a "
+        "PR, and whether run-deploy-command.sh holds the deploy to the "
+        "default branch (#342). A present but unusable knob is exit 2 with "
+        "nothing on stdout, never `direct`, and its one git probe dies "
+        "rather than answering empty"
+    ),
     # This repo's own gate surface, in scope since #318.
     "python-lint.sh": (
         "gate 2/3 of this repo's ship gate and the pre-commit hook ahead of "
