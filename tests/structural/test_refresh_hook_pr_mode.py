@@ -49,6 +49,7 @@ from tests.utils.refresh_hook_consumer import (
     log_text,
     origin_gitlink,
     run_hook,
+    staged,
     start_hook,
     today,
     write_shim,
@@ -720,3 +721,52 @@ class TestReconcileInPrMode:
         _main_never_moved(c)
         _assert_content_matches_pointer(c)
         assert len(_creates(c.gh)) == 1
+
+
+# --- a staged leftover the hook did not mark (CR 1791) -----------------------
+
+
+class TestAnUnmarkedStagedBumpInPrMode:
+    """A checkout left staged by a hook from before #555 (hook paths staged,
+    no marker) is not the heal's to undo, because a human's own `git add
+    skills-vendor/<v>` looks the same. In `direct` mode the first refresh
+    commits it through its own pathspec; `pr` mode never commits here, so the
+    prose's "the first refresh … commits it" was false there, and the restore
+    logged "restored … to the recorded pointer" while the content stayed on
+    the staged bump. The next `git commit` on main absorbs it."""
+
+    def _leftover(self, c) -> None:
+        git(c.path / VENDOR, "fetch", "-q", "origin")
+        git(c.path / VENDOR, "checkout", "-q", c.after)
+        git(c.path, "add", VENDOR)
+
+    def test_it_is_named_once_with_the_reset_and_left_staged(self, pr_consumer):
+        """The reviewer's reproduction."""
+        c = pr_consumer
+        self._leftover(c)
+
+        result = run_hook(c)
+
+        assert result.returncode == 0, result.stderr
+        assert staged(c) == [VENDOR], "an unmarked staged bump was unstaged"
+        assert result.stderr.count(f"git reset -q -- {VENDOR}") == 1, result.stderr
+        assert "no in-progress marker" in result.stderr, result.stderr
+        assert len(_creates(c.gh)) == 1, "the PR path stopped proposing"
+        _main_never_moved(c)
+
+        again = run_hook(c)
+
+        assert again.stderr == "", "said again behind a spent day's lock"
+
+    def test_the_restore_names_the_pointer_it_restored_to(self, pr_consumer):
+        """Content goes back to the pointer the INDEX records, the staged
+        bump, which may be a human's, and the log says which."""
+        c = pr_consumer
+        self._leftover(c)
+
+        run_hook(c)
+
+        assert content(c) == c.after
+        log = log_text(c)
+        assert f"HEAD records {c.before[:7]}" in log, log
+        assert f"{VENDOR} to the recorded pointer" not in log, log
