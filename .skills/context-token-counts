@@ -172,7 +172,7 @@
 20576 8270 skills/patching-hosts/references/environments/exe-dev-exeuntu.md
 4361 1755 skills/patching-hosts/references/environments/exe-dev-tailscale.md
 13632 4824 skills/patching-hosts/references/knob.md
-15595 5609 skills/patching-hosts/references/policy.md
+16549 5962 skills/patching-hosts/references/policy.md
 8492 3245 skills/patching-hosts/references/process-log.md
 1415 482 skills/patching-hosts/references/process-log/2026/2026-09-21-broker.md
 1191 415 skills/patching-hosts/references/process-log/2026/2026-09-22-archiver.md
@@ -192,10 +192,10 @@
 5789 2216 skills/patching-hosts/references/process-log/2026/2026-10-09-notifier.md
 6662 2534 skills/patching-hosts/references/process-log/2026/2026-10-13-broker.md
 7866 3210 skills/patching-hosts/references/process-log/2026/index.md
-11789 4118 skills/patching-hosts/references/pruning.md
+12255 4294 skills/patching-hosts/references/pruning.md
 18650 6782 skills/patching-hosts/references/readings.md
 8240 3137 skills/patching-hosts/references/reboot-and-record.md
-20079 7320 skills/patching-hosts/references/run.md
+23443 8563 skills/patching-hosts/references/run.md
 14601 5155 skills/reviewing-architecture/SKILL.md
 14138 4667 skills/reviewing-architecture/references/dimensions.md
 12922 4774 skills/reviewing-code-php/SKILL.md
