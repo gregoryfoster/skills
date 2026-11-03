@@ -43,8 +43,8 @@
 19908 7579 skills/curating-context/SKILL.md
 12422 4654 skills/curating-context/references/budget-and-metrics.md
 17434 6175 skills/curating-context/references/budget-and-metrics/measuring-tokens.md
-18879 6632 skills/curating-context/references/cadence.md
-18181 6821 skills/curating-context/references/cadence/workflow.md
+20245 7117 skills/curating-context/references/cadence.md
+18256 6846 skills/curating-context/references/cadence/workflow.md
 22268 8554 skills/curating-context/references/cohort-patterns.md
 4546 1715 skills/curating-context/references/continuous-surfaces.md
 3720 1347 skills/curating-context/references/experiment-log.md
@@ -96,9 +96,9 @@
 2935 1147 skills/maintaining-host-disk/references/verifying.md
 15834 5978 skills/managing-skills/SKILL.md
 2409 942 skills/managing-skills/references/auth-troubleshooting.md
-26373 9024 skills/managing-skills/references/auto-refresh-hook.md
-3962 1416 skills/managing-skills/references/auto-refresh-hook/pr-mode.md
-4119 1581 skills/managing-skills/references/excluding-vendored-code.md
+27193 9271 skills/managing-skills/references/auto-refresh-hook.md
+4234 1509 skills/managing-skills/references/auto-refresh-hook/pr-mode.md
+4535 1739 skills/managing-skills/references/excluding-vendored-code.md
 20946 7401 skills/managing-skills/references/local-overrides.md
 2763 987 skills/managing-skills/references/pinning-submodules.md
 12696 4514 skills/managing-skills/references/the-doctor.md
