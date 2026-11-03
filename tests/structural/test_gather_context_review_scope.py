@@ -20,6 +20,7 @@ real toolchain or the user's own vendored skills.
 """
 
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -461,6 +462,50 @@ def test_php_lints_the_branchs_committed_php_files(clone, home):
     r = _run("reviewing-code-php", clone, home)
     assert r.returncode == 0, r.stderr
     assert "php-stub -l src/thing.php" in r.stdout, r.stdout
+
+
+def _path_without_uv(tmp_path: Path) -> str:
+    """A PATH holding only what the Python variants run before and through
+    the budget block, so a `uv` installed on this machine cannot leak in."""
+    shim = tmp_path / "no-uv-bin"
+    shim.mkdir()
+    for tool in ("bash", "git", "sort", "sed", "dirname", "cat"):
+        found = shutil.which(tool)
+        assert found, f"{tool} not on PATH"
+        (shim / tool).symlink_to(found)
+    assert shutil.which("uv", path=str(shim)) is None
+    return str(shim)
+
+
+class TestNoUvStillReachesTheBudgetBlock:
+    """CR 1813. The Click variant exited 0 as soon as uv was missing, before
+    the context-budget block its --help promises; FastAPI skips its uv step
+    inline and carries on. Both must reach the block."""
+
+    @pytest.mark.parametrize(
+        "variant", ["reviewing-code-python-click", "reviewing-code-python-fastapi"]
+    )
+    def test_the_budget_block_runs_without_uv(self, variant, tmp_path, clone, home):
+        _committed_branch(clone)
+        stub = clone / "skills" / "curating-context" / "scripts" / "context-delta.sh"
+        stub.parent.mkdir(parents=True)
+        stub.write_text('echo "=== Context budget stub $* ==="\n')
+        env = _clean_env(home)
+        env["PATH"] = _path_without_uv(tmp_path)
+        r = subprocess.run(
+            ["bash", str(SKILLS_DIR / variant / "scripts" / "gather-context.sh")],
+            cwd=str(clone),
+            capture_output=True,
+            text=True,
+            timeout=60,
+            env=env,
+        )
+        assert r.returncode == 0, r.stderr
+        assert "uv not installed" in r.stdout, r.stdout
+        assert "=== Context budget stub --base " in r.stdout, (
+            f"{variant}: with no uv the script stopped before the "
+            f"context-budget block its --help promises (CR 1813):\n{r.stdout}"
+        )
 
 
 class TestOneBaseInLockstep:
