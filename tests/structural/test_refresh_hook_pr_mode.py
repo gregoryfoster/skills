@@ -6,7 +6,7 @@ bypass refuses the hook's push, and the hook rolls the bump back. Decided on
 pushes `skills/submodule-refresh` and keeps one PR open, which later sessions
 update. Absent or `direct`: today's behaviour, byte for byte.
 
-The mechanism (references/auto-refresh-hook.md, "In `pr` mode"):
+The mechanism (managing-skills references/auto-refresh-hook/pr-mode.md):
 - the refresh runs in place as today, under the in-progress marker; the bump
   is recorded in a commit built on `@{u}` in a private index, and the content
   goes back to the recorded pointer BEFORE any network call, so local `main`
@@ -91,9 +91,9 @@ exit 64
 
 GH013 = (
     "#!/usr/bin/env bash\n"
-    'echo x >>"@COUNT@"\n'
     "while read -r _ _ ref; do\n"
     '  if [ "$ref" = @REF@ ] || [ @REF@ = all ]; then\n'
+    '    echo x >>"@COUNT@"\n'
     '    echo "error: GH013: Repository rule violations found for $ref." >&2\n'
     '    echo "Review all repository rules at https://github.com/o/r/rules" >&2\n'
     '    echo "" >&2\n'
@@ -139,7 +139,7 @@ def _commit_knob(c, text: str) -> None:
 
 def _rule(c, ref: str = "refs/heads/main") -> Path:
     """A no-bypass rule on `ref` (or every ref, `all`), as a server hook that
-    refuses the way GitHub does. Returns the file counting push attempts."""
+    refuses the way GitHub does. Returns the file counting refused pushes."""
     count = c.path.parent / f"pushes-{ref.replace('/', '_')}"
     hook = c.origin / "hooks" / "pre-receive"
     hook.write_text(GH013.replace("@COUNT@", str(count)).replace("@REF@", ref))
@@ -205,7 +205,11 @@ def _path_without_gh(c) -> str:
             if name == "gh" or (tools / name).exists() or (tools / name).is_symlink():
                 continue
             src = Path(d) / name
-            if src.is_file() and os.access(src, os.X_OK):
+            try:
+                runnable = src.is_file() and os.access(src, os.X_OK)
+            except OSError:  # a root-only entry in /usr/sbin
+                runnable = False
+            if runnable:
                 (tools / name).symlink_to(src)
     return f"{c.bindir}{os.pathsep}{tools}"
 
@@ -339,9 +343,7 @@ class TestAbsentOrDirectIsToday:
 
 
 def _reader_source() -> str:
-    m = re.search(
-        r"^_read_merge_mode\(\) \{\n.*?^\}\n", HOOK.read_text(), re.M | re.S
-    )
+    m = re.search(r"^_read_merge_mode\(\) \{\n.*?^\}\n", HOOK.read_text(), re.M | re.S)
     assert m, "the hook has no _read_merge_mode() at column 0"
     return m.group(0)
 
@@ -649,7 +651,9 @@ class TestAKillAnywhereConverges:
 
     def test_a_second_session_leaves_a_pr_run_in_flight_alone(self, pr_consumer):
         c = pr_consumer
-        write_shim(c, hold_when='[ "$1" = ls-remote ]')
+        # Held after the restore and the base's fetch, before gh and the
+        # push: the marker must cover the rest of the run.
+        write_shim(c, hold_when='[ "$1" = commit-tree ]')
         c.kill_flag.write_text("")
         first = start_hook(c)
         deadline = time.monotonic() + 60
@@ -690,4 +694,29 @@ class TestReconcileInPrMode:
         _assert_content_matches_pointer(c)
         assert content(c) == c.before
         assert _branch_gitlink(c) == c.after
+        assert len(_creates(c.gh)) == 1
+
+    def test_two_sessions_rolling_back_together_roll_back_once(self, pr_consumer):
+        """Both sessions reach this pass ahead of the in-progress marker. A
+        relative `reset --soft HEAD~1` run by each would take main one commit
+        behind its upstream — the knob's own commit, the operator's."""
+        c = pr_consumer
+        git(c.path, "submodule", "update", "--remote", "--merge", "--", VENDOR)
+        git(c.path, "add", VENDOR)
+        git(c.path, "commit", "-qm", MSG_SUB, "--", VENDOR)
+        write_shim(c, hold_when='[ "$1" = update-ref ]')
+        c.kill_flag.write_text("")
+        first = start_hook(c)
+        deadline = time.monotonic() + 60
+        while not c.held.exists():
+            assert time.monotonic() < deadline, "the first run never reached the hold"
+            time.sleep(0.05)
+
+        second = run_hook(c)
+        c.release.write_text("")
+        assert finish_hook(first).returncode == 0
+
+        assert second.returncode == 0, second.stderr
+        _main_never_moved(c)
+        _assert_content_matches_pointer(c)
         assert len(_creates(c.gh)) == 1
