@@ -169,10 +169,11 @@
 4771 1596 skills/orchestrating-issue-backlog/references/shared-files.md
 11124 4134 skills/patching-hosts/SKILL.md
 6513 2393 skills/patching-hosts/references/datastores.md
-20469 8199 skills/patching-hosts/references/environments/exe-dev-exeuntu.md
+20576 8270 skills/patching-hosts/references/environments/exe-dev-exeuntu.md
+4361 1755 skills/patching-hosts/references/environments/exe-dev-tailscale.md
 13632 4824 skills/patching-hosts/references/knob.md
 15595 5609 skills/patching-hosts/references/policy.md
-7768 2923 skills/patching-hosts/references/process-log.md
+8492 3245 skills/patching-hosts/references/process-log.md
 1415 482 skills/patching-hosts/references/process-log/2026/2026-09-21-broker.md
 1191 415 skills/patching-hosts/references/process-log/2026/2026-09-22-archiver.md
 1816 660 skills/patching-hosts/references/process-log/2026/2026-09-26-archiver.md

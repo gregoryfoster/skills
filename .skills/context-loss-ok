@@ -381,3 +381,8 @@ AGENTS.md :: tighten :: into a conflict, while a new per-rule file merges clean.
 AGENTS.md :: tighten :: findable by filename. Extend an existing file only when the new test belongs to
 AGENTS.md :: tighten :: the rule that file already owns.
 
+# patching-hosts#432, CR 1656: the profile's Tailscale paragraphs moved into
+# environments/exe-dev-tailscale.md, and the drop's same-file pointer to
+# "Packages that restart their own services" now names the profile. The move
+# that invalidated the anchor is the same run that re-aimed it.
+skills/patching-hosts/references/environments/exe-dev-exeuntu.md :: retarget :: **What the drop costs, measured:** about 2 s. The package's postinst restarts `tailscaled` ([below](#packages-that-restart-their-own-services))
