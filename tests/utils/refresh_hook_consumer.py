@@ -134,15 +134,26 @@ def build(tmp_path: Path, *, doctor_tracked: bool = True) -> SimpleNamespace:
         v1=v1,
         v2=v2,
         kill_flag=tmp_path / "kill-armed",
+        held=tmp_path / "held",
+        release=tmp_path / "release",
     )
     write_shim(ns)
     return ns
 
 
-def write_shim(c: SimpleNamespace, kill_when: str = "", signal_name: str = "KILL"):
+def write_shim(
+    c: SimpleNamespace,
+    kill_when: str = "",
+    signal_name: str = "KILL",
+    hold_when: str = "",
+):
     """A `git` on the hook's PATH that delegates to real git, and once — while
     `c.kill_flag` exists — kills the run's whole process group when the
-    `kill_when` test (a bash condition over "$@") holds."""
+    `kill_when` test (a bash condition over "$@") holds.
+
+    `hold_when` instead parks the run there, once: it creates `c.held` and
+    waits until `c.release` exists, so a test can start a second session
+    while the first is mid-refresh (CR 1789)."""
     real_git = shutil.which("git") or "/usr/bin/git"
     arm = ""
     if kill_when:
@@ -151,6 +162,14 @@ def write_shim(c: SimpleNamespace, kill_when: str = "", signal_name: str = "KILL
             f'  rm -f "{c.kill_flag}"\n'
             f"  kill -{signal_name} 0\n"
             "  sleep 5\n"
+            "fi\n"
+        )
+    if hold_when:
+        arm += (
+            f'if [ -f "{c.kill_flag}" ] && {hold_when}; then\n'
+            f'  rm -f "{c.kill_flag}"\n'
+            f'  : > "{c.held}"\n'
+            f'  while [ ! -f "{c.release}" ]; do sleep 0.05; done\n'
             "fi\n"
         )
     shim = c.bindir / "git"
@@ -177,12 +196,11 @@ def arm_pre_commit_kill(c: SimpleNamespace, signal_name: str) -> None:
     c.kill_flag.write_text("")
 
 
-def run_hook(c: SimpleNamespace, timeout: float = 120) -> subprocess.CompletedProcess:
-    """One session start. Waits for the whole process group to be gone, so a
-    killed run's git children cannot still be writing when the test looks."""
+def start_hook(c: SimpleNamespace) -> subprocess.Popen:
+    """A session start, not waited for — `finish_hook` collects it."""
     env = clean_env()
     env["PATH"] = f"{c.bindir}:{env.get('PATH', '/usr/bin:/bin')}"
-    proc = subprocess.Popen(
+    return subprocess.Popen(
         ["bash", str(HOOK)],
         cwd=c.path,
         env=env,
@@ -191,6 +209,18 @@ def run_hook(c: SimpleNamespace, timeout: float = 120) -> subprocess.CompletedPr
         text=True,
         start_new_session=True,
     )
+
+
+def run_hook(c: SimpleNamespace, timeout: float = 120) -> subprocess.CompletedProcess:
+    """One session start, waited for."""
+    return finish_hook(start_hook(c), timeout)
+
+
+def finish_hook(
+    proc: subprocess.Popen, timeout: float = 120
+) -> subprocess.CompletedProcess:
+    """Waits for the whole process group to be gone, so a killed run's git
+    children cannot still be writing when the test looks."""
     out, err = proc.communicate(timeout=timeout)
     deadline = time.monotonic() + 30
     while time.monotonic() < deadline:
