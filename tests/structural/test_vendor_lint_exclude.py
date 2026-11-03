@@ -13,6 +13,9 @@ What this file pins:
 
 - **The issue's own case is reported**: a consumer whose `[tool.ruff]` does not
   exclude `skills-vendor/` gets a doctor warning that names the file and the fix.
+- **The fix fits the table**: where the table already has an `extend-exclude`,
+  the doctor says to append to it, since a second one is a duplicate key ruff
+  refuses (CR 1806).
 - **The check reads the config ruff itself reads**: `.ruff.toml`, then
   `ruff.toml`, then `pyproject.toml`'s `[tool.ruff]`. An exclude in
   `[tool.ruff.lint]` does not count, because `ruff format` still reads the
@@ -143,6 +146,66 @@ class TestTheIssuesCase:
             "the warning must print the line to add, not only name the gap"
         )
         assert "#336" in result.stderr
+
+
+# A [tool.ruff] that already carries an extend-exclude, without the vendor.
+EXTENDS_WITHOUT_VENDOR = """\
+[project]
+name = "status"
+
+[tool.ruff]
+line-length = 100
+extend-exclude = ["alembic/versions/"]
+
+[tool.ruff.lint]
+select = ["E", "F"]
+"""
+
+
+class TestAnExistingExtendExclude:
+    """CR 1806. The remedy printed a literal `extend-exclude = [...]` line even
+    where the table already had one; added as printed, that is a duplicate
+    TOML key, and ruff refuses the whole file."""
+
+    @pytest.mark.parametrize(
+        "cfg, text, where",
+        [
+            ("pyproject.toml", EXTENDS_WITHOUT_VENDOR, "[tool.ruff] in pyproject.toml"),
+            (
+                "ruff.toml",
+                'line-length = 100\nextend-exclude = [\n    "alembic/",\n]\n',
+                "the top level of ruff.toml",
+            ),
+        ],
+        ids=["pyproject", "ruff-toml-multiline"],
+    )
+    def test_the_remedy_says_append_not_add(self, consumer, cfg, text, where):
+        (consumer / cfg).write_text(text)
+        result = _doctor(consumer)
+        assert result.returncode == 0, result.stderr
+        assert MARKER in result.stderr, result.stderr
+        assert 'extend-exclude = ["skills-vendor/"]' not in result.stderr, (
+            "the doctor told a config that already has extend-exclude to add a "
+            f"second one, a duplicate key (CR 1806):\n{result.stderr}"
+        )
+        flat = " ".join(
+            ln.removeprefix("doctor:").strip() for ln in result.stderr.splitlines()
+        )
+        assert (
+            'append "skills-vendor/" to the existing extend-exclude array in '
+            + where
+            in flat
+        ), result.stderr
+
+    def test_a_lint_only_extend_exclude_still_gets_the_line(self, consumer):
+        """Only the table the doctor reads counts: an extend-exclude in
+        [tool.ruff.lint] is another table's key, so the line to add is still
+        right."""
+        (consumer / "pyproject.toml").write_text(
+            UNEXCLUDED + 'extend-exclude = ["alembic/"]\n'
+        )
+        result = _doctor(consumer)
+        assert 'extend-exclude = ["skills-vendor/"]' in result.stderr, result.stderr
 
 
 # ------------------------------------------------------- what counts as ruff
@@ -312,6 +375,31 @@ class TestTheRemedyWorks:
         fmt = _ruff(consumer, "format", "--check", ".")
         assert fmt.returncode == 0, fmt.stdout + fmt.stderr
 
+        assert MARKER not in _doctor(consumer).stderr
+
+    def test_the_append_works_where_a_second_line_would_not(self, consumer: Path):
+        """CR 1806, in ruff: the old remedy beside an existing extend-exclude
+        is a duplicate key ruff refuses, and the append the doctor now asks
+        for keeps ruff out of the vendor."""
+        existing = 'extend-exclude = ["alembic/versions/"]\n'
+        (consumer / "pyproject.toml").write_text(
+            EXTENDS_WITHOUT_VENDOR.replace(
+                existing, existing + 'extend-exclude = ["skills-vendor/"]\n'
+            )
+        )
+        dup = _ruff(consumer, "check", ".")
+        assert dup.returncode == 2 and "duplicate key" in dup.stderr, (
+            "precondition: ruff refuses a duplicate extend-exclude\n" + dup.stderr
+        )
+
+        (consumer / "pyproject.toml").write_text(
+            EXTENDS_WITHOUT_VENDOR.replace(
+                '["alembic/versions/"]', '["alembic/versions/", "skills-vendor/"]'
+            )
+        )
+        after = _ruff(consumer, "check", "--show-files", ".")
+        assert after.returncode == 0, after.stderr
+        assert "skills-vendor" not in after.stdout, after.stdout
         assert MARKER not in _doctor(consumer).stderr
 
 
