@@ -691,8 +691,9 @@ _reconcile_pr() {
 # managing-skills is the fallback when the first fails; the loop used to break
 # after the first attempt either way, leaving a stale doctor with one $LOG line
 # as its only trace. When every installer fails, that reaches stderr — the
-# channel every other failure here uses — once per run although this is called
-# up to three times, and only when the run's LAST call failed (#300 CR 14).
+# channel every other failure here uses — once per run although a run can call
+# this several times (three call sites, the third once per restore), and only
+# when the run's LAST call failed (#300 CR 14, CR 1809).
 # Warning from call site 1 on the spot was false whenever call site 2 then
 # succeeded: a broken pre-bump installer that the bump replaces with a working
 # one leaves a freshly installed and committed doctor, which "left as it was"
