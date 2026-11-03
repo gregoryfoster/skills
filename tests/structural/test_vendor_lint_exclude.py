@@ -13,10 +13,15 @@ What this file pins:
 
 - **The issue's own case is reported**: a consumer whose `[tool.ruff]` does not
   exclude `skills-vendor/` gets a doctor warning that names the file and the fix.
+- **The fix fits the table**: where the table already has an `extend-exclude`,
+  the doctor says to append to it, since a second one is a duplicate key ruff
+  refuses (CR 1806).
 - **The check reads the config ruff itself reads**: `.ruff.toml`, then
   `ruff.toml`, then `pyproject.toml`'s `[tool.ruff]`. An exclude in
   `[tool.ruff.lint]` does not count, because `ruff format` still reads the
-  vendor then [measured, ruff 0.16.6].
+  vendor then [measured, ruff 0.16.6]; nor does the same exclude as a dotted
+  `lint.` or `format.` key. Only a header-shaped line opens a table, not a
+  line inside an array that starts with `[` (CR 1814).
 - **Silent where it has nothing to say**: no `skills-vendor/`, no ruff config,
   an exclude already present, or a comment in the table naming the vendor
   (the documented way to lint it on purpose).
@@ -145,6 +150,65 @@ class TestTheIssuesCase:
         assert "#336" in result.stderr
 
 
+# A [tool.ruff] that already carries an extend-exclude, without the vendor.
+EXTENDS_WITHOUT_VENDOR = """\
+[project]
+name = "status"
+
+[tool.ruff]
+line-length = 100
+extend-exclude = ["alembic/versions/"]
+
+[tool.ruff.lint]
+select = ["E", "F"]
+"""
+
+
+class TestAnExistingExtendExclude:
+    """CR 1806. The remedy printed a literal `extend-exclude = [...]` line even
+    where the table already had one; added as printed, that is a duplicate
+    TOML key, and ruff refuses the whole file."""
+
+    @pytest.mark.parametrize(
+        "cfg, text, where",
+        [
+            ("pyproject.toml", EXTENDS_WITHOUT_VENDOR, "[tool.ruff] in pyproject.toml"),
+            (
+                "ruff.toml",
+                'line-length = 100\nextend-exclude = [\n    "alembic/",\n]\n',
+                "the top level of ruff.toml",
+            ),
+        ],
+        ids=["pyproject", "ruff-toml-multiline"],
+    )
+    def test_the_remedy_says_append_not_add(self, consumer, cfg, text, where):
+        (consumer / cfg).write_text(text)
+        result = _doctor(consumer)
+        assert result.returncode == 0, result.stderr
+        assert MARKER in result.stderr, result.stderr
+        assert 'extend-exclude = ["skills-vendor/"]' not in result.stderr, (
+            "the doctor told a config that already has extend-exclude to add a "
+            f"second one, a duplicate key (CR 1806):\n{result.stderr}"
+        )
+        flat = " ".join(
+            ln.removeprefix("doctor:").strip() for ln in result.stderr.splitlines()
+        ).lower()
+        assert (
+            'append "skills-vendor/" to the existing extend-exclude array in ' + where
+            in flat
+        ), result.stderr
+
+    def test_a_lint_only_extend_exclude_still_gets_the_line(self, consumer):
+        """Only the table the doctor reads counts: an extend-exclude in
+        [tool.ruff.lint] is another table's key, so the line to add is still
+        right."""
+        (consumer / "pyproject.toml").write_text(
+            UNEXCLUDED + 'extend-exclude = ["alembic/"]\n'
+        )
+        result = _doctor(consumer)
+        assert 'extend-exclude = ["skills-vendor/"]' in result.stderr, result.stderr
+
+
 # ------------------------------------------------------- what counts as ruff
 
 
@@ -193,6 +257,69 @@ class TestTheCheckReadsTheConfigRuffReads:
         )
         result = _doctor(consumer)
         assert MARKER in result.stderr, result.stderr
+
+
+class TestOnlyHeaderShapedLinesAreTables:
+    """CR 1814. Any line starting `[` was read as a table header, so a line
+    inside a multi-line array left the table and the exclude after it went
+    unseen: a false warning, against the rule that an over-eager match costs
+    a missed warning, never a wrong one. And a dotted `lint.` key inside the
+    table counted as covered, though it sets [tool.ruff.lint], which does not
+    count in its header form."""
+
+    def test_a_bracket_line_inside_an_array_is_not_a_table(self, consumer):
+        # The doctor reads lines, not ruff's schema: what matters is a value
+        # line that starts with "[" ahead of the exclude.
+        (consumer / "pyproject.toml").write_text(
+            '[project]\nname = "x"\n\n[tool.ruff]\nline-length = 100\n'
+            'pairs = [\n    ["a", "b"],\n    [1, 2],\n]\n'
+            'extend-exclude = ["skills-vendor/"]\n'
+        )
+        result = _doctor(consumer)
+        assert MARKER not in result.stderr, result.stderr
+
+    @pytest.mark.parametrize(
+        "header", ["[tool.ruff]  # the linter", "[ tool . ruff ]", "[tool.ruff ]"]
+    )
+    def test_a_header_with_a_comment_or_spaces_is_still_a_table(self, consumer, header):
+        (consumer / "pyproject.toml").write_text(
+            f'[project]\nname = "x"\n\n{header}\nline-length = 100\n'
+        )
+        result = _doctor(consumer)
+        assert MARKER in result.stderr, result.stderr
+
+    @pytest.mark.parametrize(
+        "cfg, text",
+        [
+            (
+                "pyproject.toml",
+                '[tool.ruff]\nline-length = 100\nlint.exclude = ["skills-vendor/"]\n',
+            ),
+            (
+                "pyproject.toml",
+                '[tool.ruff]\nlint.exclude = [\n    "skills-vendor/",\n]\n'
+                "line-length = 100\n",
+            ),
+            ("ruff.toml", 'line-length = 100\nlint.exclude = ["skills-vendor/"]\n'),
+            (".ruff.toml", 'format.exclude = [\n    "skills-vendor/",\n]\n'),
+        ],
+        ids=["pyproject-inline", "pyproject-multiline", "ruff-toml", "format"],
+    )
+    def test_a_dotted_sub_table_key_does_not_cover(self, consumer, cfg, text):
+        (consumer / cfg).write_text(text)
+        result = _doctor(consumer)
+        assert MARKER in result.stderr, (
+            f"a dotted sub-table exclude in {cfg} counted as covered (CR 1814):\n"
+            + result.stderr
+        )
+
+    def test_a_comment_after_a_dotted_array_still_opts_out(self, consumer):
+        (consumer / "pyproject.toml").write_text(
+            '[tool.ruff]\nlint.select = [\n    "E",\n]\n'
+            "# skills-vendor/ is linted on purpose here.\n"
+        )
+        result = _doctor(consumer)
+        assert MARKER not in result.stderr, result.stderr
 
 
 class TestSilentWhereThereIsNothingToSay:
@@ -312,6 +439,31 @@ class TestTheRemedyWorks:
         fmt = _ruff(consumer, "format", "--check", ".")
         assert fmt.returncode == 0, fmt.stdout + fmt.stderr
 
+        assert MARKER not in _doctor(consumer).stderr
+
+    def test_the_append_works_where_a_second_line_would_not(self, consumer: Path):
+        """CR 1806, in ruff: the old remedy beside an existing extend-exclude
+        is a duplicate key ruff refuses, and the append the doctor now asks
+        for keeps ruff out of the vendor."""
+        existing = 'extend-exclude = ["alembic/versions/"]\n'
+        (consumer / "pyproject.toml").write_text(
+            EXTENDS_WITHOUT_VENDOR.replace(
+                existing, existing + 'extend-exclude = ["skills-vendor/"]\n'
+            )
+        )
+        dup = _ruff(consumer, "check", ".")
+        assert dup.returncode == 2 and "duplicate key" in dup.stderr, (
+            "precondition: ruff refuses a duplicate extend-exclude\n" + dup.stderr
+        )
+
+        (consumer / "pyproject.toml").write_text(
+            EXTENDS_WITHOUT_VENDOR.replace(
+                '["alembic/versions/"]', '["alembic/versions/", "skills-vendor/"]'
+            )
+        )
+        after = _ruff(consumer, "check", "--show-files", ".")
+        assert after.returncode == 0, after.stderr
+        assert "skills-vendor" not in after.stdout, after.stdout
         assert MARKER not in _doctor(consumer).stderr
 
 

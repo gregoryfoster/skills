@@ -49,10 +49,11 @@ Copy them from there; one copy cannot drift.
   the key goes at the top level.
 - **ty** walks the whole tree by default. Without the exclude, its output is
   mostly unresolved-import noise from the vendor.
-- **pytest.** `testpaths` covers a bare `pytest` only. `pytest .`, or any path
-  given on the command line, still walks into `skills-vendor/*/tests/` and
-  collects upstream's suite. If the project runs pytest that way, also add
-  `skills-vendor` to `norecursedirs`. That key replaces pytest's default list,
+- **pytest.** `testpaths` applies only when pytest is given no path. A path
+  that contains the vendor, such as `pytest .`, still walks into
+  `skills-vendor/*/tests/` and collects upstream's suite; `pytest tests/` does
+  not. If the project runs pytest over the root, also add `skills-vendor` to
+  `norecursedirs`. That key replaces pytest's default list,
   so restate the defaults with it: `*.egg`, `.*`, `_darcs`, `build`, `CVS`,
   `dist`, `node_modules`, `venv` and `{arch}` [measured, pytest 9.0.3].
 - **Anything else that walks the tree** reads the vendor the same way: another
@@ -65,8 +66,13 @@ Copy them from there; one copy cannot drift.
 `.skills/doctor.sh` warns when the root ruff config never names
 `skills-vendor` in its top-level table. The root config is the file ruff
 itself would read, in the order above, and for `pyproject.toml` the top-level
-table is `[tool.ruff]`. The doctor stays silent when there is no
-`skills-vendor/` directory or no ruff config at the root.
+table is `[tool.ruff]`. A dotted key in that table, such as `lint.exclude`,
+belongs to a sub-table and does not count, any more than `[tool.ruff.lint]`
+does. The doctor stays silent when there is no
+`skills-vendor/` directory or no ruff config at the root. Its warning prints
+the `extend-exclude` line to add, or, where that table already has an
+`extend-exclude`, says to append `"skills-vendor/"` to it: a second
+`extend-exclude` is a duplicate key, and ruff refuses the whole file.
 
 The warning is advisory in every mode, `--check-only` included, and never
 changes the exit code. The gap is in the repo's tooling, not in the diff under
@@ -74,4 +80,4 @@ review. Only ruff is read: ty is non-gating where `init-project-fastapi`
 scaffolds it, and pytest's config can live in several files.
 
 To lint the vendor on purpose, say so in a comment in that table that names
-`skills-vendor`. The doctor counts any mention there as covered.
+`skills-vendor`. The doctor counts any other mention there as covered.

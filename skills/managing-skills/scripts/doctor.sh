@@ -557,7 +557,8 @@ check_unpushed
 # Reads the config ruff itself would read at the root: .ruff.toml, then
 # ruff.toml (both top-level keys), then pyproject.toml's [tool.ruff] table. An
 # exclude in [tool.ruff.lint] does not count, because `ruff format` still reads
-# the vendor then [measured, ruff 0.16.6]. Any mention of skills-vendor in that
+# the vendor then [measured, ruff 0.16.6], and nor does the same exclude as a
+# dotted lint. or format. key. Any other mention of skills-vendor in that
 # table counts as covered, comments included: that is the documented way to
 # lint the vendor on purpose, and an over-eager match costs a missed warning,
 # never a wrong one. Not a TOML parser, deliberately, like frontmatter_value
@@ -581,25 +582,52 @@ check_vendor_lint_exclude() {
     return 0
   fi
   # none: pyproject.toml has no ruff table, so ruff is not configured here.
+  # extend: uncovered, and the table already has an extend-exclude, so the fix
+  # is an append: a second extend-exclude line is a duplicate TOML key, which
+  # ruff refuses for the whole file (CR 1806).
+  #
+  # A table header is a whole line of bare dotted keys in [ ] or [[ ]], then at
+  # most a comment (CR 1814). A line inside a multi-line array can start with
+  # "[" too; read as a header, it left the table and the exclude after it went
+  # unseen, a wrong warning. A quoted-key header is not recognised, which can
+  # only keep the previous table open: a missed warning at worst. A dotted key
+  # in the table (lint.exclude, format.exclude) sets a sub-table, which counts
+  # no more than its [tool.ruff.lint] header form does; its multi-line array
+  # value runs to the line holding the closing bracket.
   verdict="$(awk -v want="$table" '
-    BEGIN { cur = ""; seen = (want == ""); hit = 0 }
-    /^[[:space:]]*\[/ {
+    BEGIN { cur = ""; seen = (want == ""); hit = 0; ext = 0; dotted = 0 }
+    /^[[:space:]]*\[\[?[[:space:]]*[A-Za-z_][A-Za-z0-9_-]*([[:space:]]*\.[[:space:]]*[A-Za-z_][A-Za-z0-9_-]*)*[[:space:]]*\]\]?[[:space:]]*(#.*)?$/ {
       cur = $0
       sub(/^[[:space:]]*\[+[[:space:]]*/, "", cur)
       sub(/[[:space:]]*\].*$/, "", cur)
+      gsub(/[[:space:]]*\.[[:space:]]*/, ".", cur)
       if (want != "" && (cur == want || index(cur, want ".") == 1)) seen = 1
+      dotted = 0
       next
     }
-    cur == want && /skills-vendor/ { hit = 1 }
-    END { print (!seen ? "none" : (hit ? "covered" : "uncovered")) }
+    cur != want { next }
+    dotted { if ($0 ~ /\]/) dotted = 0; next }
+    /^[[:space:]]*[A-Za-z0-9_-]+[[:space:]]*\.[^=]*=/ {
+      dotted = ($0 ~ /=[[:space:]]*\[/ && $0 !~ /\]/)
+      next
+    }
+    /^[[:space:]]*extend-exclude[[:space:]]*=/ { ext = 1 }
+    /skills-vendor/ { hit = 1 }
+    END { print (!seen ? "none" : (hit ? "covered" : (ext ? "extend" : "uncovered"))) }
   ' "$cfg" 2>/dev/null || true)"
-  [ "$verdict" = "uncovered" ] || return 0
+  case "$verdict" in uncovered|extend) ;; *) return 0 ;; esac
 
   echo "doctor: $cfg configures ruff without excluding skills-vendor/, so 'ruff" >&2
   echo "doctor:   check .' and 'ruff format --check .' read vendored code this repo" >&2
   echo "doctor:   must not edit, with this repo's ruff. A refresh can turn them red" >&2
-  echo "doctor:   with no local change (#336). Add to $where:" >&2
-  echo "doctor:     extend-exclude = [\"skills-vendor/\"]" >&2
+  if [ "$verdict" = "extend" ]; then
+    echo "doctor:   with no local change (#336). Append \"skills-vendor/\" to the" >&2
+    echo "doctor:   existing extend-exclude array in $where; a second" >&2
+    echo "doctor:   extend-exclude line is a duplicate key, which ruff refuses." >&2
+  else
+    echo "doctor:   with no local change (#336). Add to $where:" >&2
+    echo "doctor:     extend-exclude = [\"skills-vendor/\"]" >&2
+  fi
   echo "doctor:   ty and pytest want the same: managing-skills'" >&2
   echo "doctor:   references/excluding-vendored-code.md." >&2
   return 0
