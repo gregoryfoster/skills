@@ -454,22 +454,6 @@ def test_a_caller_under_no_link_cannot_learn_one(repo, linked_root):
     assert str(proc.pid) not in _listed(result.stdout), result.stdout
 
 
-def test_at_a_tie_the_longer_spelling_wins(tmp_path, repo):
-    """`<real>/b` links back to `<real>`, so both spellings start at the same
-    place in `<real>/b/ghost-branch/x`. The shorter one reads the name `b`,
-    which exists, and would hide the zombie."""
-    real = tmp_path / "loop-wt"
-    real.mkdir()
-    (real / "b").symlink_to(real, target_is_directory=True)
-    proc = _sleeper(f"{real.resolve()}/b/ghost-branch/x")
-    try:
-        result = _audit_with_root(repo, real.resolve() / "b")
-    finally:
-        _stop(proc)
-    assert result.returncode == 1, (result.returncode, result.stdout, result.stderr)
-    assert str(proc.pid) in _listed(result.stdout), result.stdout
-
-
 # --- The caller's spelling of the root (#533, CR 1738) -----------------------
 #
 # The default root is built with `pwd -P`, so it is always the resolved
@@ -565,3 +549,20 @@ def test_the_callers_spelling_is_checked_against_the_root(tmp_path):
         _stop(proc)
     assert result.returncode == 0, (result.returncode, result.stdout, result.stderr)
     assert str(proc.pid) not in _listed(result.stdout), result.stdout
+
+
+def test_at_a_tie_the_longer_spelling_wins(repo):
+    """`<root>/b` links back to `<root>`, and the caller stands in it, so the
+    root (`<root>`) and the caller's spelling (`<root>/b`) start at the same
+    place in `<root>/b/ghost-branch/x`. The shorter reads the name `b`, which
+    exists, and would hide the zombie. The longer is the later spelling here,
+    so taking the first one found would get this wrong."""
+    root = _root(repo).resolve()
+    (root / "b").symlink_to(root, target_is_directory=True)
+    proc = _sleeper(f"{root}/b/ghost-branch/x")
+    try:
+        result = _audit_from(root / "b")
+    finally:
+        _stop(proc)
+    assert result.returncode == 1, (result.returncode, result.stdout, result.stderr)
+    assert str(proc.pid) in _listed(result.stdout), result.stdout

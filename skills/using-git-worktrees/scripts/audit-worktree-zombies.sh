@@ -8,8 +8,9 @@ usage() {
   echo ""
   echo "Lists processes whose cmdline references a path under the resolved"
   echo "worktree root that no longer exists on disk. Detection-only — does"
-  echo "not kill anything. The root matches as given and as resolved through"
-  echo "symlinks; only the first worktree path in a cmdline is checked."
+  echo "not kill anything. The root matches as given, as resolved through"
+  echo "symlinks, and as the caller's directory spells it; only the first"
+  echo "worktree path in a cmdline is checked."
   echo ""
   echo "Searches for zombies under the resolved worktree root (env WORKTREE_ROOT"
   echo "→ .skills/worktree_root → <repo>/.worktrees/, in that order)."
@@ -73,18 +74,48 @@ WORKTREE_ROOT=$(bash "$SCRIPT_DIR/resolve-worktree-root.sh") || {
 # match real cmdlines — silent false negatives.
 WORKTREE_ROOT="${WORKTREE_ROOT%/}"
 
-# A root reached through a symlink has a second spelling, and a process started
-# under the one the audit was not given went unlisted, with "No worktree
-# zombies." to say so (#533). So the root is matched as configured and as
-# resolved through symlinks. Only an absolute root that exists has a resolved
-# spelling here: `cd` fails on a missing one, and a relative one would resolve
-# against wherever the audit happened to run. The converse stays out of reach:
-# a root given already resolved, as the default root is (the resolver builds it
-# with `pwd -P`), names no link, so a process started under some symlink to it
-# is still missed.
+# A root reached through a symlink has more than one spelling, and a process
+# started under one the audit was not given went unlisted, with "No worktree
+# zombies." to say so (#533). So the root is matched as configured, as resolved
+# through symlinks, and as the caller spells it. Only an absolute root that
+# exists has the other two: `cd` fails on a missing one, and a relative one
+# would resolve against wherever the audit happened to run.
 RESOLVED_ROOT=""
 if [[ "$WORKTREE_ROOT" == /* ]]; then
   RESOLVED_ROOT=$(cd -- "$WORKTREE_ROOT" 2>/dev/null && pwd -P) || RESOLVED_ROOT=""
+fi
+
+# The caller's spelling of a resolved path, or nothing. The default root is
+# built with `pwd -P`, so it is always the resolved spelling, and a repo reached
+# through a symlink (macOS's /tmp is /private/tmp) left a process under the
+# caller's `/tmp/<repo>/.worktrees/<gone>` unlisted (CR 1738). The caller's
+# `pwd -L` and `pwd -P` name the link: stripping their common trailing
+# components leaves one mapping, physical prefix to logical prefix. It works
+# from a linked worktree too, where the caller's toplevel is not the primary
+# checkout the default root lives under, since only the prefix is used. The
+# strip can overreach (`L/proj` linked to `R/proj` maps `R` to `L`, which is no
+# spelling of `R`), so a derived spelling counts only if it resolves to the
+# root. A caller under no link learns nothing: a process under some other
+# symlink to the root is still missed.
+caller_spelling() {
+  local resolved=$1 logical physical candidate
+  logical=$(pwd -L 2>/dev/null) && physical=$(pwd -P 2>/dev/null) || return 0
+  [[ "$logical" == /* && "$physical" == /* && "$logical" != "$physical" ]] || return 0
+  while [[ -n "$logical" && -n "$physical" && "${logical##*/}" == "${physical##*/}" ]]; do
+    logical=${logical%/*}
+    physical=${physical%/*}
+  done
+  case "$resolved" in
+    "$physical" | "$physical"/*) candidate="$logical${resolved#"$physical"}" ;;
+    *) return 0 ;;
+  esac
+  [[ "$(cd -- "$candidate" 2>/dev/null && pwd -P)" == "$resolved" ]] || return 0
+  printf '%s\n' "$candidate"
+}
+
+CALLER_ROOT=""
+if [[ -n "$RESOLVED_ROOT" ]]; then
+  CALLER_ROOT=$(caller_spelling "$RESOLVED_ROOT")
 fi
 
 # Enumerate with `ps`, not `pgrep -af` (#335). On macOS and the BSDs `pgrep -a`
@@ -110,8 +141,8 @@ PS_TABLE=$(ps -A -ww -o pid= -o ppid= -o args=) || {
 # `grep` filter would carry the pattern in its own argv and could match itself,
 # and awk's `-v` would rewrite any backslash in the path. Each candidate is
 # printed as `<pid> TAB <root>/<name> TAB <args>`, where <name> is the first
-# path component after the root — the worktree the process belongs to. With two
-# spellings, the root is whichever comes first in the text, so a process is
+# path component after the root — the worktree the process belongs to. Of the
+# root's spellings, whichever comes first in the text is used, so a process is
 # still checked by the first worktree name it names, not by any. <name>
 # also ends at shell punctuation (`;&|<>()'"` and backtick) and at `:`, since a
 # shell's command text writes `cd <root>/<name>; …` or `PATH=<root>/<name>:…`.
@@ -124,11 +155,16 @@ PS_TABLE=$(ps -A -ww -o pid= -o ppid= -o args=) || {
 # up: under worktree-create.sh's preamble the wrapper is the audit's
 # grandparent. Listing either would make the `Kill all:` recipe kill the caller.
 CANDIDATES=$(AUDIT_ROOT="$WORKTREE_ROOT/" \
-  AUDIT_ROOT_RESOLVED="${RESOLVED_ROOT:+$RESOLVED_ROOT/}" AUDIT_SELF=$$ awk '
+  AUDIT_ROOT_RESOLVED="${RESOLVED_ROOT:+$RESOLVED_ROOT/}" \
+  AUDIT_ROOT_CALLER="${CALLER_ROOT:+$CALLER_ROOT/}" AUDIT_SELF=$$ awk '
   BEGIN {
     roots[1] = ENVIRON["AUDIT_ROOT"]; nroots = 1
-    r = ENVIRON["AUDIT_ROOT_RESOLVED"]
-    if (r != "" && r != roots[1]) roots[++nroots] = r
+    split("AUDIT_ROOT_RESOLVED AUDIT_ROOT_CALLER", more, " ")
+    for (k = 1; k <= 2; k++) {
+      r = ENVIRON[more[k]]
+      for (j = 1; j <= nroots; j++) if (roots[j] == r) r = ""
+      if (r != "") roots[++nroots] = r
+    }
   }
   {
     ppid[$1] = $2
