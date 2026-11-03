@@ -39,6 +39,8 @@ Coverage:
 - a killed run, then a run that cannot redo the bump (main carries an
   operator's unpushed commit)               → the hook's staging is undone
 - a human's staged path beside the hook's   → left staged, and not committed
+- killed after the update, a human's path staged and none of the hook's
+  (CR 1800)                                 → the next run ends, under bash 3.2
 - a manual bump a human staged by hand      → left staged (no marker)
 - a kill that leaves git's index.lock       → the lock is never removed; the
                                               still-staged paths are named
@@ -273,3 +275,27 @@ class TestTheHeal:
         assert f"{VENDOR}" in result.stderr and "still staged" in result.stderr, (
             result.stderr
         )
+
+    def test_a_kill_after_the_update_beside_a_humans_staged_path(self, consumer):
+        """CR 1800: killed after the update and before `git add` (11-02's
+        window) with a human's own path staged, the killed run had staged
+        nothing, so the heal's list of the hook's staged paths is empty — and
+        `${own[*]}` on an empty array is an unbound variable under bash 3.2's
+        `set -u`. The next session died in the heal, its day unspent, and so
+        did every session after it."""
+        (consumer.path / "notes.txt").write_text("wip\n")
+        git(consumer.path, "add", "notes.txt")
+        _kill_once(consumer, BEFORE_COMMIT_BLOCK)
+        assert (consumer.path / MARKER).exists(), "fixture: the kill keeps the marker"
+        assert staged(consumer) == ["notes.txt"]
+
+        result = run_hook(consumer)
+
+        assert "unbound variable" not in result.stderr, result.stderr
+        assert result.returncode == 0, result.stderr
+        assert lock(consumer).read_text().strip() == today(), (
+            "the run did not end: the day's lock is unspent"
+        )
+        assert staged(consumer) == ["notes.txt"]
+        assert gitlink(consumer) == consumer.after
+        assert not (consumer.path / MARKER).exists()
