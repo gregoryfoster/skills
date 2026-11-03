@@ -49,10 +49,11 @@ Copy them from there; one copy cannot drift.
   the key goes at the top level.
 - **ty** walks the whole tree by default. Without the exclude, its output is
   mostly unresolved-import noise from the vendor.
-- **pytest.** `testpaths` covers a bare `pytest` only. `pytest .`, or any path
-  given on the command line, still walks into `skills-vendor/*/tests/` and
-  collects upstream's suite. If the project runs pytest that way, also add
-  `skills-vendor` to `norecursedirs`. That key replaces pytest's default list,
+- **pytest.** `testpaths` applies only when pytest is given no path. A path
+  that contains the vendor, such as `pytest .`, still walks into
+  `skills-vendor/*/tests/` and collects upstream's suite; `pytest tests/` does
+  not. If the project runs pytest over the root, also add `skills-vendor` to
+  `norecursedirs`. That key replaces pytest's default list,
   so restate the defaults with it: `*.egg`, `.*`, `_darcs`, `build`, `CVS`,
   `dist`, `node_modules`, `venv` and `{arch}` [measured, pytest 9.0.3].
 - **Anything else that walks the tree** reads the vendor the same way: another
