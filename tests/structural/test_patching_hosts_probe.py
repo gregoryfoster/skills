@@ -219,14 +219,10 @@ def _finding(out: dict, fid: str, key: str = "findings") -> dict:
     return hits[0]
 
 
-def _dormant(out: dict, name: str) -> dict:
-    hits = [d for d in out["dormant"] if d["name"] == name]
-    assert hits, f"no {name} in dormant: {[d['name'] for d in out['dormant']]}"
-    return hits[0]
-
-
 @pytest.fixture
 def host(tmp_path) -> Host:
+    # The probe files' one `host`: _environment and _components bind this
+    # same fixture by name (#538).
     return Host(tmp_path).knob("class production\nposture automatic\n")
 
 
