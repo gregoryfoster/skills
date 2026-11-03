@@ -15,6 +15,13 @@
 # ONE DEFINITION, TWO COPIES. shipping-work and using-git-worktrees each ship
 # this file, because each skill resolves its own scripts (#63, #301).
 # tests/structural/test_merge_mode_knob.py holds them byte-identical.
+# THREE INLINE READERS also hold its grammar, for consumers that vendor
+# neither skill: curating-context's install-cadence.sh and the workflow step
+# it renders (tests/structural/test_cadence_merge_mode.py), and
+# managing-skills' skills-submodule-update.sh
+# (tests/structural/test_refresh_hook_pr_mode.py). Each feeds its reader the
+# inputs test_merge_mode_knob.py feeds this file, wherever they can reach
+# that reader, and wants this file's answer.
 #
 # THE KNOB is read from the primary checkout (the first `git worktree list`
 # entry), as .skills/deploy_command is: an untracked file does not exist in a

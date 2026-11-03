@@ -258,8 +258,9 @@ _log() {
   echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] $*" >>"$LOG" 2>/dev/null || true
 }
 
-# Stamp the lock BEFORE the check, like the submodule hook: a transient failure
-# (Docker mid-restart) must not re-run and re-log on every same-day session.
+# Stamp the lock BEFORE the check, as the submodule hook did until #555 moved
+# its stamp to the end of the run, so that a refresh killed part way retries.
+# Here a transient failure (Docker mid-restart) must not re-run and re-log on every same-day session.
 #
 # Checked, not `|| true`. The lock is the hook's only state, and it now lives in
 # the COMMON git dir — so a write that fails silently no longer re-reports in one

@@ -37,6 +37,8 @@ Example:
 git submodule add https://github.com/gregoryfoster/skills.git skills-vendor/gregoryfoster-skills
 ```
 
+Then exclude `skills-vendor/` from every tool that walks the tree (ruff, ty, pytest), or a refresh can turn a local lint red over code you must not edit: [references/excluding-vendored-code.md](references/excluding-vendored-code.md).
+
 #### Step 2 — Symlink desired skills
 
 Create relative symlinks from the project's `skills/` directory to the submodule:
@@ -139,7 +141,7 @@ git commit -m "chore: update skill submodules"
 
 `--init` is not optional. Without it, a submodule missing from `.git/config` — vendored content on disk, nothing registered — is skipped in silence and git still exits `0`, so the run reports success with the pointer unmoved ([#176](https://github.com/gregoryfoster/skills/issues/176)).
 
-No follow-up step is needed to refresh `.skills/doctor.sh` — it re-syncs itself on its next run and the auto-refresh hook re-installs it on session start. Re-run Step 2c's installer only to collapse the one-run lag when iterating on the doctor itself.
+`.skills/doctor.sh` keeps itself current (Step 2c). Re-run its installer only to collapse the one-run lag when iterating on the doctor itself.
 
 ### Installing the auto-refresh hook
 
@@ -150,12 +152,12 @@ Pulls upstream submodule changes once per calendar day, on `main` only, and auto
 - Skips silently on any branch other than `main`.
 - Skips silently if the project has no `skills-vendor/` directory.
 - Scopes updates to `skills-vendor/` — never touches other submodules a project may have.
-- Logs to `.git/skills-update.log` (auto-truncated to the last 200 lines once it crosses 64 KiB).
+- Logs to `.git/skills-update.log` (truncated to the last 200 lines past 64 KiB).
 - Matches diff scope to add scope, so unrelated dirty work cannot be absorbed and empty commits cannot be created. Exactly two paths are ever staged: `skills-vendor/` and, when present, `.skills/doctor.sh` — never `.skills/` wholesale, which would sweep in operator config like `.skills/plans_dir` and `.skills/worktree_root`.
 - Commit message names what changed: `chore: update skills submodules`, `chore: refresh .skills/doctor.sh`, or both.
-- Pushes what it commits; a failed push is rolled back rather than left unpushed.
+- Pushes what it commits, rolling back a failed push; under `.skills/merge_mode` `pr`, opens one PR.
 - **Installs/updates `.skills/doctor.sh`** every session on any branch, so a deleted doctor self-heals, and again after a refresh so a bump commits the doctor it ships (#299); **commits it** only past the `main` and once-per-day gates (#86). The first vendored installer to succeed wins; all failing reaches stderr (#300). Not in a fresh worktree, whose `skills-vendor/*` is empty.
-- To verify the hook is running, check `.git/skills-update.log` after a session start on `main`. Lines beginning `unexpected hook error` come from the ERR-trap backstop and mark an unanticipated failure path; the hook still exits 0.
+- To verify the hook is running, check `.git/skills-update.log` after a session start on `main`. Lines beginning `unexpected hook error` come from the ERR-trap backstop; the hook still exits 0.
 
 **Run the installer. Do not hand-execute the steps below.**
 
@@ -272,7 +274,4 @@ block for each — a rung-by-rung ladder for auth failures, a smaller
 
 **Self-budget:** held to a **6,000-token ratchet (estimate and exact)** by
 `tests/structural/test_skill_self_budget.py` — the repo's ordinary standard, not
-an exception to it. This file carried a named 8,750 exception until two curation
-passes created `references/` and demoted five units into it, ending 35% smaller
-and under the standard, so the exception was deleted rather than lowered.
-Growing this file means demoting again.
+an exception to it. Growing this file means demoting again.

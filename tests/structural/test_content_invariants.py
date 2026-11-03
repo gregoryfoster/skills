@@ -1935,7 +1935,10 @@ GATHER_CONTEXT_REQUIRED_COMMANDS = [
     "git diff --staged",
     "git diff --stat",
     "git log --oneline",
-    "git diff --name-only HEAD",
+    # Against the review base, not HEAD (#549): HEAD left a fully committed
+    # branch with nothing listed. test_gather_context_review_scope.py runs it.
+    # Unquoted paths, and `--` after the base (CR 1807).
+    'git -c core.quotePath=false diff --name-only "$_cd_base" --',
 ]
 
 

@@ -40,12 +40,19 @@ set -euo pipefail
 # where it fires and exits 0 in the subshell — measured, the checked
 # `$(git status …) || STATUS_RC=$?` below then reads rc 0, and a failed status
 # becomes "nothing to commit".
+#
+# A panic once the refresh has begun spends the day, as any run that ends does
+# (#555): the lock used to be stamped before the refresh, so an error there was
+# already damped, and a deterministic one must not re-run at every session.
 # Called by the ERR trap below; shellcheck does not count a trap as a call.
 # shellcheck disable=SC2329
 _hook_panic() {
   local rc=$?
   echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] unexpected hook error (rc=$rc)" \
     >> "${LOG:-/dev/null}" 2>/dev/null || true
+  if [ "${REFRESH_BEGUN:-0}" = "1" ]; then
+    _stamp_lock || true
+  fi
   exit 0
 }
 trap _hook_panic ERR
@@ -59,7 +66,11 @@ Once-per-day refresh of skills-vendor/ git submodules. Designed for
 invocation as a Claude Code SessionStart hook — never blocks a session.
 
 Behaviour:
-  - Runs at most once per UTC day (.git/skills-update.lock).
+  - Runs at most once per UTC day (.git/skills-update.lock). The day is
+    spent when a run ends, not when it starts: a run killed part way
+    leaves it for the next session, which first undoes any staging the
+    killed run left behind (.git/skills-update.staging marks a refresh in
+    progress).
   - Runs only on the main branch.
   - Scopes the submodule update to skills-vendor/ — never touches other
     submodules.
@@ -86,8 +97,16 @@ Behaviour:
     pushed is invisible to CI, to every other clone and to every fresh
     worktree; where a service reads the checkout it can refuse to start.
     If the push fails the commit is rolled back so the checkout matches the
-    remote, and the next session retries. Never pulls, never force-pushes,
-    and never touches a commit this hook did not write.
+    remote — the pointer, the vendored content and .skills/doctor.sh
+    alike — and the next session retries. A run that cannot push does not
+    refresh either. Never pulls, never force-pushes main, and never touches
+    a commit this hook did not write.
+  - With .skills/merge_mode 'pr' (read from the primary checkout, #560),
+    never pushes to main: the bump is proposed as ONE pull request from
+    skills/submodule-refresh, which later sessions update, and the
+    checkout's content stays on the pointer its index records. Needs gh. A
+    refusal is reported once and not retried. A knob that is present but
+    unusable is never read as 'direct': no refresh until it is fixed.
   - Logs to .git/skills-update.log (bounded to ~64 KiB / 200 lines).
   - Exits 0 on every non-fatal condition.
 
@@ -123,6 +142,30 @@ done
 gitdir="$(git rev-parse --git-dir 2>/dev/null)" || exit 0
 LOCK="$gitdir/skills-update.lock"
 LOG="$gitdir/skills-update.log"
+# A refresh in progress (#555): written before the update, removed once the
+# commit block ends with nothing of the hook's left staged. Its first line
+# names the run that owns it, `pid <PID> <epoch seconds>`; then one path per
+# line — the ones that run may stage — so a later session can tell what the
+# hook staged from what a human did; a heal that has said a killed run's
+# staging on stderr appends `noted`. See _heal_staged and _marker_owner_live.
+STAGING="$gitdir/skills-update.staging"
+# How long a marker's owner can be believed alive (CR 1789): the hook's 120 s
+# ceiling plus margin. Past it, a live PID is a reused one — an unrelated
+# process, or one in another PID namespace — and the marker is stale.
+#
+# A known limit (CR 1799): the 120 s is install-refresh.sh's default, and
+# install-hook.sh keeps a consumer's own larger `timeout` on a re-run. A run
+# allowed past 300 s that takes that long has its live marker read as stale,
+# so a session starting then can heal under it — the race CR 1789 closed. Not
+# derived: the harness does not hand a hook its timeout, and reading it from
+# .claude/settings.json means a JSON parser on a path that must finish inside
+# the extension's ~2 s. A timeout above 300 s needs this raised with it.
+MARKER_MAX_AGE=300
+# merge_mode pr (#560): the private index the pull request's commit is built
+# in, so the checkout's own index is never written; and the one branch the
+# hook proposes from.
+PR_INDEX="$gitdir/skills-update.pr-index"
+PR_BRANCH="skills/submodule-refresh"
 
 # Nothing to refresh if the project doesn't use the skills-vendor/ pattern.
 [ -d skills-vendor ] || exit 0
@@ -137,6 +180,61 @@ _log() {
   echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] $*" >>"$LOG" 2>/dev/null || true
 }
 
+# _marker_owner_live — true when $STAGING names a run that is still going
+# (CR 1789), and sets MARKER_OWNER to its PID for the log.
+#
+# The day's lock used to be stamped ahead of the refresh, and that made it the
+# hook's mutual exclusion as well: a session starting mid-refresh exited at
+# the once-per-day guard. #555 moved the stamp to the end, so the marker
+# carries that job now. Without it, two sessions starting together in one
+# checkout — agent sessions sharing it, or two VS Code windows reconnecting —
+# both ran the whole refresh, and the second's heal took the first's LIVE
+# marker for a killed run's: it unstaged and restored the content under a run
+# between `git add` and `git commit`, whose commit then recorded nothing.
+#
+# Alive means `kill -0` reaches the PID and the marker is younger than
+# MARKER_MAX_AGE. A SIGKILL or SIGTERM leaves the marker behind with its owner
+# gone, which is exactly the leftover the heal exists for. A marker naming
+# this run's own PID (reused) is not live.
+#
+# Nor, once it is a few seconds old, is one this run cannot parse. Younger, it
+# is a claim still being written (CR 1808): noclobber's open creates the file
+# before its first byte lands, and a second session reading it in between
+# found no `pid` line, took it for dead, and both refreshed. The claim now
+# writes it with no fork inside the redirect, so that window is microseconds;
+# _marker_being_written covers what is left of it, and is reached only for an
+# unparseable marker, so its `stat` costs a normal run nothing. Both ways
+# bounded: an mtime more than 2 s ahead (a clock set back) is not believed.
+MARKER_OWNER=""
+_marker_being_written() {
+  local now mtime
+  now="$(date +%s 2>/dev/null)" || return 1
+  # GNU and busybox take -c; BSD's (macOS) refuses it with nothing on stdout.
+  mtime="$(stat -c %Y "$STAGING" 2>/dev/null || stat -f %m "$STAGING" 2>/dev/null)" || return 1
+  case "$mtime" in '' | *[!0-9]*) return 1 ;; esac
+  [ $((now - mtime)) -le 2 ] && [ $((mtime - now)) -le 2 ]
+}
+_marker_owner_live() {
+  local head tag pid started now
+  MARKER_OWNER=""
+  [ -f "$STAGING" ] || return 1
+  head="$(head -n 1 "$STAGING" 2>/dev/null)" || return 1
+  read -r tag pid started <<<"$head" || true
+  case "$pid" in '' | *[!0-9]*) tag="" ;; esac
+  case "$started" in '' | *[!0-9]*) tag="" ;; esac
+  if [ "$tag" != "pid" ]; then
+    _marker_being_written || return 1
+    MARKER_OWNER="unknown: its marker is still being written"
+    return 0
+  fi
+  [ "$pid" != "$$" ] || return 1
+  now="$(date +%s 2>/dev/null)" || return 1
+  [ $((now - started)) -le "$MARKER_MAX_AGE" ] || return 1
+  kill -0 "$pid" 2>/dev/null || return 1
+  MARKER_OWNER="$pid"
+  return 0
+}
+
 # _unstage <after> <path>... — unstage the paths, then read the index back
 # rather than trust the reset (#311). <after> names the failure being undone,
 # for the messages: "a failed commit", "a rolled-back push".
@@ -146,11 +244,16 @@ _log() {
 # discarded, git's stderr in $LOG its only trace. A reset that fails leaves
 # the paths staged with nothing said where a session looks — the state
 # CannObserv/power-map was found in on 2026-09-18, both paths staged beneath
-# this hook's own "unstaging" line. The cause is still unknown: #306's
-# in-place rewrite was measured and ruled out, and an index.lock held by
-# another git process would produce it (measured: the reset exits 128). So
-# this checks the outcome, not a cause: whatever is still staged under the
-# paths is named on stderr, with the command that clears it.
+# this hook's own "unstaging" line. The cause is not proven. #306's in-place
+# rewrite was measured and ruled out; an index.lock held by another git
+# process would produce it (measured: the reset exits 128); and so might a
+# kill that lands inside this very reset — #555 found the VS Code extension
+# killing session-start hooks about 2 s in. A kill earlier, between `git add`
+# and the end of `git commit`, leaves the same two paths staged but WITHOUT
+# the "unstaging" line power-map's log carried; _heal_staged undoes that one
+# at the next session. So this checks the outcome, not a cause: whatever is
+# still staged under the paths is named on stderr, with the command that
+# clears it.
 #
 # It sees the index as the reset left it. Something that re-stages later — a
 # hook running `git add`, a framework restoring its stash — is past it.
@@ -175,6 +278,79 @@ _unstage() {
 # for the `exit 0` gate to have computed this.
 BRANCH="$(git symbolic-ref --short HEAD 2>/dev/null || true)"
 
+# ------------------------------------------------------ merge_mode (#342, #560)
+# How this project lands work on its default branch: `direct` (absent means
+# direct) or `pr`. In `pr` mode the hook never pushes to main; it proposes its
+# bump as one pull request (_pr_refresh, below).
+#
+# Inline, not a call to shipping-work's merge-mode.sh: this file is read by
+# bash while `git submodule update` rewrites the vendored tree (see the brace
+# note at the top), it can be installed as a copy rather than a symlink
+# (install-hook.sh), and a consumer need not vendor shipping-work at all.
+# tests/structural/test_refresh_hook_pr_mode.py holds it to merge-mode.sh's
+# answers on the same inputs test_cadence_merge_mode.py uses.
+#
+# Read from the primary checkout (the first `git worktree list` entry), as
+# merge-mode.sh does: an untracked knob does not exist in a linked worktree.
+# Present but unusable is `unusable`, never `direct` — the run then neither
+# pushes nor refreshes, and says why.
+MERGE_MODE="direct"
+MERGE_MODE_ERR=""
+_read_merge_mode() {
+  local wt primary knob remedy line word="" count=0 words
+  MERGE_MODE="unusable"
+  MERGE_MODE_ERR=""
+  remedy="write one word, 'pr' or 'direct', or delete the file for the default ('direct')"
+  wt="$(git worktree list --porcelain 2>/dev/null)" || {
+    MERGE_MODE_ERR="git worktree list failed, so .skills/merge_mode could not be read"
+    return 0
+  }
+  primary=${wt%%$'\n'*}
+  primary=${primary#worktree }
+  if [ ! -d "$primary" ]; then
+    MERGE_MODE_ERR="could not resolve the primary checkout (got '$primary') to read .skills/merge_mode"
+    return 0
+  fi
+  knob="$primary/.skills/merge_mode"
+  if [ ! -e "$knob" ] && [ ! -L "$knob" ]; then
+    MERGE_MODE="direct"
+    return 0
+  fi
+  if ! { [ -f "$knob" ] && [ -r "$knob" ]; }; then
+    MERGE_MODE_ERR="$knob is present but not a readable file: $remedy"
+    return 0
+  fi
+  if ! exec 3<"$knob"; then
+    MERGE_MODE_ERR="could not open $knob: $remedy"
+    return 0
+  fi
+  while IFS= read -r line <&3 || [ -n "$line" ]; do
+    line=${line%$'\r'}
+    read -r -a words <<<"$line" || true
+    [ "${#words[@]}" -gt 0 ] || continue
+    case ${words[0]} in \#*) continue ;; esac
+    count=$((count + ${#words[@]}))
+    word=${words[0]}
+  done
+  exec 3<&-
+  if [ "$count" -eq 0 ]; then
+    MERGE_MODE_ERR="$knob names no mode: $remedy"
+  elif [ "$count" -ne 1 ]; then
+    MERGE_MODE_ERR="$knob has $count words; it takes one: $remedy"
+  else
+    case $word in
+      pr | direct) MERGE_MODE="$word" ;;
+      *) MERGE_MODE_ERR="$knob says '$word', which is not a merge mode: $remedy" ;;
+    esac
+  fi
+  return 0
+}
+# Read on main only: every path that acts on it is main-only, so a session on
+# any other branch runs exactly as before the knob.
+if [ "$BRANCH" = "main" ]; then
+  _read_merge_mode
+fi
+
 # The commit subjects this hook authors. Named once because two places read
 # them: the commit step at the bottom, and the reconcile step's authorship
 # guard. Let those drift and the guard either stops recognising this hook's
@@ -184,12 +360,13 @@ MSG_SUB='chore: update skills submodules'
 MSG_DOC='chore: refresh .skills/doctor.sh'
 MSG_BOTH='chore: update skills submodules and refresh .skills/doctor.sh'
 
-# Set when a push fails, and read for the rest of the run. A rollback leaves
-# the refreshed submodule content in the working tree, so the very next thing
-# this script would otherwise do is re-stage it, re-commit it, and re-attempt
-# the push it has just been refused — two network waits inside a hook with a
-# 120s ceiling, and the same warning twice. One refusal is enough information
-# for one run.
+# Set when a push fails or is refused, and read for the rest of the run: it
+# stops the refresh itself, not only the commit (#550). Without it the very
+# next thing this script would do after a rollback is fetch the content
+# forward again, re-stage it, re-commit it and re-attempt the push it has just
+# been refused — two network waits inside a hook with a 120s ceiling, the
+# same warning twice, and a checkout left with content ahead of its pointer.
+# One refusal is enough information for one run.
 PUSH_BLOCKED=0
 
 # ------------------------------------------------- unpushed reconcile (#293)
@@ -209,11 +386,14 @@ PUSH_BLOCKED=0
 #
 # Runs on EVERY session, ahead of the once-per-day lock, rather than as a
 # `git push` bolted onto the commit below. Three things that shape buys:
-#   - the lock is stamped BEFORE the work, deliberately, so a push that
-#     failed on the commit path would wait a whole UTC day to retry;
-#   - the harness can kill this hook between commit and push — a timeout
-#     SIGKILL, which the ERR trap cannot catch — leaving exactly the state
-#     this exists to prevent. A separate pass heals it at the next session;
+#   - the lock is spent by any run that ends, success or failure, so a push
+#     that failed on the commit path would wait a whole UTC day to retry;
+#   - the hook can be killed at any point, by a signal no trap here can
+#     answer: the harness's timeout, or — every window (re)connect, about
+#     2 s in — the VS Code extension's config-cache process shutting down
+#     (#555). A kill between commit and push leaves exactly the state this
+#     exists to prevent, and this pass heals it at the next session. A kill
+#     before the commit ends is _heal_staged's, just below;
 #   - consumers are stranded today. This reaches them with nobody visiting
 #     the machine.
 #
@@ -223,9 +403,17 @@ PUSH_BLOCKED=0
 # authority than moving a submodule pointer. A stale consumer gets no bump,
 # loudly, until a human syncs — and that is an acceptable trade because the
 # rollback is the fix here and the push is the optimization. The service was
-# stranded by `ahead 1`, not by a stale skills pin, and a rollback leaves the
-# refreshed submodule *content* in the working tree (only the recorded
-# pointer reverts), so the skills themselves keep working either way.
+# stranded by `ahead 1`, not by a stale skills pin.
+#
+# A rollback undoes the WHOLE bump: the recorded pointer, the vendored content
+# and the doctor (_restore_bump). It used to revert only the pointer, leaving
+# the refreshed content checked out "so the skills keep working either way".
+# That holds only while an update is backward-compatible with the consumer's
+# repo-side config, and #550 measured where it is not: wslcb's rollback on
+# 2026-10-29 left content carrying #480, which refuses a knob grammar that
+# repo's committed config still used, so its vendored patching-hosts refused
+# the repo's own knob until a human synced. A stale consumer keeps the older
+# skills, content and pointer together, until a session can share the bump.
 _reconcile_unpushed() {
   [ "$BRANCH" = "main" ] || return 0
   # Already refused once this run. Asking again costs a second network wait
@@ -265,6 +453,13 @@ _reconcile_unpushed() {
       *) unknown=$((unknown + 1)) ;;
     esac
   done < <(git log --no-show-signature --format=%s '@{u}..HEAD' 2>/dev/null || true)
+
+  # Not `direct`: this hook pushes nothing to $BRANCH (#560). Its guards and
+  # its messages differ, so it has its own pass.
+  if [ "$MERGE_MODE" != "direct" ]; then
+    _reconcile_pr "$ahead" "$seen" "$unknown" "$upstream_name"
+    return 0
+  fi
 
   # `--no-show-signature` above, because this count is compared against
   # rev-list's: with `log.showSignature = true` — an ordinary setting where
@@ -326,7 +521,13 @@ _reconcile_unpushed() {
     return 0
   fi
 
-  local paths
+  local paths log_before=0
+  # Where this push's output starts in $LOG, so a refusal can be read back
+  # from it (#560). A read only: what is written, and when, is unchanged.
+  if [ -f "$LOG" ]; then
+    log_before="$(wc -c <"$LOG" 2>/dev/null | tr -d ' ')" || log_before=0
+  fi
+  case "$log_before" in '' | *[!0-9]*) log_before=0 ;; esac
   if {
     echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] push $ahead unpushed commit(s) to $upstream_name:"
     # Explicit refspec, never a bare `git push`: under push.default=matching
@@ -365,15 +566,24 @@ _reconcile_unpushed() {
   done < <(git diff --name-only -z "HEAD~$ahead" HEAD 2>/dev/null || true)
 
   if git reset -q --soft "HEAD~$ahead" 2>>"$LOG"; then
-    _log "unpushed: push failed — rolled $ahead commit(s) back; the refreshed content stays in the working tree and the next session retries"
-    echo "skills update: could not push to $remote — rolled $ahead commit(s) back so this checkout matches $upstream_name (see $LOG)" >&2
+    _log "unpushed: push failed — rolled $ahead commit(s) back, vendored content with them; the next session retries"
+    # A repository rule or branch protection (GH013, GH006) is not an outage
+    # the next session's retry outlives: say which rule, and the knob that
+    # answers it (#560). Every other failure keeps the line it always had.
+    if _rule_refusal "$(tail -c +$((log_before + 1)) "$LOG" 2>/dev/null || true)"; then
+      echo "skills update: could not push to $remote — a repository rule refused it ($RULE_TEXT), so $BRANCH takes changes by pull request here: write pr to .skills/merge_mode and this hook proposes its bump as one pull request instead; rolled $ahead commit(s) back so this checkout matches $upstream_name (see $LOG)" >&2
+    else
+      echo "skills update: could not push to $remote — rolled $ahead commit(s) back so this checkout matches $upstream_name (see $LOG)" >&2
+    fi
     if [ "${#paths[@]}" -gt 0 ]; then
       # Same move as the commit step's failure path: leave the index as we
       # found it. A .skills/doctor.sh that was untracked before the commit
       # goes back to untracked rather than sitting staged in an index the
-      # operator never touched. After the report above, so a warning that
-      # this unstage fell short follows the rollback it belongs to.
-      _unstage "a rolled-back push" "${paths[@]}"
+      # operator never touched. Then the content goes back to the pointer
+      # the reset restored (#550), bounded to these paths. After the report
+      # above, so a warning that either fell short follows the rollback it
+      # belongs to.
+      _restore_bump "a rolled-back push" "${paths[@]}"
     fi
   else
     _log "unpushed: push failed AND rollback failed — $BRANCH is still $ahead commit(s) ahead of $upstream_name"
@@ -382,19 +592,95 @@ _reconcile_unpushed() {
   return 0
 }
 
+# _rule_refusal <push output> — true when a repository rule or branch
+# protection refused the push, and sets RULE_TEXT to its code and the rule it
+# named: GitHub prints `GH013: Repository rule violations found` with each rule
+# as a `remote: - <rule>` line, and legacy protection prints `GH006: Protected
+# branch update failed` with the rule as a second `remote: error:` line.
+RULE_TEXT=""
+_rule_refusal() {
+  local text="$1" code rule
+  RULE_TEXT=""
+  case "$text" in
+    *GH013*) code="GH013" ;;
+    *GH006*) code="GH006" ;;
+    *"rotected branch"*) code="protected branch" ;;
+    *) return 1 ;;
+  esac
+  rule="$(awk '/^remote: - / { sub(/^remote: - /, ""); sub(/[ \r]+$/, ""); print; exit }' <<<"$text" 2>/dev/null || true)"
+  if [ -z "$rule" ]; then
+    rule="$(awk '/^remote: error: / && !/GH0[0-9][0-9]/ { sub(/^remote: error: /, ""); sub(/[ \r]+$/, ""); print; exit }' <<<"$text" 2>/dev/null || true)"
+  fi
+  RULE_TEXT="$code${rule:+: $rule}"
+  return 0
+}
+
+# _reconcile_pr <ahead> <seen> <unknown> <upstream> — the unpushed pass when
+# merge_mode is not `direct` (#560). Nothing is ever pushed to $BRANCH here.
+#
+# `pr`: commits this hook wrote and never pushed — left by a run from before
+# the repo set `pr` — are rolled back with their content (#550), and the pull
+# request path redoes the bump from the default branch's tip. Moving them onto
+# the PR branch instead would publish a bump an older run verified, on a parent
+# that may not be the default branch's. Anything not wholly this hook's is left
+# alone: the PR is built on @{u}, so an operator's unpushed work is never in
+# it, and _pr_refresh refuses where main and @{u} disagree on the hook's paths.
+#
+# HEAD moves by compare-and-swap (`update-ref <new> <old>`), not `reset --soft
+# HEAD~N`: two sessions starting together both reach this pass ahead of the
+# in-progress marker, and a relative reset run twice would roll back a commit
+# that is not this hook's. The second swap fails instead, and is logged.
+#
+# `unusable`: neither pushed nor rolled back. The refresh, which runs once a
+# day, is where that is reported.
+_reconcile_pr() {
+  local ahead="$1" seen="$2" unknown="$3" upstream_name="$4" merges head target rpath paths=()
+  if [ "$MERGE_MODE" != "pr" ]; then
+    _log "unpushed: $BRANCH is $ahead commit(s) ahead of $upstream_name, and .skills/merge_mode is unusable — neither pushing nor rolling back until it reads pr or direct"
+    return 0
+  fi
+  if [ "$seen" -ne "$ahead" ] || [ "$unknown" -gt 0 ]; then
+    _log "unpushed: $BRANCH is $ahead commit(s) ahead of $upstream_name, not all confirmed as this hook's — merge_mode is pr, so nothing is pushed or rolled back"
+    return 0
+  fi
+  merges="$(git rev-list --count --merges '@{u}..HEAD' 2>/dev/null || true)"
+  if [ "$merges" != "0" ]; then
+    _log "unpushed: merge_mode is pr, and @{u}..HEAD holds merge commit(s) — not rolling back"
+    return 0
+  fi
+  head="$(git rev-parse --verify -q HEAD 2>/dev/null)" || return 0
+  target="$(git rev-parse --verify -q "HEAD~$ahead" 2>/dev/null)" || return 0
+  while IFS= read -r -d '' rpath; do
+    paths+=("$rpath")
+  done < <(git diff --name-only -z "$target" "$head" 2>/dev/null || true)
+  if git update-ref -m "skills update: merge_mode pr, roll back $ahead unpushed hook commit(s)" HEAD "$target" "$head" 2>>"$LOG"; then
+    _log "unpushed: merge_mode is pr — rolled back $ahead commit(s) this hook made on $BRANCH; a pull request proposes the bump instead"
+    echo "skills update: merge_mode is pr — rolled back $ahead unpushed commit(s) this hook made on $BRANCH; it proposes the bump as a pull request instead (see $LOG)" >&2
+    if [ "${#paths[@]}" -gt 0 ]; then
+      _restore_bump "a pr-mode rollback" "${paths[@]}"
+    fi
+  else
+    _log "unpushed: merge_mode is pr, and rolling back $ahead commit(s) this hook made on $BRANCH failed (HEAD moved, or git refused)"
+  fi
+  return 0
+}
+
 # Opportunistically install/update .skills/doctor.sh — the backport path
 # for consumers added before doctor.sh existed. install-doctor.sh is a no-op
 # when content matches, so the cost is one file compare per call.
 #
-# Called from two places. Call site 1, just below, runs on every session (not
-# gated by the once-per-day lock) so accidental deletions self-heal at the
-# next session start. Call site 2 runs after a successful submodule update,
-# because call site 1 ran the PRE-bump installer against the PRE-bump doctor
-# (#299): without it, the session that advances the pointer commits the old
-# doctor beside the new pointer, and the refreshed one waits for the next
-# session that reaches call site 1.
+# Called from three places. Call site 1, just below, runs on every session
+# (not gated by the once-per-day lock) so accidental deletions self-heal at
+# the next session start. Call site 2 runs after a successful submodule
+# update, because call site 1 ran the PRE-bump installer against the PRE-bump
+# doctor (#299): without it, the session that advances the pointer commits
+# the old doctor beside the new pointer, and the refreshed one waits for the
+# next session that reaches call site 1. The third is _restore_content, after
+# it puts the content back on its pointer (#550): the heal, a rolled-back
+# push, a failed commit or update, and every pr-mode refresh, where it is
+# always the run's last call (CR 1794).
 #
-# Neither fires in a checkout whose skills-vendor/* are empty gitlinks — every
+# None fires in a checkout whose skills-vendor/* are empty gitlinks — every
 # fresh linked worktree, until something initializes them. The glob matches no
 # installer there, and there is no vendored doctor to install from anyway, so
 # "every session" means every session in a checkout with its submodules
@@ -405,21 +691,32 @@ _reconcile_unpushed() {
 # managing-skills is the fallback when the first fails; the loop used to break
 # after the first attempt either way, leaving a stale doctor with one $LOG line
 # as its only trace. When every installer fails, that reaches stderr — the
-# channel every other failure here uses — once per run although this is called
-# twice, and only when the run's LAST call failed (#300 CR 14). Warning from
-# call site 1 on the spot was false whenever call site 2 then succeeded: a
-# broken pre-bump installer that the bump replaces with a working one leaves a
-# freshly installed and committed doctor, which "left as it was" denies. So
-# each call records its outcome and the EXIT trap below reports the last one —
-# every way out of this block, the ERR backstop's exit included, passes it.
+# channel every other failure here uses — once per run although a run can call
+# this several times (three call sites, the third once per restore), and only
+# when the run's LAST call failed (#300 CR 14, CR 1809).
+# Warning from call site 1 on the spot was false whenever call site 2 then
+# succeeded: a broken pre-bump installer that the bump replaces with a working
+# one leaves a freshly installed and committed doctor, which "left as it was"
+# denies. So each call records its outcome and the EXIT trap below reports the
+# last one — every way out of this block, the ERR backstop's exit included,
+# passes it.
+#
+# A restore passes what it restores after, and its failure is worded apart
+# (CR 1794). By then call site 2 — this run's, or a killed run's being healed
+# — may already have replaced the doctor from the bump's installer, which the
+# restored pointer's installer then could not put back, so "left as it was"
+# would deny a change the run made. What holds is that the doctor may not be
+# the one the restored pointer ships.
 DOCTOR_INSTALL_FAILED=0
+DOCTOR_FAILED_AFTER=""
 _install_doctor() {
-  local installer tried=0
+  local installer tried=0 restoring="${1:-}"
   for installer in skills-vendor/*/skills/managing-skills/scripts/install-doctor.sh; do
     [ -x "$installer" ] || continue
     tried=$((tried + 1))
     if bash "$installer" --quiet >>"$LOG" 2>&1; then
       DOCTOR_INSTALL_FAILED=0
+      DOCTOR_FAILED_AFTER=""
       return 0
     fi
     _log "doctor install failed via $installer (see lines above) — trying the next vendor, if any"
@@ -427,30 +724,331 @@ _install_doctor() {
   # No installer this time leaves the last verdict standing: a call that
   # installed nothing has not repaired an earlier failure.
   [ "$tried" -gt 0 ] || return 0
-  _log "doctor install failed: all $tried vendored installer(s) failed — .skills/doctor.sh left as it was"
+  _log "doctor install failed: all $tried vendored installer(s) failed — .skills/doctor.sh left as it was${restoring:+, not reinstalled after $restoring}"
   DOCTOR_INSTALL_FAILED=1
+  DOCTOR_FAILED_AFTER="$restoring"
   return 0
 }
 # Called by the EXIT trap below; shellcheck does not count a trap as a call.
 # shellcheck disable=SC2329
 _report_doctor_install() {
   [ "$DOCTOR_INSTALL_FAILED" = "1" ] || return 0
+  if [ -n "$DOCTOR_FAILED_AFTER" ]; then
+    echo "skills update: could not reinstall .skills/doctor.sh when the content went back on its pointer after $DOCTOR_FAILED_AFTER — every vendored installer failed, so it may not be the version the restored pointer ships (see $LOG)" >&2 || true
+    return 0
+  fi
   echo "skills update: could not install .skills/doctor.sh — every vendored installer failed, so it was left as it was (see $LOG)" >&2 || true
 }
 trap _report_doctor_install EXIT
 
-# _install_doctor, call site 1 of 2: every session, ahead of both gates. This
+# Another session's refresh is in flight (CR 1789): leave the checkout to it,
+# the way the old up-front lock did. Ahead of everything that writes — the
+# doctor install, the heal, the reconcile, the refresh — and without spending
+# the day, since that run will.
+if _marker_owner_live; then
+  _log "another refresh is in flight (pid $MARKER_OWNER) — leaving this checkout to it"
+  exit 0
+fi
+
+# _install_doctor, call site 1 of 3: every session, ahead of both gates. This
 # is the working-tree repair, and it should happen on every branch and every
 # session. Committing the result is a separate concern and stays behind
 # both gates, further down (#86).
 _install_doctor
 
+# Submodules git actually knows about, restricted to this hook's scope. Pins
+# are validated against this rather than against the filesystem — a directory
+# under skills-vendor/ that isn't a registered submodule can't be pinned
+# because it can't be updated either. Resolved up here, ahead of the gates,
+# because _heal_staged reads it too (#555).
+REGISTERED="$(git config -f .gitmodules --get-regexp '^submodule\..*\.path$' 2>/dev/null |
+  awk '$2 ~ /^skills-vendor\// {print $2}' || true)"
+
+# _listed <path> <newline-separated list> — true when the list holds the path
+# as a whole line.
+_listed() {
+  case "
+$2
+" in
+    *"
+$1
+"*) return 0 ;;
+  esac
+  return 1
+}
+
+# _restore_bump <after> <path>... — undo a pointer bump this hook made but
+# cannot keep (#550): a rolled-back push, or a killed refresh's leftovers. A
+# failed commit and a failed update (CR 1792) do the same in two calls,
+# unstage and restore, because their pathspecs differ.
+# Unstages the paths, then puts each registered skills-vendor/ submodule among
+# them back on the commit the index now records, then reinstalls the doctor
+# from the restored vendored installer — so content, pointer and doctor go
+# back together. Called only once REGISTERED is resolved.
+#
+# The doctor is reinstalled rather than checked out, so each case lands where
+# it was: one tracked before the bump matches its committed copy again, and
+# one untracked before it — unstaged back to untracked just above — is
+# rewritten in place to the version the restored pointer ships, which is what
+# _install_doctor's call site 1 writes at every session anyway.
+#
+# `--checkout`, because a plain `git submodule update -- <path>` honours a
+# configured `submodule.<name>.update`: with merge, rebase or none it exits 0
+# and leaves the newer content checked out (measured, git 2.54 — the older
+# recorded commit is already contained in the newer one). `--no-fetch`,
+# because the recorded commit was checked out here before the bump, and this
+# runs inside a session start. Neither `--remote` nor `--merge`, and never
+# `-f`: a checkout carries a local edit across where it can and refuses where
+# it cannot, and a refusal is said on stderr — the content is then still
+# ahead of its pointer, and the session needs to know.
+#
+# _restore_content is the second half alone, for merge_mode pr (#560): that
+# path never stages anything in the checkout's index, so nothing staged under
+# these paths is the hook's to unstage. The checkout is to the commit the
+# index records, so an operator's own staged bump is kept, content and all.
+_restore_bump() {
+  local after="$1"
+  shift
+  _unstage "$after" "$@"
+  _restore_content "$after" "$@"
+}
+#
+# The log names the commit each path went back to, and whose it is (CR 1791):
+# `git submodule update` checks out the pointer the INDEX records, which is
+# HEAD's unless something is staged there — an unstage that failed, or a bump
+# staged with no marker, which may be a human's and is never the hook's to
+# unstage. "Restored to the recorded pointer" said nothing of which.
+_restore_content() {
+  local after="$1" p idx head gitlinks=()
+  shift
+  for p in "$@"; do
+    if _listed "$p" "$REGISTERED"; then
+      gitlinks+=("$p")
+    fi
+  done
+  [ "${#gitlinks[@]}" -gt 0 ] || return 0
+  if {
+    echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] restore ${gitlinks[*]} to the pointer the index records, after $after:"
+    git submodule update --checkout --no-fetch -- "${gitlinks[@]}" 2>&1
+  } >>"$LOG"; then
+    for p in "${gitlinks[@]}"; do
+      idx="$(git ls-files -s -- "$p" 2>/dev/null | awk '$1 == "160000" { print $2 }')" || idx=""
+      head="$(git rev-parse -q --verify "HEAD:$p" 2>/dev/null)" || head=""
+      idx="${idx:0:7}"
+      head="${head:0:7}"
+      if [ "$idx" = "$head" ]; then
+        _log "restored $p after $after: ${idx:-nothing}, the pointer HEAD and the index both record"
+      else
+        _log "restored $p after $after: ${idx:-nothing}, the pointer the index records — HEAD records ${head:-nothing}; the staged bump between them is left as it is"
+      fi
+    done
+  else
+    _log "could not restore ${gitlinks[*]} after $after — content is ahead of the recorded pointer"
+    echo "skills update: ${gitlinks[*]} is ahead of the recorded pointer after $after — repo-side config may not match it until synced: git submodule update --checkout -- ${gitlinks[*]} (see $LOG)" >&2 || true
+  fi
+  _install_doctor "$after"
+  return 0
+}
+
+# The day's lock, written by every run that ENDS — success or failure — and by
+# no run that is killed part way (#555). Checked, not `|| true` (#193): this
+# one write IS the once-per-day contract, and the guard reads nothing else. A
+# read-only or root-owned .git, or a full disk, and the stamp never lands, the
+# guard falls through next session, and the whole refresh runs again — every
+# session, forever, with nothing said. That is the defect #187 fixed in
+# socraticode-health.sh, the script this file's pin comment names as its twin;
+# the shape is copied from it. Reported, never fatal: a SessionStart hook must
+# not block, so a failed stamp degrades to noisier reporting.
+_stamp_lock() {
+  if ! date -u +%Y%m%d > "$LOCK" 2>/dev/null; then
+    _log "could not stamp $LOCK — the once-per-day guard is off until this is fixed"
+    echo "skills update: cannot write $LOCK; this refresh will repeat every session (see $LOG)" >&2 || true
+  fi
+  return 0
+}
+
+# ------------------------------------------- a killed refresh's staging (#555)
+# The VS Code extension starts a short-lived "config cache" CLI process at
+# every window (re)connect. It runs the SessionStart hooks and shuts down about
+# 2-3 s later, killing what is still running; the real session starts its own
+# run about a second after. A refresh fetching a hundred upstream commits, then
+# committing through a consumer's pre-commit framework (about 1 s even with
+# every hook skipped), does not fit. Killed between `git add` and the end of
+# `git commit`, it leaves this hook's paths STAGED: the state
+# CannObserv/address-validator was found in on 2026-11-01, and the next bare
+# `git commit` anyone makes there absorbs the bump under their own message.
+#
+# Undone here, every session on main, ahead of the lock — the session after a
+# kill is usually the real one, a second later. Unstaged rather than
+# committed: the lock is now spent only when a run ends, so this same session
+# redoes the bump, and nothing is committed that this run has not verified.
+#
+# Only what the hook staged is touched, and the marker is how it knows. A
+# human's own `git add skills-vendor/<v>` — a manual bump — stages exactly the
+# hook's paths, so "every staged path is one this hook would commit" cannot
+# tell the two apart. With no marker, the index is left alone and the state is
+# logged: a checkout left staged by a hook from before #555 is not undone
+# here. In `direct` mode the first refresh this version completes on main
+# commits it through its own pathspec; `pr` mode never commits in this
+# checkout, so its refresh says so on stderr instead, with the reset that
+# clears it (_pr_note_staged, CR 1791). With a marker, the heal unstages only
+# when every staged path is one the marker names; anything else staged beside
+# them is someone's work, so the whole index is left alone — the content still
+# goes back on the pointer the index records (CR 1801) — and the marker is
+# kept while the hook's own paths stay staged.
+_heal_staged() {
+  [ "$BRANCH" = "main" ] || return 0
+
+  local listed="" marked=0 staged_now rc=0 spath own=() others=0 hook_paths
+  if [ -f "$STAGING" ]; then
+    # A live owner's marker is never the heal's (CR 1789). The guard ahead of
+    # the doctor install already exits on one; this keeps the heal honest on
+    # its own.
+    if _marker_owner_live; then
+      _log "heal: $STAGING belongs to a refresh still in flight (pid $MARKER_OWNER) — leaving the index alone"
+      return 0
+    fi
+    marked=1
+    # The paths, without the owner line, a pr-mode run's `mode pr`, or the
+    # `noted` an earlier heal appended (CR 1801).
+    listed="$(grep -v -e '^pid ' -e '^mode ' -e '^noted$' "$STAGING" 2>>"$LOG")" || rc=$?
+    if [ "$rc" -gt 1 ]; then
+      _log "heal: could not read $STAGING (grep exited $rc) — leaving the index alone"
+      return 0
+    fi
+    rc=0
+    # A pr-mode run (#560) never stages in this index, so whatever is staged
+    # is not its own: only its content goes back, and its private index goes.
+    if grep -qx 'mode pr' "$STAGING" 2>/dev/null; then
+      _heal_pr "$listed"
+      return 0
+    fi
+  fi
+
+  # --ignore-submodules=none: a diff.ignoreSubmodules or .gitmodules `ignore`
+  # setting would otherwise hide the very gitlink this looks for.
+  staged_now="$(git diff --cached --name-only --ignore-submodules=none 2>>"$LOG")" || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    _log "heal: could not read the index (git diff exited $rc) — leaving it alone"
+    return 0
+  fi
+
+  if [ "$marked" = "1" ]; then
+    hook_paths="$listed"
+  else
+    hook_paths="$REGISTERED
+.skills/doctor.sh"
+  fi
+  while IFS= read -r spath; do
+    [ -n "$spath" ] || continue
+    if _listed "$spath" "$hook_paths"; then
+      own+=("$spath")
+    else
+      others=$((others + 1))
+    fi
+  done <<STAGED_EOF
+$staged_now
+STAGED_EOF
+
+  if [ "$marked" = "0" ]; then
+    if [ "${#own[@]}" -gt 0 ]; then
+      _log "heal: ${own[*]} staged with no in-progress marker — a manual bump, or a hook from before #555; not this hook's to undo, leaving the index alone"
+    fi
+    return 0
+  fi
+
+  # The whole bump goes back, not only its staging (#550): a kill after the
+  # update leaves the content ahead of the pointer whether or not it got as
+  # far as `git add`, and a session that cannot redo the bump (main carrying
+  # an operator's unpushed commit, a pin refusal) would otherwise keep it so.
+  # When this session can redo it, it does, from a checkout that agrees.
+  # Every path the marker names, staged or not: an unstage of a path with
+  # nothing staged is a no-op, and a submodule already on its pointer is too.
+  local marked_paths=() gitlinks=() p
+  while IFS= read -r spath; do
+    [ -n "$spath" ] || continue
+    marked_paths+=("$spath")
+  done <<LISTED_EOF
+$listed
+LISTED_EOF
+
+  # Someone else's work staged beside the hook's keeps the index as it is,
+  # but not the content (CR 1801): `git submodule update --checkout` writes
+  # no index, so the content still goes back — onto the pointer the index
+  # records, which for a gitlink the killed run staged is that run's bump;
+  # _restore_content's log says which. The hook's staging left in place is
+  # said on stderr once per killed run, not at every session while the
+  # human's work stays staged: the marker gets a `noted` line, and the
+  # refresh that redoes the bump writes a fresh marker. `own` is empty when
+  # the kill fell before `git add`, and an empty array's expansion is an
+  # unbound variable under bash 3.2's `set -u` (CR 1800).
+  if [ "$others" -gt 0 ]; then
+    if [ "${#own[@]}" -gt 0 ]; then
+      _log "heal: a killed refresh left ${own[*]} staged beside $others path(s) it did not stage — leaving the index alone; the content goes back on the pointer the index records"
+      if ! grep -qx 'noted' "$STAGING" 2>/dev/null; then
+        for p in "${own[@]}"; do
+          if _listed "$p" "$REGISTERED"; then
+            gitlinks+=("$p")
+          fi
+        done
+        echo "skills update: a refresh killed part way left ${own[*]} staged beside $others staged path(s) it did not stage, so the index is left as it is; the next refresh to complete commits them through its own pathspec. To drop them instead: git reset -q -- ${own[*]}${gitlinks[0]:+ && git submodule update --checkout -- ${gitlinks[*]}} (see $LOG)" >&2 || true
+        printf 'noted\n' >>"$STAGING" 2>/dev/null || true
+      fi
+    else
+      _log "heal: a killed refresh staged nothing, and $others path(s) it did not stage are staged — leaving the index alone; the content goes back on its pointer"
+    fi
+    if [ "${#marked_paths[@]}" -gt 0 ]; then
+      _restore_content "a killed refresh" "${marked_paths[@]}"
+    fi
+  elif [ "${#marked_paths[@]}" -gt 0 ]; then
+    if [ "${#own[@]}" -gt 0 ]; then
+      _log "heal: a killed refresh left ${own[*]} staged — undoing its bump"
+    fi
+    _restore_bump "a killed refresh" "${marked_paths[@]}"
+  fi
+  # Kept while anything of the hook's is still staged, so the next session
+  # tries again; _unstage has already said so on stderr.
+  if [ "${#own[@]}" -eq 0 ] ||
+    git diff --cached --quiet --ignore-submodules=none -- "${own[@]}" 2>/dev/null; then
+    rm -f "$STAGING" 2>/dev/null || true
+  fi
+  return 0
+}
+
+# _heal_pr <marked paths> — a killed pr-mode refresh's leftovers (#560): the
+# vendored content it moved, the doctor it reinstalled, and its private index
+# (with git's lock on it — its owner is dead, which is how this was reached).
+# The marker goes too: a restore git refuses is said on stderr, and the next
+# refresh runs the same restore again.
+_heal_pr() {
+  local spath marked_paths=()
+  while IFS= read -r spath; do
+    [ -n "$spath" ] || continue
+    marked_paths+=("$spath")
+  done <<LISTED_EOF
+$1
+LISTED_EOF
+  _log "heal: a killed pr-mode refresh left $STAGING — putting the content back on the recorded pointer"
+  if [ "${#marked_paths[@]}" -gt 0 ]; then
+    _restore_content "a killed refresh" "${marked_paths[@]}"
+  fi
+  rm -f "$PR_INDEX" "$PR_INDEX.lock" "$STAGING" 2>/dev/null || true
+  return 0
+}
+
+# Ahead of _reconcile_unpushed: a failed push's rollback re-stages its range
+# with `reset --soft`, and the paths it then unstages are derived from that
+# range alone. Healed first, the index it starts from holds nothing a killed
+# run left there.
+_heal_staged
+
 # Call site 1 of 2: every session, ahead of both gates. This is the pass that
 # heals a checkout some earlier run left stranded — a push killed by the
-# harness timeout, a push that failed while the remote was unreachable, or a
-# commit made by a version of this hook that had no push step at all. Behind
-# the once-per-day lock it would retry at most once a day; behind the branch
-# gate it would never run at all on the sessions that matter.
+# harness timeout or the extension's shutdown (#555), a push that failed while
+# the remote was unreachable, or a commit made by a version of this hook that
+# had no push step at all. Behind the once-per-day lock it would retry at most
+# once a day; behind the branch gate it would never run at all on the
+# sessions that matter.
 _reconcile_unpushed
 
 # Lock check: once per UTC day. UTC matches the log timestamp timezone so
@@ -488,13 +1086,7 @@ fi
 # env var, then committed file, then a default of "no pins".
 PIN_FILE="${SKILLS_PIN_FILE:-.skills/skills-pin}"
 
-# Submodules git actually knows about, restricted to this hook's scope. Pins
-# are validated against this rather than against the filesystem — a directory
-# under skills-vendor/ that isn't a registered submodule can't be pinned
-# because it can't be updated either.
-REGISTERED="$(git config -f .gitmodules --get-regexp '^submodule\..*\.path$' 2>/dev/null |
-  awk '$2 ~ /^skills-vendor\// {print $2}' || true)"
-
+# Pins are validated against REGISTERED, resolved above the gates.
 PINNED=""      # space-fenced membership set: " path1  path2 "
 PIN_COUNT=0    # entry lines seen, valid or not
 PIN_REFUSE=0   # an entry this hook cannot honour ⇒ move nothing this run
@@ -579,23 +1171,216 @@ $REGISTERED
 REGISTERED_EOF
 fi
 
-# Stamp the lock BEFORE the update so a transient failure (e.g. network
-# blip) doesn't cause the hook to retry-and-relog on every same-day session.
-# A failure today defers recovery to tomorrow's UTC day; the trade-off
-# preserves the once-per-day invariant for both success and failure.
+# This run has already established it cannot share a commit — the remote
+# refused a push, or `main` carries commits this hook did not write and must
+# not publish on the operator's behalf. Committing anyway would manufacture
+# exactly the unpushed commit the reconcile step exists to prevent (#293).
 #
-# Checked, not `|| true` (#193). This one write IS the once-per-day contract:
-# the guard at the top reads nothing else. A read-only or root-owned .git, or
-# a full disk, and the stamp never lands, the guard falls through next session,
-# and the whole refresh runs again — every session, forever, with nothing said.
-# That is the same defect #187 fixed in socraticode-health.sh, the script this
-# file's own pin comment names as its twin; the shape below is copied from it.
-# Reported, never fatal: a SessionStart hook must not block, so a failed stamp
-# degrades to noisier reporting rather than to no session.
-if ! date -u +%Y%m%d > "$LOCK" 2>/dev/null; then
-  _log "could not stamp $LOCK — the once-per-day guard is off until this is fixed"
-  echo "skills update: cannot write $LOCK; this refresh will repeat every session (see $LOG)" >&2
+# And it does not refresh either (#550). It used to, skipping only the
+# commit, on the premise that refreshed content in the working tree keeps the
+# skills working while the pointer waits. That premise is what #550
+# disproved: content ahead of its pointer can refuse the repo's own config.
+# So the checkout stays on its recorded pointer — the one a rollback this run
+# has just restored, or the one main has carried all along — until a session
+# that can share the bump makes it. After the pin parse, so a malformed pin
+# is still reported; a completed run, so the day is spent.
+if [ "$PUSH_BLOCKED" = "1" ]; then
+  _log "refresh skipped — this run cannot share what it would commit, and a refresh it cannot commit would leave the content ahead of the pointer; the bump waits for a session that can"
+  _stamp_lock
+  exit 0
 fi
+
+# merge_mode (#560). Present but unusable is never `direct`: no refresh, said
+# once — here, behind the day's lock — not at every session start.
+if [ "$MERGE_MODE" = "unusable" ]; then
+  _log "refresh skipped — $MERGE_MODE_ERR"
+  echo "skills update: no refresh — .skills/merge_mode is unusable, and is never read as direct: $MERGE_MODE_ERR (see $LOG)" >&2
+  _stamp_lock
+  exit 0
+fi
+
+# `pr`: what the pull request needs that is local and cheap, checked before
+# the refresh moves anything — gh on PATH, and an upstream for main. Each
+# refusal is said once and spends the day, as any run that ends does.
+PR_REMOTE=""
+PR_MERGE=""
+PR_BASE_BRANCH=""
+PR_UPSTREAM=""
+PR_GH_REPO=""
+# _gh_repo_of <remote url> — `host/owner/repo` for gh's --repo, or nothing
+# when the URL is not a host's (a local path): gh then resolves the repo from
+# the checkout's remotes, which works where there is one.
+_gh_repo_of() {
+  local url="$1" rest host path
+  case "$url" in
+    *://*)
+      rest=${url#*://}
+      rest=${rest#*@}
+      host=${rest%%/*}
+      host=${host%%:*}
+      path=${rest#*/}
+      ;;
+    *@*:*)
+      rest=${url#*@}
+      host=${rest%%:*}
+      path=${rest#*:}
+      ;;
+    *) return 0 ;;
+  esac
+  path=${path%/}
+  path=${path%.git}
+  [ -n "$host" ] || return 0
+  case "$path" in
+    '' | /* | */*/*) return 0 ;;
+    */*) printf '%s/%s\n' "$host" "$path" ;;
+  esac
+  return 0
+}
+_pr_preflight() {
+  if ! command -v gh >/dev/null 2>&1; then
+    _log "pr: gh not found on PATH — merge_mode is pr, and the pull request is opened with gh; no refresh this run"
+    echo "skills update: .skills/merge_mode is pr, but gh is not on this hook's PATH, so no pull request can be opened — no refresh this run; install gh and run gh auth login (see $LOG)" >&2
+    return 1
+  fi
+  PR_REMOTE="$(git config --get "branch.$BRANCH.remote" 2>/dev/null || true)"
+  PR_MERGE="$(git config --get "branch.$BRANCH.merge" 2>/dev/null || true)"
+  if [ -z "$PR_REMOTE" ] || [ -z "$PR_MERGE" ]; then
+    _log "pr: $BRANCH has no upstream — merge_mode is pr, and the pull request needs a base; no refresh this run"
+    echo "skills update: .skills/merge_mode is pr, but $BRANCH has no upstream to propose a pull request against — no refresh this run (see $LOG)" >&2
+    return 1
+  fi
+  PR_BASE_BRANCH="${PR_MERGE#refs/heads/}"
+  PR_UPSTREAM="$PR_REMOTE/$PR_BASE_BRANCH"
+  # The configured URL, not `git remote get-url`, which expands insteadOf.
+  PR_GH_REPO="$(_gh_repo_of "$(git config --get "remote.$PR_REMOTE.url" 2>/dev/null || true)")"
+  return 0
+}
+if [ "$MERGE_MODE" = "pr" ] && ! _pr_preflight; then
+  _stamp_lock
+  exit 0
+fi
+
+# The refresh begins. The day's lock is NOT stamped here; it used to be, so
+# that a transient failure (a network blip) would not retry and re-log at every
+# same-day session — and that damping is kept for every run that ends, failure
+# included: each way out of the update-and-commit block below goes through
+# _finish_refresh. What changed is a run killed part way (#555). Stamped up
+# here, it spent the day before doing the work, and the real session that
+# starts a second after the extension's config-cache process exited at the
+# once-per-day guard; recovery waited a UTC day, and the next day's run landed
+# in the same 2 s window. Unstamped, the next session redoes it.
+#
+# The marker goes down first, naming this run as its owner and every path it
+# may stage — the unpinned registered submodules and the doctor — so a kill
+# anywhere from here to the end of the commit leaves _heal_staged the evidence
+# it needs, and a session starting meanwhile leaves this one alone. Checked: a
+# marker that never lands costs only the heal, so it is logged, not fatal.
+REFRESH_PATHS=()
+if [ "$PIN_COUNT" -eq 0 ]; then
+  while IFS= read -r REG_PATH; do
+    [ -n "$REG_PATH" ] || continue
+    REFRESH_PATHS+=("$REG_PATH")
+  done <<REGISTERED_EOF
+$REGISTERED
+REGISTERED_EOF
+elif [ "${#UPDATE_PATHS[@]}" -gt 0 ]; then
+  REFRESH_PATHS=("${UPDATE_PATHS[@]}")
+fi
+REFRESH_PATHS+=(.skills/doctor.sh)
+
+# Claimed, not just written (CR 1789): `noclobber` makes the write fail when a
+# marker is already there, so of two runs that reach this line together
+# exactly one owns the refresh. One already there is checked: a live owner's
+# means another session got here since this one passed the guard at the top,
+# so this run leaves; a dead owner's — kept by a heal whose unstage failed —
+# is replaced. In a subshell, so noclobber stays out of the rest of the run
+# (and `$$` there is still this run's PID).
+#
+# The whole content is built first, `date` and all, and written by one
+# builtin `printf` (CR 1808): with the fork inside the redirect, the file sat
+# empty for as long as `date` took, and a second session reading it then saw
+# no owner. _marker_owner_live believes an unparseable marker for its first
+# 2 s, which covers the open-to-write gap that remains.
+_claim_marker() {
+  local body p
+  body="pid $$ $(date +%s 2>/dev/null || true)"
+  # A pr-mode run says so: its heal restores content and unstages nothing.
+  if [ "$MERGE_MODE" = "pr" ]; then
+    body="$body"$'\n'"mode pr"
+  fi
+  for p in "${REFRESH_PATHS[@]}"; do
+    body="$body"$'\n'"$p"
+  done
+  (
+    set -o noclobber
+    printf '%s\n' "$body" > "$STAGING"
+  ) 2>/dev/null
+}
+if ! _claim_marker; then
+  if _marker_owner_live; then
+    _log "another refresh is in flight (pid $MARKER_OWNER) — leaving this checkout to it"
+    exit 0
+  fi
+  rm -f "$STAGING" 2>/dev/null || true
+  if ! _claim_marker; then
+    if [ -f "$STAGING" ]; then
+      _log "another refresh claimed $STAGING first — leaving this checkout to it"
+      exit 0
+    fi
+    _log "could not write $STAGING — a run killed before its commit ends will not have its staging undone"
+  fi
+fi
+REFRESH_BEGUN=1
+HOOK_ADDED=0
+
+# merge_mode pr and a bump staged with no marker (CR 1791). _heal_staged
+# leaves it alone, since a human's own `git add skills-vendor/<v>` looks the
+# same as a hook from before #555. In `direct` mode this run's commit takes it
+# through its own pathspec; `pr` mode never commits in this checkout, so it
+# stays staged for the next `git commit` on main to absorb, and the content
+# stays on the pointer the index records. So it is said, once a run — this is
+# behind the day's lock — by the run that owns the refresh, with the commands
+# that clear it.
+_pr_note_staged() {
+  local p hook_paths=() left gitlinks=() rc=0
+  while IFS= read -r p; do
+    [ -n "$p" ] || continue
+    hook_paths+=("$p")
+  done <<NOTE_EOF
+$REGISTERED
+.skills/doctor.sh
+NOTE_EOF
+  left="$(git diff --cached --name-only --ignore-submodules=none -- "${hook_paths[@]}" 2>>"$LOG")" || rc=$?
+  if [ "$rc" -ne 0 ] || [ -z "$left" ]; then
+    return 0
+  fi
+  while IFS= read -r p; do
+    if _listed "$p" "$REGISTERED"; then
+      gitlinks+=("$p")
+    fi
+  done <<LEFT_EOF
+$left
+LEFT_EOF
+  left="${left//$'\n'/ }"
+  _log "pr: $left staged with no in-progress marker — left staged; merge_mode pr never commits here"
+  echo "skills update: $left is staged with no in-progress marker — a hook from before #555, or a bump of your own. merge_mode pr never commits in this checkout, so it stays staged for the next git commit on main, and the content stays on the pointer the index records. If it is not yours: git reset -q -- $left${gitlinks[0]:+ && git submodule update --checkout -- ${gitlinks[*]}} (see $LOG)" >&2 || true
+  return 0
+}
+if [ "$MERGE_MODE" = "pr" ]; then
+  _pr_note_staged
+fi
+
+# Every way out of the refresh from here on. The marker goes unless this run's
+# own `git add` left something of the hook's still staged — a commit that
+# failed and could not be unstaged — in which case the next session's
+# _heal_staged tries the unstage again. Then the day is spent.
+_finish_refresh() {
+  if [ "$HOOK_ADDED" = "0" ] ||
+    git diff --cached --quiet --ignore-submodules=none -- "${REFRESH_PATHS[@]}" 2>/dev/null; then
+    rm -f "$STAGING" 2>/dev/null || true
+  fi
+  _stamp_lock
+}
 
 # Scope the update to the unpinned skills-vendor/ paths — never touch other
 # submodules, and never a pinned one.
@@ -603,7 +1388,7 @@ fi
 # `--init` is what makes this hook work on a half-healed checkout: content
 # present under skills-vendor/, nothing registered in .git/config. Without it
 # git skips every such submodule and exits **0** — so the guard below passes,
-# no pointer moves, and the lock (stamped above, deliberately) is spent. A
+# no pointer moves, and the day's lock is spent on a run that did nothing. A
 # consumer sat in that state for days reporting success (#176).
 #
 # How loudly git skips depends on the pathspec, which is worth knowing because
@@ -634,6 +1419,13 @@ elif ! {
   git submodule update --init --remote --merge -- "${UPDATE_PATHS[@]}" 2>&1
 } >>"$LOG"; then
   echo "skills update failed (see $LOG)" >&2
+  # A part-way update must not stay checked out, in either mode (#560 for
+  # pr, CR 1792 for direct): nothing is committed after it, so whatever it
+  # moved would sit ahead of its pointer until the next day's refresh. The
+  # hook has staged nothing yet, so only the content goes back.
+  _restore_content "a failed update" "${REFRESH_PATHS[@]}"
+  # A failure that ran to completion: it spends the day (see above).
+  _finish_refresh
   exit 0
 else
   # Post-condition, because the failure mode of #176 was a *silent* one: git
@@ -647,7 +1439,7 @@ else
     echo "skills update: still uninitialized after refresh: ${UNINIT% } (see $LOG)" >&2
   fi
 
-  # _install_doctor, call site 2 of 2 (#299): the update may just have
+  # _install_doctor, call site 2 of 3 (#299): the update may just have
   # replaced the vendored install-doctor.sh and doctor.sh, so run the
   # POST-bump installer. Here, before COMMIT_PATHS is built, so the doctor
   # staged and committed below is the one that ships with the pointer this run
@@ -682,18 +1474,336 @@ fi
 # Nothing this hook is allowed to stage. An empty pathspec would widen every
 # git call below to the whole repo, so stop here instead.
 if [ "${#COMMIT_PATHS[@]}" -eq 0 ]; then
+  _finish_refresh
   exit 0
 fi
 
-# This run has already established it cannot share a commit — the remote
-# refused a push, or `main` carries commits this hook did not write and must
-# not publish on the operator's behalf. Committing anyway would manufacture
-# exactly the unpushed commit the reconcile step exists to prevent (#293).
-# Nothing is lost by waiting: the refreshed submodule content is already in
-# the working tree, so the skills themselves work today, and the pointer gets
-# recorded by the first session that can actually share it.
-if [ "$PUSH_BLOCKED" = "1" ]; then
-  _log "commit skipped — this run cannot share what it would commit; the pointer bump waits for a session that can"
+# ------------------------------------------------------ merge_mode pr (#560)
+# The refresh above ran in place, as it always has: the same update, the same
+# post-bump doctor install (#299), the same pins. From here a `pr` run records
+# the bump in a commit built in a private index, never in the checkout's own,
+# puts the content back on the pointer the index records (#550) — main's,
+# unless a bump is staged with no marker (_pr_note_staged) — and only THEN
+# touches the network: pushes that commit to skills/submodule-refresh and opens
+# a pull request for it if none is open. Local main never moves; the content
+# always agrees with the index, except between the update and the restore,
+# which the marker covers (_heal_pr). Annotated in
+# references/auto-refresh-hook/pr-mode.md.
+#
+# Why in place rather than fetching inside each submodule and writing the new
+# gitlinks without checking them out: `--remote --merge --init` and the pins
+# would have to be re-implemented, and the doctor that rides the commit must be
+# the one the new pointer's own installer writes, which needs that installer
+# checked out.
+
+# Every path this hook may write, as a list and as an array: the registered
+# skills-vendor/ submodules and the doctor.
+PR_HOOK_LIST="$REGISTERED
+.skills/doctor.sh"
+PR_HOOK_PATHS=()
+while IFS= read -r REG_PATH; do
+  [ -n "$REG_PATH" ] || continue
+  PR_HOOK_PATHS+=("$REG_PATH")
+done <<PRHOOK_EOF
+$PR_HOOK_LIST
+PRHOOK_EOF
+
+_gh() {
+  if [ -n "$PR_GH_REPO" ]; then
+    GH_PROMPT_DISABLED=1 GH_NO_UPDATE_NOTIFIER=1 gh "$@" --repo "$PR_GH_REPO"
+  else
+    GH_PROMPT_DISABLED=1 GH_NO_UPDATE_NOTIFIER=1 gh "$@"
+  fi
+}
+
+# _pr_restore — the content back on the pointer the index records (main's,
+# unless a bump is staged with no marker), the doctor with it.
+_pr_restore() {
+  _restore_content "a pr-mode refresh" "${REFRESH_PATHS[@]}"
+}
+
+# _pr_tree <commit> <path>... — a tree: <commit>'s, with each path as the
+# working tree has it. The add is the commit step's own (`|| true` for the same
+# gitignored-.skills/ reason), in the private index.
+_pr_tree() {
+  local base="$1" tree
+  shift
+  rm -f "$PR_INDEX" "$PR_INDEX.lock" 2>/dev/null || true
+  GIT_INDEX_FILE="$PR_INDEX" git read-tree "$base" 2>>"$LOG" || return 1
+  GIT_INDEX_FILE="$PR_INDEX" git add -- "$@" >>"$LOG" 2>&1 || true
+  tree="$(GIT_INDEX_FILE="$PR_INDEX" git write-tree 2>>"$LOG")" || return 1
+  rm -f "$PR_INDEX" 2>/dev/null || true
+  printf '%s\n' "$tree"
+}
+
+# _pr_graft <commit> <tree> <path>... — a tree: <commit>'s, with each path as
+# <tree> has it.
+_pr_graft() {
+  local base="$1" from="$2" entries tree
+  shift 2
+  rm -f "$PR_INDEX" "$PR_INDEX.lock" 2>/dev/null || true
+  GIT_INDEX_FILE="$PR_INDEX" git read-tree "$base" 2>>"$LOG" || return 1
+  entries="$(git ls-tree -r "$from" -- "$@" 2>>"$LOG")" || return 1
+  if [ -n "$entries" ]; then
+    GIT_INDEX_FILE="$PR_INDEX" git update-index --index-info <<<"$entries" 2>>"$LOG" || return 1
+  fi
+  tree="$(GIT_INDEX_FILE="$PR_INDEX" git write-tree 2>>"$LOG")" || return 1
+  rm -f "$PR_INDEX" 2>/dev/null || true
+  printf '%s\n' "$tree"
+}
+
+# _pr_same_bump <a> <b> — true when two commits make the same change to the
+# hook's paths: from the same pointers and doctor, to the same. False when
+# either is not here to read.
+_pr_same_bump() {
+  if [ -z "$1" ] || [ -z "$2" ]; then
+    return 1
+  fi
+  git diff --quiet --ignore-submodules=none "$1" "$2" -- "${PR_HOOK_PATHS[@]}" </dev/null 2>/dev/null || return 1
+  git diff --quiet --ignore-submodules=none "$1^" "$2^" -- "${PR_HOOK_PATHS[@]}" </dev/null 2>/dev/null || return 1
+  return 0
+}
+
+# _pr_hook_commit <commit> — true when it is a commit this hook writes: one
+# parent, one of the three subjects, and nothing changed outside the hook's
+# paths. A human's fix on the PR fails it, and is never replaced.
+_pr_hook_commit() {
+  local parents subject changed p
+  parents="$(git rev-list --parents -n 1 "$1" 2>/dev/null)" || return 1
+  case "$parents" in
+    *" "*" "*) return 1 ;;
+    *" "*) : ;;
+    *) return 1 ;;
+  esac
+  subject="$(git log -1 --no-show-signature --format=%s "$1" 2>/dev/null)" || return 1
+  case "$subject" in
+    "$MSG_SUB" | "$MSG_DOC" | "$MSG_BOTH") : ;;
+    *) return 1 ;;
+  esac
+  changed="$(git diff --name-only --ignore-submodules=none "$1^" "$1" 2>/dev/null)" || return 1
+  while IFS= read -r p; do
+    [ -n "$p" ] || continue
+    _listed "$p" "$PR_HOOK_LIST" || return 1
+  done <<CHANGED_EOF
+$changed
+CHANGED_EOF
+  return 0
+}
+
+# _pr_refused <what> <output> — a push or gh call that failed, said once on
+# stderr. Never retried: a rule, a credential or a concurrent push is not
+# answered by asking again, and the run ends after it.
+_pr_refused() {
+  local what="$1" out="$2" first
+  first="$(awk 'NF { sub(/[ \r]+$/, ""); print; exit }' <<<"$out" 2>/dev/null || true)"
+  if _rule_refusal "$out"; then
+    _log "pr: $what refused by a rule ($RULE_TEXT)"
+    echo "skills update: a repository rule refused $what ($RULE_TEXT) — merge_mode pr needs $PR_BRANCH pushable, so exempt that branch from the rule; not retried (see $LOG)" >&2
+  else
+    _log "pr: $what failed: $first"
+    echo "skills update: $what failed${first:+: $first} — not retried this run (see $LOG)" >&2
+  fi
+}
+
+# _pr_publish <commit> <subject> — the commit onto $PR_BRANCH, and ONE pull
+# request for it.
+_pr_publish() {
+  local c="$1" msg="$2" prs rc=0 tip_line tip n s oid open="" declined="" out
+  local unread=() refspecs=() pr missing
+  # Every PR from the branch, any state. gh failing is not "none".
+  prs="$(_gh pr list --head "$PR_BRANCH" --base "$PR_BASE_BRANCH" --state all \
+    --json number,state,headRefOid --jq '.[] | "\(.number) \(.state) \(.headRefOid)"' 2>&1)" || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    { echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] gh pr list exited $rc:"; printf '%s\n' "$prs"; } >>"$LOG" 2>/dev/null || true
+    _pr_refused "gh pr list (is gh authenticated? gh auth status)" "$prs"
+    return 0
+  fi
+  tip_line="$(git ls-remote "$PR_REMOTE" "refs/heads/$PR_BRANCH" 2>>"$LOG")" || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    _pr_refused "reading $PR_BRANCH from $PR_REMOTE" "git ls-remote exited $rc"
+    return 0
+  fi
+  tip=${tip_line%%[[:space:]]*}
+  while read -r n s oid; do
+    case "$n" in '' | *[!0-9]*) continue ;; esac
+    if [ "$s" = "OPEN" ]; then
+      open=${open:-$n}
+    elif [ "$s" = "CLOSED" ] && [ -z "$declined" ] && [ -n "$oid" ]; then
+      if ! git cat-file -e "$oid^{commit}" 2>/dev/null; then
+        unread+=("$n $oid")
+      elif _pr_same_bump "$oid" "$c"; then
+        declined=$n
+      fi
+    fi
+  done <<PRS_EOF
+$prs
+PRS_EOF
+
+  # A closed PR's head this clone never had — another clone proposed it, or
+  # gc pruned it once the branch was deleted — compared as "not the same" and
+  # a declined bump was proposed again (CR 1802). GitHub keeps every PR's head
+  # at refs/pull/<n>/head on the base repo, so it is fetched from there, all
+  # in one fetch, and only when nothing else has settled the answer. Unable to
+  # fetch, the run proposes nothing: a PR a human may already have closed is
+  # a visible write, and waiting costs a day — the next day's run checks again.
+  if [ -z "$open" ] && [ -z "$declined" ] && [ "${#unread[@]}" -gt 0 ]; then
+    refspecs=()
+    for pr in "${unread[@]}"; do
+      refspecs+=("refs/pull/${pr%% *}/head")
+    done
+    rc=0
+    { echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] fetch ${refspecs[*]} to read closed PRs' heads:"; git fetch -q --no-tags "$PR_REMOTE" "${refspecs[@]}" 2>&1; } >>"$LOG" || rc=$?
+    missing=""
+    for pr in "${unread[@]}"; do
+      n=${pr%% *}
+      oid=${pr#* }
+      if [ "$rc" -ne 0 ] || ! git cat-file -e "$oid^{commit}" 2>/dev/null; then
+        missing=${missing:-$n}
+      elif _pr_same_bump "$oid" "$c"; then
+        declined=$n
+        break
+      fi
+    done
+    if [ -z "$declined" ] && [ -n "$missing" ]; then
+      _log "pr: could not fetch closed PR #$missing's head from $PR_REMOTE — whether it declined this bump is unknown, so nothing is proposed this run"
+      echo "skills update: could not fetch closed PR #$missing's head from $PR_REMOTE to check whether it declined this bump, so nothing is proposed this run; the next day's refresh checks again (see $LOG)" >&2
+      return 0
+    fi
+  fi
+
+  # An open PR's branch is replaced only while it is still the hook's own.
+  if [ -n "$open" ] && [ -n "$tip" ]; then
+    if ! git cat-file -e "$tip^{commit}" 2>/dev/null; then
+      if ! { echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] fetch $PR_BRANCH to read PR #$open's tip:"; git fetch -q --no-tags "$PR_REMOTE" "refs/heads/$PR_BRANCH" 2>&1; } >>"$LOG"; then
+        _pr_refused "fetching $PR_BRANCH" "git fetch failed"
+        return 0
+      fi
+    fi
+    if ! _pr_hook_commit "$tip"; then
+      _log "pr: PR #$open's branch $PR_BRANCH carries a commit this hook did not write — leaving it"
+      echo "skills update: PR #$open's branch $PR_BRANCH carries a commit this hook did not write, so it is left as it is — merge or close it, and a later session proposes any newer bump (see $LOG)" >&2
+      return 0
+    fi
+  fi
+  # Closed unmerged, the same change: a human's no. The next upstream change
+  # is proposed again; .skills/skills-pin is how to hold one for good.
+  if [ -z "$open" ] && [ -n "$declined" ]; then
+    _log "pr: PR #$declined proposed this same bump and was closed unmerged — not proposing it again"
+    return 0
+  fi
+
+  if [ -n "$tip" ] && _pr_same_bump "$tip" "$c"; then
+    _log "pr: $PR_BRANCH already proposes this bump — nothing to push"
+  else
+    # The lease is the tip just read; empty means "must not exist". Never a
+    # plain --force: a push landing between the read and here is refused.
+    rc=0
+    out="$(git push --force-with-lease="refs/heads/$PR_BRANCH:$tip" "$PR_REMOTE" "$c:refs/heads/$PR_BRANCH" 2>&1)" || rc=$?
+    { echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] push the bump to $PR_BRANCH:"; [ -z "$out" ] || printf '%s\n' "$out"; } >>"$LOG" 2>/dev/null || true
+    if [ "$rc" -ne 0 ]; then
+      _pr_refused "the push to $PR_BRANCH" "$out"
+      return 0
+    fi
+  fi
+  if [ -n "$open" ]; then
+    _log "pr: PR #$open proposes the bump"
+    return 0
+  fi
+  rc=0
+  out="$(_gh pr create --head "$PR_BRANCH" --base "$PR_BASE_BRANCH" --title "$msg" --body "$PR_BODY" 2>&1)" || rc=$?
+  { echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] gh pr create exited $rc:"; [ -z "$out" ] || printf '%s\n' "$out"; } >>"$LOG" 2>/dev/null || true
+  if [ "$rc" -eq 0 ]; then
+    _log "pr: opened $out"
+  else
+    case "$out" in
+      *"already exists"*) _log "pr: a pull request from $PR_BRANCH already exists — another session opened it" ;;
+      *) _pr_refused "gh pr create (the bump is on $PR_BRANCH; a later session retries)" "$out" ;;
+    esac
+  fi
+  return 0
+}
+
+PR_BODY='Proposed by the skills auto-refresh hook (managing-skills), because .skills/merge_mode is pr here: the hook never pushes to the default branch.
+
+Later sessions update this branch in place, at most once a day, while this pull request is open and its branch holds only the hook'"'"'s commit. Closing it unmerged declines this bump; the next upstream change is proposed again. To hold one submodule at a commit, use .skills/skills-pin.'
+
+# _pr_refresh — the whole pr path, from the refreshed working tree.
+_pr_refresh() {
+  local bumped head_tree base base_tree tree rc=0 msg moves c
+  # 1. The bump, read off the working tree onto HEAD.
+  bumped="$(_pr_tree HEAD "${COMMIT_PATHS[@]}")" || rc=$?
+  # 2. The content goes back before anything else, success or not.
+  _pr_restore
+  if [ "$rc" -ne 0 ] || [ -z "$bumped" ]; then
+    _log "pr: could not record the bump in $PR_INDEX — nothing proposed"
+    rm -f "$PR_INDEX" "$PR_INDEX.lock" 2>/dev/null || true
+    return 0
+  fi
+  head_tree="$(git rev-parse --verify -q 'HEAD^{tree}' 2>/dev/null || true)"
+  if [ "$bumped" = "$head_tree" ]; then
+    _log "pr: nothing to propose — $BRANCH already records the refreshed pointers and doctor"
+    return 0
+  fi
+  # 3. The base: the default branch as the remote has it now. A fetch, never
+  # a pull — local main does not move.
+  if ! { echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] fetch $PR_UPSTREAM to base the pull request on:"; git fetch -q --no-tags "$PR_REMOTE" "$PR_MERGE" 2>&1; } >>"$LOG"; then
+    _pr_refused "fetching $PR_UPSTREAM" "git fetch failed"
+    return 0
+  fi
+  base="$(git rev-parse --verify -q '@{u}^{commit}' 2>/dev/null)" || {
+    _log "pr: @{u} does not resolve after the fetch — nothing proposed"
+    return 0
+  }
+  # 4. A checkout behind on the hook's paths gets no bump: the bump was made
+  # from HEAD's pointers, and the base records others (a merged refresh PR
+  # not yet pulled, a pin changed upstream).
+  rc=0
+  git diff --quiet --ignore-submodules=none "$base" HEAD -- "${PR_HOOK_PATHS[@]}" .skills/skills-pin 2>>"$LOG" || rc=$?
+  if [ "$rc" -eq 1 ]; then
+    _log "pr: $BRANCH and $PR_UPSTREAM record different skills-vendor/ pointers, doctor or pin — no bump until $BRANCH is pulled"
+    echo "skills update: $BRANCH and $PR_UPSTREAM record different skills-vendor/ pointers, doctor or pin, so no bump is proposed — pull $BRANCH (or drop an unpushed bump on it), and a later session proposes any newer one (see $LOG)" >&2
+    return 0
+  elif [ "$rc" -ne 0 ]; then
+    _log "pr: could not compare $BRANCH with $PR_UPSTREAM (git diff exited $rc) — nothing proposed"
+    return 0
+  fi
+  # 5. The pull request's commit: the base, with the bump.
+  tree="$(_pr_graft "$base" "$bumped" "${COMMIT_PATHS[@]}")" || {
+    _log "pr: could not build the pull request's tree — nothing proposed"
+    rm -f "$PR_INDEX" "$PR_INDEX.lock" 2>/dev/null || true
+    return 0
+  }
+  base_tree="$(git rev-parse --verify -q "$base^{tree}" 2>/dev/null || true)"
+  if [ "$tree" = "$base_tree" ]; then
+    _log "pr: nothing to propose — $PR_UPSTREAM already records this refresh"
+    return 0
+  fi
+  if ! git diff --quiet --ignore-submodules=none "$base" "$tree" -- skills-vendor/ 2>/dev/null; then
+    if ! git diff --quiet "$base" "$tree" -- .skills/doctor.sh 2>/dev/null; then
+      msg="$MSG_BOTH"
+    else
+      msg="$MSG_SUB"
+    fi
+  else
+    msg="$MSG_DOC"
+  fi
+  moves="$(git diff --raw --ignore-submodules=none "$base" "$tree" -- skills-vendor/ 2>/dev/null |
+    awk -F '\t' '{ split($1, f, " "); printf "%s: %s -> %s\n", $2, f[3], f[4] }' || true)"
+  # The subject is exactly one of the three, so _pr_hook_commit knows it again.
+  [ -n "$moves" ] || moves="(the doctor only)"
+  c="$(git commit-tree "$tree" -p "$base" -m "$msg" -m "$moves" 2>>"$LOG")" || {
+    _log "pr: git commit-tree failed — nothing proposed"
+    return 0
+  }
+  _log "pr: proposing $c on $PR_UPSTREAM ($msg)"
+  # 6. The network, with the checkout already back on its pointer.
+  _pr_publish "$c" "$msg"
+  return 0
+}
+
+if [ "$MERGE_MODE" = "pr" ]; then
+  _pr_refresh
+  _finish_refresh
   exit 0
 fi
 
@@ -732,6 +1842,11 @@ if [ "$STATUS_RC" -eq 0 ] && [ -n "$STATUS_OUT" ]; then
     # the ignored path but still stages everything else, so submodule bumps
     # keep getting committed there. Tightening this into a hard failure
     # would silently strand those consumers.
+    #
+    # From this add to the end of the commit is the window the 11-01 kill
+    # landed in (#555): the marker written above is what lets the next
+    # session undo it.
+    HOOK_ADDED=1
     git add -- "${COMMIT_PATHS[@]}" 2>&1 || true
     if ! git diff --cached --quiet -- "${COMMIT_PATHS[@]}" 2>/dev/null; then
       # Name what actually changed. A doctor-only refresh recorded as
@@ -778,19 +1893,34 @@ if [ "$STATUS_RC" -eq 0 ] && [ -n "$STATUS_OUT" ]; then
         # construction here would go unnoticed.
         echo "nothing staged under this hook's paths after all — no commit"
       else
-        # On failure, unstage what we staged. `git add` above may have staged
-        # a previously *untracked* .skills/doctor.sh, and leaving a file the
-        # operator never touched sitting in their index is worse than leaving
-        # the commit undone — the next run retries cleanly either way. The
-        # unstage is checked, not assumed: see _unstage (#311).
+        # On failure — a consumer's pre-commit hook refusing, most often —
+        # the bump is undone whole, as a refused push's is (#550, CR 1792).
+        # Unstaged first: `git add` above may have staged a previously
+        # *untracked* .skills/doctor.sh, and leaving a file the operator never
+        # touched sitting in their index is worse than leaving the commit
+        # undone. The unstage is checked, not assumed: see _unstage (#311).
+        # It takes COMMIT_PATHS, the add's own pathspec; the restore takes
+        # REFRESH_PATHS, because COMMIT_PATHS holds `skills-vendor/` itself
+        # when nothing is pinned, and that names no registered submodule.
+        # Then the content goes back to its pointer and the doctor with it:
+        # unstaging alone left both ahead, with stderr silent and the day
+        # spent.
         git commit -m "$MSG" -- "${STAGED_PATHS[@]}" 2>&1 || {
-          echo "commit failed — unstaging to leave the index as we found it"
+          echo "commit failed — undoing the bump: unstaging, then the content and the doctor back on the recorded pointer"
+          echo "skills update: the commit failed (git's words in $LOG), so this run undoes its bump — the staging, the vendored content and the doctor; anything it cannot put back is said separately. The next day's refresh tries again" >&2 || true
           _unstage "a failed commit" "${COMMIT_PATHS[@]}"
+          _restore_content "a failed commit" "${REFRESH_PATHS[@]}"
         }
       fi
     fi
   } >>"$LOG" || true
 fi
+
+# The update-and-commit block has ended: the day is spent here, and not
+# before, so a run killed anywhere above leaves it for the next session
+# (#555). Ahead of the push, which _reconcile_unpushed retries at every
+# session regardless of the lock.
+_finish_refresh
 
 # Call site 2 of 2: push what this run just committed. Cheap when call site 1
 # already found nothing — it re-reads a count and returns. Separate from the

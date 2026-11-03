@@ -113,8 +113,9 @@ reports it. Beyond that the two files part ways:
 The counts file merges **per row, newest wins**
 ([#237](https://github.com/gregoryfoster/skills/issues/237)). It used to carry
 `merge=ours`, which keeps the side of whoever *runs* the merge — unrelated to
-which side measured more recently — and the cadence bot only ever pushes to
-the default branch, so it was structurally always the side that lost: merging
+which side measured more recently — and the cadence bot then only ever pushed
+to the default branch (in [`pr` mode](#under-a-pr-only-ruleset-merge_mode-pr)
+it pushes a branch of its own), so it was structurally always the side that lost: merging
 `origin/main` onto a branch silently reverted the week's fresh row, and
 nothing went red because the file is a cache (`c7be4eb` is the incident
 record). The `context-counts` driver (`merge-token-counts.sh`) merges
@@ -233,6 +234,87 @@ that last case. It is not a guarantee, so it never sets exit 3. `--print` reads
 the installed line too, which is what lets this repo's parity test pass a bare
 Dependabot bump of `context-cadence.yml`.
 
+## Under a PR-only ruleset: `merge_mode` `pr`
+
+A default branch with a PR-only ruleset and no bypass refuses this job's push,
+and a repository ruleset won't take the GitHub Actions app as a bypass actor.
+So the push loop retried the refusal three times as a non-fast-forward and the
+week's row was lost
+([#560](https://github.com/gregoryfoster/skills/issues/560)). The answer is
+[#342](https://github.com/gregoryfoster/skills/issues/342)'s knob,
+`.skills/merge_mode`, with no knob of its own: under such a rule a `direct`
+ship is refused too, so a repo that needs one needs the other.
+
+- **`direct` or absent: nothing changes.** `install-cadence.sh` renders
+  today's workflow, byte for byte, and the job does what it did.
+- **`pr`: the same workflow plus five insertions,** none removed or
+  rewritten. `pull-requests: write`; a `Read the merge mode` step before the
+  credential preflight, which reads the committed knob with `merge-mode.sh`'s
+  grammar and fails on an unusable one; a `Take in the measurement PR's
+  rows` step after the preflight (below); `GH_TOKEN` on the commit step; and,
+  after `# --- push ---`, a path that pushes `context/weekly-measurement` and
+  opens or updates one PR into the branch the run is on.
+- **One PR, not one a week.** While the branch carries rows no finished PR
+  took (an open PR's, or a run's whose PR was never opened), each run merges
+  its row *into* that branch. Those rows stay first and in order, the default
+  branch comes in with the row, and the push is a fast-forward, so the PR
+  never conflicts with its base. When no PR is open and the branch's tip was
+  the head of a PR that merged or closed, the branch restarts at the default
+  branch plus the row. A merged PR's rows are already there, and a squash
+  merge would otherwise carry them twice; a closed PR was a no. An open PR
+  always wins, even when a closed one shares its head. Only this repo's PRs
+  count: `gh pr list --head` matches a branch *name*, so a fork's PR from a
+  branch of the same name is filtered out by `isCrossRepository`.
+- **Each row is measured after the one before it.** The job checks out the
+  default branch, whose ledger lacks the open PR's rows. Measured there,
+  every row after the first took its `delta_days` and `delta_tokens`, and
+  the seam sweep its `--base-ledger` interval, from the last *merged* row:
+  [the delta check](#the-delta-check) warned on every run while the PR was
+  open, and the merge landed the wrong deltas. So when the push would keep
+  the branch, the take-in step merges it in before the sweep, deciding
+  which PR exactly as the push does. It merges with `--no-commit`: `HEAD`
+  stays the default branch's tip, so the row's `repo_commit` is a commit
+  that branch keeps even after a squash merge, and the commit step records
+  the merge with the row. The push decides again, since a PR can merge
+  mid-run. `record-telemetry.sh --repair` after the fact was the other way,
+  and it can't do this: it rewrites deltas, never the observed `seams`.
+- **A refused push is reported once.** On the PR's branch a refusal is a
+  rule or a concurrent push, not a race a rebase fixes. A `GH013` or
+  protected-branch refusal is named as one, and nothing is retried.
+
+**The knob is read twice, on purpose.** The permissions block is static, so
+the installer reads the primary checkout's knob and renders by it: widening
+the token for every consumer would have changed every direct repo's
+workflow. A `pr` render then follows the *committed* knob at run time.
+Switched back to `direct`, it pushes to the default branch without a
+re-render, and `--check` prints a `merge mode:` line saying so. Switched to
+`pr` under a direct render, the runs keep pushing to the default branch, so
+`--check` reports `STALE` and exits 3. Re-running the installer re-renders
+either way. The job reads the checked-out file, so a `pr` knob not committed
+as it reads (untracked, only staged, or edited after a `direct` commit)
+renders the PR path and then runs `direct`; the installer and `--check` say
+so.
+
+**What GitHub needs, and what it won't do** [GitHub's documented behaviour;
+not measured here]:
+
+- **Actions must be allowed to open PRs:** Settings → Actions → General →
+  Workflow permissions → *Allow GitHub Actions to create and approve pull
+  requests* (an organization can hold it off). Off, the branch is still
+  pushed, the job fails naming the setting, and the next run keeps that row.
+- **A PR opened with `GITHUB_TOKEN` starts no `pull_request` workflow,** and
+  neither does a later run's push to it. A required check never reports, so a
+  ruleset requiring one won't merge the PR until a human acts. The remedy is
+  in the PR's body: close and reopen it, which a human does and which starts
+  the checks. *Known limit:* a GitHub App token would avoid it, at the cost
+  of a secret this job doesn't otherwise need.
+- **The late merge is safe where git merges it, not on GitHub's button.** The
+  union attribute is in the tree, and the runner defines the other two
+  drivers, so every merge *this job* makes is clean. GitHub's merge has no
+  config, so `context-counts` can't run there, and its handling of `union` is
+  undocumented. If the PR shows a conflict, run the workflow by hand: its
+  merge brings the default branch in with every driver.
+
 ## The workflow
 
 The rendered job, step by step, with the annotations that explain each one —
@@ -255,7 +337,8 @@ assumed per-week.
 
 ## What this does not do
 
-- **It does not curate.** No agent, no judgement, no PR. When a row shows the
+- **It does not curate.** No agent, no judgement, and no PR beyond `pr`
+  mode's measurement PR. When a row shows the
   surface over budget or seams accruing, a human or an agent runs
   `curate context` in that repo.
 - **It does not gate a merge.** It never runs on `pull_request`. Turning the

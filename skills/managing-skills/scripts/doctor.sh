@@ -52,7 +52,7 @@ set -euo pipefail
 # copy that produced it. Nothing branches on it: sync_self keeps the installed
 # copy equal to the vendored source, which makes drift transient and a
 # version-comparison mechanism unnecessary.
-VERSION="2026-10-31-1"
+VERSION="2026-11-03-1"
 
 CHECK_ONLY=0
 VERBOSE=0
@@ -171,6 +171,12 @@ link already dangles); a directory at skills/<old> and a skills/<new>
 that is not the vendor's link are reported, never rewritten. Nothing is
 committed — the report prints the git add that stages it. Advisory in
 every mode; --check-only says what it would repoint.
+
+Warns when the root ruff config (.ruff.toml, then ruff.toml, then
+pyproject.toml's [tool.ruff]) does not exclude skills-vendor/, which ruff
+would otherwise lint and format with this repo's ruff, so a refresh can
+turn a local run red over code this repo must not edit (#336). Advisory in
+every mode; silent without skills-vendor/ or a ruff config.
 
 Re-syncs .skills/doctor.sh from the vendored source under skills-vendor/
 when the two differ, so upstream fixes reach consumers that did not
@@ -538,6 +544,96 @@ check_unpushed() {
 }
 
 check_unpushed
+
+# #336 — vendored code read by the consumer's ruff. Every tool that walks the
+# tree from the root reads skills-vendor/, which this repo must not edit. With
+# ruff that bites on a refresh, not on the day of vendoring: the bump lands and
+# the next local `ruff check .` goes red with no local change behind it. CI
+# checks out without submodules and never sees it. init-project-fastapi
+# scaffolds the exclude; a repo that adopted skills through managing-skills
+# later has nothing that tells it, and this check is the one channel that
+# reaches a consumer which has already vendored.
+#
+# Reads the config ruff itself would read at the root: .ruff.toml, then
+# ruff.toml (both top-level keys), then pyproject.toml's [tool.ruff] table. An
+# exclude in [tool.ruff.lint] does not count, because `ruff format` still reads
+# the vendor then [measured, ruff 0.16.6], and nor does the same exclude as a
+# dotted lint. or format. key. Any other mention of skills-vendor in that
+# table counts as covered, comments included: that is the documented way to
+# lint the vendor on purpose, and an over-eager match costs a missed warning,
+# never a wrong one. Not a TOML parser, deliberately, like frontmatter_value
+# below: a table header line and a substring are all the question needs.
+#
+# Silent without skills-vendor/ or a ruff config. Advisory in every mode,
+# --check-only included, and never on REG_GAPS: a lint gap is not the diff
+# under review, and not damage the CI probe gates on. ty and pytest want the
+# same exclude; neither is read here (ty is non-gating where it is scaffolded,
+# and pytest's config can live in several files), so the message names them.
+check_vendor_lint_exclude() {
+  [ -d skills-vendor ] || return 0
+  local cfg table where verdict
+  if [ -f .ruff.toml ]; then
+    cfg=".ruff.toml" table="" where="the top level of .ruff.toml"
+  elif [ -f ruff.toml ]; then
+    cfg="ruff.toml" table="" where="the top level of ruff.toml"
+  elif [ -f pyproject.toml ]; then
+    cfg="pyproject.toml" table="tool.ruff" where="[tool.ruff] in pyproject.toml"
+  else
+    return 0
+  fi
+  # none: pyproject.toml has no ruff table, so ruff is not configured here.
+  # extend: uncovered, and the table already has an extend-exclude, so the fix
+  # is an append: a second extend-exclude line is a duplicate TOML key, which
+  # ruff refuses for the whole file (CR 1806).
+  #
+  # A table header is a whole line of bare dotted keys in [ ] or [[ ]], then at
+  # most a comment (CR 1814). A line inside a multi-line array can start with
+  # "[" too; read as a header, it left the table and the exclude after it went
+  # unseen, a wrong warning. A quoted-key header is not recognised, which can
+  # only keep the previous table open: a missed warning at worst. A dotted key
+  # in the table (lint.exclude, format.exclude) sets a sub-table, which counts
+  # no more than its [tool.ruff.lint] header form does; its multi-line array
+  # value runs to the line holding the closing bracket.
+  verdict="$(awk -v want="$table" '
+    BEGIN { cur = ""; seen = (want == ""); hit = 0; ext = 0; dotted = 0 }
+    /^[[:space:]]*\[\[?[[:space:]]*[A-Za-z_][A-Za-z0-9_-]*([[:space:]]*\.[[:space:]]*[A-Za-z_][A-Za-z0-9_-]*)*[[:space:]]*\]\]?[[:space:]]*(#.*)?$/ {
+      cur = $0
+      sub(/^[[:space:]]*\[+[[:space:]]*/, "", cur)
+      sub(/[[:space:]]*\].*$/, "", cur)
+      gsub(/[[:space:]]*\.[[:space:]]*/, ".", cur)
+      if (want != "" && (cur == want || index(cur, want ".") == 1)) seen = 1
+      dotted = 0
+      next
+    }
+    cur != want { next }
+    dotted { if ($0 ~ /\]/) dotted = 0; next }
+    /^[[:space:]]*[A-Za-z0-9_-]+[[:space:]]*\.[^=]*=/ {
+      dotted = ($0 ~ /=[[:space:]]*\[/ && $0 !~ /\]/)
+      next
+    }
+    /^[[:space:]]*extend-exclude[[:space:]]*=/ { ext = 1 }
+    /skills-vendor/ { hit = 1 }
+    END { print (!seen ? "none" : (hit ? "covered" : (ext ? "extend" : "uncovered"))) }
+  ' "$cfg" 2>/dev/null || true)"
+  case "$verdict" in uncovered|extend) ;; *) return 0 ;; esac
+
+  echo "doctor: $cfg configures ruff without excluding skills-vendor/, so 'ruff" >&2
+  echo "doctor:   check .' and 'ruff format --check .' read vendored code this repo" >&2
+  echo "doctor:   must not edit, with this repo's ruff. A refresh can turn them red" >&2
+  if [ "$verdict" = "extend" ]; then
+    echo "doctor:   with no local change (#336). Append \"skills-vendor/\" to the" >&2
+    echo "doctor:   existing extend-exclude array in $where; a second" >&2
+    echo "doctor:   extend-exclude line is a duplicate key, which ruff refuses." >&2
+  else
+    echo "doctor:   with no local change (#336). Add to $where:" >&2
+    echo "doctor:     extend-exclude = [\"skills-vendor/\"]" >&2
+  fi
+  echo "doctor:   ty and pytest want the same: managing-skills'" >&2
+  echo "doctor:   references/excluding-vendored-code.md." >&2
+  return 0
+}
+
+check_vendor_lint_exclude
 
 # frontmatter_value <file> <key> — the value of the first `<key>:` line inside
 # the file's YAML frontmatter, surrounding double quotes stripped; empty when

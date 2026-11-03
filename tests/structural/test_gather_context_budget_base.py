@@ -7,9 +7,11 @@ was HEAD and the block printed nothing. Seen on CannObserv/provisioner PR #45:
 +569 tokens to AGENTS.md and a new 2,000-token reference doc, an empty budget
 block across five CR rounds.
 
-The base is now the first of the default branch (`origin/HEAD`, `main`,
-`master`) and then `@{upstream}` whose merge base is not HEAD itself.
-`origin/HEAD` leads because a local `main` is often stale (CR 696). The
+The base is now the merge base with the first default-branch ref that has one
+(`origin/HEAD`, `origin/main`, `origin/master`, `main`, `master`), and with
+`@{upstream}` only when none does. A merge base that is HEAD itself still
+decides (CR 1805): skipping it fell through to a stale `main`. `origin/HEAD`
+leads because a local `main` is often stale (CR 696). The
 block is identical in all four variants, so it is lifted out of each and run
 against fixture repositories; one end-to-end run of the baseline script shows
 the block printing on a pushed branch.
@@ -215,6 +217,29 @@ class TestTheBudgetBase:
         assert _base(variant, clone) == tip
 
     @pytest.mark.parametrize("variant", VARIANTS)
+    def test_a_fresh_branch_over_a_stale_main_measures_from_head(
+        self, variant, tmp_path, remote, clone
+    ):
+        """CR 1805. The branch is cut from origin/main and has no commit yet,
+        so origin/HEAD's merge base is HEAD. Skipping it fell through to the
+        stale local main, and the budget block measured someone else's two
+        commits as this branch's."""
+        other = tmp_path / "other"
+        git(tmp_path, "clone", "-q", str(remote), str(other))
+        _commit(other, "b.md", "theirs\n")
+        _commit(other, "x.md", "theirs too\n")
+        git(other, "push", "-q", "origin", "main")
+        git(clone, "fetch", "-q", "origin")
+        tip = git(clone, "rev-parse", "origin/main")
+        assert git(clone, "rev-parse", "main") != tip  # local main is stale
+        git(clone, "checkout", "-q", "-b", "fresh", "origin/main")
+        base = _base(variant, clone)
+        assert base == tip, (
+            f"{variant}: the budget base was {base}, the stale local main, not "
+            f"HEAD ({tip}), which is its own merge base with origin/HEAD."
+        )
+
+    @pytest.mark.parametrize("variant", VARIANTS)
     def test_nothing_to_diff_against_falls_back_to_head(self, variant, tmp_path):
         """No remote, and a default branch with neither common name: HEAD, the
         old behaviour, still right for reviewing a dirty tree."""
@@ -239,9 +264,11 @@ def test_the_budget_block_prints_on_a_pushed_branch(clone):
         env=_clean_env(),
     )
     assert r.returncode == 0, r.stderr
-    tail = r.stdout.split("=== Changed files (working tree vs HEAD) ===", 1)[1]
-    assert "AGENTS.md" in tail, (
+    # Split on the budget block's own header, not the changed-files one: since
+    # #549 that list names AGENTS.md on this branch too, so a tail taken after
+    # it would pass with no budget block at all.
+    _, sep, tail = r.stdout.partition("=== Context budget")
+    assert sep and "AGENTS.md" in tail, (
         "gather-context.sh printed no budget block on a branch pushed with -u "
-        f"that grew AGENTS.md (#389). Output after the changed-files section:\n"
-        f"{tail}"
+        f"that grew AGENTS.md (#389). Output:\n{r.stdout}"
     )
