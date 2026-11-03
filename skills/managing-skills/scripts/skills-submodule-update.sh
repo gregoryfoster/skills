@@ -137,10 +137,15 @@ gitdir="$(git rev-parse --git-dir 2>/dev/null)" || exit 0
 LOCK="$gitdir/skills-update.lock"
 LOG="$gitdir/skills-update.log"
 # A refresh in progress (#555): written before the update, removed once the
-# commit block ends with nothing of the hook's left staged. One path per line —
-# the ones this run may stage — so a later session can tell what the hook
-# staged from what a human did. See _heal_staged.
+# commit block ends with nothing of the hook's left staged. Its first line
+# names the run that owns it, `pid <PID> <epoch seconds>`; then one path per
+# line — the ones that run may stage — so a later session can tell what the
+# hook staged from what a human did. See _heal_staged and _marker_owner_live.
 STAGING="$gitdir/skills-update.staging"
+# How long a marker's owner can be believed alive (CR 1789): the hook's 120 s
+# ceiling plus margin. Past it, a live PID is a reused one — an unrelated
+# process, or one in another PID namespace — and the marker is stale.
+MARKER_MAX_AGE=300
 
 # Nothing to refresh if the project doesn't use the skills-vendor/ pattern.
 [ -d skills-vendor ] || exit 0
@@ -153,6 +158,40 @@ STAGING="$gitdir/skills-update.staging"
 # reconcile step deliberately runs ahead of both of them (#293) and needs it.
 _log() {
   echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] $*" >>"$LOG" 2>/dev/null || true
+}
+
+# _marker_owner_live — true when $STAGING names a run that is still going
+# (CR 1789), and sets MARKER_OWNER to its PID for the log.
+#
+# The day's lock used to be stamped ahead of the refresh, and that made it the
+# hook's mutual exclusion as well: a session starting mid-refresh exited at
+# the once-per-day guard. #555 moved the stamp to the end, so the marker
+# carries that job now. Without it, two sessions starting together in one
+# checkout — agent sessions sharing it, or two VS Code windows reconnecting —
+# both ran the whole refresh, and the second's heal took the first's LIVE
+# marker for a killed run's: it unstaged and restored the content under a run
+# between `git add` and `git commit`, whose commit then recorded nothing.
+#
+# Alive means `kill -0` reaches the PID and the marker is younger than
+# MARKER_MAX_AGE. A SIGKILL or SIGTERM leaves the marker behind with its owner
+# gone, which is exactly the leftover the heal exists for. A marker this run
+# could not parse, or one naming this run's own PID (reused), is not live.
+MARKER_OWNER=""
+_marker_owner_live() {
+  local head tag pid started now
+  MARKER_OWNER=""
+  [ -f "$STAGING" ] || return 1
+  head="$(head -n 1 "$STAGING" 2>/dev/null)" || return 1
+  read -r tag pid started <<<"$head" || true
+  [ "$tag" = "pid" ] || return 1
+  case "$pid" in '' | *[!0-9]*) return 1 ;; esac
+  case "$started" in '' | *[!0-9]*) return 1 ;; esac
+  [ "$pid" != "$$" ] || return 1
+  now="$(date +%s 2>/dev/null)" || return 1
+  [ $((now - started)) -le "$MARKER_MAX_AGE" ] || return 1
+  kill -0 "$pid" 2>/dev/null || return 1
+  MARKER_OWNER="$pid"
+  return 0
 }
 
 # _unstage <after> <path>... — unstage the paths, then read the index back
@@ -476,6 +515,15 @@ _report_doctor_install() {
 }
 trap _report_doctor_install EXIT
 
+# Another session's refresh is in flight (CR 1789): leave the checkout to it,
+# the way the old up-front lock did. Ahead of everything that writes — the
+# doctor install, the heal, the reconcile, the refresh — and without spending
+# the day, since that run will.
+if _marker_owner_live; then
+  _log "another refresh is in flight (pid $MARKER_OWNER) — leaving this checkout to it"
+  exit 0
+fi
+
 # _install_doctor, call site 1 of 2: every session, ahead of both gates. This
 # is the working-tree repair, and it should happen on every branch and every
 # session. Committing the result is a separate concern and stays behind
@@ -595,12 +643,21 @@ _heal_staged() {
 
   local listed="" marked=0 staged_now rc=0 spath own=() others=0 hook_paths
   if [ -f "$STAGING" ]; then
-    marked=1
-    listed="$(cat "$STAGING" 2>>"$LOG")" || rc=$?
-    if [ "$rc" -ne 0 ]; then
-      _log "heal: could not read $STAGING (cat exited $rc) — leaving the index alone"
+    # A live owner's marker is never the heal's (CR 1789). The guard ahead of
+    # the doctor install already exits on one; this keeps the heal honest on
+    # its own.
+    if _marker_owner_live; then
+      _log "heal: $STAGING belongs to a refresh still in flight (pid $MARKER_OWNER) — leaving the index alone"
       return 0
     fi
+    marked=1
+    # The paths, without the owner line.
+    listed="$(grep -v '^pid ' "$STAGING" 2>>"$LOG")" || rc=$?
+    if [ "$rc" -gt 1 ]; then
+      _log "heal: could not read $STAGING (grep exited $rc) — leaving the index alone"
+      return 0
+    fi
+    rc=0
   fi
 
   # --ignore-submodules=none: a diff.ignoreSubmodules or .gitmodules `ignore`
@@ -833,10 +890,11 @@ fi
 # once-per-day guard; recovery waited a UTC day, and the next day's run landed
 # in the same 2 s window. Unstamped, the next session redoes it.
 #
-# The marker goes down first, naming every path this run may stage — the
-# unpinned registered submodules and the doctor — so a kill anywhere from here
-# to the end of the commit leaves _heal_staged the evidence it needs. Checked:
-# a marker that never lands costs only the heal, so it is logged, not fatal.
+# The marker goes down first, naming this run as its owner and every path it
+# may stage — the unpinned registered submodules and the doctor — so a kill
+# anywhere from here to the end of the commit leaves _heal_staged the evidence
+# it needs, and a session starting meanwhile leaves this one alone. Checked: a
+# marker that never lands costs only the heal, so it is logged, not fatal.
 REFRESH_PATHS=()
 if [ "$PIN_COUNT" -eq 0 ]; then
   while IFS= read -r REG_PATH; do
@@ -849,8 +907,36 @@ elif [ "${#UPDATE_PATHS[@]}" -gt 0 ]; then
   REFRESH_PATHS=("${UPDATE_PATHS[@]}")
 fi
 REFRESH_PATHS+=(.skills/doctor.sh)
-if ! printf '%s\n' "${REFRESH_PATHS[@]}" > "$STAGING" 2>/dev/null; then
-  _log "could not write $STAGING — a run killed before its commit ends will not have its staging undone"
+
+# Claimed, not just written (CR 1789): `noclobber` makes the write fail when a
+# marker is already there, so of two runs that reach this line together
+# exactly one owns the refresh. One already there is checked: a live owner's
+# means another session got here since this one passed the guard at the top,
+# so this run leaves; a dead owner's — kept by a heal whose unstage failed —
+# is replaced. In a subshell, so noclobber stays out of the rest of the run
+# (and `$$` there is still this run's PID).
+_claim_marker() {
+  (
+    set -o noclobber
+    {
+      printf 'pid %s %s\n' "$$" "$(date +%s)"
+      printf '%s\n' "${REFRESH_PATHS[@]}"
+    } > "$STAGING"
+  ) 2>/dev/null
+}
+if ! _claim_marker; then
+  if _marker_owner_live; then
+    _log "another refresh is in flight (pid $MARKER_OWNER) — leaving this checkout to it"
+    exit 0
+  fi
+  rm -f "$STAGING" 2>/dev/null || true
+  if ! _claim_marker; then
+    if [ -f "$STAGING" ]; then
+      _log "another refresh claimed $STAGING first — leaving this checkout to it"
+      exit 0
+    fi
+    _log "could not write $STAGING — a run killed before its commit ends will not have its staging undone"
+  fi
 fi
 REFRESH_BEGUN=1
 HOOK_ADDED=0
