@@ -8,7 +8,8 @@ usage() {
   echo ""
   echo "Lists processes whose cmdline references a path under the resolved"
   echo "worktree root that no longer exists on disk. Detection-only — does"
-  echo "not kill anything."
+  echo "not kill anything. The root matches as given and as resolved through"
+  echo "symlinks; only the first worktree path in a cmdline is checked."
   echo ""
   echo "Searches for zombies under the resolved worktree root (env WORKTREE_ROOT"
   echo "→ .skills/worktree_root → <repo>/.worktrees/, in that order)."
@@ -72,6 +73,20 @@ WORKTREE_ROOT=$(bash "$SCRIPT_DIR/resolve-worktree-root.sh") || {
 # match real cmdlines — silent false negatives.
 WORKTREE_ROOT="${WORKTREE_ROOT%/}"
 
+# A root reached through a symlink has a second spelling, and a process started
+# under the one the audit was not given went unlisted, with "No worktree
+# zombies." to say so (#533). So the root is matched as configured and as
+# resolved through symlinks. Only an absolute root that exists has a resolved
+# spelling here: `cd` fails on a missing one, and a relative one would resolve
+# against wherever the audit happened to run. The converse stays out of reach:
+# a root given already resolved, as the default root is (the resolver builds it
+# with `pwd -P`), names no link, so a process started under some symlink to it
+# is still missed.
+RESOLVED_ROOT=""
+if [[ "$WORKTREE_ROOT" == /* ]]; then
+  RESOLVED_ROOT=$(cd -- "$WORKTREE_ROOT" 2>/dev/null && pwd -P) || RESOLVED_ROOT=""
+fi
+
 # Enumerate with `ps`, not `pgrep -af` (#335). On macOS and the BSDs `pgrep -a`
 # means "include ancestors in the match", not "print the command line", so each
 # line was a bare PID, no worktree path could be read from it, and the audit
@@ -95,7 +110,9 @@ PS_TABLE=$(ps -A -ww -o pid= -o ppid= -o args=) || {
 # `grep` filter would carry the pattern in its own argv and could match itself,
 # and awk's `-v` would rewrite any backslash in the path. Each candidate is
 # printed as `<pid> TAB <root>/<name> TAB <args>`, where <name> is the first
-# path component after the root — the worktree the process belongs to. <name>
+# path component after the root — the worktree the process belongs to. With two
+# spellings, the root is whichever comes first in the text, so a process is
+# still checked by the first worktree name it names, not by any. <name>
 # also ends at shell punctuation (`;&|<>()'"` and backtick) and at `:`, since a
 # shell's command text writes `cd <root>/<name>; …` or `PATH=<root>/<name>:…`.
 # Keeping the `;` named a worktree that never existed, so a live session's shell
@@ -106,15 +123,29 @@ PS_TABLE=$(ps -A -ww -o pid= -o ppid= -o args=) || {
 # name a vanished worktree in its own command text, and so may a wrapper further
 # up: under worktree-create.sh's preamble the wrapper is the audit's
 # grandparent. Listing either would make the `Kill all:` recipe kill the caller.
-CANDIDATES=$(AUDIT_ROOT="$WORKTREE_ROOT/" AUDIT_SELF=$$ awk '
-  BEGIN { root = ENVIRON["AUDIT_ROOT"] }
+CANDIDATES=$(AUDIT_ROOT="$WORKTREE_ROOT/" \
+  AUDIT_ROOT_RESOLVED="${RESOLVED_ROOT:+$RESOLVED_ROOT/}" AUDIT_SELF=$$ awk '
+  BEGIN {
+    roots[1] = ENVIRON["AUDIT_ROOT"]; nroots = 1
+    r = ENVIRON["AUDIT_ROOT_RESOLVED"]
+    if (r != "" && r != roots[1]) roots[++nroots] = r
+  }
   {
     ppid[$1] = $2
     args = $0
     sub("^[ \t]*[0-9]+[ \t]+[0-9]+[ \t]", "", args)
     s = args
-    while ((i = index(s, root)) > 0) {
-      s = substr(s, i + length(root))
+    while (1) {
+      # The earliest spelling in the text; at a tie, the longer one.
+      at = 0
+      for (j = 1; j <= nroots; j++) {
+        i = index(s, roots[j])
+        if (i > 0 && (at == 0 || i < at || (i == at && length(roots[j]) > length(root)))) {
+          at = i; root = roots[j]
+        }
+      }
+      if (at == 0) break
+      s = substr(s, at + length(root))
       if (match(s, "^[^/ \t;&|<>()\047\"`:]+")) {
         n++; pid[n] = $1; wt[n] = root substr(s, 1, RLENGTH); cmd[n] = args
         break
