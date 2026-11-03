@@ -182,7 +182,10 @@ class Rig:
             found = shutil.which(tool)
             if found and tool != "gh":
                 (farm / tool).symlink_to(found)
-        return str(farm)
+        # A local fetch runs git-upload-pack from PATH, and it lives in git's
+        # exec-path, not beside a git that a symlink farm can name.
+        exec_path = _git(self.repo, "--exec-path")
+        return f"{farm}:{exec_path}"
 
 
 @pytest.fixture
