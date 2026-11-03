@@ -670,9 +670,9 @@ gate_dry() {
   fi
 }
 
-# The bulk took 2.2 and 2.5 times its dry run on the two hosts measured
-# (replicator, wslcb-licensing-tracker, 2026-10-06 and 07), so it's budgeted
-# at three. A held step takes a group's few packages, and keeps the whole dry
+# The bulk is budgeted at three times its dry run: the typical figure, not a
+# ceiling, from the measured spread run.md's gate section records (2.2 to
+# 4.0 across the cohort's runs). A held step takes a group's few packages, and keeps the whole dry
 # run's wall time as its own.
 BULK_FACTOR=3
 # What the dry run selected: the bulk sizes it, less what its holds take.
