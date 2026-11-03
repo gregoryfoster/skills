@@ -19,7 +19,9 @@ What this file pins:
 - **The check reads the config ruff itself reads**: `.ruff.toml`, then
   `ruff.toml`, then `pyproject.toml`'s `[tool.ruff]`. An exclude in
   `[tool.ruff.lint]` does not count, because `ruff format` still reads the
-  vendor then [measured, ruff 0.16.6].
+  vendor then [measured, ruff 0.16.6]; nor does the same exclude as a dotted
+  `lint.` or `format.` key. Only a header-shaped line opens a table, not a
+  line inside an array that starts with `[` (CR 1814).
 - **Silent where it has nothing to say**: no `skills-vendor/`, no ruff config,
   an exclude already present, or a comment in the table naming the vendor
   (the documented way to lint it on purpose).
@@ -255,6 +257,69 @@ class TestTheCheckReadsTheConfigRuffReads:
         )
         result = _doctor(consumer)
         assert MARKER in result.stderr, result.stderr
+
+
+class TestOnlyHeaderShapedLinesAreTables:
+    """CR 1814. Any line starting `[` was read as a table header, so a line
+    inside a multi-line array left the table and the exclude after it went
+    unseen: a false warning, against the rule that an over-eager match costs
+    a missed warning, never a wrong one. And a dotted `lint.` key inside the
+    table counted as covered, though it sets [tool.ruff.lint], which does not
+    count in its header form."""
+
+    def test_a_bracket_line_inside_an_array_is_not_a_table(self, consumer):
+        # The doctor reads lines, not ruff's schema: what matters is a value
+        # line that starts with "[" ahead of the exclude.
+        (consumer / "pyproject.toml").write_text(
+            '[project]\nname = "x"\n\n[tool.ruff]\nline-length = 100\n'
+            'pairs = [\n    ["a", "b"],\n    [1, 2],\n]\n'
+            'extend-exclude = ["skills-vendor/"]\n'
+        )
+        result = _doctor(consumer)
+        assert MARKER not in result.stderr, result.stderr
+
+    @pytest.mark.parametrize(
+        "header", ["[tool.ruff]  # the linter", "[ tool . ruff ]", "[tool.ruff ]"]
+    )
+    def test_a_header_with_a_comment_or_spaces_is_still_a_table(self, consumer, header):
+        (consumer / "pyproject.toml").write_text(
+            f'[project]\nname = "x"\n\n{header}\nline-length = 100\n'
+        )
+        result = _doctor(consumer)
+        assert MARKER in result.stderr, result.stderr
+
+    @pytest.mark.parametrize(
+        "cfg, text",
+        [
+            (
+                "pyproject.toml",
+                '[tool.ruff]\nline-length = 100\nlint.exclude = ["skills-vendor/"]\n',
+            ),
+            (
+                "pyproject.toml",
+                '[tool.ruff]\nlint.exclude = [\n    "skills-vendor/",\n]\n'
+                "line-length = 100\n",
+            ),
+            ("ruff.toml", 'line-length = 100\nlint.exclude = ["skills-vendor/"]\n'),
+            (".ruff.toml", 'format.exclude = [\n    "skills-vendor/",\n]\n'),
+        ],
+        ids=["pyproject-inline", "pyproject-multiline", "ruff-toml", "format"],
+    )
+    def test_a_dotted_sub_table_key_does_not_cover(self, consumer, cfg, text):
+        (consumer / cfg).write_text(text)
+        result = _doctor(consumer)
+        assert MARKER in result.stderr, (
+            f"a dotted sub-table exclude in {cfg} counted as covered (CR 1814):\n"
+            + result.stderr
+        )
+
+    def test_a_comment_after_a_dotted_array_still_opts_out(self, consumer):
+        (consumer / "pyproject.toml").write_text(
+            '[tool.ruff]\nlint.select = [\n    "E",\n]\n'
+            "# skills-vendor/ is linted on purpose here.\n"
+        )
+        result = _doctor(consumer)
+        assert MARKER not in result.stderr, result.stderr
 
 
 class TestSilentWhereThereIsNothingToSay:
