@@ -8,10 +8,10 @@ call such as `gather-context.sh origin/main..HEAD` was accepted and the range
 ignored without a word. Reported from CannObserv/wslcb-licensing-tracker#229.
 
 The budget block had already solved this for itself (#389): a merge base,
-`origin/HEAD` first, skipping a ref whose merge base is HEAD
-(test_gather_context_budget_base.py). The list now runs from that same base,
-resolved once, plus the working tree and untracked files; its header names the
-base, or says the list is working tree only. An argument other than `--help`
+`origin/HEAD` first (test_gather_context_budget_base.py). The list now runs
+from that same base, resolved once, plus the working tree and untracked
+files; its header names the base, or says why the list is working tree only.
+An argument other than `--help`
 is refused with exit 2 rather than ignored.
 
 The scripts run end to end against fixture repositories, with a stub `uv` and
@@ -251,7 +251,8 @@ class TestTheReviewBase:
                 f"{variant}: {line!r} says there is no merge base; there is "
                 "one, and it is HEAD."
             )
-        assert "other than HEAD" in header, header
+        # CR 1805: the ref that decided is named, and what its base means.
+        assert "its own merge base with origin/HEAD" in header, header
 
     @pytest.mark.parametrize("variant", VARIANTS)
     def test_an_empty_list_against_a_base_is_never_silent(self, variant, clone, home):

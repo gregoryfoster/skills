@@ -7,9 +7,11 @@ was HEAD and the block printed nothing. Seen on CannObserv/provisioner PR #45:
 +569 tokens to AGENTS.md and a new 2,000-token reference doc, an empty budget
 block across five CR rounds.
 
-The base is now the first of the default branch (`origin/HEAD`, `main`,
-`master`) and then `@{upstream}` whose merge base is not HEAD itself.
-`origin/HEAD` leads because a local `main` is often stale (CR 696). The
+The base is now the merge base with the first default-branch ref that has one
+(`origin/HEAD`, `origin/main`, `origin/master`, `main`, `master`), and with
+`@{upstream}` only when none does. A merge base that is HEAD itself still
+decides (CR 1805): skipping it fell through to a stale `main`. `origin/HEAD`
+leads because a local `main` is often stale (CR 696). The
 block is identical in all four variants, so it is lifted out of each and run
 against fixture repositories; one end-to-end run of the baseline script shows
 the block printing on a pushed branch.
