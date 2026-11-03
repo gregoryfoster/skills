@@ -231,6 +231,29 @@ class TestTheReviewBase:
         )
 
     @pytest.mark.parametrize("variant", VARIANTS)
+    def test_on_main_everything_pushed_does_not_claim_no_merge_base(
+        self, variant, clone, home
+    ):
+        """CR 1788. The fallback's commonest case: a merge base exists and
+        is HEAD itself, which the loop skips by design. A header or empty
+        line saying "no merge base" asserts something false there, and on a
+        repo whose default branch has another name it reads as no common
+        history at all."""
+        assert git(clone, "merge-base", "HEAD", "origin/HEAD") == git(
+            clone, "rev-parse", "HEAD"
+        )
+        r = _run(variant, clone, home)
+        assert r.returncode == 0, r.stderr
+        header, body = _section(r.stdout)
+        assert "only" in header, header
+        for line in [header, *body]:
+            assert "no merge base" not in line, (
+                f"{variant}: {line!r} says there is no merge base; there is "
+                "one, and it is HEAD."
+            )
+        assert "other than HEAD" in header, header
+
+    @pytest.mark.parametrize("variant", VARIANTS)
     def test_an_empty_list_against_a_base_is_never_silent(self, variant, clone, home):
         """Two unpushed commits on main that cancel out, and a clean tree:
         origin/HEAD qualifies as the base, and nothing differs from it."""
