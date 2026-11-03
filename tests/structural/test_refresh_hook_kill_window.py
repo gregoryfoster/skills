@@ -41,6 +41,10 @@ Coverage:
 - a human's staged path beside the hook's   → left staged, and not committed
 - killed after the update, a human's path staged and none of the hook's
   (CR 1800)                                 → the next run ends, under bash 3.2
+- the same, and a run that cannot redo the bump (CR 1801)
+                                            → the content goes back anyway
+- the hook's staging kept beside a human's  → said on stderr once, not at
+                                              every session
 - a manual bump a human staged by hand      → left staged (no marker)
 - a kill that leaves git's index.lock       → the lock is never removed; the
                                               still-staged paths are named
@@ -299,3 +303,62 @@ class TestTheHeal:
         assert staged(consumer) == ["notes.txt"]
         assert gitlink(consumer) == consumer.after
         assert not (consumer.path / MARKER).exists()
+
+    def test_content_goes_back_beside_a_humans_staged_path(self, consumer):
+        """CR 1801: other work staged keeps the heal off the index, but
+        `git submodule update --checkout` writes no index, so it does not
+        keep the content ahead. Killed after the update with a human's path
+        staged, and then a session that cannot redo the bump (main carries
+        an operator's unpushed commit): the content goes back on its
+        pointer, the human's staging stays, and the marker — naming nothing
+        of the hook's that is still staged — goes."""
+        (consumer.path / "notes.txt").write_text("wip\n")
+        git(consumer.path, "add", "notes.txt")
+        _kill_once(consumer, BEFORE_COMMIT_BLOCK)
+        assert content(consumer) == consumer.after, "fixture: the content moved"
+        (consumer.path / "mine.txt").write_text("unshared\n")
+        git(consumer.path, "add", "mine.txt")
+        git(consumer.path, "commit", "-qm", "feat: my own work", "--", "mine.txt")
+
+        result = run_hook(consumer)
+
+        assert result.returncode == 0, result.stderr
+        assert staged(consumer) == ["notes.txt"]
+        assert gitlink(consumer) == consumer.before
+        assert content(consumer) == consumer.before, (
+            "the content was left ahead of its pointer"
+        )
+        assert not (consumer.path / MARKER).exists()
+
+    def test_the_hooks_staging_beside_a_humans_is_named_once(self, consumer):
+        """CR 1801: killed after `git add` with a human's path staged, the
+        hook's own staging is left in place and said on stderr — once for
+        that killed run, not at every session while the human's work stays
+        staged. The content is on the pointer the index records, which is
+        the staged bump, and the log says that rather than HEAD's."""
+        (consumer.path / "README.md").write_text("operator work\n")
+        git(consumer.path, "add", "README.md")
+        _kill_once(consumer, AFTER_ADD)
+        spend_todays_lock(consumer)  # no refresh redoes it this day
+
+        first = run_hook(consumer)
+
+        assert first.returncode == 0, first.stderr
+        assert sorted(staged(consumer)) == sorted(["README.md", DOCTOR_PATH, VENDOR])
+        assert "staged beside" in first.stderr, first.stderr
+        assert f"git reset -q -- {DOCTOR_PATH} {VENDOR}" in first.stderr or (
+            f"git reset -q -- {VENDOR} {DOCTOR_PATH}" in first.stderr
+        ), first.stderr
+        assert content(consumer) == consumer.after == gitlink(consumer, ":0")
+        assert "HEAD records" in log_text(consumer), log_text(consumer)
+        assert (consumer.path / MARKER).exists(), (
+            "the marker went with the staging kept"
+        )
+
+        second = run_hook(consumer)
+
+        assert second.returncode == 0, second.stderr
+        assert "staged beside" not in second.stderr, (
+            "said again at the next session: " + second.stderr
+        )
+        assert (consumer.path / MARKER).exists()
