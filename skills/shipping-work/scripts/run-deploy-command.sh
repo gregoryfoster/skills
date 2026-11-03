@@ -26,6 +26,15 @@
 # ONLY PUSHED CODE IS DEPLOYED: HEAD must equal its upstream (@{u}), or
 # nothing runs.
 #
+# IN `pr` MODE, ONLY THE DEFAULT BRANCH IS DEPLOYED (#342, CR 1545). With
+# .skills/merge_mode set to `pr`, a feature branch is pushed and a PR opened,
+# so it passes the upstream check and would deploy unreviewed. The post-merge
+# pass deploys the default branch at the merge commit instead, and HEAD must
+# be on that branch. The default branch resolves as worktree-destroy.sh
+# resolves it: .skills/default_branch (here from the primary checkout), then
+# origin's HEAD, then `main`. Absent or `direct`: the branch is not checked,
+# since Step 3 has already put the agent on the default branch.
+#
 # The command's stdin is /dev/null (agents run non-interactively, so a prompt
 # would hang), and its stdout and stderr reach the caller unfiltered: the
 # project documents its own exit codes, and the report quotes them verbatim.
@@ -40,6 +49,10 @@ Runs the command named in the primary checkout's .skills/deploy_command once,
 from that checkout's root, with the pushed SHA (HEAD, which must equal its
 upstream) as its last argument. stdin is /dev/null; output is unfiltered.
 
+With .skills/merge_mode set to 'pr', HEAD must also be on the default branch
+(.skills/default_branch, else origin's HEAD, else main): the post-merge pass
+deploys the merge commit, never a feature branch's tip.
+
 Options:
   --check   Validate the knob and print the command line that would run, with
             the SHA. Runs nothing.
@@ -51,7 +64,8 @@ Exit codes:
      output verbatim, and close no issue
   2  Nothing ran: the knob is present but unusable (no command line, more than
      one, a command not found or not executable, not a readable file), HEAD
-     is not what was pushed, git failed, or a bad argument
+     is not what was pushed, in pr mode HEAD is not the default branch,
+     .skills/merge_mode is unusable, git failed, or a bad argument
   3  No .skills/deploy_command: nothing to deploy; Step 8 is the next-steps
      table, as before the knob existed
 EOF
@@ -115,6 +129,35 @@ case $CMD in
 esac
 
 SHA=$(git rev-parse --verify HEAD) || die "git rev-parse HEAD failed"
+
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd) || die "could not resolve this script's directory"
+MODE=$(bash "$SCRIPT_DIR/merge-mode.sh") || die "could not read .skills/merge_mode (merge-mode.sh's reason is above); nothing ran"
+if [ "$MODE" = pr ]; then
+  DEFAULT=""
+  DB_KNOB="$PRIMARY/.skills/default_branch"
+  if [ -e "$DB_KNOB" ] || [ -L "$DB_KNOB" ]; then
+    { [ -f "$DB_KNOB" ] && [ -r "$DB_KNOB" ]; } || die "$DB_KNOB is present but not a readable file"
+    DEFAULT=$(head -n1 "$DB_KNOB" | tr -d '[:space:]')
+  fi
+  if [ -z "$DEFAULT" ]; then
+    # --quiet: exit 1 with no message when origin/HEAD is absent, an answer;
+    # anything else is git failing.
+    SR_RC=0
+    DEFAULT=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD) || SR_RC=$?
+    case $SR_RC in
+      0) DEFAULT=${DEFAULT#origin/} ;;
+      1) DEFAULT="" ;;
+      *) die "git symbolic-ref refs/remotes/origin/HEAD failed (exit $SR_RC)" ;;
+    esac
+  fi
+  [ -n "$DEFAULT" ] || DEFAULT=main
+  REMEDY="in the main checkout, git switch $DEFAULT && git pull --ff-only, then re-run"
+  CURRENT=$(git symbolic-ref --quiet --short HEAD) ||
+    die "HEAD is detached; merge_mode is pr, so only the default branch ($DEFAULT) is deployed, at the merge: $REMEDY"
+  [ "$CURRENT" = "$DEFAULT" ] ||
+    die "HEAD is on $CURRENT; merge_mode is pr, so only the default branch ($DEFAULT) is deployed, at the merge, never a branch's tip: $REMEDY"
+fi
+
 UPSTREAM=$(git rev-parse --verify '@{u}') ||
   die "HEAD has no upstream to compare with: push it first (Step 4)"
 [ "$SHA" = "$UPSTREAM" ] ||

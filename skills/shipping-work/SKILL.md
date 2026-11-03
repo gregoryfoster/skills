@@ -48,7 +48,7 @@ Determine which GitHub issue(s) to close (priority order):
 ```bash
 N=shipping-work
 { [ ! -x .skills/doctor.sh ] || bash .skills/doctor.sh; } || exit 1
-for S in doc-check.sh check-status.sh push.sh comment-issue.sh close-issue.sh run-deploy-command.sh pre-ship.sh; do SD=
+for S in doc-check.sh check-status.sh push.sh comment-issue.sh close-issue.sh run-deploy-command.sh merge-mode.sh pre-ship.sh; do SD=
   for d in scripts ".claude/skills/$N/scripts" "$HOME/.claude/skills/$N/scripts"; do
     [ -f "$d/$S" ] && { SD="$d"; break; }
   done
@@ -58,7 +58,7 @@ done
 bash "${SD:?}/$S"
 ```
 
-The first line is a preflight: when `.skills/doctor.sh` is present, it heals any dangling vendor symlinks (or reports an actionable error); when absent, the group is a no-op. `|| exit 1` skips `pre-ship.sh` if the doctor reports unrecoverable state so the original "No such file or directory" noise doesn't drown out the doctor's message. The loop then resolves each script against the skill directory rather than the cwd — a bare `scripts/` path resolves relative to the project root, where the script does not exist ([#63](https://github.com/gregoryfoster/skills/issues/63)). A project-local `scripts/<name>` still wins, for that script alone: a `scripts/pre-ship.sh` — a wrapper that loads what the project needs and execs the skill's gate, or a whole gate for a toolchain the skill's cannot detect — must not send the other six looking beside it ([#301](https://github.com/gregoryfoster/skills/issues/301)). A script found nowhere stops the block here, by name. `pre-ship.sh` is listed last, so the final line runs it. Resolution runs *after* the doctor so a freshly healed symlink chain is visible to it.
+The first line is a preflight: when `.skills/doctor.sh` is present, it heals any dangling vendor symlinks (or reports an actionable error); when absent, the group is a no-op. `|| exit 1` skips `pre-ship.sh` if the doctor reports unrecoverable state so the original "No such file or directory" noise doesn't drown out the doctor's message. The loop then resolves each script against the skill directory rather than the cwd — a bare `scripts/` path resolves relative to the project root, where the script does not exist ([#63](https://github.com/gregoryfoster/skills/issues/63)). A project-local `scripts/<name>` still wins, for that script alone: a `scripts/pre-ship.sh` — a wrapper that loads what the project needs and execs the skill's gate, or a whole gate for a toolchain the skill's cannot detect — must not send the other seven looking beside it ([#301](https://github.com/gregoryfoster/skills/issues/301)). A script found nowhere stops the block here, by name. `pre-ship.sh` is listed last, so the final line runs it. Resolution runs *after* the doctor so a freshly healed symlink chain is visible to it.
 
 In every later step a `<name.sh>` is a **placeholder** for the path printed for that script — substitute it literally (same convention as `init-project-fastapi` Phase 0). Each Bash invocation runs in a fresh shell, so nothing the block set is inherited.
 
@@ -111,12 +111,16 @@ If this checkout is a worktree (test: `git rev-parse --show-toplevel` differs fr
 
 If this is a single (non-worktree) checkout, skip this step.
 
+**`pr` mode:** check it in either checkout shape. `bash "<merge-mode.sh>"` prints `direct` (no `.skills/merge_mode`: this procedure as written) or `pr`, where work lands through a PR merged on GitHub and each step's `pr` line below replaces what it names ([references/pr-mode.md](references/pr-mode.md)). Exit 2: the knob is unusable; fix it, never read it as `direct`. Here: no Phase 4 merge; stay on the branch, in the worktree or not. A PR already merged starts the post-merge pass (Step 8) instead.
+
 ### Step 3 — Ensure on main
 
 If Step 2.5 applied, the merge already happened — you're on `main` in the main checkout; continue.
 If Step 2.5 did not apply (single checkout) and you're on a feature branch, merge to `main` first.
 
-Without `.skills/deploy_command`, a checkout that is a unit's `WorkingDirectory=` is production: merging into it *is* deploying. With the knob set, production runs what the deploy command builds, so a local merge deploys nothing.
+Without `.skills/deploy_command`, a checkout that is a unit's `WorkingDirectory=` is production: merging into it, or in `pr` mode the post-merge pass's pull, *is* deploying. With the knob set, production runs what the deploy command builds, so a local merge deploys nothing.
+
+**`pr` mode:** no merge. Refuse to ship from the default branch itself, or a detached HEAD: there is nothing to open a PR from. The HARD-GATE (Step 6) runs here, before the PR opens.
 
 ### Step 4 — Push
 
@@ -125,6 +129,8 @@ bash "<push.sh>"
 ```
 
 Confirm push succeeded before proceeding.
+
+**`pr` mode:** this pushes the branch. Then open the PR with `Closes #<n>` per in-scope issue, or let the push update an open one; `gh pr view` finds merged and closed PRs too, so read its `state`.
 
 ### Step 5 — Comment on GitHub issues
 
@@ -138,6 +144,8 @@ Comment must include:
 - What was implemented (2–4 bullets)
 - Key commit SHAs or commit range
 - Any follow-up items or known limitations
+
+**`pr` mode:** the comment links the PR.
 
 ### Step 6 — Close GitHub issues
 
@@ -155,6 +163,8 @@ Before closing any issue, verify the original requirements against what was impl
 bash "<close-issue.sh>" <number>
 ```
 
+**`pr` mode:** close nothing: the merge closes each `Closes #<n>` issue. With `.skills/deploy_command`, a production requirement gets `Refs #<n>` instead, closed by the post-merge pass once the deploy exits 0.
+
 ### Step 7 — Report
 
 Present a summary table:
@@ -163,7 +173,11 @@ Present a summary table:
 |---|---|---|---|
 | #19 | ... | ✅ Closed | Summary posted |
 
+**`pr` mode:** Status reads `PR #<m> open, awaiting review`.
+
 ### Step 8 — Deploy, or next-steps notification
+
+**`pr` mode:** this step waits for the **post-merge pass**, the next "ship it" once the PR shows merged: in the main checkout, `git switch <default>` and `git pull --ff-only`, then this step there (`run-deploy-command.sh` refuses any branch but the default), then the held issues, then `using-git-worktrees` Phase 5.
 
 **With `.skills/deploy_command` set**, the project deploys through its own command, and this step runs after Step 5, before Step 6 ([references/deploy-command.md](references/deploy-command.md)):
 

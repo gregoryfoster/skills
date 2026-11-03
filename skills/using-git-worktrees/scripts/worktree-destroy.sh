@@ -45,6 +45,19 @@ usage() {
   echo "  Precedence: --descoped takes precedence over --base. If both are"
   echo "  supplied, the merge check is skipped entirely and --base is ignored."
   echo ""
+  echo "Merge mode (.skills/merge_mode, read from the primary checkout):"
+  echo "  Absent or 'direct': the check above and nothing else. No network."
+  echo "  'pr': 'git fetch origin' runs first, so origin/<base> is current. A"
+  echo "  failed fetch warns and checks the refs last fetched: a stale ref can"
+  echo "  miss a merge, never invent one. When ancestry fails, a squash or"
+  echo "  rebase merge is accepted on gh's word: 'gh pr list --head <branch>"
+  echo "  --base <base> --state merged' must list a PR whose head is the branch"
+  echo "  tip or descends from it, so a branch reused after its PR merged is"
+  echo "  not read as merged. gh missing, unauthenticated or failing is exit 2:"
+  echo "  the verdict was not reached, which is never 'merged'. --base <ref>"
+  echo "  stays ancestry-only, since no PR targets a ref given as-is. A present"
+  echo "  but unusable merge_mode is exit 2."
+  echo ""
   echo "  --force propagates to 'git worktree remove --force'. Required when the"
   echo "  worktree contains checked-out submodules (git refuses to remove those"
   echo "  without --force). Note: --force ALSO bypasses git's dirty-working-tree"
@@ -69,6 +82,8 @@ usage() {
   echo "  It exits with the code the real run would: 1 on an Iron Law violation,"
   echo "  2 on a lock with no --unlock. A preview that always succeeds predicts"
   echo "  nothing. Safe to point at a live worktree, including one in use."
+  echo "  In pr mode it fetches too, which moves remote-tracking refs only, and"
+  echo "  names the merged PR it accepted."
   echo ""
   echo "Does NOT delete the branch ref. Use 'git branch -d <branch>' afterward"
   echo "if you also want to drop the local ref."
@@ -78,7 +93,8 @@ usage() {
   echo "  1  Iron Law violation (unmerged work without --descoped)"
   echo "  2  Tooling/infra failure (not a git repo, missing arg, worktree not"
   echo "     found, worktree locked without --unlock, target is the worktree this"
-  echo "     command runs from, git list/unlock/remove failed)"
+  echo "     command runs from, git list/unlock/remove failed, merge_mode"
+  echo "     unusable; in pr mode, gh missing or failing when it is needed)"
 }
 
 # One line, not the whole block. The full usage dump is 69 lines here, and it
@@ -275,6 +291,66 @@ if [[ "$SELF_ROOT" == "$TARGET_ROOT" ]]; then
   exit 2
 fi
 
+# pr mode's second evidence (#342), asked only once ancestry has failed: a PR
+# from <branch> into <base>, merged, whose head is the branch tip or descends
+# from it. Sets MERGED_PR and MERGED_HEAD, or PR_NOTE saying why not.
+#
+# `gh pr list --head` matches by branch NAME, so a merged PR alone is not
+# evidence: a branch reused after its PR merged would read as merged with its
+# new commits unmerged. Hence the head check. A head the tip is behind (a
+# reviewer's commit pushed to the PR) counts when that object is here.
+#
+# gh's answer decides whether a worktree is deleted, so it is a gate
+# producer: gh missing, or exiting non-zero (unauthenticated is exit 4), is
+# exit 2 with gh's own stderr left on the terminal. Never exit 1: that says
+# "merge it first", wrong advice for a branch that may be squash-merged.
+pr_merge_evidence() {
+  local prs gh_rc pr_num pr_head cat_rc anc_rc others=""
+  if ! command -v gh >/dev/null 2>&1; then
+    echo "ERROR: '$BRANCH' is not an ancestor of '$BASE_REF', and merge_mode is pr, but gh is not installed: a squash or rebase merge cannot be checked" >&2
+    echo "Install gh and run 'gh auth login', then re-run; or pass --descoped <reason>." >&2
+    exit 2
+  fi
+  TIP=$(git rev-parse --verify "$BRANCH^{commit}") || {
+    echo "ERROR: could not resolve the tip of '$BRANCH'" >&2
+    exit 2
+  }
+  gh_rc=0
+  prs=$(gh pr list --head "$BRANCH" --base "$BASE" --state merged --limit 100 \
+    --json number,headRefOid --jq '.[] | "\(.number) \(.headRefOid)"') || gh_rc=$?
+  if [[ $gh_rc -ne 0 ]]; then
+    echo "ERROR: gh pr list failed (exit $gh_rc; gh's reason is above), so whether '$BRANCH' was merged as a PR is unknown" >&2
+    echo "Fix gh (gh auth status), then re-run; or pass --descoped <reason>." >&2
+    exit 2
+  fi
+  while read -r pr_num pr_head; do
+    [[ -n "$pr_num" ]] || continue
+    if [[ "$pr_head" == "$TIP" ]]; then
+      MERGED_PR=$pr_num MERGED_HEAD=$pr_head
+      return 0
+    fi
+    # Exit 1 is "no such object here", an answer; anything else is git failing.
+    cat_rc=0
+    git cat-file -e "$pr_head" || cat_rc=$?
+    if [[ $cat_rc -eq 0 ]]; then
+      anc_rc=0
+      git merge-base --is-ancestor "$TIP" "$pr_head" || anc_rc=$?
+      if [[ $anc_rc -eq 0 ]]; then
+        MERGED_PR=$pr_num MERGED_HEAD=$pr_head
+        return 0
+      elif [[ $anc_rc -ne 1 ]]; then
+        echo "ERROR: git merge-base failed (exit $anc_rc) comparing '$BRANCH' with PR #$pr_num's head" >&2
+        exit 2
+      fi
+    elif [[ $cat_rc -ne 1 ]]; then
+      echo "ERROR: git cat-file failed (exit $cat_rc) on PR #$pr_num's head '$pr_head'" >&2
+      exit 2
+    fi
+    others="$others"$'\n'"  PR #$pr_num merged with head $pr_head, which does not contain the tip"
+  done <<<"$prs"
+  PR_NOTE="merge_mode is pr, and no merged PR into '$BASE' has this branch's tip ($TIP) as its head$others"
+}
+
 # Iron Law: verify the branch has been merged into the base ref.
 # "Verified merge" = the branch tip is an ancestor of the base ref. Pushing
 # alone is NOT enough — a pushed-but-unmerged branch would still lose work on
@@ -289,8 +365,38 @@ fi
 #     2. git symbolic-ref refs/remotes/origin/HEAD (whatever origin's HEAD points to)
 #     3. "main" fallback
 #     Then prefer origin/<base> over local <base> for authoritative remote state.
+#
+# Merge mode (#342): `.skills/merge_mode`, read by the sibling merge-mode.sh
+# from the primary checkout. Absent or `direct` changes nothing here — no
+# fetch, no gh, the same words. In `pr` mode, work lands through a PR merged
+# on GitHub, so two things change:
+#   * `git fetch origin` first: origin/<base> moves only on GitHub there, and
+#     an ancestry check against the last-fetched ref misses every merge since.
+#     A failed fetch warns (git's own stderr is shown) and the check reads what
+#     it has: a stale ref can miss a merge, never invent one.
+#   * A squash or rebase merge writes new commits, so ancestry fails for a
+#     branch that IS merged. Then a merged PR is the evidence — see
+#     pr_merge_evidence above. Only with the default base: `--base <ref>`
+#     names a ref as-is (a local `batch/<x>`), which no PR targets.
+# Read only when the merge check runs: --descoped skips both.
 BASE_REF=""
+MERGE_MODE=direct
+MERGED_PR=""
+MERGED_HEAD=""
+TIP=""
 if [[ $DESCOPED -eq 0 ]]; then
+  MERGE_MODE=$(bash "$SCRIPT_DIR/merge-mode.sh") || {
+    echo "ERROR: could not read the merge mode (merge-mode.sh's reason is above)" >&2
+    exit 2
+  }
+  if [[ "$MERGE_MODE" == "pr" ]]; then
+    FETCH_RC=0
+    git fetch --quiet origin || FETCH_RC=$?
+    if [[ $FETCH_RC -ne 0 ]]; then
+      echo "WARN: git fetch origin failed (exit $FETCH_RC; git's reason is above), so the merge check reads the refs last fetched" >&2
+    fi
+  fi
+
   if [[ -n "$BASE_OVERRIDE" ]]; then
     if git rev-parse --verify --quiet "$BASE_OVERRIDE" >/dev/null; then
       BASE_REF="$BASE_OVERRIDE"
@@ -331,13 +437,27 @@ if [[ $DESCOPED -eq 0 ]]; then
   fi
 
   if ! git merge-base --is-ancestor "$BRANCH" "$BASE_REF"; then
-    UNMERGED=$(git rev-list --count "$BASE_REF..$BRANCH" 2>/dev/null || echo "?")
-    echo "ERROR: branch '$BRANCH' is not merged into '$BASE_REF' ($UNMERGED commit(s) ahead)" >&2
-    echo "Merge it first, or pass --descoped <reason> to acknowledge the descope." >&2
-    exit 1
+    PR_NOTE=""
+    if [[ "$MERGE_MODE" == "pr" ]]; then
+      if [[ -n "$BASE_OVERRIDE" ]]; then
+        PR_NOTE="merge_mode is pr, but --base checks ancestry only: no PR targets a ref given as-is"
+      else
+        pr_merge_evidence
+      fi
+    fi
+    if [[ -z "$MERGED_PR" ]]; then
+      UNMERGED=$(git rev-list --count "$BASE_REF..$BRANCH" 2>/dev/null || echo "?")
+      echo "ERROR: branch '$BRANCH' is not merged into '$BASE_REF' ($UNMERGED commit(s) ahead)" >&2
+      [[ -z "$PR_NOTE" ]] || printf '%s\n' "$PR_NOTE" >&2
+      echo "Merge it first, or pass --descoped <reason> to acknowledge the descope." >&2
+      exit 1
+    fi
   fi
 else
   echo "Descoped: $DESCOPE_REASON"
+fi
+if [[ -n "$MERGED_PR" && $DRY_RUN -eq 0 ]]; then
+  echo "Merged as PR #$MERGED_PR into '$BASE' (head $MERGED_HEAD): a squash or rebase merge leaves no ancestry to check"
 fi
 
 # --- Dry run ---------------------------------------------------------------
@@ -359,6 +479,8 @@ if [[ $DRY_RUN -eq 1 ]]; then
   fi
   if [[ $DESCOPED -eq 1 ]]; then
     echo "  merge:     skipped — descoped: $DESCOPE_REASON"
+  elif [[ -n "$MERGED_PR" ]]; then
+    echo "  merge:     verified — merged PR #$MERGED_PR into '$BASE' (head $MERGED_HEAD) contains the tip $TIP"
   else
     echo "  merge:     verified — '$BRANCH' is an ancestor of '$BASE_REF'"
   fi
