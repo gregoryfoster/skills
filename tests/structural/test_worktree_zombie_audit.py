@@ -347,3 +347,107 @@ def test_a_live_worktree_process_is_not_listed(repo):
         proc.wait()
     assert result.returncode == 0, (result.returncode, result.stdout, result.stderr)
     assert result.stdout.strip() == "No worktree zombies."
+
+
+# --- Both spellings of the root (#533, CR 1242) ------------------------------
+#
+# A root reached through a symlink has two spellings: as configured, and
+# resolved. The audit matched the configured one only, so a process started
+# under the resolved spelling was missed and the audit said "No worktree
+# zombies." On macOS, /tmp is a symlink to /private/tmp. The match is a
+# substring, so a /tmp root already found /private/tmp/... names; here `link`
+# and `real` share no such overlap, which is the general case.
+
+
+@pytest.fixture
+def linked_root(repo, tmp_path):
+    """`(configured, resolved)`: a root configured through a symlink."""
+    real = tmp_path / "real-wt"
+    (real / "live").mkdir(parents=True)
+    link = tmp_path / "link-wt"
+    link.symlink_to(real, target_is_directory=True)
+    return link, real.resolve()
+
+
+def _sleeper(*argv_tail: str) -> subprocess.Popen:
+    return subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(120)", *argv_tail]
+    )
+
+
+def _audit_with_root(repo: Path, root: Path) -> subprocess.CompletedProcess:
+    return _audit(repo, _env(repo, WORKTREE_ROOT=str(root)))
+
+
+def _stop(proc: subprocess.Popen) -> None:
+    proc.kill()
+    proc.wait()
+
+
+def test_a_zombie_under_the_resolved_spelling_is_found(repo, linked_root):
+    """The filed miss: configured through the link, started under the target."""
+    configured, resolved = linked_root
+    proc = _sleeper(f"{resolved}/ghost-branch/x")
+    try:
+        result = _audit_with_root(repo, configured)
+    finally:
+        _stop(proc)
+    assert result.returncode == 1, (result.returncode, result.stdout, result.stderr)
+    assert str(proc.pid) in _listed(result.stdout), result.stdout
+
+
+def test_a_zombie_under_the_configured_spelling_is_still_found(repo, linked_root):
+    """Control: adding the resolved spelling does not drop the configured one."""
+    configured, _ = linked_root
+    proc = _sleeper(f"{configured}/ghost-branch/x")
+    try:
+        result = _audit_with_root(repo, configured)
+    finally:
+        _stop(proc)
+    assert result.returncode == 1, (result.returncode, result.stdout, result.stderr)
+    assert str(proc.pid) in _listed(result.stdout), result.stdout
+
+
+def test_a_live_worktree_under_the_resolved_spelling_is_not_listed(repo, linked_root):
+    """Control: the second spelling widens the match, not what is a zombie."""
+    configured, resolved = linked_root
+    proc = _sleeper(f"{resolved}/live/server.py")
+    try:
+        result = _audit_with_root(repo, configured)
+    finally:
+        _stop(proc)
+    assert result.returncode == 0, (result.returncode, result.stdout, result.stderr)
+    assert str(proc.pid) not in _listed(result.stdout), result.stdout
+
+
+@pytest.mark.parametrize("live_first", ["resolved", "configured"])
+def test_the_first_name_is_first_across_both_spellings(repo, linked_root, live_first):
+    """CR 1241 stays an accepted limit: a process is checked by the first
+    worktree name in its command line. A second spelling searched after the
+    first would reach a later name, and widen the `Kill all:` recipe."""
+    configured, resolved = linked_root
+    live_root, ghost_root = (
+        (resolved, configured) if live_first == "resolved" else (configured, resolved)
+    )
+    proc = _sleeper(f"{live_root}/live/server.py", f"{ghost_root}/ghost-branch/x")
+    try:
+        result = _audit_with_root(repo, configured)
+    finally:
+        _stop(proc)
+    assert result.returncode == 0, (result.returncode, result.stdout, result.stderr)
+    assert str(proc.pid) not in _listed(result.stdout), result.stdout
+
+
+def test_a_root_configured_resolved_does_not_learn_the_link(repo, linked_root):
+    """Pinned limit, not a goal: a resolved root has no second spelling to
+    derive, so a process started under some symlink to it is still missed.
+    The default root is this case, since the resolver builds it from a
+    `pwd -P`. Changing this is a decision, not a fix to this test."""
+    configured, resolved = linked_root
+    proc = _sleeper(f"{configured}/ghost-branch/x")
+    try:
+        result = _audit_with_root(repo, resolved)
+    finally:
+        _stop(proc)
+    assert result.returncode == 0, (result.returncode, result.stdout, result.stderr)
+    assert str(proc.pid) not in _listed(result.stdout), result.stdout
