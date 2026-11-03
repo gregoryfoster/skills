@@ -729,7 +729,9 @@ $1
 }
 
 # _restore_bump <after> <path>... — undo a pointer bump this hook made but
-# cannot keep (#550): a rolled-back push, or a killed refresh's leftovers.
+# cannot keep (#550): a rolled-back push, or a killed refresh's leftovers. A
+# failed commit and a failed update (CR 1792) do the same in two calls,
+# unstage and restore, because their pathspecs differ.
 # Unstages the paths, then puts each registered skills-vendor/ submodule among
 # them back on the commit the index now records, then reinstalls the doctor
 # from the restored vendored installer — so content, pointer and doctor go
@@ -1278,10 +1280,11 @@ elif ! {
   git submodule update --init --remote --merge -- "${UPDATE_PATHS[@]}" 2>&1
 } >>"$LOG"; then
   echo "skills update failed (see $LOG)" >&2
-  # In pr mode a part-way update must not stay checked out (#560).
-  if [ "$MERGE_MODE" = "pr" ]; then
-    _restore_content "a failed pr-mode refresh" "${REFRESH_PATHS[@]}"
-  fi
+  # A part-way update must not stay checked out, in either mode (#560 for
+  # pr, CR 1792 for direct): nothing is committed after it, so whatever it
+  # moved would sit ahead of its pointer until the next day's refresh. The
+  # hook has staged nothing yet, so only the content goes back.
+  _restore_content "a failed update" "${REFRESH_PATHS[@]}"
   # A failure that ran to completion: it spends the day (see above).
   _finish_refresh
   exit 0
@@ -1712,14 +1715,23 @@ if [ "$STATUS_RC" -eq 0 ] && [ -n "$STATUS_OUT" ]; then
         # construction here would go unnoticed.
         echo "nothing staged under this hook's paths after all — no commit"
       else
-        # On failure, unstage what we staged. `git add` above may have staged
-        # a previously *untracked* .skills/doctor.sh, and leaving a file the
-        # operator never touched sitting in their index is worse than leaving
-        # the commit undone — the next run retries cleanly either way. The
-        # unstage is checked, not assumed: see _unstage (#311).
+        # On failure — a consumer's pre-commit hook refusing, most often —
+        # the bump is undone whole, as a refused push's is (#550, CR 1792).
+        # Unstaged first: `git add` above may have staged a previously
+        # *untracked* .skills/doctor.sh, and leaving a file the operator never
+        # touched sitting in their index is worse than leaving the commit
+        # undone. The unstage is checked, not assumed: see _unstage (#311).
+        # It takes COMMIT_PATHS, the add's own pathspec; the restore takes
+        # REFRESH_PATHS, because COMMIT_PATHS holds `skills-vendor/` itself
+        # when nothing is pinned, and that names no registered submodule.
+        # Then the content goes back to its pointer and the doctor with it:
+        # unstaging alone left both ahead, with stderr silent and the day
+        # spent.
         git commit -m "$MSG" -- "${STAGED_PATHS[@]}" 2>&1 || {
-          echo "commit failed — unstaging to leave the index as we found it"
+          echo "commit failed — undoing the bump: unstaging, then the content and the doctor back on the recorded pointer"
+          echo "skills update: the commit failed (git's words in $LOG), so the bump is undone — content, pointer and doctor; the next day's refresh tries again" >&2 || true
           _unstage "a failed commit" "${COMMIT_PATHS[@]}"
+          _restore_content "a failed commit" "${REFRESH_PATHS[@]}"
         }
       fi
     fi

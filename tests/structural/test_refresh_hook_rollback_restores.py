@@ -61,6 +61,7 @@ from tests.utils.refresh_hook_consumer import (
     log_text,
     origin_gitlink,
     run_hook,
+    spend_todays_lock,
     staged,
     today,
     write_shim,
@@ -302,3 +303,30 @@ class TestAFailedCommitOrUpdateUndoesTheBump:
         _assert_content_matches_pointer(c)
         assert (c.path / DOCTOR_PATH).read_text() == c.v1
         assert staged(c) == []
+
+    def test_a_kill_inside_that_restore_is_healed_next_session(self, tmp_path):
+        """The restore runs with the marker still down, so a kill landing
+        in it is a killed refresh's leftover like any other."""
+        c = build(tmp_path)
+        hook = c.path / ".git" / "hooks" / "pre-commit"
+        hook.parent.mkdir(parents=True, exist_ok=True)
+        hook.write_text("#!/bin/sh\nexit 1\n")
+        hook.chmod(0o755)
+        write_shim(
+            c, kill_when='case " $* " in *" --checkout "*) true ;; *) false ;; esac'
+        )
+        c.kill_flag.write_text("")
+        assert run_hook(c).returncode < 0
+        assert (c.path / ".git" / "skills-update.staging").exists()
+        assert content(c) == c.after, "the kill did not land inside the restore"
+        write_shim(c)
+        # The day spent, so only the heal acts: a refresh would redo the bump,
+        # fail the commit again and restore it, passing without the heal.
+        spend_todays_lock(c)
+
+        result = run_hook(c)
+
+        assert result.returncode == 0, result.stderr
+        assert staged(c) == []
+        _assert_content_matches_pointer(c)
+        assert (c.path / DOCTOR_PATH).read_text() == c.v1
