@@ -1608,6 +1608,7 @@ _pr_refused() {
 # request for it.
 _pr_publish() {
   local c="$1" msg="$2" prs rc=0 tip_line tip n s oid open="" declined="" out
+  local unread=() refspecs=() pr missing
   # Every PR from the branch, any state. gh failing is not "none".
   prs="$(_gh pr list --head "$PR_BRANCH" --base "$PR_BASE_BRANCH" --state all \
     --json number,state,headRefOid --jq '.[] | "\(.number) \(.state) \(.headRefOid)"' 2>&1)" || rc=$?
@@ -1626,12 +1627,48 @@ _pr_publish() {
     case "$n" in '' | *[!0-9]*) continue ;; esac
     if [ "$s" = "OPEN" ]; then
       open=${open:-$n}
-    elif [ "$s" = "CLOSED" ] && [ -z "$declined" ] && _pr_same_bump "$oid" "$c"; then
-      declined=$n
+    elif [ "$s" = "CLOSED" ] && [ -z "$declined" ] && [ -n "$oid" ]; then
+      if ! git cat-file -e "$oid^{commit}" 2>/dev/null; then
+        unread+=("$n $oid")
+      elif _pr_same_bump "$oid" "$c"; then
+        declined=$n
+      fi
     fi
   done <<PRS_EOF
 $prs
 PRS_EOF
+
+  # A closed PR's head this clone never had — another clone proposed it, or
+  # gc pruned it once the branch was deleted — compared as "not the same" and
+  # a declined bump was proposed again (CR 1802). GitHub keeps every PR's head
+  # at refs/pull/<n>/head on the base repo, so it is fetched from there, all
+  # in one fetch, and only when nothing else has settled the answer. Unable to
+  # fetch, the run proposes nothing: a PR a human may already have closed is
+  # a visible write, and waiting costs a day — the next day's run checks again.
+  if [ -z "$open" ] && [ -z "$declined" ] && [ "${#unread[@]}" -gt 0 ]; then
+    refspecs=()
+    for pr in "${unread[@]}"; do
+      refspecs+=("refs/pull/${pr%% *}/head")
+    done
+    rc=0
+    { echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] fetch ${refspecs[*]} to read closed PRs' heads:"; git fetch -q --no-tags "$PR_REMOTE" "${refspecs[@]}" 2>&1; } >>"$LOG" || rc=$?
+    missing=""
+    for pr in "${unread[@]}"; do
+      n=${pr%% *}
+      oid=${pr#* }
+      if [ "$rc" -ne 0 ] || ! git cat-file -e "$oid^{commit}" 2>/dev/null; then
+        missing=${missing:-$n}
+      elif _pr_same_bump "$oid" "$c"; then
+        declined=$n
+        break
+      fi
+    done
+    if [ -z "$declined" ] && [ -n "$missing" ]; then
+      _log "pr: could not fetch closed PR #$missing's head from $PR_REMOTE — whether it declined this bump is unknown, so nothing is proposed this run"
+      echo "skills update: could not fetch closed PR #$missing's head from $PR_REMOTE to check whether it declined this bump, so nothing is proposed this run; the next day's refresh checks again (see $LOG)" >&2
+      return 0
+    fi
+  fi
 
   # An open PR's branch is replaced only while it is still the hook's own.
   if [ -n "$open" ] && [ -n "$tip" ]; then
