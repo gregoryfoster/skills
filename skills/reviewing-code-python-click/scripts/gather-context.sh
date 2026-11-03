@@ -117,7 +117,7 @@ git log --oneline -10 2>/dev/null || true
 # the sections above, git's stderr is kept: this list's emptiness is a claim.
 echo ""
 if [ "$_cd_base" = HEAD ]; then
-  echo "=== Changed files (working tree vs HEAD only: no merge base with the default branch or @{upstream}) ==="
+  echo "=== Changed files (working tree vs HEAD only: no default-branch or upstream ref gives a merge base other than HEAD) ==="
 else
   echo "=== Changed files (since merge base ${_cd_base:0:12} ($_cd_ref), plus the working tree) ==="
 fi
@@ -134,7 +134,7 @@ CHANGED=$(printf '%s\n' "$CHANGED" | sort -u | sed '/^$/d')
 if [ "$_cf_rc" -ne 0 ]; then
   echo "(incomplete: git failed listing changes against $_cd_base; its error is on stderr)"
 elif [ -z "$CHANGED" ] && [ "$_cd_base" = HEAD ]; then
-  echo "(none: the working tree is clean, and with no merge base no commit is listed; name the review scope explicitly)"
+  echo "(none: the working tree is clean, and no commit is listed: HEAD has no commits beyond a default-branch or upstream ref, or there is no such ref; name the review scope explicitly)"
 elif [ -z "$CHANGED" ]; then
   echo "(none: nothing differs from the merge base, and the working tree is clean)"
 fi
