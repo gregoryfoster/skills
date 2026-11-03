@@ -1937,7 +1937,8 @@ GATHER_CONTEXT_REQUIRED_COMMANDS = [
     "git log --oneline",
     # Against the review base, not HEAD (#549): HEAD left a fully committed
     # branch with nothing listed. test_gather_context_review_scope.py runs it.
-    'git diff --name-only "$_cd_base"',
+    # Unquoted paths, and `--` after the base (CR 1807).
+    'git -c core.quotePath=false diff --name-only "$_cd_base" --',
 ]
 
 

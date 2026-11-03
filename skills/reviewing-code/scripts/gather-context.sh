@@ -109,6 +109,9 @@ git log --oneline -10 2>/dev/null || true
 # files, deduplicated (#549). Never silent: an empty list says so and why, and
 # a git that failed is reported rather than read as "nothing changed". Unlike
 # the sections above, git's stderr is kept: this list's emptiness is a claim.
+# core.quotePath=false lists a non-ASCII path as named, where git's default
+# C-quotes it and the PHP variant's `\.php$` filter then drops it; the `--`
+# keeps a file named HEAD from making the base ambiguous (CR 1807).
 echo ""
 if [ "$_cd_base" = HEAD ]; then
   echo "=== Changed files (working tree vs HEAD only: $_cd_why) ==="
@@ -118,9 +121,9 @@ fi
 _cf_rc=0
 CHANGED=$(
   rc=0
-  git diff --name-only "$_cd_base" || rc=1
-  git diff --name-only --staged "$_cd_base" || rc=1
-  git ls-files --others --exclude-standard || rc=1
+  git -c core.quotePath=false diff --name-only "$_cd_base" -- || rc=1
+  git -c core.quotePath=false diff --name-only --staged "$_cd_base" -- || rc=1
+  git -c core.quotePath=false ls-files --others --exclude-standard -- || rc=1
   exit "$rc"
 ) || _cf_rc=$?
 CHANGED=$(printf '%s\n' "$CHANGED" | sort -u | sed '/^$/d')
