@@ -62,8 +62,9 @@ Merge mode (#560):
   The primary checkout's .skills/merge_mode (#342) picks what renders. Absent
   or `direct`: the workflow below, exactly as before. `pr`: the same workflow
   plus `pull-requests: write`, a step that reads the committed knob at run
-  time, and a push to context/weekly-measurement that opens or updates one PR
-  instead of pushing to the default branch. Present but unusable refuses
+  time, one that merges the open PR's rows in before the measurement, and a
+  push to context/weekly-measurement that opens or updates one PR instead of
+  pushing to the default branch. Present but unusable refuses
   (exit 5) before anything is written. --check reports a knob the installed
   workflow does not match. Design: references/cadence.md.
 
@@ -1212,7 +1213,7 @@ YAML
 
 # --- merge_mode pr (#560) ---------------------------------------------------
 #
-# A repo whose .skills/merge_mode says `pr` gets the workflow above plus four
+# A repo whose .skills/merge_mode says `pr` gets the workflow above plus five
 # insertions, and nothing in it removed or rewritten. `direct` or absent gets
 # render_direct's bytes untouched: the decision on #560 is "today's behaviour,
 # byte for byte", and this split keeps it by construction rather than by care.
@@ -1266,6 +1267,60 @@ pr_read_step() {
 YAML
 }
 
+pr_take_step() {
+  cat <<'YAML'
+
+      # merge_mode pr (#560): the checkout is the default branch, whose ledger
+      # lacks the rows still on context/weekly-measurement. Measured there, a
+      # row took its deltas, and the seam sweep its --base-ledger interval,
+      # from the last MERGED row: the delta check warned on every run while
+      # the PR stayed open, and the merge landed those deltas. So when the
+      # push below would keep the branch, it is merged in before the sweep.
+      # --no-commit: HEAD stays the default branch's tip, so the row's
+      # repo_commit is a commit that branch keeps, and the commit step
+      # records the merge with the row. Which PR is decided as the push
+      # decides it, and the push decides again: a PR can merge mid-run.
+      - name: Take in the measurement PR's rows
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          [ "${MERGE_MODE:-}" = pr ] || { echo "merge mode ${MERGE_MODE:-unset}: no PR's rows to take in"; exit 0; }
+          BRANCH="${GITHUB_REF_NAME:-$(git branch --show-current)}"
+          PR_BRANCH=context/weekly-measurement
+          PRS=$(gh pr list --head "$PR_BRANCH" --base "$BRANCH" --state all --json number,state,headRefOid,isCrossRepository --jq '.[] | select(.isCrossRepository | not) | "\(.number) \(.state) \(.headRefOid)"') || {
+            echo "::error::gh pr list failed, so which measurement PR is open is unknown — nothing was measured."
+            exit 1; }
+          REMOTE=$(git ls-remote origin "refs/heads/$PR_BRANCH") || {
+            echo "::error::could not read $PR_BRANCH from origin — nothing was measured."
+            exit 1; }
+          TIP=${REMOTE%%[[:space:]]*}
+          OPEN='' ENDED=''
+          while read -r N S OID; do
+            [ -n "$N" ] || continue
+            if [ "$S" = OPEN ]; then
+              OPEN=${OPEN:-$N}
+            elif [ -n "$TIP" ] && [ "$OID" = "$TIP" ]; then
+              ENDED=$N
+            fi
+          done <<<"$PRS"
+          if [ -n "$TIP" ] && { [ -n "$OPEN" ] || [ -z "$ENDED" ]; }; then
+            # The commit step sets these too; the merge needs them now.
+            git config user.name  "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git config merge.ours.driver true
+            git config merge.context-counts.driver "bash \"$MERGE_TOKEN_COUNTS_SH\" %O %A %B %P"
+            { git fetch -q origin "+refs/heads/$PR_BRANCH:refs/remotes/origin/$PR_BRANCH" \
+              && git merge -q --no-commit --no-ff "$TIP"; } || {
+              echo "::error::could not merge $PR_BRANCH in — nothing was measured."
+              git diff --name-only --diff-filter=U | sed 's/^/::error::  conflicted: /'
+              exit 1; }
+            echo "measuring after the rows on $PR_BRANCH${OPEN:+ (PR #$OPEN)}"
+          else
+            echo "no rows on $PR_BRANCH to take in: the row is measured after $BRANCH's"
+          fi
+YAML
+}
+
 pr_commit_env() {
   cat <<'YAML'
         env:
@@ -1310,6 +1365,8 @@ pr_push_block() {
                 # a run's whose PR was never opened. Merge the row INTO it, so
                 # those rows stay first and in order and $BRANCH comes in with
                 # the row: the PR never conflicts with the branch it targets.
+                # The take-in step merged this tip in before the measurement,
+                # so unless the branch moved since, this is a fast-forward.
                 { git fetch -q origin "+refs/heads/$PR_BRANCH:refs/remotes/origin/$PR_BRANCH" \
                   && git checkout -q --detach "$TIP"; } || {
                   echo "::error::could not check out $PR_BRANCH — the row was not pushed."
@@ -1363,7 +1420,7 @@ pr_push_block() {
 YAML
 }
 
-# Splices the four fragments above into the direct render, each after its
+# Splices the five fragments above into the direct render, each after its
 # anchor line. Every anchor must be met exactly once: a template edit that
 # moved one would otherwise render a pr workflow missing a piece, silently.
 add_pr_mode() {
@@ -1373,12 +1430,13 @@ add_pr_mode() {
     case "$line" in
       "  contents: write") pr_permissions; met="$met p" ;;
       "        run: '[ ! -x .skills/doctor.sh ] || bash .skills/doctor.sh'") pr_read_step; met="$met r" ;;
+      "        run: bash \"\$MEASURE_CONTEXT_SH\" --check-credential") pr_take_step; met="$met t" ;;
       "      - name: Commit the row") pr_commit_env; met="$met e" ;;
       "          # --- push ---") pr_push_block; met="$met b" ;;
     esac
   done
-  [ "$met" = " p r e b" ] || {
-    echo "ERROR the pr render met its anchors as '$met', not ' p r e b': the template moved under it" >&2
+  [ "$met" = " p r t e b" ] || {
+    echo "ERROR the pr render met its anchors as '$met', not ' p r t e b': the template moved under it" >&2
     return 1; }
 }
 

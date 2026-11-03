@@ -247,10 +247,11 @@ ship is refused too, so a repo that needs one needs the other.
 
 - **`direct` or absent: nothing changes.** `install-cadence.sh` renders
   today's workflow, byte for byte, and the job does what it did.
-- **`pr`: the same workflow plus four insertions,** none removed or
+- **`pr`: the same workflow plus five insertions,** none removed or
   rewritten. `pull-requests: write`; a `Read the merge mode` step before the
   credential preflight, which reads the committed knob with `merge-mode.sh`'s
-  grammar and fails on an unusable one; `GH_TOKEN` on the commit step; and,
+  grammar and fails on an unusable one; a `Take in the measurement PR's
+  rows` step after the preflight (below); `GH_TOKEN` on the commit step; and,
   after `# --- push ---`, a path that pushes `context/weekly-measurement` and
   opens or updates one PR into the branch the run is on.
 - **One PR, not one a week.** While the branch carries rows no finished PR
@@ -264,6 +265,19 @@ ship is refused too, so a repo that needs one needs the other.
   always wins, even when a closed one shares its head. Only this repo's PRs
   count: `gh pr list --head` matches a branch *name*, so a fork's PR from a
   branch of the same name is filtered out by `isCrossRepository`.
+- **Each row is measured after the one before it.** The job checks out the
+  default branch, whose ledger lacks the open PR's rows. Measured there,
+  every row after the first took its `delta_days` and `delta_tokens`, and
+  the seam sweep its `--base-ledger` interval, from the last *merged* row:
+  [the delta check](#the-delta-check) warned on every run while the PR was
+  open, and the merge landed the wrong deltas. So when the push would keep
+  the branch, the take-in step merges it in before the sweep, deciding
+  which PR exactly as the push does. It merges with `--no-commit`: `HEAD`
+  stays the default branch's tip, so the row's `repo_commit` is a commit
+  that branch keeps even after a squash merge, and the commit step records
+  the merge with the row. The push decides again, since a PR can merge
+  mid-run. `record-telemetry.sh --repair` after the fact was the other way,
+  and it can't do this: it rewrites deltas, never the observed `seams`.
 - **A refused push is reported once.** On the PR's branch a refusal is a
   rule or a concurrent push, not a race a rebase fixes. A `GH013` or
   protected-branch refusal is named as one, and nothing is retried.

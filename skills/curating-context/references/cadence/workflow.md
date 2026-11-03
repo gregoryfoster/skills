@@ -320,8 +320,9 @@ installs into repos where the `.yml` is the only thing anybody reads, with no
 path back to this doc. The pin above is what keeps that copy in step.
 
 This is the render for `.skills/merge_mode` absent or `direct`. At `pr` the
-installer adds four insertions and changes nothing above: `pull-requests:
-write`, a `Read the merge mode` step after the symlink heal, `GH_TOKEN` on
+installer adds five insertions and changes nothing above: `pull-requests:
+write`, a `Read the merge mode` step after the symlink heal, a `Take in the
+measurement PR's rows` step after the credential preflight, `GH_TOKEN` on
 the commit step, and a PR path after `# --- push ---`. `install-cadence.sh
 --print` in such a repo shows them in place; what they do and why:
 [cadence.md § Under a PR-only ruleset](../cadence.md#under-a-pr-only-ruleset-merge_mode-pr)

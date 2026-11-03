@@ -11,8 +11,9 @@ How the knob reaches the workflow (the call #560's brief left open):
 
 - **At install time it picks the shape.** `install-cadence.sh` reads the
   primary checkout's knob with merge-mode.sh's grammar. `direct` or absent
-  renders today's bytes; `pr` renders today's bytes plus four insertions:
-  `pull-requests: write`, a `Read the merge mode` step, `GH_TOKEN` on the
+  renders today's bytes; `pr` renders today's bytes plus five insertions:
+  `pull-requests: write`, a `Read the merge mode` step, a step that merges
+  the open PR's rows in before the sweep (CR 1803), `GH_TOKEN` on the
   commit step, and the PR path after `# --- push ---`. Widening the token for
   every consumer was the other option, and it would have changed every
   direct repo's workflow, which the decision rules out.
@@ -895,6 +896,15 @@ class TestEachRowFollowsItsTruePredecessor:
         assert take == push
         assert any("isCrossRepository" in ln for ln in take)
 
+    def test_the_rows_come_in_before_the_sweep_and_after_the_preflight(
+        self, tmp_path: Path
+    ):
+        doc = yaml.safe_load(_render(tmp_path, "pr\n"))
+        names = [s.get("name", "") for s in doc["jobs"]["measure"]["steps"]]
+        take = names.index(TAKE_STEP)
+        assert names.index("Preflight the credential") < take
+        assert take < names.index("Sweep the seams and the counts")
+
 
 # --- install, --check, and a knob that changes after install ---------------
 
@@ -973,7 +983,7 @@ class TestInstallAndCheck:
     def test_a_template_that_moved_an_anchor_renders_nothing_for_pr(
         self, tmp_path: Path
     ):
-        """The pr shape is spliced in after four anchor lines. A template edit
+        """The pr shape is spliced in after five anchor lines. A template edit
         that moved one must fail the render, not install a pr workflow
         missing a piece, and must leave the installed file as it was."""
         broken = tmp_path / "scripts" / "install-cadence.sh"
