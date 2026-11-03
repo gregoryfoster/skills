@@ -145,7 +145,7 @@ When the branch is ready:
 1. Commit and push from inside the worktree
 2. `cd` to the main checkout — its path is the first row of `bash "<worktree-list.sh>"` (or `git worktree list | head -n1 | awk '{print $1}'`)
 3. `git switch main` (or the project's default branch)
-4. `git merge <branch>`
+4. `git merge <branch>` (a project whose AGENTS.md requires PRs sets `.skills/merge_mode` to `pr`; see below)
 5. Confirm the merge succeeded before Phase 5
 
 **`pr` mode** (`bash "<merge-mode.sh>"` prints `pr` from `.skills/merge_mode`; exit 2 is an unusable knob, never `direct`): no local merge. Push, then open the PR or hand off to `shipping-work`; once it merges, pull the main checkout and run Phase 5 ([references/pr-mode.md](references/pr-mode.md)).
