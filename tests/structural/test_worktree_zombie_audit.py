@@ -438,15 +438,129 @@ def test_the_first_name_is_first_across_both_spellings(repo, linked_root, live_f
     assert str(proc.pid) not in _listed(result.stdout), result.stdout
 
 
-def test_a_root_configured_resolved_does_not_learn_the_link(repo, linked_root):
-    """Pinned limit, not a goal: a resolved root has no second spelling to
-    derive, so a process started under some symlink to it is still missed.
-    The default root is this case, since the resolver builds it from a
-    `pwd -P`. Changing this is a decision, not a fix to this test."""
+def test_a_caller_under_no_link_cannot_learn_one(repo, linked_root):
+    """Pinned limit, not a goal: the root is given resolved and the caller
+    stands under no symlink, so nothing names the link, and a process
+    started under it is still missed. Changing this is a decision."""
     configured, resolved = linked_root
     proc = _sleeper(f"{configured}/ghost-branch/x")
     try:
-        result = _audit_with_root(repo, resolved)
+        result = _audit(
+            repo, _env(repo, WORKTREE_ROOT=str(resolved), PWD=str(repo.resolve()))
+        )
+    finally:
+        _stop(proc)
+    assert result.returncode == 0, (result.returncode, result.stdout, result.stderr)
+    assert str(proc.pid) not in _listed(result.stdout), result.stdout
+
+
+def test_at_a_tie_the_longer_spelling_wins(tmp_path, repo):
+    """`<real>/b` links back to `<real>`, so both spellings start at the same
+    place in `<real>/b/ghost-branch/x`. The shorter one reads the name `b`,
+    which exists, and would hide the zombie."""
+    real = tmp_path / "loop-wt"
+    real.mkdir()
+    (real / "b").symlink_to(real, target_is_directory=True)
+    proc = _sleeper(f"{real.resolve()}/b/ghost-branch/x")
+    try:
+        result = _audit_with_root(repo, real.resolve() / "b")
+    finally:
+        _stop(proc)
+    assert result.returncode == 1, (result.returncode, result.stdout, result.stderr)
+    assert str(proc.pid) in _listed(result.stdout), result.stdout
+
+
+# --- The caller's spelling of the root (#533, CR 1738) -----------------------
+#
+# The default root is built with `pwd -P`, so it is always the resolved
+# spelling, and the audit had no other: a repo reached through a symlink (the
+# issue's /tmp -> /private/tmp) left a process under the caller's spelling of
+# `<repo>/.worktrees/<gone>` unlisted. The caller's `pwd -L` against its
+# `pwd -P` names that link. Each test sets PWD, since the audit runs in a
+# child whose PWD is otherwise the parent's, and bash drops a PWD that does
+# not name its directory.
+
+
+@pytest.fixture
+def linked_repo(tmp_path):
+    """`(logical, physical)` checkout of a repo reached through a symlinked
+    parent, with a linked worktree `live` under the default root."""
+    real_parent = tmp_path / "real-parent"
+    physical = real_parent / "repo"
+    physical.mkdir(parents=True)
+    _git(physical, "init", "-b", "main")
+    _git(physical, "config", "user.email", "test@example.com")
+    _git(physical, "config", "user.name", "test")
+    _git(physical, "commit", "--allow-empty", "-m", "initial")
+    _git(physical, "worktree", "add", "-q", "-b", "live", ".worktrees/live")
+    link_parent = tmp_path / "link-parent"
+    link_parent.symlink_to(real_parent, target_is_directory=True)
+    return link_parent / "repo", physical.resolve()
+
+
+def _audit_from(cwd: Path, **extra: str) -> subprocess.CompletedProcess:
+    """The audit run from `cwd` as spelled, under the default root unless
+    `extra` sets one."""
+    env = _scrubbed()
+    env.pop("WORKTREE_ROOT", None)
+    env["PWD"] = str(cwd)
+    env.update(extra)
+    return subprocess.run(
+        ["bash", str(AUDIT)],
+        capture_output=True,
+        text=True,
+        cwd=str(cwd),
+        env=env,
+        timeout=60,
+    )
+
+
+@pytest.mark.parametrize("stand_in", ["primary", "linked worktree"])
+def test_a_zombie_under_the_callers_spelling_of_the_default_root_is_found(
+    linked_repo, stand_in
+):
+    """The issue's headline case. From the linked worktree too: the default
+    root lives under the primary checkout, not the caller's toplevel."""
+    logical, _ = linked_repo
+    cwd = logical if stand_in == "primary" else logical / ".worktrees" / "live"
+    proc = _sleeper(f"{logical}/.worktrees/ghost-branch/x")
+    try:
+        result = _audit_from(cwd)
+    finally:
+        _stop(proc)
+    assert result.returncode == 1, (result.returncode, result.stdout, result.stderr)
+    assert str(proc.pid) in _listed(result.stdout), result.stdout
+
+
+def test_a_live_worktree_under_the_callers_spelling_is_not_listed(linked_repo):
+    """Control: the caller's spelling widens the match, not what is a zombie."""
+    logical, _ = linked_repo
+    proc = _sleeper(f"{logical}/.worktrees/live/server.py")
+    try:
+        result = _audit_from(logical)
+    finally:
+        _stop(proc)
+    assert result.returncode == 0, (result.returncode, result.stdout, result.stderr)
+    assert str(proc.pid) not in _listed(result.stdout), result.stdout
+
+
+def test_the_callers_spelling_is_checked_against_the_root(tmp_path):
+    """The common-suffix strip can overreach: `L/proj` links to `R/proj`, so it
+    maps `R` to `L`, though `L` is no spelling of `R`. A root `R/wt` would gain
+    `L/wt`, a different place, and a process under it would be listed. The
+    derived spelling must resolve to the root, or it is dropped."""
+    physical = tmp_path / "R" / "proj"
+    physical.mkdir(parents=True)
+    _git(physical, "init", "-b", "main")
+    (tmp_path / "R" / "wt").mkdir()
+    (tmp_path / "L").mkdir()
+    logical = tmp_path / "L" / "proj"
+    logical.symlink_to(physical, target_is_directory=True)
+    proc = _sleeper(f"{tmp_path / 'L' / 'wt'}/ghost-branch/x")
+    try:
+        result = _audit_from(
+            logical, WORKTREE_ROOT=str((tmp_path / "R" / "wt").resolve())
+        )
     finally:
         _stop(proc)
     assert result.returncode == 0, (result.returncode, result.stdout, result.stderr)
