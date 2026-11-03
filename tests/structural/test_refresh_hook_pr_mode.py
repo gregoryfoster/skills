@@ -32,10 +32,17 @@ from pathlib import Path
 
 import pytest
 
-from tests.structural.test_cadence_merge_mode import CASES, _merge_mode_sh
+from tests.structural.test_cadence_merge_mode import (
+    CASES,
+    NOT_TEXT,
+    _merge_mode_sh,
+    _not_text,
+)
 from tests.utils.refresh_hook_consumer import (
     DOCTOR_PATH,
     HOOK,
+    INSTALLER,
+    MS_SCRIPTS,
     MSG_SUB,
     VENDOR,
     _vendor_commit,
@@ -49,6 +56,7 @@ from tests.utils.refresh_hook_consumer import (
     log_text,
     origin_gitlink,
     run_hook,
+    staged,
     start_hook,
     today,
     write_shim,
@@ -382,6 +390,28 @@ class TestTheReaderHoldsMergeModeShsGrammar:
         else:
             assert mode == "unusable", (text, mode)
             assert ".skills/merge_mode" in err
+
+    @pytest.mark.parametrize("kind", NOT_TEXT)
+    def test_it_refuses_what_merge_mode_sh_refuses(self, tmp_path, kind):
+        """The states no text can write (CR 1793)."""
+        repo = tmp_path / "r"
+        git(tmp_path, "init", "-q", "-b", "main", str(repo))
+        _not_text(repo, kind)
+        assert _merge_mode_sh(repo)[0] == 2, "fixture: merge-mode.sh accepts it"
+        mode, err = _read_mode(repo)
+        assert mode == "unusable", (kind, mode)
+        assert ".skills/merge_mode" in err
+
+    def test_outside_a_git_checkout_it_is_unusable(self, tmp_path):
+        """The hook itself exits before reading the knob there (no git dir),
+        so this pins the reader alone: a failed `git worktree list` is a
+        refusal, never `direct`."""
+        bare = tmp_path / "not-a-repo"
+        bare.mkdir()
+        assert _merge_mode_sh(bare)[0] == 2
+        mode, err = _read_mode(bare)
+        assert mode == "unusable", mode
+        assert ".skills/merge_mode" in err
 
     def test_it_reads_the_primary_checkout(self, tmp_path):
         """An untracked knob is absent from a linked worktree (#559's bug)."""
@@ -720,3 +750,103 @@ class TestReconcileInPrMode:
         _main_never_moved(c)
         _assert_content_matches_pointer(c)
         assert len(_creates(c.gh)) == 1
+
+
+# --- a staged leftover the hook did not mark (CR 1791) -----------------------
+
+
+class TestAnUnmarkedStagedBumpInPrMode:
+    """A checkout left staged by a hook from before #555 (hook paths staged,
+    no marker) is not the heal's to undo, because a human's own `git add
+    skills-vendor/<v>` looks the same. In `direct` mode the first refresh
+    commits it through its own pathspec; `pr` mode never commits here, so the
+    prose's "the first refresh … commits it" was false there, and the restore
+    logged "restored … to the recorded pointer" while the content stayed on
+    the staged bump. The next `git commit` on main absorbs it."""
+
+    def _leftover(self, c) -> None:
+        git(c.path / VENDOR, "fetch", "-q", "origin")
+        git(c.path / VENDOR, "checkout", "-q", c.after)
+        git(c.path, "add", VENDOR)
+
+    def test_it_is_named_once_with_the_reset_and_left_staged(self, pr_consumer):
+        """The reviewer's reproduction."""
+        c = pr_consumer
+        self._leftover(c)
+
+        result = run_hook(c)
+
+        assert result.returncode == 0, result.stderr
+        assert staged(c) == [VENDOR], "an unmarked staged bump was unstaged"
+        assert result.stderr.count(f"git reset -q -- {VENDOR}") == 1, result.stderr
+        assert "no in-progress marker" in result.stderr, result.stderr
+        assert len(_creates(c.gh)) == 1, "the PR path stopped proposing"
+        _main_never_moved(c)
+
+        again = run_hook(c)
+
+        assert again.stderr == "", "said again behind a spent day's lock"
+
+    def test_the_restore_names_the_pointer_it_restored_to(self, pr_consumer):
+        """Content goes back to the pointer the INDEX records, the staged
+        bump, which may be a human's, and the log says which."""
+        c = pr_consumer
+        self._leftover(c)
+
+        run_hook(c)
+
+        assert content(c) == c.after
+        log = log_text(c)
+        assert f"HEAD records {c.before[:7]}" in log, log
+        assert f"{VENDOR} to the recorded pointer" not in log, log
+
+    def test_with_nothing_staged_it_names_heads_pointer(self, pr_consumer):
+        c = pr_consumer
+
+        result = run_hook(c)
+
+        assert result.stderr == "", result.stderr
+        assert f"{c.before[:7]}, the pointer HEAD and the index both record" in (
+            log_text(c)
+        ), log_text(c)
+
+
+# --- the doctor report after a restore (CR 1794) -----------------------------
+
+
+class TestTheDoctorReportAfterARestore:
+    """`_restore_content` is a third caller of `_install_doctor`, and in `pr`
+    mode always the run's last, so the EXIT trap reports the restore's
+    install. When the restored pointer's installer is broken but the bump's
+    worked, the tree holds the doctor call site 2 installed from the bump,
+    and "left as it was" says the run did not change it."""
+
+    def test_a_failed_reinstall_does_not_say_left_as_it_was(self, pr_consumer):
+        c = pr_consumer
+        scripts = c.up / MS_SCRIPTS
+        (scripts / "install-doctor.sh").write_text("#!/usr/bin/env bash\nexit 1\n")
+        broken = _vendor_commit(c.up, c.v1 + "# fixture: broken\n", "broken")
+        git(c.path / VENDOR, "fetch", "-q", "origin")
+        git(c.path / VENDOR, "checkout", "-q", broken)
+        git(c.path, "add", VENDOR)
+        git(c.path, "commit", "-qm", "chore: vendor at a broken installer")
+        git(c.path, "push", "-q", "origin", "main")
+        shutil.copy2(INSTALLER, scripts / "install-doctor.sh")
+        bumped_doctor = c.v2 + "# fixture: fixed\n"
+        _vendor_commit(c.up, bumped_doctor, "fixed")
+
+        result = run_hook(c)
+
+        assert result.returncode == 0, result.stderr
+        assert content(c) == broken, "the content did not go back"
+        assert (c.path / DOCTOR_PATH).read_text() == bumped_doctor, (
+            "fixture: call site 2 should have installed the bump's doctor"
+        )
+        assert "could not" in result.stderr and DOCTOR_PATH in result.stderr, (
+            result.stderr
+        )
+        assert "left as it was" not in result.stderr, (
+            "the run replaced the doctor and could not put it back, and "
+            f"said it had left it as it was:\n{result.stderr}"
+        )
+        assert "restored pointer" in result.stderr, result.stderr

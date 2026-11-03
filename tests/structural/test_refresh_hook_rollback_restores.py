@@ -41,6 +41,8 @@ Coverage:
 - unrelated dirty work, and an edit inside the vendored checkout
                                       → survive the restore (never forced)
 - a restore git refuses               → stderr says the content is ahead
+- a commit the consumer's pre-commit refuses, and an update that fails
+  after moving the content (CR 1792)  → undone whole, said on stderr
 """
 
 import pytest
@@ -56,8 +58,10 @@ from tests.utils.refresh_hook_consumer import (
     git,
     gitlink,
     lock,
+    log_text,
     origin_gitlink,
     run_hook,
+    spend_todays_lock,
     staged,
     today,
     write_shim,
@@ -238,3 +242,91 @@ class TestTheRestoreIsBounded:
         assert content(c) == c.after and gitlink(c) == c.before
         assert "ahead of the recorded pointer" in result.stderr, result.stderr
         assert origin_gitlink(c) == c.before
+
+
+class TestAFailedCommitOrUpdateUndoesTheBump:
+    """CR 1792 — every rollback, not only a refused push's. A commit the
+    consumer's pre-commit framework refused used to be unstaged and nothing
+    more: the content stayed ahead of its pointer, the doctor modified,
+    stderr silent and the day spent — #550's hazard, on the path
+    `_restore_bump`'s header said it closed. A `direct` update that failed
+    after moving some content left it moved, where `pr` mode restored it."""
+
+    @pytest.mark.parametrize("doctor_tracked", [True, False])
+    def test_a_refused_commit_leaves_content_on_its_pointer(
+        self, tmp_path, doctor_tracked
+    ):
+        """The reviewer's reproduction: the consumer's pre-commit exits 1."""
+        c = build(tmp_path, doctor_tracked=doctor_tracked)
+        hook = c.path / ".git" / "hooks" / "pre-commit"
+        hook.parent.mkdir(parents=True, exist_ok=True)
+        hook.write_text("#!/bin/sh\necho 'pre-commit: refused' >&2\nexit 1\n")
+        hook.chmod(0o755)
+
+        result = run_hook(c)
+
+        assert result.returncode == 0, result.stderr
+        assert "pre-commit: refused" in log_text(c), log_text(c)
+        assert ahead(c) == 0 and staged(c) == []
+        _assert_content_matches_pointer(c)
+        assert (c.path / DOCTOR_PATH).read_text() == c.v1, (
+            "the doctor the refused commit would have carried is still in place"
+        )
+        if doctor_tracked:
+            assert _doctor_status(c) == "", _doctor_status(c)
+        else:
+            assert _doctor_status(c) == f"?? {DOCTOR_PATH}", _doctor_status(c)
+        assert "commit failed" in result.stderr, (
+            f"a refused commit was undone in silence:\n{result.stderr}"
+        )
+        assert lock(c).read_text().strip() == today()
+        assert not (c.path / ".git" / "skills-update.staging").exists()
+
+    def test_a_failed_update_leaves_content_on_its_pointer(self, tmp_path):
+        """The update moves the content, then exits non-zero — the shape of
+        one submodule's merge failing after another's has landed."""
+        c = build(tmp_path)
+        write_shim(c)
+        shim = c.bindir / "git"
+        first, rest = shim.read_text().split("\n", 1)
+        real = rest.rsplit("exec ", 1)[1].split(" ", 1)[0]
+        shim.write_text(
+            first + "\n"
+            f'case " $* " in *" --remote "*) {real} "$@"; exit 1 ;; esac\n' + rest
+        )
+
+        result = run_hook(c)
+
+        assert result.returncode == 0, result.stderr
+        assert "skills update failed" in result.stderr, result.stderr
+        assert "Fast-forward" in log_text(c), "the update never moved anything"
+        _assert_content_matches_pointer(c)
+        assert (c.path / DOCTOR_PATH).read_text() == c.v1
+        assert staged(c) == []
+
+    def test_a_kill_inside_that_restore_is_healed_next_session(self, tmp_path):
+        """The restore runs with the marker still down, so a kill landing
+        in it is a killed refresh's leftover like any other."""
+        c = build(tmp_path)
+        hook = c.path / ".git" / "hooks" / "pre-commit"
+        hook.parent.mkdir(parents=True, exist_ok=True)
+        hook.write_text("#!/bin/sh\nexit 1\n")
+        hook.chmod(0o755)
+        write_shim(
+            c, kill_when='case " $* " in *" --checkout "*) true ;; *) false ;; esac'
+        )
+        c.kill_flag.write_text("")
+        assert run_hook(c).returncode < 0
+        assert (c.path / ".git" / "skills-update.staging").exists()
+        assert content(c) == c.after, "the kill did not land inside the restore"
+        write_shim(c)
+        # The day spent, so only the heal acts: a refresh would redo the bump,
+        # fail the commit again and restore it, passing without the heal.
+        spend_todays_lock(c)
+
+        result = run_hook(c)
+
+        assert result.returncode == 0, result.stderr
+        assert staged(c) == []
+        _assert_content_matches_pointer(c)
+        assert (c.path / DOCTOR_PATH).read_text() == c.v1

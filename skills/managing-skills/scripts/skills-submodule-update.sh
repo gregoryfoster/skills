@@ -104,7 +104,7 @@ Behaviour:
   - With .skills/merge_mode 'pr' (read from the primary checkout, #560),
     never pushes to main: the bump is proposed as ONE pull request from
     skills/submodule-refresh, which later sessions update, and the
-    checkout's content stays on main's recorded pointer. Needs gh. A
+    checkout's content stays on the pointer its index records. Needs gh. A
     refusal is reported once and not retried. A knob that is present but
     unusable is never read as 'direct': no refresh until it is fixed.
   - Logs to .git/skills-update.log (bounded to ~64 KiB / 200 lines).
@@ -151,6 +151,14 @@ STAGING="$gitdir/skills-update.staging"
 # How long a marker's owner can be believed alive (CR 1789): the hook's 120 s
 # ceiling plus margin. Past it, a live PID is a reused one — an unrelated
 # process, or one in another PID namespace — and the marker is stale.
+#
+# A known limit (CR 1799): the 120 s is install-refresh.sh's default, and
+# install-hook.sh keeps a consumer's own larger `timeout` on a re-run. A run
+# allowed past 300 s that takes that long has its live marker read as stale,
+# so a session starting then can heal under it — the race CR 1789 closed. Not
+# derived: the harness does not hand a hook its timeout, and reading it from
+# .claude/settings.json means a JSON parser on a path that must finish inside
+# the extension's ~2 s. A timeout above 300 s needs this raised with it.
 MARKER_MAX_AGE=300
 # merge_mode pr (#560): the private index the pull request's commit is built
 # in, so the checkout's own index is never written; and the one branch the
@@ -639,15 +647,18 @@ _reconcile_pr() {
 # for consumers added before doctor.sh existed. install-doctor.sh is a no-op
 # when content matches, so the cost is one file compare per call.
 #
-# Called from two places. Call site 1, just below, runs on every session (not
-# gated by the once-per-day lock) so accidental deletions self-heal at the
-# next session start. Call site 2 runs after a successful submodule update,
-# because call site 1 ran the PRE-bump installer against the PRE-bump doctor
-# (#299): without it, the session that advances the pointer commits the old
-# doctor beside the new pointer, and the refreshed one waits for the next
-# session that reaches call site 1.
+# Called from three places. Call site 1, just below, runs on every session
+# (not gated by the once-per-day lock) so accidental deletions self-heal at
+# the next session start. Call site 2 runs after a successful submodule
+# update, because call site 1 ran the PRE-bump installer against the PRE-bump
+# doctor (#299): without it, the session that advances the pointer commits
+# the old doctor beside the new pointer, and the refreshed one waits for the
+# next session that reaches call site 1. The third is _restore_content, after
+# it puts the content back on its pointer (#550): the heal, a rolled-back
+# push, a failed commit or update, and every pr-mode refresh, where it is
+# always the run's last call (CR 1794).
 #
-# Neither fires in a checkout whose skills-vendor/* are empty gitlinks — every
+# None fires in a checkout whose skills-vendor/* are empty gitlinks — every
 # fresh linked worktree, until something initializes them. The glob matches no
 # installer there, and there is no vendored doctor to install from anyway, so
 # "every session" means every session in a checkout with its submodules
@@ -659,20 +670,30 @@ _reconcile_pr() {
 # after the first attempt either way, leaving a stale doctor with one $LOG line
 # as its only trace. When every installer fails, that reaches stderr — the
 # channel every other failure here uses — once per run although this is called
-# twice, and only when the run's LAST call failed (#300 CR 14). Warning from
-# call site 1 on the spot was false whenever call site 2 then succeeded: a
-# broken pre-bump installer that the bump replaces with a working one leaves a
-# freshly installed and committed doctor, which "left as it was" denies. So
-# each call records its outcome and the EXIT trap below reports the last one —
-# every way out of this block, the ERR backstop's exit included, passes it.
+# up to three times, and only when the run's LAST call failed (#300 CR 14).
+# Warning from call site 1 on the spot was false whenever call site 2 then
+# succeeded: a broken pre-bump installer that the bump replaces with a working
+# one leaves a freshly installed and committed doctor, which "left as it was"
+# denies. So each call records its outcome and the EXIT trap below reports the
+# last one — every way out of this block, the ERR backstop's exit included,
+# passes it.
+#
+# A restore passes what it restores after, and its failure is worded apart
+# (CR 1794). By then call site 2 — this run's, or a killed run's being healed
+# — may already have replaced the doctor from the bump's installer, which the
+# restored pointer's installer then could not put back, so "left as it was"
+# would deny a change the run made. What holds is that the doctor may not be
+# the one the restored pointer ships.
 DOCTOR_INSTALL_FAILED=0
+DOCTOR_FAILED_AFTER=""
 _install_doctor() {
-  local installer tried=0
+  local installer tried=0 restoring="${1:-}"
   for installer in skills-vendor/*/skills/managing-skills/scripts/install-doctor.sh; do
     [ -x "$installer" ] || continue
     tried=$((tried + 1))
     if bash "$installer" --quiet >>"$LOG" 2>&1; then
       DOCTOR_INSTALL_FAILED=0
+      DOCTOR_FAILED_AFTER=""
       return 0
     fi
     _log "doctor install failed via $installer (see lines above) — trying the next vendor, if any"
@@ -680,14 +701,19 @@ _install_doctor() {
   # No installer this time leaves the last verdict standing: a call that
   # installed nothing has not repaired an earlier failure.
   [ "$tried" -gt 0 ] || return 0
-  _log "doctor install failed: all $tried vendored installer(s) failed — .skills/doctor.sh left as it was"
+  _log "doctor install failed: all $tried vendored installer(s) failed — .skills/doctor.sh left as it was${restoring:+, not reinstalled after $restoring}"
   DOCTOR_INSTALL_FAILED=1
+  DOCTOR_FAILED_AFTER="$restoring"
   return 0
 }
 # Called by the EXIT trap below; shellcheck does not count a trap as a call.
 # shellcheck disable=SC2329
 _report_doctor_install() {
   [ "$DOCTOR_INSTALL_FAILED" = "1" ] || return 0
+  if [ -n "$DOCTOR_FAILED_AFTER" ]; then
+    echo "skills update: could not reinstall .skills/doctor.sh when the content went back on its pointer after $DOCTOR_FAILED_AFTER — every vendored installer failed, so it may not be the version the restored pointer ships (see $LOG)" >&2 || true
+    return 0
+  fi
   echo "skills update: could not install .skills/doctor.sh — every vendored installer failed, so it was left as it was (see $LOG)" >&2 || true
 }
 trap _report_doctor_install EXIT
@@ -701,7 +727,7 @@ if _marker_owner_live; then
   exit 0
 fi
 
-# _install_doctor, call site 1 of 2: every session, ahead of both gates. This
+# _install_doctor, call site 1 of 3: every session, ahead of both gates. This
 # is the working-tree repair, and it should happen on every branch and every
 # session. Committing the result is a separate concern and stays behind
 # both gates, further down (#86).
@@ -729,7 +755,9 @@ $1
 }
 
 # _restore_bump <after> <path>... — undo a pointer bump this hook made but
-# cannot keep (#550): a rolled-back push, or a killed refresh's leftovers.
+# cannot keep (#550): a rolled-back push, or a killed refresh's leftovers. A
+# failed commit and a failed update (CR 1792) do the same in two calls,
+# unstage and restore, because their pathspecs differ.
 # Unstages the paths, then puts each registered skills-vendor/ submodule among
 # them back on the commit the index now records, then reinstalls the doctor
 # from the restored vendored installer — so content, pointer and doctor go
@@ -761,8 +789,14 @@ _restore_bump() {
   _unstage "$after" "$@"
   _restore_content "$after" "$@"
 }
+#
+# The log names the commit each path went back to, and whose it is (CR 1791):
+# `git submodule update` checks out the pointer the INDEX records, which is
+# HEAD's unless something is staged there — an unstage that failed, or a bump
+# staged with no marker, which may be a human's and is never the hook's to
+# unstage. "Restored to the recorded pointer" said nothing of which.
 _restore_content() {
-  local after="$1" p gitlinks=()
+  local after="$1" p idx head gitlinks=()
   shift
   for p in "$@"; do
     if _listed "$p" "$REGISTERED"; then
@@ -771,15 +805,25 @@ _restore_content() {
   done
   [ "${#gitlinks[@]}" -gt 0 ] || return 0
   if {
-    echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] restore ${gitlinks[*]} to the recorded pointer after $after:"
+    echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] restore ${gitlinks[*]} to the pointer the index records, after $after:"
     git submodule update --checkout --no-fetch -- "${gitlinks[@]}" 2>&1
   } >>"$LOG"; then
-    _log "restored ${gitlinks[*]} to the recorded pointer after $after"
+    for p in "${gitlinks[@]}"; do
+      idx="$(git ls-files -s -- "$p" 2>/dev/null | awk '$1 == "160000" { print $2 }')" || idx=""
+      head="$(git rev-parse -q --verify "HEAD:$p" 2>/dev/null)" || head=""
+      idx="${idx:0:7}"
+      head="${head:0:7}"
+      if [ "$idx" = "$head" ]; then
+        _log "restored $p after $after: ${idx:-nothing}, the pointer HEAD and the index both record"
+      else
+        _log "restored $p after $after: ${idx:-nothing}, the pointer the index records — HEAD records ${head:-nothing}; the staged bump between them is left as it is"
+      fi
+    done
   else
     _log "could not restore ${gitlinks[*]} after $after — content is ahead of the recorded pointer"
     echo "skills update: ${gitlinks[*]} is ahead of the recorded pointer after $after — repo-side config may not match it until synced: git submodule update --checkout -- ${gitlinks[*]} (see $LOG)" >&2 || true
   fi
-  _install_doctor
+  _install_doctor "$after"
   return 0
 }
 
@@ -821,8 +865,10 @@ _stamp_lock() {
 # hook's paths, so "every staged path is one this hook would commit" cannot
 # tell the two apart. With no marker, the index is left alone and the state is
 # logged: a checkout left staged by a hook from before #555 is not undone
-# here, but the first refresh this version completes on main commits it
-# through its own pathspec. With a marker, the heal acts only when every
+# here. In `direct` mode the first refresh this version completes on main
+# commits it through its own pathspec; `pr` mode never commits in this
+# checkout, so its refresh says so on stderr instead, with the reset that
+# clears it (_pr_note_staged, CR 1791). With a marker, the heal acts only when every
 # staged path is one the marker names; anything else staged beside them is
 # someone's work, so the whole index is left alone and the marker kept.
 _heal_staged() {
@@ -1229,6 +1275,43 @@ fi
 REFRESH_BEGUN=1
 HOOK_ADDED=0
 
+# merge_mode pr and a bump staged with no marker (CR 1791). _heal_staged
+# leaves it alone, since a human's own `git add skills-vendor/<v>` looks the
+# same as a hook from before #555. In `direct` mode this run's commit takes it
+# through its own pathspec; `pr` mode never commits in this checkout, so it
+# stays staged for the next `git commit` on main to absorb, and the content
+# stays on the pointer the index records. So it is said, once a run — this is
+# behind the day's lock — by the run that owns the refresh, with the commands
+# that clear it.
+_pr_note_staged() {
+  local p hook_paths=() left gitlinks=() rc=0
+  while IFS= read -r p; do
+    [ -n "$p" ] || continue
+    hook_paths+=("$p")
+  done <<NOTE_EOF
+$REGISTERED
+.skills/doctor.sh
+NOTE_EOF
+  left="$(git diff --cached --name-only --ignore-submodules=none -- "${hook_paths[@]}" 2>>"$LOG")" || rc=$?
+  if [ "$rc" -ne 0 ] || [ -z "$left" ]; then
+    return 0
+  fi
+  while IFS= read -r p; do
+    if _listed "$p" "$REGISTERED"; then
+      gitlinks+=("$p")
+    fi
+  done <<LEFT_EOF
+$left
+LEFT_EOF
+  left="${left//$'\n'/ }"
+  _log "pr: $left staged with no in-progress marker — left staged; merge_mode pr never commits here"
+  echo "skills update: $left is staged with no in-progress marker — a hook from before #555, or a bump of your own. merge_mode pr never commits in this checkout, so it stays staged for the next git commit on main, and the content stays on the pointer the index records. If it is not yours: git reset -q -- $left${gitlinks[0]:+ && git submodule update --checkout -- ${gitlinks[*]}} (see $LOG)" >&2 || true
+  return 0
+}
+if [ "$MERGE_MODE" = "pr" ]; then
+  _pr_note_staged
+fi
+
 # Every way out of the refresh from here on. The marker goes unless this run's
 # own `git add` left something of the hook's still staged — a commit that
 # failed and could not be unstaged — in which case the next session's
@@ -1278,10 +1361,11 @@ elif ! {
   git submodule update --init --remote --merge -- "${UPDATE_PATHS[@]}" 2>&1
 } >>"$LOG"; then
   echo "skills update failed (see $LOG)" >&2
-  # In pr mode a part-way update must not stay checked out (#560).
-  if [ "$MERGE_MODE" = "pr" ]; then
-    _restore_content "a failed pr-mode refresh" "${REFRESH_PATHS[@]}"
-  fi
+  # A part-way update must not stay checked out, in either mode (#560 for
+  # pr, CR 1792 for direct): nothing is committed after it, so whatever it
+  # moved would sit ahead of its pointer until the next day's refresh. The
+  # hook has staged nothing yet, so only the content goes back.
+  _restore_content "a failed update" "${REFRESH_PATHS[@]}"
   # A failure that ran to completion: it spends the day (see above).
   _finish_refresh
   exit 0
@@ -1297,7 +1381,7 @@ else
     echo "skills update: still uninitialized after refresh: ${UNINIT% } (see $LOG)" >&2
   fi
 
-  # _install_doctor, call site 2 of 2 (#299): the update may just have
+  # _install_doctor, call site 2 of 3 (#299): the update may just have
   # replaced the vendored install-doctor.sh and doctor.sh, so run the
   # POST-bump installer. Here, before COMMIT_PATHS is built, so the doctor
   # staged and committed below is the one that ships with the pointer this run
@@ -1340,10 +1424,11 @@ fi
 # The refresh above ran in place, as it always has: the same update, the same
 # post-bump doctor install (#299), the same pins. From here a `pr` run records
 # the bump in a commit built in a private index, never in the checkout's own,
-# puts the content back on main's recorded pointer (#550), and only THEN
+# puts the content back on the pointer the index records (#550) — main's,
+# unless a bump is staged with no marker (_pr_note_staged) — and only THEN
 # touches the network: pushes that commit to skills/submodule-refresh and opens
 # a pull request for it if none is open. Local main never moves; the content
-# always agrees with its pointer, except between the update and the restore,
+# always agrees with the index, except between the update and the restore,
 # which the marker covers (_heal_pr). Annotated in
 # references/auto-refresh-hook/pr-mode.md.
 #
@@ -1373,7 +1458,8 @@ _gh() {
   fi
 }
 
-# _pr_restore — the content back on main's recorded pointer, the doctor with it.
+# _pr_restore — the content back on the pointer the index records (main's,
+# unless a bump is staged with no marker), the doctor with it.
 _pr_restore() {
   _restore_content "a pr-mode refresh" "${REFRESH_PATHS[@]}"
 }
@@ -1712,14 +1798,23 @@ if [ "$STATUS_RC" -eq 0 ] && [ -n "$STATUS_OUT" ]; then
         # construction here would go unnoticed.
         echo "nothing staged under this hook's paths after all — no commit"
       else
-        # On failure, unstage what we staged. `git add` above may have staged
-        # a previously *untracked* .skills/doctor.sh, and leaving a file the
-        # operator never touched sitting in their index is worse than leaving
-        # the commit undone — the next run retries cleanly either way. The
-        # unstage is checked, not assumed: see _unstage (#311).
+        # On failure — a consumer's pre-commit hook refusing, most often —
+        # the bump is undone whole, as a refused push's is (#550, CR 1792).
+        # Unstaged first: `git add` above may have staged a previously
+        # *untracked* .skills/doctor.sh, and leaving a file the operator never
+        # touched sitting in their index is worse than leaving the commit
+        # undone. The unstage is checked, not assumed: see _unstage (#311).
+        # It takes COMMIT_PATHS, the add's own pathspec; the restore takes
+        # REFRESH_PATHS, because COMMIT_PATHS holds `skills-vendor/` itself
+        # when nothing is pinned, and that names no registered submodule.
+        # Then the content goes back to its pointer and the doctor with it:
+        # unstaging alone left both ahead, with stderr silent and the day
+        # spent.
         git commit -m "$MSG" -- "${STAGED_PATHS[@]}" 2>&1 || {
-          echo "commit failed — unstaging to leave the index as we found it"
+          echo "commit failed — undoing the bump: unstaging, then the content and the doctor back on the recorded pointer"
+          echo "skills update: the commit failed (git's words in $LOG), so this run undoes its bump — the staging, the vendored content and the doctor; anything it cannot put back is said separately. The next day's refresh tries again" >&2 || true
           _unstage "a failed commit" "${COMMIT_PATHS[@]}"
+          _restore_content "a failed commit" "${REFRESH_PATHS[@]}"
         }
       fi
     fi

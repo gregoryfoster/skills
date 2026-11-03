@@ -113,8 +113,9 @@ reports it. Beyond that the two files part ways:
 The counts file merges **per row, newest wins**
 ([#237](https://github.com/gregoryfoster/skills/issues/237)). It used to carry
 `merge=ours`, which keeps the side of whoever *runs* the merge — unrelated to
-which side measured more recently — and the cadence bot only ever pushes to
-the default branch, so it was structurally always the side that lost: merging
+which side measured more recently — and the cadence bot then only ever pushed
+to the default branch (in [`pr` mode](#under-a-pr-only-ruleset-merge_mode-pr)
+it pushes a branch of its own), so it was structurally always the side that lost: merging
 `origin/main` onto a branch silently reverted the week's fresh row, and
 nothing went red because the file is a cache (`c7be4eb` is the incident
 record). The `context-counts` driver (`merge-token-counts.sh`) merges
