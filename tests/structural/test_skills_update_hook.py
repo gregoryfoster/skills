@@ -39,7 +39,7 @@ transport, since what matters is whether a push was actually accepted:
 - a commit stranded by an earlier run        → pushed at the next session
 - push fails                                 → commit rolled back
 - push fails with unrelated dirty work       → that work survives (NOT --hard)
-- push fails                                 → refreshed content stays on disk
+- push fails                                 → an untracked doctor stays on disk
 - push fails                                 → reported on stderr, not only $LOG
 - push fails                                 → no second attempt in the same run
 - push fails and its unstage fails           → reported after the rollback (#311)
@@ -839,7 +839,7 @@ class TestUnhonourablePinRefusesTheRefresh:
 # `git submodule update --remote --merge` skips a submodule that is not
 # registered in .git/config, prints "not initialized", and exits **0**. The
 # hook's `if !` guard passes, nothing is committed, and the day's lock — which
-# is stamped before the update, deliberately — is already consumed. Found in
+# a run that ends spends, success or not (#555) — is consumed. Found in
 # a consumer checkout that had been "succeeding" this way for days.
 # --------------------------------------------------------------------------
 
@@ -1089,10 +1089,12 @@ class TestFailedPushRollsBack:
             "the rollback discarded an uncommitted edit the hook never staged"
         )
 
-    def test_the_refreshed_content_stays_on_disk(self, remote_repo):
-        """Only the recorded pointer reverts. The doctor this run installed is
-        still there, so the skills keep working and the next session retries
-        from a working tree that already holds the refresh."""
+    def test_an_untracked_doctor_stays_on_disk(self, remote_repo):
+        """The doctor here was untracked before the bump: the rollback puts
+        it back to untracked, not to absent. Never `--hard`, which measured
+        deleted it. (The vendored content and the doctor's version go back to
+        the recorded pointer too, #550 — test_refresh_hook_rollback_restores
+        holds that against a real submodule, which this fixture lacks.)"""
         _break_remote(remote_repo)
 
         _run_hook(remote_repo)
@@ -1114,10 +1116,10 @@ class TestFailedPushRollsBack:
         )
 
     def test_it_does_not_retry_within_the_same_run(self, remote_repo):
-        """A rollback leaves the refreshed content dirty, so the commit step
-        would otherwise re-stage it, re-commit it and re-attempt the push just
-        refused — two network waits inside a 120s ceiling, and the same warning
-        twice."""
+        """After a rollback the refresh would otherwise fetch the content
+        forward again, and the commit step re-stage it, re-commit it and
+        re-attempt the push just refused — two network waits inside a 120s
+        ceiling, and the same warning twice."""
         _break_remote(remote_repo)
 
         result = _run_hook(remote_repo)

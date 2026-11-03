@@ -145,9 +145,10 @@ class TestUnwritableLock:
         assert _run_hook(repo).returncode == 0
 
     def test_the_hook_proceeds_past_the_failed_stamp(self, repo):
-        """Degrade to noisier reporting, not to no work. The stamp sits ahead
-        of the update deliberately, so a failed one must not swallow the run
-        it was gating — the hook goes on and reaches its update stage."""
+        """Degrade to noisier reporting, not to no work. An unwritable lock
+        reads as an unspent day, so the run must still do the work it gates —
+        reach its update stage — and only then fail to stamp. The stamp is
+        written when the refresh ends (#555), not before it."""
         _lock(repo).mkdir()
         _run_hook(repo)
         assert "submodule update did nothing" in _log_text(repo), _log_text(repo)
