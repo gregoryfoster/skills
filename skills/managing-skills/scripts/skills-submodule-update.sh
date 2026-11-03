@@ -151,6 +151,14 @@ STAGING="$gitdir/skills-update.staging"
 # How long a marker's owner can be believed alive (CR 1789): the hook's 120 s
 # ceiling plus margin. Past it, a live PID is a reused one — an unrelated
 # process, or one in another PID namespace — and the marker is stale.
+#
+# A known limit (CR 1799): the 120 s is install-refresh.sh's default, and
+# install-hook.sh keeps a consumer's own larger `timeout` on a re-run. A run
+# allowed past 300 s that takes that long has its live marker read as stale,
+# so a session starting then can heal under it — the race CR 1789 closed. Not
+# derived: the harness does not hand a hook its timeout, and reading it from
+# .claude/settings.json means a JSON parser on a path that must finish inside
+# the extension's ~2 s. A timeout above 300 s needs this raised with it.
 MARKER_MAX_AGE=300
 # merge_mode pr (#560): the private index the pull request's commit is built
 # in, so the checkout's own index is never written; and the one branch the
