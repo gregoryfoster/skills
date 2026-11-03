@@ -27,6 +27,8 @@ human or an agent curates on that evidence. It never runs on `pull_request`.
 **It needs the `ANTHROPIC_API_KEY` repository secret.** Without it the job
 records *nothing*, silently, every week — `record-telemetry.sh` refuses an
 estimate against exact rows. Set the secret first, then run it once by hand.
+Behind a PR-only ruleset, set `.skills/merge_mode` to `pr` before installing,
+so the row arrives as one standing PR ([cadence.md](cadence.md), #560).
 
 Design, the annotated template, and what it deliberately does not do:
 [references/cadence.md](cadence.md) ([#118](https://github.com/gregoryfoster/skills/issues/118)).

@@ -233,6 +233,68 @@ that last case. It is not a guarantee, so it never sets exit 3. `--print` reads
 the installed line too, which is what lets this repo's parity test pass a bare
 Dependabot bump of `context-cadence.yml`.
 
+## Under a PR-only ruleset: `merge_mode` `pr`
+
+A default branch with a PR-only ruleset and no bypass refuses this job's push,
+and a repository ruleset won't take the GitHub Actions app as a bypass actor.
+So the push loop retried the refusal three times as a non-fast-forward and the
+week's row was lost
+([#560](https://github.com/gregoryfoster/skills/issues/560)). The answer is
+[#342](https://github.com/gregoryfoster/skills/issues/342)'s knob,
+`.skills/merge_mode`, with no knob of its own: under such a rule a `direct`
+ship is refused too, so a repo that needs one needs the other.
+
+- **`direct` or absent: nothing changes.** `install-cadence.sh` renders
+  today's workflow, byte for byte, and the job does what it did.
+- **`pr`: the same workflow plus four insertions,** none removed or
+  rewritten. `pull-requests: write`; a `Read the merge mode` step before the
+  credential preflight, which reads the committed knob with `merge-mode.sh`'s
+  grammar and fails on an unusable one; `GH_TOKEN` on the commit step; and,
+  after `# --- push ---`, a path that pushes `context/weekly-measurement` and
+  opens or updates one PR into the branch the run is on.
+- **One PR, not one a week.** While the branch carries rows no finished PR
+  took (an open PR's, or a run's whose PR was never opened), each run merges
+  its row *into* that branch. Those rows stay first and in order, the default
+  branch comes in with the row, and the push is a fast-forward, so the PR
+  never conflicts with its base. When the branch's tip was the head of a PR
+  that merged or closed, the branch restarts at the default branch plus the
+  row. A merged PR's rows are already there, and a squash merge would
+  otherwise carry them twice; a closed PR was a no.
+- **A refused push is reported once.** On the PR's branch a refusal is a
+  rule or a concurrent push, not a race a rebase fixes. A `GH013` or
+  protected-branch refusal is named as one, and nothing is retried.
+
+**The knob is read twice, on purpose.** The permissions block is static, so
+the installer reads the primary checkout's knob and renders by it: widening
+the token for every consumer would have changed every direct repo's
+workflow. A `pr` render then follows the *committed* knob at run time.
+Switched back to `direct`, it pushes to the default branch without a
+re-render, and `--check` prints a `merge mode:` line saying so. Switched to
+`pr` under a direct render, the runs keep pushing to the default branch, so
+`--check` reports `STALE` and exits 3. Re-running the installer re-renders
+either way. The job reads the checked-out file, so an uncommitted `pr` knob
+renders the PR path and then runs `direct`; the installer says so.
+
+**What GitHub needs, and what it won't do** [GitHub's documented behaviour;
+not measured here]:
+
+- **Actions must be allowed to open PRs:** Settings → Actions → General →
+  Workflow permissions → *Allow GitHub Actions to create and approve pull
+  requests* (an organization can hold it off). Off, the branch is still
+  pushed, the job fails naming the setting, and the next run keeps that row.
+- **A PR opened with `GITHUB_TOKEN` starts no `pull_request` workflow,** and
+  neither does a later run's push to it. A required check never reports, so a
+  ruleset requiring one won't merge the PR until a human acts. The remedy is
+  in the PR's body: close and reopen it, which a human does and which starts
+  the checks. *Known limit:* a GitHub App token would avoid it, at the cost
+  of a secret this job doesn't otherwise need.
+- **The late merge is safe where git merges it, not on GitHub's button.** The
+  union attribute is in the tree, and the runner defines the other two
+  drivers, so every merge *this job* makes is clean. GitHub's merge has no
+  config, so `context-counts` can't run there, and its handling of `union` is
+  undocumented. If the PR shows a conflict, run the workflow by hand: its
+  merge brings the default branch in with every driver.
+
 ## The workflow
 
 The rendered job, step by step, with the annotations that explain each one —
@@ -255,7 +317,8 @@ assumed per-week.
 
 ## What this does not do
 
-- **It does not curate.** No agent, no judgement, no PR. When a row shows the
+- **It does not curate.** No agent, no judgement, and no PR beyond `pr`
+  mode's measurement PR. When a row shows the
   surface over budget or seams accruing, a human or an agent runs
   `curate context` in that repo.
 - **It does not gate a merge.** It never runs on `pull_request`. Turning the
