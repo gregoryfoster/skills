@@ -234,6 +234,15 @@ class TestUvWorkspace:
         _member(repo, "packages/cli", '"click"')
         assert _detect(repo) == {UV, ("framework", "click")}
 
+    def test_a_member_path_with_a_space_is_one_member(self, repo):
+        """bash 3.2 joins an array's words under an empty IFS; the glob's
+        matches must stay one path each."""
+        _workspace(repo, extra='exclude = ["packages/old one"]\n')
+        _member(repo, "packages/my cli", '"click"')
+        _member(repo, "packages/old one", '"fastapi"')
+        _member(repo, "packages/zz", '"httpx"')
+        assert _detect(repo) == {UV, ("framework", "click")}
+
     def test_no_members_key_is_a_root_only_workspace(self, repo):
         _workspace(repo, members=None, deps='"click"')
         _member(repo, "packages/api", '"fastapi"')
@@ -292,6 +301,21 @@ class TestUvWorkspace:
     def test_an_exclude_it_cannot_read_makes_the_framework_undetermined(self, repo):
         """An exclusion it can't read might be hiding the member that decides."""
         _workspace(repo, extra="exclude = EXCLUDED\n")
+        _member(repo, "packages/cli", '"click"')
+        assert _detect(repo) == {UV, UNDETERMINED}
+
+    @pytest.mark.parametrize(
+        "spelling",
+        ['workspace = { members = ["packages/*"] }', 'workspace.members = ["p/*"]'],
+        ids=["inline", "dotted"],
+    )
+    def test_a_workspace_key_under_tool_uv_is_undetermined(self, repo, spelling):
+        """The same table in another spelling: flagged, not passed over."""
+        _write(
+            repo,
+            "pyproject.toml",
+            f'[project]\nname = "ws"\ndependencies = ["cli"]\n\n[tool.uv]\n{spelling}\n',
+        )
         _member(repo, "packages/cli", '"click"')
         assert _detect(repo) == {UV, UNDETERMINED}
 
