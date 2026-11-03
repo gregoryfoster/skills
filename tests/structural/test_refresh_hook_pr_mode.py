@@ -770,3 +770,13 @@ class TestAnUnmarkedStagedBumpInPrMode:
         log = log_text(c)
         assert f"HEAD records {c.before[:7]}" in log, log
         assert f"{VENDOR} to the recorded pointer" not in log, log
+
+    def test_with_nothing_staged_it_names_heads_pointer(self, pr_consumer):
+        c = pr_consumer
+
+        result = run_hook(c)
+
+        assert result.stderr == "", result.stderr
+        assert f"{c.before[:7]}, the pointer HEAD and the index both record" in (
+            log_text(c)
+        ), log_text(c)

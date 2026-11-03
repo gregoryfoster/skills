@@ -104,7 +104,7 @@ Behaviour:
   - With .skills/merge_mode 'pr' (read from the primary checkout, #560),
     never pushes to main: the bump is proposed as ONE pull request from
     skills/submodule-refresh, which later sessions update, and the
-    checkout's content stays on main's recorded pointer. Needs gh. A
+    checkout's content stays on the pointer its index records. Needs gh. A
     refusal is reported once and not retried. A knob that is present but
     unusable is never read as 'direct': no refresh until it is fixed.
   - Logs to .git/skills-update.log (bounded to ~64 KiB / 200 lines).
@@ -763,8 +763,14 @@ _restore_bump() {
   _unstage "$after" "$@"
   _restore_content "$after" "$@"
 }
+#
+# The log names the commit each path went back to, and whose it is (CR 1791):
+# `git submodule update` checks out the pointer the INDEX records, which is
+# HEAD's unless something is staged there — an unstage that failed, or a bump
+# staged with no marker, which may be a human's and is never the hook's to
+# unstage. "Restored to the recorded pointer" said nothing of which.
 _restore_content() {
-  local after="$1" p gitlinks=()
+  local after="$1" p idx head gitlinks=()
   shift
   for p in "$@"; do
     if _listed "$p" "$REGISTERED"; then
@@ -773,10 +779,20 @@ _restore_content() {
   done
   [ "${#gitlinks[@]}" -gt 0 ] || return 0
   if {
-    echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] restore ${gitlinks[*]} to the recorded pointer after $after:"
+    echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] restore ${gitlinks[*]} to the pointer the index records, after $after:"
     git submodule update --checkout --no-fetch -- "${gitlinks[@]}" 2>&1
   } >>"$LOG"; then
-    _log "restored ${gitlinks[*]} to the recorded pointer after $after"
+    for p in "${gitlinks[@]}"; do
+      idx="$(git ls-files -s -- "$p" 2>/dev/null | awk '$1 == "160000" { print $2 }')" || idx=""
+      head="$(git rev-parse -q --verify "HEAD:$p" 2>/dev/null)" || head=""
+      idx="${idx:0:7}"
+      head="${head:0:7}"
+      if [ "$idx" = "$head" ]; then
+        _log "restored $p after $after: ${idx:-nothing}, the pointer HEAD and the index both record"
+      else
+        _log "restored $p after $after: ${idx:-nothing}, the pointer the index records — HEAD records ${head:-nothing}; the staged bump between them is left as it is"
+      fi
+    done
   else
     _log "could not restore ${gitlinks[*]} after $after — content is ahead of the recorded pointer"
     echo "skills update: ${gitlinks[*]} is ahead of the recorded pointer after $after — repo-side config may not match it until synced: git submodule update --checkout -- ${gitlinks[*]} (see $LOG)" >&2 || true
@@ -823,8 +839,10 @@ _stamp_lock() {
 # hook's paths, so "every staged path is one this hook would commit" cannot
 # tell the two apart. With no marker, the index is left alone and the state is
 # logged: a checkout left staged by a hook from before #555 is not undone
-# here, but the first refresh this version completes on main commits it
-# through its own pathspec. With a marker, the heal acts only when every
+# here. In `direct` mode the first refresh this version completes on main
+# commits it through its own pathspec; `pr` mode never commits in this
+# checkout, so its refresh says so on stderr instead, with the reset that
+# clears it (_pr_note_staged, CR 1791). With a marker, the heal acts only when every
 # staged path is one the marker names; anything else staged beside them is
 # someone's work, so the whole index is left alone and the marker kept.
 _heal_staged() {
@@ -1231,6 +1249,43 @@ fi
 REFRESH_BEGUN=1
 HOOK_ADDED=0
 
+# merge_mode pr and a bump staged with no marker (CR 1791). _heal_staged
+# leaves it alone, since a human's own `git add skills-vendor/<v>` looks the
+# same as a hook from before #555. In `direct` mode this run's commit takes it
+# through its own pathspec; `pr` mode never commits in this checkout, so it
+# stays staged for the next `git commit` on main to absorb, and the content
+# stays on the pointer the index records. So it is said, once a run — this is
+# behind the day's lock — by the run that owns the refresh, with the commands
+# that clear it.
+_pr_note_staged() {
+  local p hook_paths=() left gitlinks=() rc=0
+  while IFS= read -r p; do
+    [ -n "$p" ] || continue
+    hook_paths+=("$p")
+  done <<NOTE_EOF
+$REGISTERED
+.skills/doctor.sh
+NOTE_EOF
+  left="$(git diff --cached --name-only --ignore-submodules=none -- "${hook_paths[@]}" 2>>"$LOG")" || rc=$?
+  if [ "$rc" -ne 0 ] || [ -z "$left" ]; then
+    return 0
+  fi
+  while IFS= read -r p; do
+    if _listed "$p" "$REGISTERED"; then
+      gitlinks+=("$p")
+    fi
+  done <<LEFT_EOF
+$left
+LEFT_EOF
+  left="${left//$'\n'/ }"
+  _log "pr: $left staged with no in-progress marker — left staged; merge_mode pr never commits here"
+  echo "skills update: $left is staged with no in-progress marker — a hook from before #555, or a bump of your own. merge_mode pr never commits in this checkout, so it stays staged for the next git commit on main, and the content stays on the pointer the index records. If it is not yours: git reset -q -- $left${gitlinks[0]:+ && git submodule update --checkout -- ${gitlinks[*]}} (see $LOG)" >&2 || true
+  return 0
+}
+if [ "$MERGE_MODE" = "pr" ]; then
+  _pr_note_staged
+fi
+
 # Every way out of the refresh from here on. The marker goes unless this run's
 # own `git add` left something of the hook's still staged — a commit that
 # failed and could not be unstaged — in which case the next session's
@@ -1343,10 +1398,11 @@ fi
 # The refresh above ran in place, as it always has: the same update, the same
 # post-bump doctor install (#299), the same pins. From here a `pr` run records
 # the bump in a commit built in a private index, never in the checkout's own,
-# puts the content back on main's recorded pointer (#550), and only THEN
+# puts the content back on the pointer the index records (#550) — main's,
+# unless a bump is staged with no marker (_pr_note_staged) — and only THEN
 # touches the network: pushes that commit to skills/submodule-refresh and opens
 # a pull request for it if none is open. Local main never moves; the content
-# always agrees with its pointer, except between the update and the restore,
+# always agrees with the index, except between the update and the restore,
 # which the marker covers (_heal_pr). Annotated in
 # references/auto-refresh-hook/pr-mode.md.
 #
@@ -1376,7 +1432,8 @@ _gh() {
   fi
 }
 
-# _pr_restore — the content back on main's recorded pointer, the doctor with it.
+# _pr_restore — the content back on the pointer the index records (main's,
+# unless a bump is staged with no marker), the doctor with it.
 _pr_restore() {
   _restore_content "a pr-mode refresh" "${REFRESH_PATHS[@]}"
 }
