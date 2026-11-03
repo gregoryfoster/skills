@@ -50,7 +50,7 @@ Two to six lines, pasted into a fresh thread:
 Pick up OWNER/REPO#45. The brief is the latest coordinator comment on it; read it first.
 Work in a worktree off origin/main; never change the deploy checkout's branch.
 Review the brief against the code and post corrections before you build.
-Put notes for later issues under "For #N:"; list skipped verification and accepted limits. Write the post-merge host steps on the issue.
+End the closing comment with shipping-work Step 5's leads: **Follow-up:**, **Known limits:** (skipped verification and accepted limits), one **For #N:** per later issue. Write the post-merge host steps on the issue.
 Run the code review and fix its findings, or record each declined one with its reason, before you report.
 The report names the final SHA. Pause before shipping. Never close the epic, even after the last child: the coordinator closes it.
 ```

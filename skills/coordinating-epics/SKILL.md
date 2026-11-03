@@ -114,8 +114,8 @@ On "I finished #N", "next", or a report between threads:
 Every kickoff prompt carries these, or points to the brief that does:
 - Work in a worktree. Never change the branch of the checkout the repo deploys from.
 - Review the brief against `origin/main` first, and post corrections before building.
-- Notes for later issues go under a `For #N:` heading.
-- List the verification you skipped, and why. Record accepted limitations.
+- Notes for later issues go under a `**For #N:**` lead, as `shipping-work` Step 5 spells it.
+- List the verification you skipped, and why, and accepted limitations, under `**Known limits:**`.
 - Write the post-merge host steps on the issue.
 - Run the code review and fix its findings, or record each declined one with its reason, before reporting. The report names the final SHA.
 - Pause for the operator before shipping.
