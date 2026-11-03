@@ -43,6 +43,8 @@ Coverage:
 - a kill that leaves git's index.lock       → the lock is never removed; the
                                               still-staged paths are named
 - a clean run                               → leaves no marker behind
+- staging a pre-#555 hook left (no marker)  → logged, then committed by the
+                                              next completed refresh
 """
 
 import pytest
@@ -240,6 +242,19 @@ class TestTheHeal:
         assert staged(consumer) == [VENDOR]
         assert content(consumer) == consumer.after
         assert "no in-progress marker" in log_text(consumer), log_text(consumer)
+
+    def test_a_pre_555_hooks_leftover_is_committed_by_the_next_refresh(self, consumer):
+        """The transition the marker trades away: a checkout left staged by a
+        hook from before #555 (which writes no marker) — address-validator's
+        state — is not the heal's to undo, so it rests on the claim that the
+        first refresh this version completes on main commits it."""
+        _kill_once(consumer, AFTER_ADD)
+        (consumer.path / MARKER).unlink()
+
+        result = run_hook(consumer)
+
+        assert "no in-progress marker" in log_text(consumer), log_text(consumer)
+        _assert_bump_landed(consumer, result)
 
     def test_a_kill_that_leaves_index_lock_is_reported_not_forced(self, consumer):
         """SIGKILL inside `git commit` leaves git's own index.lock behind. The
