@@ -215,6 +215,29 @@ class TestTheBudgetBase:
         assert _base(variant, clone) == tip
 
     @pytest.mark.parametrize("variant", VARIANTS)
+    def test_a_fresh_branch_over_a_stale_main_measures_from_head(
+        self, variant, tmp_path, remote, clone
+    ):
+        """CR 1805. The branch is cut from origin/main and has no commit yet,
+        so origin/HEAD's merge base is HEAD. Skipping it fell through to the
+        stale local main, and the budget block measured someone else's two
+        commits as this branch's."""
+        other = tmp_path / "other"
+        git(tmp_path, "clone", "-q", str(remote), str(other))
+        _commit(other, "b.md", "theirs\n")
+        _commit(other, "x.md", "theirs too\n")
+        git(other, "push", "-q", "origin", "main")
+        git(clone, "fetch", "-q", "origin")
+        tip = git(clone, "rev-parse", "origin/main")
+        assert git(clone, "rev-parse", "main") != tip  # local main is stale
+        git(clone, "checkout", "-q", "-b", "fresh", "origin/main")
+        base = _base(variant, clone)
+        assert base == tip, (
+            f"{variant}: the budget base was {base}, the stale local main, not "
+            f"HEAD ({tip}), which is its own merge base with origin/HEAD."
+        )
+
+    @pytest.mark.parametrize("variant", VARIANTS)
     def test_nothing_to_diff_against_falls_back_to_head(self, variant, tmp_path):
         """No remote, and a default branch with neither common name: HEAD, the
         old behaviour, still right for reviewing a dirty tree."""

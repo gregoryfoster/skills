@@ -283,6 +283,47 @@ class TestTheReviewBase:
         assert "HEAD" in r.stderr, r.stderr
 
 
+def _fresh_branch_over_a_stale_main(tmp_path: Path, clone: Path) -> str:
+    """Someone else pushes two commits to main; this clone fetches without
+    moving its local main, then cuts a branch from origin/main and has not
+    committed yet. Returns origin/main's tip, which is HEAD."""
+    other = tmp_path / "other"
+    git(tmp_path, "clone", "-q", str(tmp_path / "origin.git"), str(other))
+    _commit(other, "theirs.txt", "theirs\n")
+    _commit(other, "theirs-too.txt", "theirs too\n")
+    git(other, "push", "-q", "origin", "main")
+    git(clone, "fetch", "-q", "origin")
+    tip = git(clone, "rev-parse", "origin/main")
+    assert git(clone, "rev-parse", "main") != tip  # local main is stale
+    git(clone, "checkout", "-q", "-b", "fresh", "origin/main")
+    (clone / "mine.txt").write_text("uncommitted\n")
+    return tip
+
+
+class TestTheFirstDefaultBranchRefDecides:
+    """CR 1805. A ref whose merge base is HEAD was skipped, and the loop fell
+    through to staler refs: on a branch freshly cut from origin/main, the
+    stale local main became the base and the list claimed other people's
+    commits. The first default-branch ref with a merge base now decides, and
+    a base of HEAD means the working tree alone."""
+
+    @pytest.mark.parametrize("variant", VARIANTS)
+    def test_a_fresh_branch_over_a_stale_main_lists_only_its_own_work(
+        self, variant, tmp_path, clone, home
+    ):
+        _fresh_branch_over_a_stale_main(tmp_path, clone)
+        r = _run(variant, clone, home)
+        assert r.returncode == 0, r.stderr
+        header, body = _section(r.stdout)
+        assert body == ["mine.txt"], (
+            f"{variant}: a branch cut from origin/main with nothing committed "
+            f"listed {body!r}. theirs.txt and theirs-too.txt are someone "
+            "else's, reached through the stale local main (CR 1805)."
+        )
+        assert "only" in header and "origin/HEAD" in header, header
+        assert "main)" not in header, header
+
+
 class TestArguments:
     @pytest.mark.parametrize("variant", VARIANTS)
     @pytest.mark.parametrize("arg", ["origin/main..HEAD", "main", "-h", "--base"])
