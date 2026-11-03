@@ -931,8 +931,14 @@ STAGED_EOF
     return 0
   fi
 
+  # `own` is empty when the kill fell before `git add`, and an empty array's
+  # expansion is an unbound variable under bash 3.2's `set -u` (CR 1800).
   if [ "$others" -gt 0 ]; then
-    _log "heal: a killed refresh left ${own[*]} staged beside $others path(s) it did not stage — leaving the index alone"
+    if [ "${#own[@]}" -gt 0 ]; then
+      _log "heal: a killed refresh left ${own[*]} staged beside $others path(s) it did not stage — leaving the index alone"
+    else
+      _log "heal: a killed refresh staged nothing, and $others path(s) it did not stage are staged — leaving the index alone"
+    fi
     return 0
   fi
 
