@@ -1935,7 +1935,9 @@ GATHER_CONTEXT_REQUIRED_COMMANDS = [
     "git diff --staged",
     "git diff --stat",
     "git log --oneline",
-    "git diff --name-only HEAD",
+    # Against the review base, not HEAD (#549): HEAD left a fully committed
+    # branch with nothing listed. test_gather_context_review_scope.py runs it.
+    'git diff --name-only "$_cd_base"',
 ]
 
 

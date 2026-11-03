@@ -239,9 +239,11 @@ def test_the_budget_block_prints_on_a_pushed_branch(clone):
         env=_clean_env(),
     )
     assert r.returncode == 0, r.stderr
-    tail = r.stdout.split("=== Changed files (working tree vs HEAD) ===", 1)[1]
-    assert "AGENTS.md" in tail, (
+    # Split on the budget block's own header, not the changed-files one: since
+    # #549 that list names AGENTS.md on this branch too, so a tail taken after
+    # it would pass with no budget block at all.
+    _, sep, tail = r.stdout.partition("=== Context budget")
+    assert sep and "AGENTS.md" in tail, (
         "gather-context.sh printed no budget block on a branch pushed with -u "
-        f"that grew AGENTS.md (#389). Output after the changed-files section:\n"
-        f"{tail}"
+        f"that grew AGENTS.md (#389). Output:\n{r.stdout}"
     )
