@@ -24,6 +24,7 @@ import subprocess
 
 import pytest
 
+from tests.structural import test_patching_hosts_probe as _probe
 from tests.structural.patching_hosts_rig import DAY, dispatcher
 from tests.structural.patching_hosts_rig import clean_env as _clean_env
 from tests.structural.test_patching_hosts_probe import (
@@ -32,7 +33,6 @@ from tests.structural.test_patching_hosts_probe import (
     STOCK_ORIGINS,
     TODAY,
     Host,
-    _dormant,
     _finding,
     _ids,
     _policy,
@@ -45,9 +45,16 @@ def _dispatcher(tmp_path_factory):
         yield
 
 
-@pytest.fixture
-def host(tmp_path) -> Host:
-    return Host(tmp_path).knob("class production\nposture automatic\n")
+# The probe file's `host`, bound here by name so pytest finds it. An import
+# of it would read as unused to ruff (F401), and each test's argument as its
+# redefinition (F811).
+host = _probe.host
+
+
+def _dormant(out: dict, name: str) -> dict:
+    hits = [d for d in out["dormant"] if d["name"] == name]
+    assert hits, f"no {name} in dormant: {[d['name'] for d in out['dormant']]}"
+    return hits[0]
 
 
 # --- impact -----------------------------------------------------------------

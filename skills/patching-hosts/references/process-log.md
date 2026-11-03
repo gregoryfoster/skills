@@ -47,7 +47,7 @@ Which runs each rule came from, wherever it now lives. The 2026 entries are the 
 - **Before a reboot, list anything staged under `/tmp`, and read a daemon's live arguments from `/proc/<pid>/cmdline`** (the profile, [readings.md](readings.md)). From 2026-09-29 wslcb-licensing-tracker.
 - **Set a one-off window when the approval arrives, not ahead of it,** with a dated `window` line or a `--config` copy of the knob ([run.md](run.md), the gate). From 2026-10-15 usa-wa, 2026-10-26 usa-wa, 2026-10-26 host 6, 2026-10-30 host 11 and 2026-11-01 watcher, and 2026-10-28 broker for the callers' latency.
 - **The platform kernel can change at any reboot,** in-guest ones included (the profile). From 2026-10-20 host 6, 2026-10-21 co-status, 2026-10-26 notifier and 2026-10-26 co-processor.
-- **Tailscale's auto-update goes off on the node as well as for the tailnet** (the profile). From 2026-10-06 replicator, 2026-10-21 co-status and 2026-10-26 co-processor.
+- **Tailscale's auto-update goes off on the node as well as for the tailnet** (the profile's [Tailscale page](environments/exe-dev-tailscale.md)). From 2026-10-06 replicator, 2026-10-21 co-status and 2026-10-26 co-processor.
 
 ---
 ## Adding an entry

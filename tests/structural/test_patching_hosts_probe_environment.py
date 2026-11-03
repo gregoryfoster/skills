@@ -21,6 +21,7 @@ import os
 
 import pytest
 
+from tests.structural import test_patching_hosts_probe as _probe
 from tests.structural.patching_hosts_rig import DAY, dispatcher
 from tests.structural.test_patching_hosts_probe import (
     APP,
@@ -41,9 +42,10 @@ def _dispatcher(tmp_path_factory):
         yield
 
 
-@pytest.fixture
-def host(tmp_path) -> Host:
-    return Host(tmp_path).knob("class production\nposture automatic\n")
+# The probe file's `host`, bound here by name so pytest finds it. An import
+# of it would read as unused to ruff (F401), and each test's argument as its
+# redefinition (F811).
+host = _probe.host
 
 
 # --- the environment ------------------------------------------------------------

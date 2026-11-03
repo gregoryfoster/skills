@@ -1260,6 +1260,13 @@ def test_a_failed_apt_run_stops_the_stage(tmp_path):
     out = host.prune("remove", rc=1)
     assert out["done"][0]["exit"] == 100
     assert any("exited 100" in w for w in out["verdict"]["why"])
+    # Its undo unmasks only what a disable masked, never what the image had
+    # (CR 1663): the units in the run's masks file stay masked.
+    assert any(
+        "unmask of each unit under actions" in n
+        and f"not those in {host.run_dir}/masks" in n
+        for n in out["next"]
+    ), out["next"]
     # The group's members stay: nothing after the failed command ran.
     assert host.host_state["groups"] == {"docker": ["exedev"]}
     assert not [c for c in host.changes() if c.startswith("gpasswd")]

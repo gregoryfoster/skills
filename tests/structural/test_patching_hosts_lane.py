@@ -1028,7 +1028,7 @@ def test_tailscales_auto_update_is_unread_without_tailscaled_and_ignored_without
 
 
 @pytest.mark.parametrize(
-    "doc", ["references/run.md", "references/environments/exe-dev-exeuntu.md"]
+    "doc", ["references/run.md", "references/environments/exe-dev-tailscale.md"]
 )
 def test_the_daemon_check_reads_the_daemon(doc):
     # Plain `tailscale version` prints the client's version and never warns,
