@@ -290,8 +290,10 @@ Switched back to `direct`, it pushes to the default branch without a
 re-render, and `--check` prints a `merge mode:` line saying so. Switched to
 `pr` under a direct render, the runs keep pushing to the default branch, so
 `--check` reports `STALE` and exits 3. Re-running the installer re-renders
-either way. The job reads the checked-out file, so an uncommitted `pr` knob
-renders the PR path and then runs `direct`; the installer says so.
+either way. The job reads the checked-out file, so a `pr` knob not committed
+as it reads (untracked, only staged, or edited after a `direct` commit)
+renders the PR path and then runs `direct`; the installer and `--check` say
+so.
 
 **What GitHub needs, and what it won't do** [GitHub's documented behaviour;
 not measured here]:

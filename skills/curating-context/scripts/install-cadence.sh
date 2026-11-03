@@ -293,11 +293,17 @@ if [ -f "$WF" ]; then
   fi
 fi
 
-# Whether the knob is committed: the job reads the checked-out file, so an
-# untracked `pr` renders the PR path and then runs it as `direct`.
+# Whether the knob is committed AS IT READS: the job reads the checked-out
+# file, so an untracked `pr` renders the PR path and then runs it as
+# `direct`. In the index is not enough (CR 1810): `direct` committed with the
+# working file edited to `pr`, or `pr` staged and in no commit, renders pr
+# and runs direct too. ls-files catches the untracked file, which diff
+# against HEAD does not show; the diff catches the rest.
 knob_tracked() {
   env -u GIT_DIR -u GIT_WORK_TREE git -C "$KNOB_PRIMARY" ls-files --error-unmatch \
-    -- .skills/merge_mode >/dev/null 2>&1
+    -- .skills/merge_mode >/dev/null 2>&1 \
+    && env -u GIT_DIR -u GIT_WORK_TREE git -C "$KNOB_PRIMARY" diff --quiet HEAD \
+      -- .skills/merge_mode >/dev/null 2>&1
 }
 
 # ONE definition, above the mode dispatch, because --check reads this and
@@ -621,9 +627,9 @@ if [ "$MODE" = "check" ]; then
     pr:*)
       echo "merge mode:         pr (one standing PR from context/weekly-measurement)"
       if ! knob_tracked; then
-        echo "                    .skills/merge_mode is not committed, and the job"
-        echo "                    reads the committed file: until it is, runs push"
-        echo "                    to the default branch."
+        echo "                    .skills/merge_mode is not committed as it reads,"
+        echo "                    and the job reads the committed file: until it"
+        echo "                    is, runs push to the default branch."
       fi ;;
     *:pr)
       echo "merge mode:         direct, under a workflow rendered for pr: runs follow"
@@ -1531,9 +1537,9 @@ A PR opened with GITHUB_TOKEN starts no pull_request workflow. If a required
 check blocks its merge, close and reopen the PR to start them."
   if ! knob_tracked; then
     PR_NOTE="$PR_NOTE
-The job reads the COMMITTED knob, and .skills/merge_mode is not committed:
-commit .skills/merge_mode with the workflow, or the runs push to the default
-branch."
+The job reads the COMMITTED knob, and .skills/merge_mode is not committed as
+it reads: commit .skills/merge_mode with the workflow, or the runs push to
+the default branch."
   fi
   # The blank line before "Then run it once by hand" that DRIVER_NOTE gets.
   PR_NOTE="$PR_NOTE
