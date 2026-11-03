@@ -639,15 +639,18 @@ _reconcile_pr() {
 # for consumers added before doctor.sh existed. install-doctor.sh is a no-op
 # when content matches, so the cost is one file compare per call.
 #
-# Called from two places. Call site 1, just below, runs on every session (not
-# gated by the once-per-day lock) so accidental deletions self-heal at the
-# next session start. Call site 2 runs after a successful submodule update,
-# because call site 1 ran the PRE-bump installer against the PRE-bump doctor
-# (#299): without it, the session that advances the pointer commits the old
-# doctor beside the new pointer, and the refreshed one waits for the next
-# session that reaches call site 1.
+# Called from three places. Call site 1, just below, runs on every session
+# (not gated by the once-per-day lock) so accidental deletions self-heal at
+# the next session start. Call site 2 runs after a successful submodule
+# update, because call site 1 ran the PRE-bump installer against the PRE-bump
+# doctor (#299): without it, the session that advances the pointer commits
+# the old doctor beside the new pointer, and the refreshed one waits for the
+# next session that reaches call site 1. The third is _restore_content, after
+# it puts the content back on its pointer (#550): the heal, a rolled-back
+# push, a failed commit or update, and every pr-mode refresh, where it is
+# always the run's last call (CR 1794).
 #
-# Neither fires in a checkout whose skills-vendor/* are empty gitlinks — every
+# None fires in a checkout whose skills-vendor/* are empty gitlinks — every
 # fresh linked worktree, until something initializes them. The glob matches no
 # installer there, and there is no vendored doctor to install from anyway, so
 # "every session" means every session in a checkout with its submodules
@@ -659,20 +662,30 @@ _reconcile_pr() {
 # after the first attempt either way, leaving a stale doctor with one $LOG line
 # as its only trace. When every installer fails, that reaches stderr — the
 # channel every other failure here uses — once per run although this is called
-# twice, and only when the run's LAST call failed (#300 CR 14). Warning from
-# call site 1 on the spot was false whenever call site 2 then succeeded: a
-# broken pre-bump installer that the bump replaces with a working one leaves a
-# freshly installed and committed doctor, which "left as it was" denies. So
-# each call records its outcome and the EXIT trap below reports the last one —
-# every way out of this block, the ERR backstop's exit included, passes it.
+# up to three times, and only when the run's LAST call failed (#300 CR 14).
+# Warning from call site 1 on the spot was false whenever call site 2 then
+# succeeded: a broken pre-bump installer that the bump replaces with a working
+# one leaves a freshly installed and committed doctor, which "left as it was"
+# denies. So each call records its outcome and the EXIT trap below reports the
+# last one — every way out of this block, the ERR backstop's exit included,
+# passes it.
+#
+# A restore passes what it restores after, and its failure is worded apart
+# (CR 1794). By then call site 2 — this run's, or a killed run's being healed
+# — may already have replaced the doctor from the bump's installer, which the
+# restored pointer's installer then could not put back, so "left as it was"
+# would deny a change the run made. What holds is that the doctor may not be
+# the one the restored pointer ships.
 DOCTOR_INSTALL_FAILED=0
+DOCTOR_FAILED_AFTER=""
 _install_doctor() {
-  local installer tried=0
+  local installer tried=0 restoring="${1:-}"
   for installer in skills-vendor/*/skills/managing-skills/scripts/install-doctor.sh; do
     [ -x "$installer" ] || continue
     tried=$((tried + 1))
     if bash "$installer" --quiet >>"$LOG" 2>&1; then
       DOCTOR_INSTALL_FAILED=0
+      DOCTOR_FAILED_AFTER=""
       return 0
     fi
     _log "doctor install failed via $installer (see lines above) — trying the next vendor, if any"
@@ -680,14 +693,19 @@ _install_doctor() {
   # No installer this time leaves the last verdict standing: a call that
   # installed nothing has not repaired an earlier failure.
   [ "$tried" -gt 0 ] || return 0
-  _log "doctor install failed: all $tried vendored installer(s) failed — .skills/doctor.sh left as it was"
+  _log "doctor install failed: all $tried vendored installer(s) failed — .skills/doctor.sh left as it was${restoring:+, not reinstalled after $restoring}"
   DOCTOR_INSTALL_FAILED=1
+  DOCTOR_FAILED_AFTER="$restoring"
   return 0
 }
 # Called by the EXIT trap below; shellcheck does not count a trap as a call.
 # shellcheck disable=SC2329
 _report_doctor_install() {
   [ "$DOCTOR_INSTALL_FAILED" = "1" ] || return 0
+  if [ -n "$DOCTOR_FAILED_AFTER" ]; then
+    echo "skills update: could not reinstall .skills/doctor.sh when the content went back on its pointer after $DOCTOR_FAILED_AFTER — every vendored installer failed, so it may not be the version the restored pointer ships (see $LOG)" >&2 || true
+    return 0
+  fi
   echo "skills update: could not install .skills/doctor.sh — every vendored installer failed, so it was left as it was (see $LOG)" >&2 || true
 }
 trap _report_doctor_install EXIT
@@ -701,7 +719,7 @@ if _marker_owner_live; then
   exit 0
 fi
 
-# _install_doctor, call site 1 of 2: every session, ahead of both gates. This
+# _install_doctor, call site 1 of 3: every session, ahead of both gates. This
 # is the working-tree repair, and it should happen on every branch and every
 # session. Committing the result is a separate concern and stays behind
 # both gates, further down (#86).
@@ -797,7 +815,7 @@ _restore_content() {
     _log "could not restore ${gitlinks[*]} after $after — content is ahead of the recorded pointer"
     echo "skills update: ${gitlinks[*]} is ahead of the recorded pointer after $after — repo-side config may not match it until synced: git submodule update --checkout -- ${gitlinks[*]} (see $LOG)" >&2 || true
   fi
-  _install_doctor
+  _install_doctor "$after"
   return 0
 }
 
@@ -1355,7 +1373,7 @@ else
     echo "skills update: still uninitialized after refresh: ${UNINIT% } (see $LOG)" >&2
   fi
 
-  # _install_doctor, call site 2 of 2 (#299): the update may just have
+  # _install_doctor, call site 2 of 3 (#299): the update may just have
   # replaced the vendored install-doctor.sh and doctor.sh, so run the
   # POST-bump installer. Here, before COMMIT_PATHS is built, so the doctor
   # staged and committed below is the one that ships with the pointer this run
