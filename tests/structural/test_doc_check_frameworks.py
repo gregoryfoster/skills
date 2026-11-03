@@ -87,6 +87,34 @@ def test_no_framework_keeps_the_generic_list(tmp_path):
     assert result.returncode == 1, result.stdout + result.stderr
 
 
+WORKSPACE_PYPROJECT = (
+    '[project]\nname = "ws"\ndependencies = ["cli"]\n\n'
+    '[tool.uv.workspace]\nmembers = ["packages/*"]\n'
+)
+
+
+def test_a_workspace_members_framework_sets_the_list(tmp_path):
+    """#552: the click member's list applies though the root names none."""
+    repo = _repo(tmp_path, WORKSPACE_PYPROJECT, ["packages/cli/src/cli/main.py"])
+    write_file(repo, "packages/cli/pyproject.toml", CLICK_PYPROJECT)
+    run_git(repo, "add", "-A")
+    run_git(repo, "commit", "-q", "-m", "member")
+    result = _check(repo)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "command inventory" in result.stdout
+
+
+def test_an_undetermined_framework_keeps_the_generic_list(tmp_path):
+    """No member can be read, so no framework's list applies: the generic
+    one does, and no inventory is named."""
+    repo = _repo(tmp_path, WORKSPACE_PYPROJECT, ["skills/x/SKILL.md"])
+    result = _check(repo)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "skills/x/SKILL.md" in result.stdout
+    for inventory in ("route table", "command inventory", "CPT/Skills tables"):
+        assert inventory not in result.stdout
+
+
 def test_the_knob_still_replaces_the_defaults(tmp_path):
     repo = _repo(tmp_path, FASTAPI_PYPROJECT, ["alembic/versions/0001_init.py"])
     write_file(repo, ".skills/doc-sensitive-paths", "README.md\n")

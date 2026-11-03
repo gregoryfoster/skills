@@ -43,6 +43,13 @@ def test_skill_md_routes_each_framework_to_its_file(framework):
     assert f"references/stack-{framework}.md" in body
 
 
+def test_skill_md_says_what_an_undetermined_framework_means():
+    """#552: the Detected line can say `undetermined framework`, which is not
+    a `framework <name>`, so SKILL.md must say what to do with it."""
+    body = (SKILL / "SKILL.md").read_text()
+    assert "undetermined framework" in body
+
+
 def test_the_worktree_aware_merge_step_is_kept():
     """It closed the loop #10 opened, and was never FastAPI-specific."""
     body = (SKILL / "SKILL.md").read_text()
