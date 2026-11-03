@@ -32,7 +32,12 @@ from pathlib import Path
 
 import pytest
 
-from tests.structural.test_cadence_merge_mode import CASES, _merge_mode_sh
+from tests.structural.test_cadence_merge_mode import (
+    CASES,
+    NOT_TEXT,
+    _merge_mode_sh,
+    _not_text,
+)
 from tests.utils.refresh_hook_consumer import (
     DOCTOR_PATH,
     HOOK,
@@ -385,6 +390,28 @@ class TestTheReaderHoldsMergeModeShsGrammar:
         else:
             assert mode == "unusable", (text, mode)
             assert ".skills/merge_mode" in err
+
+    @pytest.mark.parametrize("kind", NOT_TEXT)
+    def test_it_refuses_what_merge_mode_sh_refuses(self, tmp_path, kind):
+        """The states no text can write (CR 1793)."""
+        repo = tmp_path / "r"
+        git(tmp_path, "init", "-q", "-b", "main", str(repo))
+        _not_text(repo, kind)
+        assert _merge_mode_sh(repo)[0] == 2, "fixture: merge-mode.sh accepts it"
+        mode, err = _read_mode(repo)
+        assert mode == "unusable", (kind, mode)
+        assert ".skills/merge_mode" in err
+
+    def test_outside_a_git_checkout_it_is_unusable(self, tmp_path):
+        """The hook itself exits before reading the knob there (no git dir),
+        so this pins the reader alone: a failed `git worktree list` is a
+        refusal, never `direct`."""
+        bare = tmp_path / "not-a-repo"
+        bare.mkdir()
+        assert _merge_mode_sh(bare)[0] == 2
+        mode, err = _read_mode(bare)
+        assert mode == "unusable", mode
+        assert ".skills/merge_mode" in err
 
     def test_it_reads_the_primary_checkout(self, tmp_path):
         """An untracked knob is absent from a linked worktree (#559's bug)."""

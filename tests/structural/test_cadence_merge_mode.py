@@ -318,7 +318,8 @@ class TestIssueReproduction:
 
 # --- the inline readers hold merge-mode.sh's grammar -----------------------
 
-# The inputs test_merge_mode_knob.py pins merge-mode.sh to, plus absence.
+# The text inputs test_merge_mode_knob.py pins merge-mode.sh to, plus
+# absence. The states no text can write are NOT_TEXT, below.
 CASES = [
     None,
     "pr\n",
@@ -334,6 +335,32 @@ CASES = [
     "",
     "# only a comment\n\n",
 ]
+
+# The filesystem states test_merge_mode_knob.py also pins merge-mode.sh to,
+# exit 2 each (CR 1793). Its fourth, outside a git checkout, does not apply
+# to these two readers: install-cadence.sh refuses before it reads the knob
+# ("not inside a git repository", exit 1), and the workflow step runs in the
+# job's checkout. The hook's reader takes it (test_refresh_hook_pr_mode.py).
+NOT_TEXT = [
+    "directory",
+    "dangling-symlink",
+    pytest.param(
+        "unreadable",
+        marks=pytest.mark.skipif(os.geteuid() == 0, reason="root reads mode 000"),
+    ),
+]
+
+
+def _not_text(repo: Path, kind: str) -> None:
+    knob = repo / ".skills" / "merge_mode"
+    knob.parent.mkdir(exist_ok=True)
+    if kind == "directory":
+        knob.mkdir()
+    elif kind == "dangling-symlink":
+        knob.symlink_to(repo / "nowhere")
+    else:
+        knob.write_text("pr\n")
+        knob.chmod(0)
 
 
 def _merge_mode_sh(repo: Path) -> tuple[int, str]:
@@ -391,6 +418,36 @@ class TestTheInlineReadersHoldMergeModeShsGrammar:
             assert r.returncode == 5, r.stdout + r.stderr
             assert r.stdout == "", "an unusable knob must render nothing"
             assert ".skills/merge_mode" in r.stderr
+
+    @pytest.mark.parametrize("kind", NOT_TEXT)
+    def test_the_workflow_step_refuses_what_merge_mode_sh_refuses(self, tmp_path, kind):
+        repo = _init(tmp_path / "r")
+        _not_text(repo, kind)
+        assert _merge_mode_sh(repo)[0] == 2, "fixture: merge-mode.sh accepts it"
+        step = _steps(_render(tmp_path, "pr\n"))[READ_STEP]
+        gh_env = tmp_path / "github_env"
+        gh_env.write_text("")
+        r = subprocess.run(
+            ["bash", "-e", "-c", step],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+            env=_env(GITHUB_ENV=str(gh_env)),
+            timeout=30,
+        )
+        assert r.returncode != 0, r.stdout
+        assert gh_env.read_text() == "", "an unusable knob must export no mode"
+        assert "::error::" in r.stdout and ".skills/merge_mode" in r.stdout
+
+    @pytest.mark.parametrize("kind", NOT_TEXT)
+    def test_the_installer_refuses_what_merge_mode_sh_refuses(self, tmp_path, kind):
+        repo = _init(tmp_path / "r")
+        _not_text(repo, kind)
+        assert _merge_mode_sh(repo)[0] == 2, "fixture: merge-mode.sh accepts it"
+        r = _install(repo, "--print", "--cron", "0 15 * * 1")
+        assert r.returncode == 5, r.stdout + r.stderr
+        assert r.stdout == "", "an unusable knob must render nothing"
+        assert ".skills/merge_mode" in r.stderr
 
     def test_the_installer_reads_the_primary_checkout(self, tmp_path: Path):
         """As merge-mode.sh does: an untracked knob is absent from a linked
