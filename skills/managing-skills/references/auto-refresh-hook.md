@@ -141,8 +141,9 @@ git add .claude/settings.json
 git commit -m "chore: disable skills auto-refresh hook"
 ```
 
-You may also want to delete the hook's files in `.git/` if you don't plan to reinstall. `skills-status.err` and `skills-update.staging` are transient files the hook removes itself — they only survive a run that died mid-flight:
+You may also want to delete the hook's files in `.git/` if you don't plan to reinstall. `skills-status.err`, `skills-update.staging` and, in [`pr` mode](auto-refresh-hook/pr-mode.md), the private index `skills-update.pr-index` with git's `.lock` on it are transient files the hook removes itself — they only survive a run that died mid-flight:
 
 ```bash
-rm -f .git/skills-update.lock .git/skills-update.log .git/skills-status.err .git/skills-update.staging
+rm -f .git/skills-update.lock .git/skills-update.log .git/skills-status.err .git/skills-update.staging \
+  .git/skills-update.pr-index .git/skills-update.pr-index.lock
 ```
