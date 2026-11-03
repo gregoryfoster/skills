@@ -363,6 +363,76 @@ class TestPathsGitWouldQuoteOrMisread:
         assert "its own merge base with origin/HEAD" in header, header
 
 
+@pytest.fixture
+def shallow(tmp_path: Path) -> Path:
+    """A depth-1 clone checked out on a feature branch forked before main's
+    last two commits: neither origin/HEAD nor origin/main shares a fetched
+    commit with HEAD, and the upstream is HEAD itself."""
+    seed = tmp_path / "seed"
+    seed.mkdir()
+    git(seed, "init", "-q", "-b", "main")
+    _commit(seed, "README.md", "seed\n")
+    git(seed, "checkout", "-q", "-b", "feature")
+    _commit(seed, "feature.txt", "the branch's work\n")
+    git(seed, "checkout", "-q", "main")
+    _commit(seed, "main-1.txt", "main moves on\n")
+    _commit(seed, "main-2.txt", "and on\n")
+    bare = tmp_path / "origin.git"
+    git(tmp_path, "clone", "-q", "--bare", str(seed), str(bare))
+    work = tmp_path / "shallow"
+    # --depth is ignored for a plain local path; a file:// URL honours it.
+    git(
+        tmp_path,
+        "clone",
+        "-q",
+        "--depth",
+        "1",
+        "--no-single-branch",
+        bare.as_uri(),
+        str(work),
+    )
+    git(work, "checkout", "-q", "feature")
+    assert git(work, "rev-parse", "--is-shallow-repository") == "true"
+    assert git(work, "rev-parse", "@{upstream}") == git(work, "rev-parse", "HEAD")
+    return work
+
+
+class TestAShallowCloneSaysSo:
+    """CR 1812. With no merge base in the fetched history, the fallback's
+    reason was false: HEAD does have commits beyond the default branch, and
+    the default branch is there; the history that joins them was not
+    fetched."""
+
+    @pytest.mark.parametrize("variant", VARIANTS)
+    def test_the_header_and_the_empty_line_name_the_shallow_clone(
+        self, variant, shallow, home
+    ):
+        r = _run(variant, shallow, home)
+        assert r.returncode == 0, r.stderr
+        header, body = _section(r.stdout)
+        assert "only" in header and "shallow clone" in header, header
+        assert "git fetch --unshallow" in header, header
+        assert len(body) == 1 and body[0].startswith("(none"), body
+        assert "shallow clone" in body[0], body
+        for line in [header, *body]:
+            assert "its own merge base" not in line, line
+            assert "shares history" not in line, line
+
+    @pytest.mark.parametrize("variant", VARIANTS)
+    def test_a_base_from_the_upstream_says_the_clone_is_shallow(
+        self, variant, shallow, home
+    ):
+        """One unpushed commit: the upstream gives a base other than HEAD,
+        and the list runs from the last push only. The header says that is
+        the upstream's, in a shallow clone."""
+        _commit(shallow, "unpushed.txt", "local\n")
+        r = _run(variant, shallow, home)
+        assert r.returncode == 0, r.stderr
+        header, body = _section(r.stdout)
+        assert body == ["unpushed.txt"], body
+        assert "@{upstream}" in header and "shallow clone" in header, header
+
+
 class TestArguments:
     @pytest.mark.parametrize("variant", VARIANTS)
     @pytest.mark.parametrize("arg", ["origin/main..HEAD", "main", "-h", "--base"])
