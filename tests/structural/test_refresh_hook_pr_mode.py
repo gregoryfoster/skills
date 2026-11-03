@@ -36,6 +36,8 @@ from tests.structural.test_cadence_merge_mode import CASES, _merge_mode_sh
 from tests.utils.refresh_hook_consumer import (
     DOCTOR_PATH,
     HOOK,
+    INSTALLER,
+    MS_SCRIPTS,
     MSG_SUB,
     VENDOR,
     _vendor_commit,
@@ -780,3 +782,44 @@ class TestAnUnmarkedStagedBumpInPrMode:
         assert f"{c.before[:7]}, the pointer HEAD and the index both record" in (
             log_text(c)
         ), log_text(c)
+
+
+# --- the doctor report after a restore (CR 1794) -----------------------------
+
+
+class TestTheDoctorReportAfterARestore:
+    """`_restore_content` is a third caller of `_install_doctor`, and in `pr`
+    mode always the run's last, so the EXIT trap reports the restore's
+    install. When the restored pointer's installer is broken but the bump's
+    worked, the tree holds the doctor call site 2 installed from the bump,
+    and "left as it was" says the run did not change it."""
+
+    def test_a_failed_reinstall_does_not_say_left_as_it_was(self, pr_consumer):
+        c = pr_consumer
+        scripts = c.up / MS_SCRIPTS
+        (scripts / "install-doctor.sh").write_text("#!/usr/bin/env bash\nexit 1\n")
+        broken = _vendor_commit(c.up, c.v1 + "# fixture: broken\n", "broken")
+        git(c.path / VENDOR, "fetch", "-q", "origin")
+        git(c.path / VENDOR, "checkout", "-q", broken)
+        git(c.path, "add", VENDOR)
+        git(c.path, "commit", "-qm", "chore: vendor at a broken installer")
+        git(c.path, "push", "-q", "origin", "main")
+        shutil.copy2(INSTALLER, scripts / "install-doctor.sh")
+        bumped_doctor = c.v2 + "# fixture: fixed\n"
+        _vendor_commit(c.up, bumped_doctor, "fixed")
+
+        result = run_hook(c)
+
+        assert result.returncode == 0, result.stderr
+        assert content(c) == broken, "the content did not go back"
+        assert (c.path / DOCTOR_PATH).read_text() == bumped_doctor, (
+            "fixture: call site 2 should have installed the bump's doctor"
+        )
+        assert "could not" in result.stderr and DOCTOR_PATH in result.stderr, (
+            result.stderr
+        )
+        assert "left as it was" not in result.stderr, (
+            "the run replaced the doctor and could not put it back, and "
+            f"said it had left it as it was:\n{result.stderr}"
+        )
+        assert "restored pointer" in result.stderr, result.stderr
