@@ -232,7 +232,7 @@ Create a venv, install dependencies, and activate local git hooks (run once afte
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements-test.txt
-pre-commit install                       # structural tests run on every commit
+pre-commit install                       # commit: impacted tests; push: full suite
 ```
 
 Hooks use `.venv/` at the repo root. A worktree has none; the gate links the
@@ -246,7 +246,8 @@ refuses to run ([#246](https://github.com/gregoryfoster/skills/issues/246)).
 
 `scripts/pre-ship.sh` is the ship gate — every pre-commit hook in one
 command, and what `shipping-work` Step 1 resolves (#318). The suite runs in
-parallel and reuses a pass recorded for the same tree (#537):
+parallel and reuses a pass recorded for the same tree (#537). A commit runs
+only the tests its change reaches; pushing needs a full pass ([docs/GATE.md](docs/GATE.md)):
 
 ```bash
 bash scripts/pre-ship.sh                 # budget + ruff + suite
@@ -289,3 +290,4 @@ When an agent-specific or stack-specific divergence is needed (see "Variant stra
 - [docs/BUDGETS.md](docs/BUDGETS.md) — a budget's two readings, anchoring, and the weekly exact gate
 - [docs/KNOBS.md](docs/KNOBS.md) — every `.skills/` file a project may commit: grammar, reader, replaces-or-extends, and what absence means
 - [docs/SKILLS.md](docs/SKILLS.md) — the submodule + symlink vendoring pattern, `.skills/doctor.sh`, and self-discovery
+- [docs/GATE.md](docs/GATE.md) — what the commit, ship and push gates run, and the test-selection map

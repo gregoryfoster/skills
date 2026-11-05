@@ -201,6 +201,22 @@ so `shipping-work`'s shared `gate-stamp.sh` needs no change.
 
    *Verify:* pushing a tree with only selected runs triggers a full run, and
    pushing one that passed pre-ship returns in about 1 s.
+
+   *Done 2026-11-05.* `scripts/pre-push-gate.sh`, classified as a gate script.
+   `test_pre_push_gate.py` (9 cases) covers:
+   - an unproven tree runs the full suite;
+   - a proven tree is reused;
+   - the hook's `PRE_COMMIT=1` does not switch selection on;
+   - a failing suite, or no venv, refuses the push;
+   - a commit other than what is checked out, or a dirty checkout, is gated
+     in a temporary worktree, which is then removed;
+   - a branch deletion runs nothing.
+
+   `default_install_hook_types: [pre-commit, pre-push]`, so a plain
+   `pre-commit install` installs both. AGENTS.md gets one sentence and a
+   Detail Docs row, and the detail is in a new `docs/GATE.md`; STYLE.md is
+   left alone. Before the hook does anything in this checkout, it still needs
+   `pre-commit install --hook-type pre-push`.
 6. **Measure for a week, then decide.** Report on #537, from the stamp
    history:
    - pre-commit wall clock before and after;

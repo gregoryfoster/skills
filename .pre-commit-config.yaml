@@ -1,3 +1,8 @@
+# Both stages install from a plain `pre-commit install` (#537 Step 10): the
+# commit hook may run only the impacted tests, and the pre-push hook is what
+# makes that safe. See docs/GATE.md.
+default_install_hook_types: [pre-commit, pre-push]
+
 repos:
   - repo: local
     hooks:
@@ -60,6 +65,19 @@ repos:
         pass_filenames: false
         always_run: true
         stages: [pre-commit]
+
+      # The backstop for the commit hook's test selection (#537 Step 10): a push
+      # is refused unless the pushed commit's tree has passed the FULL suite,
+      # recorded by an earlier full run or run now. A push by SHA from a
+      # worktree is gated on that commit, in a temporary worktree if it is not
+      # what is checked out. No venv blocks, as pre-ship does. docs/GATE.md.
+      - id: pre-push-gate
+        name: Full suite on the pushed tree
+        entry: bash scripts/pre-push-gate.sh
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]
 
       # Integration tests disabled on pre-push — LLM non-determinism makes this
       # too flaky as a hard gate. Run manually: scripts/run-integration-tests.sh

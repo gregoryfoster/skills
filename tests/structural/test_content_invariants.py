@@ -1350,6 +1350,11 @@ GATE_SCRIPTS = {
         "captures `git ls-files`'s status explicitly rather than letting an "
         "empty answer read as a clean tree"
     ),
+    "pre-push-gate.sh": (
+        "the push backstop for the commit hook's test selection (#537): its "
+        "exit code decides whether a push leaves the machine, so a swallowed "
+        "rev-parse, status or suite failure is a push of an unproven tree"
+    ),
     "structural-tests.sh": (
         "gate 3/3, and the only pytest gate. It passes pytest's own exit code "
         "through unchanged — including 5 for nothing-collected, which is the "
