@@ -12,8 +12,11 @@ three points, and only the first may run part of it
 | `git push` (pre-push hook) | `scripts/pre-push-gate.sh` | the full suite on the pushed commit's tree, unless that tree already passed it |
 
 A partial run never records a pass. Only a full pass lets pre-ship or pre-push
-skip, so nothing leaves this machine without the full suite having passed on
-exactly what is pushed.
+skip, so a pushed commit's tree has passed the full suite.
+
+That holds for one ref per push. pre-commit gates only the first ref in a
+push that carries new commits, so `git push origin a b` checks `a` alone.
+Push one ref at a time, as `git push origin <sha>:main` does.
 
 ## The map
 

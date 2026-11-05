@@ -8,6 +8,9 @@
 # either recorded by an earlier full run (pre-ship, a full hook run) or run
 # here and now.
 #
+# One ref per push: pre-commit hands this hook only the first ref that carries
+# new commits, so in `git push origin a b` the gate never sees `b`.
+#
 # Usage: bash scripts/pre-push-gate.sh [--help]
 set -euo pipefail
 
