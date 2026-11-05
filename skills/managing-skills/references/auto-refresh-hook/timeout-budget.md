@@ -24,6 +24,7 @@ pytest
 ty
 ```
 
+- **pre-commit only:** `SKIP` is read by the pre-commit framework and nothing else. A consumer whose hooks come from husky, lefthook or plain scripts in `.git/hooks/` sees no change. The alternative #572 deferred until such a consumer turns up: the hook marks its commit with an environment variable tied to the live `.git/skills-update.staging` marker, and the consumer's own hook checks it.
 - **`pr` mode:** the commit is built with `git commit-tree`, which runs no hooks, and the push to `skills/submodule-refresh` carries the ids.
 - **An unusable knob** (an id with a comma, a `#` after an id, no ids at all, or a path that is not a readable file) skips nothing. The commit runs every hook, and stderr says why, once per run.
 - **A stale id:** pre-commit ignores a `SKIP` id it doesn't know, so a renamed hook comes back into the refresh's commit without any message. The doctor names every id in the knob that is neither an `id:` nor an `alias:` in `.pre-commit-config.yaml`.
