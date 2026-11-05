@@ -185,6 +185,13 @@ hook after all. Also says when the hook cannot use the knob at all: a
 word that is not an id (a comma, a mid-line #), no ids, or a path that is
 not a readable file. Advisory in every mode; silent without the knob.
 
+Warns when .skills/merge_mode is pr and the refresh hook is installed,
+but nothing gives gh a token: the repo .env sets no GH_TOKEN and gh has
+no stored login (#576). Without one the hook refuses its pull request
+before refreshing, every day. This shell's own GH_TOKEN is not counted,
+since a SessionStart hook does not see it. Also warns when gh is not on
+PATH. Advisory in every mode.
+
 Re-syncs .skills/doctor.sh from the vendored source under skills-vendor/
 when the two differ, so upstream fixes reach consumers that did not
 install the auto-refresh hook. Best-effort — never affects the exit code;
@@ -734,6 +741,103 @@ check_refresh_skip_hooks() {
 }
 
 check_refresh_skip_hooks
+
+# ------------------------------------------- merge_mode pr's gh token (#576)
+# Under .skills/merge_mode `pr` the refresh hook opens its bump's pull request
+# with gh, so it needs a token. Looking in the hook's own order, it finds one
+# in its environment, then the repo .env's GH_TOKEN, then gh's stored login. With
+# none it refuses before refreshing, once a day, on stderr — and until #576
+# nothing else said so: the cohort's consumers sat on the default branch's
+# pointer for days with every check reading healthy.
+#
+# The doctor cannot see the hook's environment. It usually runs in an agent
+# shell that has GH_TOKEN exported per command, and a SessionStart hook
+# inherits only what Claude Code itself was started with. So this shell's
+# GH_TOKEN and GITHUB_TOKEN are NOT counted. The .env is read as the hook reads
+# it (env_value, held to load_env's grammar), and gh's login is asked with both
+# names unset. A consumer whose token lives only in the launcher's environment
+# gets a warning it can ignore. Counting this shell's export would be the other
+# mistake, and that one is silent.
+#
+# Silent unless the hook is installed and the knob reads `pr`. A knob the hook
+# finds unusable is the hook's to name. Advisory in every mode, --check-only
+# included, and never on REG_GAPS: a missing token is setup, not damage.
+
+# env_value <file> <name> — <name>'s value in a .env file, parsed as data and
+# never sourced: load_env's grammar (shipping-work's pre-ship.sh header), the
+# last assignment winning. The refresh hook's _env_value, which a test holds
+# this to.
+env_value() {
+  local file="$1" want="$2" line key val found=""
+  if ! { [ -f "$file" ] && [ -r "$file" ]; }; then
+    return 0
+  fi
+  while IFS= read -r line || [ -n "$line" ]; do
+    line=${line#"${line%%[![:space:]]*}"}
+    case $line in '' | \#*) continue ;; esac
+    line=${line#export }
+    case $line in *=*) ;; *) continue ;; esac
+    key=${line%%=*} val=${line#*=}
+    key=${key%"${key##*[![:space:]]}"}
+    [ "$key" = "$want" ] || continue
+    case $val in
+      \"*\") val=${val#\"} val=${val%\"} ;;
+      \'*\') val=${val#\'} val=${val%\'} ;;
+    esac
+    found=$val
+  done <"$file" 2>/dev/null || true
+  printf '%s' "$found"
+}
+
+check_pr_mode_gh_token() {
+  local wt primary knob line words word="" count=0 env_file=".env"
+  [ -e .claude/hooks/skills-submodule-update.sh ] || return 0
+  wt="$(git worktree list --porcelain 2>/dev/null || true)"
+  primary=${wt%%$'\n'*}
+  primary=${primary#worktree }
+  [ -n "$primary" ] || return 0
+  # Read from the primary checkout, as the hook reads it. merge_mode's grammar
+  # (docs/KNOBS.md): one word, blank lines and whole-line comments ignored.
+  # Only an exact `pr` speaks here; anything else the hook reads as direct or
+  # names as unusable itself.
+  knob="$primary/.skills/merge_mode"
+  if ! { [ -f "$knob" ] && [ -r "$knob" ]; }; then
+    return 0
+  fi
+  while IFS= read -r line || [ -n "$line" ]; do
+    line=${line%$'\r'}
+    read -r -a words <<<"$line" || true
+    [ "${#words[@]}" -gt 0 ] || continue
+    case ${words[0]} in \#*) continue ;; esac
+    word=${words[0]}
+    count=$((count + ${#words[@]}))
+  done <"$knob" 2>/dev/null || true
+  if [ "$count" -ne 1 ] || [ "$word" != "pr" ]; then
+    return 0
+  fi
+
+  if ! command -v gh >/dev/null 2>&1; then
+    echo "doctor: .skills/merge_mode is pr, so the refresh hook opens its bump's" >&2
+    echo "doctor:   pull request with gh, and gh is not on this shell's PATH. Without" >&2
+    echo "doctor:   it the hook refuses before refreshing, every day (#576)." >&2
+    return 0
+  fi
+  [ -r "$env_file" ] || env_file="$primary/.env"
+  [ -z "$(env_value "$env_file" GH_TOKEN)" ] || return 0
+  if env -u GH_TOKEN -u GITHUB_TOKEN GH_PROMPT_DISABLED=1 GH_NO_UPDATE_NOTIFIER=1 \
+    gh auth token >/dev/null 2>&1; then
+    return 0
+  fi
+  echo "doctor: .skills/merge_mode is pr, but the refresh hook may have no token" >&2
+  echo "doctor:   for gh: $env_file sets no GH_TOKEN, and gh has no stored login." >&2
+  echo "doctor:   This shell's own GH_TOKEN does not count: a SessionStart hook sees" >&2
+  echo "doctor:   one only when Claude Code itself was started with it. Without a" >&2
+  echo "doctor:   token the hook refuses before refreshing, every day (#576). Put" >&2
+  echo "doctor:   GH_TOKEN in $env_file, or run gh auth login." >&2
+  return 0
+}
+
+check_pr_mode_gh_token
 
 # frontmatter_value <file> <key> — the value of the first `<key>:` line inside
 # the file's YAML frontmatter, surrounding double quotes stripped; empty when
