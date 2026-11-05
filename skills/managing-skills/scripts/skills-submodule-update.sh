@@ -1458,6 +1458,10 @@ HOOK_ADDED=0
 # out of a refresh is covered; a SIGKILL runs no trap, and the log then ends at
 # the last phase that finished. Added to the doctor report's EXIT trap, not in
 # place of it: a shell holds one trap per signal.
+#
+# A known limit (CR 1820), MARKER_MAX_AGE's again: the harness does not hand
+# the hook its timeout, so the line is fixed. A consumer that raised its entry
+# toward 300 s is warned on every run past 90 s, though none is at risk.
 TIMING_WARN_AT=90
 # Called by the EXIT trap below; shellcheck does not count a trap as a call.
 # shellcheck disable=SC2329
