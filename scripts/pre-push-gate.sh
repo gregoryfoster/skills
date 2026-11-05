@@ -81,8 +81,14 @@ if [[ $STATUS_RC -ne 0 || -n "$DIRTY" || "$HEAD_TREE" != "$TO_TREE" ]]; then
   echo "pre-push gate: $TO is not what is checked out here; gating it in $WT"
 fi
 
+# git exports GIT_DIR to a hook run from a linked worktree. Left set, every
+# git command in the suite (the stamp key, the tests that read history) would
+# resolve the pushing worktree's HEAD and index, not the commit gated here
+# (#189). Unset, git finds the repo from RUN_IN, which is the same repo when
+# the run is in place.
 RC=0
-(cd "$RUN_IN" && env -u PRE_COMMIT bash scripts/structural-tests.sh) || RC=$?
+(cd "$RUN_IN" && env -u PRE_COMMIT -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE \
+  -u GIT_COMMON_DIR -u GIT_OBJECT_DIRECTORY bash scripts/structural-tests.sh) || RC=$?
 if [[ $RC -ne 0 ]]; then
   echo "pre-push gate: the full structural suite did not pass on $TO (exit $RC) — push refused" >&2
   exit 1

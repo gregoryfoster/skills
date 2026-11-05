@@ -9,7 +9,9 @@ pushed commit's tree must have a full-suite pass, recorded or run now.
 - any other commit (a push by SHA, a dirty checkout): it is checked out into
   a temporary worktree and gated there, and the worktree is removed;
 - a branch deletion pushes no tree, so nothing runs;
-- a failed suite, or no venv to run it with, blocks the push.
+- a failed suite, or no venv to run it with, blocks the push;
+- a push from a linked worktree, where git exports GIT_DIR to the hook, still
+  gates the pushed commit, not the pushing worktree's HEAD (#189).
 
 pytest is faked as in test_structural_tests_select.py. No API calls.
 """
@@ -31,7 +33,7 @@ COPIED = (
     "skills/shipping-work/scripts/gate-workers.sh",
 )
 FAKE_PYTEST = """#!/bin/sh
-echo "$(pwd -P) $*" >> "$FAKE_PYTEST_LOG"
+echo "$(pwd -P) $(git rev-parse HEAD) $*" >> "$FAKE_PYTEST_LOG"
 exit "${FAKE_PYTEST_RC:-0}"
 """
 ZERO = "0" * 40
@@ -81,7 +83,9 @@ def repo(tmp_path: Path) -> Path:
     return repo
 
 
-def _push(repo: Path, to: str | None = None, **env: str) -> subprocess.CompletedProcess:
+def _push(
+    repo: Path, to: str | None = None, cwd: Path | None = None, **env: str
+) -> subprocess.CompletedProcess:
     extra = {
         "FAKE_PYTEST_LOG": str(repo.parent / "pytest.log"),
         "PYTEST_XDIST_AUTO_NUM_WORKERS": "1",
@@ -91,7 +95,7 @@ def _push(repo: Path, to: str | None = None, **env: str) -> subprocess.Completed
     extra.update(env)
     return subprocess.run(
         ["bash", "scripts/pre-push-gate.sh"],
-        cwd=repo,
+        cwd=cwd or repo,
         capture_output=True,
         text=True,
         timeout=120,
@@ -171,3 +175,19 @@ def test_no_venv_blocks_the_push(repo):
     r = _push(repo)
     assert r.returncode == 1
     assert "push refused" in r.stderr
+
+
+def test_a_push_from_a_linked_worktree_gates_the_pushed_commit(repo):
+    """git exports GIT_DIR to a hook run from a linked worktree. Left set in
+    the temporary worktree, the suite's git sees the pusher's HEAD (#189)."""
+    first = _git(repo, "rev-parse", "HEAD")
+    wt = repo.parent / "wt"
+    _git(repo, "worktree", "add", "-q", "-b", "wt", str(wt))
+    (wt / "README.md").write_text("x\n")
+    _git(wt, "add", "README.md")
+    _git(wt, "commit", "-q", "-m", "second")
+    git_dir = _git(wt, "rev-parse", "--absolute-git-dir")
+    r = _push(repo, to=first, cwd=wt, GIT_DIR=git_dir)
+    assert r.returncode == 0, r.stderr
+    (call,) = _calls(repo)
+    assert call.split()[1] == first, f"the suite saw {call.split()[1]}, not {first}"
