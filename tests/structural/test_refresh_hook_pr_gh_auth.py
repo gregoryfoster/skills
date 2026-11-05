@@ -317,8 +317,10 @@ class TestWhereTheTokenComesFrom:
 
         rc, src, tok = _token_source(wt, env)
 
+        # The primary as `git worktree list` names it (macOS resolves /var).
+        primary = git(wt, "worktree", "list", "--porcelain").stdout.split("\n")[0]
         assert (rc, tok) == (0, "primary")
-        assert src == f"{repo.resolve()}/.env" or src.endswith("/r/.env"), src
+        assert src == primary.removeprefix("worktree ") + "/.env", src
 
     def test_the_environment_outranks_the_env_file(self, tmp_path):
         git(tmp_path, "init", "-q", "-b", "main", str(tmp_path / "r"))
