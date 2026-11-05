@@ -17,11 +17,12 @@ usage() {
   echo "Refuses a push whose tree has not passed the full structural suite."
   echo ""
   echo "Reads the pushed commit from PRE_COMMIT_TO_REF (pre-commit sets it for"
-  echo "pre-push hooks), else HEAD. When that commit's tree is checked out here"
-  echo "and the checkout is clean, scripts/structural-tests.sh runs in place,"
-  echo "with the hook's test selection off, and reuses a pass recorded for the"
-  echo "tree. Otherwise the commit is checked out into a temporary worktree and"
-  echo "gated there. A branch deletion pushes no tree and runs nothing."
+  echo "pre-push hooks), else PRE_COMMIT_LOCAL_BRANCH, else HEAD. When that"
+  echo "commit's tree is checked out here and the checkout is clean,"
+  echo "scripts/structural-tests.sh runs in place, with the hook's test"
+  echo "selection off, and reuses a pass recorded for the tree. Otherwise the"
+  echo "commit is checked out into a temporary worktree and gated there. A"
+  echo "branch deletion pushes no tree and runs nothing."
   echo ""
   echo "Exit codes:"
   echo "  0  the pushed tree passed the full suite (recorded, or just now)"
@@ -42,7 +43,11 @@ REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || {
 }
 cd "$REPO_ROOT"
 
-TO=${PRE_COMMIT_TO_REF:-HEAD}
+# A push that includes the root commit (the remote has none of this history)
+# runs pre-commit in all-files mode, which sets no TO_REF; LOCAL_BRANCH still
+# names what is pushed (the SHA itself, for a push by SHA). HEAD is the last
+# resort, for a run outside pre-commit.
+TO=${PRE_COMMIT_TO_REF:-${PRE_COMMIT_LOCAL_BRANCH:-HEAD}}
 if [[ "$TO" =~ ^0+$ ]]; then
   exit 0
 fi

@@ -9,6 +9,8 @@ pushed commit's tree must have a full-suite pass, recorded or run now.
 - any other commit (a push by SHA, a dirty checkout): it is checked out into
   a temporary worktree and gated there, and the worktree is removed;
 - a branch deletion pushes no tree, so nothing runs;
+- a push that includes the root commit, where pre-commit sets no
+  PRE_COMMIT_TO_REF, gates the pushed local ref, not HEAD;
 - a failed suite, or no venv to run it with, blocks the push;
 - a push from a linked worktree, where git exports GIT_DIR to the hook, still
   gates the pushed commit, not the pushing worktree's HEAD (#189).
@@ -92,6 +94,8 @@ def _push(
         "PRE_COMMIT_FROM_REF": ZERO,
         "PRE_COMMIT_TO_REF": to or _git(repo, "rev-parse", "HEAD"),
     }
+    if to == "":  # pre-commit's all-files mode: it sets no TO_REF
+        del extra["PRE_COMMIT_TO_REF"]
     extra.update(env)
     return subprocess.run(
         ["bash", "scripts/pre-push-gate.sh"],
@@ -191,3 +195,17 @@ def test_a_push_from_a_linked_worktree_gates_the_pushed_commit(repo):
     assert r.returncode == 0, r.stderr
     (call,) = _calls(repo)
     assert call.split()[1] == first, f"the suite saw {call.split()[1]}, not {first}"
+
+
+def test_a_root_commit_push_gates_the_local_ref_not_head(repo):
+    """Pushing history the remote has none of, pre-commit runs in all-files
+    mode: no PRE_COMMIT_TO_REF, but PRE_COMMIT_LOCAL_BRANCH names what is
+    pushed (the SHA itself, for a push by SHA)."""
+    first = _git(repo, "rev-parse", "HEAD")
+    (repo / "README.md").write_text("x\n")
+    _git(repo, "add", "README.md")
+    _git(repo, "commit", "-q", "-m", "second")
+    r = _push(repo, to="", PRE_COMMIT_LOCAL_BRANCH=first)
+    assert r.returncode == 0, r.stderr
+    (call,) = _calls(repo)
+    assert call.split()[1] == first, "gated HEAD, not the pushed commit"
