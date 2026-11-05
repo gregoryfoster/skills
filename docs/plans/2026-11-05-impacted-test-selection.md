@@ -178,6 +178,18 @@ so `shipping-work`'s shared `gate-stamp.sh` needs no change.
    *Verify:* a commit that touches one skill runs its selection;
    `GATE_SELECT=off` runs everything; pre-ship on that tree runs the full suite
    and does not reuse the selected run.
+
+   *Done 2026-11-05.* `test_structural_tests_select.py` covers it with 8
+   cases, run against a fixture repo with a fake pytest; 7 were red before
+   the change:
+   - a traced full run builds the map, and a failing one builds none;
+   - under the hook a skill change runs its tests only;
+   - a selected run leaves no stamp, so pre-ship re-runs, and logs one
+     `gate-select.log` line;
+   - `GATE_SELECT=off`, a shared change, an unreadable map and any run
+     outside the hook each run the full suite.
+
+   A failed `git diff --cached` also runs the full suite.
 5. **Pre-push backstop.**
    - A `pre-push` stage hook (`scripts/pre-push-gate.sh`) checks for a
      full-pass stamp on each pushed ref's tree, and runs `structural-tests.sh`

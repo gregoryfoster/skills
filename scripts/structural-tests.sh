@@ -28,6 +28,12 @@ usage() {
   echo "  2. linked worktree, main checkout has .venv -> symlink it in"
   echo "  3. neither                                  -> diagnose and exit 1"
   echo ""
+  echo "Under the pre-commit hook (PRE_COMMIT=1) only the tests the staged"
+  echo "paths reach run, chosen by scripts/gate_select.py from the map the last"
+  echo "full run traced (<git-common-dir>/gate-map.json). A selected run records"
+  echo "no stamp, so pre-ship and the pre-push hook still run the full suite."
+  echo "GATE_SELECT=off runs the full suite under the hook too."
+  echo ""
   echo "Options:"
   echo "  --check  Do the venv resolution and stop; do not run pytest."
   echo ""
@@ -222,12 +228,81 @@ if [[ "$N" -ge 2 ]]; then
   fi
 fi
 
+# --- Impacted-test selection (#537 Step 10) ----------------------------------
+# Under the hook, with a map from the last traced full run, only the test files
+# the staged paths reach run. A selected run is never a full pass: it records
+# no stamp, so pre-ship and the pre-push hook run everything before the work
+# leaves this machine. Anything that stops the selector from answering -- a
+# failed `git diff`, no map, a map it cannot read, a change it cannot map --
+# runs the full suite, which is what this script did before selection existed.
+MAP="$GIT_COMMON/gate-map.json"
+SELECTED=""
+TOTAL=0
+if [[ "${PRE_COMMIT:-}" == "1" && "${GATE_SELECT:-}" != "off" && -f scripts/gate_select.py ]]; then
+  if [[ ! -f "$MAP" ]]; then
+    echo "test selection: no map yet — running the full suite, which builds one"
+  else
+    CHANGED=""
+    DIFF_RC=0
+    CHANGED=$(git diff --cached --name-only --no-renames) || DIFF_RC=$?
+    if [[ $DIFF_RC -ne 0 ]]; then
+      echo "NOTE: git diff --cached failed (exit $DIFF_RC) — running the full suite" >&2
+    else
+      SEL_RC=0
+      SEL_OUT=$(printf '%s\n' "$CHANGED" | python scripts/gate_select.py select --map "$MAP") || SEL_RC=$?
+      case "$SEL_RC" in
+        0) SELECTED=$SEL_OUT ;;
+        3) echo "test selection: full suite — ${SEL_OUT#FULL$'\t'}" ;;
+        *) echo "NOTE: gate_select.py failed (exit $SEL_RC) — running the full suite" >&2 ;;
+      esac
+    fi
+  fi
+fi
+TRACE_DIR=""
+if [[ -n "$SELECTED" ]]; then
+  TOTAL=$(find tests/structural -maxdepth 1 -name 'test_*.py' | wc -l | tr -d ' ')
+  COUNT=$(printf '%s\n' "$SELECTED" | grep -c .)
+  echo "test selection: selected $COUNT/$TOTAL files; the full suite runs at pre-ship and pre-push"
+  PYTEST_ARGS=(-q)
+  if [[ -f tests/utils/gate_durations.py ]]; then
+    PYTEST_ARGS+=(-p tests.utils.gate_durations)
+  fi
+  while IFS= read -r f; do
+    PYTEST_ARGS+=("$f")
+  done <<<"$SELECTED"
+  if [[ "$N" -ge 2 ]] && python -c 'import xdist' >/dev/null 2>&1; then
+    PYTEST_ARGS+=(-n "$N" --dist loadfile)
+  fi
+elif [[ -f tests/utils/gate_trace.py ]]; then
+  # A full run traces itself, so the map is only ever as old as the last pass.
+  TRACE_DIR=$(mktemp -d) || TRACE_DIR=""
+  if [[ -n "$TRACE_DIR" ]]; then
+    export GATE_TRACE="$TRACE_DIR/trace"
+    PYTEST_ARGS+=(-p tests.utils.gate_trace)
+  else
+    echo "NOTE: no temp dir for the trace — the map is not refreshed by this run" >&2
+  fi
+fi
+trap '[[ -z "$SLOT" ]] || rm -f "$SLOT"; [[ -z "$TRACE_DIR" ]] || rm -rf "$TRACE_DIR"' EXIT
+
 # Not `exec`: the slot has to be released and the pass recorded afterwards.
 # pytest's exit code is still this script's — the usage block documents the
 # pass-through, and pre-ship.sh relies on 5 meaning "collected nothing".
 START=$SECONDS
 RC=0
 pytest "${PYTEST_ARGS[@]}" || RC=$?
+
+if [[ -n "$SELECTED" ]]; then
+  printf '%s\t%s\t%s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    "$((SECONDS - START))" "$COUNT" "$TOTAL" "$RC" >>"$GIT_COMMON/gate-select.log" \
+    || echo "NOTE: could not append to gate-select.log" >&2
+  exit "$RC"
+fi
+if [[ "$RC" -eq 0 && -n "$TRACE_DIR" ]]; then
+  TREE=$(git rev-parse 'HEAD^{tree}' 2>/dev/null) || TREE=""
+  python scripts/gate_select.py build --trace "$GATE_TRACE" --out "$MAP" --tree "$TREE" \
+    || echo "NOTE: the test-selection map was not refreshed" >&2
+fi
 
 # Record the pass only if the files did not move under the run: the key is
 # recomputed and must still match, so an edit made mid-suite costs the stamp
