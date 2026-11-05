@@ -382,7 +382,11 @@ fi
 # every hook.
 #
 # The pushes too: a consumer whose pre-push runs the same suite meets the same
-# kill there, and pre-commit applies SKIP to an id in every stage.
+# kill there, and pre-commit applies SKIP to an id in every stage. "This
+# hook's" is the reconcile's reading (CR 1823): it pushes only when every
+# unpushed subject is one of MSG_SUB/MSG_DOC/MSG_BOTH, so a commit made by hand
+# under one of those exact subjects is pushed with the knob's SKIP too. Its
+# pre-commit ran when it was made; only its pre-push is skipped.
 #
 # Read from this checkout, not the primary: it is committed config that lands
 # with the pin bump that needs it, and this checkout is the one committing.
