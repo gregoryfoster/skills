@@ -207,3 +207,13 @@ def test_a_failing_full_run_builds_no_map(repo):
     r = _suite(repo, GATE_STAMP="off", FAKE_PYTEST_RC="1")
     assert r.returncode == 1
     assert not (_common(repo) / "gate-map.json").exists()
+
+
+def test_a_full_run_under_the_hook_records_the_staged_tree(repo):
+    """Under the hook the suite ran on the index, so that is the map's tree."""
+    _stage(repo, "skills/a/SKILL.md")
+    r = _suite(repo, PRE_COMMIT="1", GATE_STAMP="off")
+    assert r.returncode == 0, r.stderr
+    doc = json.loads((_common(repo) / "gate-map.json").read_text())
+    assert doc["tree"] == _git(repo, "write-tree").strip()
+    assert doc["tree"] != _git(repo, "rev-parse", "HEAD^{tree}").strip()

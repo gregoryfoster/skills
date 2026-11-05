@@ -299,7 +299,13 @@ if [[ -n "$SELECTED" ]]; then
   exit "$RC"
 fi
 if [[ "$RC" -eq 0 && -n "$TRACE_DIR" ]]; then
-  TREE=$(git rev-parse 'HEAD^{tree}' 2>/dev/null) || TREE=""
+  # The tree the suite ran on: under the hook that is the index, not HEAD.
+  # Informational only; nothing reads it back.
+  if [[ "${PRE_COMMIT:-}" == "1" ]]; then
+    TREE=$(git write-tree 2>/dev/null) || TREE=""
+  else
+    TREE=$(git rev-parse 'HEAD^{tree}' 2>/dev/null) || TREE=""
+  fi
   python scripts/gate_select.py build --trace "$GATE_TRACE" --out "$MAP" --tree "$TREE" \
     || echo "NOTE: the test-selection map was not refreshed" >&2
 fi
