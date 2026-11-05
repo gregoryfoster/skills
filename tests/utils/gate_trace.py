@@ -20,9 +20,13 @@ the pre-commit hook selects from. The policy lives there, not here: this file
 only reports, so what counts as "the whole tree" can change without a re-trace.
 
 Reads are attributed to the test file that was running — or being collected,
-for module-level reads — when they happened. A session-scoped fixture's reads
-land on the first file that used it; the selector's full-suite rule for any
-change under `tests/` covers that gap.
+for module-level reads — when they happened. A read shared across files is
+attributed once: a session-scoped fixture's reads, or a `tests/utils` module
+that reads at import or caches across calls, land on the first file that
+used it, and every later file misses that dependency. A change to what it
+read would then select only that first file. The suite has none (fixtures
+are module-scoped at most, and `tests/utils` reads per call);
+`test_gate_trace.py` refuses a session-scoped fixture.
 
 Paths are kept repo-relative and resolved through symlinks, so
 `.claude/skills/<x>` and `skills/<x>` are one path. Paths outside the repo

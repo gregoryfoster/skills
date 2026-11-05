@@ -10,13 +10,15 @@ plugin in a child pytest and reads back what the trace recorded:
 - a script passed to a subprocess, and a subprocess started from inside the
   repo (recorded with its argv, a path outside the repo shown as `<outside>`);
 - nothing from a tmp path, `.git` or the venv;
-- one trace file per xdist worker.
+- one trace file per xdist worker;
+- no session-scoped fixture, whose reads the tracer would credit to one file.
 
 No API calls. Each case is one child pytest run against this checkout.
 """
 
 import json
 import os
+import re
 import subprocess
 import sys
 import textwrap
@@ -215,3 +217,20 @@ def test_each_xdist_worker_writes_its_own_trace(tmp_path):
     _trace(tmp_path, body, "-n", "2")
     names = sorted(p.name for p in tmp_path.glob("trace.*.jsonl"))
     assert {"trace.gw0.jsonl", "trace.gw1.jsonl"} <= set(names), names
+
+
+def test_no_fixture_is_session_scoped():
+    """A session fixture runs once per process, so its reads land on the first
+    file that used it and every other user misses them: a change to what it
+    reads would not select them. Keep fixtures module-scoped at most."""
+    pattern = re.compile(r"scope\s*=\s*[\"']session[\"']")
+    roots = [REPO / "tests" / "structural", REPO / "tests" / "utils"]
+    files = [REPO / "tests" / "conftest.py"]
+    files += [p for root in roots for p in sorted(root.rglob("*.py"))]
+    hits = [
+        f"{p.relative_to(REPO)}:{n}"
+        for p in files
+        for n, line in enumerate(p.read_text().splitlines(), 1)
+        if pattern.search(line)
+    ]
+    assert not hits, f"session-scoped fixtures: {hits}"
