@@ -68,7 +68,7 @@ DOC_SECTIONS=(
 # generic lists too; one whose detect-stack.sh fails is a tooling failure.
 # Outside a git repository there is nothing to detect: this block runs before
 # the arguments are read, and `--help` must work anywhere, so it steps aside
-# and leaves the body to behave as every variant's does (CR 1393).
+# and leaves the body to run on the generic lists (CR 1393).
 DETECT="$(cd "$(dirname "$0")" && pwd)/detect-stack.sh"
 if [[ -f "$DETECT" ]] && git rev-parse --show-toplevel >/dev/null 2>&1; then
   STACK=$(bash "$DETECT") || {
