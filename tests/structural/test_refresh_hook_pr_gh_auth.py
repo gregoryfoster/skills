@@ -457,6 +457,19 @@ class TestTheRemoteGhIsPointedAt:
 
 
 class TestAnHttpsRemotesPush:
+    def test_a_callers_git_config_count_is_left_alone_and_logged(self, pr_consumer):
+        c = pr_consumer
+        _remote_as(c, "https://github.com/o/r.git")
+        _dotenv(c, "GH_TOKEN=from-dotenv\n")
+
+        result = _run(
+            c, GIT_CONFIG_COUNT="1", GIT_CONFIG_KEY_0="core.x", GIT_CONFIG_VALUE_0="y"
+        )
+
+        assert result.returncode == 0, result.stderr
+        assert len(_creates(c.gh)) == 1, result.stderr
+        assert "GIT_CONFIG_COUNT is already set" in log_text(c)
+
     def test_its_network_calls_get_gh_as_credential_helper_and_nothing_else_does(
         self, pr_consumer
     ):

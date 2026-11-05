@@ -1494,7 +1494,9 @@ _pr_preflight() {
   # the caller set GIT_CONFIG_COUNT: adding to it would renumber theirs.
   case "$url" in
     https://*)
-      if [ -n "$PR_GH_REPO" ] && [ -z "${GIT_CONFIG_COUNT:-}" ]; then
+      if [ -n "${GIT_CONFIG_COUNT:-}" ]; then
+        _log "pr: GIT_CONFIG_COUNT is already set, so gh is not added as $PR_REMOTE's credential helper — the push uses git's own, if any"
+      elif [ -n "$PR_GH_REPO" ]; then
         PR_GIT_CRED="credential.https://${PR_GH_REPO%%/*}.helper"
       fi
       ;;
