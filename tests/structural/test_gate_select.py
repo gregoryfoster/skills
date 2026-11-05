@@ -226,6 +226,15 @@ class TestCli:
         assert r.returncode == 3
         assert r.stdout.startswith("FULL\t") and "pyproject.toml" in r.stdout
 
+    @pytest.mark.parametrize("line", ["{not json", '{"open": []}', '"a string"'])
+    def test_a_malformed_trace_is_exit_2(self, tmp_path, line):
+        (tmp_path / "trace.main.jsonl").write_text(line + "\n")
+        out = tmp_path / "map.json"
+        r = _cli("build", "--trace", str(tmp_path / "trace"), "--out", str(out))
+        assert r.returncode == 2, r.stderr
+        assert r.stderr.startswith("ERROR:") and "Traceback" not in r.stderr
+        assert not out.exists()
+
     def test_an_unreadable_map_is_exit_2(self, tmp_path):
         r = _cli("select", "--map", str(tmp_path / "missing.json"), stdin="AGENTS.md\n")
         assert r.returncode == 2 and "cannot read the map" in r.stderr

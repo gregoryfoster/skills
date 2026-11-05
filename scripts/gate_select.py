@@ -205,7 +205,13 @@ def main(argv: list[str]) -> int:
     except SystemExit as exc:
         return 0 if exc.code == 0 else 2
     if args.cmd == "build":
-        return build(args.trace, args.out, args.tree)
+        try:
+            return build(args.trace, args.out, args.tree)
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            print(
+                f"ERROR: cannot build the map from {args.trace}: {exc}", file=sys.stderr
+            )
+            return 2
     try:
         on_disk = sorted(
             os.path.relpath(p, args.root)
