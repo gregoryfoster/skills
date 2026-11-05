@@ -142,6 +142,32 @@ so `shipping-work`'s shared `gate-stamp.sh` needs no change.
 
    *Verify:* both results are recorded in this plan. A miss stops the plan
    here: revise the map units, then re-run the step.
+
+   *Done 2026-11-05.* Map from a traced full run on `455d1bee`: 213 files,
+   93 of them on the whole tree.
+   - **Replay** (287 non-merge commits since 2026-10-31):
+     - recall proxy 54/54;
+     - full suite on 11 commits (4%), all for changes under `tests/` or to
+       requirements;
+     - selected share: median 57%, p75 69%;
+     - simulated median per commit: 130 s against 228 s at 8 workers (saves
+       98 s), and 279 s against 489 s at 4 workers (saves 210 s).
+
+     That is lower than the 18–39% estimate, because 93 whole-tree files are
+     a 57% floor: the heavy rigs run their scripts from the repo's working
+     directory. Narrowing that is the next lever, and not needed to clear
+     the bar.
+   - **Mutation sample** (`exit 97` after the shebang of every script in the
+     skill), for shipping-work, managing-skills, patching-hosts,
+     coordinating-epics, curating-context, reviewing-code-python-click,
+     maintaining-host-disk, adopting-dependabot, writing-plans and
+     using-git-worktrees:
+     - every test file *not* selected passed (80–119 files per mutation,
+       1,566–2,344 tests);
+     - each mutation was effective. It failed tests in its direct dependents
+       (shipping-work 257, managing-skills 420, curating-context 537, …),
+       or, for patching-hosts, coordinating-epics, maintaining-host-disk and
+       adopting-dependabot, in whole-tree tests, which always run.
 4. **Wire pre-commit.**
    - `structural-tests.sh` selects under `PRE_COMMIT=1` when a map exists,
      and prints `selected N/M files, ~X% of suite time; full run at pre-ship
