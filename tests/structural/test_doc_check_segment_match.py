@@ -58,10 +58,10 @@ from tests.structural.doc_check_fixtures import (
     write_file,
 )
 
-# A nested path that each variant's own defaults must flag. Every row must MISS
-# under the pre-#252 root-anchored matcher, or the case proves nothing — a
-# Bedrock path under `web/app/plugins/` is already root-anchored, so the obvious
-# php choice is exactly the one that passes against the unfixed script.
+# A nested path the script's generic defaults must flag (each framework's are
+# held in test_doc_check_frameworks.py). Every row must MISS under the pre-#252
+# root-anchored matcher, or the case proves nothing: a path some entry already
+# matches at the root passes against the unfixed script too.
 # `test_nested_hit_rows_are_real_regression_cases` enforces that.
 NESTED_HITS = {
     "shipping-work": "vendor/co-core/src/api/routes.py",
