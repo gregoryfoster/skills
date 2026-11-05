@@ -26,6 +26,11 @@
 # script's own.
 {
 set -euo pipefail
+# The phase timing (#572) reads SECONDS, and bash takes its starting value
+# from the environment: `env SECONDS=5000 bash -c 'echo $SECONDS'` prints
+# 5000. Zeroed, so a stray export cannot skew the times or the warning
+# (CR 1818).
+SECONDS=0
 
 # Backstop: an unhandled error in a TOP-LEVEL statement exits 0 (SessionStart
 # hooks must not block a session), with a one-line breadcrumb to LOG when LOG

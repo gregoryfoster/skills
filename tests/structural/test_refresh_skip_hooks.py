@@ -28,6 +28,7 @@ Coverage:
 - each phase's time                    → in the log; a push only where one
                                          was attempted (CR 1817)
 - a run past the warning line          → one stderr line naming the knob
+- an exported SECONDS                  → ignored (CR 1818)
 """
 
 import subprocess
@@ -203,6 +204,24 @@ def test_a_run_inside_the_line_says_nothing(consumer):
     result = run_hook(consumer)
     _assert_bump_landed(consumer, result)
     assert "timeout" not in result.stderr
+
+
+def test_an_exported_seconds_does_not_skew_the_timing(consumer):
+    """CR 1818: bash starts SECONDS from the environment's value."""
+    env = clean_env()
+    env["SECONDS"] = "5000"
+    env["PATH"] = f"{consumer.bindir}:{env.get('PATH', '/usr/bin:/bin')}"
+    result = subprocess.run(
+        ["bash", str(HOOK)],
+        cwd=consumer.path,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    _assert_bump_landed(consumer, result)
+    assert "timeout" not in result.stderr, result.stderr
+    assert "done at 5" not in log_text(consumer), log_text(consumer)
 
 
 def test_pr_mode_skips_on_its_branch_push_and_runs_no_commit_hook(consumer):
