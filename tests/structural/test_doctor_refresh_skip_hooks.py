@@ -152,3 +152,11 @@ def test_a_word_the_hook_refuses_is_named_as_malformed(consumer, text, named):
     assert MARKER not in result.stderr, (
         f"a malformed word was looked up as an id:\n{result.stderr}"
     )
+
+
+def test_an_id_matches_only_itself(consumer):
+    """CR 1819: the membership test is a quoted pattern, so an id's glob
+    characters are literal, and a prefix of a defined id is not defined."""
+    _knob(consumer, "py* pyte\n")
+    result = _doctor(consumer)
+    assert "doctor:   py* pyte" in result.stderr.splitlines(), result.stderr

@@ -689,7 +689,14 @@ check_refresh_skip_hooks() {
         *,*) malformed="$malformed $word"; continue ;;
         \#*) malformed="$malformed $word"; break ;;
       esac
-      printf '%s\n' "$known" | grep -qxF -- "$word" || missing="$missing $word"
+      # A newline-fenced pattern, not `printf | grep -q` (CR 1819): under
+      # pipefail that pipeline reads as missing whenever grep exits before
+      # printf has written everything, and it forked once per id. Quoted, so
+      # an id's own glob characters match only themselves.
+      case $'\n'"$known"$'\n' in
+        *$'\n'"$word"$'\n'*) ;;
+        *) missing="$missing $word" ;;
+      esac
     done
   done <"$knob"
   if [ -n "$malformed" ]; then
