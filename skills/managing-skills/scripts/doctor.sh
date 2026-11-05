@@ -181,9 +181,9 @@ every mode; silent without skills-vendor/ or a ruff config.
 Warns when .skills/refresh-skip-hooks names a hook id that is neither an
 id nor an alias in .pre-commit-config.yaml (#572). pre-commit ignores a
 SKIP id it does not know, so the refresh hook's commit would run that
-hook after all, and names a word that is not an id at all (a comma, a
-mid-line #), which leaves the knob unusable. Advisory in every mode;
-silent without the knob.
+hook after all. Also says when the hook cannot use the knob at all: a
+word that is not an id (a comma, a mid-line #), no ids, or a path that is
+not a readable file. Advisory in every mode; silent without the knob.
 
 Re-syncs .skills/doctor.sh from the vendored source under skills-vendor/
 when the two differ, so upstream fixes reach consumers that did not
@@ -661,8 +661,42 @@ check_vendor_lint_exclude
 # never on REG_GAPS: a stale id is wiring, not damage the CI probe gates on.
 check_refresh_skip_hooks() {
   local knob=.skills/refresh-skip-hooks cfg=.pre-commit-config.yaml
-  local line words word known missing="" malformed=""
-  [ -f "$knob" ] && [ -r "$knob" ] || return 0
+  local line words word known missing="" malformed="" why=""
+  local -a ids=()
+  [ -e "$knob" ] || [ -L "$knob" ] || return 0
+  # Every way the hook finds the knob unusable is said here too (CR 1826):
+  # the hook says it only in a run that commits or pushes, so a doctor silent
+  # on an empty or misplaced knob left it unseen until a refresh was killed.
+  if ! { [ -f "$knob" ] && [ -r "$knob" ]; }; then
+    why="it is present but not a readable file"
+  else
+    while IFS= read -r line || [ -n "$line" ]; do
+      line=${line%$'\r'}
+      read -r -a words <<<"$line" || true
+      [ "${#words[@]}" -gt 0 ] || continue
+      case ${words[0]} in \#*) continue ;; esac
+      for word in "${words[@]}"; do
+        case $word in
+          *,*) malformed="$malformed $word"; continue ;;
+          \#*) malformed="$malformed $word"; break ;;
+        esac
+        ids+=("$word")
+      done
+    done <"$knob"
+    if [ -n "$malformed" ]; then
+      why="not hook ids:$malformed. An id holds no comma, and a comment takes its own line"
+    elif [ "${#ids[@]}" -eq 0 ]; then
+      why="it names no hook id"
+    fi
+  fi
+  if [ -n "$why" ]; then
+    echo "doctor: $knob is unusable — $why." >&2
+    echo "doctor:   Until it is fixed the refresh hook skips nothing, so its commit" >&2
+    echo "doctor:   runs every pre-commit hook (#572)." >&2
+  fi
+  # Guarded, not expanded empty: "${ids[@]}" of an empty array is an
+  # unbound variable under bash 3.2's set -u.
+  [ "${#ids[@]}" -gt 0 ] || return 0
   if [ ! -f "$cfg" ]; then
     echo "doctor: $knob names pre-commit hooks to skip on the refresh hook's" >&2
     echo "doctor:   commit, but there is no $cfg here, so nothing reads them." >&2
@@ -679,32 +713,16 @@ check_refresh_skip_hooks() {
       if (line != "") print line
     }
   ' "$cfg" 2>/dev/null || true)"
-  while IFS= read -r line || [ -n "$line" ]; do
-    line=${line%$'\r'}
-    read -r -a words <<<"$line" || true
-    [ "${#words[@]}" -gt 0 ] || continue
-    case ${words[0]} in \#*) continue ;; esac
-    for word in "${words[@]}"; do
-      case $word in
-        *,*) malformed="$malformed $word"; continue ;;
-        \#*) malformed="$malformed $word"; break ;;
-      esac
-      # A newline-fenced pattern, not `printf | grep -q` (CR 1819): under
-      # pipefail that pipeline reads as missing whenever grep exits before
-      # printf has written everything, and it forked once per id. Quoted, so
-      # an id's own glob characters match only themselves.
-      case $'\n'"$known"$'\n' in
-        *$'\n'"$word"$'\n'*) ;;
-        *) missing="$missing $word" ;;
-      esac
-    done
-  done <"$knob"
-  if [ -n "$malformed" ]; then
-    echo "doctor: $knob is unusable — not hook ids:$malformed" >&2
-    echo "doctor:   An id holds no comma, and a comment takes its own line. Until" >&2
-    echo "doctor:   it is fixed the refresh hook skips nothing, so its commit runs" >&2
-    echo "doctor:   every pre-commit hook (#572)." >&2
-  fi
+  for word in "${ids[@]}"; do
+    # A newline-fenced pattern, not `printf | grep -q` (CR 1819): under
+    # pipefail that pipeline reads as missing whenever grep exits before
+    # printf has written everything, and it forked once per id. Quoted, so
+    # an id's own glob characters match only themselves.
+    case $'\n'"$known"$'\n' in
+      *$'\n'"$word"$'\n'*) ;;
+      *) missing="$missing $word" ;;
+    esac
+  done
   [ -n "$missing" ] || return 0
   echo "doctor: $knob names hook id(s) $cfg does not define:" >&2
   echo "doctor:  $missing" >&2

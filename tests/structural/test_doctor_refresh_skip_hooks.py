@@ -17,6 +17,9 @@ What this file pins:
   mid-line `#`) is named as malformed, not as an undefined id, and the comment
   after a `#` is not looked up (CR 1816).
 - **A knob with no config to read it** is said.
+- **Every way the hook finds the knob unusable is said** (CR 1826): a malformed
+  word, no ids at all, or a path that is not a readable file. The hook says it
+  only in a run that commits or pushes.
 - **Silent where it has nothing to say**: no knob, or every id defined.
 - **Advisory in every mode**: the exit code never moves, `--check-only`
   included.
@@ -160,3 +163,26 @@ def test_an_id_matches_only_itself(consumer):
     _knob(consumer, "py* pyte\n")
     result = _doctor(consumer)
     assert "doctor:   py* pyte" in result.stderr.splitlines(), result.stderr
+
+
+@pytest.mark.parametrize("case", ["no-ids", "directory"], ids=["no-ids", "directory"])
+def test_an_empty_or_misplaced_knob_is_said(consumer, case):
+    """CR 1826: the doctor returned silently on both, though the hook skips
+    nothing for either."""
+    if case == "directory":
+        (consumer / KNOB).mkdir()
+        said = "it is present but not a readable file"
+    else:
+        _knob(consumer, "# nothing yet\n\n")
+        said = "it names no hook id"
+    result = _doctor(consumer)
+    assert result.returncode == 0, result.stderr
+    assert f"{KNOB} is unusable — {said}" in result.stderr, result.stderr
+
+
+def test_a_glob_id_is_not_expanded_against_the_tree(consumer):
+    """`py*` must stay one literal id, not the repo's `py*` files."""
+    (consumer / "pyproject.toml").write_text("")
+    _knob(consumer, "py*\n")
+    result = _doctor(consumer)
+    assert "doctor:   py*" in result.stderr.splitlines(), result.stderr
