@@ -23,9 +23,13 @@ What this file pins:
 - **Silent where it has nothing to say**: no knob, or every id defined.
 - **Advisory in every mode**: the exit code never moves, `--check-only`
   included.
+- **The two readers agree** (CR 1827): over one set of knob texts, the hook's
+  own `_read_skip_hooks` finds the knob unusable exactly when the doctor says
+  so, and otherwise the ids the doctor checks are the ids the hook skips.
 """
 
 import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -33,6 +37,9 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 DOCTOR = REPO_ROOT / "skills" / "managing-skills" / "scripts" / "doctor.sh"
+HOOK = (
+    REPO_ROOT / "skills" / "managing-skills" / "scripts" / "skills-submodule-update.sh"
+)
 
 KNOB = ".skills/refresh-skip-hooks"
 MARKER = "does not define"
@@ -186,3 +193,63 @@ def test_a_glob_id_is_not_expanded_against_the_tree(consumer):
     _knob(consumer, "py*\n")
     result = _doctor(consumer)
     assert "doctor:   py*" in result.stderr.splitlines(), result.stderr
+
+
+# One grammar, two readers: the hook decides what it skips, the doctor what it
+# reports. A text either reader treats differently from the other is drift.
+PARITY = [
+    "pytest\n",
+    "pytest ty\n",
+    "# slow\r\n\r\n  pytest\tty\r\nruff",
+    "pytest,ty\n",
+    "pytest # the slow one\n",
+    "pytest\n#ty\n",
+    "pytest #ty\n",
+    "# nothing\n\n",
+    "",
+    "   \n\t\n",
+]
+
+
+def _hook_reads(repo: Path) -> tuple[list[str], bool]:
+    """The ids the hook's own reader would add to SKIP, and whether it found
+    the knob unusable. Its function, lifted out of the hook as the merge_mode
+    parity test lifts _read_merge_mode."""
+    m = re.search(r"^_read_skip_hooks\(\) \{\n.*?^\}\n", HOOK.read_text(), re.M | re.S)
+    assert m, "the hook has no _read_skip_hooks() at column 0"
+    script = (
+        "set -euo pipefail\nSKIP_HOOKS_KNOB=.skills/refresh-skip-hooks\n"
+        + m.group(0)
+        + '_read_skip_hooks\nprintf "%s\\n%s" "$SKIP_HOOKS" "$SKIP_HOOKS_ERR"\n'
+    )
+    r = subprocess.run(
+        ["bash", "-c", script],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        env=_clean_env(),
+        timeout=30,
+    )
+    assert r.returncode == 0, r.stderr
+    ids, _, err = r.stdout.partition("\n")
+    return [i for i in ids.split(",") if i], bool(err)
+
+
+@pytest.mark.parametrize("text", PARITY, ids=[repr(t) for t in PARITY])
+def test_the_doctor_and_the_hook_read_one_grammar(consumer, text):
+    _knob(consumer, text)
+    ids, hook_unusable = _hook_reads(consumer)
+    # No id defined, so the doctor names every id it read: compared whole, it
+    # is exactly the hook's list, in both directions.
+    (consumer / ".pre-commit-config.yaml").write_text("repos: []\n")
+    result = _doctor(consumer)
+    doctor_unusable = f"{KNOB} is unusable" in result.stderr
+    assert hook_unusable == doctor_unusable, (
+        f"the hook found {text!r} {'unusable' if hook_unusable else 'usable'}, "
+        f"the doctor {'unusable' if doctor_unusable else 'usable'}:\n{result.stderr}"
+    )
+    if not hook_unusable:
+        assert ids, "a usable knob names at least one id"
+        assert f"doctor:   {' '.join(ids)}" in result.stderr.splitlines(), (
+            f"the doctor read other ids than the hook's {ids}:\n{result.stderr}"
+        )
