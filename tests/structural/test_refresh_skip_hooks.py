@@ -31,6 +31,7 @@ Coverage:
 - an exported SECONDS                  → ignored (CR 1818)
 """
 
+import re
 import subprocess
 from pathlib import Path
 
@@ -221,7 +222,10 @@ def test_an_exported_seconds_does_not_skew_the_timing(consumer):
     )
     _assert_bump_landed(consumer, result)
     assert "timeout" not in result.stderr, result.stderr
-    assert "done at 5" not in log_text(consumer), log_text(consumer)
+    # Parsed, not matched (CR 1825): "done at 5" is also a real 5 s or 57 s.
+    times = [int(n) for n in re.findall(r"done at (\d+)s", log_text(consumer))]
+    assert times, log_text(consumer)
+    assert max(times) < 1000, f"timed from the exported value: {times}"
 
 
 def test_pr_mode_skips_on_its_branch_push_and_runs_no_commit_hook(consumer):
