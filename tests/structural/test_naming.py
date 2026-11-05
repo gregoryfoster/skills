@@ -54,7 +54,7 @@ class TestVariantFamilyDeclaration:
     """A skill that *looks* like a variant must be declared as one, or excluded.
 
     `tests/utils/skill_families.VARIANT_FAMILIES` is the authority on family
-    membership, so that a name like `shipping-work-orders` cannot silently
+    membership, so that a name like `reviewing-code-orders` cannot silently
     inherit its apparent baseline's trigger xfails (CR finding 6). Authority
     alone would reintroduce exactly the staleness #243 was about, though: a
     list you must remember to update goes stale quietly.

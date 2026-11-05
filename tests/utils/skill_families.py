@@ -13,7 +13,7 @@ Both now read `VARIANT_FAMILIES` below.
 
 Inference from `<baseline>-<stack>` is what #243 shipped, and it carries a
 hazard the inference itself cannot see (CR finding 6): a future skill named
-`shipping-work-orders` — a genuinely different skill, not a variant — matches
+`reviewing-code-orders` — a genuinely different skill, not a variant — matches
 the prefix and would silently inherit the family's xfails, turning a real
 routing regression into a quiet pass. A name is a guess about intent; this
 list states it.
@@ -83,8 +83,8 @@ def infer_variant_candidates(
 
     Returns `(name, inferred_baseline)` for each name shaped like
     `<baseline>-<suffix>` that is neither declared nor excluded. The `-`
-    boundary is required, so `shipping-workflow` is not a candidate for
-    `shipping-work`; the longest match wins, so a nested baseline beats a
+    boundary is required, so `reviewing-codex` is not a candidate for
+    `reviewing-code`; the longest match wins, so a nested baseline beats a
     shorter prefix of it.
     """
     baselines = BASELINES if baselines is None else baselines

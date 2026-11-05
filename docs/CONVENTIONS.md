@@ -213,7 +213,7 @@ which skills are variants of which baseline; both the drift assertions and the
 trigger-xfail keying read it. Add `(baseline, variant, stack_keyword)` there.
 
 Membership is **declared, not inferred from the name**, so a future
-`shipping-work-orders` — a different skill that merely reads like a variant —
+`reviewing-code-orders` — a different skill that merely reads like a variant —
 cannot silently inherit the family's xfails and turn a real routing regression
 into a quiet pass. Because an authoritative list is also a list you can forget
 to update, the name inference survives as a *detector*:
