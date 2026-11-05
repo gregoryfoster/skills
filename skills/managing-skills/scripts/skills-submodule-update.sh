@@ -187,6 +187,13 @@ _log() {
   echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] $*" >>"$LOG" 2>/dev/null || true
 }
 
+# _phase <name> — how far into the hook's timeout a phase ended (#572; see
+# TIMING_WARN_AT below). Up here because the reconcile's push, which times
+# itself, runs ahead of the refresh too.
+_phase() {
+  _log "timing: $1 done at ${SECONDS}s"
+}
+
 # _marker_owner_live — true when $STAGING names a run that is still going
 # (CR 1789), and sets MARKER_OWNER to its PID for the log.
 #
@@ -637,9 +644,11 @@ _reconcile_unpushed() {
     # any spelling — a rejected push is information, not an obstacle.
     _hook_git push "$remote" "HEAD:$merge" 2>&1
   } >>"$LOG"; then
+    _phase "push"
     _log "unpushed: pushed $ahead commit(s) to $upstream_name"
     return 0
   fi
+  _phase "push"
 
   # --soft, and to HEAD~N rather than to @{u}. Both halves are load-bearing.
   #
@@ -1435,7 +1444,8 @@ REFRESH_BEGUN=1
 HOOK_ADDED=0
 
 # Phase timing (#572): how much of the harness's timeout each part of a
-# refresh used, in $LOG, and one stderr line once a run passes
+# refresh used, in $LOG (_phase, above; a push is timed where it is made, at
+# either reconcile call, so a run that pushes nothing logs no push — CR 1817), and one stderr line once a run passes
 # TIMING_WARN_AT. The kill at 120 s says nothing of its own, and a consumer
 # whose suite keeps growing crosses it between one day and the next
 # (CannObserv/cli was at 112 s). SECONDS counts from the hook's start, so the
@@ -1444,9 +1454,6 @@ HOOK_ADDED=0
 # the last phase that finished. Added to the doctor report's EXIT trap, not in
 # place of it: a shell holds one trap per signal.
 TIMING_WARN_AT=90
-_phase() {
-  _log "timing: $1 done at ${SECONDS}s"
-}
 # Called by the EXIT trap below; shellcheck does not count a trap as a call.
 # shellcheck disable=SC2329
 _warn_if_slow() {
@@ -2057,7 +2064,6 @@ _finish_refresh
 # `>>"$LOG"` redirect, where the operator would never see it (the failure the
 # log-a-warning alternative was rejected for).
 _reconcile_unpushed
-_phase "push"
 
 exit 0
 }

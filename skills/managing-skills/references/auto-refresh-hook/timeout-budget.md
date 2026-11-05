@@ -49,4 +49,4 @@ Before this knob, power-map and cli each wrapped their slow stages in a gate tha
 
 ## Timing in the log
 
-Each phase writes `timing: <phase> done at <N>s` to `.git/skills-update.log`. The phases are `refresh` (the update and the doctor), then `commit` and `push`, or `pull request` in `pr` mode. `N` counts from the hook's start. A refresh that passes 90 s prints one stderr line naming its time and the knob, before the timeout arrives with no warning. A run killed by `SIGKILL` writes nothing more, so its log ends at the last phase it finished.
+Each phase writes `timing: <phase> done at <N>s` to `.git/skills-update.log`. The phases are `refresh` (the update and the doctor), then `commit`, or `pull request` in `pr` mode. `push` is logged wherever a push is attempted, including one the hook makes before the refresh to share an earlier run's commit, and only then. `N` counts from the hook's start. A refresh that passes 90 s prints one stderr line naming its time and the knob, before the timeout arrives with no warning. A run killed by `SIGKILL` writes nothing more, so its log ends at the last phase it finished.

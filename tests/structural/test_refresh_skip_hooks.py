@@ -25,7 +25,8 @@ Coverage:
                                          stderr once, and the bump still lands
 - merge_mode pr                        → no commit hook runs; the branch push
                                          carries the ids
-- each phase's time                    → in the log
+- each phase's time                    → in the log; a push only where one
+                                         was attempted (CR 1817)
 - a run past the warning line          → one stderr line naming the knob
 """
 
@@ -217,3 +218,17 @@ def test_pr_mode_skips_on_its_branch_push_and_runs_no_commit_hook(consumer):
     assert _origin(consumer, f"{PR_BRANCH}:{VENDOR}") == consumer.after
     assert _seen(consumer, "pre-commit") == []
     assert _seen(consumer, "pre-push") == ["pytest"]
+
+
+def test_a_run_that_pushes_nothing_logs_no_push(consumer):
+    """CR 1817: `timing: push done` was logged after the last reconcile call
+    whether or not it pushed anything."""
+    _assert_bump_landed(consumer, run_hook(consumer))
+    log = consumer.path / ".git" / "skills-update.log"
+    log.write_text("")
+    (consumer.path / ".git" / "skills-update.lock").unlink()
+    result = run_hook(consumer)
+    assert result.returncode == 0, result.stderr
+    text = log_text(consumer)
+    assert "timing: refresh done at " in text, text
+    assert "timing: push" not in text, text
