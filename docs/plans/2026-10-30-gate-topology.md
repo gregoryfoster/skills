@@ -324,6 +324,25 @@ the parts run in order: A, then B, then C.
        per repo, not two.
    - When all 13 are on `shipping-work`, delete the variant directories.
      The rename map stays, to heal stragglers.
+   - *Done 2026-11-05.* The issues were filed 2026-10-31. The roster grew to
+     17 on 2026-11-03: status (its own coordinator's status#83), processor
+     (processor#115), and index and provisioner, which were already on
+     `shipping-work`. All 17 had migrated by 2026-11-05. The overrides
+     folded into knobs, wrappers or AGENTS.md, plus two new knobs: #342's
+     `merge_mode` (wordpress's replaced Step 3) and #345's `deploy_command`.
+     Release 2 is one commit, as planned. Two things were found in it:
+     - `test_pr_mode_docs.py` held the description for this reword, and
+       goes with it.
+     - The deleted PHP variant was STYLE.md's canonical home for `LS_RC`,
+       `FIND_RC` and the scalar EXIT trap. Those now point at shipping-work's
+       `pre-ship.sh` and reviewing-code-php's `gather-context.sh`.
+
+     The doc-check fixtures declare click in `pyproject.toml`, so they keep
+     the old default variant's defaults. The billed `test_trigger_routing`
+     re-run routes `ship it` and `wrap up` to `shipping-work`, with `push
+     GH` and `close GH` still xfail. The run had about 21 other failures, in
+     skills this change does not touch. Main (`38f378dc`) fails the same
+     set, give or take three flaky cases.
 10. **Selection decision.** After a week of commits under Steps 1–2, compare
     pre-commit wall clock against the roughly one minute that selection would
     save. If it is worth it, selection gets its own plan, built on a
