@@ -122,6 +122,10 @@ def _audit(event: str, args) -> None:
         base = os.fsdecode(cwd) if cwd is not None else os.getcwd()
         words = _argv(argv)
         for item in words + _argv(executable or []):
+            # A word with whitespace is a message (`git commit -m "add
+            # AGENTS.md"`), not a path: no path in this repo has any.
+            if any(c.isspace() for c in item):
+                continue
             if os.sep in item or item.endswith((".sh", ".py", ".md")):
                 _record("exec", _rel(item, base))
         where = _rel(base)

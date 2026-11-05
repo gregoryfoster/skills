@@ -170,6 +170,25 @@ def test_a_script_passed_to_a_subprocess_is_recorded(tmp_path):
     assert "proc" not in rec, "run from a tmp dir, so not a proc from inside the repo"
 
 
+def test_a_message_argument_is_not_a_path(tmp_path):
+    """`git commit -m "add AGENTS.md"` names no file; a path that does not
+    exist yet still counts, since creating it could flip the test."""
+    rec = _only(
+        _trace(
+            tmp_path,
+            """
+        def test_it(tmp_path):
+            subprocess.run(
+                ["true", "add .skills/doctor.sh", "skills/x/scripts/new.sh"],
+                cwd=REPO,
+            )
+    """,
+        )
+    )
+    assert "add .skills/doctor.sh" not in rec["exec"]
+    assert "skills/x/scripts/new.sh" in rec["exec"]
+
+
 def test_a_subprocess_from_inside_the_repo_keeps_its_argv(tmp_path):
     rec = _only(
         _trace(
