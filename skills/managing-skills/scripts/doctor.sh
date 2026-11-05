@@ -178,6 +178,11 @@ would otherwise lint and format with this repo's ruff, so a refresh can
 turn a local run red over code this repo must not edit (#336). Advisory in
 every mode; silent without skills-vendor/ or a ruff config.
 
+Warns when .skills/refresh-skip-hooks names a hook id that is neither an
+id nor an alias in .pre-commit-config.yaml (#572). pre-commit ignores a
+SKIP id it does not know, so the refresh hook's commit would run that
+hook after all. Advisory in every mode; silent without the knob.
+
 Re-syncs .skills/doctor.sh from the vendored source under skills-vendor/
 when the two differ, so upstream fixes reach consumers that did not
 install the auto-refresh hook. Best-effort — never affects the exit code;
@@ -634,6 +639,61 @@ check_vendor_lint_exclude() {
 }
 
 check_vendor_lint_exclude
+
+# ------------------------------------------------- refresh-skip-hooks (#572)
+# .skills/refresh-skip-hooks names pre-commit hook ids the refresh hook skips
+# on its own commit and pushes, through SKIP. pre-commit ignores a SKIP id it
+# does not know, so a hook renamed in .pre-commit-config.yaml quietly falls
+# back into the refresh's commit, and a suite that outlasts the hook's 120 s
+# timeout gets it killed again — with nothing said anywhere. So each id is
+# looked for among the config's `id:` and `alias:` values (SKIP matches
+# either). A line scan, not a YAML parser, like check_vendor_lint_exclude: a
+# flow-style hook (`- {id: x}`) reads as absent, which costs a wrong warning
+# the operator can see, never a missed one. An unusable knob is the refresh
+# hook's to report, on stderr when it would have used it; not repeated here.
+#
+# Silent without the knob. Advisory in every mode, --check-only included, and
+# never on REG_GAPS: a stale id is wiring, not damage the CI probe gates on.
+check_refresh_skip_hooks() {
+  local knob=.skills/refresh-skip-hooks cfg=.pre-commit-config.yaml
+  local line words word known missing=""
+  [ -f "$knob" ] && [ -r "$knob" ] || return 0
+  if [ ! -f "$cfg" ]; then
+    echo "doctor: $knob names pre-commit hooks to skip on the refresh hook's" >&2
+    echo "doctor:   commit, but there is no $cfg here, so nothing reads them." >&2
+    echo "doctor:   Delete the knob, or check that pre-commit runs this repo's hooks." >&2
+    return 0
+  fi
+  known="$(awk '
+    {
+      line = $0
+      if (!sub(/^[[:space:]]*(-[[:space:]]+)?(id|alias)[[:space:]]*:[[:space:]]*/, "", line)) next
+      sub(/[[:space:]]+#.*$/, "", line)
+      sub(/[[:space:]]+$/, "", line)
+      if (line ~ /^".*"$/ || line ~ /^\047.*\047$/) line = substr(line, 2, length(line) - 2)
+      if (line != "") print line
+    }
+  ' "$cfg" 2>/dev/null || true)"
+  while IFS= read -r line || [ -n "$line" ]; do
+    line=${line%$'\r'}
+    read -r -a words <<<"$line" || true
+    [ "${#words[@]}" -gt 0 ] || continue
+    case ${words[0]} in \#*) continue ;; esac
+    for word in "${words[@]}"; do
+      printf '%s\n' "$known" | grep -qxF -- "$word" || missing="$missing $word"
+    done
+  done <"$knob"
+  [ -n "$missing" ] || return 0
+  echo "doctor: $knob names hook id(s) $cfg does not define:" >&2
+  echo "doctor:  $missing" >&2
+  echo "doctor:   pre-commit ignores a SKIP id it does not know, so the refresh" >&2
+  echo "doctor:   hook's commit runs that hook after all, and a run that outlasts" >&2
+  echo "doctor:   the hook's 120 s timeout is killed (#572). Use each hook's id or" >&2
+  echo "doctor:   alias as $cfg spells it." >&2
+  return 0
+}
+
+check_refresh_skip_hooks
 
 # frontmatter_value <file> <key> — the value of the first `<key>:` line inside
 # the file's YAML frontmatter, surrounding double quotes stripped; empty when
