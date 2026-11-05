@@ -19,6 +19,10 @@ exports the names (never the values) it loaded as `PRE_SHIP_ENV_NAMES`. The
 stamped gates fold a hash of those names into the stamp key, and write no
 stamp when the wrapper found no env file.
 
+This file pins the recipe's half. The stamp's half moved with #537's release
+2, which deleted the per-SHA stamp's two gates: test_unified_pre_ship.py holds
+the tree stamp to the same rules.
+
 The recipe ships as a comment, so these tests lift it out and run it: the
 text-only suite is how #144's recipe passed while aborting on a comment line.
 No test here prints a value from an env file.
