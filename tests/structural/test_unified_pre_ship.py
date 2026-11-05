@@ -426,7 +426,8 @@ class TestStamp:
     def test_a_repo_with_no_commit_runs_and_records_nothing(self, repo):
         """HEAD does not resolve. The variants' /tmp stamp once keyed such a
         run as `<repo>-tests-clean-HEAD`, shared by every commit-less run
-        (test_pre_ship_unresolved_head.py); the tree stamp has no key for it,
+        (pinned until #537's release 2 deleted the variants); the tree stamp
+        has no key for it,
         so the gate runs, every time, and writes nothing."""
         (repo / "pyproject.toml").write_text('[project]\nname = "demo-app"\n')
         (repo / "uv.lock").write_text("version = 1\n")

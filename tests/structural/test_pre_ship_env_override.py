@@ -32,13 +32,9 @@ SKILLS_DIR = Path(__file__).resolve().parents[2] / "skills"
 HEADER = "# --- Project-local env loading (optional override point) ---"
 
 # Variants shipping a real gate: a project-local override should wrap and
-# delegate, so the full recipe applies. Since #537 that is all of them.
-DELEGATING_VARIANTS = [
-    "shipping-work",
-    "shipping-work-php",
-    "shipping-work-python-click",
-    "shipping-work-python-fastapi",
-]
+# delegate, so the full recipe applies. Since #537 that is all of them, and
+# since its release 2 deleted the `shipping-work-*` variants, all is one.
+DELEGATING_VARIANTS = ["shipping-work"]
 
 # Variants that refuse a repo with no toolchain they can detect, naming the
 # repo-root remedy. Only the toolchain-detecting gate can reach that refusal.

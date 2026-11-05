@@ -1,12 +1,11 @@
 """Shared fixtures for the doc-check.sh behavioral tests.
 
-Two files exercise the four `shipping-work*` copies of doc-check.sh against a
-throwaway git repo: test_doc_check_segment_match.py (#252 — the matcher, the
+Two files exercise `shipping-work`'s doc-check.sh against a throwaway git
+repo: test_doc_check_segment_match.py (#252 — the matcher, the
 dead-entry probe, the path-list override) and test_doc_check_doc_sections.py
 (#261 — the advice override). They build the same fixture, so the builder lives
-here once: a change to how a repo is made, or to which variants exist, reaches
-every doc-check test at the same time instead of drifting between two copies
-of the same twenty lines.
+here once: a change to how a repo is made reaches every doc-check test at the
+same time instead of drifting between two copies of the same twenty lines.
 
 Not a test module — pytest collects `test_*.py` only — and nothing here is
 private to either caller.
@@ -18,12 +17,16 @@ from pathlib import Path
 
 SKILLS_DIR = Path(__file__).resolve().parents[2] / "skills"
 
-VARIANTS = [
-    "shipping-work",
-    "shipping-work-php",
-    "shipping-work-python-click",
-    "shipping-work-python-fastapi",
-]
+# The copies of doc-check.sh under test. Four until #537's release 2 deleted
+# the `shipping-work-*` variants; the unified skill's copy reads each
+# framework's defaults through detect-stack.sh instead.
+VARIANTS = ["shipping-work"]
+
+# Every root pyproject.toml these fixtures write declares click, so the
+# unified copy takes the click defaults the tests were written against (the
+# old default variant was `shipping-work-python-click`). The body a test asks
+# for follows, so a branch that changes the file still changes its content.
+CLICK_PYPROJECT = '[project]\nname = "co"\ndependencies = ["click"]\n'
 
 # A tree where every click default is live, so the dead-entry probe stays quiet
 # and each test's assertion is about the thing it names.
@@ -63,6 +66,8 @@ def run_git(repo: Path, *args: str) -> subprocess.CompletedProcess:
 
 
 def write_file(repo: Path, rel: str, body: str = "x\n") -> None:
+    if rel == "pyproject.toml":
+        body = CLICK_PYPROJECT + "# " + body
     path = repo / rel
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(body)
@@ -83,7 +88,7 @@ HANG_TIMEOUT_S = 15
 
 def run_doc_check(
     repo: Path,
-    variant: str = "shipping-work-python-click",
+    variant: str = "shipping-work",
     *args: str,
     timeout: float = RUN_TIMEOUT_S,
 ) -> subprocess.CompletedProcess:

@@ -78,7 +78,8 @@ except Exception:
 # test_triggers_match_baseline), so a phrase too ambiguous for the baseline is
 # exactly as ambiguous for every variant — but directory-name keying excused
 # only `shipping-work`, leaving its three variants to fail for an already
-# accepted reason.
+# accepted reason. (#537's release 2 later folded those variants into
+# `shipping-work`; the family keying still holds for reviewing-code's.)
 #
 # Keying on the bare trigger phrase would be simpler and yields the same marks
 # today, but it excuses the phrase everywhere: a future skill declaring `AR` or
@@ -88,7 +89,7 @@ except Exception:
 # `skill_family` resolves against tests/utils/skill_families.VARIANT_FAMILIES,
 # the single declaration this and the drift assertions in
 # test_content_invariants both read (CR findings 3/6). It is declared-only, so
-# a future `shipping-work-orders` does not join the family by name alone.
+# a future `reviewing-code-orders` does not join the family by name alone.
 # tests/structural/test_trigger_xfail_keying.py pins both directions.
 _CONTEXT_DEPENDENT_TRIGGERS: set[tuple[str, str]] = {
     ("init-project-fastapi", "bootstrap project"),

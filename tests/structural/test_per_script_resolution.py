@@ -90,12 +90,8 @@ PLACEHOLDER = re.compile(r'"<([A-Za-z0-9_.-]+\.sh)>"')
 # One line of a publishing block's output.
 RESOLVED = re.compile(r"^<([A-Za-z0-9_.-]+\.sh)>=(.+)$", re.M)
 
-SHIPPING = [
-    "shipping-work",
-    "shipping-work-php",
-    "shipping-work-python-click",
-    "shipping-work-python-fastapi",
-]
+# One skill since #537's release 2 deleted the `shipping-work-*` variants.
+SHIPPING = ["shipping-work"]
 
 # Every skill whose later steps substitute a resolved script path. Declared, so
 # a block that stops parsing as a list fails here instead of dropping out of

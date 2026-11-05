@@ -29,14 +29,9 @@ def skill(name: str):
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture(
-    params=[
-        "shipping-work",
-        "shipping-work-php",
-        "shipping-work-python-fastapi",
-        "shipping-work-python-click",
-    ]
-)
+# One skill since #537's release 2 deleted the `shipping-work-*` variants; the
+# fixture stays so a future variant joins these invariants by being listed.
+@pytest.fixture(params=["shipping-work"])
 def shipping_work_skill(request):
     return skill(request.param)
 
@@ -99,160 +94,6 @@ class TestShippingWorkBaseline:
     def test_no_continuation_if_checks_fail(self):
         assert "NO CONTINUATION IF CHECKS FAIL" in self.s.body, (
             "'NO CONTINUATION IF CHECKS FAIL' block must be present in baseline"
-        )
-
-
-class TestShippingWorkPhp:
-    """PHP variant-only invariants."""
-
-    @pytest.fixture(autouse=True)
-    def _load(self):
-        self.s = skill("shipping-work-php")
-
-    def test_iron_law_no_push_without_pre_ship_checks(self):
-        assert "NO PUSH WITHOUT PASSING PRE-SHIP CHECKS" in self.s.body, (
-            "PHP Iron Law text 'NO PUSH WITHOUT PASSING PRE-SHIP CHECKS' must be present verbatim"
-        )
-
-    def test_step1_run_pre_ship_checks(self):
-        assert "Step 1 — Run pre-ship checks" in self.s.body, (
-            "PHP variant Step 1 heading must be 'Run pre-ship checks'"
-        )
-
-    def test_no_continuation_if_checks_fail(self):
-        assert "NO CONTINUATION IF CHECKS FAIL" in self.s.body, (
-            "'NO CONTINUATION IF CHECKS FAIL' block must be present in PHP variant"
-        )
-
-    def test_h1_includes_php_suffix(self):
-        assert "# Shipping Work — PHP" in self.s.body, (
-            "PHP variant H1 must be '# Shipping Work — PHP'"
-        )
-
-    def test_wp_next_steps_categories_present(self):
-        body = self.s.body
-        for category in (
-            "ACF JSON sync",
-            "Asset build",
-            "WP-CLI cache",
-            "Composer deps",
-        ):
-            assert category in body, (
-                f"WP next-steps category '{category}' must be present"
-            )
-
-
-class TestShippingWorkPythonFastapi:
-    """Python/FastAPI variant-only invariants."""
-
-    @pytest.fixture(autouse=True)
-    def _load(self):
-        self.s = skill("shipping-work-python-fastapi")
-
-    def test_iron_law_no_push_without_pre_ship_checks(self):
-        assert "NO PUSH WITHOUT PASSING PRE-SHIP CHECKS" in self.s.body, (
-            "Python/FastAPI Iron Law text 'NO PUSH WITHOUT PASSING PRE-SHIP CHECKS' must be present verbatim"
-        )
-
-    def test_step1_run_pre_ship_checks(self):
-        assert "Step 1 — Run pre-ship checks" in self.s.body, (
-            "Python/FastAPI variant Step 1 heading must be 'Run pre-ship checks'"
-        )
-
-    def test_no_continuation_if_checks_fail(self):
-        assert "NO CONTINUATION IF CHECKS FAIL" in self.s.body, (
-            "'NO CONTINUATION IF CHECKS FAIL' block must be present in Python/FastAPI variant"
-        )
-
-    def test_h1_includes_python_fastapi_suffix(self):
-        assert "# Shipping Work — Python/FastAPI" in self.s.body, (
-            "Python/FastAPI variant H1 must be '# Shipping Work — Python/FastAPI'"
-        )
-
-    def test_fastapi_next_steps_categories_present(self):
-        body = self.s.body
-        for category in (
-            "DB migration",
-            "Service restart",
-            "Integration tests",
-            "Env var",
-            "Dev-server cleanup",
-        ):
-            assert category in body, (
-                f"FastAPI next-steps category '{category}' must be present"
-            )
-
-    def test_auto_derived_stamp_prefix_documented(self):
-        assert "auto-derives" in self.s.body or "auto-derived" in self.s.body, (
-            "Variant must document that the per-SHA stamp prefix is auto-derived "
-            "(eliminates the project-name substitution copy-paste bug class)"
-        )
-
-    def test_worktree_aware_merge_step_present(self):
-        body = self.s.body
-        assert "Step 2.5 — Worktree-aware merge" in body, (
-            "Step 2.5 (worktree-aware merge) must be present in the FastAPI variant — "
-            "it closes the loop opened in #10 (deferred until using-git-worktrees landed)"
-        )
-        assert "using-git-worktrees" in body, (
-            "Step 2.5 must reference the using-git-worktrees skill by name (hard cross-reference) "
-            "so the agent can discover and invoke the worktree workflow when it applies"
-        )
-
-
-class TestShippingWorkPythonClick:
-    """Python/Click variant-only invariants."""
-
-    @pytest.fixture(autouse=True)
-    def _load(self):
-        self.s = skill("shipping-work-python-click")
-
-    def test_iron_law_no_push_without_pre_ship_checks(self):
-        assert "NO PUSH WITHOUT PASSING PRE-SHIP CHECKS" in self.s.body, (
-            "Python/Click Iron Law text 'NO PUSH WITHOUT PASSING PRE-SHIP CHECKS' must be present verbatim"
-        )
-
-    def test_step1_run_pre_ship_checks(self):
-        assert "Step 1 — Run pre-ship checks" in self.s.body, (
-            "Python/Click variant Step 1 heading must be 'Run pre-ship checks'"
-        )
-
-    def test_no_continuation_if_checks_fail(self):
-        assert "NO CONTINUATION IF CHECKS FAIL" in self.s.body, (
-            "'NO CONTINUATION IF CHECKS FAIL' block must be present in Python/Click variant"
-        )
-
-    def test_h1_includes_python_click_suffix(self):
-        assert "# Shipping Work — Python/Click" in self.s.body, (
-            "Python/Click variant H1 must be '# Shipping Work — Python/Click'"
-        )
-
-    def test_click_next_steps_categories_present(self):
-        body = self.s.body
-        for category in (
-            "Dep update",
-            "Cross-package consumer",
-            "Pydantic pin",
-            "New command",
-        ):
-            assert category in body, (
-                f"Click next-steps category '{category}' must be present"
-            )
-
-    def test_auto_detected_import_target_documented(self):
-        body = self.s.body
-        assert "auto-detected" in body, (
-            "Variant must document that the import-check target is auto-detected from pyproject.toml"
-        )
-        assert ".skills/import-targets" in body, (
-            "Variant must document the .skills/import-targets override path for multi-package projects"
-        )
-
-    def test_no_substitution_markers(self):
-        body = self.s.body
-        assert "<PROJECT_PACKAGE>" not in body, (
-            "Variant must not carry <PROJECT_PACKAGE> substitution markers — "
-            "import target is auto-detected from pyproject.toml"
         )
 
 
@@ -1335,7 +1176,7 @@ class TestPythonClickHelperIntegration:
     @pytest.fixture(
         params=[
             "reviewing-code-python-click/scripts/gather-context.sh",
-            "shipping-work-python-click/scripts/pre-ship.sh",
+            "shipping-work/scripts/pre-ship.sh",
         ],
         ids=lambda p: p.split("/")[0] + "/" + p.split("/")[-1],
     )
@@ -1350,7 +1191,12 @@ class TestPythonClickHelperIntegration:
             "import target via one canonical resolver"
         )
 
-    def test_invokes_detect_test_dirs_helper(self, script_path):
+    def test_invokes_detect_test_dirs_helper(self):
+        """Review only: the unified gate leaves test discovery to pytest
+        (#537, Step 5 row 8), so there is no ship side to agree with."""
+        script_path = (
+            SKILLS_DIR / "reviewing-code-python-click/scripts/gather-context.sh"
+        )
         content = script_path.read_text()
         assert "detect-test-dirs.sh" in content, (
             f"{script_path.parent.parent.name}/{script_path.name} must invoke "
@@ -1360,42 +1206,12 @@ class TestPythonClickHelperIntegration:
 
 
 class TestPythonClickHelperByteEquality:
-    """Each helper exists as an independent copy in both reviewing-code-python-click/scripts/
-    and shipping-work-python-click/scripts/ so each variant is self-contained per the
-    Agent Skills spec (no cross-skill symlinks). The two copies must stay byte-equal
-    until intentionally diverged — if you genuinely need them to differ, delete this
-    test class and document the divergence in both scripts' headers.
+    """`detect-import-targets.sh` exists as an independent copy in
+    reviewing-code-python-click/scripts/ and shipping-work/scripts/, so each
+    skill is self-contained per the Agent Skills spec (no cross-skill
+    symlinks). The copies must stay byte-equal until intentionally diverged.
+    A third copy lived in shipping-work-python-click until #537's release 2.
     """
-
-    @pytest.fixture(
-        params=["detect-import-targets.sh", "detect-test-dirs.sh"],
-        ids=lambda n: n,
-    )
-    def helper_name(self, request):
-        return request.param
-
-    def test_review_and_ship_copies_byte_equal(self, helper_name):
-        review = SKILLS_DIR / "reviewing-code-python-click" / "scripts" / helper_name
-        ship = SKILLS_DIR / "shipping-work-python-click" / "scripts" / helper_name
-        assert review.exists(), (
-            f"missing helper copy in reviewing-code-python-click: {helper_name}"
-        )
-        assert ship.exists(), (
-            f"missing helper copy in shipping-work-python-click: {helper_name}"
-        )
-        assert not review.is_symlink(), (
-            f"reviewing-code-python-click/scripts/{helper_name} is a symlink — variants must be "
-            "self-contained per the Agent Skills spec; replace with a real copy"
-        )
-        assert not ship.is_symlink(), (
-            f"shipping-work-python-click/scripts/{helper_name} is a symlink — variants must be "
-            "self-contained per the Agent Skills spec; replace with a real copy"
-        )
-        assert review.read_bytes() == ship.read_bytes(), (
-            f"{helper_name} differs between reviewing-code-python-click and "
-            f"shipping-work-python-click copies. Either re-sync them or delete this "
-            f"assertion and document the intended divergence."
-        )
 
     def test_the_unified_gates_copy_is_byte_equal_too(self):
         """The one shipping-work gate runs the import check in every uv repo
@@ -1408,8 +1224,8 @@ class TestPythonClickHelperByteEquality:
         review = SKILLS_DIR / "reviewing-code-python-click" / "scripts" / name
         assert not unified.is_symlink()
         assert unified.read_bytes() == review.read_bytes(), (
-            f"shipping-work/scripts/{name} differs from the click copies; "
-            "re-sync all three"
+            f"shipping-work/scripts/{name} differs from reviewing-code-python-click's; "
+            "re-sync both"
         )
 
 
@@ -1629,7 +1445,7 @@ class TestGateScriptHardening:
     so a producer failure (git, find, helper script) silently empties the loop
     and the gate falsely passes. The canonical hardened pattern captures
     producer output to a tempfile and its exit code into a scalar — see
-    `LS_RC` in skills/shipping-work-php/scripts/pre-ship.sh, or the simpler
+    `LS_RC` in skills/shipping-work/scripts/pre-ship.sh, or the simpler
     `DIFF_RC` scalar capture in skills/shipping-work/scripts/doc-check.sh.
 
     Scope was `pre-ship.sh` only until [#255](https://github.com/gregoryfoster/skills/issues/255),
@@ -1667,7 +1483,7 @@ class TestGateScriptHardening:
         """A new script must be classified, not silently uncovered.
 
         This is the half that keeps the gate honest: without it, adding
-        `skills/shipping-work-php/scripts/new-gate.sh` extends the surface the
+        `skills/shipping-work/scripts/new-gate.sh` extends the surface the
         rule claims to cover while extending nothing that checks it.
         """
         unclassified = sorted(
@@ -1732,7 +1548,7 @@ class TestGateScriptHardening:
             + "\n".join(f"  line {ln}: {txt}" for ln, txt in violations)
             + "\n\nGate-script inputs must capture the producer's exit code. "
             "Replace with the tempfile + `*_RC=$?` pattern (see `LS_RC` in "
-            "skills/shipping-work-php/scripts/pre-ship.sh, or the simpler "
+            "skills/shipping-work/scripts/pre-ship.sh, or the simpler "
             "`DIFF_RC` scalar capture in "
             "skills/shipping-work/scripts/doc-check.sh, and the "
             '"Gate-script discipline" section of docs/STYLE.md). '
@@ -2075,9 +1891,6 @@ SKILLS_REQUIRING_DOCTOR_PREFLIGHT = [
     ("reviewing-code-python-fastapi", "gather-context.sh"),
     ("reviewing-architecture", "gather-context.sh"),
     ("shipping-work", "pre-ship.sh"),
-    ("shipping-work-php", "pre-ship.sh"),
-    ("shipping-work-python-click", "pre-ship.sh"),
-    ("shipping-work-python-fastapi", "pre-ship.sh"),
 ]
 
 

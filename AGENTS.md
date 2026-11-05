@@ -144,7 +144,7 @@ These carry a full template and a rationale in
   `TestGateScriptHardening` binds every `shipping-work*` / `reviewing-code*`
   / `coordinating-epics` script plus repo-root `scripts/` (#318, #398), each
   classified gate or reporting (#255); `test_pre_ship_env_override.py` holds
-  the wrapper-don't-fork override block across all four variants (#105).
+  the wrapper-don't-fork override block in `shipping-work`'s gate (#105).
 
 ## Resolution knobs
 

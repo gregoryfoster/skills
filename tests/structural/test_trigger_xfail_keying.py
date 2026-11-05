@@ -109,32 +109,40 @@ class TestSkillFamilyResolution:
     `undeclared_variant_candidates`; see TestTheDetectorCatchesStaleness.
     """
 
+    # The examples use the reviewing-code family: #243 was found on
+    # shipping-work's, which #537's release 2 folded into one skill.
+
     def test_a_baseline_resolves_to_itself(self):
-        assert skill_family("shipping-work") == "shipping-work"
+        assert skill_family("reviewing-code") == "reviewing-code"
 
     @pytest.mark.parametrize(
         "variant",
         [
-            "shipping-work-php",
-            "shipping-work-python-click",
-            "shipping-work-python-fastapi",
+            "reviewing-code-php",
+            "reviewing-code-python-click",
+            "reviewing-code-python-fastapi",
         ],
     )
     def test_a_variant_resolves_to_its_baseline(self, variant):
-        assert skill_family(variant) == "shipping-work"
+        assert skill_family(variant) == "reviewing-code"
+
+    def test_a_retired_variant_is_no_longer_a_family_member(self):
+        """#537's release 2 deleted the shipping-work variants and their
+        declarations, so the name no longer joins a family."""
+        assert skill_family("shipping-work-php") == "shipping-work-php"
 
     def test_an_unrecognized_name_resolves_to_itself(self):
         assert skill_family("no-such-skill") == "no-such-skill"
 
     def test_a_lookalike_name_does_not_join_the_family(self):
-        """`shipping-work-orders` is not a variant just because it reads like one.
+        """`reviewing-code-orders` is not a variant just because it reads like one.
 
         This is the whole point of declaring membership. Under the previous
-        name-inference resolver this returned `shipping-work`, silently
+        name-inference resolver this returned `reviewing-code`, silently
         granting the family's xfails to a skill that never earned them and
         turning any real routing regression in it into a quiet pass.
         """
-        assert skill_family("shipping-work-orders") == "shipping-work-orders"
+        assert skill_family("reviewing-code-orders") == "reviewing-code-orders"
 
     def test_the_routing_module_uses_the_shared_resolver(self, routing):
         """The integration module must not carry its own copy of this logic."""
@@ -157,18 +165,18 @@ class TestTheDetectorCatchesStaleness:
         assert undeclared_variant_candidates() == []
 
     def test_a_hyphen_boundary_is_required(self):
-        """`shipping-workflow` must not be reported as an undeclared variant.
+        """`reviewing-codex` must not be reported as an undeclared variant.
 
         Without the boundary a plain `startswith` flags any skill whose name
         merely begins with a baseline's.
         """
-        assert not [name for name, _ in _candidates_for(["shipping-workflow"])], (
+        assert not [name for name, _ in _candidates_for(["reviewing-codex"])], (
             "a hyphen boundary is required before a name counts as a candidate"
         )
 
     def test_a_lookalike_is_reported_as_undeclared(self):
-        assert _candidates_for(["shipping-work-orders"]) == [
-            ("shipping-work-orders", "shipping-work")
+        assert _candidates_for(["reviewing-code-orders"]) == [
+            ("reviewing-code-orders", "reviewing-code")
         ]
 
     def test_the_longest_matching_baseline_wins(self):
@@ -247,14 +255,8 @@ class TestContextDependentTriggerKeying:
         `shipping-work` is flagged for `close GH` and `push GH` only; its
         unambiguous triggers must still be able to fail.
         """
-        for member in (
-            "shipping-work",
-            "shipping-work-php",
-            "shipping-work-python-click",
-            "shipping-work-python-fastapi",
-        ):
-            for trigger in ("ship it", "wrap up"):
-                assert (member, trigger) not in marked_pairs
+        for trigger in ("ship it", "wrap up"):
+            assert ("shipping-work", trigger) not in marked_pairs
 
     def test_the_reviewing_code_family_is_not_flagged_at_all(self, marked_pairs):
         """A sibling variant family with no context-dependent entry stays clean."""

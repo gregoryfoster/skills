@@ -11,8 +11,9 @@ FAKE_PYTHON_VERSION.
 PATH is the fakes plus BASE_PATH only, so a real uv, composer or node on the
 host can never answer for a fake that was withheld.
 
-Shared by test_unified_pre_ship.py (the one gate, row by row) and
-test_gate_parity.py (the old variant gates against it). Not a test module.
+Used by test_unified_pre_ship.py (the one gate, row by row). Until #537's
+release 2 it also served test_gate_parity.py, which ran the deleted variant
+gates against it. Not a test module.
 """
 
 import os

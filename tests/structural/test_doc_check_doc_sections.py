@@ -14,8 +14,8 @@ fix, which is the fork #252 existed to remove.
 
 Pinned here:
 
-- **Replacement, in four copies.** `.skills/doc-sections` replaces the built-in
-  DOC_SECTIONS wholesale, in every variant, and the hit output names which
+- **Replacement.** `.skills/doc-sections` replaces the built-in
+  DOC_SECTIONS wholesale, and the hit output names which
   source it printed — "route table" under `built-in defaults` tells the reader
   exactly which file to add.
 - **One grammar, one reader.** Blank lines and `#`-comment lines dropped,
@@ -43,8 +43,7 @@ Pinned here:
   `-r` precondition, which is the pattern measure-context.sh settled for this
   class of bug (#184). A symlink that resolves still reads normally.
 
-Body parity across the four copies is `TestBodyParity`'s job in
-test_doc_check_segment_match.py. The repo builder and runner come from
+The repo builder and runner come from
 doc_check_fixtures.py, shared with that file, so both build the same fixture.
 
 No API calls. Self-contained: each test builds a throwaway git repo.

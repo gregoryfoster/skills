@@ -14,7 +14,8 @@ Two ways a `uv`-based `pre-ship.sh` ran something else:
    pytest` got a narrower suite from the gate, silently: the group's tests
    `importorskip` at module scope and register as skips.
 
-The fix for (1) passes no `-m` at all. `shipping-work-python-fastapi` loads a
+The fix for (1) passes no `-m` at all. The gate (first in
+`shipping-work-python-fastapi`, now in the unified `shipping-work`) loads a
 per-run plugin that deselects integration-marked items after pytest has applied
 the project's own expression, so pytest itself resolves that expression — from
 whichever config file wins its own precedence, and from `PYTEST_ADDOPTS` — and
@@ -39,17 +40,13 @@ import pytest
 
 SKILLS_DIR = Path(__file__).resolve().parents[2] / "skills"
 
-# The gates that run their suite through uv: the two variants, and the one
-# gate that replaces them (#537), which must hold every property they did.
-UV_VARIANTS = [
-    "shipping-work",
-    "shipping-work-python-click",
-    "shipping-work-python-fastapi",
-]
-FASTAPI = "shipping-work-python-fastapi"
+# The gates that run their suite through uv. The click and fastapi variants
+# were two more until #537's release 2 deleted them; the unified gate held
+# every property they did before they went.
+UV_VARIANTS = ["shipping-work"]
 # The gates that run the project's suite with integration tests deselected
-# by plugin: the fastapi variant, and the unified gate after it.
-DESELECTING = ["shipping-work", FASTAPI]
+# by plugin.
+DESELECTING = ["shipping-work"]
 
 KNOB = ".skills/pre-ship-uv-args"
 TOOLS = ("ruff", "python", "pytest")
@@ -341,8 +338,7 @@ def test_the_plugin_is_loaded_and_is_the_one_written(gate: str, project: Path) -
         "pytest was told to load pre_ship_not_integration, but no such module "
         f"was on its PYTHONPATH: {call}"
     )
-    if gate == FASTAPI:
-        assert "-x" in argv, argv  # the unified gate drops -x (Step 5 row 10)
+    assert "-x" not in argv, argv  # the unified gate drops -x (Step 5 row 10)
 
 
 # ---------------------------------------------------------------------------

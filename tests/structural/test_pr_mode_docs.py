@@ -20,8 +20,6 @@ No API calls. Pure text.
 
 from __future__ import annotations
 
-import re
-
 import pytest
 
 from tests.utils.skill_loader import SKILLS_DIR
@@ -70,16 +68,6 @@ def test_the_mode_is_read_through_the_script_and_the_reference_is_linked():
 def test_step_3_says_the_pull_deploys_in_pr_mode_without_the_deploy_knob():
     step3 = _section(SW_MD, "### Step 3 — Ensure on main")
     assert "WorkingDirectory=" in step3 and "pull" in step3
-
-
-def test_the_description_is_left_to_537():
-    """#537's release 2 rewords it; this change must not."""
-    assert re.search(
-        r"^description: \"Finalizes work by ensuring everything is committed, "
-        r"pushed to the remote, and reflected on GitHub: closes issues",
-        SW_MD,
-        re.M,
-    )
 
 
 SW_REF = _read(SW / "references" / "pr-mode.md")

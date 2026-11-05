@@ -40,10 +40,10 @@ VARIANT_FAMILIES: list[tuple[str, str, str]] = [
     ("reviewing-code", "reviewing-code-php", "PHP"),
     ("reviewing-code", "reviewing-code-python-fastapi", "FastAPI"),
     ("reviewing-code", "reviewing-code-python-click", "Click"),
-    ("shipping-work", "shipping-work-php", "PHP"),
-    ("shipping-work", "shipping-work-python-fastapi", "FastAPI"),
-    ("shipping-work", "shipping-work-python-click", "Click"),
 ]
+# `shipping-work` left this list in #537's release 2: it is one skill that
+# detects the stack, and its retired variants live on only in the root
+# `retired-skills` map, which repoints a consumer's links.
 
 # Skill directories that look like `<baseline>-<suffix>` but are deliberately
 # NOT variants. Empty today; an entry here is a decision with a reason, which

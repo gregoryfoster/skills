@@ -27,12 +27,12 @@ Three properties are pinned here, and they are load-bearing together:
   has demonstrably hit and a dead-entry census would be noise.
 - **The override file.** `.skills/doc-sensitive-paths` replaces the defaults,
   reusing the grammar `.skills/import-targets` already established, so a
-  project tailors the list without forking a script that lives in four copies.
+  project tailors the list without forking the script.
 
-`TestBodyParity` is what keeps this true in all four copies at once, and it
-covers the whole body below the configuration block — including the advice
-override added by [#261](https://github.com/gregoryfoster/skills/issues/261),
-whose own behaviour is pinned in test_doc_check_doc_sections.py. The repo
+The script lived in four copies, held together by a body-parity test, until
+#537's release 2 deleted the `shipping-work-*` variants. The advice override
+added by [#261](https://github.com/gregoryfoster/skills/issues/261) is pinned
+in test_doc_check_doc_sections.py. The repo
 builder and runner both files use live in doc_check_fixtures.py.
 
 No API calls. Self-contained: each test builds a throwaway git repo.
@@ -65,9 +65,6 @@ from tests.structural.doc_check_fixtures import (
 # `test_nested_hit_rows_are_real_regression_cases` enforces that.
 NESTED_HITS = {
     "shipping-work": "vendor/co-core/src/api/routes.py",
-    "shipping-work-php": "bedrock/web/app/themes/co/functions.php",
-    "shipping-work-python-click": "packages/co-core/src/co_core/api.py",
-    "shipping-work-python-fastapi": "services/ingest/src/models/user.py",
 }
 
 
@@ -136,7 +133,7 @@ class TestSegmentMatching:
     def test_every_variant_matches_its_own_defaults_at_depth(
         self, variant: str, tmp_path: Path
     ):
-        """The bug shipped in four copies; the fix has to hold in four copies."""
+        """The bug shipped in every copy; the fix has to hold in every copy."""
         nested = NESTED_HITS[variant]
         repo = make_repo(tmp_path, ["README.md", nested], [nested])
         result = run_doc_check(repo, variant)
@@ -148,7 +145,7 @@ class TestSegmentMatching:
 
     @pytest.mark.parametrize("variant", VARIANTS)
     def test_every_variant_matches_a_nested_readme(self, variant: str, tmp_path: Path):
-        """README.md is a filename entry in all four; a package README is still
+        """README.md is a filename entry in every copy; a package README is still
         a README."""
         repo = make_repo(
             tmp_path,
@@ -274,6 +271,9 @@ class TestDeadEntryReporting:
             [
                 "AGENTS.md",
                 "README.md",
+                # The root declares click, so the click defaults apply; src/
+                # still exists only under packages/co/.
+                "pyproject.toml",
                 "uv.lock",
                 ".env.example",
                 "packages/co/pyproject.toml",
@@ -287,8 +287,8 @@ class TestDeadEntryReporting:
             f"expected a pass; got exit {result.returncode}\nstderr: {result.stderr}"
         )
         assert "Note:" not in result.stdout, (
-            "src/ and pyproject.toml exist only under packages/co/, which the "
-            f"matcher covers, so neither is dead:\n{result.stdout}"
+            "src/ exists only under packages/co/, which the matcher covers, "
+            f"so it is not dead:\n{result.stdout}"
         )
 
     def test_non_ascii_paths_do_not_look_dead(self, tmp_path: Path):
@@ -335,7 +335,7 @@ class TestDeadEntryReporting:
         env = clean_env()
         env["PATH"] = f"{shim}:{env['PATH']}"
         result = subprocess.run(
-            ["bash", str(script_path("shipping-work-python-click"))],
+            ["bash", str(script_path("shipping-work"))],
             capture_output=True,
             text=True,
             cwd=str(repo),
@@ -469,7 +469,7 @@ class TestArgumentParsing:
 
     def test_base_without_a_ref_exits_two(self, tmp_path: Path):
         repo = make_repo(tmp_path, ["README.md"], ["README.md"])
-        result = run_doc_check(repo, "shipping-work-python-click", "--base")
+        result = run_doc_check(repo, "shipping-work", "--base")
         assert result.returncode == 2
         assert "--base requires a ref" in result.stderr
 
@@ -477,7 +477,7 @@ class TestArgumentParsing:
         """--base must work wherever it appears in the argument list."""
         repo = make_repo(tmp_path, CLICK_LIVE_TREE, ["docs/other.md"])
         run_git(repo, "branch", "other", "main")
-        result = run_doc_check(repo, "shipping-work-python-click", "--base", "other")
+        result = run_doc_check(repo, "shipping-work", "--base", "other")
         assert result.returncode == 0, f"stderr: {result.stderr}"
         assert "vs other" in result.stdout, (
             f"--base must select the compared ref:\n{result.stdout}"
@@ -494,25 +494,10 @@ class TestArgumentParsing:
         assert "segments" in result.stdout
 
 
-class TestBodyParity:
-    """Below the configuration block the four variants are one script kept in
-    four files. #252 existed in all four because nothing checked that; this is
-    the check.
+class TestInventory:
+    """Every `shipping-work*` copy of doc-check.sh is under test. One since
+    #537's release 2 deleted the variants; a new copy has to join VARIANTS.
     """
-
-    MARKER = re.compile(r"^# -{10,}$")
-
-    def _body(self, variant: str) -> str:
-        lines = script_path(variant).read_text().splitlines()
-        ends = [i for i, ln in enumerate(lines) if self.MARKER.match(ln)]
-        assert len(ends) == 1, (
-            f"{variant}/scripts/doc-check.sh must contain exactly one `# ---…` "
-            f"marker line, the one closing its configuration block; found "
-            f"{len(ends)} at lines {[i + 1 for i in ends]}. Splitting on the last "
-            "of several would silently shrink the region this parity check "
-            "compares, which is how four copies drift while the test stays green."
-        )
-        return "\n".join(lines[ends[0] + 1 :])
 
     def test_variant_inventory_is_exhaustive(self):
         discovered = sorted(
@@ -523,13 +508,4 @@ class TestBodyParity:
             f"shipping-work* variants shipping a doc-check.sh {discovered} do not "
             f"match the tested set {sorted(VARIANTS)}. Add the new variant here so "
             "its copy of the matcher is held to the same behavior."
-        )
-
-    @pytest.mark.parametrize("variant", VARIANTS[1:])
-    def test_body_is_identical_to_the_baseline(self, variant: str):
-        assert self._body(variant) == self._body(VARIANTS[0]), (
-            f"{variant}/scripts/doc-check.sh has drifted from "
-            f"{VARIANTS[0]}/scripts/doc-check.sh below the configuration block. "
-            "Variants differ in their path list and doc sections, not in their "
-            "matcher — a fix applied to one copy has to reach all four."
         )

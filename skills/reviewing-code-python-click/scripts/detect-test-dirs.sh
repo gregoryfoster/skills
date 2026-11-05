@@ -8,10 +8,10 @@
 # Trailing-slash normalization is the caller's responsibility — paths
 # are emitted as-given. Detection errors go to stderr.
 #
-# Shared between gather-context.sh (reviewing-code-python-click) and
-# pre-ship.sh (shipping-work-python-click) — review and ship must agree
-# on which directories contain the test suite, so the resolution logic
-# lives in one place.
+# Used by gather-context.sh. Until #537's release 2 a byte-equal copy also
+# ran in shipping-work-python-click's pre-ship.sh; the unified shipping-work
+# gate leaves test discovery to pytest (Step 5 row 8), so this is the only
+# copy.
 #
 # Exit codes:
 #   0  resolved (possibly to nothing — an empty answer is a valid one)

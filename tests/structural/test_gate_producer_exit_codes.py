@@ -1,7 +1,7 @@
 """A gate's producers must fail loudly, not resolve to nothing (#255).
 
-`shipping-work-python-click`'s `pre-ship.sh` delegates two questions to helper
-scripts — which package to import-check, and which directories hold the tests —
+The click gate's `pre-ship.sh` (`shipping-work-python-click`, until #537's
+release 2 deleted it) delegated two questions to helper scripts — which package to import-check, and which directories hold the tests —
 and captures each helper's exit code carefully, because (its own comment) *"a
 missing helper or a broken pyproject.toml must not silently degrade to 'no
 tests, skip pytest'."*
@@ -37,10 +37,10 @@ import pytest
 
 SKILLS_DIR = Path(__file__).resolve().parents[2] / "skills"
 
-# Both copies are held byte-equal by TestPythonClickHelperByteEquality; the
-# parametrization runs the behaviour against each so a future divergence
-# cannot quietly relax the shipping-side one.
-VARIANTS = ["shipping-work-python-click", "reviewing-code-python-click"]
+# The click review skill's copies. The ship-side copies lived in
+# `shipping-work-python-click` until #537's release 2; the unified gate's own
+# import-target resolver joins the cases below.
+VARIANTS = ["reviewing-code-python-click"]
 
 # A resolver that cannot run, versus one that runs and answers nothing.
 UV_BROKEN = (
@@ -97,7 +97,7 @@ HELPERS = [
 ]
 
 
-# The unified shipping-work gate carries a third byte-equal copy of the
+# The unified shipping-work gate carries a byte-equal copy of the
 # import-target resolver (#537), and no detect-test-dirs.sh: it leaves test
 # discovery to pytest (Step 5 row 8).
 CASES = [(v, s, p) for v in VARIANTS for s, p in HELPERS] + [

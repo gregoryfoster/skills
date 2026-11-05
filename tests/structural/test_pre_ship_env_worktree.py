@@ -26,7 +26,6 @@ No test here prints a value from an env file.
 
 import os
 import subprocess
-import uuid
 from pathlib import Path
 
 import pytest
@@ -36,21 +35,15 @@ SKILLS_DIR = Path(__file__).resolve().parents[2] / "skills"
 HEADER = "# --- Project-local env loading (optional override point) ---"
 
 # Every variant ships a real gate since #537, so every recipe is a wrapper.
-DELEGATING_VARIANTS = [
-    "shipping-work",
-    "shipping-work-php",
-    "shipping-work-python-click",
-    "shipping-work-python-fastapi",
-]
+# One variant since its release 2 deleted the `shipping-work-*` copies.
+DELEGATING_VARIANTS = ["shipping-work"]
 ALL_VARIANTS = sorted(DELEGATING_VARIANTS)
 
-# The variants whose gate keeps the old per-SHA /tmp stamp, and so reads the
-# names. shipping-work keys its tree stamp on them too (gate-stamp.sh); that is
-# pinned in test_unified_pre_ship.py, since no /tmp file is there to inspect.
-STAMPED_VARIANTS = ["shipping-work-python-click", "shipping-work-python-fastapi"]
-
 # The recipes that export PRE_SHIP_ENV_NAMES: every gate keyed on them.
-NAME_EXPORTING = ["shipping-work", *STAMPED_VARIANTS]
+# shipping-work keys its tree stamp on the names (gate-stamp.sh); that is
+# pinned in test_unified_pre_ship.py. The per-SHA /tmp stamp the fastapi and
+# click variants kept, and the tests that read it here, went with them.
+NAME_EXPORTING = ["shipping-work"]
 
 # A value no assertion may ever see in output. If it shows up, the recipe or
 # the gate printed a secret.
@@ -243,124 +236,6 @@ class TestTheRecipeExportsTheNames:
         )
 
 
-# --- the stamp ---------------------------------------------------------------
-
-# Records argv; reports pytest-cov absent so no --no-cov is added; passes
-# everything else. Same stub as test_pre_ship_unresolved_head.py.
-STUB_UV = """#!/bin/sh
-printf '%s\\n' "$*" >>"$UV_LOG"
-case "$*" in *"import pytest_cov"*) exit 1 ;; esac
-exit 0
-"""
-
-
-@pytest.fixture
-def project(tmp_path: Path):
-    # A basename no other run shares, because the stamp lives in /tmp/.
-    root = tmp_path / f"proj-{uuid.uuid4().hex[:12]}"
-    root.mkdir()
-    _git("-C", str(root), "init", "-q")
-    _git("-C", str(root), "config", "user.email", "t@example.com")
-    _git("-C", str(root), "config", "user.name", "t")
-    (root / "tests").mkdir()
-    (root / "tests" / "test_x.py").write_text("def test_x():\n    pass\n")
-    _git("-C", str(root), "add", ".")
-    _git("-C", str(root), "commit", "-q", "-m", "init")
-    fakebin = tmp_path / "fakebin"
-    fakebin.mkdir()
-    (fakebin / "uv").write_text(STUB_UV)
-    (fakebin / "uv").chmod(0o755)
-    try:
-        yield root
-    finally:
-        for stamp in Path("/tmp").glob(f"{root.name}-tests-clean-*"):
-            stamp.unlink(missing_ok=True)
-
-
-def _stamps(root: Path) -> list:
-    return sorted(Path("/tmp").glob(f"{root.name}-tests-clean-*"))
-
-
-def _gate(variant: str, root: Path, names) -> tuple:
-    """Run the gate with PRE_SHIP_ENV_NAMES as given (None = unset); return
-    the process and whether pytest ran."""
-    env = _clean_env()
-    env["PATH"] = f"{root.parent / 'fakebin'}{os.pathsep}{env['PATH']}"
-    log = root.parent / "uv.log"
-    log.unlink(missing_ok=True)
-    env["UV_LOG"] = str(log)
-    if names is not None:
-        env["PRE_SHIP_ENV_NAMES"] = names
-    r = subprocess.run(
-        ["bash", str(SKILLS_DIR / variant / "scripts" / "pre-ship.sh")],
-        cwd=str(root),
-        capture_output=True,
-        text=True,
-        timeout=120,
-        env=env,
-    )
-    assert r.returncode == 0, f"stdout={r.stdout}\nstderr={r.stderr}"
-    ran = log.exists() and any(
-        "pytest" in ln.split() for ln in log.read_text().splitlines()
-    )
-    return r, ran
-
-
-class TestTheStampKnowsItsEnvironment:
-    @pytest.mark.parametrize("variant", STAMPED_VARIANTS)
-    def test_a_run_with_no_env_file_writes_no_stamp(self, variant, project):
-        r, ran = _gate(variant, project, "")
-        assert ran, r.stdout
-        assert _stamps(project) == [], (
-            f"{variant}: the wrapper found no env file, and the gate still "
-            f"stamped the commit: {_stamps(project)}. That run skipped every "
-            "env-dependent test, so its pass vouches for nothing (#497)."
-        )
-        assert "no stamp" in r.stderr, (
-            f"{variant}: an unstamped run must say why on stderr. stderr: {r.stderr}"
-        )
-        _, ran = _gate(variant, project, "")
-        assert ran, f"{variant}: the second env-less run was skipped"
-
-    @pytest.mark.parametrize("variant", STAMPED_VARIANTS)
-    def test_a_run_in_another_environment_is_not_suppressed(self, variant, project):
-        """The #497 sequence with a partial env: the machine-wide file loaded,
-        the project's did not. The corrected re-run must run."""
-        _, ran = _gate(variant, project, "SHARED")
-        assert ran
-        r, ran = _gate(variant, project, "SHARED DSN")
-        assert ran, (
-            f"{variant}: a run with a different set of env names reused the "
-            f"stamp of the run before it. stdout={r.stdout}"
-        )
-
-    @pytest.mark.parametrize("variant", STAMPED_VARIANTS)
-    def test_the_same_names_in_any_order_reuse_the_stamp(self, variant, project):
-        _, ran = _gate(variant, project, "B_KEY A_KEY B_KEY")
-        assert ran
-        r, ran = _gate(variant, project, "A_KEY B_KEY")
-        assert not ran, (
-            f"{variant}: the same set of names, reordered or repeated, must "
-            f"hit the same stamp. stdout={r.stdout}"
-        )
-        assert "already passed" in r.stdout
-
-    @pytest.mark.parametrize("variant", STAMPED_VARIANTS)
-    def test_a_gate_run_with_no_wrapper_keeps_its_stamp(self, variant, project):
-        """No PRE_SHIP_ENV_NAMES at all: a project with no env contract, or a
-        wrapper not yet refreshed. The stamp works as it did, and it is not
-        the slot an env-keyed run reads."""
-        _, ran = _gate(variant, project, None)
-        assert ran
-        r, ran = _gate(variant, project, None)
-        assert not ran, r.stdout
-        _, ran = _gate(variant, project, "DSN")
-        assert ran, (
-            f"{variant}: an env-keyed run reused the stamp of a run with no "
-            "env contract."
-        )
-
-
 class TestAnEnvOnlyInEtc:
     """CR 695: a host-deployed service keeps its env in /etc/<project>/.env
     and has no repo .env at all. The recipe loaded it, then reset the names
@@ -383,10 +258,8 @@ class TestAnEnvOnlyInEtc:
             f"recipe still warned that tests needing it will skip:\n{r.stderr}"
         )
 
-    @pytest.mark.parametrize("variant", STAMPED_VARIANTS)
-    def test_its_names_reach_the_gate_and_the_gate_stamps(
-        self, variant, checkouts, tmp_path, project
-    ):
+    @pytest.mark.parametrize("variant", NAME_EXPORTING)
+    def test_its_names_reach_the_gate(self, variant, checkouts, tmp_path):
         _, worktree = checkouts
         etc = tmp_path / "etc.env"
         etc.write_text(f"ETC_ONLY={SECRET}\nAPI_KEY={SECRET}\n")
@@ -397,10 +270,6 @@ class TestAnEnvOnlyInEtc:
         assert set(names.split()) == {"ETC_ONLY", "API_KEY"}, (
             f"{variant}: the recipe discarded the names the machine-wide file "
             f"set, so the gate reads 'no env file' and never stamps. {line!r}"
-        )
-        _gate(variant, project, names)
-        assert _stamps(project), (
-            f"{variant}: a run whose env loaded from /etc wrote no stamp."
         )
 
 

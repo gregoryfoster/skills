@@ -1,1 +1,0 @@
-../../shipping-work/scripts/push.sh
