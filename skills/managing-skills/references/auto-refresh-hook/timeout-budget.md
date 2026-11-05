@@ -46,7 +46,13 @@ Keep a test in the consumer that fails when a test reading the vendored tree is 
 
 ## Why the hook marks its commit, not a gate inside pre-commit
 
-Before this knob, power-map and cli each wrapped their slow stages in a gate that recognised the hook's commit from its staged paths: registered `skills-vendor/` gitlinks plus `.skills/doctor.sh`. That list copies the hook's `COMMIT_PATHS`, and a path added to it would silently send every consumer back to the full suite. A path list also cannot tell the hook's commit from one made by hand, so the gate needed checks for deleted paths, gitlinks replaced by files, and a doctor turned into a symlink, each added only after review found it missing. Marking the commit in the hook needs none of them. To adopt the knob, delete the local gate, list its slow hook ids in the knob, and move its subset into a hook of its own. Land the knob in the same commit as the pin bump, or before it.
+Before this knob, power-map and cli each wrapped their slow stages in a gate that recognised the hook's commit from its staged paths: registered `skills-vendor/` gitlinks plus `.skills/doctor.sh`. That list copies the hook's `COMMIT_PATHS`, and a path added to it would silently send every consumer back to the full suite. A path list also cannot tell the hook's commit from one made by hand, so the gate needed checks for deleted paths, gitlinks replaced by files, and a doctor turned into a symlink, each added only after review found it missing. Marking the commit in the hook needs none of them.
+
+**Adopting it takes one bump made the old way.** The hook runs as a symlink into `skills-vendor/`, and bash reads it whole before running it. So the refresh that first brings this release in is run by the *previous* hook, which doesn't read the knob. For a consumer whose suite doesn't fit the budget, that first bump must be made by hand (`git submodule update --remote`, then a commit through the full suite), or by a hook still running under the local gate. If the gate is deleted first, the old hook's commit is killed. The heal then puts the content back on the old pointer, so the old hook runs again at the next session, and is killed again. In order:
+
+1. Add the knob, and move the subset into its own hook.
+2. Bump the pin past this release, by hand or under the gate. Committing the knob in the same commit as the bump works.
+3. Delete the gate.
 
 ## Timing in the log
 
