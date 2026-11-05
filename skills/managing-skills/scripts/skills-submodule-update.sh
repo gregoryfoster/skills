@@ -109,9 +109,12 @@ Behaviour:
   - With .skills/merge_mode 'pr' (read from the primary checkout, #560),
     never pushes to main: the bump is proposed as ONE pull request from
     skills/submodule-refresh, which later sessions update, and the
-    checkout's content stays on the pointer its index records. Needs gh. A
-    refusal is reported once and not retried. A knob that is present but
-    unusable is never read as 'direct': no refresh until it is fixed.
+    checkout's content stays on the pointer its index records. Needs gh
+    and a token for it (#576): GH_TOKEN in the hook's environment, else
+    GH_TOKEN in the repo's .env (read as data, handed to gh alone), else
+    gh's stored login; with none, no refresh. A refusal is reported once
+    and not retried. A knob that is present but unusable is never read as
+    'direct': no refresh until it is fixed.
   - With .skills/refresh-skip-hooks (committed, #572), adds the pre-commit
     hook ids it lists to SKIP for this hook's own commit and pushes, so a
     suite longer than the 120 s timeout is not run on a pointer bump. A
@@ -1326,36 +1329,137 @@ PR_MERGE=""
 PR_BASE_BRANCH=""
 PR_UPSTREAM=""
 PR_GH_REPO=""
-# _gh_repo_of <remote url> — `host/owner/repo` for gh's --repo, or nothing
-# when the URL is not a host's (a local path): gh then resolves the repo from
-# the checkout's remotes, which works where there is one.
+PR_GH_TOKEN=""
+PR_TOKEN_FROM=""
+PR_GIT_CRED=""
+# _gh_repo_of <remote url> — `host/owner/repo` for gh's --repo, or nothing:
+# for a URL that is not a host's (a local path), and for an SSH host `ssh -G`
+# cannot name. gh then resolves the repo from the checkout's remotes, which
+# works where there is one.
+#
+# An SSH URL's host is an ssh_config name, not necessarily a hostname. A
+# deploy-key alias (`git@github-processor:o/r.git` under `Host
+# github-processor` / `HostName github.com`) went to gh as an Enterprise host,
+# and every run was refused at `gh pr list` (#576). `ssh -G` prints the
+# HostName the name resolves to (the name itself when no Host block matches),
+# and SSH-over-443's ssh.github.com is github.com to gh. --repo is kept rather
+# than left to gh: it pins the PR's base to main's own upstream remote, where
+# gh's choice among remotes could take an `upstream` fork parent instead.
 _gh_repo_of() {
-  local url="$1" rest host path
+  local url="$1" rest host path ssh=""
+  case "$url" in
+    ssh://* | git+ssh://* | ssh+git://*) ssh=1 ;;
+  esac
   case "$url" in
     *://*)
       rest=${url#*://}
-      rest=${rest#*@}
       host=${rest%%/*}
-      host=${host%%:*}
       path=${rest#*/}
+      host=${host##*@}
+      host=${host%%:*}
       ;;
-    *@*:*)
-      rest=${url#*@}
-      host=${rest%%:*}
-      path=${rest#*:}
+    *:*)
+      # scp-like, [user@]host:path: git's rule is no slash before the colon.
+      rest=${url%%:*}
+      case "$rest" in */*) return 0 ;; esac
+      host=${rest##*@}
+      path=${url#*:}
+      ssh=1
       ;;
     *) return 0 ;;
   esac
   path=${path%/}
   path=${path%.git}
-  [ -n "$host" ] || return 0
+  case "$host" in '' | -*) return 0 ;; esac
   case "$path" in
     '' | /* | */*/*) return 0 ;;
-    */*) printf '%s/%s\n' "$host" "$path" ;;
+    */*) : ;;
+    *) return 0 ;;
   esac
+  if [ -n "$ssh" ]; then
+    rest=$host
+    host="$(ssh -G -- "$rest" </dev/null 2>/dev/null | awk '$1 == "hostname" { print $2; exit }' || true)"
+    [ "$host" != "ssh.github.com" ] || host=github.com
+    if [ -z "$host" ] || [ "${host#-}" != "$host" ]; then
+      _log "pr: ssh -G could not name the host behind '$rest' — gh resolves the repo from the checkout's remotes instead"
+      return 0
+    fi
+  fi
+  printf '%s/%s\n' "$host" "$path"
   return 0
 }
+
+# _env_value <file> <name> — <name>'s value in a .env file, parsed as data and
+# never sourced: load_env's grammar from shipping-work's pre-ship.sh header,
+# for one name, the last assignment winning as it does there. Nothing when the
+# file is absent or unreadable, or does not set it.
+_env_value() {
+  local file="$1" want="$2" line key val found=""
+  if ! { [ -f "$file" ] && [ -r "$file" ]; }; then
+    return 0
+  fi
+  while IFS= read -r line || [ -n "$line" ]; do
+    line=${line#"${line%%[![:space:]]*}"}
+    case $line in '' | \#*) continue ;; esac
+    line=${line#export }
+    case $line in *=*) ;; *) continue ;; esac
+    key=${line%%=*} val=${line#*=}
+    key=${key%"${key##*[![:space:]]}"}
+    [ "$key" = "$want" ] || continue
+    case $val in
+      \"*\") val=${val#\"} val=${val%\"} ;;
+      \'*\') val=${val#\'} val=${val%\'} ;;
+    esac
+    found=$val
+  done <"$file" 2>/dev/null || true
+  printf '%s' "$found"
+}
+
+# _pr_token — where gh's token comes from (#576), into PR_TOKEN_FROM; false
+# when there is none. Cohort hosts keep GH_TOKEN only in the git-ignored repo
+# .env, which agents load per command; a SessionStart hook runs beside the
+# others, not after them, so no other hook's export ever reaches this one.
+# In order:
+#   1. GH_TOKEN or GITHUB_TOKEN already in this hook's environment;
+#   2. GH_TOKEN in the checkout's .env, or from a linked worktree the primary
+#      checkout's — read as data, held in PR_GH_TOKEN, and handed to gh (and
+#      to git's network calls for an https remote) per call. Never exported:
+#      the refresh runs the new pointer's own install-doctor.sh before any
+#      human has reviewed the bump, and the token must not reach it;
+#   3. gh's own stored login (`gh auth token`, which reads it offline).
+# The .env outranks the stored login: a stale hosts.yml fails as a 401 that
+# reads like a bad token (#334's power-map case), while the .env is what the
+# cohort keeps current.
+_pr_token() {
+  local env_file=".env" wt primary host
+  PR_GH_TOKEN=""
+  PR_TOKEN_FROM=""
+  if [ -n "${GH_TOKEN:-}" ] || [ -n "${GITHUB_TOKEN:-}" ]; then
+    PR_TOKEN_FROM="this hook's environment"
+    return 0
+  fi
+  if [ ! -r "$env_file" ]; then
+    wt="$(git worktree list --porcelain 2>/dev/null || true)"
+    primary=${wt%%$'\n'*}
+    primary=${primary#worktree }
+    [ -z "$primary" ] || env_file="$primary/.env"
+  fi
+  PR_GH_TOKEN="$(_env_value "$env_file" GH_TOKEN)"
+  if [ -n "$PR_GH_TOKEN" ]; then
+    PR_TOKEN_FROM="$env_file"
+    return 0
+  fi
+  host=""
+  [ -z "$PR_GH_REPO" ] || host=${PR_GH_REPO%%/*}
+  if GH_PROMPT_DISABLED=1 GH_NO_UPDATE_NOTIFIER=1 gh auth token ${host:+--hostname "$host"} >/dev/null 2>&1; then
+    PR_TOKEN_FROM="gh's stored login${host:+ for $host}"
+    return 0
+  fi
+  PR_TOKEN_FROM="$env_file"
+  return 1
+}
 _pr_preflight() {
+  local url
   if ! command -v gh >/dev/null 2>&1; then
     _log "pr: gh not found on PATH — merge_mode is pr, and the pull request is opened with gh; no refresh this run"
     echo "skills update: .skills/merge_mode is pr, but gh is not on this hook's PATH, so no pull request can be opened — no refresh this run; install gh and run gh auth login (see $LOG)" >&2
@@ -1371,7 +1475,30 @@ _pr_preflight() {
   PR_BASE_BRANCH="${PR_MERGE#refs/heads/}"
   PR_UPSTREAM="$PR_REMOTE/$PR_BASE_BRANCH"
   # The configured URL, not `git remote get-url`, which expands insteadOf.
-  PR_GH_REPO="$(_gh_repo_of "$(git config --get "remote.$PR_REMOTE.url" 2>/dev/null || true)")"
+  url="$(git config --get "remote.$PR_REMOTE.url" 2>/dev/null || true)"
+  PR_GH_REPO="$(_gh_repo_of "$url")"
+  # No token is refused here, before the refresh moves anything: it used to
+  # be found at `gh pr list`, after a whole refresh and its restore (#576).
+  if ! _pr_token; then
+    _log "pr: gh has no token — none in this hook's environment, no GH_TOKEN in $PR_TOKEN_FROM, and no stored gh login; no refresh this run"
+    echo "skills update: .skills/merge_mode is pr, but gh has no token here — GH_TOKEN is not in this hook's environment or in $PR_TOKEN_FROM, and gh has no stored login (gh auth login) — so no pull request can be opened; no refresh this run (see $LOG)" >&2
+    return 1
+  fi
+  _log "pr: gh's token comes from $PR_TOKEN_FROM${PR_GH_REPO:+; --repo $PR_GH_REPO}"
+  # An https remote needs a credential for the branch push too, and a host
+  # whose token lives only in the .env, or only in gh's login, may have no
+  # git credential helper at all. Such a run's network git calls get gh's
+  # (`gh auth git-credential`, which answers from the same token) for that
+  # host, added through GIT_CONFIG_COUNT (git >= 2.31; older git ignores
+  # it) after the consumer's own helpers, which still answer first. Not when
+  # the caller set GIT_CONFIG_COUNT: adding to it would renumber theirs.
+  case "$url" in
+    https://*)
+      if [ -n "$PR_GH_REPO" ] && [ -z "${GIT_CONFIG_COUNT:-}" ]; then
+        PR_GIT_CRED="credential.https://${PR_GH_REPO%%/*}.helper"
+      fi
+      ;;
+  esac
   return 0
 }
 if [ "$MERGE_MODE" = "pr" ] && ! _pr_preflight; then
@@ -1653,11 +1780,33 @@ done <<PRHOOK_EOF
 $PR_HOOK_LIST
 PRHOOK_EOF
 
+# gh, with the token _pr_token found in the .env (if that is where it came
+# from) in its environment alone, never the hook's (#576).
 _gh() {
   if [ -n "$PR_GH_REPO" ]; then
-    GH_PROMPT_DISABLED=1 GH_NO_UPDATE_NOTIFIER=1 gh "$@" --repo "$PR_GH_REPO"
+    set -- "$@" --repo "$PR_GH_REPO"
+  fi
+  if [ -n "$PR_GH_TOKEN" ]; then
+    GH_TOKEN="$PR_GH_TOKEN" GH_PROMPT_DISABLED=1 GH_NO_UPDATE_NOTIFIER=1 gh "$@"
   else
     GH_PROMPT_DISABLED=1 GH_NO_UPDATE_NOTIFIER=1 gh "$@"
+  fi
+}
+
+# _pr_net <command>... — one of the pr path's network git calls (a git or a
+# _hook_git), with gh as the https remote's credential helper when
+# _pr_preflight chose one, the token in that call's environment only.
+_pr_net() {
+  if [ -z "$PR_GIT_CRED" ]; then
+    "$@"
+    return
+  fi
+  if [ -n "$PR_GH_TOKEN" ]; then
+    GH_TOKEN="$PR_GH_TOKEN" GH_PROMPT_DISABLED=1 GIT_CONFIG_COUNT=1 \
+      GIT_CONFIG_KEY_0="$PR_GIT_CRED" GIT_CONFIG_VALUE_0='!gh auth git-credential' "$@"
+  else
+    GH_PROMPT_DISABLED=1 GIT_CONFIG_COUNT=1 \
+      GIT_CONFIG_KEY_0="$PR_GIT_CRED" GIT_CONFIG_VALUE_0='!gh auth git-credential' "$@"
   fi
 }
 
@@ -1763,7 +1912,7 @@ _pr_publish() {
     _pr_refused "gh pr list (is gh authenticated? gh auth status)" "$prs"
     return 0
   fi
-  tip_line="$(git ls-remote "$PR_REMOTE" "refs/heads/$PR_BRANCH" 2>>"$LOG")" || rc=$?
+  tip_line="$(_pr_net git ls-remote "$PR_REMOTE" "refs/heads/$PR_BRANCH" 2>>"$LOG")" || rc=$?
   if [ "$rc" -ne 0 ]; then
     _pr_refused "reading $PR_BRANCH from $PR_REMOTE" "git ls-remote exited $rc"
     return 0
@@ -1797,7 +1946,7 @@ PRS_EOF
       refspecs+=("refs/pull/${pr%% *}/head")
     done
     rc=0
-    { echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] fetch ${refspecs[*]} to read closed PRs' heads:"; git fetch -q --no-tags "$PR_REMOTE" "${refspecs[@]}" 2>&1; } >>"$LOG" || rc=$?
+    { echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] fetch ${refspecs[*]} to read closed PRs' heads:"; _pr_net git fetch -q --no-tags "$PR_REMOTE" "${refspecs[@]}" 2>&1; } >>"$LOG" || rc=$?
     missing=""
     for pr in "${unread[@]}"; do
       n=${pr%% *}
@@ -1819,7 +1968,7 @@ PRS_EOF
   # An open PR's branch is replaced only while it is still the hook's own.
   if [ -n "$open" ] && [ -n "$tip" ]; then
     if ! git cat-file -e "$tip^{commit}" 2>/dev/null; then
-      if ! { echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] fetch $PR_BRANCH to read PR #$open's tip:"; git fetch -q --no-tags "$PR_REMOTE" "refs/heads/$PR_BRANCH" 2>&1; } >>"$LOG"; then
+      if ! { echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] fetch $PR_BRANCH to read PR #$open's tip:"; _pr_net git fetch -q --no-tags "$PR_REMOTE" "refs/heads/$PR_BRANCH" 2>&1; } >>"$LOG"; then
         _pr_refused "fetching $PR_BRANCH" "git fetch failed"
         return 0
       fi
@@ -1844,7 +1993,7 @@ PRS_EOF
     # plain --force: a push landing between the read and here is refused.
     rc=0
     _skip_hooks_note
-    out="$(_hook_git push --force-with-lease="refs/heads/$PR_BRANCH:$tip" "$PR_REMOTE" "$c:refs/heads/$PR_BRANCH" 2>&1)" || rc=$?
+    out="$(_pr_net _hook_git push --force-with-lease="refs/heads/$PR_BRANCH:$tip" "$PR_REMOTE" "$c:refs/heads/$PR_BRANCH" 2>&1)" || rc=$?
     { echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] push the bump to $PR_BRANCH:"; [ -z "$out" ] || printf '%s\n' "$out"; } >>"$LOG" 2>/dev/null || true
     if [ "$rc" -ne 0 ]; then
       _pr_refused "the push to $PR_BRANCH" "$out"
@@ -1892,7 +2041,7 @@ _pr_refresh() {
   fi
   # 3. The base: the default branch as the remote has it now. A fetch, never
   # a pull — local main does not move.
-  if ! { echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] fetch $PR_UPSTREAM to base the pull request on:"; git fetch -q --no-tags "$PR_REMOTE" "$PR_MERGE" 2>&1; } >>"$LOG"; then
+  if ! { echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] fetch $PR_UPSTREAM to base the pull request on:"; _pr_net git fetch -q --no-tags "$PR_REMOTE" "$PR_MERGE" 2>&1; } >>"$LOG"; then
     _pr_refused "fetching $PR_UPSTREAM" "git fetch failed"
     return 0
   fi

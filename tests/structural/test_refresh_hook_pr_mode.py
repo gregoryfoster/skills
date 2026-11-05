@@ -75,7 +75,16 @@ FAKE_GH = r"""#!/usr/bin/env bash
 # fail with the file's text; $S/kill_create kills the run's process group at
 # `pr create`, once, the way the VS Code extension's shutdown does (#555).
 S="@STATE@"
+# `auth token` is the preflight's offline check (#576), logged apart from the
+# calls that reach GitHub: $S/no_login makes it fail, as with no stored login.
+if [ "$1 $2" = "auth token" ]; then
+  printf '%s\n' "$*" >>"$S/auth"
+  [ ! -f "$S/no_login" ] || exit 1
+  echo stored-token
+  exit 0
+fi
 printf '%s\n' "$*" >>"$S/calls"
+printf '%s\n' "${GH_TOKEN:-}" >>"$S/tokens"
 tip() { "@GIT@" ls-remote origin "refs/heads/skills/submodule-refresh" | cut -f1; }
 case "$1 $2" in
   "pr list")
