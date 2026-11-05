@@ -7,6 +7,8 @@ one JSON object per test file, listing the repo paths it
 
 - opened (`open` audit event: reads, writes, and imports through
   `io.open_code`) or linked to (`os.symlink`'s target),
+- checked for (`stat`: `os.stat`, behind `Path.exists`, `is_file`, `is_dir`
+  and `os.path.exists`; it raises no audit event, so it is wrapped),
 - listed (`os.listdir`, `os.scandir` — what `Path.glob` and `iterdir` use —
   and `glob.glob`),
 - executed or passed to a subprocess (`subprocess.Popen` argv, `exec`), and
@@ -41,6 +43,8 @@ IGNORED = {".git", ".venv", ".worktrees", "__pycache__", ".pytest_cache", ".ruff
 
 _out = os.environ.get("GATE_TRACE", "")
 _current = ""
+_os_stat = os.stat
+_in_stat = False
 _events: dict[str, dict[str, set[str]]] = {}
 _real: dict[str, str] = {}
 
@@ -124,6 +128,20 @@ def _audit(event: str, args) -> None:
             _record("proc", json.dumps([where] + [_marked(w, base) for w in words[:8]]))
 
 
+def _traced_stat(path, *args, **kwargs):
+    """os.stat, recording the repo path it was asked about, found or not."""
+    global _in_stat
+    if _current and not _in_stat and kwargs.get("dir_fd") is None:
+        _in_stat = True
+        try:
+            _record("stat", _rel(path))
+        except Exception:  # noqa: BLE001 — tracing must never fail a stat
+            pass
+        finally:
+            _in_stat = False
+    return _os_stat(path, *args, **kwargs)
+
+
 def _set_current(nodeid: str) -> None:
     global _current
     _current = nodeid.split("::", 1)[0]
@@ -145,6 +163,9 @@ def pytest_runtest_protocol(item, nextitem):
 def pytest_configure(config):
     if _out:
         sys.addaudithook(_audit)
+        # pathlib and os.path look os.stat up at call time; the import
+        # system binds its own, so module lookups are not recorded.
+        os.stat = _traced_stat
 
 
 def pytest_sessionfinish(session):

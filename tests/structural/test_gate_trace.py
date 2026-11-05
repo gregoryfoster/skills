@@ -5,7 +5,8 @@ so a kind of access it fails to see is a test the selector will skip when that
 dependency changes. Each case here runs a synthetic test file through the
 plugin in a child pytest and reads back what the trace recorded:
 
-- an open, a directory listing, a `glob`, a symlink into the repo;
+- an open, a directory listing, a `glob`, a symlink into the repo, and an
+  existence check (`os.stat` raises no audit event, so it is wrapped);
 - a script passed to a subprocess, and a subprocess started from inside the
   repo (recorded with its argv, a path outside the repo shown as `<outside>`);
 - nothing from a tmp path, `.git` or the venv;
@@ -103,6 +104,23 @@ def test_a_path_through_claude_skills_resolves_to_skills(tmp_path):
         )
     )
     assert "skills/shipping-work/SKILL.md" in rec["open"]
+
+
+def test_an_existence_check_is_recorded(tmp_path):
+    """A test that only asks whether a file exists depends on it too: adding
+    or deleting that file can flip the test."""
+    rec = _only(
+        _trace(
+            tmp_path,
+            """
+        def test_it():
+            (REPO / "retired-skills").exists()
+            os.path.isfile(REPO / "AGENTS.md")
+            (REPO / "no-such-file").is_file()
+    """,
+        )
+    )
+    assert {"retired-skills", "AGENTS.md", "no-such-file"} <= rec["stat"]
 
 
 def test_listings_and_globs_are_recorded(tmp_path):

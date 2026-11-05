@@ -66,6 +66,23 @@ class TestBuild:
         assert tests["tests/structural/test_b.py"] == ["*"]
         assert tests["tests/structural/test_c.py"] == ["*"]
 
+    def test_an_existence_check_is_a_file_unit(self, tmp_path):
+        tests = _build(
+            tmp_path,
+            {
+                "gw0": [
+                    {
+                        "file": "tests/structural/test_a.py",
+                        "stat": ["AGENTS.md", "skills/shipping-work/SKILL.md"],
+                    }
+                ]
+            },
+        )
+        assert tests["tests/structural/test_a.py"] == [
+            "AGENTS.md",
+            "skills/shipping-work",
+        ]
+
     def test_workers_merge(self, tmp_path):
         tests = _build(
             tmp_path,

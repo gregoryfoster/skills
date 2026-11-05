@@ -17,7 +17,7 @@ A unit is one of:
                   their own directory, so the directory bounds what a bash
                   script under it can read
   <dir>/          anything under a directory the file listed
-  <path>          one file it opened or passed to a subprocess
+  <path>          one file it opened, checked for, or passed to a subprocess
 
 Selection, for each changed path:
 
@@ -123,7 +123,9 @@ def build(prefix: str, out: str, tree: str) -> int:
                     continue
                 rec = json.loads(line)
                 units = tests.setdefault(rec["file"], set())
-                for rel in rec.get("open", []) + rec.get("exec", []):
+                for rel in (
+                    rec.get("open", []) + rec.get("stat", []) + rec.get("exec", [])
+                ):
                     units.add(unit_of(rel))
                 for rel in rec.get("list", []):
                     units.add(unit_of(rel, listed=True))
