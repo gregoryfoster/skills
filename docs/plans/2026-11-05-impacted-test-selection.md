@@ -1,7 +1,7 @@
 ---
 title: Impacted-test selection in this repo's pre-commit, from a traced map
 date: 2026-11-05
-status: draft
+status: approved
 ---
 
 # Impacted-test selection in pre-commit
@@ -63,9 +63,9 @@ the staged paths to test files. Each kind of change runs:
 | anything else (`tests/utils`, `conftest.py`, the shared fixtures, `scripts/`, `pyproject.toml`, requirements, hooks) | the full suite |
 | no map yet, or `GATE_SELECT=off` | the full suite |
 
-**Stamps.** A selected run records itself in the stamp history under a
-`selected` label, for measurement. It never records a pass that `check`
-reuses.
+**Stamps.** A selected run never records a pass that `check` reuses. It logs
+one line to `<git-common-dir>/gate-select.log` for the measurement in Step 6,
+so `shipping-work`'s shared `gate-stamp.sh` needs no change.
 
 **Backstops.** Two full runs stay as backstops:
 - `pre-ship.sh`, unchanged, which also refreshes the map;
@@ -92,7 +92,8 @@ reuses.
 
 ## Steps
 
-1. **Tracer.** A pytest plugin (`tests/gate_trace.py`), active only when
+1. **Tracer.** A pytest plugin (`tests/utils/gate_trace.py`, beside
+   `gate_durations.py`), active only when
    `GATE_TRACE=<file>` is set, writes one JSON line per test file with its
    dependency units. Structural tests cover each kind of access: open, listing,
    `glob`, `Popen` argv, a bash script under a skill, and `git ls-files`. Two
@@ -100,6 +101,15 @@ reuses.
    workers each write their own lines.
    *Verify:* the tests pass, and a traced full run costs under 5% more wall
    clock than an untraced one (measured, and recorded in this plan).
+
+   *Done 2026-11-05.* `test_gate_trace.py` (8 cases). Six of them go red with
+   the audit hook removed; the other two are a negative case and the
+   per-worker files. Overhead: on a 40-file slice at `-n 8`, interleaved
+   untraced and traced runs used 122–129 s and 121–124 s of CPU. That is
+   within noise. A full-suite comparison of 228 s against 343 s wall clock
+   was another session's load, not the tracer. Unplanned addition: the
+   tracer also records `os.symlink` targets, so a fixture that links into
+   the repo and works through the link is not invisible.
 2. **Map builder and selector.** `scripts/gate-select.sh` (a bash entry over
    a stdlib Python core) builds the map from the trace, and prints the selected
    test files, or `FULL` with its reason, for a list of paths. Unit tests cover
@@ -120,7 +130,7 @@ reuses.
    - `structural-tests.sh` selects under `PRE_COMMIT=1` when a map exists,
      and prints `selected N/M files, ~X% of suite time; full run at pre-ship
      and pre-push`.
-   - A selected run writes the `selected` history row, never a reusable stamp.
+   - A selected run writes a `gate-select.log` line, never a reusable stamp.
    - Full runs carry `GATE_TRACE` and refresh the map.
 
    *Verify:* a commit that touches one skill runs its selection;
@@ -164,6 +174,5 @@ reuses.
 - **Cloud workers** (Linux) run the same hook, so they get selection too. The
   per-worktree map is built after their first full run. Until then they run
   everything.
-- **Decision for you:** should the pre-push backstop also block a push from a
-  machine with no venv, or warn and allow it? The plan blocks it, as pre-ship
-  does today.
+- **Decided (2026-11-05):** the pre-push backstop blocks a push from a machine
+  with no venv, as pre-ship does.
