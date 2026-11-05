@@ -579,7 +579,10 @@ class TestReportedOnce:
         later = _run(c, path)
         assert later.stderr == "", "reported again the same day"
 
-    def test_gh_unauthenticated(self, pr_consumer):
+    def test_a_token_github_rejects(self, pr_consumer):
+        """gh has a token (the fake's stored login) and GitHub refuses it. A
+        host with no token at all never reaches `gh pr list`: the preflight
+        refuses it (test_refresh_hook_pr_gh_auth.py, #576)."""
         c = pr_consumer
         (c.gh / "list_err").write_text(
             "To get started with GitHub CLI, please run:  gh auth login\n"
