@@ -116,6 +116,22 @@ so `shipping-work`'s shared `gate-stamp.sh` needs no change.
    every rule in the table above.
    *Verify:* tests pass, `--help`, and shellcheck clean. The script is
    classified as a gate script in `GATE_SCRIPTS`.
+
+   *Done 2026-11-05, revised:* `scripts/gate_select.py` alone, a stdlib
+   module with `--help` and exit codes 0, 2 and 3. It has no bash entry.
+   `structural-tests.sh` is its only caller and is already a classified gate
+   script, so a wrapper would add a file and nothing else. Tests:
+   `test_gate_select.py` (37 cases), one per rule in the table and per way the
+   full suite has to win. The whole-tree policy was tightened against the
+   first real trace, which put 101 of 211 files on the whole tree:
+   - a subprocess run from inside the repo counts only when it is an
+     interpreter (bash, python, node and the like, or an executable outside
+     the repo), or git not aimed at a fixture;
+   - a `--help` run never counts;
+   - other commands (`stat`, `gh`, `true`) read only the paths in their argv,
+     which the tracer already records.
+
+   With that, 91 of 211 files remain on the whole tree.
 3. **Validate before switching on.**
    - Replay the 287 commits since 2026-10-31 against the traced map. The bar:
      the recall proxy reaches 54/54 co-changed tests, and the simulated
