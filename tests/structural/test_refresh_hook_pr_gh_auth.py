@@ -376,6 +376,20 @@ class TestTheTokenReachesGhAlone:
         _main_never_moved(c)
         _assert_content_matches_pointer(c)
 
+    def test_a_token_github_rejects_is_named_by_its_source(self, pr_consumer):
+        """The preflight found one, so a refused `gh pr list` means GitHub
+        rejected that token; `gh auth status` in another shell can't see it."""
+        c = pr_consumer
+        _dotenv(c, "GH_TOKEN=stale\n")
+        (c.gh / "list_err").write_text("HTTP 401: Bad credentials\n")
+
+        result = _run(c)
+
+        assert result.returncode == 0, result.stderr
+        assert "token from .env" in result.stderr, result.stderr
+        assert "Bad credentials" in result.stderr
+        assert "stale" not in result.stderr, "the token was printed"
+
     def test_the_hooks_own_environment_outranks_the_env_file(self, pr_consumer):
         c = pr_consumer
         _dotenv(c, "GH_TOKEN=from-dotenv\n")

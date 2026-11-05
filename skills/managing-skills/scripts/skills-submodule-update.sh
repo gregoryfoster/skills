@@ -1909,7 +1909,10 @@ _pr_publish() {
     --json number,state,headRefOid --jq '.[] | "\(.number) \(.state) \(.headRefOid)"' 2>&1)" || rc=$?
   if [ "$rc" -ne 0 ]; then
     { echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] gh pr list exited $rc:"; printf '%s\n' "$prs"; } >>"$LOG" 2>/dev/null || true
-    _pr_refused "gh pr list (is gh authenticated? gh auth status)" "$prs"
+    # The preflight found a token, so this is GitHub refusing that one. Name
+    # where it came from: a stale .env token is invisible to `gh auth status`
+    # in the operator's shell, which checks that shell's own (CR 1828).
+    _pr_refused "gh pr list, with the token from $PR_TOKEN_FROM (is it still valid?)" "$prs"
     return 0
   fi
   tip_line="$(_pr_net git ls-remote "$PR_REMOTE" "refs/heads/$PR_BRANCH" 2>>"$LOG")" || rc=$?
