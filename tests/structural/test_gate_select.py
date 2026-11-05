@@ -104,6 +104,10 @@ class TestBuild:
             (("bash", "skills/x/scripts/y.sh"), True),
             (("bash", "-c", "cat AGENTS.md"), True),
             (("<outside>", "-c", "print(1)"), True),
+            # A script run directly is as free to read the repo as under bash.
+            (("skills/x/scripts/y.sh",), True),
+            (("/home/u/repo/scripts/pre-ship.sh", "--fast"), True),
+            (("./y.sh", "--help"), False),
             (("stat", "-c", "%U", "<outside>"), False),
             (("true",), False),
         ],

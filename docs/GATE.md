@@ -32,7 +32,8 @@ Each test file depends on some of:
 - a skill directory: anything under `skills/<name>/`;
 - a file or a listed directory;
 - the whole tree: it listed the repo root or `skills/`, or ran an
-  interpreter, or git not aimed at a fixture, from inside the repo.
+  interpreter, a script by its path, or git not aimed at a fixture, from
+  inside the repo.
 
 ## What a commit runs
 

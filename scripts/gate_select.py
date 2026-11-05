@@ -11,8 +11,9 @@ Two subcommands, stdlib only:
 A unit is one of:
 
   *               the whole tree: the file listed the repo root or skills/,
-                  or ran an interpreter (or git not aimed at a fixture) from
-                  inside the repo, which can read anything relative to it
+                  or ran an interpreter, a script by its path, or git not
+                  aimed at a fixture from inside the repo, which can read
+                  anything relative to it
   skills/<name>   anything under that skill: a skill's scripts reach only
                   their own directory, so the directory bounds what a bash
                   script under it can read
@@ -92,9 +93,10 @@ def proc_reads_tree(record: list[str]) -> bool:
     """Whether a subprocess started from inside the repo could read the tree.
 
     record is [cwd, argv...], with a path outside the repo shown as
-    `<outside>`. An interpreter (or an executable outside the repo, such as
-    the venv's python) runs code that may read anything relative to the repo,
-    so it counts, unless all it was asked for is `--help`. git counts unless it
+    `<outside>`. An interpreter, or any program named by a path (a script in
+    the repo run directly, the venv's python), runs code that may read
+    anything relative to the repo, so it counts, unless all it was asked for
+    is `--help`. git counts unless it
     was pointed at a fixture outside the repo (`-C <outside>`, `init <outside>`,
     `clone ... <outside>`). Any other command reads only the paths in its
     argv, and the tracer already recorded those.
@@ -107,7 +109,7 @@ def proc_reads_tree(record: list[str]) -> bool:
     prog = os.path.basename(argv[0])
     if prog == "git":
         return "<outside>" not in argv
-    return prog in INTERPRETERS or argv[0] == "<outside>"
+    return prog in INTERPRETERS or "/" in argv[0] or argv[0] == "<outside>"
 
 
 def build(prefix: str, out: str, tree: str) -> int:
