@@ -372,7 +372,7 @@ class TestTheTokenReachesGhAlone:
             "absent"
         }, "the .env's token reached the new pointer's installer"
         assert "from-dotenv" not in log_text(c), "the token was logged"
-        assert str(c.path / ".env") in log_text(c) or ".env" in log_text(c)
+        assert "pr: gh's token comes from .env\n" in log_text(c), log_text(c)
         _main_never_moved(c)
         _assert_content_matches_pointer(c)
 
