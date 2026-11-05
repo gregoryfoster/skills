@@ -107,6 +107,13 @@ Behaviour:
     checkout's content stays on the pointer its index records. Needs gh. A
     refusal is reported once and not retried. A knob that is present but
     unusable is never read as 'direct': no refresh until it is fixed.
+  - With .skills/refresh-skip-hooks (committed, #572), adds the pre-commit
+    hook ids it lists to SKIP for this hook's own commit and pushes, so a
+    suite longer than the 120 s timeout is not run on a pointer bump. A
+    commit made by hand still runs every hook. A knob that is present but
+    unusable skips nothing, and says so on stderr.
+  - Logs each phase's elapsed time, and warns on stderr when a refresh
+    passes 90 s of its 120 s timeout.
   - Logs to .git/skills-update.log (bounded to ~64 KiB / 200 lines).
   - Exits 0 on every non-fatal condition.
 
@@ -351,6 +358,99 @@ if [ "$BRANCH" = "main" ]; then
   _read_merge_mode
 fi
 
+# ------------------------------------------------ refresh-skip-hooks (#572)
+# The consumer's pre-commit hook ids this hook's own commit and pushes skip,
+# through pre-commit's SKIP. The harness kills this hook at 120 s, and
+# MARKER_MAX_AGE caps any raise at 300, so a consumer whose pre-commit suite
+# runs longer had every refresh commit killed — and since #555, killed again
+# at every session start. A gate inside the consumer's pre-commit that guessed
+# this hook's commit from its staged paths (CannObserv/power-map#752) copied
+# COMMIT_PATHS and would drift with it; marking the commit here does not. Only
+# this hook's commits and pushes carry it, so a bump made by hand still runs
+# every hook.
+#
+# The pushes too: a consumer whose pre-push runs the same suite meets the same
+# kill there, and pre-commit applies SKIP to an id in every stage.
+#
+# Read from this checkout, not the primary: it is committed config that lands
+# with the pin bump that needs it, and this checkout is the one committing.
+# Absent: nothing skipped. Present but unusable: nothing skipped either, so
+# the commit runs every hook, the safe direction — and _skip_hooks_note says
+# so on stderr.
+SKIP_HOOKS=""
+SKIP_HOOKS_ERR=""
+SKIP_HOOKS_KNOB=.skills/refresh-skip-hooks
+_read_skip_hooks() {
+  local line word words ids="" remedy
+  SKIP_HOOKS=""
+  SKIP_HOOKS_ERR=""
+  remedy="write pre-commit hook ids separated by spaces or newlines, or delete the file to run every hook"
+  if [ ! -e "$SKIP_HOOKS_KNOB" ] && [ ! -L "$SKIP_HOOKS_KNOB" ]; then
+    return 0
+  fi
+  if ! { [ -f "$SKIP_HOOKS_KNOB" ] && [ -r "$SKIP_HOOKS_KNOB" ]; }; then
+    SKIP_HOOKS_ERR="$SKIP_HOOKS_KNOB is present but not a readable file: $remedy"
+    return 0
+  fi
+  if ! exec 3<"$SKIP_HOOKS_KNOB"; then
+    SKIP_HOOKS_ERR="could not open $SKIP_HOOKS_KNOB: $remedy"
+    return 0
+  fi
+  while IFS= read -r line <&3 || [ -n "$line" ]; do
+    line=${line%$'\r'}
+    read -r -a words <<<"$line" || true
+    [ "${#words[@]}" -gt 0 ] || continue
+    case ${words[0]} in \#*) continue ;; esac
+    for word in "${words[@]}"; do
+      # pre-commit splits SKIP on commas, so an id holding one would skip
+      # two hooks; a `#` past the first word is a comment pre-commit never
+      # sees, taken here for ids.
+      case $word in
+        *,* | \#*)
+          [ -n "$SKIP_HOOKS_ERR" ] ||
+            SKIP_HOOKS_ERR="$SKIP_HOOKS_KNOB has '$word', which is not a hook id (no commas; a comment takes its own line): $remedy"
+          ;;
+        *) ids="${ids:+$ids,}$word" ;;
+      esac
+    done
+  done
+  exec 3<&-
+  if [ -z "$SKIP_HOOKS_ERR" ] && [ -z "$ids" ]; then
+    SKIP_HOOKS_ERR="$SKIP_HOOKS_KNOB names no hook id: $remedy"
+  fi
+  [ -n "$SKIP_HOOKS_ERR" ] || SKIP_HOOKS="$ids"
+  return 0
+}
+# Main only, as merge_mode: nothing off main commits or pushes.
+if [ "$BRANCH" = "main" ]; then
+  _read_skip_hooks
+fi
+
+# _skip_hooks_note — an unusable knob, said once per run, ahead of the first
+# commit or push it would have shaped. Its own call, not inside _hook_git:
+# every caller folds that command's stderr into $LOG or a variable, where an
+# operator would never read it.
+SKIP_HOOKS_SAID=0
+_skip_hooks_note() {
+  [ -n "$SKIP_HOOKS_ERR" ] && [ "$SKIP_HOOKS_SAID" = "0" ] || return 0
+  SKIP_HOOKS_SAID=1
+  _log "$SKIP_HOOKS_ERR — this run's commit and push run every pre-commit hook"
+  echo "skills update: $SKIP_HOOKS_ERR. Until then this hook's commit and push run every pre-commit hook, and a run that outlasts its 120 s timeout is killed (see $LOG)" >&2 || true
+  return 0
+}
+
+# _hook_git <git args> — git with the knob's ids added to SKIP, for this one
+# command. Only this hook's own commit and pushes go through it. An SKIP the
+# session already carries is kept, not replaced.
+_hook_git() {
+  if [ -n "$SKIP_HOOKS" ]; then
+    _log "git $1: skipping pre-commit hook(s) $SKIP_HOOKS ($SKIP_HOOKS_KNOB)"
+    SKIP="${SKIP:+$SKIP,}$SKIP_HOOKS" git "$@"
+  else
+    git "$@"
+  fi
+}
+
 # The commit subjects this hook authors. Named once because two places read
 # them: the commit step at the bottom, and the reconcile step's authorship
 # guard. Let those drift and the guard either stops recognising this hook's
@@ -528,13 +628,14 @@ _reconcile_unpushed() {
     log_before="$(wc -c <"$LOG" 2>/dev/null | tr -d ' ')" || log_before=0
   fi
   case "$log_before" in '' | *[!0-9]*) log_before=0 ;; esac
+  _skip_hooks_note
   if {
     echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] push $ahead unpushed commit(s) to $upstream_name:"
     # Explicit refspec, never a bare `git push`: under push.default=matching
     # that pushes every matching branch, which is not an authority an
     # unattended SessionStart hook should be exercising. Never --force, in
     # any spelling — a rejected push is information, not an obstacle.
-    git push "$remote" "HEAD:$merge" 2>&1
+    _hook_git push "$remote" "HEAD:$merge" 2>&1
   } >>"$LOG"; then
     _log "unpushed: pushed $ahead commit(s) to $upstream_name"
     return 0
@@ -1333,6 +1434,28 @@ fi
 REFRESH_BEGUN=1
 HOOK_ADDED=0
 
+# Phase timing (#572): how much of the harness's timeout each part of a
+# refresh used, in $LOG, and one stderr line once a run passes
+# TIMING_WARN_AT. The kill at 120 s says nothing of its own, and a consumer
+# whose suite keeps growing crosses it between one day and the next
+# (CannObserv/cli was at 112 s). SECONDS counts from the hook's start, so the
+# heal and the reconcile ahead of the refresh are in it. On EXIT, so every way
+# out of a refresh is covered; a SIGKILL runs no trap, and the log then ends at
+# the last phase that finished. Added to the doctor report's EXIT trap, not in
+# place of it: a shell holds one trap per signal.
+TIMING_WARN_AT=90
+_phase() {
+  _log "timing: $1 done at ${SECONDS}s"
+}
+# Called by the EXIT trap below; shellcheck does not count a trap as a call.
+# shellcheck disable=SC2329
+_warn_if_slow() {
+  [ "$SECONDS" -ge "$TIMING_WARN_AT" ] || return 0
+  _log "timing: this run took ${SECONDS}s, past the ${TIMING_WARN_AT}s warning line"
+  echo "skills update: this refresh took ${SECONDS} s of the hook's 120 s default timeout, and a run past its timeout is killed. Each phase's time is in $LOG; a slow pre-commit hook can be skipped on this hook's own commit with .skills/refresh-skip-hooks" >&2 || true
+}
+trap '_report_doctor_install; _warn_if_slow' EXIT
+
 # merge_mode pr and a bump staged with no marker (CR 1791). _heal_staged
 # leaves it alone, since a human's own `git add skills-vendor/<v>` looks the
 # same as a hook from before #555. In `direct` mode this run's commit takes it
@@ -1447,6 +1570,8 @@ else
   # created.
   _install_doctor
 fi
+
+_phase "refresh"
 
 # Paths this hook is allowed to stage. Enumerated explicitly, and NEVER
 # `.skills/` wholesale: that directory also holds operator config (plans_dir,
@@ -1698,7 +1823,8 @@ PRS_EOF
     # The lease is the tip just read; empty means "must not exist". Never a
     # plain --force: a push landing between the read and here is refused.
     rc=0
-    out="$(git push --force-with-lease="refs/heads/$PR_BRANCH:$tip" "$PR_REMOTE" "$c:refs/heads/$PR_BRANCH" 2>&1)" || rc=$?
+    _skip_hooks_note
+    out="$(_hook_git push --force-with-lease="refs/heads/$PR_BRANCH:$tip" "$PR_REMOTE" "$c:refs/heads/$PR_BRANCH" 2>&1)" || rc=$?
     { echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] push the bump to $PR_BRANCH:"; [ -z "$out" ] || printf '%s\n' "$out"; } >>"$LOG" 2>/dev/null || true
     if [ "$rc" -ne 0 ]; then
       _pr_refused "the push to $PR_BRANCH" "$out"
@@ -1803,6 +1929,7 @@ _pr_refresh() {
 
 if [ "$MERGE_MODE" = "pr" ]; then
   _pr_refresh
+  _phase "pull request"
   _finish_refresh
   exit 0
 fi
@@ -1834,6 +1961,7 @@ fi
 rm -f "$STATUS_ERR"
 
 if [ "$STATUS_RC" -eq 0 ] && [ -n "$STATUS_OUT" ]; then
+  _skip_hooks_note
   {
     echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] commit skills update:"
     # `|| true` is load-bearing in two distinct cases, not just the obvious
@@ -1905,7 +2033,7 @@ if [ "$STATUS_RC" -eq 0 ] && [ -n "$STATUS_OUT" ]; then
         # Then the content goes back to its pointer and the doctor with it:
         # unstaging alone left both ahead, with stderr silent and the day
         # spent.
-        git commit -m "$MSG" -- "${STAGED_PATHS[@]}" 2>&1 || {
+        _hook_git commit -m "$MSG" -- "${STAGED_PATHS[@]}" 2>&1 || {
           echo "commit failed — undoing the bump: unstaging, then the content and the doctor back on the recorded pointer"
           echo "skills update: the commit failed (git's words in $LOG), so this run undoes its bump — the staging, the vendored content and the doctor; anything it cannot put back is said separately. The next day's refresh tries again" >&2 || true
           _unstage "a failed commit" "${COMMIT_PATHS[@]}"
@@ -1914,6 +2042,7 @@ if [ "$STATUS_RC" -eq 0 ] && [ -n "$STATUS_OUT" ]; then
       fi
     fi
   } >>"$LOG" || true
+  _phase "commit"
 fi
 
 # The update-and-commit block has ended: the day is spent here, and not
@@ -1928,6 +2057,7 @@ _finish_refresh
 # `>>"$LOG"` redirect, where the operator would never see it (the failure the
 # log-a-warning alternative was rejected for).
 _reconcile_unpushed
+_phase "push"
 
 exit 0
 }
