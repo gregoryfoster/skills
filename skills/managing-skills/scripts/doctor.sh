@@ -181,7 +181,9 @@ every mode; silent without skills-vendor/ or a ruff config.
 Warns when .skills/refresh-skip-hooks names a hook id that is neither an
 id nor an alias in .pre-commit-config.yaml (#572). pre-commit ignores a
 SKIP id it does not know, so the refresh hook's commit would run that
-hook after all. Advisory in every mode; silent without the knob.
+hook after all, and names a word that is not an id at all (a comma, a
+mid-line #), which leaves the knob unusable. Advisory in every mode;
+silent without the knob.
 
 Re-syncs .skills/doctor.sh from the vendored source under skills-vendor/
 when the two differ, so upstream fixes reach consumers that did not
@@ -649,14 +651,17 @@ check_vendor_lint_exclude
 # looked for among the config's `id:` and `alias:` values (SKIP matches
 # either). A line scan, not a YAML parser, like check_vendor_lint_exclude: a
 # flow-style hook (`- {id: x}`) reads as absent, which costs a wrong warning
-# the operator can see, never a missed one. An unusable knob is the refresh
-# hook's to report, on stderr when it would have used it; not repeated here.
+# the operator can see, never a missed one. A word the hook refuses (a comma,
+# or a `#` after an id) is named as malformed rather than looked up (CR 1816):
+# reported as an undefined id, it sent the operator to rename a comment's
+# words, and the hook itself says so only on a run that commits or pushes.
+# Past a mid-line `#` the rest of the line is the comment the operator meant.
 #
 # Silent without the knob. Advisory in every mode, --check-only included, and
 # never on REG_GAPS: a stale id is wiring, not damage the CI probe gates on.
 check_refresh_skip_hooks() {
   local knob=.skills/refresh-skip-hooks cfg=.pre-commit-config.yaml
-  local line words word known missing=""
+  local line words word known missing="" malformed=""
   [ -f "$knob" ] && [ -r "$knob" ] || return 0
   if [ ! -f "$cfg" ]; then
     echo "doctor: $knob names pre-commit hooks to skip on the refresh hook's" >&2
@@ -680,9 +685,19 @@ check_refresh_skip_hooks() {
     [ "${#words[@]}" -gt 0 ] || continue
     case ${words[0]} in \#*) continue ;; esac
     for word in "${words[@]}"; do
+      case $word in
+        *,*) malformed="$malformed $word"; continue ;;
+        \#*) malformed="$malformed $word"; break ;;
+      esac
       printf '%s\n' "$known" | grep -qxF -- "$word" || missing="$missing $word"
     done
   done <"$knob"
+  if [ -n "$malformed" ]; then
+    echo "doctor: $knob is unusable — not hook ids:$malformed" >&2
+    echo "doctor:   An id holds no comma, and a comment takes its own line. Until" >&2
+    echo "doctor:   it is fixed the refresh hook skips nothing, so its commit runs" >&2
+    echo "doctor:   every pre-commit hook (#572)." >&2
+  fi
   [ -n "$missing" ] || return 0
   echo "doctor: $knob names hook id(s) $cfg does not define:" >&2
   echo "doctor:  $missing" >&2

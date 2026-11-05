@@ -13,7 +13,9 @@ What this file pins:
 - **What counts as defined**: an `id:` or an `alias:` (SKIP matches either), in
   list-item or key form, quoted or not, with a trailing comment.
 - **The knob's grammar**: whole-line comments, blank lines and CRLF, several ids
-  on a line, as the refresh hook reads it.
+  on a line, as the refresh hook reads it. A word the hook refuses (a comma, a
+  mid-line `#`) is named as malformed, not as an undefined id, and the comment
+  after a `#` is not looked up (CR 1816).
 - **A knob with no config to read it** is said.
 - **Silent where it has nothing to say**: no knob, or every id defined.
 - **Advisory in every mode**: the exit code never moves, `--check-only`
@@ -133,3 +135,20 @@ def test_advisory_in_every_mode(consumer, mode):
     result = _doctor(consumer, *mode)
     assert MARKER in result.stderr, result.stderr
     assert result.returncode == baseline
+
+
+@pytest.mark.parametrize(
+    ("text", "named"),
+    [("pytest,ty\n", "pytest,ty"), ("pytest # the slow one\n", "#")],
+    ids=["comma", "trailing-comment"],
+)
+def test_a_word_the_hook_refuses_is_named_as_malformed(consumer, text, named):
+    """CR 1816: reported as an undefined id, `# the slow one` sent the operator
+    to rename `#`, `the`, `slow` and `one`."""
+    _knob(consumer, text)
+    result = _doctor(consumer)
+    assert result.returncode == 0, result.stderr
+    assert f"is unusable — not hook ids: {named}" in result.stderr, result.stderr
+    assert MARKER not in result.stderr, (
+        f"a malformed word was looked up as an id:\n{result.stderr}"
+    )
