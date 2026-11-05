@@ -88,7 +88,5 @@ vendored copy, and its own sync rewrites it.
   CannObserv/observo's root-only re-run of its live guards, goes inside the
   deploy command, as its verify step. The command's exit code is then the
   whole verdict, and the skill trusts no green run that skipped it.
-- **The deprecated `shipping-work-*` variants don't read the knob.** They
-  stay frozen (#537). A repo gets the knob by moving to this skill.
 - **It doesn't generate the release layout.** That is the project's own
   packaging step (CannObserv/broker#22).
