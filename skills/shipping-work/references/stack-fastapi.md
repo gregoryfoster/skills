@@ -27,7 +27,7 @@ A project's `.skills/next-steps`, when present, replaces this table
 | Env var / secret | New config key | Add to the project's env file and restart |
 | Dev-server cleanup | Worktree shutdown | `fuser -k <port>/tcp` for the project's port |
 
-Each row here that runs `systemctl restart` is offered only after `bash
+Each row here that restarts the service is offered only after `bash
 "<run-pre-restart.sh>"` passes or finds no `.skills/pre_restart` (SKILL.md
 Step 8). A unit that applies its schema in `ExecStartPre` doesn't fail on an
 unreachable DB: it loops in start-pre, and applies the schema unwatched when
