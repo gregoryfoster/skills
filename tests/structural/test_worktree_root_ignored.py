@@ -10,10 +10,13 @@ comes first, on canonical paths.
 
 Two traps the tests pin:
 
-* `git check-ignore` matches a dir-only pattern such as `.worktrees/` only
-  when it knows the path is a directory. The root usually does not exist yet
-  on the first create, so asking about `.worktrees` (no slash) reports it NOT
-  ignored: a false refusal of every repo's first worktree.
+* `git check-ignore` matches a dir-only pattern only when it knows the path
+  is a directory, and the worktree's directory does not exist yet on the
+  first create. A rule on a parent (`.worktrees/`) still matches
+  `.worktrees/x`, because a parent is a directory by construction; a rule on
+  the worktree's own level (`.worktrees/*/`) matches only when asked about
+  `.worktrees/x/`, with the slash. Without it, every first worktree under such
+  a rule is falsely refused (CR 1843).
 * Paths are compared canonically. macOS resolves /var to /private/var, and a
   root may be reached through a symlink or a `..`; a raw string compare calls
   such a root "outside" and lets it through.
@@ -148,6 +151,20 @@ class TestRootsThatPass:
         assert r.returncode == 0, r.stderr
         assert Path(r.stdout.strip()) == repo / ".worktrees" / "feature-x"
 
+    def test_a_dir_only_rule_on_the_worktree_level_passes(self, tmp_path: Path):
+        """`.worktrees/*/` matches the worktree's directory only as a directory.
+
+        It does not exist yet, so git knows that only from the trailing slash
+        on the question. A parent rule (`.worktrees/`) cannot pin the slash:
+        it matches `.worktrees/x` with or without one (CR 1843).
+        """
+        r_ = _make_repo(tmp_path.resolve() / "r", ".worktrees/*/\n")
+        assert not (r_ / ".worktrees").exists()
+        r = _run(CREATE, "--new", "feature/x", cwd=r_)
+        assert r.returncode == 0, r.stderr
+        assert Path(r.stdout.strip()) == r_ / ".worktrees" / "feature-x"
+        assert _git(r_, "status", "--porcelain").stdout == ""
+
     def test_a_root_under_an_ignored_parent_passes(self, tmp_path: Path):
         r_ = _make_repo(tmp_path.resolve() / "r", "build/\n")
         r = _run(
@@ -206,6 +223,20 @@ class TestCanonicalPaths:
         root = f"{repo}/missing/../wt"
         r = _run(CREATE, "--new", "feature/x", cwd=repo, WORKTREE_ROOT=root)
         _assert_refused(r, repo)
+
+    def test_a_dotdot_root_out_of_the_repo_through_a_missing_directory(
+        self, repo: Path, tmp_path: Path
+    ):
+        """`missing/../../outside` leaves the repo: applied lexically, it passes.
+
+        Taken literally, the `..` keeps the path under the repo's prefix and
+        check-ignore is asked about it (exit 128). The test above cannot tell
+        the two apart, since there git normalises the `..` itself (CR 1843).
+        """
+        root = f"{repo}/missing/../../outside"
+        r = _run(CREATE, "--new", "feature/x", cwd=repo, WORKTREE_ROOT=root)
+        assert r.returncode == 0, r.stderr
+        assert (tmp_path.resolve() / "outside" / "feature-x").is_dir()
 
     def test_a_dotdot_root_into_an_ignored_directory_passes(self, repo: Path):
         root = f"{repo}/src/../.worktrees"

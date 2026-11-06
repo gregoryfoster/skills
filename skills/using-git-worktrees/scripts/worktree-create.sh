@@ -174,9 +174,12 @@ WORKTREE_PATH="$ROOT/$SLUG"
 #   * Inside-ness first. `git check-ignore` exits non-zero for ANY path it does
 #     not match, one outside the repo included (exit 128), so a root outside
 #     every work tree passes without asking it.
-#   * The trailing slash. A dir-only pattern such as `.worktrees/` matches only
-#     a path git knows is a directory, and on the first create nothing there
-#     exists yet: asked about `.worktrees/x`, git says not ignored.
+#   * The trailing slash. A dir-only pattern matches only a path git knows is
+#     a directory, and on the first create nothing there exists yet. A rule
+#     on a parent (`.worktrees/`) matches `.worktrees/x` either way, since a
+#     parent is a directory by construction; a rule on the worktree's own
+#     level (`.worktrees/*/`) matches `.worktrees/x` only when asked with the
+#     slash.
 #   * Canonical paths on both sides (canonical_path, above), and containment by
 #     inode, not by string (rel_in, below).
 # check-ignore failing (exit 128) is a refusal too: an unanswered question is
