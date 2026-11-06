@@ -83,16 +83,19 @@ refusal.
   sidebar links included, and must be exactly the `Closes` issues. To drop
   one still listed, remove it in the PR's Development sidebar; the
   post-merge pass reopens it if the merge closed it anyway.
-- **With `.skills/deploy_command` set**, an issue whose requirement concerns
-  what production runs gets `Refs #<n>`, not `Closes #<n>`. The merge would
-  close it before the deploy ran, which the HARD-GATE's item 4 forbids. The
-  post-merge pass closes it once the deploy exits 0.
+- **With `.skills/deploy_command` or `.skills/pre_restart` set**, an issue
+  whose requirement concerns what production runs gets `Refs #<n>`, not
+  `Closes #<n>`. The merge would close it before the deploy or the check
+  ran, which the HARD-GATE forbids. The post-merge pass closes it once the
+  deploy exits 0, or, without one, once the check passes (the restart
+  itself stays the user's).
 - **Step 5.** Each issue comment links the PR (`PR #<m>: <url>`) beside the
   usual bullets, above the `Follow-up:`, `Known limits:` and `For #N:`
   sections.
 - **Step 6.** Close nothing. The merge closes the `Closes` issues.
 - **Step 7.** The Status column reads `PR #<m> open, awaiting review`. A
-  `Refs` issue reads `PR #<m> open; closes after the deploy`.
+  `Refs` issue reads `PR #<m> open; closes after the deploy` (or `after
+  the check`).
 - **Step 8** waits for the post-merge pass. Say so in the report.
 
 ## The post-merge pass
@@ -106,22 +109,21 @@ Started by "ship it" once `gh pr view` shows `MERGED`:
 2. **Step 8 runs there.** Without `.skills/deploy_command`, a checkout that is
    a unit's `WorkingDirectory=` became production at the pull, so the next
    steps table follows it, and a restart row waits on `.skills/pre_restart`
-   as Step 8 says; a refusal also means reporting each `Closes` issue whose
-   "Done when" is about production as unverified there, since the merge
-   closed it. With the knob, Step 8's `--check` and offer run
-   from there, and `bash "<run-deploy-command.sh>"` deploys. In `pr` mode it
-   refuses (exit 2) unless HEAD is the default branch and equals its
-   upstream. The deploy runs the merge commit, or a later one on the
-   default branch, never the branch tip.
+   as Step 8 says; a refusal closes no `Refs` issue. With
+   `.skills/deploy_command`, Step 8's `--check` and offer run from there,
+   and `bash "<run-deploy-command.sh>"` deploys. In `pr` mode it refuses
+   (exit 2) unless HEAD is the default branch and equals its upstream. The
+   deploy runs the merge commit, or a later one on the default branch,
+   never the branch tip.
 3. **Close the held issues.** Close each `Refs` issue only after the deploy
-   exited 0, under the HARD-GATE. For each `Closes` issue, check that the merge
-   closed it (`gh issue view <n> --json state`); a PR merged into any other
-   base closes nothing. Then check that it closed nothing else. A link
-   dropped in the Development sidebar is gone from
-   `closingIssuesReferences`, yet the merge can close its issue, so take
-   the candidates from the issues closed in the five minutes after
-   `mergedAt` (`gh pr view <m> --json mergedAt`), both ends in its ISO 8601
-   form, such as `2026-08-07T16:16:07Z..2026-08-07T16:21:07Z`:
+   exited 0, or, without one, the check passed, under the HARD-GATE. For
+   each `Closes` issue, check that the merge closed it (`gh issue view <n>
+   --json state`); a PR merged into any other base closes nothing. Then
+   check that it closed nothing else. A link dropped in the Development
+   sidebar is gone from `closingIssuesReferences`, yet the merge can close
+   its issue, so take the candidates from the issues closed in the five
+   minutes after `mergedAt` (`gh pr view <m> --json mergedAt`), both ends
+   in its ISO 8601 form, such as `2026-08-07T16:16:07Z..2026-08-07T16:21:07Z`:
 
    ```bash
    gh issue list --state closed --limit 100 --json number --search "closed:<mergedAt>..<mergedAt+5m>"

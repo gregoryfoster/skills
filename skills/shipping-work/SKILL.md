@@ -170,7 +170,7 @@ Before closing any issue, verify the original requirements against what was impl
 bash "<close-issue.sh>" <number>
 ```
 
-**`pr` mode:** close nothing: the merge closes each `Closes #<n>` issue. With `.skills/deploy_command`, a production requirement gets `Refs #<n>` instead, closed by the post-merge pass once the deploy exits 0.
+**`pr` mode:** close nothing: the merge closes each `Closes #<n>` issue. With `.skills/deploy_command` or `.skills/pre_restart`, a production requirement gets `Refs #<n>` instead, closed by the post-merge pass once the deploy, or else the check, exits 0.
 
 ### Step 7 — Report
 

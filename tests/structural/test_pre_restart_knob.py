@@ -328,3 +328,32 @@ def test_the_post_merge_pass_runs_the_check():
     text = (SKILL / "references" / "pr-mode.md").read_text()
     post = text[text.index("## The post-merge pass") :]
     assert ".skills/pre_restart" in post
+
+
+# --- pr mode: the merge closes before the check runs (CR 1855) ----------------------
+
+
+def test_pr_mode_holds_a_production_issue_on_refs_when_the_check_is_set():
+    """The merge closes each `Closes` issue before the post-merge pass runs
+    the check, so "close no production issue on a refusal" needs `Refs`, as
+    `deploy_command` already had."""
+    text = (SKILL / "references" / "pr-mode.md").read_text()
+    pr_pass = text[text.index("## The PR pass") : text.index("## The post-merge pass")]
+    bullet = next(b for b in pr_pass.split("\n- ") if "gets `Refs #<n>`" in b)
+    assert "`.skills/pre_restart`" in bullet, bullet
+    post = text[text.index("## The post-merge pass") :]
+    step3 = post.split("\n3. ", 1)[1].split("\n4. ", 1)[0]
+    assert re.search(
+        r"`Refs` issue only after the deploy\s+exited 0, or, without one, the check passed",
+        step3,
+    ), step3
+    step2 = post.split("\n2. ", 1)[1].split("\n3. ", 1)[0]
+    assert "With the knob" not in step2, step2
+    assert re.search(r"With\s+`\.skills/deploy_command`, Step 8's `--check`", step2), (
+        step2
+    )
+    step6 = _section(SKILL_MD, "### Step 6")
+    line = next(p for p in step6.split("\n\n") if p.startswith("**`pr` mode:**"))
+    assert re.search(
+        r"`\.skills/pre_restart`, a production requirement gets `Refs", line
+    ), line
