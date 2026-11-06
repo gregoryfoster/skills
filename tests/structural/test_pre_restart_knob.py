@@ -32,7 +32,8 @@ SCRIPT = SKILL / "scripts" / "run-pre-restart.sh"
 
 # Records each argument, the cwd and whether stdin is empty, then exits with
 # $STUB_EXIT, printing a line to each stream on the way. The stderr line is
-# power-map's own refusal, in shape.
+# power-map's own refusal, in shape. $STUB_SIGNAL kills it with that signal
+# instead.
 STUB = """\
 #!/usr/bin/env bash
 out="${STUB_RECORD:?}"
@@ -42,6 +43,7 @@ printf 'cwd=%s\\n' "$(pwd -P)" >>"$out"
 printf 'stdin=%s\\n' "$(cat)" >>"$out"
 echo "stub stdout: probing the DSN ExecStartPre uses"
 echo "stub stderr: DB unreachable within 5 s; refusing the restart" >&2
+[ -z "${STUB_SIGNAL:-}" ] || kill -"$STUB_SIGNAL" $$
 exit "${STUB_EXIT:-0}"
 """
 
@@ -120,6 +122,23 @@ class TestARefusingCheckOffersNoRestart:
         assert re.search(rf"\bexited {code}\b", result.stdout), result.stdout
         assert "stub stdout: probing the DSN" in result.stdout
         assert "DB unreachable within 5 s; refusing the restart" in result.stderr
+        assert re.search(r"no restart row", result.stderr), result.stderr
+
+    @pytest.mark.parametrize(
+        ("env", "code"),
+        [({"STUB_EXIT": "2"}, "2"), ({"STUB_SIGNAL": "TERM"}, "143")],
+        ids=["exit-2", "sigterm"],
+    )
+    def test_a_check_that_exits_2_or_dies_by_a_signal_is_still_exit_1(
+        self, repo, tmp_path, env, code
+    ):
+        """CR 1857: the check's own 2, or a signal's 128+n, is a refusal. It
+        never passes through as this script's 2 ("nothing ran") or 3 ("no
+        knob"), either of which would read as no check having run."""
+        _knob(repo, "scripts/pre-restart-check.sh\n")
+        result = _run(repo, record=tmp_path / "record", **env)
+        assert result.returncode == 1, result.stdout + result.stderr
+        assert re.search(rf"\bexited {code}\b", result.stdout), result.stdout
         assert re.search(r"no restart row", result.stderr), result.stderr
 
 
