@@ -473,6 +473,29 @@ class TestNpmManifests:
         assert "plugins/broken/package.json failed to parse" in result.stderr
         assert _cwd_calls(repo, "npm") == []
 
+    def test_a_gitignored_plugins_manifest_is_not_run(self, repo):
+        """CR 1844, the reviewer's reproduction: composer installs a plugin
+        into a gitignored plugins/<vendor>/, whose package.json declares
+        lint:js. Run, it failed the gate (`wp-scripts: command not found`).
+        Only tracked nested manifests run, and detect-stack.sh agrees."""
+        (repo / ".gitignore").write_text("/plugins/third-party/\n")
+        _manifest(repo, "themes/sage/package.json", {"test:js": "jest"})
+        _manifest(repo, "plugins/third-party/package.json", {"lint:js": "wp-scripts"})
+        _commit(repo)
+        result = _npm_gate(repo)
+        assert result.returncode == 0, result.stderr
+        assert _cwd_calls(repo, "npm") == [("themes/sage", ["run", "test:js"])]
+        assert "plugins/third-party" not in result.stdout
+
+    def test_only_a_gitignored_manifest_is_nothing_detected(self, repo):
+        (repo / ".gitignore").write_text("/plugins/third-party/\n")
+        _manifest(repo, "plugins/third-party/package.json", {"lint:js": "wp-scripts"})
+        _commit(repo)
+        result = _npm_gate(repo)
+        assert result.returncode == 1
+        assert "no toolchain detected" in result.stderr
+        assert _cwd_calls(repo, "npm") == []
+
     def test_a_nested_trigger_keys_the_npm_tools(self, repo):
         """The stamp key carries node's and npm's versions for a nested
         manifest exactly as for a root one."""
