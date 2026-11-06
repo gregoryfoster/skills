@@ -63,7 +63,7 @@ def _run_git(repo: Path, *args: str, check: bool = True) -> subprocess.Completed
 
 
 def _run_destroy(
-    repo: Path, *args: str, cwd: Path | None = None
+    repo: Path, *args: str, cwd: Path | None = None, extra_env: dict | None = None
 ) -> subprocess.CompletedProcess:
     """Run worktree-destroy.sh with cwd=repo so it picks up the right project root.
 
@@ -72,6 +72,7 @@ def _run_destroy(
     """
     env = _clean_env()
     env["WORKTREE_ROOT"] = str(repo / ".worktrees")
+    env.update(extra_env or {})
     return subprocess.run(
         ["bash", str(SCRIPT), *args],
         capture_output=True,
@@ -528,6 +529,43 @@ class TestDefaultBranchFromPrimaryCheckout:
             f"stdout: {result.stdout}\nstderr: {result.stderr}"
         )
         assert "'trunk'" in result.stderr, result.stderr
+
+    def test_a_primary_git_cannot_open_is_exit_2_not_the_current_checkout(
+        self, knob_repo: Path
+    ):
+        """CR 1858: a failed ask about the primary is never a fallback.
+
+        git refuses the primary alone ("dubious ownership"; the linked
+        worktree is declared safe). Falling back to the current checkout
+        reads no knob there, so the base became main and the verdict an
+        Iron Law exit 1 about a base the project never named.
+        """
+        orch = knob_repo / ".worktrees" / "orchestrate-t"
+        result = _run_destroy(
+            knob_repo,
+            "feature/y",
+            "--dry-run",
+            cwd=orch,
+            extra_env=_only_the_primary_is_dubious(orch),
+        )
+        assert result.returncode == 2, (
+            f"expected exit 2, got {result.returncode}\n"
+            f"stdout: {result.stdout}\nstderr: {result.stderr}"
+        )
+        assert "dubious ownership" in result.stderr, "git's reason is let through"
+        assert f"'{knob_repo.resolve()}'" in result.stderr, (
+            f"the error names the primary's path: {result.stderr}"
+        )
+
+
+def _only_the_primary_is_dubious(linked: Path) -> dict:
+    """git treats every repo as foreign except the one linked worktree."""
+    return {
+        "GIT_TEST_ASSUME_DIFFERENT_OWNER": "1",
+        "GIT_CONFIG_COUNT": "1",
+        "GIT_CONFIG_KEY_0": "safe.directory",
+        "GIT_CONFIG_VALUE_0": str(linked.resolve()),
+    }
 
 
 # --- CR 1839: the first `git worktree list` entry is not always a work tree --
