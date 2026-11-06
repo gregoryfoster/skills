@@ -640,13 +640,20 @@ UV_VALUE_OPTIONS = frozenset(
         "--allow-insecure-host",
     }
 )
-# A variable that holds uv: `UV=uv`, `UV=/path/to/uv`, `UV=$(command -v uv)`,
-# optionally declared `local`, `readonly` and the like.
+# A variable that holds uv: `UV=uv`, `UV=/path/to/uv`, `UV=$(command -v uv)`
+# with or without a redirection after it, `UV=${UV:-uv}`, optionally declared
+# `local`, `readonly` and the like. An unquoted value ends where bash ends a
+# word, so `UV=uv;` and `then UV=uv; fi` hold `uv` (CR 1869).
 UV_VAR_ASSIGNMENT = re.compile(
     r"(?:^|[\s;&|(])(?:(?:local|declare|typeset|readonly|export)\s+(?:-\w+\s+)*)?"
-    r"([A-Za-z_]\w*)=(\"[^\"]*\"|'[^']*'|\$\([^)]*\)|\S+)"
+    r"([A-Za-z_]\w*)=(\"[^\"]*\"|'[^']*'|\$\([^)]*\)|[^\s;&|()<>`]+)"
 )
-UV_VALUE = re.compile(r"(?:\S*/)?uv|\$\((?:command\s+-v|which|type\s+-P)\s+uv\)")
+# `command -v uv`, `which uv` or `type -P uv` in a substitution, anything
+# after the name inside it (`2>/dev/null`) allowed, never `uvx`.
+UV_LOOKUP = r"\$\(\s*(?:command\s+-v|which|type\s+-P)\s+uv(?:\s[^)]*)?\)"
+UV_VALUE = re.compile(rf"(?:\S*/)?uv|{UV_LOOKUP}|\$\{{[A-Za-z_]\w*:?[-=](?:\S*/)?uv\}}")
+# The lookup itself as the command word: `"$(command -v uv)" run x`.
+UV_LOOKUP_WORD = re.compile(rf"(\"?){UV_LOOKUP}\1(?=[\s;&|()<>`]|$)")
 VAR_WORD = re.compile(r"\$(?:([A-Za-z_]\w*)|\{([A-Za-z_]\w*)\})")
 WORD_END = " \t;&|()<>`"
 
@@ -689,14 +696,19 @@ def _uv_vars(text: str) -> set[str]:
 def _uv_run_at(line: str, j: int, uv_vars: set[str]) -> int | None:
     """Where `uv … run` ends, when one starts at `j`: `uv` bare, quoted, by
     path or through a variable holding it, then global options (consuming the
-    values of UV_VALUE_OPTIONS), then `run`."""
-    first = _word(line, j)
-    if first is None:
-        return None
-    raw, value, j = first
-    var = VAR_WORD.fullmatch(raw.strip('"'))
-    if not (value == "uv" or (var and (var.group(1) or var.group(2)) in uv_vars)):
-        return None
+    values of UV_VALUE_OPTIONS), then `run`. `uv` may also be `\\uv` or a
+    lookup that prints its path, `$(command -v uv)`."""
+    lookup = UV_LOOKUP_WORD.match(line, j)
+    if lookup:
+        j = lookup.end()
+    else:
+        first = _word(line, j)
+        if first is None:
+            return None
+        raw, value, j = first
+        var = VAR_WORD.fullmatch(raw.strip('"'))
+        if not (value == "uv" or (var and (var.group(1) or var.group(2)) in uv_vars)):
+            return None
     takes_value = False
     while True:
         while j < len(line) and line[j] in " \t":
@@ -747,15 +759,32 @@ def _code_uv_runs(
                     stack.pop()
                 j += 1
                 continue
-            if c == "\\":
-                if j == len(line) - 1 and i + extra + 1 < len(lines):
-                    # A continuation: join, and scan the whole line again.
-                    extra += 1
-                    line = line[:j] + lines[i + extra]
-                    stack, heredoc = list(saved[0]), list(saved[2])
-                    del found[saved[1] :]
-                    j = 0
+            if c == "\\" and j == len(line) - 1 and i + extra + 1 < len(lines):
+                # A continuation: join, and scan the whole line again.
+                extra += 1
+                line = line[:j] + lines[i + extra]
+                stack, heredoc = list(saved[0]), list(saved[2])
+                del found[saved[1] :]
+                j = 0
+                continue
+            # Outside "…", a word starts here: bash would run it. Checked
+            # before `\` and `$(` are stepped over, so `\uv run` and
+            # `$(command -v uv) run` are seen (CR 1869). A `#` is no word.
+            if (
+                top != "dq"
+                and c != "#"
+                and (j == 0 or not (line[j - 1].isalnum() or line[j - 1] in "_-"))
+            ):
+                if pattern is None:
+                    end = _uv_run_at(line, j, uv_vars)
+                else:
+                    m = pattern.match(line, j)
+                    end = m.end() if m else None
+                if end is not None:
+                    found.append((i + 1, line[end:]))
+                    j = end
                     continue
+            if c == "\\":
                 j += 2
                 continue
             if line.startswith("$(", j):
@@ -770,16 +799,6 @@ def _code_uv_runs(
             # code, sub or paren: bash would run what is here.
             if c == "#" and (j == 0 or line[j - 1] in " \t;&|("):
                 break
-            if j == 0 or not (line[j - 1].isalnum() or line[j - 1] in "_-"):
-                if pattern is None:
-                    end = _uv_run_at(line, j, uv_vars)
-                else:
-                    m = pattern.match(line, j)
-                    end = m.end() if m else None
-                if end is not None:
-                    found.append((i + 1, line[end:]))
-                    j = end
-                    continue
             if line.startswith("$'", j):
                 stack.append("ansi")
                 j += 2
@@ -854,7 +873,29 @@ def _carries_no_project(rest: str) -> bool:
         ('UV=uv\n"$UV" run pytest\n', [2]),
         ("UV=$(command -v uv)\n${UV} -q run pytest\n", [2]),
         ('local uv_bin="/opt/uv"\n"${uv_bin}" run x\n', [2]),
+        # CR 1869: an assignment a `;` ends, one inside `then … fi`, a lookup
+        # with a redirection (patching-hosts' probe.sh idiom), a default
+        # expansion, the lookup as the command word, and an escaped uv.
+        ('UV=uv; "$UV" run x\n', [1]),
+        ('if true; then UV=uv; fi\n"$UV" run x\n', [2]),
+        ('UV=$(command -v uv 2>/dev/null)\n"$UV" run x\n', [2]),
+        (
+            '[ -n "$uvb" ] || uvb=$(command -v uv 2>/dev/null) || uvb=""\n'
+            '"$uvb" run x\n',
+            [2],
+        ),
+        ('UV=${UV:-uv}\n"$UV" run x\n', [2]),
+        ("UV=${UV:=/opt/bin/uv}\n$UV -q run x\n", [2]),
+        ('"$(command -v uv)" run x\n', [1]),
+        ("$(command -v uv 2>/dev/null) run x\n", [1]),
+        ('x=1; "$(which uv)" --quiet run x\n', [1]),
+        ("\\uv run x\n", [1]),
+        ("foo && \\uv run x\n", [1]),
         # ... and these do not.
+        ('UV=${UV:-uvx}\n"$UV" run x\n', []),
+        ('"$(command -v uvx)" run x\n', []),
+        ('UV=uv;\n"$OTHER" run x\n', []),
+        ('echo "$(command -v uv) run x"\n', []),
         ("uv --directory run sync\n", []),
         ("uv tool run ruff\n", []),
         ("uv sync --frozen\n", []),
