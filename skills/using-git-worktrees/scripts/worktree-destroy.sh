@@ -34,6 +34,8 @@ usage() {
   echo "Merge verification:"
   echo "  Refuses if the branch is not an ancestor of the base ref."
   echo "  Default base resolution: .skills/default_branch -> origin's HEAD -> 'main'."
+  echo "  The knob is read from the primary checkout, as merge_mode is, so an"
+  echo "  untracked one works when this runs from inside a linked worktree."
   echo "  Prefers origin/<base> over local <base> (authoritative remote state)."
   echo ""
   echo "  --base <ref> overrides the default resolution and verifies merge into"
@@ -361,7 +363,7 @@ pr_merge_evidence() {
 #     — the caller is being explicit, possibly targeting a local-only branch
 #     like 'batch/<x>' from a multi-agent orchestration).
 #   - Otherwise resolve the project default:
-#     1. .skills/default_branch (single-line file)
+#     1. .skills/default_branch (single-line file, in the primary checkout)
 #     2. git symbolic-ref refs/remotes/origin/HEAD (whatever origin's HEAD points to)
 #     3. "main" fallback
 #     Then prefer origin/<base> over local <base> for authoritative remote state.
@@ -405,9 +407,21 @@ if [[ $DESCOPED -eq 0 ]]; then
       exit 2
     fi
   else
+    # The knob is read from the PRIMARY checkout (the first `git worktree
+    # list` entry), as merge-mode.sh reads .skills/merge_mode (#559). It is
+    # untracked, so it does not exist in a linked worktree: an orchestrator
+    # destroying from its own orchestrate/<topic> worktree read nothing here
+    # and checked the merge against origin/HEAD or main instead. PROJECT_ROOT
+    # stays the current checkout, which the self-destruction guard needs.
+    WT_LIST=$(git worktree list --porcelain) || {
+      echo "ERROR: failed to enumerate worktrees (git worktree list --porcelain)" >&2
+      exit 2
+    }
+    PRIMARY=${WT_LIST%%$'\n'*}
+    PRIMARY=${PRIMARY#worktree }
     BASE=""
-    if [[ -f "$PROJECT_ROOT/.skills/default_branch" ]]; then
-      BASE=$(head -n1 "$PROJECT_ROOT/.skills/default_branch" | tr -d '[:space:]')
+    if [[ -f "$PRIMARY/.skills/default_branch" ]]; then
+      BASE=$(head -n1 "$PRIMARY/.skills/default_branch" | tr -d '[:space:]')
     fi
     if [[ -z "$BASE" ]]; then
       BASE=$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's@^origin/@@' || true)
@@ -426,7 +440,7 @@ if [[ $DESCOPED -eq 0 ]]; then
 
     if [[ -z "$BASE_REF" ]]; then
       echo "ERROR: could not resolve base branch '$BASE' (neither origin/$BASE nor local $BASE exists)" >&2
-      echo "Set .skills/default_branch to your project's base branch name, pass --base <ref>, or pass --descoped <reason>." >&2
+      echo "Set .skills/default_branch in the primary checkout ($PRIMARY) to your project's base branch name, pass --base <ref>, or pass --descoped <reason>." >&2
       exit 2
     fi
   fi

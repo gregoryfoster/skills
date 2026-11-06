@@ -13,11 +13,16 @@ if [[ "${1:-}" == "--help" ]]; then
   echo ""
   echo "Resolution order (first match wins):"
   echo "  1. WORKTREE_ROOT env var"
-  echo "  2. .skills/worktree_root file under the repo root (single-line path)"
+  echo "  2. .skills/worktree_root file under the repo root (single-line path;"
+  echo "     a relative one resolves against <repo-root>)"
   echo "  3. <repo-root>/.worktrees/ (fallback)"
   echo ""
   echo "<repo-root> is the PRIMARY checkout, not whichever worktree you are"
   echo "standing in — so worktrees created from inside a worktree are siblings."
+  echo ""
+  echo "A relative WORKTREE_ROOT is printed as given: it resolves against the"
+  echo "directory of whoever reads it (worktree-create.sh and"
+  echo "worktree-destroy.sh read it from the current checkout's top level)."
   echo ""
   echo "Exit codes:"
   echo "  0  Resolution succeeded"
@@ -85,6 +90,16 @@ if [[ -f "$CONFIG_FILE" ]]; then
   # comments — that case must fall through to the default, not crash.
   CONFIGURED=$(grep -v '^[[:space:]]*#' "$CONFIG_FILE" | grep -v '^[[:space:]]*$' | head -n1 | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' || true)
   if [[ -n "$CONFIGURED" ]]; then
+    # A relative path is the PRIMARY checkout's (#562, #567). Echoed as given,
+    # it resolved against the caller's directory: from a subdirectory it named
+    # a path under that subdirectory, and worktree-create.sh, which reads it
+    # from the current checkout's top level, nested every worktree created
+    # from a linked worktree inside that worktree. The knob lives in the
+    # primary checkout, so that is the only directory it can mean.
+    case $CONFIGURED in
+      /*) ;;
+      *) CONFIGURED="$PROJECT_ROOT/${CONFIGURED#./}" ;;
+    esac
     echo "$CONFIGURED"
     exit 0
   fi

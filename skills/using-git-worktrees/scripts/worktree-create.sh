@@ -28,10 +28,24 @@ usage() {
   echo ""
   echo "Iron Law: refuses if <branch> is already checked out in another worktree."
   echo ""
+  echo "Refuses a root git would commit (#567): one inside the primary checkout"
+  echo "or the current one that git does not ignore there. A worktree inside a"
+  echo "tracked directory is one 'git add -A' away from being committed as an"
+  echo "embedded repository. Add the root to that checkout's .gitignore (the"
+  echo "default root wants '.worktrees/') and commit it, or move the root out of"
+  echo "the repo. A root outside every work tree needs no rule and passes. Paths"
+  echo "are compared after resolving symlinks and '..', so an alias of the repo"
+  echo "is inside it. git is asked about the new worktree's own directory, so a"
+  echo "'.worktrees/*' rule passes too. A relative WORKTREE_ROOT is taken from"
+  echo "the current checkout's top level (a relative .skills/worktree_root, from"
+  echo "the primary checkout's), so the printed path is always absolute."
+  echo ""
   echo "Exit codes:"
   echo "  0  Worktree created; absolute path printed on stdout"
   echo "  1  Iron Law violation (branch already checked out elsewhere)"
-  echo "  2  Tooling/infra failure (not a git repo, missing arg, git worktree add failed)"
+  echo "  2  Tooling/infra failure (not a git repo, missing arg, git worktree add"
+  echo "     failed), or the root is inside a work tree that does not ignore it"
+  echo "     (git check-ignore), which creates nothing"
 }
 
 # One line, not the whole block. An argument error used to print the full usage
@@ -108,8 +122,104 @@ ROOT=$(bash "$SCRIPT_DIR/resolve-worktree-root.sh") || {
   exit 2
 }
 
+# The physical absolute path of $1, which need not exist yet: its deepest
+# existing ancestor is resolved by `cd -P`/`pwd -P`, and the rest is applied
+# lexically. That is exact, since a component that does not exist cannot be a
+# symlink, and it is what `mkdir -p` will create. A raw string compare is not
+# enough: macOS spells /var as /private/var, and an alias or a `..` reaches
+# into the repo under a prefix that does not match it.
+canonical_path() {
+  local p=$1 rest="" head comp
+  case $p in /*) ;; *) p="$PWD/$p" ;; esac
+  while [[ ! -d "$p" ]]; do
+    rest="$(basename -- "$p")${rest:+/$rest}"
+    p=$(dirname -- "$p")
+  done
+  head=$(cd -P -- "$p" && pwd -P) || return 1
+  while [[ -n "$rest" ]]; do
+    comp=${rest%%/*}
+    if [[ "$rest" == */* ]]; then rest=${rest#*/}; else rest=""; fi
+    case $comp in
+      "" | .) ;;
+      ..) head=$(dirname -- "$head") ;;
+      *) head="${head%/}/$comp" ;;
+    esac
+  done
+  printf '%s\n' "$head"
+}
+
+# A relative root (a relative WORKTREE_ROOT; a relative .skills/worktree_root
+# is already the primary checkout's) means the current checkout's top level,
+# where this script now stands. Absolutized here, because stdout promises an
+# absolute path: `wt/feature-x` printed to a caller in a subdirectory names a
+# directory that does not exist.
+case $ROOT in /*) ;; *) ROOT="$PWD/${ROOT#./}" ;; esac
 SLUG="${BRANCH//\//-}"
 WORKTREE_PATH="$ROOT/$SLUG"
+
+# Refuse a root git would commit (#567). A worktree inside a directory git
+# does not ignore is one `git add -A` away from being committed: git adds the
+# nested checkout as an embedded repository (a gitlink), with only a warning.
+# The default `<repo>/.worktrees/` is no exception: it is safe only where the
+# repo ignores it.
+#
+# Two checkouts can commit it: the primary (the first `git worktree list`
+# entry, merge-mode.sh's idiom), where the root normally lives, and the
+# current one, which is a different tree when this runs from a linked
+# worktree. Each that contains the root must ignore the new worktree's
+# directory, by its own rules. The directory, not the root: `.worktrees/*`
+# ignores every worktree in the root and not the root itself.
+#
+# Three traps:
+#   * Inside-ness first. `git check-ignore` exits non-zero for ANY path it does
+#     not match, one outside the repo included (exit 128), so a root outside
+#     every work tree passes without asking it.
+#   * The trailing slash. A dir-only pattern such as `.worktrees/` matches only
+#     a path git knows is a directory, and on the first create nothing there
+#     exists yet: asked about `.worktrees/x`, git says not ignored.
+#   * Canonical paths on both sides (canonical_path, above).
+# check-ignore failing (exit 128) is a refusal too: an unanswered question is
+# not "ignored". A root that IS the work tree is refused without asking.
+ROOT_CANON=$(canonical_path "$ROOT") || {
+  echo "ERROR: could not resolve the worktree root '$ROOT'" >&2
+  exit 2
+}
+WT_LIST=$(git worktree list --porcelain) || {
+  echo "ERROR: failed to enumerate worktrees (git worktree list --porcelain)" >&2
+  exit 2
+}
+PRIMARY=${WT_LIST%%$'\n'*}
+PRIMARY=${PRIMARY#worktree }
+CHECKED=""
+for TREE in "$PRIMARY" "$PROJECT_ROOT"; do
+  TREE=$(cd -P -- "$TREE" 2>/dev/null && pwd -P) || continue
+  [[ "$TREE" != "$CHECKED" ]] || continue
+  CHECKED=$TREE
+  case $ROOT_CANON in
+    "$TREE") REL="" ;;
+    "$TREE"/*) REL=${ROOT_CANON#"$TREE"/} ;;
+    *) continue ;;
+  esac
+  IGNORE_RC=1
+  if [[ -n "$REL" ]]; then
+    IGNORE_RC=0
+    git -C "$TREE" check-ignore -q -- "$REL/$SLUG/" || IGNORE_RC=$?
+  fi
+  [[ $IGNORE_RC -ne 0 ]] || continue
+  if [[ -z "$REL" ]]; then
+    echo "ERROR: the worktree root '$ROOT' is the work tree $TREE itself: every worktree would sit in the repo" >&2
+    echo "Set WORKTREE_ROOT or .skills/worktree_root to a directory git ignores, or to a path outside the repo. Unset, the root is '.worktrees/', which .gitignore must carry." >&2
+  else
+    if [[ $IGNORE_RC -eq 1 ]]; then
+      echo "ERROR: the worktree root '$ROOT' is inside $TREE, and git does not ignore it there: a worktree in it is one 'git add -A' away from being committed" >&2
+    else
+      echo "ERROR: git check-ignore failed (exit $IGNORE_RC; git's reason is above), so whether $TREE ignores the worktree root '$ROOT' is unknown" >&2
+    fi
+    echo "Add '$REL/' to $TREE/.gitignore and commit it, or set WORKTREE_ROOT or .skills/worktree_root to a path outside the repo." >&2
+  fi
+  exit 2
+done
+
 
 # Iron Law check: refuse if the branch is already checked out elsewhere.
 # `git worktree list --porcelain` emits a `branch refs/heads/<name>` line per worktree.
