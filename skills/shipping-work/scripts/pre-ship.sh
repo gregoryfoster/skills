@@ -37,7 +37,7 @@ usage() {
   echo "            check (.skills/import-targets, else the [project] name) ;"
   echo "            uv run pytest, integration-marked tests deselected on top of"
   echo "            the project's own marker expression, --no-cov when pytest-cov"
-  echo "            is installed, -n N --dist loadfile when xdist is"
+  echo "            is installed, -n N --dist MODE when xdist is"
   echo "  composer  composer validate ; php -l on tracked PHP files ; composer test"
   echo "  npm       npm run lint:js / format:js:check / test:js, when declared,"
   echo "            in each package.json's directory: the root, themes/*/, plugins/*/"
@@ -51,6 +51,9 @@ usage() {
   echo "                             separated, '#'-comment lines ignored"
   echo "  .skills/import-targets     packages the import check imports"
   echo "  .skills/test-workers       off | auto | N  (or PYTEST_XDIST_AUTO_NUM_WORKERS)"
+  echo "  .skills/test-dist          the --dist MODE: loadfile (default) | load |"
+  echo "                             loadscope | loadgroup | worksteal (or"
+  echo "                             PYTEST_XDIST_DIST); not in the stamp key"
   echo "  PRE_SHIP_PHP_LINT_JOBS     parallel php -l jobs (default: the worker count)"
   echo "  PRE_SHIP_ENV_NAMES         names a wrapper's env files set; they join the"
   echo "                             stamp key, and an empty list writes no stamp"
@@ -327,6 +330,8 @@ fi
 # stacks and their tools' versions, PATH without git's exec-path (git puts it
 # first in every hook), the env names a wrapper loaded, and gate-stamp.sh's
 # untracked inputs. Under a pre-commit hook it keys the tree being committed.
+# Not the worker count or the --dist mode: a committed .skills/test-workers or
+# test-dist is in the tree, and their env overrides are not keyed (#563).
 STAMP="$SCRIPT_DIR/gate-stamp.sh"
 STAMP_OK=1
 if [[ ! -f "$STAMP" ]]; then
@@ -519,7 +524,10 @@ PY
   fi
   if [[ "$N" -ge 2 ]]; then
     if uv_run python -c "import xdist" >/dev/null 2>&1; then
-      PYTEST_ARGS+=(-n "$N" --dist loadfile)
+      # .skills/test-dist, else loadfile (#563). PYTEST_ADDOPTS cannot reach
+      # this: pytest puts it ahead of the command line, so this --dist wins.
+      DIST=$(bash "$WORKERS" --dist --explain) || exit 2
+      PYTEST_ARGS+=(-n "$N" --dist "$DIST")
       if SLOTS=$(bash "$WORKERS" --slot-dir); then
         SLOT="$SLOTS/$$"
         : >"$SLOT" || {

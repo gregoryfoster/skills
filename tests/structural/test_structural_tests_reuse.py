@@ -10,8 +10,9 @@ on identical files. Now:
   which is HEAD^{tree} once the commit lands;
 - a failure, a dirty tree, an untracked file or GATE_STAMP=off records or
   reuses nothing;
-- the worker count from gate-workers.sh becomes `-n N --dist loadfile`, and
-  `off` means no xdist flags at all;
+- the worker count from gate-workers.sh becomes `-n N --dist <mode>`, the
+  mode `.skills/test-dist`'s or loadfile (#563), and `off` means no xdist
+  flags at all;
 - pytest's own exit code still passes through — 5 especially.
 
 pytest is faked by a `.venv/bin/pytest` that logs its arguments, so the suite

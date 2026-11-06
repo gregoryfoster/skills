@@ -202,8 +202,13 @@ fi
 # A malformed setting is a 2 here: a gate that guessed past a broken knob
 # would be running a configuration nobody chose.
 N=0
+DIST=loadfile
 if [[ -f "$WORKERS" ]]; then
   N=$(bash "$WORKERS" --explain) || exit 2
+  # .skills/test-dist (PYTEST_XDIST_DIST wins), else loadfile (#563).
+  if [[ "$N" -ge 2 ]]; then
+    DIST=$(bash "$WORKERS" --dist --explain) || exit 2
+  fi
 fi
 PYTEST_ARGS=(tests/structural/ -q)
 if [[ -f tests/utils/gate_durations.py ]]; then
@@ -213,7 +218,7 @@ SLOT=""
 trap '[[ -z "$SLOT" ]] || rm -f "$SLOT"' EXIT
 if [[ "$N" -ge 2 ]]; then
   if python -c 'import xdist' >/dev/null 2>&1; then
-    PYTEST_ARGS+=(-n "$N" --dist loadfile)
+    PYTEST_ARGS+=(-n "$N" --dist "$DIST")
     # A slot only divides the cores between gates, so failing to take one
     # costs that accounting, never the run (CR 1390).
     if SLOTS=$(bash "$WORKERS" --slot-dir); then
@@ -272,7 +277,7 @@ if [[ -n "$SELECTED" ]]; then
     PYTEST_ARGS+=("$f")
   done <<<"$SELECTED"
   if [[ "$N" -ge 2 ]] && python -c 'import xdist' >/dev/null 2>&1; then
-    PYTEST_ARGS+=(-n "$N" --dist loadfile)
+    PYTEST_ARGS+=(-n "$N" --dist "$DIST")
   fi
 elif [[ -f tests/utils/gate_trace.py ]]; then
   # A full run traces itself, so the map is only ever as old as the last pass.
