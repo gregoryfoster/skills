@@ -525,6 +525,9 @@ def test_no_skill_tells_the_reader_to_replace_the_projects_marker() -> None:
 # The words that keep a `uv run` from syncing the project, so it may skip the
 # args file.
 NO_PROJECT = "--no-project"
+# The probe's whole option list: no project, and an interpreter with tomllib
+# (CR 1851), since outside a project nothing else picks one.
+PROBE_ARGS = [NO_PROJECT, "--python", ">=3.11"]
 
 
 @pytest.mark.parametrize("variant", UV_VARIANTS)
@@ -552,12 +555,12 @@ def test_without_import_targets_every_uv_call_carries_the_knob_or_no_project(
     tools = {t for c in calls for t in TOOLS if t in c["argv"]}
     assert {"ruff", "python", "pytest"} <= tools, calls
     for call in calls:
-        assert _uv_args(call["argv"]) in (["--group", "seed"], [NO_PROJECT]), (
+        assert _uv_args(call["argv"]) in (["--group", "seed"], PROBE_ARGS), (
             f"{variant}: a uv call with neither {KNOB}'s words nor "
             f"{NO_PROJECT}: {call['argv']}"
         )
     for call in probes:
-        assert _uv_args(call["argv"]) == [NO_PROJECT], call["argv"]
+        assert _uv_args(call["argv"]) == PROBE_ARGS, call["argv"]
 
 
 # The copies of the resolver: the gate's and the click review skill's, held
@@ -572,8 +575,28 @@ def test_the_probe_syncs_no_project(variant: str, tmp_path: Path) -> None:
     resolve or sync fails, and offline it fails without the network: a bare
     `uv run` exits non-zero there, and the resolver exits 2. With
     `--no-project` the probe never resolves, reads the name, and leaves no
-    `.venv` or `uv.lock` behind. The interpreter is pinned to this one (3.11+,
-    so tomllib) so the test does not depend on what else is installed."""
+    `.venv` or `uv.lock` behind. This interpreter (3.11+, so tomllib) leads
+    PATH, so one that satisfies the probe's `--python '>=3.11'` is always
+    there offline, whatever else is installed."""
+    root = _probe_project(tmp_path)
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if not k.startswith(("GIT_", "UV_", "VIRTUAL_ENV", "CONDA_"))
+    }
+    env.update(
+        UV_OFFLINE="1",
+        UV_PYTHON_DOWNLOADS="never",
+        PATH=f"{Path(sys.executable).parent}{os.pathsep}{env.get('PATH', '')}",
+    )
+    r = _probe(variant, root, env)
+    assert r.returncode == 0, f"stdout={r.stdout}\nstderr={r.stderr}"
+    assert r.stdout == "my_pkg\n", f"stdout={r.stdout!r}\nstderr={r.stderr}"
+    left = sorted(p.name for p in root.iterdir() if p.name != ".git")
+    assert left == ["pyproject.toml"], f"the probe synced the project: {left}"
+
+
+def _probe_project(tmp_path: Path) -> Path:
     root = tmp_path / "proj"
     root.mkdir()
     subprocess.run(
@@ -587,13 +610,11 @@ def test_the_probe_syncs_no_project(variant: str, tmp_path: Path) -> None:
         'dependencies = ["no-such-package-skills-553"]\n\n'
         '[dependency-groups]\nseed = ["no-such-package-skills-553-seed"]\n'
     )
-    env = {
-        k: v
-        for k, v in os.environ.items()
-        if not k.startswith(("GIT_", "UV_", "VIRTUAL_ENV", "CONDA_"))
-    }
-    env.update(UV_OFFLINE="1", UV_PYTHON_DOWNLOADS="never", UV_PYTHON=sys.executable)
-    r = subprocess.run(
+    return root
+
+
+def _probe(variant: str, root: Path, env: dict) -> subprocess.CompletedProcess:
+    return subprocess.run(
         ["bash", str(SKILLS_DIR / variant / "scripts" / "detect-import-targets.sh")],
         cwd=str(root),
         capture_output=True,
@@ -601,10 +622,50 @@ def test_the_probe_syncs_no_project(variant: str, tmp_path: Path) -> None:
         timeout=120,
         env=env,
     )
-    assert r.returncode == 0, f"stdout={r.stdout}\nstderr={r.stderr}"
-    assert r.stdout == "my_pkg\n", f"stdout={r.stdout!r}\nstderr={r.stderr}"
-    left = sorted(p.name for p in root.iterdir() if p.name != ".git")
-    assert left == ["pyproject.toml"], f"the probe synced the project: {left}"
+
+
+@pytest.mark.skipif(shutil.which("uv") is None, reason="uv is not installed")
+@pytest.mark.parametrize("variant", RESOLVERS)
+def test_no_tomllib_python_is_exit_2_not_no_target(
+    variant: str, tmp_path: Path
+) -> None:
+    """CR 1851. Outside a project nothing picks the interpreter, so uv took
+    the first on offer; a 3.9 failed `import tomllib` inside the snippet's
+    try, and the probe printed nothing with exit 0, which the gate reads as
+    "No import target… Skipping." Offered only a pre-3.11 interpreter, the
+    probe must exit 2. Runs where the system python3 is older than 3.11
+    (macOS ships 3.9) and is the only one uv can find: PATH holds uv, git and
+    /usr/bin:/bin, and the managed-install directory is empty."""
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    for tool in ("uv", "git"):
+        (bindir / tool).symlink_to(shutil.which(tool))
+    env = {
+        "HOME": str(tmp_path),
+        "PATH": f"{bindir}{os.pathsep}/usr/bin{os.pathsep}/bin",
+        "UV_OFFLINE": "1",
+        "UV_PYTHON_DOWNLOADS": "never",
+        "UV_NO_CONFIG": "1",
+        "UV_PYTHON_INSTALL_DIR": str(tmp_path / "no-pythons"),
+        "UV_CACHE_DIR": str(tmp_path / "uv-cache"),
+    }
+    # From tmp_path, as the probe runs: uv also looks for a .venv upward.
+    found = subprocess.run(
+        ["uv", "python", "find"], cwd=tmp_path, capture_output=True, text=True, env=env
+    )
+    if found.returncode != 0:
+        pytest.skip(f"uv finds no interpreter here at all: {found.stderr.strip()}")
+    version = subprocess.run(
+        [found.stdout.strip(), "-c", "import sys; print(sys.version_info >= (3, 11))"],
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    if version != "False":
+        pytest.skip(f"{found.stdout.strip()} is 3.11+, so it has tomllib")
+    r = _probe(variant, _probe_project(tmp_path), env)
+    assert r.returncode == 2, f"stdout={r.stdout!r}\nstderr={r.stderr}"
+    assert r.stdout == "", r.stdout
+    assert ">=3.11" in r.stderr, r.stderr
 
 
 # ---------------------------------------------------------------------------
