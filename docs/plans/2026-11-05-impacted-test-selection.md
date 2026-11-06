@@ -192,7 +192,7 @@ so `shipping-work`'s shared `gate-stamp.sh` needs no change.
    A failed `git diff --cached` also runs the full suite.
 5. **Pre-push backstop.**
    - A `pre-push` stage hook (`scripts/pre-push-gate.sh`) checks for a
-     full-pass stamp on each pushed ref's tree, and runs `structural-tests.sh`
+     full-pass stamp on the pushed ref's tree, and runs `structural-tests.sh`
      on any miss.
    - `pre-commit install --hook-type pre-push` goes in AGENTS.md's dev setup,
      in one line, since AGENTS.md has 115 tokens of headroom. The detail goes
@@ -215,10 +215,39 @@ so `shipping-work`'s shared `gate-stamp.sh` needs no change.
    `default_install_hook_types: [pre-commit, pre-push]`, so a plain
    `pre-commit install` installs both. AGENTS.md gets one sentence and a
    Detail Docs row, and the detail is in a new `docs/GATE.md`; STYLE.md is
-   left alone. Before the hook does anything in this checkout, it still needs
-   `pre-commit install --hook-type pre-push`.
-6. **Measure for a week, then decide.** Report on #537, from the stamp
-   history:
+   left alone. This checkout needs no install step. pre-commit's
+   `pre-push` hook has been in the shared hooks directory since 2026-03-23,
+   for the integration hook that is now commented out, so the check goes live
+   when this lands, starting with the push that ships it. Another clone
+   installed before then needs `pre-commit install --hook-type pre-push` once.
+
+   *Revised by review (CR 1411–1423, 2026-11-05):*
+   - **Push check:**
+     - it unsets `GIT_DIR` and the related variables before running the
+       suite, which a push from a linked worktree hands it (1411);
+     - a push that includes the root commit is gated on
+       `PRE_COMMIT_LOCAL_BRANCH`, not HEAD (1412).
+   - **What it covers:** pre-commit passes the hook only the first ref of a
+     push that carries new commits. So the check covers one ref per push, and
+     `docs/GATE.md` says so (1413).
+   - **Tracer:**
+     - it records existence checks (`os.stat`), which raise no audit event;
+       that found one missed dependency (1414);
+     - it skips argv words with whitespace, which are messages, not paths
+       (1417).
+   - **Whole-tree policy:** a program named by a path, run from inside the
+     repo, counts as whole tree, as an interpreter does (1415).
+   - **New guards:**
+     - no session-scoped fixtures (1416);
+     - no skill script climbs into another skill through its own location,
+       with `install-hook.sh` allowlisted (1422).
+   - **Log:** every run that runs pytest logs its kind, tree and exit code to
+     `gate-select.log`, which Step 6 needs (1420).
+   - **Map:** still 93 whole-tree files of 215. The first real selected run
+     ran 94 of 216 files in 119 s, against about 170 s for a full run.
+6. **Measure for a week, then decide.** Report on #537, from
+   `gate-select.log` (every run, with its kind, tree and exit code) and the
+   stamp history:
    - pre-commit wall clock before and after;
    - the number of pre-ship or pre-push failures on trees whose commits had all
      passed selected runs.
@@ -241,8 +270,8 @@ so `shipping-work`'s shared `gate-stamp.sh` needs no change.
   the time it was made, while main stays green because of the backstops.
   `reviewing-code`'s blanket fixes revert the offending commit when the final
   gate goes red, and that still works, because the final gate is a full run.
-- **Cloud workers** (Linux) run the same hook, so they get selection too. The
-  per-worktree map is built after their first full run. Until then they run
-  everything.
+- **Cloud workers** (Linux) run the same hook, so they get selection too.
+  Their map, one per clone in the git common dir, is built after their first
+  full run. Until then they run everything.
 - **Decided (2026-11-05):** the pre-push backstop blocks a push from a machine
   with no venv, as pre-ship does.
