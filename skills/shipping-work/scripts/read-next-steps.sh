@@ -64,6 +64,12 @@ WT_LIST=$(git worktree list --porcelain) || die "git worktree list failed: not i
 PRIMARY=${WT_LIST%%$'\n'*}
 PRIMARY=${PRIMARY#worktree }
 [ -d "$PRIMARY" ] || die "could not resolve the primary checkout (got '$PRIMARY')"
+# A bare primary or a submodule lists a git dir first, which holds no .skills/
+# (CR 1839b): normalised as _command-knob.sh's primary_checkout does, and a
+# bare primary's "must be run in a work tree" is the expected answer here.
+PRIMARY=$(git -C "$PRIMARY" rev-parse --show-toplevel 2>/dev/null) ||
+  PRIMARY=$(git rev-parse --show-toplevel) ||
+  die "could not resolve a working tree for the primary checkout"
 cd "$PRIMARY"
 
 # From doc-check.sh, byte for byte (see the header).
