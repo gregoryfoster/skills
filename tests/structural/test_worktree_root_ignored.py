@@ -453,3 +453,14 @@ class TestRootInASubmodule:
             f"the remedy names the submodule's .gitignore: {r.stderr}"
         )
         assert len(_worktrees(sup)) == 1
+
+
+def test_a_root_that_cannot_be_created_exits_2_not_1(repo: Path, tmp_path: Path):
+    """CR 1850: exit 1 is the Iron Law's code; a failed `mkdir -p` is not it."""
+    blocker = tmp_path.resolve() / "afile"
+    blocker.write_text("not a directory\n")
+    r = _run(CREATE, "--new", "feature/x", cwd=repo, WORKTREE_ROOT=str(blocker / "wt"))
+    assert r.returncode == 2, f"expected exit 2, got {r.returncode}\nstderr: {r.stderr}"
+    assert "could not create the worktree root" in r.stderr, r.stderr
+    assert r.stdout == ""
+    assert len(_worktrees(repo)) == 1

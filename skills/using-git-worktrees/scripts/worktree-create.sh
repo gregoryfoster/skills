@@ -43,9 +43,10 @@ usage() {
   echo "Exit codes:"
   echo "  0  Worktree created; absolute path printed on stdout"
   echo "  1  Iron Law violation (branch already checked out elsewhere)"
-  echo "  2  Tooling/infra failure (not a git repo, missing arg, git worktree add"
-  echo "     failed), or the root is inside a work tree that does not ignore it"
-  echo "     (git check-ignore), which creates nothing"
+  echo "  2  Tooling/infra failure (not a git repo, missing arg, the root could"
+  echo "     not be created, git worktree add failed), or the root is inside a"
+  echo "     work tree that does not ignore it (git check-ignore), which"
+  echo "     creates nothing"
 }
 
 # One line, not the whole block. An argument error used to print the full usage
@@ -331,7 +332,11 @@ if [[ -x "$SCRIPT_DIR/audit-worktree-zombies.sh" ]]; then
   fi
 fi
 
-mkdir -p "$ROOT"
+# Exit 2, not set -e's 1: exit 1 is the Iron Law's code alone (CR 1850).
+mkdir -p "$ROOT" || {
+  echo "ERROR: could not create the worktree root '$ROOT'" >&2
+  exit 2
+}
 
 # `git worktree add` splits its own chatter across both streams: "Preparing
 # worktree ..." goes to stderr, but the checkout notice "HEAD is now at <sha>
