@@ -302,7 +302,7 @@ if [[ $COMPOSER -eq 1 ]]; then
 fi
 
 if [[ $UV -eq 0 && $COMPOSER -eq 0 && ${#NPM_RUN_SCRIPTS[@]} -eq 0 ]]; then
-  no_gate "no package.json ($NPM_MANIFESTS) declares lint:js, format:js:check or test:js, so there is nothing for this gate to run."
+  no_gate "no package.json${NPM_SEEN:+ ($NPM_SEEN)} declares lint:js, format:js:check or test:js, so there is nothing for this gate to run."
 fi
 
 # --- .skills/pre-ship-uv-args ------------------------------------------------

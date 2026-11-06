@@ -127,6 +127,9 @@ class TestWhatRuns:
         result = _gate(repo)
         assert result.returncode == 1
         assert "scripts/pre-ship.sh" in result.stderr
+        # CR 1854: a root-only repo's line names no list, as `Detected:` does;
+        # it said `no package.json (package.json) declares`.
+        assert "no package.json declares lint:js" in result.stderr, result.stderr
 
     @pytest.mark.parametrize(
         ("build", "tool"),
