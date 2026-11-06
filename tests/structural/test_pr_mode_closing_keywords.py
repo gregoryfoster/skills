@@ -28,6 +28,7 @@ comparison was never the test (CR 1847).
 
 from __future__ import annotations
 
+import json
 import re
 import shutil
 import subprocess
@@ -153,3 +154,65 @@ def test_the_post_merge_pass_asks_github_for_the_closer_and_compares_no_times():
     for var in ("$o", "$r", "$n"):
         assert var in query, (var, query)
     assert "-f o=<owner> -f r=<repo> -F n=<n>" in step3, step3
+
+
+def _closer_jq() -> tuple[str, str]:
+    """The post-merge pass's closer query and its `--jq` filter."""
+    post = _section("## The post-merge pass")
+    step3 = post.split("\n3. ", 1)[1].split("\n4. ", 1)[0]
+    found = re.findall(r"gh api graphql -f query='([^']+)'[^\n]*--jq '([^']+)'", step3)
+    assert len(found) == 1, step3
+    return found[0]
+
+
+# CR 1864: the query selected only `... on PullRequest{number}`, so a `Commit`
+# closer (a commit message's keyword, landed on the default branch by the
+# merge) printed an empty line and was dropped: the case the check exists for.
+# A commit counts through the PR GitHub says brought it in. Measured read-only
+# on 2026-11-06 against this repo: PR 175's branch commit 2025bca9 and its
+# merge commit 2e1cf281 both list 175 in `associatedPullRequests`; #426's and
+# #434's closers are commits pushed straight to main, which list none; #172's
+# closer is PR 175; #470, closed by hand, has a null closer.
+CLOSERS = {
+    "pull request": ({"number": 175}, ["175"]),
+    "commit the PR brought in": (
+        {"associatedPullRequests": {"nodes": [{"number": 175}]}},
+        ["175"],
+    ),
+    "commit pushed straight to the branch": (
+        {"associatedPullRequests": {"nodes": []}},
+        [],
+    ),
+    "manual close": (None, []),
+}
+
+
+def test_the_closer_query_asks_a_commit_for_its_pr():
+    query, _ = _closer_jq()
+    assert "... on Commit{associatedPullRequests(" in query, query
+
+
+@pytest.mark.skipif(shutil.which("jq") is None, reason="jq not installed")
+@pytest.mark.parametrize("case", sorted(CLOSERS))
+def test_the_closer_filter_prints_the_pr_a_close_belongs_to(case):
+    closer, expected = CLOSERS[case]
+    _, jq = _closer_jq()
+    payload = {
+        "data": {
+            "repository": {"issue": {"timelineItems": {"nodes": [{"closer": closer}]}}}
+        }
+    }
+    result = subprocess.run(
+        ["jq", "-r", jq],
+        input=json.dumps(payload),
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.split() == expected, result.stdout
+
+
+def test_the_post_merge_pass_says_a_manual_close_is_not_this_prs():
+    post = _section("## The post-merge pass")
+    step3 = post.split("\n3. ", 1)[1].split("\n4. ", 1)[0]
+    assert "manual close" in step3, step3

@@ -129,11 +129,15 @@ Started by "ship it" once `gh pr view` shows `MERGED`:
    gh issue list --state closed --limit 100 --json number --search "closed:<mergedAt>..<mergedAt+5m>"
    ```
 
-   Keep each whose closer is this PR. Ask GitHub for the closer rather than
-   comparing `closedAt` with `mergedAt`, since the gap varies:
+   Keep each whose closer is this PR, or a commit it brought in: a keyword
+   in a commit message closes once the merge lands it. Ask GitHub for the
+   closer rather than comparing `closedAt` with `mergedAt`, since the gap
+   varies. This prints the closing PR, or the PR that brought the closing
+   commit in. Nothing printed is a manual close or a commit pushed straight
+   to the branch, neither of them this PR's:
 
    ```bash
-   gh api graphql -f query='query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){issue(number:$n){timelineItems(itemTypes:[CLOSED_EVENT],last:1){nodes{... on ClosedEvent{closer{__typename ... on PullRequest{number}}}}}}}}' -f o=<owner> -f r=<repo> -F n=<n> --jq '.data.repository.issue.timelineItems.nodes[0].closer.number'
+   gh api graphql -f query='query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){issue(number:$n){timelineItems(itemTypes:[CLOSED_EVENT],last:1){nodes{... on ClosedEvent{closer{... on PullRequest{number} ... on Commit{associatedPullRequests(first:5){nodes{number}}}}}}}}}}' -f o=<owner> -f r=<repo> -F n=<n> --jq '.data.repository.issue.timelineItems.nodes[0].closer | .number // .associatedPullRequests.nodes[]?.number'
    ```
 
    Reopen each kept issue that isn't on a `Closes` line (`gh issue reopen
