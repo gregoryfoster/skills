@@ -12,10 +12,11 @@
 #     composer  composer.json at the root, or one level under themes/ or
 #               plugins/ (the layout the PHP gate validates).
 #     npm       package.json, with composer's reach: at the root, or one level
-#               under themes/ or plugins/, where a Sage/Bedrock-style
-#               monorepo keeps every one (#561). A nested one counts only
-#               when git tracks it. pre-ship.sh runs each one's scripts in
-#               its own directory.
+#               under themes/ or plugins/, where a Sage-style monorepo
+#               with themes/ and plugins/ at the root keeps them (#561); a
+#               Bedrock repo's web/app/themes/ is not searched. A nested
+#               one counts only when git tracks it. pre-ship.sh runs each
+#               one's scripts in its own directory.
 #
 #   framework   decides only which DOCS apply: doc-check.sh's default watch
 #               list and which references/stack-*.md to load. Never a check.

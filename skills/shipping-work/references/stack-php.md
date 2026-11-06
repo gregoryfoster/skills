@@ -5,7 +5,8 @@ root, or one level under `themes/` or `plugins/`. The checks are the composer
 toolchain's (see [gate-topology.md](gate-topology.md)): `composer validate`
 at each `composer.json`, `php -l` on every tracked PHP file, and
 `composer test` when the project defines it. A repo that also has a
-`package.json` gets its npm scripts too.
+`package.json` at the root, or a tracked one one level under `themes/` or
+`plugins/`, gets its npm scripts too.
 
 ## Lint workers
 
@@ -15,10 +16,11 @@ machine). `PRE_SHIP_PHP_LINT_JOBS=N` overrides it for a very large monorepo.
 ## Bedrock layouts
 
 `composer validate` looks for theme and plugin `composer.json` files under
-`themes/*/` and `plugins/*/` at the repo root, as the PHP variant did. A
-Bedrock repo keeps them under `web/app/`, which is not searched: an open
-question until a Bedrock repo shows what it needs. Its root `composer.json`
-is validated either way.
+`themes/*/` and `plugins/*/` at the repo root, as the PHP variant did, and
+npm looks for their `package.json` files there too. A Bedrock repo keeps
+them under `web/app/`, which neither searches: an open question until a
+Bedrock repo shows what it needs. Its root `composer.json` is validated, and
+its root `package.json`'s scripts run, either way.
 
 ## What doc-check watches by default
 

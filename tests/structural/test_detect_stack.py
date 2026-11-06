@@ -104,9 +104,9 @@ class TestToolchains:
 
     @pytest.mark.parametrize("parent", ["themes", "plugins"])
     def test_npm_one_level_under_themes_or_plugins(self, repo, parent):
-        """#561: a Sage/Bedrock-style monorepo keeps every package.json in its
-        theme and plugin directories and none at the root, as composer's rule
-        already allowed for composer.json."""
+        """#561: a Sage-style monorepo with themes/ and plugins/ at the root
+        keeps every package.json in its theme and plugin directories and none
+        at the root, as composer's rule already allowed for composer.json."""
         (repo / parent / "site").mkdir(parents=True)
         (repo / parent / "site" / "package.json").write_text("{}\n")
         _add(repo)
@@ -121,6 +121,17 @@ class TestToolchains:
         (repo / rel).write_text("{}\n")
         _add(repo)
         assert _detect(repo) == set()
+
+    def test_the_docs_claim_no_bedrock_reach(self):
+        """CR 1852: the reach stops at themes/ and plugins/ at the root (the
+        web/app/ case above), so neither the script nor stack-php.md may say
+        it covers a Bedrock layout, and stack-php.md's Bedrock paragraph
+        names npm beside composer as not searching web/app/."""
+        assert "Sage/Bedrock" not in SCRIPT.read_text()
+        php = (SCRIPT.parents[1] / "references" / "stack-php.md").read_text()
+        bedrock = php.split("## Bedrock layouts", 1)[1].split("\n## ", 1)[0]
+        assert "web/app/" in bedrock, bedrock
+        assert "composer.json" in bedrock and "package.json" in bedrock, bedrock
 
     @pytest.mark.parametrize("ignored", [True, False])
     def test_a_nested_npm_manifest_git_does_not_track_is_not_one(self, repo, ignored):
