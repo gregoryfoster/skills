@@ -118,6 +118,36 @@ class TestTheDistMode:
         assert result.stdout == "loadfile\n"
         assert "WARN" in result.stderr and "'each'" in result.stderr
 
+    def test_a_second_word_warns_and_is_not_joined(self, repo):
+        """CR 1853: the reader deleted every space, so `load scope` became
+        `loadscope`, a mode the knob never named. It takes the first word."""
+        _knob(repo, "test-dist", "# spread it\nload scope  # typo\n")
+        result = _dist(repo)
+        assert result.returncode == 0, result.stderr
+        assert result.stdout == "load\n"
+        assert "WARN" in result.stderr and "'load scope'" in result.stderr
+
+    def test_one_word_and_a_crlf_ending_does_not_warn(self, repo):
+        _knob(repo, "test-dist", "  worksteal \t\r\n")
+        result = _dist(repo)
+        assert result.stdout == "worksteal\n"
+        assert "WARN" not in result.stderr
+
+    @pytest.mark.parametrize("kind", ["directory", "dangling-link"])
+    def test_a_knob_that_is_not_a_file_warns(self, repo, kind):
+        """CR 1853: a directory or a dangling link at the knob's path fell
+        back to loadfile without a word, as if there were no knob."""
+        (repo / ".skills").mkdir()
+        knob = repo / ".skills" / "test-dist"
+        if kind == "directory":
+            knob.mkdir()
+        else:
+            knob.symlink_to(repo / "no-such-file")
+        result = _dist(repo)
+        assert result.returncode == 0
+        assert result.stdout == "loadfile\n"
+        assert "WARN" in result.stderr and "not a readable file" in result.stderr
+
     def test_it_does_not_touch_the_worker_count(self, repo, tmp_path):
         _knob(repo, "test-dist", "load\n")
         _knob(repo, "test-workers", "5\n")
