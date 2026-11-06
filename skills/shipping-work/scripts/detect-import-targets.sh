@@ -67,23 +67,21 @@ elif [[ -f pyproject.toml ]] && command -v uv >/dev/null 2>&1; then
   # capture around this script could not see it (#255).
   #
   # The python snippet catches its own parse errors and still exits 0, so a
-  # non-zero code here is uv itself failing.
+  # non-zero code here is uv itself failing. `import tomllib` sits INSIDE that
+  # try for the same reason: on a project pinned to Python 3.10 it is a
+  # detection limit, not a broken toolchain.
   #
   # `--no-project` (#553): the snippet needs only the stdlib, so it runs
   # outside the project. A bare `uv run` resolved and synced the project with
   # no dependency groups, against the .skills/pre-ship-uv-args set every other
   # uv call in pre-ship.sh makes, and exited non-zero on a project that could
-  # not resolve. Now nothing is resolved or written (no .venv, no uv.lock).
-  #
-  # `--python '>=3.11'`: tomllib is 3.11+, and outside the project nothing
-  # else picks the interpreter, so uv could take a system 3.9 whose failed
-  # import, caught by the try, read as "no import target" and skipped the
-  # check. Now uv takes the first 3.11+ it finds (a .venv, a managed install,
-  # then PATH), and finding none is uv's non-zero exit, so exit 2 here.
+  # not resolve. Now nothing is resolved or written (no .venv, no uv.lock). uv
+  # still takes the interpreter from .python-version or an existing .venv, but
+  # not from requires-python.
   TARGET_OUT=$(mktemp) || { echo "detect-import-targets: mktemp failed" >&2; exit 2; }
   trap 'rm -f "$TARGET_OUT"' EXIT
   UV_RC=0
-  uv run --no-project --python '>=3.11' python -c "
+  uv run --no-project python -c "
 import sys
 try:
     import tomllib
@@ -96,7 +94,7 @@ except Exception as e:
     print(f'detect-import-targets: {e}', file=sys.stderr)
 " >"$TARGET_OUT" || UV_RC=$?
   if [[ $UV_RC -ne 0 ]]; then
-    echo "detect-import-targets: uv run --no-project --python '>=3.11' python failed (exit $UV_RC) reading [project] name" >&2
+    echo "detect-import-targets: uv run --no-project python failed (exit $UV_RC) reading [project] name" >&2
     exit 2
   fi
   cat "$TARGET_OUT"
