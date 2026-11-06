@@ -229,26 +229,39 @@ gitlink_prefix() {
   return 1
 }
 
+tree_unknown() {
+  echo "ERROR: could not resolve the work tree of '$1' (the reason is above), so whether it ignores the worktree root '$ROOT' is unknown" >&2
+  exit 2
+}
+
 WT_LIST=$(git worktree list --porcelain) || {
   echo "ERROR: failed to enumerate worktrees (git worktree list --porcelain)" >&2
   exit 2
 }
-PRIMARY=${WT_LIST%%$'\n'*}
+# The primary is the first porcelain block, up to the first blank line. A
+# block with a `bare` line is `repo.git`, which has no work tree and so
+# cannot commit anything: it is not queued (CR 1840).
+PRIMARY_BLOCK=${WT_LIST%%$'\n\n'*}
+PRIMARY=${PRIMARY_BLOCK%%$'\n'*}
 PRIMARY=${PRIMARY#worktree }
 # A queue, not a fixed pair: a root inside a submodule adds that submodule's
 # checkout (CR 1849).
-TREES=("$PRIMARY" "$PROJECT_ROOT")
+case $'\n'"$PRIMARY_BLOCK"$'\n' in
+  *$'\n'bare$'\n'*) TREES=("$PROJECT_ROOT") ;;
+  *) TREES=("$PRIMARY" "$PROJECT_ROOT") ;;
+esac
 CHECKED=()
 i=0
 while [[ $i -lt ${#TREES[@]} ]]; do
   TREE=${TREES[$i]}
   i=$((i + 1))
-  # Each entry becomes its work tree the same way (CR 1840). The first entry
-  # is `repo.git` for a bare primary, which has no work tree and so cannot
-  # commit anything: skip it. In a submodule (git 2.54) it is
-  # `<super>/.git/modules/<name>`, whose work tree git names via core.worktree.
-  TREE=$(git -C "$TREE" rev-parse --show-toplevel 2>/dev/null) || continue
-  TREE=$(cd -P -- "$TREE" 2>/dev/null && pwd -P) || continue
+  # Each entry becomes its work tree the same way (CR 1840). In a submodule
+  # (git 2.54) the primary's is `<super>/.git/modules/<name>`, whose work
+  # tree git names via core.worktree. A tree git cannot answer for is exit
+  # 2 with git's reason (CR 1858): skipping it skipped the one check that
+  # could refuse the root, so "dubious ownership" let any root through.
+  TOP=$(git -C "$TREE" rev-parse --show-toplevel) || tree_unknown "$TREE"
+  TREE=$(cd -P -- "$TOP" && pwd -P) || tree_unknown "$TREE"
   SEEN=0
   for C in ${CHECKED[@]+"${CHECKED[@]}"}; do
     if [[ "$TREE" -ef "$C" ]]; then SEEN=1; fi

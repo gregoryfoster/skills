@@ -288,6 +288,64 @@ class TestLinkedWorktrees:
         assert r.returncode == 0, r.stderr
         assert Path(r.stdout.strip()) == repo / ".worktrees" / "feature-x"
 
+    def test_a_primary_git_cannot_open_is_exit_2_not_skipped(
+        self, repo: Path, linked: Path
+    ):
+        """CR 1858: a tree git cannot answer for fails closed.
+
+        git refuses the primary alone ("dubious ownership"; the linked
+        worktree is declared safe). Skipped, the root in the primary's
+        tracked `src/` was outside the only tree left to ask, and passed.
+        """
+        r = _run(
+            CREATE,
+            "--new",
+            "feature/x",
+            cwd=linked,
+            WORKTREE_ROOT=str(repo / "src"),
+            GIT_TEST_ASSUME_DIFFERENT_OWNER="1",
+            GIT_CONFIG_COUNT="1",
+            GIT_CONFIG_KEY_0="safe.directory",
+            GIT_CONFIG_VALUE_0=str(linked),
+        )
+        assert r.returncode == 2, (
+            f"expected exit 2, got {r.returncode}\nstdout: {r.stdout}\nstderr: {r.stderr}"
+        )
+        assert "dubious ownership" in r.stderr, "git's reason is let through"
+        assert f"'{repo}'" in r.stderr, f"the error names the tree: {r.stderr}"
+        assert r.stdout == ""
+        assert len(_worktrees(repo)) == 2, "no worktree may be created"
+
+
+class TestSubmodulePrimary:
+    """Run from a submodule's checkout, the first list entry is its git dir.
+
+    `<super>/.git/modules/<name>` is not a work tree; git names the
+    submodule's checkout via core.worktree, and that checkout decides.
+    """
+
+    def test_a_root_the_submodule_tracks_is_refused(self, tmp_path: Path):
+        src = _make_repo(tmp_path.resolve() / "src-repo", ".worktrees/\n")
+        sup = _make_repo(tmp_path.resolve() / "sup", ".worktrees/\n")
+        _git(
+            sup,
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            "-q",
+            str(src),
+            "sub",
+        )
+        sub = sup / "sub"
+        assert "/.git/modules/" in _worktrees(sub)[0]
+        r = _run(CREATE, "--new", "feature/x", cwd=sub, WORKTREE_ROOT=str(sub / "src"))
+        assert r.returncode == 2, r.stderr
+        assert f"{sub}/.gitignore" in r.stderr, r.stderr
+        r = _run(CREATE, "--new", "feature/x", cwd=sub)
+        assert r.returncode == 0, r.stderr
+        assert Path(r.stdout.strip()) == sub / ".worktrees" / "feature-x"
+
 
 class TestRelativeConfiguredRoot:
     """#562's leftover: a relative `.skills/worktree_root` is the primary's."""
