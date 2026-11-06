@@ -21,8 +21,8 @@ Push one ref at a time, as `git push origin <sha>:main` does.
 ## The map
 
 Every full run that passes is traced by `tests/utils/gate_trace.py`. Its
-audit hook records which repo paths each test file opens, lists or hands to a
-subprocess, and which commands it runs from inside the repo.
+audit hook records which repo paths each test file opens, checks for, lists
+or hands to a subprocess, and which commands it runs from inside the repo.
 `scripts/gate_select.py build` turns that into
 `<git-common-dir>/gate-map.json`. The map is not committed: it is rebuilt by
 each full pass, and shared by every worktree.
@@ -30,7 +30,7 @@ each full pass, and shared by every worktree.
 Each test file depends on some of:
 
 - a skill directory: anything under `skills/<name>/`;
-- a file or a listed directory;
+- a file it opened or checked for, or a directory it listed;
 - the whole tree: it listed the repo root or `skills/`, or ran an
   interpreter, a script by its path, or git not aimed at a fixture, from
   inside the repo.
@@ -43,7 +43,7 @@ Each test file depends on some of:
 | `skills/<name>/…` | every test depending on that skill |
 | `docs/plans/…` | nothing extra |
 | `tests/…` but a test file, `scripts/…`, hooks, `pyproject.toml`, requirements, `.pre-commit-config.yaml`, `.github/` | the full suite |
-| anything else | every test that read it |
+| anything else | every test that read it or checked for it |
 
 Every whole-tree test, and every test file the map has never seen, runs on
 every commit.
