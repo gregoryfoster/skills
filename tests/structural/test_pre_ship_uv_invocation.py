@@ -622,27 +622,119 @@ def test_the_probe_syncs_no_project(variant: str, tmp_path: Path) -> None:
 
 GATE_SCRIPTS_DIR = SKILLS_DIR / "shipping-work" / "scripts"
 
-UV_RUN = re.compile(r"uv\s+run\b")
 UV_RUN_WRAPPER = re.compile(r"uv_run\b")
 HEREDOC = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
 UV_RUN_DEFINITION = re.compile(r"^\s*uv_run\(\)\s*\{")
 
+# uv's global options that take a value as the next word, so `uv --directory
+# run sync` is `uv sync`. `--python` is not global on uv 0.11.8, which refuses
+# it before `run`, but a newer uv that takes it must not hide a `run`.
+UV_VALUE_OPTIONS = frozenset(
+    {
+        "--directory",
+        "--project",
+        "--python",
+        "--config-file",
+        "--cache-dir",
+        "--color",
+        "--allow-insecure-host",
+    }
+)
+# A variable that holds uv: `UV=uv`, `UV=/path/to/uv`, `UV=$(command -v uv)`,
+# optionally declared `local`, `readonly` and the like.
+UV_VAR_ASSIGNMENT = re.compile(
+    r"(?:^|[\s;&|(])(?:(?:local|declare|typeset|readonly|export)\s+(?:-\w+\s+)*)?"
+    r"([A-Za-z_]\w*)=(\"[^\"]*\"|'[^']*'|\$\([^)]*\)|\S+)"
+)
+UV_VALUE = re.compile(r"(?:\S*/)?uv|\$\((?:command\s+-v|which|type\s+-P)\s+uv\)")
+VAR_WORD = re.compile(r"\$(?:([A-Za-z_]\w*)|\{([A-Za-z_]\w*)\})")
+WORD_END = " \t;&|()<>`"
 
-def _code_uv_runs(text: str, pattern: re.Pattern = UV_RUN) -> list[tuple[int, str]]:
+
+def _word(line: str, j: int) -> tuple[str, str, int] | None:
+    """The shell word at `j`: `(as written, quotes removed, end)`, or None at
+    an operator or the end of the line."""
+    start, value = j, []
+    while j < len(line) and line[j] not in WORD_END:
+        c = line[j]
+        if c in "\"'":
+            close = line.find(c, j + 1)
+            if close < 0:
+                return None
+            value.append(line[j + 1 : close])
+            j = close + 1
+        elif c == "\\":
+            value.append(line[j + 1 : j + 2])
+            j += 2
+        else:
+            value.append(c)
+            j += 1
+    if j == start:
+        return None
+    return line[start:j], "".join(value), j
+
+
+def _uv_vars(text: str) -> set[str]:
+    """The names this file assigns uv to."""
+    out = set()
+    for m in UV_VAR_ASSIGNMENT.finditer(text):
+        value = m.group(2)
+        if value[:1] in "\"'" and value[-1:] == value[:1]:
+            value = value[1:-1]
+        if UV_VALUE.fullmatch(value):
+            out.add(m.group(1))
+    return out
+
+
+def _uv_run_at(line: str, j: int, uv_vars: set[str]) -> int | None:
+    """Where `uv … run` ends, when one starts at `j`: `uv` bare, quoted, by
+    path or through a variable holding it, then global options (consuming the
+    values of UV_VALUE_OPTIONS), then `run`."""
+    first = _word(line, j)
+    if first is None:
+        return None
+    raw, value, j = first
+    var = VAR_WORD.fullmatch(raw.strip('"'))
+    if not (value == "uv" or (var and (var.group(1) or var.group(2)) in uv_vars)):
+        return None
+    takes_value = False
+    while True:
+        while j < len(line) and line[j] in " \t":
+            j += 1
+        word = _word(line, j)
+        if word is None:
+            return None
+        _, value, j = word
+        if takes_value:
+            takes_value = False
+        elif value.startswith("-"):
+            takes_value = value in UV_VALUE_OPTIONS
+        else:
+            return j if value == "run" else None
+
+
+def _code_uv_runs(
+    text: str, pattern: re.Pattern | None = None
+) -> list[tuple[int, str]]:
     """Every `uv run` (or `pattern`) bash would execute: `(line number, rest of
     the line)`.
 
     A small quote-aware scan. It skips comments, single- and double-quoted
     strings (so `--help` text and error messages), and heredoc bodies, and it
     descends into `$(…)` wherever that appears, quoted or not, since a command
-    substitution runs."""
+    substitution runs. A `\\` that ends a line outside a comment or a
+    single-quoted string joins the next line, as bash does, and the joined
+    line is scanned again from the state it started in; the number is the
+    first line's. `uv run` is matched by _uv_run_at."""
     found: list[tuple[int, str]] = []
     lines = text.splitlines()
+    uv_vars = _uv_vars(text)
     stack = ["code"]  # code | sub (inside $(…)) | paren | dq | sq | ansi
     heredoc: list[tuple[str, bool]] = []  # (delimiter, strip tabs)
     i = 0
     while i < len(lines):
-        line = lines[i]
+        line, extra = lines[i], 0
+        saved = (list(stack), len(found), list(heredoc))
         j = 0
         while j < len(line):
             top = stack[-1]
@@ -656,6 +748,14 @@ def _code_uv_runs(text: str, pattern: re.Pattern = UV_RUN) -> list[tuple[int, st
                 j += 1
                 continue
             if c == "\\":
+                if j == len(line) - 1 and i + extra + 1 < len(lines):
+                    # A continuation: join, and scan the whole line again.
+                    extra += 1
+                    line = line[:j] + lines[i + extra]
+                    stack, heredoc = list(saved[0]), list(saved[2])
+                    del found[saved[1] :]
+                    j = 0
+                    continue
                 j += 2
                 continue
             if line.startswith("$(", j):
@@ -670,6 +770,16 @@ def _code_uv_runs(text: str, pattern: re.Pattern = UV_RUN) -> list[tuple[int, st
             # code, sub or paren: bash would run what is here.
             if c == "#" and (j == 0 or line[j - 1] in " \t;&|("):
                 break
+            if j == 0 or not (line[j - 1].isalnum() or line[j - 1] in "_-"):
+                if pattern is None:
+                    end = _uv_run_at(line, j, uv_vars)
+                else:
+                    m = pattern.match(line, j)
+                    end = m.end() if m else None
+                if end is not None:
+                    found.append((i + 1, line[end:]))
+                    j = end
+                    continue
             if line.startswith("$'", j):
                 stack.append("ansi")
                 j += 2
@@ -688,14 +798,8 @@ def _code_uv_runs(text: str, pattern: re.Pattern = UV_RUN) -> list[tuple[int, st
                     heredoc.append((m.group(2), line.startswith("<<-", j)))
                     j = m.end()
                     continue
-            else:
-                m = pattern.match(line, j)
-                if m and (j == 0 or not (line[j - 1].isalnum() or line[j - 1] in "_-")):
-                    found.append((i + 1, line[m.end() :]))
-                    j = m.end()
-                    continue
             j += 1
-        i += 1
+        i += 1 + extra
         for delimiter, strip in heredoc:
             while i < len(lines):
                 body = lines[i].lstrip("\t") if strip else lines[i]
@@ -732,6 +836,33 @@ def _carries_no_project(rest: str) -> bool:
         ('echo "a\nuv run b\n"\nuv run c\n', [4]),
         ('echo "${x#y} uv run"\n', []),
         ("my_uv run\n", []),
+        # CR 1845: global options before `run`, a continuation, a quoted uv,
+        # and a variable holding it all still run `uv run`.
+        ("uv -q run pytest\n", [1]),
+        ("uv --quiet run pytest\n", [1]),
+        ("uv --directory sub run pytest\n", [1]),
+        ("uv --directory=sub run pytest\n", [1]),
+        ('uv --project "my dir" -v run pytest\n', [1]),
+        ("uv --config-file u.toml --cache-dir c --color never run x\n", [1]),
+        ("uv \\\n  run pytest\n", [1]),
+        ("uv -q \\\n  --directory sub \\\n  run pytest\nuv run x\n", [1, 4]),
+        ("foo && \\\n  uv run pytest\n", [1]),
+        ('"uv" run pytest\n', [1]),
+        ("'uv' run pytest\n", [1]),
+        ("command uv run pytest\n", [1]),
+        ("/usr/local/bin/uv run pytest\n", [1]),
+        ('UV=uv\n"$UV" run pytest\n', [2]),
+        ("UV=$(command -v uv)\n${UV} -q run pytest\n", [2]),
+        ('local uv_bin="/opt/uv"\n"${uv_bin}" run x\n', [2]),
+        # ... and these do not.
+        ("uv --directory run sync\n", []),
+        ("uv tool run ruff\n", []),
+        ("uv sync --frozen\n", []),
+        ('"uv run" x\n', []),
+        ('echo "uv \\\n run"\n', []),
+        ("# uv \\\nuv run x\n", [2]),
+        ('UV=1\n"$UV" run x\n', []),
+        ('"$NPM" run lint:js\n', []),
     ],
 )
 def test_the_scan_finds_what_bash_would_run(src: str, expected: list[int]) -> None:
