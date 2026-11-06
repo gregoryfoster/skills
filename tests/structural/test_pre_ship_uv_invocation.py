@@ -22,7 +22,8 @@ whichever config file wins its own precedence, and from `PYTEST_ADDOPTS` — and
 the result is `not integration and (<project expr>)` with nothing re-parsed.
 `shipping-work-python-click` never passed `-m`, so it had nothing to fix there.
 The fix for (2) is `.skills/pre-ship-uv-args`, whose arguments go after `uv run`
-in every uv call either gate makes.
+in every uv call either gate makes in the project. The one call outside it, the
+`[project]`-name probe, runs `--no-project` and syncs nothing (#553).
 
 Everything runs against a stub `uv` on `PATH` that records its argv. The marker
 tests have it hand the pytest call to a REAL pytest in a throwaway project, so
