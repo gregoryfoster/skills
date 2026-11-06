@@ -168,7 +168,8 @@ WORKTREE_PATH="$ROOT/$SLUG"
 # current one, which is a different tree when this runs from a linked
 # worktree. Each that contains the root must ignore the new worktree's
 # directory, by its own rules. The directory, not the root: `.worktrees/*`
-# ignores every worktree in the root and not the root itself.
+# ignores every worktree in the root and not the root itself. A root inside
+# a submodule of either is the submodule checkout's to decide (CR 1849).
 #
 # Three traps:
 #   * Inside-ness first. `git check-ignore` exits non-zero for ANY path it does
@@ -209,39 +210,80 @@ rel_in() {
     anc=${anc:-/}
   done
 }
+
+# Prints the first leading part of $2 (a path in the work tree $1) that is a
+# submodule (a mode-160000 gitlink) in $1's index; fails when none is.
+gitlink_prefix() {
+  local rest=$2 p="" comp
+  while [[ -n "$rest" ]]; do
+    comp=${rest%%/*}
+    if [[ "$rest" == */* ]]; then rest=${rest#*/}; else rest=""; fi
+    p=${p:+$p/}$comp
+    if git -C "$1" -c core.quotePath=false ls-files --stage -- ":(literal)$p" |
+      awk -F '\t' -v p="$p" '$2 == p && $1 ~ /^160000 / { f = 1 } END { exit !f }'; then
+      printf '%s\n' "$p"
+      return 0
+    fi
+  done
+  return 1
+}
+
 WT_LIST=$(git worktree list --porcelain) || {
   echo "ERROR: failed to enumerate worktrees (git worktree list --porcelain)" >&2
   exit 2
 }
 PRIMARY=${WT_LIST%%$'\n'*}
 PRIMARY=${PRIMARY#worktree }
-CHECKED=""
-for TREE in "$PRIMARY" "$PROJECT_ROOT"; do
+# A queue, not a fixed pair: a root inside a submodule adds that submodule's
+# checkout (CR 1849).
+TREES=("$PRIMARY" "$PROJECT_ROOT")
+CHECKED=()
+i=0
+while [[ $i -lt ${#TREES[@]} ]]; do
+  TREE=${TREES[$i]}
+  i=$((i + 1))
   # Each entry becomes its work tree the same way (CR 1840). The first entry
   # is `repo.git` for a bare primary, which has no work tree and so cannot
   # commit anything: skip it. In a submodule (git 2.54) it is
   # `<super>/.git/modules/<name>`, whose work tree git names via core.worktree.
   TREE=$(git -C "$TREE" rev-parse --show-toplevel 2>/dev/null) || continue
   TREE=$(cd -P -- "$TREE" 2>/dev/null && pwd -P) || continue
-  [[ -z "$CHECKED" || ! "$TREE" -ef "$CHECKED" ]] || continue
-  CHECKED=$TREE
+  SEEN=0
+  for C in ${CHECKED[@]+"${CHECKED[@]}"}; do
+    if [[ "$TREE" -ef "$C" ]]; then SEEN=1; fi
+  done
+  [[ $SEEN -eq 0 ]] || continue
+  CHECKED+=("$TREE")
   rel_in "$TREE" || continue
   IGNORE_RC=1
+  IGNORE_ERR=""
   if [[ -n "$REL" ]]; then
     IGNORE_RC=0
-    git -C "$TREE" check-ignore -q -- "$REL/$SLUG/" || IGNORE_RC=$?
+    IGNORE_ERR=$(git -C "$TREE" check-ignore -q -- "$REL/$SLUG/" 2>&1) || IGNORE_RC=$?
   fi
   [[ $IGNORE_RC -ne 0 ]] || continue
+  # A root inside a submodule of this tree (CR 1849): git cannot answer for
+  # this tree ("Pathspec ... is in submodule", exit 128), and no rule here
+  # could change that. This tree commits only the gitlink; the submodule's
+  # checkout is what would commit a worktree, so its rules decide. One that
+  # is not checked out names this tree again and is skipped as seen.
+  if [[ $IGNORE_RC -eq 128 ]] && SUB=$(gitlink_prefix "$TREE" "$REL"); then
+    TREES+=("$TREE/$SUB")
+    continue
+  fi
+  [[ -z "$IGNORE_ERR" ]] || printf '%s\n' "$IGNORE_ERR" >&2
   if [[ -z "$REL" ]]; then
     echo "ERROR: the worktree root '$ROOT' is the work tree $TREE itself: every worktree would sit in the repo" >&2
     echo "Set WORKTREE_ROOT or .skills/worktree_root to a directory git ignores, or to a path outside the repo. Unset, the root is '.worktrees/', which .gitignore must carry." >&2
   else
     if [[ $IGNORE_RC -eq 1 ]]; then
       echo "ERROR: the worktree root '$ROOT' is inside $TREE, and git does not ignore it there: a worktree in it is one 'git add -A' away from being committed" >&2
+      echo "Add '$REL/' to $TREE/.gitignore and commit it, or set WORKTREE_ROOT or .skills/worktree_root to a path outside the repo." >&2
     else
+      # No .gitignore line answers a question git could not ask (CR 1849).
       echo "ERROR: git check-ignore failed (exit $IGNORE_RC; git's reason is above), so whether $TREE ignores the worktree root '$ROOT' is unknown" >&2
+      echo "Set WORKTREE_ROOT or .skills/worktree_root to a path outside the repo." >&2
     fi
-    echo "Add '$REL/' to $TREE/.gitignore and commit it, or set WORKTREE_ROOT or .skills/worktree_root to a path outside the repo." >&2
   fi
   exit 2
 done

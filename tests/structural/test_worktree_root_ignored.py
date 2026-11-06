@@ -409,3 +409,47 @@ class TestCaseInsensitiveVolume:
         )
         _assert_refused(r, repo)
         assert "'src/'" in r.stderr, f"the remedy names the path to ignore: {r.stderr}"
+
+
+class TestRootInASubmodule:
+    """CR 1849: a root inside a submodule of the checkout.
+
+    git cannot answer for the superproject (check-ignore exits 128: "Pathspec
+    ... is in submodule"), and no `.gitignore` line there could change that.
+    The superproject commits only the gitlink; the submodule's own checkout
+    is what would commit a worktree, so its rules decide.
+    """
+
+    @pytest.fixture
+    def sup(self, tmp_path: Path) -> Path:
+        src = _make_repo(tmp_path.resolve() / "src-repo", "wt/\n")
+        sup = _make_repo(tmp_path.resolve() / "sup", ".worktrees/\n")
+        _git(
+            sup,
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            "-q",
+            str(src),
+            "vendor/sub",
+        )
+        _git(sup, "commit", "-q", "-m", "submodule")
+        return sup
+
+    def test_a_root_the_submodule_ignores_passes(self, sup: Path):
+        root = sup / "vendor" / "sub" / "wt"
+        r = _run(CREATE, "--new", "feature/x", cwd=sup, WORKTREE_ROOT=str(root))
+        assert r.returncode == 0, r.stderr
+        assert Path(r.stdout.strip()) == root / "feature-x"
+        assert "fatal:" not in r.stderr, f"a settled question leaks git's: {r.stderr}"
+
+    def test_a_root_the_submodule_tracks_is_refused_by_its_rules(self, sup: Path):
+        sub = sup / "vendor" / "sub"
+        r = _run(CREATE, "--new", "feature/x", cwd=sup, WORKTREE_ROOT=str(sub / "src"))
+        assert r.returncode == 2, r.stderr
+        assert "exit 128" not in r.stderr, r.stderr
+        assert f"{sub}/.gitignore" in r.stderr, (
+            f"the remedy names the submodule's .gitignore: {r.stderr}"
+        )
+        assert len(_worktrees(sup)) == 1
