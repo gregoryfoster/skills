@@ -288,6 +288,64 @@ class TestLinkedWorktrees:
         assert r.returncode == 0, r.stderr
         assert Path(r.stdout.strip()) == repo / ".worktrees" / "feature-x"
 
+    def test_a_primary_git_cannot_open_is_exit_2_not_skipped(
+        self, repo: Path, linked: Path
+    ):
+        """CR 1858: a tree git cannot answer for fails closed.
+
+        git refuses the primary alone ("dubious ownership"; the linked
+        worktree is declared safe). Skipped, the root in the primary's
+        tracked `src/` was outside the only tree left to ask, and passed.
+        """
+        r = _run(
+            CREATE,
+            "--new",
+            "feature/x",
+            cwd=linked,
+            WORKTREE_ROOT=str(repo / "src"),
+            GIT_TEST_ASSUME_DIFFERENT_OWNER="1",
+            GIT_CONFIG_COUNT="1",
+            GIT_CONFIG_KEY_0="safe.directory",
+            GIT_CONFIG_VALUE_0=str(linked),
+        )
+        assert r.returncode == 2, (
+            f"expected exit 2, got {r.returncode}\nstdout: {r.stdout}\nstderr: {r.stderr}"
+        )
+        assert "dubious ownership" in r.stderr, "git's reason is let through"
+        assert f"'{repo}'" in r.stderr, f"the error names the tree: {r.stderr}"
+        assert r.stdout == ""
+        assert len(_worktrees(repo)) == 2, "no worktree may be created"
+
+
+class TestSubmodulePrimary:
+    """Run from a submodule's checkout, the first list entry is its git dir.
+
+    `<super>/.git/modules/<name>` is not a work tree; git names the
+    submodule's checkout via core.worktree, and that checkout decides.
+    """
+
+    def test_a_root_the_submodule_tracks_is_refused(self, tmp_path: Path):
+        src = _make_repo(tmp_path.resolve() / "src-repo", ".worktrees/\n")
+        sup = _make_repo(tmp_path.resolve() / "sup", ".worktrees/\n")
+        _git(
+            sup,
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            "-q",
+            str(src),
+            "sub",
+        )
+        sub = sup / "sub"
+        assert "/.git/modules/" in _worktrees(sub)[0]
+        r = _run(CREATE, "--new", "feature/x", cwd=sub, WORKTREE_ROOT=str(sub / "src"))
+        assert r.returncode == 2, r.stderr
+        assert f"{sub}/.gitignore" in r.stderr, r.stderr
+        r = _run(CREATE, "--new", "feature/x", cwd=sub)
+        assert r.returncode == 0, r.stderr
+        assert Path(r.stdout.strip()) == sub / ".worktrees" / "feature-x"
+
 
 class TestRelativeConfiguredRoot:
     """#562's leftover: a relative `.skills/worktree_root` is the primary's."""
@@ -454,6 +512,52 @@ class TestRootInASubmodule:
         )
         assert len(_worktrees(sup)) == 1
 
+    @pytest.mark.parametrize("ignorecase", ["true", "false"])
+    def test_a_case_flipped_root_is_still_the_submodules_to_decide(
+        self, sup: Path, ignorecase: str
+    ):
+        """CR 1859: `Vendor/Sub/src` names `vendor/sub/src` on this volume.
+
+        Asked of the superproject as spelled, git does not see the submodule
+        (exit 1, not 128), so the superproject decided, and the remedy it
+        printed, followed here, let through a root the submodule tracks.
+        The existing part of the root is now spelled as on disk.
+        """
+        if not (sup / "Vendor").exists():
+            pytest.skip("the filesystem is case-sensitive")
+        _git(sup, "config", "core.ignorecase", ignorecase)
+        (sup / ".gitignore").write_text(".worktrees/\nVendor/Sub/src/\n")
+        _git(sup, "commit", "-q", "-am", "the superproject's remedy, followed")
+        sub = sup / "vendor" / "sub"
+        flipped = sup / "Vendor" / "Sub" / "src"
+        r = _run(CREATE, "--new", "feature/x", cwd=sup, WORKTREE_ROOT=str(flipped))
+        assert r.returncode == 2, r.stderr
+        assert f"{sub}/.gitignore" in r.stderr, (
+            f"the remedy names the submodule's .gitignore: {r.stderr}"
+        )
+        assert len(_worktrees(sup)) == 1
+
+    def test_a_root_in_a_submodule_not_checked_out_is_refused(
+        self, sup: Path, tmp_path: Path
+    ):
+        """CR 1870: an uninitialised submodule has no rules to read.
+
+        Its directory is empty, so git names the superproject as its top
+        level, which was skipped as already asked: the root passed, and the
+        worktree in it then blocks `git submodule update --init`.
+        """
+        clone = tmp_path.resolve() / "clone"
+        _git(tmp_path, "clone", "-q", str(sup), str(clone))
+        sub = clone / "vendor" / "sub"
+        assert sub.is_dir() and not (sub / ".git").exists()
+        r = _run(CREATE, "--new", "feature/x", cwd=clone, WORKTREE_ROOT=str(sub / "wt"))
+        assert r.returncode == 2, r.stderr
+        assert f"submodule at {sub}, which is not checked out" in r.stderr, r.stderr
+        assert "git submodule update --init" in r.stderr, r.stderr
+        assert r.stdout == ""
+        assert not (sub / "wt").exists()
+        assert len(_worktrees(clone)) == 1
+
 
 def test_a_root_that_cannot_be_created_exits_2_not_1(repo: Path, tmp_path: Path):
     """CR 1850: exit 1 is the Iron Law's code; a failed `mkdir -p` is not it."""
@@ -464,6 +568,20 @@ def test_a_root_that_cannot_be_created_exits_2_not_1(repo: Path, tmp_path: Path)
     assert "could not create the worktree root" in r.stderr, r.stderr
     assert r.stdout == ""
     assert len(_worktrees(repo)) == 1
+
+
+def test_skill_md_states_what_a_bare_primary_gets():
+    """CR 1871: SKILL.md still called bare repositories out of scope.
+
+    The scripts support one: its knobs are read from the current checkout,
+    and the `.gitignore` check skips it (CR 1839, CR 1840).
+    """
+    doc = (SCRIPTS.parent / "SKILL.md").read_text()
+    notes = doc[doc.index("## Notes") :]
+    notes = notes[: notes.index("\n## ", 1)]
+    line = next(ln for ln in notes.splitlines() if "bare" in ln.lower())
+    assert "out of scope" not in line, line
+    assert "current checkout" in line and "skips it" in line, line
 
 
 def test_conventions_say_where_the_knob_is_read():

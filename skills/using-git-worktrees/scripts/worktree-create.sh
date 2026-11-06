@@ -45,8 +45,8 @@ usage() {
   echo "  1  Iron Law violation (branch already checked out elsewhere)"
   echo "  2  Tooling/infra failure (not a git repo, missing arg, the root could"
   echo "     not be created, git worktree add failed), or the root is inside a"
-  echo "     work tree that does not ignore it (git check-ignore), which"
-  echo "     creates nothing"
+  echo "     work tree that does not ignore it (git check-ignore) or in a"
+  echo "     submodule that is not checked out, which creates nothing"
 }
 
 # One line, not the whole block. An argument error used to print the full usage
@@ -129,6 +129,19 @@ ROOT=$(bash "$SCRIPT_DIR/resolve-worktree-root.sh") || {
 # symlink, and it is what `mkdir -p` will create. A raw string compare is not
 # enough: macOS spells /var as /private/var, and an alias or a `..` reaches
 # into the repo under a prefix that does not match it.
+#
+# The existing part is spelled as it is on disk (CR 1859). bash's builtin
+# `pwd -P` keeps the spelling `cd` was given, so on a case-insensitive
+# volume `Vendor/Sub/src` was asked of the superproject as written: not
+# "in submodule" `vendor/sub` there, so the superproject decided, and the
+# remedy it printed let through a root the submodule tracks. The external
+# pwd calls getcwd(3), which returns the on-disk case on macOS; where it is
+# missing, the builtin is the fallback. Components that do not exist yet
+# keep the spelling given, which is what `mkdir -p` will create.
+physical_pwd() {
+  if [[ -x /bin/pwd ]]; then /bin/pwd -P; else pwd -P; fi
+}
+
 canonical_path() {
   local p=$1 rest="" head comp
   case $p in /*) ;; *) p="$PWD/$p" ;; esac
@@ -136,7 +149,7 @@ canonical_path() {
     rest="$(basename -- "$p")${rest:+/$rest}"
     p=$(dirname -- "$p")
   done
-  head=$(cd -P -- "$p" && pwd -P) || return 1
+  head=$(cd -P -- "$p" && physical_pwd) || return 1
   while [[ -n "$rest" ]]; do
     comp=${rest%%/*}
     if [[ "$rest" == */* ]]; then rest=${rest#*/}; else rest=""; fi
@@ -193,11 +206,12 @@ ROOT_CANON=$(canonical_path "$ROOT") || {
 
 # Succeeds when the root is the directory $1 or below it, setting REL to the
 # root's path relative to $1 ("" for $1 itself). Walks up from the root and
-# compares each ancestor by inode (`-ef`), not by string (CR 1842): on a
-# case-insensitive volume `pwd -P` keeps the caller's spelling, so
-# `.../caserepo/wt` is inside `.../CaseRepo` and shares no prefix with it.
-# A component that does not exist yet matches nothing and is carried into
-# REL, which keeps the spelling git is asked about.
+# compares each ancestor by inode (`-ef`), not by string (CR 1842): the
+# tree's path is spelled by git and the root's by canonical_path, and on a
+# case-insensitive volume only the inode says two spellings are one
+# directory. The existing part of REL is spelled as on disk (CR 1859), so
+# git sees the submodule a case-flipped root leads into; a component that
+# does not exist yet matches nothing and is carried into REL as given.
 rel_in() {
   local anc=$ROOT_CANON rel=""
   while :; do
@@ -229,26 +243,39 @@ gitlink_prefix() {
   return 1
 }
 
+tree_unknown() {
+  echo "ERROR: could not resolve the work tree of '$1' (the reason is above), so whether it ignores the worktree root '$ROOT' is unknown" >&2
+  exit 2
+}
+
 WT_LIST=$(git worktree list --porcelain) || {
   echo "ERROR: failed to enumerate worktrees (git worktree list --porcelain)" >&2
   exit 2
 }
-PRIMARY=${WT_LIST%%$'\n'*}
+# The primary is the first porcelain block, up to the first blank line. A
+# block with a `bare` line is `repo.git`, which has no work tree and so
+# cannot commit anything: it is not queued (CR 1840).
+PRIMARY_BLOCK=${WT_LIST%%$'\n\n'*}
+PRIMARY=${PRIMARY_BLOCK%%$'\n'*}
 PRIMARY=${PRIMARY#worktree }
 # A queue, not a fixed pair: a root inside a submodule adds that submodule's
 # checkout (CR 1849).
-TREES=("$PRIMARY" "$PROJECT_ROOT")
+case $'\n'"$PRIMARY_BLOCK"$'\n' in
+  *$'\n'bare$'\n'*) TREES=("$PROJECT_ROOT") ;;
+  *) TREES=("$PRIMARY" "$PROJECT_ROOT") ;;
+esac
 CHECKED=()
 i=0
 while [[ $i -lt ${#TREES[@]} ]]; do
   TREE=${TREES[$i]}
   i=$((i + 1))
-  # Each entry becomes its work tree the same way (CR 1840). The first entry
-  # is `repo.git` for a bare primary, which has no work tree and so cannot
-  # commit anything: skip it. In a submodule (git 2.54) it is
-  # `<super>/.git/modules/<name>`, whose work tree git names via core.worktree.
-  TREE=$(git -C "$TREE" rev-parse --show-toplevel 2>/dev/null) || continue
-  TREE=$(cd -P -- "$TREE" 2>/dev/null && pwd -P) || continue
+  # Each entry becomes its work tree the same way (CR 1840). In a submodule
+  # (git 2.54) the primary's is `<super>/.git/modules/<name>`, whose work
+  # tree git names via core.worktree. A tree git cannot answer for is exit
+  # 2 with git's reason (CR 1858): skipping it skipped the one check that
+  # could refuse the root, so "dubious ownership" let any root through.
+  TOP=$(git -C "$TREE" rev-parse --show-toplevel) || tree_unknown "$TREE"
+  TREE=$(cd -P -- "$TOP" && pwd -P) || tree_unknown "$TREE"
   SEEN=0
   for C in ${CHECKED[@]+"${CHECKED[@]}"}; do
     if [[ "$TREE" -ef "$C" ]]; then SEEN=1; fi
@@ -267,8 +294,14 @@ while [[ $i -lt ${#TREES[@]} ]]; do
   # this tree ("Pathspec ... is in submodule", exit 128), and no rule here
   # could change that. This tree commits only the gitlink; the submodule's
   # checkout is what would commit a worktree, so its rules decide. One that
-  # is not checked out names this tree again and is skipped as seen.
+  # is not checked out (no `.git` in it) is refused (CR 1870): there are no
+  # rules to read, and a worktree there would block its init.
   if [[ $IGNORE_RC -eq 128 ]] && SUB=$(gitlink_prefix "$TREE" "$REL"); then
+    if [[ ! -e "$TREE/$SUB/.git" ]]; then
+      echo "ERROR: the worktree root '$ROOT' is inside the submodule at $TREE/$SUB, which is not checked out: its rules can't be read, and a worktree there would block 'git submodule update --init'" >&2
+      echo "Set WORKTREE_ROOT or .skills/worktree_root to a path outside it." >&2
+      exit 2
+    fi
     TREES+=("$TREE/$SUB")
     continue
   fi

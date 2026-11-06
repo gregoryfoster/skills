@@ -417,14 +417,26 @@ if [[ $DESCOPED -eq 0 ]]; then
       echo "ERROR: failed to enumerate worktrees (git worktree list --porcelain)" >&2
       exit 2
     }
-    PRIMARY=${WT_LIST%%$'\n'*}
-    PRIMARY=${PRIMARY#worktree }
-    # That entry is not always a work tree (CR 1839): for a bare primary it
+    # The primary is the first porcelain block, up to the first blank line.
+    # Its entry is not always a work tree (CR 1839): for a bare primary it
     # is `repo.git`, and in a submodule (git 2.54) `<super>/.git/modules/<n>`.
-    # Neither holds `.skills/`, so ask git for the entry's work tree: the
-    # submodule's checkout via core.worktree, and nothing for a bare repo,
-    # whose knob can only live in the current checkout.
-    PRIMARY=$(git -C "$PRIMARY" rev-parse --show-toplevel 2>/dev/null) || PRIMARY=$PROJECT_ROOT
+    # Neither holds `.skills/`. A block with a `bare` line has no work tree,
+    # so the knob can only live in the current checkout; any other entry is
+    # asked for its work tree (a submodule's via core.worktree). That ask
+    # failing is exit 2, never a fallback (CR 1858): "dubious ownership"
+    # silently read the current linked worktree's knob instead.
+    PRIMARY_BLOCK=${WT_LIST%%$'\n\n'*}
+    PRIMARY_ENTRY=${PRIMARY_BLOCK%%$'\n'*}
+    PRIMARY_ENTRY=${PRIMARY_ENTRY#worktree }
+    case $'\n'"$PRIMARY_BLOCK"$'\n' in
+      *$'\n'bare$'\n'*) PRIMARY=$PROJECT_ROOT ;;
+      *)
+        PRIMARY=$(git -C "$PRIMARY_ENTRY" rev-parse --show-toplevel) || {
+          echo "ERROR: could not resolve the primary checkout '$PRIMARY_ENTRY' (git's reason is above), so its .skills/default_branch cannot be read" >&2
+          exit 2
+        }
+        ;;
+    esac
     BASE=""
     if [[ -f "$PRIMARY/.skills/default_branch" ]]; then
       BASE=$(head -n1 "$PRIMARY/.skills/default_branch" | tr -d '[:space:]')
