@@ -168,6 +168,48 @@ class TestToolchains:
         assert "git ls-files failed (exit 128)" in result.stderr
         assert "index broken" in result.stderr
 
+    def test_it_makes_no_temp_file_to_leak(self, repo, tmp_path):
+        """CR 1868: the listing went through a `mktemp -d` that a signal or a
+        set -e exit left behind. It needs none now: a mktemp that fails
+        changes nothing."""
+        (repo / "themes" / "site").mkdir(parents=True)
+        (repo / "themes" / "site" / "package.json").write_text("{}\n")
+        _add(repo)
+        fakebin = tmp_path / "fakebin"
+        fakebin.mkdir()
+        (fakebin / "mktemp").write_text('#!/bin/sh\necho "mktemp called" >&2\nexit 1\n')
+        (fakebin / "mktemp").chmod(0o755)
+        env = _clean_env()
+        env["PATH"] = f"{fakebin}{os.pathsep}{env['PATH']}"
+        result = subprocess.run(
+            ["bash", str(SCRIPT)], cwd=repo, capture_output=True, text=True, env=env
+        )
+        assert result.returncode == 0, result.stderr
+        assert "mktemp called" not in result.stderr
+        assert result.stdout == "toolchain\tnpm\n"
+
+    def test_a_lister_that_dies_unreported_is_exit_2(self, repo, tmp_path):
+        """With no temp file, git's status arrives as the listing's last
+        record. A lister killed before it reports is a failure, never "none"."""
+        real = subprocess.run(
+            ["sh", "-c", "command -v git"], capture_output=True, text=True, check=True
+        ).stdout.strip()
+        fakebin = tmp_path / "fakebin"
+        fakebin.mkdir()
+        (fakebin / "git").write_text(
+            "#!/bin/sh\n"
+            'case " $* " in *" ls-files "*) kill -9 "$PPID"; exit 0;; esac\n'
+            f'exec "{real}" "$@"\n'
+        )
+        (fakebin / "git").chmod(0o755)
+        env = _clean_env()
+        env["PATH"] = f"{fakebin}{os.pathsep}{env['PATH']}"
+        result = subprocess.run(
+            ["bash", str(SCRIPT)], cwd=repo, capture_output=True, text=True, env=env
+        )
+        assert result.returncode == 2, result.stdout
+        assert "git ls-files failed (exit unknown)" in result.stderr
+
     def test_every_stack_a_repo_has(self, repo):
         (repo / "composer.json").write_text("{}\n")
         (repo / "package.json").write_text("{}\n")

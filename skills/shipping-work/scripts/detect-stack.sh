@@ -260,24 +260,34 @@ present() {
 # filesystem: a plugin composer installs is gitignored, and its scripts are
 # not this repo's to run. pre-ship.sh lists them the same way, so the two
 # agree. A failing ls-files is a tooling failure, never "none".
+#
+# No temp file, so nothing to leak on a signal or a set -e exit (CR 1868):
+# git writes straight into the loop, its stderr straight to ours, and its
+# exit status follows as one last NUL-terminated `status N` record, since
+# bash 3.2 can neither hold NULs in a variable nor wait on a process
+# substitution. No listed path can read as that record: each one ends in
+# /package.json. A missing record (the lister died first) is a failure too.
 NESTED_NPM=()
 nested_npm() {
-  local parent f rc tmp
-  tmp=$(mktemp -d) || { echo "ERROR: mktemp failed" >&2; exit 2; }
+  local parent f status
   for parent in themes plugins; do
-    rc=0
-    git ls-files -z -- ":(glob)$parent/*/package.json" >"$tmp/ls" 2>"$tmp/err" || rc=$?
-    if [[ $rc -ne 0 ]]; then
-      echo "ERROR: git ls-files failed (exit $rc) listing $parent/*/package.json:" >&2
-      cat "$tmp/err" >&2
-      rm -rf "$tmp"
+    status=""
+    # unhardened: only in form; the lister's exit status arrives as the last record and is checked below
+    while IFS= read -r -d '' f; do
+      case $f in
+        "status "*) status=${f#status } ;;
+        *) if [[ -f $f ]]; then NESTED_NPM+=("$f"); fi ;;
+      esac
+    done < <(
+      rc=0
+      git ls-files -z -- ":(glob)$parent/*/package.json" || rc=$?
+      printf 'status %s\0' "$rc"
+    )
+    if [[ $status != 0 ]]; then
+      echo "ERROR: git ls-files failed (exit ${status:-unknown}) listing $parent/*/package.json." >&2
       exit 2
     fi
-    while IFS= read -r -d '' f; do
-      if [[ -f $f ]]; then NESTED_NPM+=("$f"); fi
-    done <"$tmp/ls"
   done
-  rm -rf "$tmp"
 }
 
 if present composer.json; then
