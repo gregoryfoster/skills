@@ -413,7 +413,8 @@ def _npm_gate(repo: Path, tools=ALL_TOOLS, **env: str) -> subprocess.CompletedPr
 
 class TestNpmManifests:
     """#561: npm is found at the root or one level under themes/ and plugins/,
-    as composer is, and each manifest's scripts run in its own directory."""
+    as composer is, where a nested manifest counts only when git tracks it
+    (CR 1844), and each manifest's scripts run in its own directory."""
 
     def test_the_issues_layout(self, repo):
         """The issue's own reproduction: no root package.json, and a theme's
@@ -540,6 +541,21 @@ class TestNpmManifests:
         assert result.returncode == 1, result.stdout + result.stderr
         assert "Detected: toolchain npm (themes/sub/package.json)" in result.stdout
         assert "npm run test:js (themes/sub) (exit 1)" in result.stderr
+
+    def test_an_untracked_themes_user_is_pointed_at_git_add(self, repo):
+        """CR 1867: a new theme's package.json, not yet added, is not
+        detected; the advice and --help say a nested one must be tracked
+        instead of saying it is found one level under themes/."""
+        _commit(repo)
+        _manifest(repo, "themes/new/package.json", {"lint:js": "eslint ."})
+        result = _npm_gate(repo)
+        assert result.returncode == 1
+        assert "no toolchain detected" in result.stderr
+        assert "only once git tracks it (git add" in result.stderr, result.stderr
+        help_text = subprocess.run(
+            ["bash", str(GATE), "--help"], capture_output=True, text=True
+        ).stdout
+        assert "each one git" in help_text and "git add" in help_text, help_text
 
     def test_a_dot_directorys_manifest_is_not_run(self, repo):
         """CR 1866: git's `:(glob)` `*` matches a leading dot, bash's

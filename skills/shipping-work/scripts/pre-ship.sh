@@ -59,7 +59,8 @@ usage() {
   echo "            is installed, -n N --dist MODE when xdist is"
   echo "  composer  composer validate ; php -l on tracked PHP files ; composer test"
   echo "  npm       npm run lint:js / format:js:check / test:js, when declared,"
-  echo "            in each package.json's directory: the root, themes/*/, plugins/*/"
+  echo "            in each package.json's directory: the root, and each one git"
+  echo "            tracks in themes/*/ or plugins/*/ (git add a new theme's)"
   echo ""
   echo "Every check runs; the gate then exits 1 naming each one that failed."
   echo "Nothing detected exits 1: supply scripts/pre-ship.sh at your repo root."
@@ -226,9 +227,11 @@ no_gate() {
   echo "       (pyproject.toml with uv.lock or [tool.uv]), composer" >&2
   echo "       (composer.json) and npm (package.json scripts lint:js," >&2
   echo "       format:js:check, test:js); composer and npm at the root or" >&2
-  echo "       one level under themes/ or plugins/. For anything else, write" >&2
-  echo "       scripts/pre-ship.sh at your repo root with your test runner in" >&2
-  echo "       it; SKILL.md Step 1 resolves it ahead of this script (#301)." >&2
+  echo "       one level under themes/ or plugins/, where a package.json counts" >&2
+  echo "       only once git tracks it (git add a new theme's). For anything" >&2
+  echo "       else, write scripts/pre-ship.sh at your repo root with your test" >&2
+  echo "       runner in it; SKILL.md Step 1 resolves it ahead of this script" >&2
+  echo "       (#301)." >&2
   echo "       Do not copy shipping-work/ into your own skills/ directory: a" >&2
   echo "       copy of the whole skill drifts on every update." >&2
   exit 1

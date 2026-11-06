@@ -5,7 +5,7 @@ Two kinds of answer, kept apart (plan Step 5, rows 1 and 1b):
 - `toolchain` decides which CHECKS run: `uv` (a pyproject.toml with a uv.lock
   or a [tool.uv] table), `composer` (a composer.json at the root, or one level
   under themes/ or plugins/), `npm` (a package.json, with composer's reach,
-  #561).
+  #561, where a nested one counts only when git tracks it, CR 1844).
 - `framework` decides only which DOCS apply — doc-check's default watch list
   and which references/stack-*.md loads: `fastapi` when fastapi is a declared
   dependency, `click` when click or typer is and fastapi is not, `php` for any

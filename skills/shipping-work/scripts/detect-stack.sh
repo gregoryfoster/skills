@@ -244,8 +244,9 @@ if [[ -f pyproject.toml ]]; then
   fi
 fi
 
-# Whether manifest $1 is at the root or one level under themes/ or plugins/:
-# the reach of composer and npm alike, so neither misses the other's layout.
+# Whether manifest $1 is at the root or one level under themes/ or plugins/,
+# read from the tree: composer's reach. npm's has the same shape but counts a
+# nested package.json only when git tracks it (nested_npm, below).
 present() {
   local f
   if [[ -f "$1" ]]; then return 0; fi
