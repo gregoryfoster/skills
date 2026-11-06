@@ -48,7 +48,7 @@ Determine which GitHub issue(s) to close (priority order):
 ```bash
 N=shipping-work
 { [ ! -x .skills/doctor.sh ] || bash .skills/doctor.sh; } || exit 1
-for S in doc-check.sh check-status.sh push.sh comment-issue.sh close-issue.sh run-deploy-command.sh run-pre-restart.sh merge-mode.sh pre-ship.sh; do SD=
+for S in doc-check.sh check-status.sh push.sh comment-issue.sh close-issue.sh run-deploy-command.sh run-pre-restart.sh read-next-steps.sh merge-mode.sh pre-ship.sh; do SD=
   for d in scripts ".claude/skills/$N/scripts" "$HOME/.claude/skills/$N/scripts"; do
     [ -f "$d/$S" ] && { SD="$d"; break; }
   done
@@ -187,11 +187,11 @@ Present a summary table:
 
 **With `.skills/deploy_command` set**, the project deploys through its own command, and this step runs after Step 5, before Step 6 ([references/deploy-command.md](references/deploy-command.md)):
 
-1. List the rows below that apply, **minus** the DB migration and service restart rows: the command owns them. Do a row the new code needs first, such as an env var it reads, before the deploy.
+1. List the rows that apply, from the source below, **minus** the DB migration and service restart rows: the command owns them. Do a row the new code needs first, such as an env var it reads, before the deploy.
 2. `bash "<run-deploy-command.sh>" --check` prints the command line, with the pushed SHA last. If it exits 2, fix what it names before offering. Offer to run it, once. On a yes, run `bash "<run-deploy-command.sh>"`.
 3. Report its exit status and the tail of its output. Exit 1 is a failed deploy: quote the command's own exit code and output verbatim, and close nothing. Exit 2 means nothing ran; fix what it names. A command that detaches without waiting exits 0 once the deploy has *started*, so check production the project's own way before Step 6.
 
-**Without it** (`--check` exits 3), after the summary table, review commits and changes shipped to identify any post-deploy work the user may need to perform. A detected framework's stack file lists its own categories; use those. Otherwise, common categories:
+**Without it** (`--check` exits 3), after the summary table, review commits and changes shipped to identify any post-deploy work the user may need to perform, from one source, and name it. `bash "<read-next-steps.sh>"` prints the project's own rows (`.skills/next-steps`, [#564](https://github.com/gregoryfoster/skills/issues/564)), which replace the rest; exit 2: fix the file, never fall back. Exit 3: the detected framework's stack file, else these common categories:
 
 | Category | Trigger | Example action |
 |---|---|---|
@@ -203,7 +203,7 @@ Present a summary table:
 
 Present only the items that apply, under **Next steps for production**, each naming its file, table or command. Then **offer to execute** any within your capabilities, once — don't nag.
 
-Before offering a row that restarts the service (a DB migration, a restart, an env var's restart), run `bash "<run-pre-restart.sh>"`, the project's check (`.skills/pre_restart`, [#557](https://github.com/gregoryfoster/skills/issues/557)). Exit 1: it refused, so offer no restart row; quote its code and output verbatim, and close no issue whose "Done when" is about production. Exit 2: fix the knob. Exit 3: no check.
+Before offering a row that restarts the service (a DB migration, a restart, an env var's restart; any project row, as those can't be told apart), run `bash "<run-pre-restart.sh>"`, the project's check (`.skills/pre_restart`, [#557](https://github.com/gregoryfoster/skills/issues/557)). Exit 1: it refused, so offer none of those rows; quote its code and output verbatim, and close no issue whose "Done when" is about production. Exit 2: fix the knob. Exit 3: no check.
 
 If nothing applies, omit this step entirely.
 

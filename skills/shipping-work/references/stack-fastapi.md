@@ -15,6 +15,9 @@ along with its structure and conventions. `.skills/doc-sensitive-paths` and
 
 ## Step 8 — next steps for a FastAPI service
 
+A project's `.skills/next-steps`, when present, replaces this table
+(SKILL.md Step 8).
+
 | Category | Trigger | Example action |
 |---|---|---|
 | DB migration (alembic) | `alembic/versions/` changed | `uv run alembic upgrade head` (or the project's `migrate.sh`), then `systemctl restart <project>` |

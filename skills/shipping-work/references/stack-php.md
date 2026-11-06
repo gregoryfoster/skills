@@ -29,6 +29,9 @@ its structure and conventions.
 
 ## Step 8 — next steps for WordPress / Bedrock / Sage 11
 
+A project's `.skills/next-steps`, when present, replaces this table
+(SKILL.md Step 8).
+
 | Category | Trigger | Example action |
 |---|---|---|
 | ACF JSON sync | `acf-json/` changed | `wp acf import` or "Sync changes" in admin |

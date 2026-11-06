@@ -1343,6 +1343,13 @@ GATE_SCRIPTS = {
         "reaches the session unfiltered, and the primary-checkout probe dies "
         "rather than answering empty"
     ),
+    "read-next-steps.sh": (
+        "its exit code decides where Step 8's rows come from (#564): 0 means "
+        "the project's own rows replace the stack file's, and 3 (no file) is "
+        "the only code that sends the agent to the stack file. A present but "
+        "unusable file or .skills is exit 2, never a silent fallback, and the "
+        "primary-checkout probe dies rather than answering empty"
+    ),
     "_command-knob.sh": (
         "the one parser behind run-deploy-command.sh and run-pre-restart.sh "
         "(#557): a knob it misreads as usable runs the wrong command, and one "
