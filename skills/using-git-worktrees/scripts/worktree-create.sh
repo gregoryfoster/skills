@@ -45,8 +45,8 @@ usage() {
   echo "  1  Iron Law violation (branch already checked out elsewhere)"
   echo "  2  Tooling/infra failure (not a git repo, missing arg, the root could"
   echo "     not be created, git worktree add failed), or the root is inside a"
-  echo "     work tree that does not ignore it (git check-ignore), which"
-  echo "     creates nothing"
+  echo "     work tree that does not ignore it (git check-ignore) or in a"
+  echo "     submodule that is not checked out, which creates nothing"
 }
 
 # One line, not the whole block. An argument error used to print the full usage
@@ -294,8 +294,14 @@ while [[ $i -lt ${#TREES[@]} ]]; do
   # this tree ("Pathspec ... is in submodule", exit 128), and no rule here
   # could change that. This tree commits only the gitlink; the submodule's
   # checkout is what would commit a worktree, so its rules decide. One that
-  # is not checked out names this tree again and is skipped as seen.
+  # is not checked out (no `.git` in it) is refused (CR 1870): there are no
+  # rules to read, and a worktree there would block its init.
   if [[ $IGNORE_RC -eq 128 ]] && SUB=$(gitlink_prefix "$TREE" "$REL"); then
+    if [[ ! -e "$TREE/$SUB/.git" ]]; then
+      echo "ERROR: the worktree root '$ROOT' is inside the submodule at $TREE/$SUB, which is not checked out: its rules can't be read, and a worktree there would block 'git submodule update --init'" >&2
+      echo "Set WORKTREE_ROOT or .skills/worktree_root to a path outside it." >&2
+      exit 2
+    fi
     TREES+=("$TREE/$SUB")
     continue
   fi

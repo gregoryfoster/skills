@@ -537,6 +537,27 @@ class TestRootInASubmodule:
         )
         assert len(_worktrees(sup)) == 1
 
+    def test_a_root_in_a_submodule_not_checked_out_is_refused(
+        self, sup: Path, tmp_path: Path
+    ):
+        """CR 1870: an uninitialised submodule has no rules to read.
+
+        Its directory is empty, so git names the superproject as its top
+        level, which was skipped as already asked: the root passed, and the
+        worktree in it then blocks `git submodule update --init`.
+        """
+        clone = tmp_path.resolve() / "clone"
+        _git(tmp_path, "clone", "-q", str(sup), str(clone))
+        sub = clone / "vendor" / "sub"
+        assert sub.is_dir() and not (sub / ".git").exists()
+        r = _run(CREATE, "--new", "feature/x", cwd=clone, WORKTREE_ROOT=str(sub / "wt"))
+        assert r.returncode == 2, r.stderr
+        assert f"submodule at {sub}, which is not checked out" in r.stderr, r.stderr
+        assert "git submodule update --init" in r.stderr, r.stderr
+        assert r.stdout == ""
+        assert not (sub / "wt").exists()
+        assert len(_worktrees(clone)) == 1
+
 
 def test_a_root_that_cannot_be_created_exits_2_not_1(repo: Path, tmp_path: Path):
     """CR 1850: exit 1 is the Iron Law's code; a failed `mkdir -p` is not it."""
