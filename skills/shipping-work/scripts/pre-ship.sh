@@ -27,7 +27,26 @@
 # Usage: bash "<pre-ship.sh>" [--help]
 set -euo pipefail
 
-SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
+# This script's own directory, where its helpers are, through the symlink
+# chain first (CR 1865): a consumer's per-script symlink (managing-skills'
+# local-overrides.md) puts this file's link in a directory with no
+# detect-stack.sh beside it, while the target has every helper. `cd -P`, not
+# a logical cd: through a .claude/skills/<dir-link> prefix a relative link's
+# `..` must cross the directory link as the kernel does, not by spelling.
+_self=${BASH_SOURCE[0]}
+_n=0
+while [[ -L $_self && $_n -lt 10 ]]; do
+  _t=$(readlink "$_self") || break
+  case $_t in
+    /*) _self=$_t ;;
+    *) _self=$(dirname "$_self")/$_t ;;
+  esac
+  _n=$((_n + 1))
+done
+SCRIPT_DIR=$(cd -P "$(dirname "$_self")" && pwd -P) || {
+  echo "ERROR: could not resolve this script's directory (from $_self)" >&2
+  exit 2
+}
 
 usage() {
   echo "Usage: bash \"$0\" [--help]"

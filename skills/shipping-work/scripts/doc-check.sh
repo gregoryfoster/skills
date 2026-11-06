@@ -69,7 +69,28 @@ DOC_SECTIONS=(
 # Outside a git repository there is nothing to detect: this block runs before
 # the arguments are read, and `--help` must work anywhere, so it steps aside
 # and leaves the body to run on the generic lists (CR 1393).
-DETECT="$(cd "$(dirname "$0")" && pwd)/detect-stack.sh"
+#
+# detect-stack.sh is looked for beside this script's target, through the
+# symlink chain (CR 1865): under a consumer's per-script symlink
+# (managing-skills' local-overrides.md) the link's own directory has none, and
+# the framework watch list was silently lost. `cd -P`, not a logical cd:
+# through a .claude/skills/<dir-link> prefix a relative link's `..` must cross
+# the directory link as the kernel does, not by spelling.
+_self=${BASH_SOURCE[0]}
+_n=0
+while [[ -L $_self && $_n -lt 10 ]]; do
+  _t=$(readlink "$_self") || break
+  case $_t in
+    /*) _self=$_t ;;
+    *) _self=$(dirname "$_self")/$_t ;;
+  esac
+  _n=$((_n + 1))
+done
+SCRIPT_DIR=$(cd -P "$(dirname "$_self")" && pwd -P) || {
+  echo "ERROR: could not resolve this script's directory (from $_self)" >&2
+  exit 2
+}
+DETECT="$SCRIPT_DIR/detect-stack.sh"
 if [[ -f "$DETECT" ]] && git rev-parse --show-toplevel >/dev/null 2>&1; then
   STACK=$(bash "$DETECT") || {
     echo "ERROR: detect-stack.sh failed (exit $?), so the default path list is unknown." >&2
