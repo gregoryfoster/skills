@@ -218,6 +218,16 @@ class TestToolchains:
         assert (clone / "themes" / "sub").is_dir()
         assert _detect(clone) == set()
 
+    def test_a_dot_directory_is_not_one(self, repo):
+        """CR 1866: git's `:(glob)` `*` matches a leading dot and bash's
+        `themes/*` does not, so a tracked themes/.old/package.json counted
+        while composer's reach skipped the same directory."""
+        (repo / "themes" / ".old").mkdir(parents=True)
+        (repo / "themes" / ".old" / "package.json").write_text("{}\n")
+        (repo / "themes" / ".old" / "composer.json").write_text("{}\n")
+        _add(repo)
+        assert _detect(repo) == set()
+
     @pytest.mark.parametrize("setting", PATHSPEC_SETTINGS)
     def test_a_global_pathspec_setting_does_not_hide_a_theme(self, repo, setting):
         """CR 1861: `git --literal-pathspecs` exports GIT_LITERAL_PATHSPECS=1

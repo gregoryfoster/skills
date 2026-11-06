@@ -274,6 +274,9 @@ present() {
 # symlink is one tracked link to git and stays out of npm's reach, while
 # composer's glob follows it.
 #
+# A dot-directory is skipped (CR 1866): git's `:(glob)` `*` matches a leading
+# dot, bash's `themes/*` does not, and composer's reach is bash's.
+#
 # No temp file, so nothing to leak on a signal or a set -e exit (CR 1868):
 # git writes straight into the loop, its stderr straight to ours, and its
 # exit status follows as one last NUL-terminated `status N` record, since
@@ -289,6 +292,7 @@ nested_npm() {
     while IFS= read -r -d '' f; do
       case $f in
         "status "*) status=${f#status } ;;
+        "$parent"/.*) ;; # a dot-directory, which composer's glob skips (CR 1866)
         *) if [[ -f $f ]]; then NESTED_NPM+=("$f"); fi ;;
       esac
     done < <(

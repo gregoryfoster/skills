@@ -541,6 +541,18 @@ class TestNpmManifests:
         assert "Detected: toolchain npm (themes/sub/package.json)" in result.stdout
         assert "npm run test:js (themes/sub) (exit 1)" in result.stderr
 
+    def test_a_dot_directorys_manifest_is_not_run(self, repo):
+        """CR 1866: git's `:(glob)` `*` matches a leading dot, bash's
+        `themes/*` (composer's reach) does not, so a tracked
+        themes/.old/package.json ran its scripts."""
+        _manifest(repo, "package.json", {"test:js": "jest"})
+        _manifest(repo, "themes/.old/package.json", {"lint:js": "eslint ."})
+        _commit(repo)
+        result = _npm_gate(repo)
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert _cwd_calls(repo, "npm") == [(".", ["run", "test:js"])]
+        assert "themes/.old" not in result.stdout
+
     @pytest.mark.parametrize("setting", PATHSPEC_SETTINGS)
     def test_a_global_pathspec_setting_keeps_a_themes_failure(self, repo, setting):
         """CR 1861: under GIT_LITERAL_PATHSPECS=1, which `git

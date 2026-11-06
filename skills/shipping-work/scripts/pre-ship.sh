@@ -261,6 +261,8 @@ if [[ $NPM -eq 1 ]]; then
       exit 2
     fi
     while IFS= read -r -d '' f; do
+      # A dot-directory, which composer's glob skips (CR 1866).
+      case $f in "$parent"/.*) continue ;; esac
       if [[ -f "$f" ]]; then NPM_DIRS+=("${f%/package.json}"); fi
     done <"$TMP/npm"
   done
