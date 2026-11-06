@@ -318,3 +318,41 @@ def test_help_documents_the_refusal():
     assert "does not ignore it" in exit_2, (
         f"--help's exit 2 must name the refusal: {codes}"
     )
+
+
+class TestBarePrimary:
+    """CR 1840: `clone --bare` + `worktree add`, which worked at 227de51e.
+
+    The first `git worktree list` entry is the bare directory, which has no
+    work tree: nothing there can commit a worktree, so it is not a tree to
+    ask. Treated as one, a root equal to it was refused as "the work tree
+    itself", and a root below it failed check-ignore with exit 128.
+    """
+
+    @pytest.fixture
+    def home(self, tmp_path: Path) -> Path:
+        seed = _make_repo(tmp_path.resolve() / "seed", None)
+        bare = tmp_path.resolve() / "repo.git"
+        _git(tmp_path, "clone", "-q", "--bare", str(seed), str(bare))
+        home = bare / "main"
+        _git(bare, "worktree", "add", "-q", str(home), "main")
+        return home
+
+    def test_the_bare_directory_as_the_root_passes(self, home: Path):
+        bare = home.parent
+        r = _run(CREATE, "--new", "feature/x", cwd=home, WORKTREE_ROOT=str(bare))
+        assert r.returncode == 0, r.stderr
+        assert Path(r.stdout.strip()) == bare / "feature-x"
+
+    def test_a_root_below_the_bare_directory_passes(self, home: Path):
+        bare = home.parent
+        r = _run(CREATE, "--new", "feature/x", cwd=home, WORKTREE_ROOT=str(bare / "wt"))
+        assert r.returncode == 0, r.stderr
+        assert Path(r.stdout.strip()) == bare / "wt" / "feature-x"
+
+    def test_a_root_inside_the_current_checkout_is_still_refused(self, home: Path):
+        r = _run(
+            CREATE, "--new", "feature/x", cwd=home, WORKTREE_ROOT=str(home / "src")
+        )
+        assert r.returncode == 2, r.stderr
+        assert ".gitignore" in r.stderr, r.stderr

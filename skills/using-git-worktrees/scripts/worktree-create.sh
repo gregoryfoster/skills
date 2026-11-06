@@ -192,6 +192,11 @@ PRIMARY=${WT_LIST%%$'\n'*}
 PRIMARY=${PRIMARY#worktree }
 CHECKED=""
 for TREE in "$PRIMARY" "$PROJECT_ROOT"; do
+  # Each entry becomes its work tree the same way (CR 1840). The first entry
+  # is `repo.git` for a bare primary, which has no work tree and so cannot
+  # commit anything: skip it. In a submodule (git 2.54) it is
+  # `<super>/.git/modules/<name>`, whose work tree git names via core.worktree.
+  TREE=$(git -C "$TREE" rev-parse --show-toplevel 2>/dev/null) || continue
   TREE=$(cd -P -- "$TREE" 2>/dev/null && pwd -P) || continue
   [[ "$TREE" != "$CHECKED" ]] || continue
   CHECKED=$TREE
