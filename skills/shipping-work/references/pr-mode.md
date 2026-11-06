@@ -115,9 +115,7 @@ Started by "ship it" once `gh pr view` shows `MERGED`:
    (exit 2) unless HEAD is the default branch and equals its upstream. The
    deploy runs the merge commit, or a later one on the default branch,
    never the branch tip.
-3. **Close the held issues.** Close each `Refs` issue only after the deploy
-   exited 0, or, without one, the check passed, under the HARD-GATE. For
-   each `Closes` issue, check that the merge closed it (`gh issue view <n>
+3. **Close the held issues.** For each `Closes` issue, check that the merge closed it (`gh issue view <n>
    --json state`); a PR merged into any other base closes nothing. Then
    check that it closed nothing else. A link dropped in the Development
    sidebar is gone from `closingIssuesReferences`, yet the merge can close
@@ -141,7 +139,10 @@ Started by "ship it" once `gh pr view` shows `MERGED`:
    ```
 
    Reopen each kept issue that isn't on a `Closes` line (`gh issue reopen
-   <n>`), and say why.
+   <n>`), and say why. Then close each `Refs` issue only after the deploy
+   exited 0, or, without one, the check passed, under the HARD-GATE. This
+   comes last, since one the merge closed through a kept sidebar link was
+   just reopened.
 4. **Destroy the worktree** with `using-git-worktrees` Phase 5. In `pr` mode
    `worktree-destroy.sh` fetches first, then accepts the merged PR as evidence
    when a squash or rebase merge left no ancestry. To delete the local branch

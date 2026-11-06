@@ -216,3 +216,17 @@ def test_the_post_merge_pass_says_a_manual_close_is_not_this_prs():
     post = _section("## The post-merge pass")
     step3 = post.split("\n3. ", 1)[1].split("\n4. ", 1)[0]
     assert "manual close" in step3, step3
+
+
+def test_the_refs_issues_close_after_the_reopen_check():
+    """CR 1873: step 3 closed the `Refs` issues first, then reopened each kept
+    issue not on a `Closes` line, so a `Refs` issue the merge closed through
+    a retained sidebar link ended reopened though its deploy or check passed.
+    The reopen check runs first; closing the `Refs` issues that passed comes
+    last, so it stands."""
+    post = _section("## The post-merge pass")
+    step3 = post.split("\n3. ", 1)[1].split("\n4. ", 1)[0]
+    reopen = step3.index("Reopen each kept issue")
+    closes = [m.start() for m in re.finditer(r"[Cc]lose each `Refs` issue", step3)]
+    assert closes, step3
+    assert all(at > reopen for at in closes), step3
