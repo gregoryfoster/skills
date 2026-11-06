@@ -419,6 +419,12 @@ if [[ $DESCOPED -eq 0 ]]; then
     }
     PRIMARY=${WT_LIST%%$'\n'*}
     PRIMARY=${PRIMARY#worktree }
+    # That entry is not always a work tree (CR 1839): for a bare primary it
+    # is `repo.git`, and in a submodule (git 2.54) `<super>/.git/modules/<n>`.
+    # Neither holds `.skills/`, so ask git for the entry's work tree: the
+    # submodule's checkout via core.worktree, and nothing for a bare repo,
+    # whose knob can only live in the current checkout.
+    PRIMARY=$(git -C "$PRIMARY" rev-parse --show-toplevel 2>/dev/null) || PRIMARY=$PROJECT_ROOT
     BASE=""
     if [[ -f "$PRIMARY/.skills/default_branch" ]]; then
       BASE=$(head -n1 "$PRIMARY/.skills/default_branch" | tr -d '[:space:]')
@@ -440,7 +446,7 @@ if [[ $DESCOPED -eq 0 ]]; then
 
     if [[ -z "$BASE_REF" ]]; then
       echo "ERROR: could not resolve base branch '$BASE' (neither origin/$BASE nor local $BASE exists)" >&2
-      echo "Set .skills/default_branch in the primary checkout ($PRIMARY) to your project's base branch name, pass --base <ref>, or pass --descoped <reason>." >&2
+      echo "Set .skills/default_branch in $PRIMARY (the primary checkout, or this one when the primary is bare) to your project's base branch name, pass --base <ref>, or pass --descoped <reason>." >&2
       exit 2
     fi
   fi
