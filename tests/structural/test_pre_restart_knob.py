@@ -272,6 +272,13 @@ def test_step_8_runs_the_check_before_offering_a_restart_row():
     assert "verbatim" in para and "Done when" in para, para
 
 
+def test_an_unusable_check_offers_no_restart_row_either():
+    """CR 1856: exit 2 means nothing ran, so nothing was checked."""
+    step8 = _section(SKILL_MD, "### Step 8")
+    para = next(p for p in step8.split("\n\n") if "<run-pre-restart.sh>" in p)
+    assert re.search(r"Exit 2: offer none of those rows", para), para
+
+
 def test_step_6_waits_for_step_8_when_the_check_is_set():
     """The issue's "close no issue" can't hold if Step 6 closed it first."""
     step6 = _section(SKILL_MD, "### Step 6")
