@@ -37,6 +37,9 @@ convention instead of the default; the project's AGENTS.md decides.
 
 ## Step 8 — next steps for a CLI or library
 
+A project's `.skills/next-steps`, when present, replaces this table
+(SKILL.md Step 8).
+
 | Category | Trigger | Example action |
 |---|---|---|
 | Dep update | `pyproject.toml` changed | `uv sync` on consumers |

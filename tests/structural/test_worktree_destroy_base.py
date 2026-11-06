@@ -63,7 +63,7 @@ def _run_git(repo: Path, *args: str, check: bool = True) -> subprocess.Completed
 
 
 def _run_destroy(
-    repo: Path, *args: str, cwd: Path | None = None
+    repo: Path, *args: str, cwd: Path | None = None, extra_env: dict | None = None
 ) -> subprocess.CompletedProcess:
     """Run worktree-destroy.sh with cwd=repo so it picks up the right project root.
 
@@ -72,6 +72,7 @@ def _run_destroy(
     """
     env = _clean_env()
     env["WORKTREE_ROOT"] = str(repo / ".worktrees")
+    env.update(extra_env or {})
     return subprocess.run(
         ["bash", str(SCRIPT), *args],
         capture_output=True,
@@ -462,4 +463,212 @@ class TestDryRun:
         listing = _run_git(tmp_repo, "worktree", "list", "--porcelain").stdout
         assert "locked claude agent agent-x" in listing, (
             "dry run must not release the lock"
+        )
+
+
+# --- #559: .skills/default_branch is read from the primary checkout ----------
+
+
+class TestDefaultBranchFromPrimaryCheckout:
+    """The knob is untracked, so only the primary checkout has it (#559).
+
+    An orchestrator destroys a worker's worktree from its own linked
+    `orchestrate/<topic>` worktree with `--base` omitted. Read from the
+    current checkout, the knob does not exist there, and the base falls to
+    origin/HEAD, then `main`: a base the project did not name. The knob here
+    names `trunk`, which differs from both, so a wrong read is observable.
+    """
+
+    @pytest.fixture
+    def knob_repo(self, tmp_repo: Path) -> Path:
+        # trunk == batch/x, so feature/y is merged into trunk but not main.
+        _run_git(tmp_repo, "branch", "trunk", "batch/x")
+        (tmp_repo / ".skills").mkdir()
+        (tmp_repo / ".skills" / "default_branch").write_text("trunk\n")
+        _add_worktree(
+            tmp_repo,
+            tmp_repo / ".worktrees" / "orchestrate-t",
+            "orchestrate/t",
+            start="main",
+        )
+        # Untracked in the primary: the linked worktree cannot see it.
+        status = _run_git(tmp_repo, "status", "--porcelain", "--", ".skills").stdout
+        assert status.startswith("??"), f"the knob must be untracked: {status!r}"
+        assert not (tmp_repo / ".worktrees" / "orchestrate-t" / ".skills").exists()
+        return tmp_repo
+
+    def test_run_from_a_linked_worktree_reads_the_primarys_knob(self, knob_repo: Path):
+        orch = knob_repo / ".worktrees" / "orchestrate-t"
+        result = _run_destroy(knob_repo, "feature/y", "--dry-run", cwd=orch)
+        assert result.returncode == 0, (
+            "from a linked worktree, the primary checkout's .skills/default_branch "
+            f"(trunk) must be the base; got exit {result.returncode}\n"
+            f"stdout: {result.stdout}\nstderr: {result.stderr}"
+        )
+        assert "ancestor of 'trunk'" in result.stdout, result.stdout
+
+    def test_run_from_the_primary_checkout_reads_the_same_knob(self, knob_repo: Path):
+        result = _run_destroy(knob_repo, "feature/y", "--dry-run")
+        assert result.returncode == 0, result.stderr
+        assert "ancestor of 'trunk'" in result.stdout, result.stdout
+
+    def test_a_branch_unmerged_into_the_knobs_base_is_refused_from_a_worktree(
+        self, knob_repo: Path
+    ):
+        """The converse: merged into main, not trunk. Falling to main would pass."""
+        _run_git(knob_repo, "branch", "only-main", "main")
+        _add_worktree(knob_repo, knob_repo / "elsewhere" / "only-main", "only-main")
+        (knob_repo / "elsewhere" / "only-main" / "m.txt").write_text("m\n")
+        _run_git(knob_repo / "elsewhere" / "only-main", "add", "m.txt")
+        _run_git(knob_repo / "elsewhere" / "only-main", "commit", "-m", "m")
+        _run_git(knob_repo, "branch", "-f", "main", "only-main")
+        orch = knob_repo / ".worktrees" / "orchestrate-t"
+        result = _run_destroy(knob_repo, "only-main", "--dry-run", cwd=orch)
+        assert result.returncode == 1, (
+            f"expected Iron Law exit 1 against trunk, got {result.returncode}\n"
+            f"stdout: {result.stdout}\nstderr: {result.stderr}"
+        )
+        assert "'trunk'" in result.stderr, result.stderr
+
+    def test_a_primary_git_cannot_open_is_exit_2_not_the_current_checkout(
+        self, knob_repo: Path
+    ):
+        """CR 1858: a failed ask about the primary is never a fallback.
+
+        git refuses the primary alone ("dubious ownership"; the linked
+        worktree is declared safe). Falling back to the current checkout
+        reads no knob there, so the base became main and the verdict an
+        Iron Law exit 1 about a base the project never named.
+        """
+        orch = knob_repo / ".worktrees" / "orchestrate-t"
+        result = _run_destroy(
+            knob_repo,
+            "feature/y",
+            "--dry-run",
+            cwd=orch,
+            extra_env=_only_the_primary_is_dubious(orch),
+        )
+        assert result.returncode == 2, (
+            f"expected exit 2, got {result.returncode}\n"
+            f"stdout: {result.stdout}\nstderr: {result.stderr}"
+        )
+        assert "dubious ownership" in result.stderr, "git's reason is let through"
+        assert f"'{knob_repo.resolve()}'" in result.stderr, (
+            f"the error names the primary's path: {result.stderr}"
+        )
+
+
+def _only_the_primary_is_dubious(linked: Path) -> dict:
+    """git treats every repo as foreign except the one linked worktree."""
+    return {
+        "GIT_TEST_ASSUME_DIFFERENT_OWNER": "1",
+        "GIT_CONFIG_COUNT": "1",
+        "GIT_CONFIG_KEY_0": "safe.directory",
+        "GIT_CONFIG_VALUE_0": str(linked.resolve()),
+    }
+
+
+# --- CR 1839: the first `git worktree list` entry is not always a work tree --
+
+
+def _seed(path: Path) -> Path:
+    """A repo whose `trunk` is main + 1 and whose feature/y sits on trunk."""
+    path.mkdir(parents=True)
+    _run_git(path.parent, "init", "-b", "main", str(path))
+    _run_git(path, "config", "user.email", "test@example.com")
+    _run_git(path, "config", "user.name", "test")
+    (path / "README.md").write_text("initial\n")
+    _run_git(path, "add", "README.md")
+    _run_git(path, "commit", "-m", "initial")
+    return path
+
+
+class TestPrimaryEntryWithoutAWorkTree:
+    """For a bare primary the first entry is `repo.git`; in a submodule (git
+    2.54) it is `<super>/.git/modules/<name>`. Neither holds `.skills/`, so a
+    knob read there is never found and the base falls to origin/HEAD or main.
+    The knob names `trunk`, which feature/y is merged into and main is not, so
+    a wrong read is an Iron Law refusal.
+    """
+
+    def test_a_bare_primary_reads_the_current_checkouts_knob(self, tmp_path: Path):
+        seed = _seed(tmp_path / "seed")
+        _run_git(seed, "checkout", "-q", "-b", "trunk")
+        (seed / ".skills").mkdir()
+        (seed / ".skills" / "default_branch").write_text("trunk\n")
+        _run_git(seed, "add", ".skills")
+        _run_git(seed, "commit", "-m", "knob")
+        _run_git(seed, "branch", "feature/y", "trunk")
+        _run_git(seed, "checkout", "-q", "main")
+        bare = tmp_path / "repo.git"
+        _run_git(tmp_path, "clone", "-q", "--bare", str(seed), str(bare))
+        home = _add_worktree(bare, tmp_path / "home", "trunk")
+        _add_worktree(bare, tmp_path / "wts" / "feature-y", "feature/y")
+        first = _run_git(home, "worktree", "list", "--porcelain").stdout
+        assert first.splitlines()[1] == "bare", first
+
+        result = _run_destroy(home, "feature/y", "--dry-run")
+        assert result.returncode == 0, (
+            "a bare primary has no .skills/: the committed knob in the current "
+            f"checkout (trunk) must be read; got exit {result.returncode}\n"
+            f"stdout: {result.stdout}\nstderr: {result.stderr}"
+        )
+        assert "ancestor of 'trunk'" in result.stdout, result.stdout
+
+    def test_a_submodules_primary_is_its_work_tree(self, tmp_path: Path):
+        src = _seed(tmp_path / "src")
+        sup = _seed(tmp_path / "sup")
+        _run_git(
+            sup,
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            "-q",
+            str(src),
+            "sub",
+        )
+        _run_git(sup, "commit", "-m", "submodule")
+        sub = sup / "sub"
+        _run_git(sub, "config", "user.email", "test@example.com")
+        _run_git(sub, "config", "user.name", "test")
+        _run_git(sub, "checkout", "-q", "-b", "trunk")
+        (sub / "t.txt").write_text("t\n")
+        _run_git(sub, "add", "t.txt")
+        _run_git(sub, "commit", "-m", "trunk")
+        _run_git(sub, "branch", "feature/y", "trunk")
+        # Untracked in the submodule's primary checkout, as #559's knob is.
+        (sub / ".skills").mkdir()
+        (sub / ".skills" / "default_branch").write_text("trunk\n")
+        orch = _add_worktree(sub, tmp_path / "orch", "orchestrate/t", start="main")
+        _add_worktree(sub, tmp_path / "wts" / "feature-y", "feature/y")
+        first = _run_git(orch, "worktree", "list", "--porcelain").stdout
+        assert "/.git/modules/" in first.splitlines()[0], first
+
+        result = _run_destroy(orch, "feature/y", "--dry-run", cwd=orch)
+        assert result.returncode == 0, (
+            "the submodule's primary checkout is its work tree, not its git "
+            f"dir; got exit {result.returncode}\n"
+            f"stdout: {result.stdout}\nstderr: {result.stderr}"
+        )
+        assert "ancestor of 'trunk'" in result.stdout, result.stdout
+
+    def test_the_remedy_never_points_inside_a_git_directory(self, tmp_path: Path):
+        """No knob, no origin/HEAD, no main: the error names where to write one."""
+        seed = tmp_path / "seed"
+        seed.mkdir()
+        _run_git(tmp_path, "init", "-b", "trunk", str(seed))
+        _run_git(seed, "config", "user.email", "test@example.com")
+        _run_git(seed, "config", "user.name", "test")
+        _run_git(seed, "commit", "--allow-empty", "-m", "initial")
+        _run_git(seed, "branch", "feature/y")
+        bare = tmp_path / "repo.git"
+        _run_git(tmp_path, "clone", "-q", "--bare", str(seed), str(bare))
+        home = _add_worktree(bare, tmp_path / "home", "trunk")
+        _add_worktree(bare, tmp_path / "wts" / "feature-y", "feature/y")
+        result = _run_destroy(home, "feature/y", "--dry-run")
+        assert result.returncode == 2, result.stderr
+        assert f"default_branch in {home.resolve()} " in result.stderr, result.stderr
+        assert "repo.git" not in result.stderr, (
+            f"the remedy must name a work tree, not a git dir: {result.stderr}"
         )

@@ -93,6 +93,8 @@ def tmp_repo(tmp_path: Path) -> Path:
     _run_git(repo, "config", "user.email", "test@example.com")
     _run_git(repo, "config", "user.name", "test")
     shutil.copy(SCRIPT, repo / "scripts" / "structural-tests.sh")
+    # worktree-create.sh refuses a root the repo does not ignore (#567).
+    (repo / ".gitignore").write_text(".worktrees/\n")
     _run_git(repo, "add", "-A")
     _run_git(repo, "commit", "-m", "initial")
     return repo

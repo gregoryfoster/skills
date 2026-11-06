@@ -4,7 +4,8 @@ Two kinds of answer, kept apart (plan Step 5, rows 1 and 1b):
 
 - `toolchain` decides which CHECKS run: `uv` (a pyproject.toml with a uv.lock
   or a [tool.uv] table), `composer` (a composer.json at the root, or one level
-  under themes/ or plugins/), `npm` (a package.json).
+  under themes/ or plugins/), `npm` (a package.json, with composer's reach,
+  #561, where a nested one counts only when git tracks it, CR 1844).
 - `framework` decides only which DOCS apply — doc-check's default watch list
   and which references/stack-*.md loads: `fastapi` when fastapi is a declared
   dependency, `click` when click or typer is and fastapi is not, `php` for any
@@ -27,6 +28,13 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = REPO_ROOT / "skills" / "shipping-work" / "scripts" / "detect-stack.sh"
+# The global pathspec settings git exports to the hooks it runs, from
+# `git --literal-pathspecs`, `--glob-pathspecs` and `--noglob-pathspecs`.
+PATHSPEC_SETTINGS = [
+    "GIT_LITERAL_PATHSPECS",
+    "GIT_GLOB_PATHSPECS",
+    "GIT_NOGLOB_PATHSPECS",
+]
 
 
 def _clean_env() -> dict:
@@ -49,6 +57,52 @@ def _run(repo: Path) -> subprocess.CompletedProcess:
         text=True,
         env=_clean_env(),
     )
+
+
+def _add(repo: Path) -> None:
+    """Stage every file: a nested package.json counts only when tracked."""
+    subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True, env=_clean_env())
+
+
+GIT_ID = (
+    *("-c", "user.email=test@example.com", "-c", "user.name=test"),
+    *("-c", "commit.gpgsign=false", "-c", "protocol.file.allow=always"),
+)
+
+
+def _commit_all(repo: Path) -> None:
+    for args in (("add", "-A"), ("commit", "-q", "-m", "state")):
+        subprocess.run(
+            ["git", "-C", str(repo), *GIT_ID, *args], check=True, env=_clean_env()
+        )
+
+
+def _vendor_theme(repo: Path, tmp_path: Path) -> None:
+    """A theme with a package.json and a composer.json in a repo of its own,
+    added to `repo` as a submodule at themes/sub, and committed."""
+    src = tmp_path / "theme-src"
+    src.mkdir()
+    subprocess.run(["git", "init", "-q", str(src)], check=True, env=_clean_env())
+    (src / "package.json").write_text("{}\n")
+    (src / "composer.json").write_text("{}\n")
+    _commit_all(src)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repo),
+            *GIT_ID,
+            "submodule",
+            "add",
+            "-q",
+            str(src),
+            "themes/sub",
+        ],
+        check=True,
+        capture_output=True,
+        env=_clean_env(),
+    )
+    _commit_all(repo)
 
 
 def _detect(repo: Path) -> set[tuple[str, str]]:
@@ -95,6 +149,166 @@ class TestToolchains:
     def test_npm(self, repo):
         (repo / "package.json").write_text("{}\n")
         assert _detect(repo) == {("toolchain", "npm")}
+
+    @pytest.mark.parametrize("parent", ["themes", "plugins"])
+    def test_npm_one_level_under_themes_or_plugins(self, repo, parent):
+        """#561: a Sage-style monorepo with themes/ and plugins/ at the root
+        keeps every package.json in its theme and plugin directories and none
+        at the root, as composer's rule already allowed for composer.json."""
+        (repo / parent / "site").mkdir(parents=True)
+        (repo / parent / "site" / "package.json").write_text("{}\n")
+        _add(repo)
+        assert _detect(repo) == {("toolchain", "npm")}
+
+    @pytest.mark.parametrize(
+        "rel", ["themes/site/sub/package.json", "web/app/themes/site/package.json"]
+    )
+    def test_npm_no_deeper_than_composer_looks(self, repo, rel):
+        """The same reach as composer's: a deeper manifest is not one."""
+        (repo / rel).parent.mkdir(parents=True)
+        (repo / rel).write_text("{}\n")
+        _add(repo)
+        assert _detect(repo) == set()
+
+    def test_the_docs_claim_no_bedrock_reach(self):
+        """CR 1852: the reach stops at themes/ and plugins/ at the root (the
+        web/app/ case above), so neither the script nor stack-php.md may say
+        it covers a Bedrock layout, and stack-php.md's Bedrock paragraph
+        names npm beside composer as not searching web/app/."""
+        assert "Sage/Bedrock" not in SCRIPT.read_text()
+        php = (SCRIPT.parents[1] / "references" / "stack-php.md").read_text()
+        bedrock = php.split("## Bedrock layouts", 1)[1].split("\n## ", 1)[0]
+        assert "web/app/" in bedrock, bedrock
+        assert "composer.json" in bedrock and "package.json" in bedrock, bedrock
+
+    @pytest.mark.parametrize("ignored", [True, False])
+    def test_a_nested_npm_manifest_git_does_not_track_is_not_one(self, repo, ignored):
+        """CR 1844: a plugin composer installs is gitignored, and its
+        package.json declaring lint:js failed the gate (`wp-scripts: command
+        not found`). Only a tracked nested manifest counts."""
+        (repo / "plugins" / "vendor-plugin").mkdir(parents=True)
+        (repo / "plugins" / "vendor-plugin" / "package.json").write_text("{}\n")
+        if ignored:
+            (repo / ".gitignore").write_text("/plugins/vendor-plugin/\n")
+            _add(repo)
+        assert _detect(repo) == set()
+
+    def test_a_theme_vendored_as_a_submodule_is_one(self, repo, tmp_path):
+        """CR 1862: the superproject tracks a submodule as one gitlink, so the
+        tracked-only rule (CR 1844) lost a submodule theme's npm while
+        composer, which reads the tree, still found its composer.json."""
+        _vendor_theme(repo, tmp_path)
+        assert _detect(repo) == {
+            ("toolchain", "composer"),
+            ("framework", "php"),
+            ("toolchain", "npm"),
+        }
+
+    def test_an_uninitialised_submodule_theme_is_neither(self, repo, tmp_path):
+        """A clone that never ran `git submodule update` has an empty
+        directory there: nothing to list and no composer.json on disk, so
+        the two stacks agree on nothing, and nothing fails."""
+        _vendor_theme(repo, tmp_path)
+        clone = tmp_path / "clone"
+        subprocess.run(
+            ["git", "clone", "-q", str(repo), str(clone)],
+            check=True,
+            env=_clean_env(),
+        )
+        assert (clone / "themes" / "sub").is_dir()
+        assert _detect(clone) == set()
+
+    def test_a_dot_directory_is_not_one(self, repo):
+        """CR 1866: git's `:(glob)` `*` matches a leading dot and bash's
+        `themes/*` does not, so a tracked themes/.old/package.json counted
+        while composer's reach skipped the same directory."""
+        (repo / "themes" / ".old").mkdir(parents=True)
+        (repo / "themes" / ".old" / "package.json").write_text("{}\n")
+        (repo / "themes" / ".old" / "composer.json").write_text("{}\n")
+        _add(repo)
+        assert _detect(repo) == set()
+
+    @pytest.mark.parametrize("setting", PATHSPEC_SETTINGS)
+    def test_a_global_pathspec_setting_does_not_hide_a_theme(self, repo, setting):
+        """CR 1861: `git --literal-pathspecs` exports GIT_LITERAL_PATHSPECS=1
+        to the hooks it runs, and under it `:(glob)…` is a literal path:
+        ls-files listed nothing, exit 0, and a theme's npm checks dropped out
+        of the gate. The glob and noglob settings are held too."""
+        (repo / "themes" / "site").mkdir(parents=True)
+        (repo / "themes" / "site" / "package.json").write_text("{}\n")
+        _add(repo)
+        env = _clean_env()
+        env[setting] = "1"
+        result = subprocess.run(
+            ["bash", str(SCRIPT)], cwd=repo, capture_output=True, text=True, env=env
+        )
+        assert result.returncode == 0, result.stderr
+        assert result.stdout == "toolchain\tnpm\n"
+
+    def test_a_failing_ls_files_is_exit_2_not_none(self, repo, tmp_path):
+        """git's own exit decides: a failure listing the nested manifests is
+        a tooling failure, never "no npm"."""
+        real = subprocess.run(
+            ["sh", "-c", "command -v git"], capture_output=True, text=True, check=True
+        ).stdout.strip()
+        fakebin = tmp_path / "fakebin"
+        fakebin.mkdir()
+        (fakebin / "git").write_text(
+            "#!/bin/sh\n"
+            'case " $* " in *" ls-files "*) echo "fatal: index broken" >&2; exit 128;; esac\n'
+            f'exec "{real}" "$@"\n'
+        )
+        (fakebin / "git").chmod(0o755)
+        env = _clean_env()
+        env["PATH"] = f"{fakebin}{os.pathsep}{env['PATH']}"
+        result = subprocess.run(
+            ["bash", str(SCRIPT)], cwd=repo, capture_output=True, text=True, env=env
+        )
+        assert result.returncode == 2, result.stdout
+        assert "git ls-files failed (exit 128)" in result.stderr
+        assert "index broken" in result.stderr
+
+    def test_it_makes_no_temp_file_to_leak(self, repo, tmp_path):
+        """CR 1868: the listing went through a `mktemp -d` that a signal or a
+        set -e exit left behind. It needs none now: a mktemp that fails
+        changes nothing."""
+        (repo / "themes" / "site").mkdir(parents=True)
+        (repo / "themes" / "site" / "package.json").write_text("{}\n")
+        _add(repo)
+        fakebin = tmp_path / "fakebin"
+        fakebin.mkdir()
+        (fakebin / "mktemp").write_text('#!/bin/sh\necho "mktemp called" >&2\nexit 1\n')
+        (fakebin / "mktemp").chmod(0o755)
+        env = _clean_env()
+        env["PATH"] = f"{fakebin}{os.pathsep}{env['PATH']}"
+        result = subprocess.run(
+            ["bash", str(SCRIPT)], cwd=repo, capture_output=True, text=True, env=env
+        )
+        assert result.returncode == 0, result.stderr
+        assert "mktemp called" not in result.stderr
+        assert result.stdout == "toolchain\tnpm\n"
+
+    def test_a_lister_that_dies_unreported_is_exit_2(self, repo, tmp_path):
+        """With no temp file, git's status arrives as the listing's last
+        record. A lister killed before it reports is a failure, never "none"."""
+        real = subprocess.run(
+            ["sh", "-c", "command -v git"], capture_output=True, text=True, check=True
+        ).stdout.strip()
+        fakebin = tmp_path / "fakebin"
+        fakebin.mkdir()
+        (fakebin / "git").write_text(
+            "#!/bin/sh\n"
+            'case " $* " in *" ls-files "*) kill -9 "$PPID"; exit 0;; esac\n'
+            f'exec "{real}" "$@"\n'
+        )
+        (fakebin / "git").chmod(0o755)
+        env = _clean_env()
+        env["PATH"] = f"{fakebin}{os.pathsep}{env['PATH']}"
+        result = subprocess.run(
+            ["bash", str(SCRIPT)], cwd=repo, capture_output=True, text=True, env=env
+        )
+        assert result.returncode == 2, result.stdout
+        assert "git ls-files failed (exit unknown)" in result.stderr
 
     def test_every_stack_a_repo_has(self, repo):
         (repo / "composer.json").write_text("{}\n")

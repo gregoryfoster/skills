@@ -11,7 +11,12 @@
 #               project uv does not manage, so it gets the remedy instead.
 #     composer  composer.json at the root, or one level under themes/ or
 #               plugins/ (the layout the PHP gate validates).
-#     npm       package.json.
+#     npm       package.json, with composer's reach: at the root, or one level
+#               under themes/ or plugins/, where a Sage-style monorepo
+#               with themes/ and plugins/ at the root keeps them (#561); a
+#               Bedrock repo's web/app/themes/ is not searched. A nested
+#               one counts only when git tracks it. pre-ship.sh runs each
+#               one's scripts in its own directory.
 #
 #   framework   decides only which DOCS apply: doc-check.sh's default watch
 #               list and which references/stack-*.md to load. Never a check.
@@ -239,22 +244,76 @@ if [[ -f pyproject.toml ]]; then
   fi
 fi
 
-composer=0
-if [[ -f composer.json ]]; then
-  composer=1
-else
-  for f in themes/*/composer.json plugins/*/composer.json; do
-    if [[ -f "$f" ]]; then
-      composer=1
-      break
+# Whether manifest $1 is at the root or one level under themes/ or plugins/,
+# read from the tree: composer's reach. npm's has the same shape but counts a
+# nested package.json only when git tracks it (nested_npm, below).
+present() {
+  local f
+  if [[ -f "$1" ]]; then return 0; fi
+  for f in themes/*/"$1" plugins/*/"$1"; do
+    if [[ -f "$f" ]]; then return 0; fi
+  done
+  return 1
+}
+
+# The package.json files one level under themes/ or plugins/ that git tracks
+# and the tree has, into NESTED_NPM, themes first. Read from git, not the
+# filesystem: a plugin composer installs is gitignored, and its scripts are
+# not this repo's to run. pre-ship.sh lists them the same way, so the two
+# agree. A failing ls-files is a tooling failure, never "none".
+#
+# GIT_LITERAL_PATHSPECS=0 (CR 1861): `git --literal-pathspecs` exports it as 1
+# to the hooks it runs, and under it `:(glob)…` is a literal path, which lists
+# nothing with exit 0. The explicit glob magic is immune to the glob and
+# noglob settings; `--glob-pathspecs` is fatal beside the literal one.
+#
+# --recurse-submodules (CR 1862): a theme or plugin vendored as a submodule
+# is one gitlink to the superproject, so its package.json is listed from the
+# submodule's own index, as composer, which reads the tree, already finds its
+# composer.json. An uninitialised one has no checkout: nothing is listed and
+# no composer.json is on disk, so the two agree. A theme directory that is a
+# symlink is one tracked link to git and stays out of npm's reach, while
+# composer's glob follows it.
+#
+# A dot-directory is skipped (CR 1866): git's `:(glob)` `*` matches a leading
+# dot, bash's `themes/*` does not, and composer's reach is bash's.
+#
+# No temp file, so nothing to leak on a signal or a set -e exit (CR 1868):
+# git writes straight into the loop, its stderr straight to ours, and its
+# exit status follows as one last NUL-terminated `status N` record, since
+# bash 3.2 can neither hold NULs in a variable nor wait on a process
+# substitution. No listed path can read as that record: each one ends in
+# /package.json. A missing record (the lister died first) is a failure too.
+NESTED_NPM=()
+nested_npm() {
+  local parent f status
+  for parent in themes plugins; do
+    status=""
+    # unhardened: only in form; the lister's exit status arrives as the last record and is checked below
+    while IFS= read -r -d '' f; do
+      case $f in
+        "status "*) status=${f#status } ;;
+        "$parent"/.*) ;; # a dot-directory, which composer's glob skips (CR 1866)
+        *) if [[ -f $f ]]; then NESTED_NPM+=("$f"); fi ;;
+      esac
+    done < <(
+      rc=0
+      GIT_LITERAL_PATHSPECS=0 git ls-files --recurse-submodules -z -- ":(glob)$parent/*/package.json" || rc=$?
+      printf 'status %s\0' "$rc"
+    )
+    if [[ $status != 0 ]]; then
+      echo "ERROR: git ls-files failed (exit ${status:-unknown}) listing $parent/*/package.json." >&2
+      exit 2
     fi
   done
-fi
-if [[ "$composer" -eq 1 ]]; then
+}
+
+if present composer.json; then
   printf 'toolchain\tcomposer\n'
   printf 'framework\tphp\n'
 fi
 
-if [[ -f package.json ]]; then
+nested_npm
+if [[ -f package.json || ${#NESTED_NPM[@]} -gt 0 ]]; then
   printf 'toolchain\tnpm\n'
 fi

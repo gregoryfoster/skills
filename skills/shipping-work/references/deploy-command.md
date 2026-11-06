@@ -81,6 +81,9 @@ vendored copy, and its own sync rewrites it.
   integration tests, index bootstrap, and env var or secret. A row the new
   code needs in place first, such as an env var it reads, is done *before*
   the deploy, and its "then restart" becomes the deploy.
+- **`.skills/pre_restart` isn't run.** It guards the default table's restart
+  rows; with this knob the deploy command owns the restart, so it runs its
+  own reachability check, as its first step.
 
 ## What it doesn't do
 

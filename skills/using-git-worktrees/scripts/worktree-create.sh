@@ -28,10 +28,25 @@ usage() {
   echo ""
   echo "Iron Law: refuses if <branch> is already checked out in another worktree."
   echo ""
+  echo "Refuses a root git would commit (#567): one inside the primary checkout"
+  echo "or the current one that git does not ignore there. A worktree inside a"
+  echo "tracked directory is one 'git add -A' away from being committed as an"
+  echo "embedded repository. Add the root to that checkout's .gitignore (the"
+  echo "default root wants '.worktrees/') and commit it, or move the root out of"
+  echo "the repo. A root outside every work tree needs no rule and passes. Paths"
+  echo "are compared after resolving symlinks and '..', so an alias of the repo"
+  echo "is inside it. git is asked about the new worktree's own directory, so a"
+  echo "'.worktrees/*' rule passes too. A relative WORKTREE_ROOT is taken from"
+  echo "the current checkout's top level (a relative .skills/worktree_root, from"
+  echo "the primary checkout's), so the printed path is always absolute."
+  echo ""
   echo "Exit codes:"
   echo "  0  Worktree created; absolute path printed on stdout"
   echo "  1  Iron Law violation (branch already checked out elsewhere)"
-  echo "  2  Tooling/infra failure (not a git repo, missing arg, git worktree add failed)"
+  echo "  2  Tooling/infra failure (not a git repo, missing arg, the root could"
+  echo "     not be created, git worktree add failed), or the root is inside a"
+  echo "     work tree that does not ignore it (git check-ignore) or in a"
+  echo "     submodule that is not checked out, which creates nothing"
 }
 
 # One line, not the whole block. An argument error used to print the full usage
@@ -108,8 +123,205 @@ ROOT=$(bash "$SCRIPT_DIR/resolve-worktree-root.sh") || {
   exit 2
 }
 
+# The physical absolute path of $1, which need not exist yet: its deepest
+# existing ancestor is resolved by `cd -P`/`pwd -P`, and the rest is applied
+# lexically. That is exact, since a component that does not exist cannot be a
+# symlink, and it is what `mkdir -p` will create. A raw string compare is not
+# enough: macOS spells /var as /private/var, and an alias or a `..` reaches
+# into the repo under a prefix that does not match it.
+#
+# The existing part is spelled as it is on disk (CR 1859). bash's builtin
+# `pwd -P` keeps the spelling `cd` was given, so on a case-insensitive
+# volume `Vendor/Sub/src` was asked of the superproject as written: not
+# "in submodule" `vendor/sub` there, so the superproject decided, and the
+# remedy it printed let through a root the submodule tracks. The external
+# pwd calls getcwd(3), which returns the on-disk case on macOS; where it is
+# missing, the builtin is the fallback. Components that do not exist yet
+# keep the spelling given, which is what `mkdir -p` will create.
+physical_pwd() {
+  if [[ -x /bin/pwd ]]; then /bin/pwd -P; else pwd -P; fi
+}
+
+canonical_path() {
+  local p=$1 rest="" head comp
+  case $p in /*) ;; *) p="$PWD/$p" ;; esac
+  while [[ ! -d "$p" ]]; do
+    rest="$(basename -- "$p")${rest:+/$rest}"
+    p=$(dirname -- "$p")
+  done
+  head=$(cd -P -- "$p" && physical_pwd) || return 1
+  while [[ -n "$rest" ]]; do
+    comp=${rest%%/*}
+    if [[ "$rest" == */* ]]; then rest=${rest#*/}; else rest=""; fi
+    case $comp in
+      "" | .) ;;
+      ..) head=$(dirname -- "$head") ;;
+      *) head="${head%/}/$comp" ;;
+    esac
+  done
+  printf '%s\n' "$head"
+}
+
+# A relative root (a relative WORKTREE_ROOT; a relative .skills/worktree_root
+# is already the primary checkout's) means the current checkout's top level,
+# where this script now stands. Absolutized here, because stdout promises an
+# absolute path: `wt/feature-x` printed to a caller in a subdirectory names a
+# directory that does not exist.
+case $ROOT in /*) ;; *) ROOT="$PWD/${ROOT#./}" ;; esac
 SLUG="${BRANCH//\//-}"
 WORKTREE_PATH="$ROOT/$SLUG"
+
+# Refuse a root git would commit (#567). A worktree inside a directory git
+# does not ignore is one `git add -A` away from being committed: git adds the
+# nested checkout as an embedded repository (a gitlink), with only a warning.
+# The default `<repo>/.worktrees/` is no exception: it is safe only where the
+# repo ignores it.
+#
+# Two checkouts can commit it: the primary (the first `git worktree list`
+# entry, merge-mode.sh's idiom), where the root normally lives, and the
+# current one, which is a different tree when this runs from a linked
+# worktree. Each that contains the root must ignore the new worktree's
+# directory, by its own rules. The directory, not the root: `.worktrees/*`
+# ignores every worktree in the root and not the root itself. A root inside
+# a submodule of either is the submodule checkout's to decide (CR 1849).
+#
+# Three traps:
+#   * Inside-ness first. `git check-ignore` exits non-zero for ANY path it does
+#     not match, one outside the repo included (exit 128), so a root outside
+#     every work tree passes without asking it.
+#   * The trailing slash. A dir-only pattern matches only a path git knows is
+#     a directory, and on the first create nothing there exists yet. A rule
+#     on a parent (`.worktrees/`) matches `.worktrees/x` either way, since a
+#     parent is a directory by construction; a rule on the worktree's own
+#     level (`.worktrees/*/`) matches `.worktrees/x` only when asked with the
+#     slash.
+#   * Canonical paths on both sides (canonical_path, above), and containment by
+#     inode, not by string (rel_in, below).
+# check-ignore failing (exit 128) is a refusal too: an unanswered question is
+# not "ignored". A root that IS the work tree is refused without asking.
+ROOT_CANON=$(canonical_path "$ROOT") || {
+  echo "ERROR: could not resolve the worktree root '$ROOT'" >&2
+  exit 2
+}
+
+# Succeeds when the root is the directory $1 or below it, setting REL to the
+# root's path relative to $1 ("" for $1 itself). Walks up from the root and
+# compares each ancestor by inode (`-ef`), not by string (CR 1842): the
+# tree's path is spelled by git and the root's by canonical_path, and on a
+# case-insensitive volume only the inode says two spellings are one
+# directory. The existing part of REL is spelled as on disk (CR 1859), so
+# git sees the submodule a case-flipped root leads into; a component that
+# does not exist yet matches nothing and is carried into REL as given.
+rel_in() {
+  local anc=$ROOT_CANON rel=""
+  while :; do
+    if [[ "$anc" -ef "$1" ]]; then
+      REL=$rel
+      return 0
+    fi
+    [[ "$anc" != / ]] || return 1
+    rel="${anc##*/}${rel:+/$rel}"
+    anc=${anc%/*}
+    anc=${anc:-/}
+  done
+}
+
+# Prints the first leading part of $2 (a path in the work tree $1) that is a
+# submodule (a mode-160000 gitlink) in $1's index; fails when none is.
+gitlink_prefix() {
+  local rest=$2 p="" comp
+  while [[ -n "$rest" ]]; do
+    comp=${rest%%/*}
+    if [[ "$rest" == */* ]]; then rest=${rest#*/}; else rest=""; fi
+    p=${p:+$p/}$comp
+    if git -C "$1" -c core.quotePath=false ls-files --stage -- ":(literal)$p" |
+      awk -F '\t' -v p="$p" '$2 == p && $1 ~ /^160000 / { f = 1 } END { exit !f }'; then
+      printf '%s\n' "$p"
+      return 0
+    fi
+  done
+  return 1
+}
+
+tree_unknown() {
+  echo "ERROR: could not resolve the work tree of '$1' (the reason is above), so whether it ignores the worktree root '$ROOT' is unknown" >&2
+  exit 2
+}
+
+WT_LIST=$(git worktree list --porcelain) || {
+  echo "ERROR: failed to enumerate worktrees (git worktree list --porcelain)" >&2
+  exit 2
+}
+# The primary is the first porcelain block, up to the first blank line. A
+# block with a `bare` line is `repo.git`, which has no work tree and so
+# cannot commit anything: it is not queued (CR 1840).
+PRIMARY_BLOCK=${WT_LIST%%$'\n\n'*}
+PRIMARY=${PRIMARY_BLOCK%%$'\n'*}
+PRIMARY=${PRIMARY#worktree }
+# A queue, not a fixed pair: a root inside a submodule adds that submodule's
+# checkout (CR 1849).
+case $'\n'"$PRIMARY_BLOCK"$'\n' in
+  *$'\n'bare$'\n'*) TREES=("$PROJECT_ROOT") ;;
+  *) TREES=("$PRIMARY" "$PROJECT_ROOT") ;;
+esac
+CHECKED=()
+i=0
+while [[ $i -lt ${#TREES[@]} ]]; do
+  TREE=${TREES[$i]}
+  i=$((i + 1))
+  # Each entry becomes its work tree the same way (CR 1840). In a submodule
+  # (git 2.54) the primary's is `<super>/.git/modules/<name>`, whose work
+  # tree git names via core.worktree. A tree git cannot answer for is exit
+  # 2 with git's reason (CR 1858): skipping it skipped the one check that
+  # could refuse the root, so "dubious ownership" let any root through.
+  TOP=$(git -C "$TREE" rev-parse --show-toplevel) || tree_unknown "$TREE"
+  TREE=$(cd -P -- "$TOP" && pwd -P) || tree_unknown "$TREE"
+  SEEN=0
+  for C in ${CHECKED[@]+"${CHECKED[@]}"}; do
+    if [[ "$TREE" -ef "$C" ]]; then SEEN=1; fi
+  done
+  [[ $SEEN -eq 0 ]] || continue
+  CHECKED+=("$TREE")
+  rel_in "$TREE" || continue
+  IGNORE_RC=1
+  IGNORE_ERR=""
+  if [[ -n "$REL" ]]; then
+    IGNORE_RC=0
+    IGNORE_ERR=$(git -C "$TREE" check-ignore -q -- "$REL/$SLUG/" 2>&1) || IGNORE_RC=$?
+  fi
+  [[ $IGNORE_RC -ne 0 ]] || continue
+  # A root inside a submodule of this tree (CR 1849): git cannot answer for
+  # this tree ("Pathspec ... is in submodule", exit 128), and no rule here
+  # could change that. This tree commits only the gitlink; the submodule's
+  # checkout is what would commit a worktree, so its rules decide. One that
+  # is not checked out (no `.git` in it) is refused (CR 1870): there are no
+  # rules to read, and a worktree there would block its init.
+  if [[ $IGNORE_RC -eq 128 ]] && SUB=$(gitlink_prefix "$TREE" "$REL"); then
+    if [[ ! -e "$TREE/$SUB/.git" ]]; then
+      echo "ERROR: the worktree root '$ROOT' is inside the submodule at $TREE/$SUB, which is not checked out: its rules can't be read, and a worktree there would block 'git submodule update --init'" >&2
+      echo "Set WORKTREE_ROOT or .skills/worktree_root to a path outside it." >&2
+      exit 2
+    fi
+    TREES+=("$TREE/$SUB")
+    continue
+  fi
+  [[ -z "$IGNORE_ERR" ]] || printf '%s\n' "$IGNORE_ERR" >&2
+  if [[ -z "$REL" ]]; then
+    echo "ERROR: the worktree root '$ROOT' is the work tree $TREE itself: every worktree would sit in the repo" >&2
+    echo "Set WORKTREE_ROOT or .skills/worktree_root to a directory git ignores, or to a path outside the repo. Unset, the root is '.worktrees/', which .gitignore must carry." >&2
+  else
+    if [[ $IGNORE_RC -eq 1 ]]; then
+      echo "ERROR: the worktree root '$ROOT' is inside $TREE, and git does not ignore it there: a worktree in it is one 'git add -A' away from being committed" >&2
+      echo "Add '$REL/' to $TREE/.gitignore and commit it, or set WORKTREE_ROOT or .skills/worktree_root to a path outside the repo." >&2
+    else
+      # No .gitignore line answers a question git could not ask (CR 1849).
+      echo "ERROR: git check-ignore failed (exit $IGNORE_RC; git's reason is above), so whether $TREE ignores the worktree root '$ROOT' is unknown" >&2
+      echo "Set WORKTREE_ROOT or .skills/worktree_root to a path outside the repo." >&2
+    fi
+  fi
+  exit 2
+done
+
 
 # Iron Law check: refuse if the branch is already checked out elsewhere.
 # `git worktree list --porcelain` emits a `branch refs/heads/<name>` line per worktree.
@@ -153,7 +365,11 @@ if [[ -x "$SCRIPT_DIR/audit-worktree-zombies.sh" ]]; then
   fi
 fi
 
-mkdir -p "$ROOT"
+# Exit 2, not set -e's 1: exit 1 is the Iron Law's code alone (CR 1850).
+mkdir -p "$ROOT" || {
+  echo "ERROR: could not create the worktree root '$ROOT'" >&2
+  exit 2
+}
 
 # `git worktree add` splits its own chatter across both streams: "Preparing
 # worktree ..." goes to stderr, but the checkout notice "HEAD is now at <sha>

@@ -17,7 +17,8 @@
 # entry), like worktree_root, and the command runs from that checkout's root.
 # Grammar: exactly one command line of whitespace-separated words; blank lines
 # and whole-line `#` comments are ignored. No shell evaluation: a pipe or a
-# redirect belongs in the project's script. The pushed SHA is appended as the
+# redirect belongs in the project's script. _command-knob.sh holds the
+# reader, shared with .skills/pre_restart (#557). The pushed SHA is appended as the
 # last argument (operator's decision, 2026-10-30), so `setsid -w
 # scripts/deploy.sh` runs as `setsid -w scripts/deploy.sh <sha>`. The command
 # handles detaching itself; a plain `setsid` returns once the deploy has
@@ -91,46 +92,38 @@ case "${1:-}" in
 esac
 [ "$#" -eq 0 ] || die "unexpected argument: $1 (see --help)"
 
-WT_LIST=$(git worktree list --porcelain) || die "git worktree list failed: not in a git checkout?"
-PRIMARY=${WT_LIST%%$'\n'*}
-PRIMARY=${PRIMARY#worktree }
-[ -d "$PRIMARY" ] || die "could not resolve the primary checkout (got '$PRIMARY')"
+# Through the symlink chain first (CR 1841): a consumer's per-script symlink
+# (managing-skills' local-overrides.md) puts this file's link in a directory
+# with no _command-knob.sh or merge-mode.sh beside it, while the target has
+# both. Resolved as curating-context's check-counts.sh does.
+_self="${BASH_SOURCE[0]}"
+_n=0
+while [ -L "$_self" ] && [ "$_n" -lt 10 ]; do
+  _t=$(readlink "$_self") || break
+  case "$_t" in
+    /*) _self="$_t" ;;
+    *) _self="$(dirname "$_self")/$_t" ;;
+  esac
+  _n=$((_n + 1))
+done
+# -P (CR 1872): through a directory link, $_self can spell `<link>/../..`, and
+# a logical cd reduces that by spelling, not by what the link points at.
+SCRIPT_DIR=$(cd -P "$(dirname "$_self")" && pwd -P) || die "could not resolve this script's directory (from $_self)"
+[ -f "$SCRIPT_DIR/_command-knob.sh" ] || die "_command-knob.sh not found next to this script in $SCRIPT_DIR"
+# The knob's grammar and reader, shared with run-pre-restart.sh (#557).
+# shellcheck source=_command-knob.sh
+. "$SCRIPT_DIR/_command-knob.sh"
 
+primary_checkout
 KNOB="$PRIMARY/.skills/deploy_command"
 if [ ! -e "$KNOB" ] && [ ! -L "$KNOB" ]; then
   echo "no .skills/deploy_command in $PRIMARY: nothing to deploy"
   exit 3
 fi
-{ [ -f "$KNOB" ] && [ -r "$KNOB" ]; } || die "$KNOB is present but not a readable file"
-
-WORDS=()
-LINES=0
-while IFS= read -r line || [ -n "$line" ]; do
-  line=${line%$'\r'}
-  read -r -a words <<<"$line"
-  [ "${#words[@]}" -gt 0 ] || continue
-  case ${words[0]} in \#*) continue ;; esac
-  LINES=$((LINES + 1))
-  WORDS=("${words[@]}")
-done <"$KNOB"
-[ "$LINES" -gt 0 ] || die "$KNOB has no command line"
-[ "$LINES" -eq 1 ] || die "$KNOB names $LINES commands; it takes one line"
-
-CMD=${WORDS[0]}
-case $CMD in
-  */*)
-    case $CMD in /*) PATH_OF=$CMD ;; *) PATH_OF="$PRIMARY/$CMD" ;; esac
-    { [ -f "$PATH_OF" ] && [ -x "$PATH_OF" ]; } ||
-      die "$CMD is not an executable file (a relative path resolves from $PRIMARY)"
-    ;;
-  *)
-    command -v -- "$CMD" >/dev/null || die "$CMD is not on PATH"
-    ;;
-esac
+read_command_knob "$KNOB"
 
 SHA=$(git rev-parse --verify HEAD) || die "git rev-parse HEAD failed"
 
-SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd) || die "could not resolve this script's directory"
 MODE=$(bash "$SCRIPT_DIR/merge-mode.sh") || die "could not read .skills/merge_mode (merge-mode.sh's reason is above); nothing ran"
 if [ "$MODE" = pr ]; then
   DEFAULT=""

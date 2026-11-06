@@ -24,7 +24,8 @@ def _clean_env(**extra: str) -> dict:
     env = {
         k: v
         for k, v in os.environ.items()
-        if not k.startswith("GIT_") and k != "PYTEST_XDIST_AUTO_NUM_WORKERS"
+        if not k.startswith("GIT_")
+        and k not in ("PYTEST_XDIST_AUTO_NUM_WORKERS", "PYTEST_XDIST_DIST")
     }
     env.update(extra)
     return env
@@ -66,6 +67,95 @@ def _answer(repo: Path, **env: str) -> int:
     result = _run(repo, "--explain", **env)
     assert result.returncode == 0, result.stderr
     return int(result.stdout.strip())
+
+
+def _knob(repo: Path, name: str, text: str) -> None:
+    (repo / ".skills").mkdir(exist_ok=True)
+    (repo / ".skills" / name).write_text(text)
+
+
+def _dist(repo: Path, **env: str) -> subprocess.CompletedProcess:
+    return _run(repo, "--dist", "--explain", **env)
+
+
+class TestTheDistMode:
+    """#563: `--dist` prints the xdist mode the gate passes, first match
+    wins: PYTEST_XDIST_DIST, then `.skills/test-dist`, then loadfile."""
+
+    def test_loadfile_by_default(self, repo):
+        result = _dist(repo)
+        assert result.returncode == 0, result.stderr
+        assert result.stdout == "loadfile\n"
+
+    @pytest.mark.parametrize(
+        "mode", ["loadfile", "load", "loadscope", "loadgroup", "worksteal"]
+    )
+    def test_the_knob_is_read(self, repo, mode):
+        _knob(repo, "test-dist", f"# one big file\n\n  {mode}  # spread it\n")
+        result = _dist(repo)
+        assert result.returncode == 0, result.stderr
+        assert result.stdout == f"{mode}\n"
+
+    def test_the_env_wins_over_the_knob(self, repo):
+        _knob(repo, "test-dist", "loadscope\n")
+        assert _dist(repo, PYTEST_XDIST_DIST="load").stdout == "load\n"
+
+    def test_a_knob_of_comments_only_is_loadfile(self, repo):
+        _knob(repo, "test-dist", "# nothing chosen yet\n\n")
+        assert _dist(repo).stdout == "loadfile\n"
+
+    @pytest.mark.parametrize("where", ["env", "knob"])
+    def test_an_unknown_mode_warns_and_is_loadfile(self, repo, where):
+        """As worktree_venv does: a warning, never a stop. `each` is a real
+        xdist mode, but it runs every test on every worker."""
+        env = {}
+        if where == "env":
+            env["PYTEST_XDIST_DIST"] = "each"
+        else:
+            _knob(repo, "test-dist", "each\n")
+        result = _dist(repo, **env)
+        assert result.returncode == 0
+        assert result.stdout == "loadfile\n"
+        assert "WARN" in result.stderr and "'each'" in result.stderr
+
+    def test_a_second_word_warns_and_is_not_joined(self, repo):
+        """CR 1853: the reader deleted every space, so `load scope` became
+        `loadscope`, a mode the knob never named. It takes the first word."""
+        _knob(repo, "test-dist", "# spread it\nload scope  # typo\n")
+        result = _dist(repo)
+        assert result.returncode == 0, result.stderr
+        assert result.stdout == "load\n"
+        assert "WARN" in result.stderr and "'load scope'" in result.stderr
+
+    def test_one_word_and_a_crlf_ending_does_not_warn(self, repo):
+        _knob(repo, "test-dist", "  worksteal \t\r\n")
+        result = _dist(repo)
+        assert result.stdout == "worksteal\n"
+        assert "WARN" not in result.stderr
+
+    @pytest.mark.parametrize("kind", ["directory", "dangling-link"])
+    def test_a_knob_that_is_not_a_file_warns(self, repo, kind):
+        """CR 1853: a directory or a dangling link at the knob's path fell
+        back to loadfile without a word, as if there were no knob."""
+        (repo / ".skills").mkdir()
+        knob = repo / ".skills" / "test-dist"
+        if kind == "directory":
+            knob.mkdir()
+        else:
+            knob.symlink_to(repo / "no-such-file")
+        result = _dist(repo)
+        assert result.returncode == 0
+        assert result.stdout == "loadfile\n"
+        assert "WARN" in result.stderr and "not a readable file" in result.stderr
+
+    def test_it_does_not_touch_the_worker_count(self, repo, tmp_path):
+        _knob(repo, "test-dist", "load\n")
+        _knob(repo, "test-workers", "5\n")
+        assert _answer(repo, PATH=_fake_cores(tmp_path, 14)) == 5
+
+    def test_help_names_it(self, repo):
+        result = _run(repo, "--help")
+        assert "--dist" in result.stdout and ".skills/test-dist" in result.stdout
 
 
 class TestTheCoordinatorsFigureWins:

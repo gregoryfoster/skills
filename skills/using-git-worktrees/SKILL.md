@@ -59,7 +59,7 @@ A project-local `scripts/<name>` wins for that script alone ([#301](https://gith
 Every operation resolves the worktree directory in this order (first match wins):
 
 1. **`WORKTREE_ROOT` env var** (highest priority) — explicit override for one-off invocations
-2. **`.skills/worktree_root` file** — single-line file under the repo root; project's persistent default
+2. **`.skills/worktree_root` file** — single-line path in the primary checkout (relative to it); the persistent default
 3. **`<repo-root>/.worktrees/`** — fallback when neither of the above is set
 
 Invoke `bash "<resolve-worktree-root.sh>"` to print the resolved root. Every other script that needs the root runs the `resolve-worktree-root.sh` beside it — the skill's own, unless that script is itself a project `scripts/` copy — so set the root with `WORKTREE_ROOT` or `.skills/worktree_root`: overriding the resolver changes only what this prints. A project that copies any of these scripts copies the whole `scripts/` directory, never single files. The final worktree path is always `<resolved-root>/<branch-slug>`, where `<branch-slug>` is the branch name with `/` replaced by `-` (e.g., `feature/foo` → `feature-foo`).
@@ -104,15 +104,15 @@ bash "<worktree-create.sh>" <branch>          # existing branch
 bash "<worktree-create.sh>" --new <branch>    # create the branch too
 ```
 
-Flags are position-independent: `--new <branch>` and `<branch> --new` are equivalent. `--help` works anywhere and never provisions. A stray second word is an error, not a silent drop.
+Flags are position-independent; `--help` works anywhere and never provisions; a stray second word is an error.
 
 The script:
-- Resolves the worktree root
+- Resolves the worktree root, refusing (exit 2) one inside the repo that git does not ignore: add it to `.gitignore`
 - Refuses if `<branch>` is already checked out elsewhere (per the Iron Law)
-- Runs `git worktree add <root>/<slug> <branch>` (or `add -b <branch> <root>/<slug>` with `--new`)
+- Runs `git worktree add <root>/<slug>` (with `-b <branch>` under `--new`)
 - Symlinks the main checkout's `.venv` into the worktree when it has one, unless `.skills/worktree_venv` is `none`
 - Prints the absolute worktree path on stdout
-- Exits 0 on success, 1 on Iron Law violation (double checkout), 2 on tooling failure
+- Exits 0 on success, 1 on Iron Law violation (double checkout), 2 otherwise
 
 ### Phase 3 — Work inside the worktree
 
@@ -203,7 +203,7 @@ Wrappers must not silently bypass the Iron Law gates. If the wrapper genuinely n
 
 - `git worktree list` is authoritative — never maintain a separate registry
 - A branch may be deleted while a worktree on it exists; reattach with `git worktree repair` if you need to recover
-- Bare repositories: out of scope; every consumer here is non-bare
+- A bare primary has no work tree: its `.skills/` knobs are read from the current checkout, and the root's `.gitignore` check skips it
 
 ## Detail Docs
 

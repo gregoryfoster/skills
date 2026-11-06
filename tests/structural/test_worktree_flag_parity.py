@@ -141,7 +141,9 @@ def tmp_repo(tmp_path: Path) -> Path:
     _git(repo, "config", "user.email", "test@example.com")
     _git(repo, "config", "user.name", "test")
     (repo / "README.md").write_text("initial\n")
-    _git(repo, "add", "README.md")
+    # worktree-create.sh refuses a root the repo does not ignore (#567).
+    (repo / ".gitignore").write_text(".worktrees/\n")
+    _git(repo, "add", "README.md", ".gitignore")
     _git(repo, "commit", "-m", "initial")
 
     _git(repo, "branch", "merged")

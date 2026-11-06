@@ -24,6 +24,13 @@ from tests.structural.gate_fakes import ALL_TOOLS, BASE_PATH, fake_env
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 GATE = REPO_ROOT / "skills" / "shipping-work" / "scripts" / "pre-ship.sh"
+# The global pathspec settings git exports to the hooks it runs, from
+# `git --literal-pathspecs`, `--glob-pathspecs` and `--noglob-pathspecs`.
+PATHSPEC_SETTINGS = [
+    "GIT_LITERAL_PATHSPECS",
+    "GIT_GLOB_PATHSPECS",
+    "GIT_NOGLOB_PATHSPECS",
+]
 
 
 def _git(repo: Path, *args: str) -> None:
@@ -127,6 +134,9 @@ class TestWhatRuns:
         result = _gate(repo)
         assert result.returncode == 1
         assert "scripts/pre-ship.sh" in result.stderr
+        # CR 1854: a root-only repo's line names no list, as `Detected:` does;
+        # it said `no package.json (package.json) declares`.
+        assert "no package.json declares lint:js" in result.stderr, result.stderr
 
     @pytest.mark.parametrize(
         ("build", "tool"),
@@ -258,6 +268,55 @@ class TestPython:
         assert args[args.index("-n") + 1] == "3"
         assert "loadfile" in args
 
+    def test_the_dist_knob_reaches_pytest(self, repo):
+        """#563, the issue's case: cli's suite sits in one 977-test file, which
+        loadfile pins to one worker. `.skills/test-dist` says `load`."""
+        _uv_repo(repo)
+        (repo / ".skills").mkdir()
+        (repo / ".skills" / "test-dist").write_text("load\n")
+        _commit(repo)
+        result = _gate(repo, FAKE_XDIST="1", PYTEST_XDIST_AUTO_NUM_WORKERS="3")
+        assert result.returncode == 0, result.stderr
+        args = _pytest_args(repo)
+        assert args[args.index("--dist") + 1] == "load"
+        assert "loadfile" not in args
+
+    def test_the_dist_env_wins_and_an_unknown_mode_is_loadfile(self, repo):
+        _uv_repo(repo)
+        _gate(
+            repo,
+            FAKE_XDIST="1",
+            PYTEST_XDIST_AUTO_NUM_WORKERS="3",
+            PYTEST_XDIST_DIST="worksteal",
+        )
+        args = _pytest_args(repo)
+        assert args[args.index("--dist") + 1] == "worksteal"
+        (repo.parent / "tools.log").unlink()
+        result = _gate(
+            repo,
+            FAKE_XDIST="1",
+            PYTEST_XDIST_AUTO_NUM_WORKERS="3",
+            PYTEST_XDIST_DIST="each",
+            GATE_STAMP="off",
+        )
+        assert result.returncode == 0, result.stderr
+        args = _pytest_args(repo)
+        assert args[args.index("--dist") + 1] == "loadfile"
+        assert "'each'" in result.stderr
+
+    def test_the_dist_mode_is_not_in_the_stamp_key(self, repo):
+        """It sets how the suite is spread, so a pass under one mode is
+        reused under another, as one under another worker count is."""
+        _uv_repo(repo)
+        _gate(repo, FAKE_XDIST="1", PYTEST_XDIST_AUTO_NUM_WORKERS="3")
+        second = _gate(
+            repo,
+            FAKE_XDIST="1",
+            PYTEST_XDIST_AUTO_NUM_WORKERS="3",
+            PYTEST_XDIST_DIST="load",
+        )
+        assert "already passed" in second.stdout
+
     def test_serial_with_a_note_when_it_does_not(self, repo):
         _uv_repo(repo)
         result = _gate(repo, PYTEST_XDIST_AUTO_NUM_WORKERS="3")
@@ -299,6 +358,19 @@ class TestPhp:
         linted = sorted(c[2] for c in _calls(repo, "php") if c[1] == "-l")
         assert linted == ["index.php", "themes/site/functions.php"]
 
+    @pytest.mark.parametrize("setting", PATHSPEC_SETTINGS)
+    def test_a_global_pathspec_setting_lints_every_tracked_php_file(
+        self, repo, setting
+    ):
+        """CR 1861: git exports these to the hooks it runs. Under the literal
+        setting the bare `*.php` listed nothing with exit 0, under noglob
+        nothing, and under glob only the root's files: php -l linted less
+        than the repo has, and the gate passed."""
+        _composer_repo(repo)
+        assert _gate(repo, **{setting: "1"}).returncode == 0
+        linted = sorted(c[2] for c in _calls(repo, "php") if c[1] == "-l")
+        assert linted == ["index.php", "themes/site/functions.php"]
+
     def test_composer_test_only_when_defined(self, repo):
         """Row 20."""
         _composer_repo(repo)
@@ -314,6 +386,211 @@ class TestPhp:
         result = _gate(repo, FAKE_COMPOSER_LIST_FAIL="1")
         assert result.returncode == 1
         assert "could not read composer.json" in result.stderr
+
+
+def _manifest(repo: Path, rel: str, scripts: dict | None = None) -> None:
+    (repo / rel).parent.mkdir(parents=True, exist_ok=True)
+    (repo / rel).write_text(json.dumps({"scripts": scripts or {}}))
+
+
+def _cwd_calls(repo: Path, tool: str) -> list[tuple[str, list[str]]]:
+    """(directory relative to the repo, argv) for each logged `tool` call."""
+    log = repo.parent / "cwd.log"
+    if not log.exists():
+        return []
+    out = []
+    for line in log.read_text().splitlines():
+        cwd, name, *argv = json.loads(line)
+        if name == tool and argv[:1] != ["--version"]:
+            rel = os.path.relpath(os.path.realpath(cwd), os.path.realpath(repo))
+            out.append((rel, argv))
+    return out
+
+
+def _npm_gate(repo: Path, tools=ALL_TOOLS, **env: str) -> subprocess.CompletedProcess:
+    return _gate(repo, tools, TOOL_CWD_LOG=str(repo.parent / "cwd.log"), **env)
+
+
+class TestNpmManifests:
+    """#561: npm is found at the root or one level under themes/ and plugins/,
+    as composer is, where a nested manifest counts only when git tracks it
+    (CR 1844), and each manifest's scripts run in its own directory."""
+
+    def test_the_issues_layout(self, repo):
+        """The issue's own reproduction: no root package.json, and a theme's
+        package.json that declares lint:js."""
+        _manifest(repo, "themes/sage/package.json", {"lint:js": "eslint ."})
+        _commit(repo)
+        result = _npm_gate(repo)
+        assert result.returncode == 0, result.stderr
+        assert "=== npm run lint:js (themes/sage) ===" in result.stdout
+        assert _cwd_calls(repo, "npm") == [("themes/sage", ["run", "lint:js"])]
+
+    def test_the_root_keeps_its_heading_beside_nested_ones(self, repo):
+        _manifest(repo, "package.json", {"test:js": "jest"})
+        _manifest(repo, "themes/sage/package.json", {"lint:js": "eslint ."})
+        _manifest(repo, "plugins/blocks/package.json", {"test:js": "jest"})
+        _commit(repo)
+        result = _npm_gate(repo)
+        assert result.returncode == 0, result.stderr
+        assert "=== npm run test:js ===" in result.stdout
+        assert "=== npm run lint:js (themes/sage) ===" in result.stdout
+        assert "=== npm run test:js (plugins/blocks) ===" in result.stdout
+        assert _cwd_calls(repo, "npm") == [
+            (".", ["run", "test:js"]),
+            ("themes/sage", ["run", "lint:js"]),
+            ("plugins/blocks", ["run", "test:js"]),
+        ]
+
+    def test_the_detected_line_names_the_manifests(self, repo):
+        _manifest(repo, "package.json", {"test:js": "jest"})
+        _manifest(repo, "themes/sage/package.json", {"lint:js": "eslint ."})
+        _commit(repo)
+        result = _npm_gate(repo)
+        assert (
+            "Detected: toolchain npm (package.json, themes/sage/package.json)"
+            in result.stdout
+        )
+
+    def test_a_root_only_detected_line_is_unchanged(self, repo):
+        _npm_repo(repo, {"test:js": "jest"})
+        assert "Detected: toolchain npm\n" in _npm_gate(repo).stdout
+
+    def test_a_nested_failure_is_named_by_its_directory(self, repo):
+        _manifest(repo, "themes/sage/package.json", {"lint:js": "eslint ."})
+        _manifest(repo, "plugins/blocks/package.json", {"test:js": "jest"})
+        _commit(repo)
+        result = _npm_gate(repo, FAKE_FAIL="lint:js")
+        assert result.returncode == 1
+        assert "npm run lint:js (themes/sage) (exit 1)" in result.stderr
+        assert ("plugins/blocks", ["run", "test:js"]) in _cwd_calls(repo, "npm")
+
+    def test_a_manifest_with_no_scripts_runs_nothing_and_needs_no_npm(self, repo):
+        """No declared script anywhere is the empty-array path, run under the
+        /bin/bash on PATH (3.2 on macOS, where an empty "${arr[@]}" aborts
+        under set -u). composer keeps the gate from stopping at 'nothing to
+        run', so the npm loops run empty."""
+        if shutil.which("npm", path=BASE_PATH):
+            pytest.skip(f"npm is installed in {BASE_PATH}; it cannot be missing here")
+        _composer_repo(repo)
+        _manifest(repo, "themes/site/package.json", {"build": "vite build"})
+        _commit(repo)
+        result = _npm_gate(repo, tools=[t for t in ALL_TOOLS if t != "npm"])
+        assert result.returncode == 0, result.stderr
+        assert _cwd_calls(repo, "npm") == []
+
+    def test_nested_manifests_with_nothing_to_run_are_not_a_pass(self, repo):
+        _manifest(repo, "themes/sage/package.json", {"build": "vite build"})
+        _commit(repo)
+        result = _npm_gate(repo)
+        assert result.returncode == 1
+        assert "themes/sage/package.json" in result.stderr
+        assert "scripts/pre-ship.sh" in result.stderr
+
+    def test_a_nested_manifest_that_does_not_parse_is_exit_2_naming_it(self, repo):
+        _manifest(repo, "package.json", {"test:js": "jest"})
+        (repo / "plugins" / "broken").mkdir(parents=True)
+        (repo / "plugins" / "broken" / "package.json").write_text("{not json\n")
+        _commit(repo)
+        result = _npm_gate(repo)
+        assert result.returncode == 2
+        assert "plugins/broken/package.json failed to parse" in result.stderr
+        assert _cwd_calls(repo, "npm") == []
+
+    def test_a_gitignored_plugins_manifest_is_not_run(self, repo):
+        """CR 1844, the reviewer's reproduction: composer installs a plugin
+        into a gitignored plugins/<vendor>/, whose package.json declares
+        lint:js. Run, it failed the gate (`wp-scripts: command not found`).
+        Only tracked nested manifests run, and detect-stack.sh agrees."""
+        (repo / ".gitignore").write_text("/plugins/third-party/\n")
+        _manifest(repo, "themes/sage/package.json", {"test:js": "jest"})
+        _manifest(repo, "plugins/third-party/package.json", {"lint:js": "wp-scripts"})
+        _commit(repo)
+        result = _npm_gate(repo)
+        assert result.returncode == 0, result.stderr
+        assert _cwd_calls(repo, "npm") == [("themes/sage", ["run", "test:js"])]
+        assert "plugins/third-party" not in result.stdout
+
+    def test_only_a_gitignored_manifest_is_nothing_detected(self, repo):
+        (repo / ".gitignore").write_text("/plugins/third-party/\n")
+        _manifest(repo, "plugins/third-party/package.json", {"lint:js": "wp-scripts"})
+        _commit(repo)
+        result = _npm_gate(repo)
+        assert result.returncode == 1
+        assert "no toolchain detected" in result.stderr
+        assert _cwd_calls(repo, "npm") == []
+
+    def test_a_theme_vendored_as_a_submodule_runs(self, repo, tmp_path):
+        """CR 1862: a submodule is one gitlink to the superproject, so the
+        tracked-only listing lost a vendored theme's scripts while composer
+        still validated its composer.json. The listing recurses now."""
+        src = tmp_path / "theme-src"
+        src.mkdir()
+        _git(src, "init", "-q", "-b", "main")
+        _git(src, "config", "user.email", "test@example.com")
+        _git(src, "config", "user.name", "test")
+        _manifest(src, "package.json", {"test:js": "jest"})
+        _commit(src)
+        _git(
+            repo,
+            *("-c", "protocol.file.allow=always", "submodule", "add", "-q"),
+            *(str(src), "themes/sub"),
+        )
+        _commit(repo)
+        result = _npm_gate(repo, FAKE_FAIL="test:js")
+        assert result.returncode == 1, result.stdout + result.stderr
+        assert "Detected: toolchain npm (themes/sub/package.json)" in result.stdout
+        assert "npm run test:js (themes/sub) (exit 1)" in result.stderr
+
+    def test_an_untracked_themes_user_is_pointed_at_git_add(self, repo):
+        """CR 1867: a new theme's package.json, not yet added, is not
+        detected; the advice and --help say a nested one must be tracked
+        instead of saying it is found one level under themes/."""
+        _commit(repo)
+        _manifest(repo, "themes/new/package.json", {"lint:js": "eslint ."})
+        result = _npm_gate(repo)
+        assert result.returncode == 1
+        assert "no toolchain detected" in result.stderr
+        assert "only once git tracks it (git add" in result.stderr, result.stderr
+        help_text = subprocess.run(
+            ["bash", str(GATE), "--help"], capture_output=True, text=True
+        ).stdout
+        assert "each one git" in help_text and "git add" in help_text, help_text
+
+    def test_a_dot_directorys_manifest_is_not_run(self, repo):
+        """CR 1866: git's `:(glob)` `*` matches a leading dot, bash's
+        `themes/*` (composer's reach) does not, so a tracked
+        themes/.old/package.json ran its scripts."""
+        _manifest(repo, "package.json", {"test:js": "jest"})
+        _manifest(repo, "themes/.old/package.json", {"lint:js": "eslint ."})
+        _commit(repo)
+        result = _npm_gate(repo)
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert _cwd_calls(repo, "npm") == [(".", ["run", "test:js"])]
+        assert "themes/.old" not in result.stdout
+
+    @pytest.mark.parametrize("setting", PATHSPEC_SETTINGS)
+    def test_a_global_pathspec_setting_keeps_a_themes_failure(self, repo, setting):
+        """CR 1861: under GIT_LITERAL_PATHSPECS=1, which `git
+        --literal-pathspecs` exports to hooks, `:(glob)…` was a literal path,
+        so a theme's failing test:js dropped out and the gate passed."""
+        _manifest(repo, "themes/sage/package.json", {"test:js": "jest"})
+        _manifest(repo, "package.json", {"lint:js": "eslint ."})
+        _commit(repo)
+        result = _npm_gate(repo, FAKE_FAIL="test:js", **{setting: "1"})
+        assert result.returncode == 1, result.stdout + result.stderr
+        assert "npm run test:js (themes/sage) (exit 1)" in result.stderr
+        assert ("themes/sage", ["run", "test:js"]) in _cwd_calls(repo, "npm")
+
+    def test_a_nested_trigger_keys_the_npm_tools(self, repo):
+        """The stamp key carries node's and npm's versions for a nested
+        manifest exactly as for a root one."""
+        _manifest(repo, "themes/sage/package.json", {"lint:js": "eslint ."})
+        _commit(repo)
+        assert _npm_gate(repo).returncode == 0
+        assert "already passed" in _npm_gate(repo).stdout
+        _npm_gate(repo, FAKE_VERSION_NPM="11.0")
+        assert len(_cwd_calls(repo, "npm")) == 2
 
 
 class TestFailures:

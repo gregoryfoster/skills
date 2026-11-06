@@ -28,13 +28,28 @@
 #   about to run a suite writes its own PID there and removes the file when it
 #   finishes; a slot whose PID is gone is stale and is removed when counted.
 #
-# Usage: bash "<gate-workers.sh>" [--explain | --slot-dir | --help]
+# DIST MODE (#563)
+#
+#   `--dist` prints the xdist --dist mode instead, first match wins:
+#   PYTEST_XDIST_DIST, then .skills/test-dist (one word, `#` comments), then
+#   loadfile. It takes loadfile, load, loadscope, loadgroup or worksteal; any
+#   other value warns on stderr and is loadfile. A second word on the knob's
+#   line warns and is ignored, and a knob that is a directory, a dangling
+#   link or unreadable warns and is loadfile. loadfile keeps a file on one
+#   worker, so a class- or module-scoped fixture is never split: a repo that
+#   picks another mode owns that risk. The env name is this script's, not
+#   xdist's — xdist 3.8 reads only PYTEST_XDIST_AUTO_NUM_WORKERS. It is the
+#   only route: pytest puts PYTEST_ADDOPTS ahead of the command line, so a
+#   gate's own --dist wins over one set there.
+#
+# Usage: bash "<gate-workers.sh>" [--explain | --slot-dir | --dist | --help]
 set -euo pipefail
 
 MAX_WORKERS=8
+DIST_MODES="loadfile load loadscope loadgroup worksteal"
 
 usage() {
-  echo "Usage: bash \"$0\" [--explain | --slot-dir | --help]"
+  echo "Usage: bash \"$0\" [--explain | --slot-dir | --dist | --help]"
   echo ""
   echo "Prints how many pytest-xdist workers a gate may use (0 = serial)."
   echo ""
@@ -46,19 +61,24 @@ usage() {
   echo "Options:"
   echo "  --explain   also print the reason for the answer on stderr"
   echo "  --slot-dir  print the slot directory (created if absent) and exit"
+  echo "  --dist      print the xdist --dist mode and exit: PYTEST_XDIST_DIST, then"
+  echo "              .skills/test-dist, then loadfile. One of $DIST_MODES;"
+  echo "              anything else warns and is loadfile"
   echo ""
   echo "Exit codes:"
-  echo "  0  a number was printed"
-  echo "  2  a configured value is not a number, off or auto; nothing printed"
+  echo "  0  a number was printed (with --dist, a mode: an unknown one warns)"
+  echo "  2  a configured worker count is not a number, off or auto; nothing printed"
 }
 
 EXPLAIN=0
 SLOT_DIR_ONLY=0
+DIST_ONLY=0
 for arg in "$@"; do
   case "$arg" in
     --help) usage; exit 0 ;;
     --explain) EXPLAIN=1 ;;
     --slot-dir) SLOT_DIR_ONLY=1 ;;
+    --dist) DIST_ONLY=1 ;;
     *) echo "ERROR: unknown argument '$arg'" >&2; usage >&2; exit 2 ;;
   esac
 done
@@ -91,6 +111,48 @@ if [[ "$SLOT_DIR_ONLY" -eq 1 ]]; then
   exit 0
 fi
 
+ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+
+# --dist: the env, then the knob's first non-comment, non-blank line, then
+# loadfile. A value it does not know is a warning, never a stop: the mode
+# only sets how the suite is spread, and loadfile is what ran before.
+if [[ "$DIST_ONLY" -eq 1 ]]; then
+  MODE="" FROM=""
+  DIST_KNOB="$ROOT/.skills/test-dist"
+  if [[ -n "${PYTEST_XDIST_DIST:-}" ]]; then
+    MODE=$PYTEST_XDIST_DIST FROM="PYTEST_XDIST_DIST"
+  elif [[ -e "$DIST_KNOB" || -L "$DIST_KNOB" ]]; then
+    FROM=".skills/test-dist"
+    if [[ ! -f "$DIST_KNOB" || ! -r "$DIST_KNOB" ]]; then
+      # A directory, a dangling link or an unreadable file: the knob is
+      # there but says nothing, which must not pass for "no knob".
+      echo "WARN: .skills/test-dist exists but is not a readable file; using loadfile" >&2
+    else
+      # The first word of the first line with one; a second word is a
+      # typo (`load scope`), never joined into a mode.
+      while IFS= read -r line || [[ -n "$line" ]]; do
+        line=${line%$'\r'}
+        line=${line%%#*}
+        read -r -a words <<<"$line"
+        [[ ${#words[@]} -gt 0 ]] || continue
+        MODE=${words[0]}
+        if [[ ${#words[@]} -gt 1 ]]; then
+          echo "WARN: .skills/test-dist says '${words[*]}' — one word is read; using '$MODE'" >&2
+        fi
+        break
+      done <"$DIST_KNOB"
+    fi
+  fi
+  if [[ -z "$MODE" ]]; then
+    answer loadfile "dist loadfile (the default)"
+  fi
+  for known in $DIST_MODES; do
+    if [[ "$MODE" == "$known" ]]; then answer "$MODE" "dist $MODE, from $FROM"; fi
+  done
+  echo "WARN: $FROM says '$MODE' — expected one of $DIST_MODES; using loadfile" >&2
+  answer loadfile "dist loadfile (the default)"
+fi
+
 # 1. The coordinator's per-agent figure.
 if [[ -n "${PYTEST_XDIST_AUTO_NUM_WORKERS:-}" ]]; then
   if ! is_count "$PYTEST_XDIST_AUTO_NUM_WORKERS"; then
@@ -102,7 +164,6 @@ if [[ -n "${PYTEST_XDIST_AUTO_NUM_WORKERS:-}" ]]; then
 fi
 
 # 2. The project's knob. First non-comment, non-blank line.
-ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
 KNOB="$ROOT/.skills/test-workers"
 SETTING=auto
 if [[ -f "$KNOB" ]]; then

@@ -13,6 +13,9 @@ htmlcov/
 env
 tests/benchmarks/results/*.jsonl
 .claude/worktrees/
+# worktree-create.sh's default root. It refuses a root git does not ignore
+# (#567): a worktree there is one `git add -A` from a committed gitlink.
+.worktrees/
 # Per-machine Claude Code settings, e.g. the cloud environment `claude --cloud`
 # uses here (#479): an account-personal ID, meaningless in anyone else's clone.
 .claude/settings.local.json

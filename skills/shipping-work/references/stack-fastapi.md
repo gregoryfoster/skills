@@ -15,14 +15,23 @@ along with its structure and conventions. `.skills/doc-sensitive-paths` and
 
 ## Step 8 — next steps for a FastAPI service
 
+A project's `.skills/next-steps`, when present, replaces this table
+(SKILL.md Step 8).
+
 | Category | Trigger | Example action |
 |---|---|---|
 | DB migration (alembic) | `alembic/versions/` changed | `uv run alembic upgrade head` (or the project's `migrate.sh`), then `systemctl restart <project>` |
 | DB migration (raw SQL) | `schema.sql` changed | `apply_schema` or `systemctl restart <project>` |
 | Service restart | Code change (no auto-reload in prod) | `systemctl restart <project>` |
 | Integration tests | New `@pytest.mark.integration` tests | `uv run pytest -m integration` on a real env; the gate never runs them |
-| Env var / secret | New config key | Add to `/etc/<project>/env` and restart |
+| Env var / secret | New config key | Add to the project's env file and restart |
 | Dev-server cleanup | Worktree shutdown | `fuser -k <port>/tcp` for the project's port |
+
+Each row here that restarts the service is offered only after `bash
+"<run-pre-restart.sh>"` passes or finds no `.skills/pre_restart` (SKILL.md
+Step 8). A unit that applies its schema in `ExecStartPre` doesn't fail on an
+unreachable DB: it loops in start-pre, and applies the schema unwatched when
+the DB returns (CannObserv/power-map#748).
 
 With `.skills/deploy_command` set, the deploy command owns both DB migration
 rows and the service restart row, so drop them. Don't run `alembic upgrade
