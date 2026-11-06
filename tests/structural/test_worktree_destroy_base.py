@@ -496,9 +496,7 @@ class TestDefaultBranchFromPrimaryCheckout:
         assert not (tmp_repo / ".worktrees" / "orchestrate-t" / ".skills").exists()
         return tmp_repo
 
-    def test_run_from_a_linked_worktree_reads_the_primarys_knob(
-        self, knob_repo: Path
-    ):
+    def test_run_from_a_linked_worktree_reads_the_primarys_knob(self, knob_repo: Path):
         orch = knob_repo / ".worktrees" / "orchestrate-t"
         result = _run_destroy(knob_repo, "feature/y", "--dry-run", cwd=orch)
         assert result.returncode == 0, (
@@ -508,9 +506,7 @@ class TestDefaultBranchFromPrimaryCheckout:
         )
         assert "ancestor of 'trunk'" in result.stdout, result.stdout
 
-    def test_run_from_the_primary_checkout_reads_the_same_knob(
-        self, knob_repo: Path
-    ):
+    def test_run_from_the_primary_checkout_reads_the_same_knob(self, knob_repo: Path):
         result = _run_destroy(knob_repo, "feature/y", "--dry-run")
         assert result.returncode == 0, result.stderr
         assert "ancestor of 'trunk'" in result.stdout, result.stdout
