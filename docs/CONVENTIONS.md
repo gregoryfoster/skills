@@ -124,7 +124,7 @@ The same conventions apply to `assets/` (templates, schemas, copy-into-place art
 Skills and project-local scripts that operate on `git worktree`s resolve the worktree root via a three-step lookup (see [`using-git-worktrees`](../skills/using-git-worktrees/)):
 
 1. `WORKTREE_ROOT` env var (highest priority — one-off overrides)
-2. `.skills/worktree_root` file under the repo root (single-line path; the project's persistent default)
+2. `.skills/worktree_root` file, read from the primary checkout (single-line path, a relative one resolved against that checkout; the project's persistent default). `worktree-create.sh` refuses a root inside the repo that git does not ignore ([#567](https://github.com/gregoryfoster/skills/issues/567))
 3. `<repo-root>/.worktrees/` (fallback)
 
 The helper `bash skills/using-git-worktrees/scripts/resolve-worktree-root.sh` prints the resolved root. Project-local wrapper scripts (e.g., `dev.sh worktree create`) should invoke the upstream `worktree-*.sh` scripts rather than reimplement them, and may pre-populate env files, allocate ports, or run extra bootstrap — but must not bypass the Iron Law gates.

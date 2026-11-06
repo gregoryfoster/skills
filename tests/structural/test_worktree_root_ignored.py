@@ -10,10 +10,13 @@ comes first, on canonical paths.
 
 Two traps the tests pin:
 
-* `git check-ignore` matches a dir-only pattern such as `.worktrees/` only
-  when it knows the path is a directory. The root usually does not exist yet
-  on the first create, so asking about `.worktrees` (no slash) reports it NOT
-  ignored: a false refusal of every repo's first worktree.
+* `git check-ignore` matches a dir-only pattern only when it knows the path
+  is a directory, and the worktree's directory does not exist yet on the
+  first create. A rule on a parent (`.worktrees/`) still matches
+  `.worktrees/x`, because a parent is a directory by construction; a rule on
+  the worktree's own level (`.worktrees/*/`) matches only when asked about
+  `.worktrees/x/`, with the slash. Without it, every first worktree under such
+  a rule is falsely refused (CR 1843).
 * Paths are compared canonically. macOS resolves /var to /private/var, and a
   root may be reached through a symlink or a `..`; a raw string compare calls
   such a root "outside" and lets it through.
@@ -148,6 +151,20 @@ class TestRootsThatPass:
         assert r.returncode == 0, r.stderr
         assert Path(r.stdout.strip()) == repo / ".worktrees" / "feature-x"
 
+    def test_a_dir_only_rule_on_the_worktree_level_passes(self, tmp_path: Path):
+        """`.worktrees/*/` matches the worktree's directory only as a directory.
+
+        It does not exist yet, so git knows that only from the trailing slash
+        on the question. A parent rule (`.worktrees/`) cannot pin the slash:
+        it matches `.worktrees/x` with or without one (CR 1843).
+        """
+        r_ = _make_repo(tmp_path.resolve() / "r", ".worktrees/*/\n")
+        assert not (r_ / ".worktrees").exists()
+        r = _run(CREATE, "--new", "feature/x", cwd=r_)
+        assert r.returncode == 0, r.stderr
+        assert Path(r.stdout.strip()) == r_ / ".worktrees" / "feature-x"
+        assert _git(r_, "status", "--porcelain").stdout == ""
+
     def test_a_root_under_an_ignored_parent_passes(self, tmp_path: Path):
         r_ = _make_repo(tmp_path.resolve() / "r", "build/\n")
         r = _run(
@@ -206,6 +223,20 @@ class TestCanonicalPaths:
         root = f"{repo}/missing/../wt"
         r = _run(CREATE, "--new", "feature/x", cwd=repo, WORKTREE_ROOT=root)
         _assert_refused(r, repo)
+
+    def test_a_dotdot_root_out_of_the_repo_through_a_missing_directory(
+        self, repo: Path, tmp_path: Path
+    ):
+        """`missing/../../outside` leaves the repo: applied lexically, it passes.
+
+        Taken literally, the `..` keeps the path under the repo's prefix and
+        check-ignore is asked about it (exit 128). The test above cannot tell
+        the two apart, since there git normalises the `..` itself (CR 1843).
+        """
+        root = f"{repo}/missing/../../outside"
+        r = _run(CREATE, "--new", "feature/x", cwd=repo, WORKTREE_ROOT=root)
+        assert r.returncode == 0, r.stderr
+        assert (tmp_path.resolve() / "outside" / "feature-x").is_dir()
 
     def test_a_dotdot_root_into_an_ignored_directory_passes(self, repo: Path):
         root = f"{repo}/src/../.worktrees"
@@ -318,3 +349,134 @@ def test_help_documents_the_refusal():
     assert "does not ignore it" in exit_2, (
         f"--help's exit 2 must name the refusal: {codes}"
     )
+
+
+class TestBarePrimary:
+    """CR 1840: `clone --bare` + `worktree add`, which worked at 227de51e.
+
+    The first `git worktree list` entry is the bare directory, which has no
+    work tree: nothing there can commit a worktree, so it is not a tree to
+    ask. Treated as one, a root equal to it was refused as "the work tree
+    itself", and a root below it failed check-ignore with exit 128.
+    """
+
+    @pytest.fixture
+    def home(self, tmp_path: Path) -> Path:
+        seed = _make_repo(tmp_path.resolve() / "seed", None)
+        bare = tmp_path.resolve() / "repo.git"
+        _git(tmp_path, "clone", "-q", "--bare", str(seed), str(bare))
+        home = bare / "main"
+        _git(bare, "worktree", "add", "-q", str(home), "main")
+        return home
+
+    def test_the_bare_directory_as_the_root_passes(self, home: Path):
+        bare = home.parent
+        r = _run(CREATE, "--new", "feature/x", cwd=home, WORKTREE_ROOT=str(bare))
+        assert r.returncode == 0, r.stderr
+        assert Path(r.stdout.strip()) == bare / "feature-x"
+
+    def test_a_root_below_the_bare_directory_passes(self, home: Path):
+        bare = home.parent
+        r = _run(CREATE, "--new", "feature/x", cwd=home, WORKTREE_ROOT=str(bare / "wt"))
+        assert r.returncode == 0, r.stderr
+        assert Path(r.stdout.strip()) == bare / "wt" / "feature-x"
+
+    def test_a_root_inside_the_current_checkout_is_still_refused(self, home: Path):
+        r = _run(
+            CREATE, "--new", "feature/x", cwd=home, WORKTREE_ROOT=str(home / "src")
+        )
+        assert r.returncode == 2, r.stderr
+        assert ".gitignore" in r.stderr, r.stderr
+
+
+class TestCaseInsensitiveVolume:
+    """CR 1842: containment is decided by inode, not by spelling.
+
+    On a case-insensitive volume (macOS's default) `pwd -P` keeps the caller's
+    spelling, so `.../caserepo/src` names a directory inside `.../CaseRepo`
+    while sharing no string prefix with it.
+    """
+
+    def test_a_case_flipped_root_into_a_tracked_directory_is_refused(
+        self, tmp_path: Path
+    ):
+        repo = _make_repo(tmp_path.resolve() / "CaseRepo", ".worktrees/\n")
+        flipped = tmp_path.resolve() / "caserepo"
+        if not flipped.exists():
+            pytest.skip("the filesystem is case-sensitive")
+        r = _run(
+            CREATE, "--new", "feature/x", cwd=repo, WORKTREE_ROOT=str(flipped / "src")
+        )
+        _assert_refused(r, repo)
+        assert "'src/'" in r.stderr, f"the remedy names the path to ignore: {r.stderr}"
+
+
+class TestRootInASubmodule:
+    """CR 1849: a root inside a submodule of the checkout.
+
+    git cannot answer for the superproject (check-ignore exits 128: "Pathspec
+    ... is in submodule"), and no `.gitignore` line there could change that.
+    The superproject commits only the gitlink; the submodule's own checkout
+    is what would commit a worktree, so its rules decide.
+    """
+
+    @pytest.fixture
+    def sup(self, tmp_path: Path) -> Path:
+        src = _make_repo(tmp_path.resolve() / "src-repo", "wt/\n")
+        sup = _make_repo(tmp_path.resolve() / "sup", ".worktrees/\n")
+        _git(
+            sup,
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            "-q",
+            str(src),
+            "vendor/sub",
+        )
+        _git(sup, "commit", "-q", "-m", "submodule")
+        return sup
+
+    def test_a_root_the_submodule_ignores_passes(self, sup: Path):
+        root = sup / "vendor" / "sub" / "wt"
+        r = _run(CREATE, "--new", "feature/x", cwd=sup, WORKTREE_ROOT=str(root))
+        assert r.returncode == 0, r.stderr
+        assert Path(r.stdout.strip()) == root / "feature-x"
+        assert "fatal:" not in r.stderr, f"a settled question leaks git's: {r.stderr}"
+
+    def test_a_root_the_submodule_tracks_is_refused_by_its_rules(self, sup: Path):
+        sub = sup / "vendor" / "sub"
+        r = _run(CREATE, "--new", "feature/x", cwd=sup, WORKTREE_ROOT=str(sub / "src"))
+        assert r.returncode == 2, r.stderr
+        assert "exit 128" not in r.stderr, r.stderr
+        assert f"{sub}/.gitignore" in r.stderr, (
+            f"the remedy names the submodule's .gitignore: {r.stderr}"
+        )
+        assert len(_worktrees(sup)) == 1
+
+
+def test_a_root_that_cannot_be_created_exits_2_not_1(repo: Path, tmp_path: Path):
+    """CR 1850: exit 1 is the Iron Law's code; a failed `mkdir -p` is not it."""
+    blocker = tmp_path.resolve() / "afile"
+    blocker.write_text("not a directory\n")
+    r = _run(CREATE, "--new", "feature/x", cwd=repo, WORKTREE_ROOT=str(blocker / "wt"))
+    assert r.returncode == 2, f"expected exit 2, got {r.returncode}\nstderr: {r.stderr}"
+    assert "could not create the worktree root" in r.stderr, r.stderr
+    assert r.stdout == ""
+    assert len(_worktrees(repo)) == 1
+
+
+def test_conventions_say_where_the_knob_is_read():
+    """CR 1838: CONVENTIONS.md said the file sits "under the repo root".
+
+    From a linked worktree that is the wrong checkout: the knob is read from
+    the primary one, and a relative path resolves against it (#562, #567).
+    """
+    doc = (REPO_ROOT / "docs" / "CONVENTIONS.md").read_text()
+    start = doc.index("## Worktree root convention")
+    section = doc[start : doc.index("\n## ", start + 1)]
+    step = next(ln for ln in section.splitlines() if ln.startswith("2. "))
+    assert "under the repo root" not in step, step
+    assert "primary checkout" in step, step
+    assert "relative" in step, step
+    assert "#567" in step or "/issues/567" in step, step
