@@ -118,8 +118,23 @@ def test_the_pr_pass_says_an_edit_cannot_retract_a_closing_keyword():
 def test_the_post_merge_pass_checks_nothing_else_was_closed():
     post = _section("## The post-merge pass")
     step3 = post.split("\n3. ", 1)[1].split("\n4. ", 1)[0]
-    assert "closingIssuesReferences" in step3, step3
     assert "reopen" in step3, step3
+
+
+def test_the_post_merge_candidates_include_a_dropped_sidebar_link():
+    """CR 1848: the PR pass says a link dropped in the Development sidebar is
+    reopened by the post-merge pass, but `closingIssuesReferences` no longer
+    lists it. The candidates are the issues closed around the merge (the
+    search measured read-only against PR #106: 101, 102 and 104)."""
+    post = _section("## The post-merge pass")
+    step3 = post.split("\n3. ", 1)[1].split("\n4. ", 1)[0]
+    assert re.search(
+        r'gh issue list --state closed [^\n]*--search "closed:<mergedAt>\.\.<mergedAt\+5m>"',
+        step3,
+    ), step3
+    assert not re.search(r"each number\s+`gh pr view <m> --json closingIssues", step3)
+    assert re.search(r"[Rr]eopen each kept issue that isn't on a `Closes` line", step3)
+    assert "post-merge pass reopens it" in _section("## The PR pass")
 
 
 def test_the_post_merge_pass_asks_github_for_the_closer_and_compares_no_times():

@@ -116,17 +116,26 @@ Started by "ship it" once `gh pr view` shows `MERGED`:
 3. **Close the held issues.** Close each `Refs` issue only after the deploy
    exited 0, under the HARD-GATE. For each `Closes` issue, check that the merge
    closed it (`gh issue view <n> --json state`); a PR merged into any other
-   base closes nothing. Then check that it closed nothing else: each number
-   `gh pr view <m> --json closingIssuesReferences` lists that isn't on a
-   `Closes` line, and whose closer is this PR, was closed by it. Ask GitHub
-   for the closer rather than comparing `closedAt` with `mergedAt`, since
-   the gap varies:
+   base closes nothing. Then check that it closed nothing else. A link
+   dropped in the Development sidebar is gone from
+   `closingIssuesReferences`, yet the merge can close its issue, so take
+   the candidates from the issues closed in the five minutes after
+   `mergedAt` (`gh pr view <m> --json mergedAt`), both ends in its ISO 8601
+   form, such as `2026-08-07T16:16:07Z..2026-08-07T16:21:07Z`:
+
+   ```bash
+   gh issue list --state closed --limit 100 --json number --search "closed:<mergedAt>..<mergedAt+5m>"
+   ```
+
+   Keep each whose closer is this PR. Ask GitHub for the closer rather than
+   comparing `closedAt` with `mergedAt`, since the gap varies:
 
    ```bash
    gh api graphql -f query='query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){issue(number:$n){timelineItems(itemTypes:[CLOSED_EVENT],last:1){nodes{... on ClosedEvent{closer{__typename ... on PullRequest{number}}}}}}}}' -f o=<owner> -f r=<repo> -F n=<n> --jq '.data.repository.issue.timelineItems.nodes[0].closer.number'
    ```
 
-   Reopen it (`gh issue reopen <n>`) and say why.
+   Reopen each kept issue that isn't on a `Closes` line (`gh issue reopen
+   <n>`), and say why.
 4. **Destroy the worktree** with `using-git-worktrees` Phase 5. In `pr` mode
    `worktree-destroy.sh` fetches first, then accepts the merged PR as evidence
    when a squash or rebase merge left no ancestry. To delete the local branch
