@@ -6,7 +6,9 @@ toolchain's (see [gate-topology.md](gate-topology.md)): `composer validate`
 at each `composer.json`, `php -l` on every tracked PHP file, and
 `composer test` when the project defines it. A repo that also has a
 `package.json` at the root, or a tracked one one level under `themes/` or
-`plugins/`, gets its npm scripts too.
+`plugins/`, gets its npm scripts too. A theme vendored as a git submodule
+counts once it is checked out; a theme directory that is a symlink does
+not, though composer follows the link.
 
 ## Lint workers
 

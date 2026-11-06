@@ -226,14 +226,16 @@ fi
 # GIT_LITERAL_PATHSPECS=0 and explicit glob magic (CR 1861): `git
 # --literal-pathspecs` exports the literal setting to hooks, and `--glob-` or
 # `--noglob-pathspecs` the others, and under any of them a bare pattern lists
-# less, or nothing, with exit 0.
+# less, or nothing, with exit 0. The npm listing recurses into submodules,
+# so a theme vendored as one runs its scripts (CR 1862; detect-stack.sh says
+# why, and what stays out of reach).
 NPM_DIRS=()
 NPM_MANIFESTS=""
 if [[ $NPM -eq 1 ]]; then
   if [[ -f package.json ]]; then NPM_DIRS+=("."); fi
   for parent in themes plugins; do
     LS_RC=0
-    GIT_LITERAL_PATHSPECS=0 git ls-files -z -- ":(glob)$parent/*/package.json" >"$TMP/npm" 2>"$TMP/npm.err" || LS_RC=$?
+    GIT_LITERAL_PATHSPECS=0 git ls-files --recurse-submodules -z -- ":(glob)$parent/*/package.json" >"$TMP/npm" 2>"$TMP/npm.err" || LS_RC=$?
     if [[ $LS_RC -ne 0 ]]; then
       echo "ERROR: git ls-files failed (exit $LS_RC) listing $parent/*/package.json:" >&2
       cat "$TMP/npm.err" >&2

@@ -266,6 +266,14 @@ present() {
 # nothing with exit 0. The explicit glob magic is immune to the glob and
 # noglob settings; `--glob-pathspecs` is fatal beside the literal one.
 #
+# --recurse-submodules (CR 1862): a theme or plugin vendored as a submodule
+# is one gitlink to the superproject, so its package.json is listed from the
+# submodule's own index, as composer, which reads the tree, already finds its
+# composer.json. An uninitialised one has no checkout: nothing is listed and
+# no composer.json is on disk, so the two agree. A theme directory that is a
+# symlink is one tracked link to git and stays out of npm's reach, while
+# composer's glob follows it.
+#
 # No temp file, so nothing to leak on a signal or a set -e exit (CR 1868):
 # git writes straight into the loop, its stderr straight to ours, and its
 # exit status follows as one last NUL-terminated `status N` record, since
@@ -285,7 +293,7 @@ nested_npm() {
       esac
     done < <(
       rc=0
-      GIT_LITERAL_PATHSPECS=0 git ls-files -z -- ":(glob)$parent/*/package.json" || rc=$?
+      GIT_LITERAL_PATHSPECS=0 git ls-files --recurse-submodules -z -- ":(glob)$parent/*/package.json" || rc=$?
       printf 'status %s\0' "$rc"
     )
     if [[ $status != 0 ]]; then

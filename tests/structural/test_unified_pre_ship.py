@@ -519,6 +519,28 @@ class TestNpmManifests:
         assert "no toolchain detected" in result.stderr
         assert _cwd_calls(repo, "npm") == []
 
+    def test_a_theme_vendored_as_a_submodule_runs(self, repo, tmp_path):
+        """CR 1862: a submodule is one gitlink to the superproject, so the
+        tracked-only listing lost a vendored theme's scripts while composer
+        still validated its composer.json. The listing recurses now."""
+        src = tmp_path / "theme-src"
+        src.mkdir()
+        _git(src, "init", "-q", "-b", "main")
+        _git(src, "config", "user.email", "test@example.com")
+        _git(src, "config", "user.name", "test")
+        _manifest(src, "package.json", {"test:js": "jest"})
+        _commit(src)
+        _git(
+            repo,
+            *("-c", "protocol.file.allow=always", "submodule", "add", "-q"),
+            *(str(src), "themes/sub"),
+        )
+        _commit(repo)
+        result = _npm_gate(repo, FAKE_FAIL="test:js")
+        assert result.returncode == 1, result.stdout + result.stderr
+        assert "Detected: toolchain npm (themes/sub/package.json)" in result.stdout
+        assert "npm run test:js (themes/sub) (exit 1)" in result.stderr
+
     @pytest.mark.parametrize("setting", PATHSPEC_SETTINGS)
     def test_a_global_pathspec_setting_keeps_a_themes_failure(self, repo, setting):
         """CR 1861: under GIT_LITERAL_PATHSPECS=1, which `git

@@ -64,6 +64,47 @@ def _add(repo: Path) -> None:
     subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True, env=_clean_env())
 
 
+GIT_ID = (
+    *("-c", "user.email=test@example.com", "-c", "user.name=test"),
+    *("-c", "commit.gpgsign=false", "-c", "protocol.file.allow=always"),
+)
+
+
+def _commit_all(repo: Path) -> None:
+    for args in (("add", "-A"), ("commit", "-q", "-m", "state")):
+        subprocess.run(
+            ["git", "-C", str(repo), *GIT_ID, *args], check=True, env=_clean_env()
+        )
+
+
+def _vendor_theme(repo: Path, tmp_path: Path) -> None:
+    """A theme with a package.json and a composer.json in a repo of its own,
+    added to `repo` as a submodule at themes/sub, and committed."""
+    src = tmp_path / "theme-src"
+    src.mkdir()
+    subprocess.run(["git", "init", "-q", str(src)], check=True, env=_clean_env())
+    (src / "package.json").write_text("{}\n")
+    (src / "composer.json").write_text("{}\n")
+    _commit_all(src)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repo),
+            *GIT_ID,
+            "submodule",
+            "add",
+            "-q",
+            str(src),
+            "themes/sub",
+        ],
+        check=True,
+        capture_output=True,
+        env=_clean_env(),
+    )
+    _commit_all(repo)
+
+
 def _detect(repo: Path) -> set[tuple[str, str]]:
     result = _run(repo)
     assert result.returncode == 0, result.stderr
@@ -151,6 +192,31 @@ class TestToolchains:
             (repo / ".gitignore").write_text("/plugins/vendor-plugin/\n")
             _add(repo)
         assert _detect(repo) == set()
+
+    def test_a_theme_vendored_as_a_submodule_is_one(self, repo, tmp_path):
+        """CR 1862: the superproject tracks a submodule as one gitlink, so the
+        tracked-only rule (CR 1844) lost a submodule theme's npm while
+        composer, which reads the tree, still found its composer.json."""
+        _vendor_theme(repo, tmp_path)
+        assert _detect(repo) == {
+            ("toolchain", "composer"),
+            ("framework", "php"),
+            ("toolchain", "npm"),
+        }
+
+    def test_an_uninitialised_submodule_theme_is_neither(self, repo, tmp_path):
+        """A clone that never ran `git submodule update` has an empty
+        directory there: nothing to list and no composer.json on disk, so
+        the two stacks agree on nothing, and nothing fails."""
+        _vendor_theme(repo, tmp_path)
+        clone = tmp_path / "clone"
+        subprocess.run(
+            ["git", "clone", "-q", str(repo), str(clone)],
+            check=True,
+            env=_clean_env(),
+        )
+        assert (clone / "themes" / "sub").is_dir()
+        assert _detect(clone) == set()
 
     @pytest.mark.parametrize("setting", PATHSPEC_SETTINGS)
     def test_a_global_pathspec_setting_does_not_hide_a_theme(self, repo, setting):
