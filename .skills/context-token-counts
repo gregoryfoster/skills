@@ -5,10 +5,11 @@
 # file never counted exactly or since drifted far from the size recorded here.
 15397 5885 AGENTS.md
 3182 1220 docs/BUDGETS.md
-20880 7402 docs/CONVENTIONS.md
-9678 3702 docs/KNOBS.md
-5350 2003 docs/SKILLS.md
-26375 9754 docs/STYLE.md
+21079 7474 docs/CONVENTIONS.md
+3255 1238 docs/GATE.md
+14467 5562 docs/KNOBS.md
+5485 2060 docs/SKILLS.md
+26586 9829 docs/STYLE.md
 11123 4283 skills/adopting-dependabot/SKILL.md
 4183 1591 skills/adopting-dependabot/references/config-keys.md
 2836 1107 skills/adopting-dependabot/references/credential-context.md
@@ -204,13 +205,13 @@
 15683 5642 skills/reviewing-code-python-click/SKILL.md
 15191 5571 skills/reviewing-code-python-fastapi/SKILL.md
 11714 4238 skills/reviewing-code/SKILL.md
-15508 5782 skills/shipping-work/SKILL.md
+15835 5901 skills/shipping-work/SKILL.md
 5273 1979 skills/shipping-work/references/deploy-command.md
-9297 3738 skills/shipping-work/references/gate-topology.md
-7253 2897 skills/shipping-work/references/pr-mode.md
+9418 3777 skills/shipping-work/references/gate-topology.md
+8084 3283 skills/shipping-work/references/pr-mode.md
 2099 813 skills/shipping-work/references/stack-click.md
 2641 1077 skills/shipping-work/references/stack-fastapi.md
-1857 771 skills/shipping-work/references/stack-php.md
+2029 831 skills/shipping-work/references/stack-php.md
 15925 5969 skills/using-git-worktrees/SKILL.md
 2257 801 skills/using-git-worktrees/references/destroy-flags.md
 3277 1262 skills/using-git-worktrees/references/pr-mode.md
