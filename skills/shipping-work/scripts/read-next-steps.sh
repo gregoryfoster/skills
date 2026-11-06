@@ -61,15 +61,23 @@ case "${1:-}" in
 esac
 
 WT_LIST=$(git worktree list --porcelain) || die "git worktree list failed: not in a git checkout?"
-PRIMARY=${WT_LIST%%$'\n'*}
+WT_BLOCK=${WT_LIST%%$'\n\n'*}
+PRIMARY=${WT_BLOCK%%$'\n'*}
 PRIMARY=${PRIMARY#worktree }
 [ -d "$PRIMARY" ] || die "could not resolve the primary checkout (got '$PRIMARY')"
 # A bare primary or a submodule lists a git dir first, which holds no .skills/
-# (CR 1839b): normalised as _command-knob.sh's primary_checkout does, and a
-# bare primary's "must be run in a work tree" is the expected answer here.
-PRIMARY=$(git -C "$PRIMARY" rev-parse --show-toplevel 2>/dev/null) ||
-  PRIMARY=$(git rev-parse --show-toplevel) ||
-  die "could not resolve a working tree for the primary checkout"
+# (CR 1839b): normalised as _command-knob.sh's primary_checkout does. Only a
+# `bare` line means bare (CR 1858); any other failure exits 2 with git's reason.
+case $'\n'"$WT_BLOCK"$'\n' in
+  *$'\n'bare$'\n'*)
+    PRIMARY=$(git rev-parse --show-toplevel) ||
+      die "the primary ($PRIMARY) is bare and this is not a working tree"
+    ;;
+  *)
+    PRIMARY=$(git -C "$PRIMARY" rev-parse --show-toplevel) ||
+      die "could not resolve the primary checkout's working tree from $PRIMARY (git's reason is above)"
+    ;;
+esac
 cd "$PRIMARY"
 
 # From doc-check.sh, byte for byte (see the header).

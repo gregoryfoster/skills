@@ -301,7 +301,21 @@ def test_the_hard_gate_holds_a_production_requirement_to_the_check():
     gate = step6[step6.index("<HARD-GATE>") : step6.index("</HARD-GATE>")]
     item = next(line for line in gate.splitlines() if ".skills/pre_restart" in line)
     assert re.search(r"passed in this session", item), item
-    assert re.search(r"refusal closes nothing", item), item
+
+
+def test_the_hard_gates_check_item_matches_where_the_check_runs():
+    """CR 1863: deploy-command.md and docs/KNOBS.md say pre_restart isn't run
+    beside a deploy command, so item 5 is qualified to match; and its "A
+    refusal closes nothing" reached past Step 8's "close no issue whose 'Done
+    when' is about production" to every issue."""
+    step6 = _section(SKILL_MD, "### Step 6")
+    gate = step6[step6.index("<HARD-GATE>") : step6.index("</HARD-GATE>")]
+    item = next(line for line in gate.splitlines() if ".skills/pre_restart" in line)
+    assert re.search(
+        r"`\.skills/pre_restart` set and no `\.skills/deploy_command`", item
+    ), item
+    assert "refusal closes nothing" not in item, item
+    assert re.search(r"refusal closes no such issue", item), item
 
 
 def test_the_fastapi_restart_rows_point_at_the_check():

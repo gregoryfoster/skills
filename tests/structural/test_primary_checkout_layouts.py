@@ -144,3 +144,71 @@ def test_pre_restart_runs_the_committed_check_from_the_checkout(
     result = _run("run-pre-restart.sh", checkout, record)
     assert result.returncode == 0, result.stdout + result.stderr
     assert record.read_text().strip() == str(checkout.resolve())
+
+
+# CR 1858: a primary git can't read is not a bare primary. The fallback above
+# took *any* failure of `git -C <entry> rev-parse --show-toplevel` as "bare",
+# so a primary under "dubious ownership" (safe.directory naming only the
+# linked worktree) handed the feature branch's knobs to every script: its
+# deploy command, its pre_restart check, its next-steps rows. Only a `bare`
+# line in the first porcelain block means bare; any other failure exits 2,
+# naming the path, with git's own reason shown.
+
+BRANCH_ROW = "Branch row: read from the feature branch, not the primary"
+
+
+@pytest.fixture
+def unreadable_primary(tmp_path: Path, src: Path) -> tuple[Path, dict]:
+    """A linked worktree on `feat` with its own rows, and an environment in
+    which git refuses the primary as another user's but trusts the worktree."""
+    (src / ".skills" / "deploy_command").write_text("scripts/stub.sh\n")
+    _git(src, "add", "-A")
+    _git(
+        src,
+        "-c",
+        "user.email=t@example.com",
+        "-c",
+        "user.name=t",
+        "-c",
+        "commit.gpgsign=false",
+        "commit",
+        "-q",
+        "-m",
+        "deploy knob",
+    )
+    wt = tmp_path / "wt"
+    _git(src, "worktree", "add", "-q", "-b", "feat", str(wt))
+    (wt / ".skills" / "next-steps").write_text(f"{BRANCH_ROW}\n")
+    # Its own upstream, so run-deploy-command.sh's pushed check would pass.
+    _git(wt, "config", "branch.feat.remote", ".")
+    _git(wt, "config", "branch.feat.merge", "refs/heads/feat")
+    git_env = {
+        "GIT_TEST_ASSUME_DIFFERENT_OWNER": "1",
+        "GIT_CONFIG_COUNT": "1",
+        "GIT_CONFIG_KEY_0": "safe.directory",
+        "GIT_CONFIG_VALUE_0": str(wt),
+    }
+    return wt, git_env
+
+
+@pytest.mark.parametrize(
+    "script", ["read-next-steps.sh", "run-pre-restart.sh", "run-deploy-command.sh"]
+)
+def test_an_unreadable_primary_exits_2_naming_it(
+    unreadable_primary, src, tmp_path, script
+):
+    wt, git_env = unreadable_primary
+    record = tmp_path / "record"
+    result = subprocess.run(
+        ["bash", str(SCRIPTS / script)],
+        cwd=wt,
+        capture_output=True,
+        text=True,
+        env=_env(STUB_RECORD=str(record), **git_env),
+        timeout=60,
+    )
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert not record.exists(), "the branch's command ran"
+    assert BRANCH_ROW not in result.stdout
+    assert str(src) in result.stderr
+    assert "dubious ownership" in result.stderr, result.stderr

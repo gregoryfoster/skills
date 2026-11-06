@@ -163,7 +163,7 @@ Before closing any issue, verify the original requirements against what was impl
 2. Confirm each stated requirement is addressed in commits
 3. If any requirement is missing: do NOT close — ask the user whether to descope or continue
 4. With `.skills/deploy_command` set: if a requirement concerns what production runs, the deploy has run and exited 0 in this session. A failed deploy closes nothing
-5. With `.skills/pre_restart` set: such a requirement needs the check to have passed in this session. A refusal closes nothing
+5. With `.skills/pre_restart` set and no `.skills/deploy_command`: such a requirement needs the check to have passed in this session. A refusal closes no such issue
 </HARD-GATE>
 
 ```bash

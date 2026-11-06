@@ -115,9 +115,7 @@ Started by "ship it" once `gh pr view` shows `MERGED`:
    (exit 2) unless HEAD is the default branch and equals its upstream. The
    deploy runs the merge commit, or a later one on the default branch,
    never the branch tip.
-3. **Close the held issues.** Close each `Refs` issue only after the deploy
-   exited 0, or, without one, the check passed, under the HARD-GATE. For
-   each `Closes` issue, check that the merge closed it (`gh issue view <n>
+3. **Close the held issues.** For each `Closes` issue, check that the merge closed it (`gh issue view <n>
    --json state`); a PR merged into any other base closes nothing. Then
    check that it closed nothing else. A link dropped in the Development
    sidebar is gone from `closingIssuesReferences`, yet the merge can close
@@ -129,15 +127,22 @@ Started by "ship it" once `gh pr view` shows `MERGED`:
    gh issue list --state closed --limit 100 --json number --search "closed:<mergedAt>..<mergedAt+5m>"
    ```
 
-   Keep each whose closer is this PR. Ask GitHub for the closer rather than
-   comparing `closedAt` with `mergedAt`, since the gap varies:
+   Keep each whose closer is this PR, or a commit it brought in: a keyword
+   in a commit message closes once the merge lands it. Ask GitHub for the
+   closer rather than comparing `closedAt` with `mergedAt`, since the gap
+   varies. This prints the closing PR, or the PR that brought the closing
+   commit in. Nothing printed is a manual close or a commit pushed straight
+   to the branch, neither of them this PR's:
 
    ```bash
-   gh api graphql -f query='query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){issue(number:$n){timelineItems(itemTypes:[CLOSED_EVENT],last:1){nodes{... on ClosedEvent{closer{__typename ... on PullRequest{number}}}}}}}}' -f o=<owner> -f r=<repo> -F n=<n> --jq '.data.repository.issue.timelineItems.nodes[0].closer.number'
+   gh api graphql -f query='query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){issue(number:$n){timelineItems(itemTypes:[CLOSED_EVENT],last:1){nodes{... on ClosedEvent{closer{... on PullRequest{number} ... on Commit{associatedPullRequests(first:5){nodes{number}}}}}}}}}}' -f o=<owner> -f r=<repo> -F n=<n> --jq '.data.repository.issue.timelineItems.nodes[0].closer | .number // .associatedPullRequests.nodes[]?.number'
    ```
 
    Reopen each kept issue that isn't on a `Closes` line (`gh issue reopen
-   <n>`), and say why.
+   <n>`), and say why. Then close each `Refs` issue only after the deploy
+   exited 0, or, without one, the check passed, under the HARD-GATE. This
+   comes last, since one the merge closed through a kept sidebar link was
+   just reopened.
 4. **Destroy the worktree** with `using-git-worktrees` Phase 5. In `pr` mode
    `worktree-destroy.sh` fetches first, then accepts the merged PR as evidence
    when a squash or rebase merge left no ancestry. To delete the local branch
