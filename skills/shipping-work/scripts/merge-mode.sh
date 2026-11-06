@@ -24,10 +24,11 @@
 # that reader, and wants this file's answer.
 #
 # THE KNOB is read from the primary checkout (the first `git worktree list`
-# entry), as .skills/deploy_command is: an untracked file does not exist in a
-# linked worktree, so asking the current checkout would read `direct` from
-# every worktree of a `pr` repo. Grammar: one word; blank lines and
-# whole-line `#` comments are ignored.
+# entry's work tree), as .skills/deploy_command is: an untracked file does
+# not exist in a linked worktree, so asking the current checkout would read
+# `direct` from every worktree of a `pr` repo. A bare primary has no work
+# tree, so there the current checkout's is read. Grammar: one word; blank
+# lines and whole-line `#` comments are ignored.
 
 set -euo pipefail
 
@@ -37,7 +38,8 @@ Usage: bash "$0"
 
 Prints the project's merge mode, from the primary checkout's
 .skills/merge_mode: 'direct' (merge locally, then push) or 'pr' (push the
-branch and open a pull request). An absent file means 'direct'.
+branch and open a pull request). An absent file means 'direct'. A bare
+primary has no checkout, so there the current checkout's file is read.
 
 Grammar: one word, 'pr' or 'direct'. Blank lines and whole-line '#' comments
 are ignored.
@@ -65,9 +67,26 @@ case "${1:-}" in
 esac
 
 WT_LIST=$(git worktree list --porcelain) || die "git worktree list failed: not in a git checkout?"
-PRIMARY=${WT_LIST%%$'\n'*}
-PRIMARY=${PRIMARY#worktree }
-[ -d "$PRIMARY" ] || die "could not resolve the primary checkout (got '$PRIMARY')"
+# The primary is the first porcelain block, up to the first blank line. Its
+# entry is a git dir, not a work tree, in two layouts (CR 1860): `repo.git`
+# for a bare primary, and `<super>/.git/modules/<n>` in a submodule. A block
+# with a `bare` line has no work tree, so the knob can only live in the
+# current checkout; any other entry is asked for its work tree (a
+# submodule's via core.worktree). That ask failing is exit 2, never a
+# fallback: "dubious ownership" would read another checkout's knob.
+PRIMARY_BLOCK=${WT_LIST%%$'\n\n'*}
+PRIMARY_ENTRY=${PRIMARY_BLOCK%%$'\n'*}
+PRIMARY_ENTRY=${PRIMARY_ENTRY#worktree }
+case $'\n'"$PRIMARY_BLOCK"$'\n' in
+  *$'\n'bare$'\n'*)
+    PRIMARY=$(git rev-parse --show-toplevel) ||
+      die "the primary is bare and this is not a work tree, so there is no checkout to read .skills/merge_mode from"
+    ;;
+  *)
+    PRIMARY=$(git -C "$PRIMARY_ENTRY" rev-parse --show-toplevel) ||
+      die "could not resolve the primary checkout '$PRIMARY_ENTRY' (git's reason is above)"
+    ;;
+esac
 
 KNOB="$PRIMARY/.skills/merge_mode"
 REMEDY="write one word, 'pr' or 'direct', or delete the file for the default ('direct')"
