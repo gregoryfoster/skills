@@ -356,3 +356,25 @@ class TestBarePrimary:
         )
         assert r.returncode == 2, r.stderr
         assert ".gitignore" in r.stderr, r.stderr
+
+
+class TestCaseInsensitiveVolume:
+    """CR 1842: containment is decided by inode, not by spelling.
+
+    On a case-insensitive volume (macOS's default) `pwd -P` keeps the caller's
+    spelling, so `.../caserepo/src` names a directory inside `.../CaseRepo`
+    while sharing no string prefix with it.
+    """
+
+    def test_a_case_flipped_root_into_a_tracked_directory_is_refused(
+        self, tmp_path: Path
+    ):
+        repo = _make_repo(tmp_path.resolve() / "CaseRepo", ".worktrees/\n")
+        flipped = tmp_path.resolve() / "caserepo"
+        if not flipped.exists():
+            pytest.skip("the filesystem is case-sensitive")
+        r = _run(
+            CREATE, "--new", "feature/x", cwd=repo, WORKTREE_ROOT=str(flipped / "src")
+        )
+        _assert_refused(r, repo)
+        assert "'src/'" in r.stderr, f"the remedy names the path to ignore: {r.stderr}"

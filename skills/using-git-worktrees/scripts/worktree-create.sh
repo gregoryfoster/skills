@@ -177,12 +177,34 @@ WORKTREE_PATH="$ROOT/$SLUG"
 #   * The trailing slash. A dir-only pattern such as `.worktrees/` matches only
 #     a path git knows is a directory, and on the first create nothing there
 #     exists yet: asked about `.worktrees/x`, git says not ignored.
-#   * Canonical paths on both sides (canonical_path, above).
+#   * Canonical paths on both sides (canonical_path, above), and containment by
+#     inode, not by string (rel_in, below).
 # check-ignore failing (exit 128) is a refusal too: an unanswered question is
 # not "ignored". A root that IS the work tree is refused without asking.
 ROOT_CANON=$(canonical_path "$ROOT") || {
   echo "ERROR: could not resolve the worktree root '$ROOT'" >&2
   exit 2
+}
+
+# Succeeds when the root is the directory $1 or below it, setting REL to the
+# root's path relative to $1 ("" for $1 itself). Walks up from the root and
+# compares each ancestor by inode (`-ef`), not by string (CR 1842): on a
+# case-insensitive volume `pwd -P` keeps the caller's spelling, so
+# `.../caserepo/wt` is inside `.../CaseRepo` and shares no prefix with it.
+# A component that does not exist yet matches nothing and is carried into
+# REL, which keeps the spelling git is asked about.
+rel_in() {
+  local anc=$ROOT_CANON rel=""
+  while :; do
+    if [[ "$anc" -ef "$1" ]]; then
+      REL=$rel
+      return 0
+    fi
+    [[ "$anc" != / ]] || return 1
+    rel="${anc##*/}${rel:+/$rel}"
+    anc=${anc%/*}
+    anc=${anc:-/}
+  done
 }
 WT_LIST=$(git worktree list --porcelain) || {
   echo "ERROR: failed to enumerate worktrees (git worktree list --porcelain)" >&2
@@ -198,13 +220,9 @@ for TREE in "$PRIMARY" "$PROJECT_ROOT"; do
   # `<super>/.git/modules/<name>`, whose work tree git names via core.worktree.
   TREE=$(git -C "$TREE" rev-parse --show-toplevel 2>/dev/null) || continue
   TREE=$(cd -P -- "$TREE" 2>/dev/null && pwd -P) || continue
-  [[ "$TREE" != "$CHECKED" ]] || continue
+  [[ -z "$CHECKED" || ! "$TREE" -ef "$CHECKED" ]] || continue
   CHECKED=$TREE
-  case $ROOT_CANON in
-    "$TREE") REL="" ;;
-    "$TREE"/*) REL=${ROOT_CANON#"$TREE"/} ;;
-    *) continue ;;
-  esac
+  rel_in "$TREE" || continue
   IGNORE_RC=1
   if [[ -n "$REL" ]]; then
     IGNORE_RC=0
