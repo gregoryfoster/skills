@@ -69,7 +69,21 @@ case "${1:-}" in
 esac
 [ "$#" -eq 0 ] || die "unexpected argument: $1 (see --help)"
 
-SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd) || die "could not resolve this script's directory"
+# Through the symlink chain first (CR 1841): a consumer's per-script symlink
+# (managing-skills' local-overrides.md) puts this file's link in a directory
+# with no _command-knob.sh or merge-mode.sh beside it, while the target has
+# both. Resolved as curating-context's check-counts.sh does.
+_self="${BASH_SOURCE[0]}"
+_n=0
+while [ -L "$_self" ] && [ "$_n" -lt 10 ]; do
+  _t=$(readlink "$_self") || break
+  case "$_t" in
+    /*) _self="$_t" ;;
+    *) _self="$(dirname "$_self")/$_t" ;;
+  esac
+  _n=$((_n + 1))
+done
+SCRIPT_DIR=$(cd "$(dirname "$_self")" && pwd -P) || die "could not resolve this script's directory (from $_self)"
 [ -f "$SCRIPT_DIR/_command-knob.sh" ] || die "_command-knob.sh not found next to this script in $SCRIPT_DIR"
 # shellcheck source=_command-knob.sh
 . "$SCRIPT_DIR/_command-knob.sh"
