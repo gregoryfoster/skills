@@ -463,3 +463,72 @@ class TestDryRun:
         assert "locked claude agent agent-x" in listing, (
             "dry run must not release the lock"
         )
+
+
+# --- #559: .skills/default_branch is read from the primary checkout ----------
+
+
+class TestDefaultBranchFromPrimaryCheckout:
+    """The knob is untracked, so only the primary checkout has it (#559).
+
+    An orchestrator destroys a worker's worktree from its own linked
+    `orchestrate/<topic>` worktree with `--base` omitted. Read from the
+    current checkout, the knob does not exist there, and the base falls to
+    origin/HEAD, then `main`: a base the project did not name. The knob here
+    names `trunk`, which differs from both, so a wrong read is observable.
+    """
+
+    @pytest.fixture
+    def knob_repo(self, tmp_repo: Path) -> Path:
+        # trunk == batch/x, so feature/y is merged into trunk but not main.
+        _run_git(tmp_repo, "branch", "trunk", "batch/x")
+        (tmp_repo / ".skills").mkdir()
+        (tmp_repo / ".skills" / "default_branch").write_text("trunk\n")
+        _add_worktree(
+            tmp_repo,
+            tmp_repo / ".worktrees" / "orchestrate-t",
+            "orchestrate/t",
+            start="main",
+        )
+        # Untracked in the primary: the linked worktree cannot see it.
+        status = _run_git(tmp_repo, "status", "--porcelain", "--", ".skills").stdout
+        assert status.startswith("??"), f"the knob must be untracked: {status!r}"
+        assert not (tmp_repo / ".worktrees" / "orchestrate-t" / ".skills").exists()
+        return tmp_repo
+
+    def test_run_from_a_linked_worktree_reads_the_primarys_knob(
+        self, knob_repo: Path
+    ):
+        orch = knob_repo / ".worktrees" / "orchestrate-t"
+        result = _run_destroy(knob_repo, "feature/y", "--dry-run", cwd=orch)
+        assert result.returncode == 0, (
+            "from a linked worktree, the primary checkout's .skills/default_branch "
+            f"(trunk) must be the base; got exit {result.returncode}\n"
+            f"stdout: {result.stdout}\nstderr: {result.stderr}"
+        )
+        assert "ancestor of 'trunk'" in result.stdout, result.stdout
+
+    def test_run_from_the_primary_checkout_reads_the_same_knob(
+        self, knob_repo: Path
+    ):
+        result = _run_destroy(knob_repo, "feature/y", "--dry-run")
+        assert result.returncode == 0, result.stderr
+        assert "ancestor of 'trunk'" in result.stdout, result.stdout
+
+    def test_a_branch_unmerged_into_the_knobs_base_is_refused_from_a_worktree(
+        self, knob_repo: Path
+    ):
+        """The converse: merged into main, not trunk. Falling to main would pass."""
+        _run_git(knob_repo, "branch", "only-main", "main")
+        _add_worktree(knob_repo, knob_repo / "elsewhere" / "only-main", "only-main")
+        (knob_repo / "elsewhere" / "only-main" / "m.txt").write_text("m\n")
+        _run_git(knob_repo / "elsewhere" / "only-main", "add", "m.txt")
+        _run_git(knob_repo / "elsewhere" / "only-main", "commit", "-m", "m")
+        _run_git(knob_repo, "branch", "-f", "main", "only-main")
+        orch = knob_repo / ".worktrees" / "orchestrate-t"
+        result = _run_destroy(knob_repo, "only-main", "--dry-run", cwd=orch)
+        assert result.returncode == 1, (
+            f"expected Iron Law exit 1 against trunk, got {result.returncode}\n"
+            f"stdout: {result.stdout}\nstderr: {result.stderr}"
+        )
+        assert "'trunk'" in result.stderr, result.stderr
