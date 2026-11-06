@@ -512,6 +512,31 @@ class TestRootInASubmodule:
         )
         assert len(_worktrees(sup)) == 1
 
+    @pytest.mark.parametrize("ignorecase", ["true", "false"])
+    def test_a_case_flipped_root_is_still_the_submodules_to_decide(
+        self, sup: Path, ignorecase: str
+    ):
+        """CR 1859: `Vendor/Sub/src` names `vendor/sub/src` on this volume.
+
+        Asked of the superproject as spelled, git does not see the submodule
+        (exit 1, not 128), so the superproject decided, and the remedy it
+        printed, followed here, let through a root the submodule tracks.
+        The existing part of the root is now spelled as on disk.
+        """
+        if not (sup / "Vendor").exists():
+            pytest.skip("the filesystem is case-sensitive")
+        _git(sup, "config", "core.ignorecase", ignorecase)
+        (sup / ".gitignore").write_text(".worktrees/\nVendor/Sub/src/\n")
+        _git(sup, "commit", "-q", "-am", "the superproject's remedy, followed")
+        sub = sup / "vendor" / "sub"
+        flipped = sup / "Vendor" / "Sub" / "src"
+        r = _run(CREATE, "--new", "feature/x", cwd=sup, WORKTREE_ROOT=str(flipped))
+        assert r.returncode == 2, r.stderr
+        assert f"{sub}/.gitignore" in r.stderr, (
+            f"the remedy names the submodule's .gitignore: {r.stderr}"
+        )
+        assert len(_worktrees(sup)) == 1
+
 
 def test_a_root_that_cannot_be_created_exits_2_not_1(repo: Path, tmp_path: Path):
     """CR 1850: exit 1 is the Iron Law's code; a failed `mkdir -p` is not it."""

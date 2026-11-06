@@ -129,6 +129,19 @@ ROOT=$(bash "$SCRIPT_DIR/resolve-worktree-root.sh") || {
 # symlink, and it is what `mkdir -p` will create. A raw string compare is not
 # enough: macOS spells /var as /private/var, and an alias or a `..` reaches
 # into the repo under a prefix that does not match it.
+#
+# The existing part is spelled as it is on disk (CR 1859). bash's builtin
+# `pwd -P` keeps the spelling `cd` was given, so on a case-insensitive
+# volume `Vendor/Sub/src` was asked of the superproject as written: not
+# "in submodule" `vendor/sub` there, so the superproject decided, and the
+# remedy it printed let through a root the submodule tracks. The external
+# pwd calls getcwd(3), which returns the on-disk case on macOS; where it is
+# missing, the builtin is the fallback. Components that do not exist yet
+# keep the spelling given, which is what `mkdir -p` will create.
+physical_pwd() {
+  if [[ -x /bin/pwd ]]; then /bin/pwd -P; else pwd -P; fi
+}
+
 canonical_path() {
   local p=$1 rest="" head comp
   case $p in /*) ;; *) p="$PWD/$p" ;; esac
@@ -136,7 +149,7 @@ canonical_path() {
     rest="$(basename -- "$p")${rest:+/$rest}"
     p=$(dirname -- "$p")
   done
-  head=$(cd -P -- "$p" && pwd -P) || return 1
+  head=$(cd -P -- "$p" && physical_pwd) || return 1
   while [[ -n "$rest" ]]; do
     comp=${rest%%/*}
     if [[ "$rest" == */* ]]; then rest=${rest#*/}; else rest=""; fi
@@ -193,11 +206,12 @@ ROOT_CANON=$(canonical_path "$ROOT") || {
 
 # Succeeds when the root is the directory $1 or below it, setting REL to the
 # root's path relative to $1 ("" for $1 itself). Walks up from the root and
-# compares each ancestor by inode (`-ef`), not by string (CR 1842): on a
-# case-insensitive volume `pwd -P` keeps the caller's spelling, so
-# `.../caserepo/wt` is inside `.../CaseRepo` and shares no prefix with it.
-# A component that does not exist yet matches nothing and is carried into
-# REL, which keeps the spelling git is asked about.
+# compares each ancestor by inode (`-ef`), not by string (CR 1842): the
+# tree's path is spelled by git and the root's by canonical_path, and on a
+# case-insensitive volume only the inode says two spellings are one
+# directory. The existing part of REL is spelled as on disk (CR 1859), so
+# git sees the submodule a case-flipped root leads into; a component that
+# does not exist yet matches nothing and is carried into REL as given.
 rel_in() {
   local anc=$ROOT_CANON rel=""
   while :; do
