@@ -155,6 +155,17 @@ class TestRootsThatPass:
         )
         assert r.returncode == 0, r.stderr
 
+    def test_a_root_whose_contents_are_ignored_passes(self, tmp_path: Path):
+        """`.worktrees/*` ignores every worktree in the root, not the root.
+
+        Asking about the root would refuse it; the worktree's own directory is
+        what `git add -A` would stage, so that is what is asked about.
+        """
+        r_ = _make_repo(tmp_path.resolve() / "r", ".worktrees/*\n")
+        r = _run(CREATE, "--new", "feature/x", cwd=r_)
+        assert r.returncode == 0, r.stderr
+        assert _git(r_, "status", "--porcelain").stdout == ""
+
     def test_a_root_outside_the_repo_passes(self, repo: Path, tmp_path: Path):
         """The `case` the issue explains: check-ignore would say NOT ignored."""
         outside = tmp_path.resolve() / "elsewhere"
@@ -285,6 +296,12 @@ class TestRelativeConfiguredRoot:
         assert Path(r.stdout.strip()) == knob / "wt" / "feature-x", (
             "resolved against the linked worktree, the root nests inside it"
         )
+
+    def test_a_relative_env_root_prints_an_absolute_path(self, knob: Path):
+        """WORKTREE_ROOT keeps its meaning (the current top level), stated whole."""
+        r = _run(CREATE, "--new", "feature/x", cwd=knob / "src", WORKTREE_ROOT="wt")
+        assert r.returncode == 0, r.stderr
+        assert r.stdout.strip() == str(knob / "wt" / "feature-x")
 
     def test_a_relative_knob_into_a_tracked_directory_is_refused(self, repo: Path):
         (repo / ".skills").mkdir()
