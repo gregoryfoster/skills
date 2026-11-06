@@ -48,7 +48,7 @@ Determine which GitHub issue(s) to close (priority order):
 ```bash
 N=shipping-work
 { [ ! -x .skills/doctor.sh ] || bash .skills/doctor.sh; } || exit 1
-for S in doc-check.sh check-status.sh push.sh comment-issue.sh close-issue.sh run-deploy-command.sh merge-mode.sh pre-ship.sh; do SD=
+for S in doc-check.sh check-status.sh push.sh comment-issue.sh close-issue.sh run-deploy-command.sh run-pre-restart.sh read-next-steps.sh merge-mode.sh pre-ship.sh; do SD=
   for d in scripts ".claude/skills/$N/scripts" "$HOME/.claude/skills/$N/scripts"; do
     [ -f "$d/$S" ] && { SD="$d"; break; }
   done
@@ -58,7 +58,7 @@ done
 bash "${SD:?}/$S"
 ```
 
-The first line is a preflight: when `.skills/doctor.sh` is present, it heals any dangling vendor symlinks (or reports an actionable error); when absent, the group is a no-op. `|| exit 1` skips `pre-ship.sh` if the doctor reports unrecoverable state so the original "No such file or directory" noise doesn't drown out the doctor's message. The loop then resolves each script against the skill directory rather than the cwd — a bare `scripts/` path resolves relative to the project root, where the script does not exist ([#63](https://github.com/gregoryfoster/skills/issues/63)). A project-local `scripts/<name>` still wins, for that script alone: a `scripts/pre-ship.sh` — a wrapper that loads what the project needs and execs the skill's gate, or a whole gate for a toolchain the skill's cannot detect — must not send the other seven looking beside it ([#301](https://github.com/gregoryfoster/skills/issues/301)). A script found nowhere stops the block here, by name. `pre-ship.sh` is listed last, so the final line runs it. Resolution runs *after* the doctor so a freshly healed symlink chain is visible to it.
+The first line is a preflight: when `.skills/doctor.sh` is present, it heals any dangling vendor symlinks (or reports an actionable error); when absent, the group is a no-op. `|| exit 1` skips `pre-ship.sh` if the doctor reports unrecoverable state so the original "No such file or directory" noise doesn't drown out the doctor's message. The loop then resolves each script against the skill directory rather than the cwd — a bare `scripts/` path resolves relative to the project root, where the script does not exist ([#63](https://github.com/gregoryfoster/skills/issues/63)). A project-local `scripts/<name>` still wins, for that script alone: a `scripts/pre-ship.sh` — a wrapper that loads what the project needs and execs the skill's gate, or a whole gate for a toolchain the skill's cannot detect — must not send the others looking beside it ([#301](https://github.com/gregoryfoster/skills/issues/301)). A script found nowhere stops the block here, by name. `pre-ship.sh` is listed last, so the final line runs it. Resolution runs *after* the doctor so a freshly healed symlink chain is visible to it.
 
 In every later step a `<name.sh>` is a **placeholder** for the path printed for that script — substitute it literally (same convention as `init-project-fastapi` Phase 0). Each Bash invocation runs in a fresh shell, so nothing the block set is inherited.
 
@@ -155,7 +155,7 @@ Each lead is its own line, a blank line before it, its notes list items under it
 
 ### Step 6 — Close GitHub issues
 
-With `.skills/deploy_command` set, run Step 8 first and close after it: a requirement about what production runs can't be checked before the deploy.
+With `.skills/deploy_command` or `.skills/pre_restart` set, run Step 8 first and close after it: a requirement about what production runs can't be checked before the deploy or restart.
 
 <HARD-GATE>
 Before closing any issue, verify the original requirements against what was implemented:
@@ -187,29 +187,23 @@ Present a summary table:
 
 **With `.skills/deploy_command` set**, the project deploys through its own command, and this step runs after Step 5, before Step 6 ([references/deploy-command.md](references/deploy-command.md)):
 
-1. List the rows below that apply, **minus** the DB migration and service restart rows: the command owns them. Do a row the new code needs first, such as an env var it reads, before the deploy.
+1. List the rows that apply, from the source below, **minus** the DB migration and service restart rows: the command owns them. Do a row the new code needs first, such as an env var it reads, before the deploy.
 2. `bash "<run-deploy-command.sh>" --check` prints the command line, with the pushed SHA last. If it exits 2, fix what it names before offering. Offer to run it, once. On a yes, run `bash "<run-deploy-command.sh>"`.
 3. Report its exit status and the tail of its output. Exit 1 is a failed deploy: quote the command's own exit code and output verbatim, and close nothing. Exit 2 means nothing ran; fix what it names. A command that detaches without waiting exits 0 once the deploy has *started*, so check production the project's own way before Step 6.
 
-**Without it** (`--check` exits 3), after the summary table, review commits and changes shipped to identify any post-deploy work the user may need to perform. A detected framework's stack file lists its own categories; use those. Otherwise, common categories:
+**Without it** (`--check` exits 3), after the summary table, review commits and changes shipped to identify any post-deploy work the user may need to perform, from one source, and name it. `bash "<read-next-steps.sh>"` prints the project's own rows (`.skills/next-steps`, [#564](https://github.com/gregoryfoster/skills/issues/564)), which replace the rest; exit 2: fix the file, never fall back. Exit 3: the detected framework's stack file, else these common categories:
 
 | Category | Trigger | Example action |
 |---|---|---|
 | DB migration | `schema.sql` changed, new table/column/index | `apply_schema` or restart service |
 | Service restart | Any production code change (no auto-reload) | `systemctl restart <project>` or gunicorn signal |
 | Data migration | New normalizer, field rename, backfill script | Run the relevant `scripts/` file |
-| Env var / secret | New config key added | Add to `/etc/<project>/env` and restart |
+| Env var / secret | New config key added | Add to the project's env file and restart |
 | Index bootstrap | New unique index on dirty table | Deduplicate first, then re-run `apply_schema` |
 
-Present only the items that apply. Be specific — name the file, table, or command. Example:
+Present only the items that apply, under **Next steps for production**, each naming its file, table or command. Then **offer to execute** any within your capabilities, once — don't nag.
 
-```
-**Next steps for production:**
-- `apply_schema` required — `schema.sql` changed (new `link_types`/`links` tables + migration)
-- Restart uvicorn/gunicorn — code changes don't auto-reload in production
-```
-
-Then **offer to execute** any item within your capabilities (e.g., running `apply_schema`, running a migration script). Ask once — don't nag.
+Before offering a row that restarts the service (a DB migration, a restart, an env var's restart; any project row, as those can't be told apart), run `bash "<run-pre-restart.sh>"`, the project's check (`.skills/pre_restart`, [#557](https://github.com/gregoryfoster/skills/issues/557)). Exit 1: it refused, so offer none of those rows; quote its code and output verbatim, and close no issue whose "Done when" is about production. Exit 2: fix the knob. Exit 3: no check.
 
 If nothing applies, omit this step entirely.
 
