@@ -114,3 +114,42 @@ def test_a_valid_knob_through_a_symlink_runs_the_command(repo, tmp_path, name):
     result = _run(_linked(tmp_path, name), repo, record)
     assert result.returncode == 0, result.stdout + result.stderr
     assert record.read_text() == "ran\n"
+
+
+def _through_a_directory_link(tmp_path: Path, name: str) -> Path:
+    """CR 1872: consumer/.claude/skills -> ../skills (a directory link), and
+    skills/shipping-work/scripts/<name> -> ../../../skills-vendor/v/skills/
+    shipping-work/scripts/<name>, whose scripts/ links to the real one. Read
+    through .claude/skills, the link's target spells
+    `.claude/skills/shipping-work/scripts/../../../skills-vendor/...`.
+
+    A logical `cd` reduces that `..` by spelling, to .claude/skills-vendor/...,
+    which works only while no such directory exists: the decoy makes one."""
+    consumer = tmp_path / "consumer"
+    vendor = consumer / "skills-vendor" / "v" / "skills" / "shipping-work"
+    vendor.mkdir(parents=True)
+    (vendor / "scripts").symlink_to(SCRIPTS)
+    scripts = consumer / "skills" / "shipping-work" / "scripts"
+    scripts.mkdir(parents=True)
+    (scripts / name).symlink_to(
+        Path("..", "..", "..", "skills-vendor", "v", "skills", "shipping-work")
+        / "scripts"
+        / name
+    )
+    (consumer / ".claude").mkdir()
+    (consumer / ".claude" / "skills").symlink_to(Path("..", "skills"))
+    decoy = consumer / ".claude" / "skills-vendor" / "v" / "skills" / "shipping-work"
+    (decoy / "scripts").mkdir(parents=True)
+    path = consumer / ".claude" / "skills" / "shipping-work" / "scripts" / name
+    assert path.resolve() == (SCRIPTS / name).resolve()
+    return path
+
+
+@pytest.mark.parametrize("name", sorted(KNOBS))
+def test_a_directory_link_prefix_resolves_physically(repo, tmp_path, name):
+    (repo / ".skills").mkdir()
+    (repo / ".skills" / KNOBS[name]).write_text("scripts/stub.sh\n")
+    record = tmp_path / "record"
+    result = _run(_through_a_directory_link(tmp_path, name), repo, record)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert record.read_text() == "ran\n"

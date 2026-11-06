@@ -83,7 +83,9 @@ while [ -L "$_self" ] && [ "$_n" -lt 10 ]; do
   esac
   _n=$((_n + 1))
 done
-SCRIPT_DIR=$(cd "$(dirname "$_self")" && pwd -P) || die "could not resolve this script's directory (from $_self)"
+# -P (CR 1872): through a directory link, $_self can spell `<link>/../..`, and
+# a logical cd reduces that by spelling, not by what the link points at.
+SCRIPT_DIR=$(cd -P "$(dirname "$_self")" && pwd -P) || die "could not resolve this script's directory (from $_self)"
 [ -f "$SCRIPT_DIR/_command-knob.sh" ] || die "_command-knob.sh not found next to this script in $SCRIPT_DIR"
 # shellcheck source=_command-knob.sh
 . "$SCRIPT_DIR/_command-knob.sh"
