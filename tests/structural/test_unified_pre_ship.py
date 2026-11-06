@@ -258,6 +258,55 @@ class TestPython:
         assert args[args.index("-n") + 1] == "3"
         assert "loadfile" in args
 
+    def test_the_dist_knob_reaches_pytest(self, repo):
+        """#563, the issue's case: cli's suite sits in one 977-test file, which
+        loadfile pins to one worker. `.skills/test-dist` says `load`."""
+        _uv_repo(repo)
+        (repo / ".skills").mkdir()
+        (repo / ".skills" / "test-dist").write_text("load\n")
+        _commit(repo)
+        result = _gate(repo, FAKE_XDIST="1", PYTEST_XDIST_AUTO_NUM_WORKERS="3")
+        assert result.returncode == 0, result.stderr
+        args = _pytest_args(repo)
+        assert args[args.index("--dist") + 1] == "load"
+        assert "loadfile" not in args
+
+    def test_the_dist_env_wins_and_an_unknown_mode_is_loadfile(self, repo):
+        _uv_repo(repo)
+        _gate(
+            repo,
+            FAKE_XDIST="1",
+            PYTEST_XDIST_AUTO_NUM_WORKERS="3",
+            PYTEST_XDIST_DIST="worksteal",
+        )
+        args = _pytest_args(repo)
+        assert args[args.index("--dist") + 1] == "worksteal"
+        (repo.parent / "tools.log").unlink()
+        result = _gate(
+            repo,
+            FAKE_XDIST="1",
+            PYTEST_XDIST_AUTO_NUM_WORKERS="3",
+            PYTEST_XDIST_DIST="each",
+            GATE_STAMP="off",
+        )
+        assert result.returncode == 0, result.stderr
+        args = _pytest_args(repo)
+        assert args[args.index("--dist") + 1] == "loadfile"
+        assert "'each'" in result.stderr
+
+    def test_the_dist_mode_is_not_in_the_stamp_key(self, repo):
+        """It sets how the suite is spread, so a pass under one mode is
+        reused under another, as one under another worker count is."""
+        _uv_repo(repo)
+        _gate(repo, FAKE_XDIST="1", PYTEST_XDIST_AUTO_NUM_WORKERS="3")
+        second = _gate(
+            repo,
+            FAKE_XDIST="1",
+            PYTEST_XDIST_AUTO_NUM_WORKERS="3",
+            PYTEST_XDIST_DIST="load",
+        )
+        assert "already passed" in second.stdout
+
     def test_serial_with_a_note_when_it_does_not(self, repo):
         _uv_repo(repo)
         result = _gate(repo, PYTEST_XDIST_AUTO_NUM_WORKERS="3")
