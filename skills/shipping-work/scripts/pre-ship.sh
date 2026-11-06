@@ -47,8 +47,10 @@ usage() {
   echo ""
   echo "Knobs:"
   echo "  .skills/pre-ship-uv-args   arguments inserted after 'uv run' in every"
-  echo "                             uv call (e.g. --group seed); whitespace-"
-  echo "                             separated, '#'-comment lines ignored"
+  echo "                             uv call that runs in the project (the"
+  echo "                             [project]-name probe runs --no-project),"
+  echo "                             e.g. --group seed; whitespace-separated,"
+  echo "                             '#'-comment lines ignored"
   echo "  .skills/import-targets     packages the import check imports"
   echo "  .skills/test-workers       off | auto | N  (or PYTEST_XDIST_AUTO_NUM_WORKERS)"
   echo "  .skills/test-dist          the --dist MODE: loadfile (default) | load |"
@@ -293,10 +295,11 @@ if [[ $UV -eq 0 && $COMPOSER -eq 0 && ${#NPM_RUN_SCRIPTS[@]} -eq 0 ]]; then
 fi
 
 # --- .skills/pre-ship-uv-args ------------------------------------------------
-# Arguments inserted after `uv run` in every uv call (e.g. `--group seed`, so
-# the gate runs the suite the project's own hook runs). Whitespace-separated,
-# never glob-expanded; a file that exists but cannot be read is exit 2, not an
-# empty list.
+# Arguments inserted after `uv run` in every uv call it makes in the project
+# (e.g. `--group seed`, so the gate runs the suite the project's own hook
+# runs); the [project]-name probe runs --no-project (#553). Whitespace-
+# separated, never glob-expanded; a file that exists but cannot be read is
+# exit 2, not an empty list.
 UV_ARGS=()
 UV_ARGS_FILE=.skills/pre-ship-uv-args
 if [[ -e "$UV_ARGS_FILE" || -L "$UV_ARGS_FILE" ]]; then
