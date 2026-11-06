@@ -108,13 +108,12 @@ def test_the_pr_pass_says_an_edit_cannot_retract_a_closing_keyword():
     pr_pass = _section("## The PR pass")
     assert "Development" in pr_pass, pr_pass
     assert re.search(r"cannot be retracted|can't be retracted", pr_pass), pr_pass
-    assert "before `gh pr create`" in pr_pass, pr_pass
+    assert re.search(r"[Bb]efore `gh pr create`", pr_pass), pr_pass
     assert "closingIssuesReferences" in pr_pass, pr_pass
 
 
 def test_the_post_merge_pass_checks_nothing_else_was_closed():
     post = _section("## The post-merge pass")
-    step3 = next(p for p in post.split("\n3. ")[1:2])
-    step3 = step3.split("\n4. ")[0]
+    step3 = post.split("\n3. ", 1)[1].split("\n4. ", 1)[0]
     assert "closingIssuesReferences" in step3, step3
     assert "reopen" in step3, step3
