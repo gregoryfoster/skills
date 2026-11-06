@@ -1336,6 +1336,19 @@ GATE_SCRIPTS = {
         "as do the merge-mode read and the default-branch probe behind pr "
         "mode's branch check (#342)"
     ),
+    "run-pre-restart.sh": (
+        "its exit code decides whether Step 8 offers a restart row (#557): "
+        "1 offers none and closes no production issue, and 3 (no knob) is the "
+        "only code that means 'no check configured'. The check's own output "
+        "reaches the session unfiltered, and the primary-checkout probe dies "
+        "rather than answering empty"
+    ),
+    "_command-knob.sh": (
+        "the one parser behind run-deploy-command.sh and run-pre-restart.sh "
+        "(#557): a knob it misreads as usable runs the wrong command, and one "
+        "it reads as absent skips a deploy or a check, so every unusable "
+        "shape dies with exit 2 and its git probe is captured"
+    ),
     "merge-mode.sh": (
         "its answer decides whether Step 3 merges locally or Step 4 opens a "
         "PR, and whether run-deploy-command.sh holds the deploy to the "

@@ -105,7 +105,10 @@ Started by "ship it" once `gh pr view` shows `MERGED`:
    merge or rebase them.
 2. **Step 8 runs there.** Without `.skills/deploy_command`, a checkout that is
    a unit's `WorkingDirectory=` became production at the pull, so the next
-   steps table follows it. With the knob, Step 8's `--check` and offer run
+   steps table follows it, and a restart row waits on `.skills/pre_restart`
+   as Step 8 says; a refusal also means reporting each `Closes` issue whose
+   "Done when" is about production as unverified there, since the merge
+   closed it. With the knob, Step 8's `--check` and offer run
    from there, and `bash "<run-deploy-command.sh>"` deploys. In `pr` mode it
    refuses (exit 2) unless HEAD is the default branch and equals its
    upstream. The deploy runs the merge commit, or a later one on the
