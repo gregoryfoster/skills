@@ -117,10 +117,16 @@ Started by "ship it" once `gh pr view` shows `MERGED`:
    exited 0, under the HARD-GATE. For each `Closes` issue, check that the merge
    closed it (`gh issue view <n> --json state`); a PR merged into any other
    base closes nothing. Then check that it closed nothing else: each number
-   `gh pr view <m> --json mergedAt,closingIssuesReferences` lists that isn't
-   on a `Closes` line, and whose `closedAt` (`gh issue view <n> --json
-   state,closedAt`) is the merge's (a second after `mergedAt`, measured),
-   was closed by it. Reopen it (`gh issue reopen <n>`) and say why.
+   `gh pr view <m> --json closingIssuesReferences` lists that isn't on a
+   `Closes` line, and whose closer is this PR, was closed by it. Ask GitHub
+   for the closer rather than comparing `closedAt` with `mergedAt`, since
+   the gap varies:
+
+   ```bash
+   gh api graphql -f query='query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){issue(number:$n){timelineItems(itemTypes:[CLOSED_EVENT],last:1){nodes{... on ClosedEvent{closer{__typename ... on PullRequest{number}}}}}}}}' -f o=<owner> -f r=<repo> -F n=<n> --jq '.data.repository.issue.timelineItems.nodes[0].closer.number'
+   ```
+
+   Reopen it (`gh issue reopen <n>`) and say why.
 4. **Destroy the worktree** with `using-git-worktrees` Phase 5. In `pr` mode
    `worktree-destroy.sh` fetches first, then accepts the merged PR as evidence
    when a squash or rebase merge left no ancestry. To delete the local branch
