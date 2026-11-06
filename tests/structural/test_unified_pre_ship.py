@@ -24,6 +24,13 @@ from tests.structural.gate_fakes import ALL_TOOLS, BASE_PATH, fake_env
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 GATE = REPO_ROOT / "skills" / "shipping-work" / "scripts" / "pre-ship.sh"
+# The global pathspec settings git exports to the hooks it runs, from
+# `git --literal-pathspecs`, `--glob-pathspecs` and `--noglob-pathspecs`.
+PATHSPEC_SETTINGS = [
+    "GIT_LITERAL_PATHSPECS",
+    "GIT_GLOB_PATHSPECS",
+    "GIT_NOGLOB_PATHSPECS",
+]
 
 
 def _git(repo: Path, *args: str) -> None:
@@ -351,6 +358,19 @@ class TestPhp:
         linted = sorted(c[2] for c in _calls(repo, "php") if c[1] == "-l")
         assert linted == ["index.php", "themes/site/functions.php"]
 
+    @pytest.mark.parametrize("setting", PATHSPEC_SETTINGS)
+    def test_a_global_pathspec_setting_lints_every_tracked_php_file(
+        self, repo, setting
+    ):
+        """CR 1861: git exports these to the hooks it runs. Under the literal
+        setting the bare `*.php` listed nothing with exit 0, under noglob
+        nothing, and under glob only the root's files: php -l linted less
+        than the repo has, and the gate passed."""
+        _composer_repo(repo)
+        assert _gate(repo, **{setting: "1"}).returncode == 0
+        linted = sorted(c[2] for c in _calls(repo, "php") if c[1] == "-l")
+        assert linted == ["index.php", "themes/site/functions.php"]
+
     def test_composer_test_only_when_defined(self, repo):
         """Row 20."""
         _composer_repo(repo)
@@ -498,6 +518,19 @@ class TestNpmManifests:
         assert result.returncode == 1
         assert "no toolchain detected" in result.stderr
         assert _cwd_calls(repo, "npm") == []
+
+    @pytest.mark.parametrize("setting", PATHSPEC_SETTINGS)
+    def test_a_global_pathspec_setting_keeps_a_themes_failure(self, repo, setting):
+        """CR 1861: under GIT_LITERAL_PATHSPECS=1, which `git
+        --literal-pathspecs` exports to hooks, `:(glob)…` was a literal path,
+        so a theme's failing test:js dropped out and the gate passed."""
+        _manifest(repo, "themes/sage/package.json", {"test:js": "jest"})
+        _manifest(repo, "package.json", {"lint:js": "eslint ."})
+        _commit(repo)
+        result = _npm_gate(repo, FAKE_FAIL="test:js", **{setting: "1"})
+        assert result.returncode == 1, result.stdout + result.stderr
+        assert "npm run test:js (themes/sage) (exit 1)" in result.stderr
+        assert ("themes/sage", ["run", "test:js"]) in _cwd_calls(repo, "npm")
 
     def test_a_nested_trigger_keys_the_npm_tools(self, repo):
         """The stamp key carries node's and npm's versions for a nested

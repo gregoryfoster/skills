@@ -222,14 +222,18 @@ fi
 # root, then one level under themes/ and plugins/ (#561). Each one's scripts
 # run in that directory. A nested one is listed from git, as detect-stack.sh
 # lists it, so a gitignored plugin composer installs is not run; a failing
-# ls-files is a tooling failure, never "none".
+# ls-files is a tooling failure, never "none". Every ls-files here runs with
+# GIT_LITERAL_PATHSPECS=0 and explicit glob magic (CR 1861): `git
+# --literal-pathspecs` exports the literal setting to hooks, and `--glob-` or
+# `--noglob-pathspecs` the others, and under any of them a bare pattern lists
+# less, or nothing, with exit 0.
 NPM_DIRS=()
 NPM_MANIFESTS=""
 if [[ $NPM -eq 1 ]]; then
   if [[ -f package.json ]]; then NPM_DIRS+=("."); fi
   for parent in themes plugins; do
     LS_RC=0
-    git ls-files -z -- ":(glob)$parent/*/package.json" >"$TMP/npm" 2>"$TMP/npm.err" || LS_RC=$?
+    GIT_LITERAL_PATHSPECS=0 git ls-files -z -- ":(glob)$parent/*/package.json" >"$TMP/npm" 2>"$TMP/npm.err" || LS_RC=$?
     if [[ $LS_RC -ne 0 ]]; then
       echo "ERROR: git ls-files failed (exit $LS_RC) listing $parent/*/package.json:" >&2
       cat "$TMP/npm.err" >&2
@@ -287,11 +291,12 @@ done
 if [[ ${#NPM_RUN_SCRIPTS[@]} -gt 0 ]]; then need npm "declares npm scripts"; fi
 
 # Tracked PHP files, captured with git's own status so a failing ls-files can
-# never read as "no PHP to lint".
+# never read as "no PHP to lint". `**/` matches the root too, as the bare
+# `*.php` it replaces did (CR 1861).
 TRACKED_PHP=()
 if [[ $COMPOSER -eq 1 ]]; then
   LS_RC=0
-  git ls-files -z '*.php' >"$TMP/php" 2>"$TMP/php.err" || LS_RC=$?
+  GIT_LITERAL_PATHSPECS=0 git ls-files -z -- ':(glob)**/*.php' >"$TMP/php" 2>"$TMP/php.err" || LS_RC=$?
   if [[ $LS_RC -ne 0 ]]; then
     echo "ERROR: git ls-files failed (exit $LS_RC):" >&2
     cat "$TMP/php.err" >&2

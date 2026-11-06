@@ -261,6 +261,11 @@ present() {
 # not this repo's to run. pre-ship.sh lists them the same way, so the two
 # agree. A failing ls-files is a tooling failure, never "none".
 #
+# GIT_LITERAL_PATHSPECS=0 (CR 1861): `git --literal-pathspecs` exports it as 1
+# to the hooks it runs, and under it `:(glob)…` is a literal path, which lists
+# nothing with exit 0. The explicit glob magic is immune to the glob and
+# noglob settings; `--glob-pathspecs` is fatal beside the literal one.
+#
 # No temp file, so nothing to leak on a signal or a set -e exit (CR 1868):
 # git writes straight into the loop, its stderr straight to ours, and its
 # exit status follows as one last NUL-terminated `status N` record, since
@@ -280,7 +285,7 @@ nested_npm() {
       esac
     done < <(
       rc=0
-      git ls-files -z -- ":(glob)$parent/*/package.json" || rc=$?
+      GIT_LITERAL_PATHSPECS=0 git ls-files -z -- ":(glob)$parent/*/package.json" || rc=$?
       printf 'status %s\0' "$rc"
     )
     if [[ $status != 0 ]]; then

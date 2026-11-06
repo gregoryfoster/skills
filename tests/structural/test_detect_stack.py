@@ -28,6 +28,13 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = REPO_ROOT / "skills" / "shipping-work" / "scripts" / "detect-stack.sh"
+# The global pathspec settings git exports to the hooks it runs, from
+# `git --literal-pathspecs`, `--glob-pathspecs` and `--noglob-pathspecs`.
+PATHSPEC_SETTINGS = [
+    "GIT_LITERAL_PATHSPECS",
+    "GIT_GLOB_PATHSPECS",
+    "GIT_NOGLOB_PATHSPECS",
+]
 
 
 def _clean_env() -> dict:
@@ -144,6 +151,23 @@ class TestToolchains:
             (repo / ".gitignore").write_text("/plugins/vendor-plugin/\n")
             _add(repo)
         assert _detect(repo) == set()
+
+    @pytest.mark.parametrize("setting", PATHSPEC_SETTINGS)
+    def test_a_global_pathspec_setting_does_not_hide_a_theme(self, repo, setting):
+        """CR 1861: `git --literal-pathspecs` exports GIT_LITERAL_PATHSPECS=1
+        to the hooks it runs, and under it `:(glob)…` is a literal path:
+        ls-files listed nothing, exit 0, and a theme's npm checks dropped out
+        of the gate. The glob and noglob settings are held too."""
+        (repo / "themes" / "site").mkdir(parents=True)
+        (repo / "themes" / "site" / "package.json").write_text("{}\n")
+        _add(repo)
+        env = _clean_env()
+        env[setting] = "1"
+        result = subprocess.run(
+            ["bash", str(SCRIPT)], cwd=repo, capture_output=True, text=True, env=env
+        )
+        assert result.returncode == 0, result.stderr
+        assert result.stdout == "toolchain\tnpm\n"
 
     def test_a_failing_ls_files_is_exit_2_not_none(self, repo, tmp_path):
         """git's own exit decides: a failure listing the nested manifests is
