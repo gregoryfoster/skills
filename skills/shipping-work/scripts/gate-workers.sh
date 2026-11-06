@@ -33,7 +33,9 @@
 #   `--dist` prints the xdist --dist mode instead, first match wins:
 #   PYTEST_XDIST_DIST, then .skills/test-dist (one word, `#` comments), then
 #   loadfile. It takes loadfile, load, loadscope, loadgroup or worksteal; any
-#   other value warns on stderr and is loadfile. loadfile keeps a file on one
+#   other value warns on stderr and is loadfile. A second word on the knob's
+#   line warns and is ignored, and a knob that is a directory, a dangling
+#   link or unreadable warns and is loadfile. loadfile keeps a file on one
 #   worker, so a class- or module-scoped fixture is never split: a repo that
 #   picks another mode owns that risk. The env name is this script's, not
 #   xdist's — xdist 3.8 reads only PYTEST_XDIST_AUTO_NUM_WORKERS. It is the
@@ -119,12 +121,26 @@ if [[ "$DIST_ONLY" -eq 1 ]]; then
   DIST_KNOB="$ROOT/.skills/test-dist"
   if [[ -n "${PYTEST_XDIST_DIST:-}" ]]; then
     MODE=$PYTEST_XDIST_DIST FROM="PYTEST_XDIST_DIST"
-  elif [[ -f "$DIST_KNOB" ]]; then
+  elif [[ -e "$DIST_KNOB" || -L "$DIST_KNOB" ]]; then
     FROM=".skills/test-dist"
-    if [[ -r "$DIST_KNOB" ]]; then
-      MODE=$(sed -e 's/#.*//' -e 's/[[:space:]]//g' "$DIST_KNOB" | grep -m1 . || true)
+    if [[ ! -f "$DIST_KNOB" || ! -r "$DIST_KNOB" ]]; then
+      # A directory, a dangling link or an unreadable file: the knob is
+      # there but says nothing, which must not pass for "no knob".
+      echo "WARN: .skills/test-dist exists but is not a readable file; using loadfile" >&2
     else
-      echo "WARN: .skills/test-dist cannot be read; using loadfile" >&2
+      # The first word of the first line with one; a second word is a
+      # typo (`load scope`), never joined into a mode.
+      while IFS= read -r line || [[ -n "$line" ]]; do
+        line=${line%$'\r'}
+        line=${line%%#*}
+        read -r -a words <<<"$line"
+        [[ ${#words[@]} -gt 0 ]] || continue
+        MODE=${words[0]}
+        if [[ ${#words[@]} -gt 1 ]]; then
+          echo "WARN: .skills/test-dist says '${words[*]}' — one word is read; using '$MODE'" >&2
+        fi
+        break
+      done <"$DIST_KNOB"
     fi
   fi
   if [[ -z "$MODE" ]]; then

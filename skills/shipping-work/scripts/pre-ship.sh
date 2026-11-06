@@ -12,7 +12,7 @@
 #             PHP file, and composer test when the project defines it
 #   npm       whichever of lint:js, format:js:check and test:js each
 #             package.json declares, in its own directory: the root's, and
-#             one level under themes/ and plugins/ (#561)
+#             each one git tracks one level under themes/ and plugins/ (#561)
 #
 # Every check runs even after one fails, and the gate then exits 1 naming each
 # failure, so one run shows everything there is to fix. A tooling failure
@@ -220,13 +220,24 @@ if [[ $UV -eq 0 && $COMPOSER -eq 0 && $NPM -eq 0 ]]; then
 fi
 # Every directory whose package.json detected npm, with composer's reach: the
 # root, then one level under themes/ and plugins/ (#561). Each one's scripts
-# run in that directory.
+# run in that directory. A nested one is listed from git, as detect-stack.sh
+# lists it, so a gitignored plugin composer installs is not run; a failing
+# ls-files is a tooling failure, never "none".
 NPM_DIRS=()
 NPM_MANIFESTS=""
 if [[ $NPM -eq 1 ]]; then
   if [[ -f package.json ]]; then NPM_DIRS+=("."); fi
-  for f in themes/*/package.json plugins/*/package.json; do
-    if [[ -f "$f" ]]; then NPM_DIRS+=("${f%/package.json}"); fi
+  for parent in themes plugins; do
+    LS_RC=0
+    git ls-files -z -- ":(glob)$parent/*/package.json" >"$TMP/npm" 2>"$TMP/npm.err" || LS_RC=$?
+    if [[ $LS_RC -ne 0 ]]; then
+      echo "ERROR: git ls-files failed (exit $LS_RC) listing $parent/*/package.json:" >&2
+      cat "$TMP/npm.err" >&2
+      exit 2
+    fi
+    while IFS= read -r -d '' f; do
+      if [[ -f "$f" ]]; then NPM_DIRS+=("${f%/package.json}"); fi
+    done <"$TMP/npm"
   done
 fi
 manifest() {
@@ -291,7 +302,7 @@ if [[ $COMPOSER -eq 1 ]]; then
 fi
 
 if [[ $UV -eq 0 && $COMPOSER -eq 0 && ${#NPM_RUN_SCRIPTS[@]} -eq 0 ]]; then
-  no_gate "no package.json ($NPM_MANIFESTS) declares lint:js, format:js:check or test:js, so there is nothing for this gate to run."
+  no_gate "no package.json${NPM_SEEN:+ ($NPM_SEEN)} declares lint:js, format:js:check or test:js, so there is nothing for this gate to run."
 fi
 
 # --- .skills/pre-ship-uv-args ------------------------------------------------

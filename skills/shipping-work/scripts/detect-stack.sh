@@ -12,8 +12,10 @@
 #     composer  composer.json at the root, or one level under themes/ or
 #               plugins/ (the layout the PHP gate validates).
 #     npm       package.json, with composer's reach: at the root, or one level
-#               under themes/ or plugins/, where a Sage/Bedrock-style
-#               monorepo keeps every one (#561). pre-ship.sh runs each
+#               under themes/ or plugins/, where a Sage-style monorepo
+#               with themes/ and plugins/ at the root keeps them (#561); a
+#               Bedrock repo's web/app/themes/ is not searched. A nested
+#               one counts only when git tracks it. pre-ship.sh runs each
 #               one's scripts in its own directory.
 #
 #   framework   decides only which DOCS apply: doc-check.sh's default watch
@@ -253,11 +255,37 @@ present() {
   return 1
 }
 
+# The package.json files one level under themes/ or plugins/ that git tracks
+# and the tree has, into NESTED_NPM, themes first. Read from git, not the
+# filesystem: a plugin composer installs is gitignored, and its scripts are
+# not this repo's to run. pre-ship.sh lists them the same way, so the two
+# agree. A failing ls-files is a tooling failure, never "none".
+NESTED_NPM=()
+nested_npm() {
+  local parent f rc tmp
+  tmp=$(mktemp -d) || { echo "ERROR: mktemp failed" >&2; exit 2; }
+  for parent in themes plugins; do
+    rc=0
+    git ls-files -z -- ":(glob)$parent/*/package.json" >"$tmp/ls" 2>"$tmp/err" || rc=$?
+    if [[ $rc -ne 0 ]]; then
+      echo "ERROR: git ls-files failed (exit $rc) listing $parent/*/package.json:" >&2
+      cat "$tmp/err" >&2
+      rm -rf "$tmp"
+      exit 2
+    fi
+    while IFS= read -r -d '' f; do
+      if [[ -f $f ]]; then NESTED_NPM+=("$f"); fi
+    done <"$tmp/ls"
+  done
+  rm -rf "$tmp"
+}
+
 if present composer.json; then
   printf 'toolchain\tcomposer\n'
   printf 'framework\tphp\n'
 fi
 
-if present package.json; then
+nested_npm
+if [[ -f package.json || ${#NESTED_NPM[@]} -gt 0 ]]; then
   printf 'toolchain\tnpm\n'
 fi
