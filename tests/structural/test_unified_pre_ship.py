@@ -316,6 +316,125 @@ class TestPhp:
         assert "could not read composer.json" in result.stderr
 
 
+def _manifest(repo: Path, rel: str, scripts: dict | None = None) -> None:
+    (repo / rel).parent.mkdir(parents=True, exist_ok=True)
+    (repo / rel).write_text(json.dumps({"scripts": scripts or {}}))
+
+
+def _cwd_calls(repo: Path, tool: str) -> list[tuple[str, list[str]]]:
+    """(directory relative to the repo, argv) for each logged `tool` call."""
+    log = repo.parent / "cwd.log"
+    if not log.exists():
+        return []
+    out = []
+    for line in log.read_text().splitlines():
+        cwd, name, *argv = json.loads(line)
+        if name == tool and argv[:1] != ["--version"]:
+            rel = os.path.relpath(os.path.realpath(cwd), os.path.realpath(repo))
+            out.append((rel, argv))
+    return out
+
+
+def _npm_gate(repo: Path, tools=ALL_TOOLS, **env: str) -> subprocess.CompletedProcess:
+    return _gate(repo, tools, TOOL_CWD_LOG=str(repo.parent / "cwd.log"), **env)
+
+
+class TestNpmManifests:
+    """#561: npm is found at the root or one level under themes/ and plugins/,
+    as composer is, and each manifest's scripts run in its own directory."""
+
+    def test_the_issues_layout(self, repo):
+        """The issue's own reproduction: no root package.json, and a theme's
+        package.json that declares lint:js."""
+        _manifest(repo, "themes/sage/package.json", {"lint:js": "eslint ."})
+        _commit(repo)
+        result = _npm_gate(repo)
+        assert result.returncode == 0, result.stderr
+        assert "=== npm run lint:js (themes/sage) ===" in result.stdout
+        assert _cwd_calls(repo, "npm") == [("themes/sage", ["run", "lint:js"])]
+
+    def test_the_root_keeps_its_heading_beside_nested_ones(self, repo):
+        _manifest(repo, "package.json", {"test:js": "jest"})
+        _manifest(repo, "themes/sage/package.json", {"lint:js": "eslint ."})
+        _manifest(repo, "plugins/blocks/package.json", {"test:js": "jest"})
+        _commit(repo)
+        result = _npm_gate(repo)
+        assert result.returncode == 0, result.stderr
+        assert "=== npm run test:js ===" in result.stdout
+        assert "=== npm run lint:js (themes/sage) ===" in result.stdout
+        assert "=== npm run test:js (plugins/blocks) ===" in result.stdout
+        assert _cwd_calls(repo, "npm") == [
+            (".", ["run", "test:js"]),
+            ("themes/sage", ["run", "lint:js"]),
+            ("plugins/blocks", ["run", "test:js"]),
+        ]
+
+    def test_the_detected_line_names_the_manifests(self, repo):
+        _manifest(repo, "package.json", {"test:js": "jest"})
+        _manifest(repo, "themes/sage/package.json", {"lint:js": "eslint ."})
+        _commit(repo)
+        result = _npm_gate(repo)
+        assert (
+            "Detected: toolchain npm (package.json, themes/sage/package.json)"
+            in result.stdout
+        )
+
+    def test_a_root_only_detected_line_is_unchanged(self, repo):
+        _npm_repo(repo, {"test:js": "jest"})
+        assert "Detected: toolchain npm\n" in _npm_gate(repo).stdout
+
+    def test_a_nested_failure_is_named_by_its_directory(self, repo):
+        _manifest(repo, "themes/sage/package.json", {"lint:js": "eslint ."})
+        _manifest(repo, "plugins/blocks/package.json", {"test:js": "jest"})
+        _commit(repo)
+        result = _npm_gate(repo, FAKE_FAIL="lint:js")
+        assert result.returncode == 1
+        assert "npm run lint:js (themes/sage) (exit 1)" in result.stderr
+        assert ("plugins/blocks", ["run", "test:js"]) in _cwd_calls(repo, "npm")
+
+    def test_a_manifest_with_no_scripts_runs_nothing_and_needs_no_npm(self, repo):
+        """No declared script anywhere is the empty-array path, run under the
+        /bin/bash on PATH (3.2 on macOS, where an empty "${arr[@]}" aborts
+        under set -u). composer keeps the gate from stopping at 'nothing to
+        run', so the npm loops run empty."""
+        if shutil.which("npm", path=BASE_PATH):
+            pytest.skip(f"npm is installed in {BASE_PATH}; it cannot be missing here")
+        _composer_repo(repo)
+        _manifest(repo, "themes/site/package.json", {"build": "vite build"})
+        _commit(repo)
+        result = _npm_gate(repo, tools=[t for t in ALL_TOOLS if t != "npm"])
+        assert result.returncode == 0, result.stderr
+        assert _cwd_calls(repo, "npm") == []
+
+    def test_nested_manifests_with_nothing_to_run_are_not_a_pass(self, repo):
+        _manifest(repo, "themes/sage/package.json", {"build": "vite build"})
+        _commit(repo)
+        result = _npm_gate(repo)
+        assert result.returncode == 1
+        assert "themes/sage/package.json" in result.stderr
+        assert "scripts/pre-ship.sh" in result.stderr
+
+    def test_a_nested_manifest_that_does_not_parse_is_exit_2_naming_it(self, repo):
+        _manifest(repo, "package.json", {"test:js": "jest"})
+        (repo / "plugins" / "broken").mkdir(parents=True)
+        (repo / "plugins" / "broken" / "package.json").write_text("{not json\n")
+        _commit(repo)
+        result = _npm_gate(repo)
+        assert result.returncode == 2
+        assert "plugins/broken/package.json failed to parse" in result.stderr
+        assert _cwd_calls(repo, "npm") == []
+
+    def test_a_nested_trigger_keys_the_npm_tools(self, repo):
+        """The stamp key carries node's and npm's versions for a nested
+        manifest exactly as for a root one."""
+        _manifest(repo, "themes/sage/package.json", {"lint:js": "eslint ."})
+        _commit(repo)
+        assert _npm_gate(repo).returncode == 0
+        assert "already passed" in _npm_gate(repo).stdout
+        _npm_gate(repo, FAKE_VERSION_NPM="11.0")
+        assert len(_cwd_calls(repo, "npm")) == 2
+
+
 class TestFailures:
     def test_every_check_runs_and_each_failure_is_named(self, repo):
         """Row 22: a lint failure does not stop the tests."""
