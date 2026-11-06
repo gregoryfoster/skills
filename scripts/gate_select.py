@@ -14,9 +14,11 @@ A unit is one of:
                   or ran an interpreter, a script by its path, or git not
                   aimed at a fixture from inside the repo, which can read
                   anything relative to it
-  skills/<name>   anything under that skill: a skill's scripts reach only
-                  their own directory, so the directory bounds what a bash
-                  script under it can read
+  skills/<name>   anything under that skill: a skill's scripts read only
+                  their own directory, so the directory bounds what a
+                  script under it can read. A structural test holds that,
+                  allowlisting the one exception:
+                  tests/structural/test_skill_scripts_stay_in_their_skill.py
   <dir>/          anything under a directory the file listed
   <path>          one file it opened, checked for, or passed to a subprocess
 
