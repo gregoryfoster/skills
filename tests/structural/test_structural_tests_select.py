@@ -8,7 +8,10 @@ Step 10 of the gate-topology plan, wired:
 - under PRE_COMMIT=1 with a map, the staged paths decide which test files
   run, through `scripts/gate_select.py`;
 - a selected run records no stamp, so pre-ship on the same tree still runs
-  the full suite, and logs one line to gate-select.log instead;
+  the full suite;
+- every run that runs pytest logs a line to gate-select.log with its kind
+  and tree, a failed full run included, so a false skip (a full-run failure
+  after selected passes) can be counted;
 - a change the selector cannot map, or a selector that fails, runs the full
   suite, saying why.
 
@@ -124,6 +127,11 @@ def _common(repo: Path) -> Path:
     return repo / ".git"
 
 
+def _log(repo: Path) -> list[str]:
+    log = _common(repo) / "gate-select.log"
+    return log.read_text().splitlines() if log.exists() else []
+
+
 def _with_map(repo: Path) -> None:
     """A passing full run outside the hook: traced, so it builds the map."""
     r = _suite(repo, GATE_STAMP="off")
@@ -167,8 +175,9 @@ def test_a_selected_run_records_no_stamp_but_logs_a_line(repo):
     r = _suite(repo)
     assert "already passed" not in r.stdout, "pre-ship reused a selected run"
     assert "tests/structural/" in _calls(repo)[-1].split()
-    log = (_common(repo) / "gate-select.log").read_text().splitlines()
-    assert len(log) == 1 and log[0].split("\t")[2:4] == ["1", "2"], log
+    rows = [ln.split("\t") for ln in _log(repo)]
+    selected = [r for r in rows if r[5] == "selected"]
+    assert len(selected) == 1 and selected[0][2:5] == ["1", "2", "0"], rows
 
 
 def test_gate_select_off_runs_everything(repo):
@@ -217,3 +226,23 @@ def test_a_full_run_under_the_hook_records_the_staged_tree(repo):
     doc = json.loads((_common(repo) / "gate-map.json").read_text())
     assert doc["tree"] == _git(repo, "write-tree").strip()
     assert doc["tree"] != _git(repo, "rev-parse", "HEAD^{tree}").strip()
+
+
+def test_every_run_logs_its_kind_tree_and_outcome(repo):
+    """Step 6 counts false skips: full-run failures after selected passes. A
+    failed run writes no stamp, so this log is its only record."""
+    _with_map(repo)
+    head_tree = _git(repo, "rev-parse", "HEAD^{tree}").strip()
+    _stage(repo, "skills/a/SKILL.md")
+    staged_tree = _git(repo, "write-tree").strip()
+    assert _suite(repo, PRE_COMMIT="1").returncode == 0
+    _stage(repo, "tests/utils/gate_trace.py")
+    _suite(repo, PRE_COMMIT="1", FAKE_PYTEST_RC="1")
+    rows = [ln.split("\t") for ln in _log(repo)]
+    assert [(r[4], r[5]) for r in rows] == [
+        ("0", "full"),
+        ("0", "selected"),
+        ("1", "hook-full"),
+    ], rows
+    assert rows[0][6] == head_tree and rows[1][6] == staged_tree
+    assert rows[0][2] == rows[0][3] == "2", "a full run ran every file"

@@ -32,6 +32,7 @@ usage() {
   echo "paths reach run, chosen by scripts/gate_select.py from the map the last"
   echo "full run traced (<git-common-dir>/gate-map.json). A selected run records"
   echo "no stamp, so pre-ship and the pre-push hook still run the full suite."
+  echo "Every run that runs pytest appends a line to <git-common-dir>/gate-select.log."
   echo "GATE_SELECT=off runs the full suite under the hook too."
   echo ""
   echo "Options:"
@@ -292,20 +293,40 @@ START=$SECONDS
 RC=0
 pytest "${PYTEST_ARGS[@]}" || RC=$?
 
+RUN_SECONDS=$((SECONDS - START))
+
+# The tree the suite ran on: under the hook that is the index, not HEAD; a
+# full run outside it on a dirty checkout ran on HEAD plus the edits.
+if [[ "${PRE_COMMIT:-}" == "1" ]]; then
+  TREE=$(git write-tree 2>/dev/null) || TREE=""
+else
+  TREE=$(git rev-parse 'HEAD^{tree}' 2>/dev/null) || TREE=""
+  if [[ -n "$TREE" && -n "$(git status --porcelain 2>/dev/null)" ]]; then
+    TREE="$TREE+dirty"
+  fi
+fi
+
+# Every run that ran pytest, passed or not, is one line: the record step 6
+# counts false skips from (a full-run failure after selected passes), and
+# the only record a failed run leaves, since only a pass writes a stamp.
 if [[ -n "$SELECTED" ]]; then
-  printf '%s\t%s\t%s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-    "$((SECONDS - START))" "$COUNT" "$TOTAL" "$RC" >>"$GIT_COMMON/gate-select.log" \
-    || echo "NOTE: could not append to gate-select.log" >&2
+  KIND=selected
+else
+  TOTAL=$(find tests/structural -maxdepth 1 -name 'test_*.py' | wc -l | tr -d ' ')
+  COUNT=$TOTAL
+  KIND=full
+  if [[ "${PRE_COMMIT:-}" == "1" ]]; then
+    KIND=hook-full
+  fi
+fi
+printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  "$RUN_SECONDS" "$COUNT" "$TOTAL" "$RC" "$KIND" "$TREE" >>"$GIT_COMMON/gate-select.log" \
+  || echo "NOTE: could not append to gate-select.log" >&2
+
+if [[ -n "$SELECTED" ]]; then
   exit "$RC"
 fi
 if [[ "$RC" -eq 0 && -n "$TRACE_DIR" ]]; then
-  # The tree the suite ran on: under the hook that is the index, not HEAD.
-  # Informational only; nothing reads it back.
-  if [[ "${PRE_COMMIT:-}" == "1" ]]; then
-    TREE=$(git write-tree 2>/dev/null) || TREE=""
-  else
-    TREE=$(git rev-parse 'HEAD^{tree}' 2>/dev/null) || TREE=""
-  fi
   python scripts/gate_select.py build --trace "$GATE_TRACE" --out "$MAP" --tree "$TREE" \
     || echo "NOTE: the test-selection map was not refreshed" >&2
 fi

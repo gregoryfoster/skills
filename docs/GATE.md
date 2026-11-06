@@ -52,9 +52,13 @@ every commit.
 
 - `GATE_SELECT=off` makes the commit hook run everything.
 - `GATE_STAMP=off` makes every gate run, reusing nothing.
-- Each partial run appends a line to `<git-common-dir>/gate-select.log`: the
-  time, the seconds it took, the files run, the files on disk, and its exit
-  code. A full run's record is in `gate-stamp.sh list`.
+- Every run that runs pytest appends a tab-separated line to
+  `<git-common-dir>/gate-select.log`. The columns are: the time, the seconds
+  it took, the files run, the files on disk, the exit code, the kind
+  (`selected`, `hook-full` or `full`), and the tree it ran on (`+dirty` when
+  it ran on uncommitted edits). A failed run writes no stamp, so this line is
+  its only record. A full-run failure after selected passes is what a false
+  skip looks like.
 
 ## Installing the hooks
 
