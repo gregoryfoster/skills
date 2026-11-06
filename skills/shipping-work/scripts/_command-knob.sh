@@ -37,17 +37,26 @@ esac
 # Neither holds a .skills/, so a knob there read as absent. --show-toplevel
 # names the submodule's working tree; a bare primary has none, so the current
 # checkout's top level stands in, as using-git-worktrees resolves it.
+# Only a `bare` line in the first porcelain block means bare (CR 1858): any
+# other rev-parse failure, "dubious ownership" say, exits 2 with git's reason,
+# since standing in the current checkout would run a feature branch's knob.
 primary_checkout() {
-  local wt_list
+  local wt_list block
   wt_list=$(git worktree list --porcelain) || die "git worktree list failed: not in a git checkout?"
-  PRIMARY=${wt_list%%$'\n'*}
+  block=${wt_list%%$'\n\n'*}
+  PRIMARY=${block%%$'\n'*}
   PRIMARY=${PRIMARY#worktree }
   [ -d "$PRIMARY" ] || die "could not resolve the primary checkout (got '$PRIMARY')"
-  # A bare primary's "must be run in a work tree" is the expected answer here,
-  # not a failure, and the fallback's own error is shown.
-  PRIMARY=$(git -C "$PRIMARY" rev-parse --show-toplevel 2>/dev/null) ||
-    PRIMARY=$(git rev-parse --show-toplevel) ||
-    die "could not resolve a working tree for the primary checkout"
+  case $'\n'"$block"$'\n' in
+    *$'\n'bare$'\n'*)
+      PRIMARY=$(git rev-parse --show-toplevel) ||
+        die "the primary ($PRIMARY) is bare and this is not a working tree"
+      ;;
+    *)
+      PRIMARY=$(git -C "$PRIMARY" rev-parse --show-toplevel) ||
+        die "could not resolve the primary checkout's working tree from $PRIMARY (git's reason is above)"
+      ;;
+  esac
 }
 
 read_command_knob() {
