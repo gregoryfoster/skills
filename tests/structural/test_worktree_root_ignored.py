@@ -570,6 +570,20 @@ def test_a_root_that_cannot_be_created_exits_2_not_1(repo: Path, tmp_path: Path)
     assert len(_worktrees(repo)) == 1
 
 
+def test_skill_md_states_what_a_bare_primary_gets():
+    """CR 1871: SKILL.md still called bare repositories out of scope.
+
+    The scripts support one: its knobs are read from the current checkout,
+    and the `.gitignore` check skips it (CR 1839, CR 1840).
+    """
+    doc = (SCRIPTS.parent / "SKILL.md").read_text()
+    notes = doc[doc.index("## Notes") :]
+    notes = notes[: notes.index("\n## ", 1)]
+    line = next(ln for ln in notes.splitlines() if "bare" in ln.lower())
+    assert "out of scope" not in line, line
+    assert "current checkout" in line and "skips it" in line, line
+
+
 def test_conventions_say_where_the_knob_is_read():
     """CR 1838: CONVENTIONS.md said the file sits "under the repo root".
 
