@@ -10,8 +10,9 @@ on identical files. Now:
   which is HEAD^{tree} once the commit lands;
 - a failure, a dirty tree, an untracked file or GATE_STAMP=off records or
   reuses nothing;
-- the worker count from gate-workers.sh becomes `-n N --dist loadfile`, and
-  `off` means no xdist flags at all;
+- the worker count from gate-workers.sh becomes `-n N --dist <mode>`, the
+  mode `.skills/test-dist`'s or loadfile (#563), and `off` means no xdist
+  flags at all;
 - pytest's own exit code still passes through — 5 especially.
 
 pytest is faked by a `.venv/bin/pytest` that logs its arguments, so the suite
@@ -76,7 +77,7 @@ def _clean_env(**extra: str) -> dict:
         k: v
         for k, v in os.environ.items()
         if not k.startswith(("GIT_", "GATE_STAMP", "PRE_COMMIT"))
-        and k != "PYTEST_XDIST_AUTO_NUM_WORKERS"
+        and k not in ("PYTEST_XDIST_AUTO_NUM_WORKERS", "PYTEST_XDIST_DIST")
         and not any(fnmatch.fnmatchcase(k, pat) for pat in keyed)
     }
     env.update(extra)
@@ -286,6 +287,16 @@ class TestWorkers:
     def test_the_count_becomes_xdist_flags(self, repo):
         _suite(repo, PYTEST_XDIST_AUTO_NUM_WORKERS="3")
         assert "-n 3 --dist loadfile" in _calls(repo)[0]
+
+    def test_the_dist_knob_reaches_it(self, repo):
+        """#563: this repo's own gate reads `.skills/test-dist` through
+        gate-workers.sh, as it reads `.skills/test-workers`."""
+        (repo / ".skills").mkdir()
+        (repo / ".skills" / "test-dist").write_text("worksteal\n")
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-q", "-m", "knob")
+        _suite(repo, PYTEST_XDIST_AUTO_NUM_WORKERS="3")
+        assert "-n 3 --dist worksteal" in _calls(repo)[0]
 
     def test_serial_means_no_xdist_flags(self, repo):
         _suite(repo, PYTEST_XDIST_AUTO_NUM_WORKERS="0")

@@ -4,7 +4,8 @@ Two kinds of answer, kept apart (plan Step 5, rows 1 and 1b):
 
 - `toolchain` decides which CHECKS run: `uv` (a pyproject.toml with a uv.lock
   or a [tool.uv] table), `composer` (a composer.json at the root, or one level
-  under themes/ or plugins/), `npm` (a package.json).
+  under themes/ or plugins/), `npm` (a package.json, with composer's reach,
+  #561).
 - `framework` decides only which DOCS apply — doc-check's default watch list
   and which references/stack-*.md loads: `fastapi` when fastapi is a declared
   dependency, `click` when click or typer is and fastapi is not, `php` for any
@@ -95,6 +96,24 @@ class TestToolchains:
     def test_npm(self, repo):
         (repo / "package.json").write_text("{}\n")
         assert _detect(repo) == {("toolchain", "npm")}
+
+    @pytest.mark.parametrize("parent", ["themes", "plugins"])
+    def test_npm_one_level_under_themes_or_plugins(self, repo, parent):
+        """#561: a Sage/Bedrock-style monorepo keeps every package.json in its
+        theme and plugin directories and none at the root, as composer's rule
+        already allowed for composer.json."""
+        (repo / parent / "site").mkdir(parents=True)
+        (repo / parent / "site" / "package.json").write_text("{}\n")
+        assert _detect(repo) == {("toolchain", "npm")}
+
+    @pytest.mark.parametrize(
+        "rel", ["themes/site/sub/package.json", "web/app/themes/site/package.json"]
+    )
+    def test_npm_no_deeper_than_composer_looks(self, repo, rel):
+        """The same reach as composer's: a deeper manifest is not one."""
+        (repo / rel).parent.mkdir(parents=True)
+        (repo / rel).write_text("{}\n")
+        assert _detect(repo) == set()
 
     def test_every_stack_a_repo_has(self, repo):
         (repo / "composer.json").write_text("{}\n")
