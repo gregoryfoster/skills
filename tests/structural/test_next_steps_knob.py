@@ -208,6 +208,15 @@ def _section(text: str, heading: str) -> str:
     return text[start : end if end != -1 else len(text)]
 
 
+def test_the_deploy_path_lists_the_projects_rows_as_written():
+    """CR 1856: "minus the DB migration and service restart rows" names the
+    stack table's rows; a project's free-text rows can't be told apart, and
+    they are its own, so they are listed as written."""
+    step8 = _section((SKILL / "SKILL.md").read_text(), "### Step 8")
+    item1 = next(line for line in step8.splitlines() if line.startswith("1. "))
+    assert re.search(r"`\.skills/next-steps`\) are listed as written", item1), item1
+
+
 def test_step_8_reads_the_projects_rows_first_and_names_the_source():
     step8 = _section((SKILL / "SKILL.md").read_text(), "### Step 8")
     para = next(p for p in step8.split("\n\n") if "<read-next-steps.sh>" in p)

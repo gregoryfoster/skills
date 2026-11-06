@@ -32,7 +32,8 @@ SCRIPT = SKILL / "scripts" / "run-pre-restart.sh"
 
 # Records each argument, the cwd and whether stdin is empty, then exits with
 # $STUB_EXIT, printing a line to each stream on the way. The stderr line is
-# power-map's own refusal, in shape.
+# power-map's own refusal, in shape. $STUB_SIGNAL kills it with that signal
+# instead.
 STUB = """\
 #!/usr/bin/env bash
 out="${STUB_RECORD:?}"
@@ -42,6 +43,7 @@ printf 'cwd=%s\\n' "$(pwd -P)" >>"$out"
 printf 'stdin=%s\\n' "$(cat)" >>"$out"
 echo "stub stdout: probing the DSN ExecStartPre uses"
 echo "stub stderr: DB unreachable within 5 s; refusing the restart" >&2
+[ -z "${STUB_SIGNAL:-}" ] || kill -"$STUB_SIGNAL" $$
 exit "${STUB_EXIT:-0}"
 """
 
@@ -120,6 +122,23 @@ class TestARefusingCheckOffersNoRestart:
         assert re.search(rf"\bexited {code}\b", result.stdout), result.stdout
         assert "stub stdout: probing the DSN" in result.stdout
         assert "DB unreachable within 5 s; refusing the restart" in result.stderr
+        assert re.search(r"no restart row", result.stderr), result.stderr
+
+    @pytest.mark.parametrize(
+        ("env", "code"),
+        [({"STUB_EXIT": "2"}, "2"), ({"STUB_SIGNAL": "TERM"}, "143")],
+        ids=["exit-2", "sigterm"],
+    )
+    def test_a_check_that_exits_2_or_dies_by_a_signal_is_still_exit_1(
+        self, repo, tmp_path, env, code
+    ):
+        """CR 1857: the check's own 2, or a signal's 128+n, is a refusal. It
+        never passes through as this script's 2 ("nothing ran") or 3 ("no
+        knob"), either of which would read as no check having run."""
+        _knob(repo, "scripts/pre-restart-check.sh\n")
+        result = _run(repo, record=tmp_path / "record", **env)
+        assert result.returncode == 1, result.stdout + result.stderr
+        assert re.search(rf"\bexited {code}\b", result.stdout), result.stdout
         assert re.search(r"no restart row", result.stderr), result.stderr
 
 
@@ -253,11 +272,36 @@ def test_step_8_runs_the_check_before_offering_a_restart_row():
     assert "verbatim" in para and "Done when" in para, para
 
 
+def test_an_unusable_check_offers_no_restart_row_either():
+    """CR 1856: exit 2 means nothing ran, so nothing was checked."""
+    step8 = _section(SKILL_MD, "### Step 8")
+    para = next(p for p in step8.split("\n\n") if "<run-pre-restart.sh>" in p)
+    assert re.search(r"Exit 2: offer none of those rows", para), para
+
+
 def test_step_6_waits_for_step_8_when_the_check_is_set():
     """The issue's "close no issue" can't hold if Step 6 closed it first."""
     step6 = _section(SKILL_MD, "### Step 6")
     first = step6.split("\n\n")[1]
     assert ".skills/pre_restart" in first and "Step 8 first" in first, first
+
+
+def test_step_8s_no_deploy_path_runs_before_step_6_when_the_check_is_set():
+    """CR 1846: Step 6 waits for Step 8, so Step 8 can't wait for Step 7's table."""
+    step8 = _section(SKILL_MD, "### Step 8")
+    para = next(p for p in step8.split("\n\n") if p.startswith("**Without it**"))
+    assert re.search(
+        r"with `\.skills/pre_restart` set, after Step 5, before Step 6", para
+    ), para
+
+
+def test_the_hard_gate_holds_a_production_requirement_to_the_check():
+    """CR 1846: item 4 named only deploy_command, so a refused check closed."""
+    step6 = _section(SKILL_MD, "### Step 6")
+    gate = step6[step6.index("<HARD-GATE>") : step6.index("</HARD-GATE>")]
+    item = next(line for line in gate.splitlines() if ".skills/pre_restart" in line)
+    assert re.search(r"passed in this session", item), item
+    assert re.search(r"refusal closes nothing", item), item
 
 
 def test_the_fastapi_restart_rows_point_at_the_check():
@@ -284,3 +328,32 @@ def test_the_post_merge_pass_runs_the_check():
     text = (SKILL / "references" / "pr-mode.md").read_text()
     post = text[text.index("## The post-merge pass") :]
     assert ".skills/pre_restart" in post
+
+
+# --- pr mode: the merge closes before the check runs (CR 1855) ----------------------
+
+
+def test_pr_mode_holds_a_production_issue_on_refs_when_the_check_is_set():
+    """The merge closes each `Closes` issue before the post-merge pass runs
+    the check, so "close no production issue on a refusal" needs `Refs`, as
+    `deploy_command` already had."""
+    text = (SKILL / "references" / "pr-mode.md").read_text()
+    pr_pass = text[text.index("## The PR pass") : text.index("## The post-merge pass")]
+    bullet = next(b for b in pr_pass.split("\n- ") if "gets `Refs #<n>`" in b)
+    assert "`.skills/pre_restart`" in bullet, bullet
+    post = text[text.index("## The post-merge pass") :]
+    step3 = post.split("\n3. ", 1)[1].split("\n4. ", 1)[0]
+    assert re.search(
+        r"`Refs` issue only after the deploy\s+exited 0, or, without one, the check passed",
+        step3,
+    ), step3
+    step2 = post.split("\n2. ", 1)[1].split("\n3. ", 1)[0]
+    assert "With the knob" not in step2, step2
+    assert re.search(r"With\s+`\.skills/deploy_command`, Step 8's `--check`", step2), (
+        step2
+    )
+    step6 = _section(SKILL_MD, "### Step 6")
+    line = next(p for p in step6.split("\n\n") if p.startswith("**`pr` mode:**"))
+    assert re.search(
+        r"`\.skills/pre_restart`, a production requirement gets `Refs", line
+    ), line

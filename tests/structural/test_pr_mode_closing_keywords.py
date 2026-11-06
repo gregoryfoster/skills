@@ -20,7 +20,10 @@ honours, `owner/repo#<n>` and a full issue URL. Measured on BSD grep 2.6.0
 
 No API calls. The `gh` fields the prose names were measured read-only against
 this repo's own PR #178, whose body's "the tooling written to fix #167" put
-#167 in its `closingIssuesReferences`.
+#167 in its `closingIssuesReferences`. The closer query was run read-only on
+2026-11-06 against issues 167, 101, 172 and 102, and named PRs 170, 106, 175
+and 106: their `closedAt` trails `mergedAt` by one to two seconds, so a time
+comparison was never the test (CR 1847).
 """
 
 from __future__ import annotations
@@ -115,5 +118,38 @@ def test_the_pr_pass_says_an_edit_cannot_retract_a_closing_keyword():
 def test_the_post_merge_pass_checks_nothing_else_was_closed():
     post = _section("## The post-merge pass")
     step3 = post.split("\n3. ", 1)[1].split("\n4. ", 1)[0]
-    assert "closingIssuesReferences" in step3, step3
     assert "reopen" in step3, step3
+
+
+def test_the_post_merge_candidates_include_a_dropped_sidebar_link():
+    """CR 1848: the PR pass says a link dropped in the Development sidebar is
+    reopened by the post-merge pass, but `closingIssuesReferences` no longer
+    lists it. The candidates are the issues closed around the merge (the
+    search measured read-only against PR #106: 101, 102 and 104)."""
+    post = _section("## The post-merge pass")
+    step3 = post.split("\n3. ", 1)[1].split("\n4. ", 1)[0]
+    assert re.search(
+        r'gh issue list --state closed [^\n]*--search "closed:<mergedAt>\.\.<mergedAt\+5m>"',
+        step3,
+    ), step3
+    assert not re.search(r"each number\s+`gh pr view <m> --json closingIssues", step3)
+    assert re.search(r"[Rr]eopen each kept issue that isn't on a `Closes` line", step3)
+    assert "post-merge pass reopens it" in _section("## The PR pass")
+
+
+def test_the_post_merge_pass_asks_github_for_the_closer_and_compares_no_times():
+    """CR 1847: "a second after `mergedAt`, measured" was wrong (one to two)."""
+    post = _section("## The post-merge pass")
+    step3 = post.split("\n3. ", 1)[1].split("\n4. ", 1)[0]
+    assert "closedAt` is the merge's" not in step3, step3
+    assert "a second after" not in step3, step3
+    queries = re.findall(r"gh api graphql -f query='([^']+)'", step3)
+    assert len(queries) == 1, step3
+    query = queries[0]
+    assert query.count("{") == query.count("}"), query
+    assert "timelineItems(itemTypes:[CLOSED_EVENT]" in query, query
+    assert "... on ClosedEvent{closer{" in query, query
+    assert "... on PullRequest{number}" in query, query
+    for var in ("$o", "$r", "$n"):
+        assert var in query, (var, query)
+    assert "-f o=<owner> -f r=<repo> -F n=<n>" in step3, step3

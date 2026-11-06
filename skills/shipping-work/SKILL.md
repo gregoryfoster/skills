@@ -163,13 +163,14 @@ Before closing any issue, verify the original requirements against what was impl
 2. Confirm each stated requirement is addressed in commits
 3. If any requirement is missing: do NOT close — ask the user whether to descope or continue
 4. With `.skills/deploy_command` set: if a requirement concerns what production runs, the deploy has run and exited 0 in this session. A failed deploy closes nothing
+5. With `.skills/pre_restart` set: such a requirement needs the check to have passed in this session. A refusal closes nothing
 </HARD-GATE>
 
 ```bash
 bash "<close-issue.sh>" <number>
 ```
 
-**`pr` mode:** close nothing: the merge closes each `Closes #<n>` issue. With `.skills/deploy_command`, a production requirement gets `Refs #<n>` instead, closed by the post-merge pass once the deploy exits 0.
+**`pr` mode:** close nothing: the merge closes each `Closes #<n>` issue. With `.skills/deploy_command` or `.skills/pre_restart`, a production requirement gets `Refs #<n>` instead, closed by the post-merge pass once the deploy, or else the check, exits 0.
 
 ### Step 7 — Report
 
@@ -187,11 +188,11 @@ Present a summary table:
 
 **With `.skills/deploy_command` set**, the project deploys through its own command, and this step runs after Step 5, before Step 6 ([references/deploy-command.md](references/deploy-command.md)):
 
-1. List the rows that apply, from the source below, **minus** the DB migration and service restart rows: the command owns them. Do a row the new code needs first, such as an env var it reads, before the deploy.
+1. List the rows that apply, from the source below, **minus** the DB migration and service restart rows: the command owns them. A project's own rows (`.skills/next-steps`) are listed as written. Do a row the new code needs first, such as an env var it reads, before the deploy.
 2. `bash "<run-deploy-command.sh>" --check` prints the command line, with the pushed SHA last. If it exits 2, fix what it names before offering. Offer to run it, once. On a yes, run `bash "<run-deploy-command.sh>"`.
 3. Report its exit status and the tail of its output. Exit 1 is a failed deploy: quote the command's own exit code and output verbatim, and close nothing. Exit 2 means nothing ran; fix what it names. A command that detaches without waiting exits 0 once the deploy has *started*, so check production the project's own way before Step 6.
 
-**Without it** (`--check` exits 3), after the summary table, review commits and changes shipped to identify any post-deploy work the user may need to perform, from one source, and name it. `bash "<read-next-steps.sh>"` prints the project's own rows (`.skills/next-steps`, [#564](https://github.com/gregoryfoster/skills/issues/564)), which replace the rest; exit 2: fix the file, never fall back. Exit 3: the detected framework's stack file, else these common categories:
+**Without it** (`--check` exits 3), after the summary table (with `.skills/pre_restart` set, after Step 5, before Step 6), review commits and changes shipped to identify any post-deploy work the user may need to perform, from one source, and name it. `bash "<read-next-steps.sh>"` prints the project's own rows (`.skills/next-steps`, [#564](https://github.com/gregoryfoster/skills/issues/564)), which replace the rest; exit 2: fix the file, never fall back. Exit 3: the detected framework's stack file, else these common categories:
 
 | Category | Trigger | Example action |
 |---|---|---|
@@ -203,7 +204,7 @@ Present a summary table:
 
 Present only the items that apply, under **Next steps for production**, each naming its file, table or command. Then **offer to execute** any within your capabilities, once — don't nag.
 
-Before offering a row that restarts the service (a DB migration, a restart, an env var's restart; any project row, as those can't be told apart), run `bash "<run-pre-restart.sh>"`, the project's check (`.skills/pre_restart`, [#557](https://github.com/gregoryfoster/skills/issues/557)). Exit 1: it refused, so offer none of those rows; quote its code and output verbatim, and close no issue whose "Done when" is about production. Exit 2: fix the knob. Exit 3: no check.
+Before offering a row that restarts the service (a DB migration, a restart, an env var's restart; any project row, as those can't be told apart), run `bash "<run-pre-restart.sh>"`, the project's check (`.skills/pre_restart`, [#557](https://github.com/gregoryfoster/skills/issues/557)). Exit 1: it refused, so offer none of those rows; quote its code and output verbatim, and close no issue whose "Done when" is about production. Exit 2: offer none of those rows; fix the knob. Exit 3: no check.
 
 If nothing applies, omit this step entirely.
 

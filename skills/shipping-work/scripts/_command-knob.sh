@@ -21,7 +21,8 @@ command_knob_usage() {
 Usage: . _command-knob.sh    (sourced by run-deploy-command.sh and
                              run-pre-restart.sh; running it does nothing)
 
-  primary_checkout        PRIMARY := the first `git worktree list` entry
+  primary_checkout        PRIMARY := the first `git worktree list` entry's
+                          working tree (bare: the current checkout's)
   read_command_knob KNOB  WORDS := the knob's one command line, its first
                           word checked; die() on anything unusable
 USAGE
@@ -31,12 +32,22 @@ case "${0##*/}" in
   _command-knob.sh) case "${1-}" in -h | --help) command_knob_usage; exit 0 ;; esac ;;
 esac
 
+# The first entry is a git dir, not a working tree, in two layouts (CR 1839b):
+# a bare primary (`repo.git`) and a submodule (`<super>/.git/modules/<name>`).
+# Neither holds a .skills/, so a knob there read as absent. --show-toplevel
+# names the submodule's working tree; a bare primary has none, so the current
+# checkout's top level stands in, as using-git-worktrees resolves it.
 primary_checkout() {
   local wt_list
   wt_list=$(git worktree list --porcelain) || die "git worktree list failed: not in a git checkout?"
   PRIMARY=${wt_list%%$'\n'*}
   PRIMARY=${PRIMARY#worktree }
   [ -d "$PRIMARY" ] || die "could not resolve the primary checkout (got '$PRIMARY')"
+  # A bare primary's "must be run in a work tree" is the expected answer here,
+  # not a failure, and the fallback's own error is shown.
+  PRIMARY=$(git -C "$PRIMARY" rev-parse --show-toplevel 2>/dev/null) ||
+    PRIMARY=$(git rev-parse --show-toplevel) ||
+    die "could not resolve a working tree for the primary checkout"
 }
 
 read_command_knob() {
