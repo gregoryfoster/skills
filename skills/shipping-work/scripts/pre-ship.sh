@@ -27,7 +27,26 @@
 # Usage: bash "<pre-ship.sh>" [--help]
 set -euo pipefail
 
-SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
+# This script's own directory, where its helpers are, through the symlink
+# chain first (CR 1865): a consumer's per-script symlink (managing-skills'
+# local-overrides.md) puts this file's link in a directory with no
+# detect-stack.sh beside it, while the target has every helper. `cd -P`, not
+# a logical cd: through a .claude/skills/<dir-link> prefix a relative link's
+# `..` must cross the directory link as the kernel does, not by spelling.
+_self=${BASH_SOURCE[0]}
+_n=0
+while [[ -L $_self && $_n -lt 10 ]]; do
+  _t=$(readlink "$_self") || break
+  case $_t in
+    /*) _self=$_t ;;
+    *) _self=$(dirname "$_self")/$_t ;;
+  esac
+  _n=$((_n + 1))
+done
+SCRIPT_DIR=$(cd -P "$(dirname "$_self")" && pwd -P) || {
+  echo "ERROR: could not resolve this script's directory (from $_self)" >&2
+  exit 2
+}
 
 usage() {
   echo "Usage: bash \"$0\" [--help]"
@@ -40,7 +59,8 @@ usage() {
   echo "            is installed, -n N --dist MODE when xdist is"
   echo "  composer  composer validate ; php -l on tracked PHP files ; composer test"
   echo "  npm       npm run lint:js / format:js:check / test:js, when declared,"
-  echo "            in each package.json's directory: the root, themes/*/, plugins/*/"
+  echo "            in each package.json's directory: the root, and each one git"
+  echo "            tracks in themes/*/ or plugins/*/ (git add a new theme's)"
   echo ""
   echo "Every check runs; the gate then exits 1 naming each one that failed."
   echo "Nothing detected exits 1: supply scripts/pre-ship.sh at your repo root."
@@ -207,9 +227,11 @@ no_gate() {
   echo "       (pyproject.toml with uv.lock or [tool.uv]), composer" >&2
   echo "       (composer.json) and npm (package.json scripts lint:js," >&2
   echo "       format:js:check, test:js); composer and npm at the root or" >&2
-  echo "       one level under themes/ or plugins/. For anything else, write" >&2
-  echo "       scripts/pre-ship.sh at your repo root with your test runner in" >&2
-  echo "       it; SKILL.md Step 1 resolves it ahead of this script (#301)." >&2
+  echo "       one level under themes/ or plugins/, where a package.json counts" >&2
+  echo "       only once git tracks it (git add a new theme's). For anything" >&2
+  echo "       else, write scripts/pre-ship.sh at your repo root with your test" >&2
+  echo "       runner in it; SKILL.md Step 1 resolves it ahead of this script" >&2
+  echo "       (#301)." >&2
   echo "       Do not copy shipping-work/ into your own skills/ directory: a" >&2
   echo "       copy of the whole skill drifts on every update." >&2
   exit 1
@@ -222,20 +244,28 @@ fi
 # root, then one level under themes/ and plugins/ (#561). Each one's scripts
 # run in that directory. A nested one is listed from git, as detect-stack.sh
 # lists it, so a gitignored plugin composer installs is not run; a failing
-# ls-files is a tooling failure, never "none".
+# ls-files is a tooling failure, never "none". Every ls-files here runs with
+# GIT_LITERAL_PATHSPECS=0 and explicit glob magic (CR 1861): `git
+# --literal-pathspecs` exports the literal setting to hooks, and `--glob-` or
+# `--noglob-pathspecs` the others, and under any of them a bare pattern lists
+# less, or nothing, with exit 0. The npm listing recurses into submodules,
+# so a theme vendored as one runs its scripts (CR 1862; detect-stack.sh says
+# why, and what stays out of reach).
 NPM_DIRS=()
 NPM_MANIFESTS=""
 if [[ $NPM -eq 1 ]]; then
   if [[ -f package.json ]]; then NPM_DIRS+=("."); fi
   for parent in themes plugins; do
     LS_RC=0
-    git ls-files -z -- ":(glob)$parent/*/package.json" >"$TMP/npm" 2>"$TMP/npm.err" || LS_RC=$?
+    GIT_LITERAL_PATHSPECS=0 git ls-files --recurse-submodules -z -- ":(glob)$parent/*/package.json" >"$TMP/npm" 2>"$TMP/npm.err" || LS_RC=$?
     if [[ $LS_RC -ne 0 ]]; then
       echo "ERROR: git ls-files failed (exit $LS_RC) listing $parent/*/package.json:" >&2
       cat "$TMP/npm.err" >&2
       exit 2
     fi
     while IFS= read -r -d '' f; do
+      # A dot-directory, which composer's glob skips (CR 1866).
+      case $f in "$parent"/.*) continue ;; esac
       if [[ -f "$f" ]]; then NPM_DIRS+=("${f%/package.json}"); fi
     done <"$TMP/npm"
   done
@@ -287,11 +317,12 @@ done
 if [[ ${#NPM_RUN_SCRIPTS[@]} -gt 0 ]]; then need npm "declares npm scripts"; fi
 
 # Tracked PHP files, captured with git's own status so a failing ls-files can
-# never read as "no PHP to lint".
+# never read as "no PHP to lint". `**/` matches the root too, as the bare
+# `*.php` it replaces did (CR 1861).
 TRACKED_PHP=()
 if [[ $COMPOSER -eq 1 ]]; then
   LS_RC=0
-  git ls-files -z '*.php' >"$TMP/php" 2>"$TMP/php.err" || LS_RC=$?
+  GIT_LITERAL_PATHSPECS=0 git ls-files -z -- ':(glob)**/*.php' >"$TMP/php" 2>"$TMP/php.err" || LS_RC=$?
   if [[ $LS_RC -ne 0 ]]; then
     echo "ERROR: git ls-files failed (exit $LS_RC):" >&2
     cat "$TMP/php.err" >&2

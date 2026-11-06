@@ -24,6 +24,13 @@ from tests.structural.gate_fakes import ALL_TOOLS, BASE_PATH, fake_env
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 GATE = REPO_ROOT / "skills" / "shipping-work" / "scripts" / "pre-ship.sh"
+# The global pathspec settings git exports to the hooks it runs, from
+# `git --literal-pathspecs`, `--glob-pathspecs` and `--noglob-pathspecs`.
+PATHSPEC_SETTINGS = [
+    "GIT_LITERAL_PATHSPECS",
+    "GIT_GLOB_PATHSPECS",
+    "GIT_NOGLOB_PATHSPECS",
+]
 
 
 def _git(repo: Path, *args: str) -> None:
@@ -351,6 +358,19 @@ class TestPhp:
         linted = sorted(c[2] for c in _calls(repo, "php") if c[1] == "-l")
         assert linted == ["index.php", "themes/site/functions.php"]
 
+    @pytest.mark.parametrize("setting", PATHSPEC_SETTINGS)
+    def test_a_global_pathspec_setting_lints_every_tracked_php_file(
+        self, repo, setting
+    ):
+        """CR 1861: git exports these to the hooks it runs. Under the literal
+        setting the bare `*.php` listed nothing with exit 0, under noglob
+        nothing, and under glob only the root's files: php -l linted less
+        than the repo has, and the gate passed."""
+        _composer_repo(repo)
+        assert _gate(repo, **{setting: "1"}).returncode == 0
+        linted = sorted(c[2] for c in _calls(repo, "php") if c[1] == "-l")
+        assert linted == ["index.php", "themes/site/functions.php"]
+
     def test_composer_test_only_when_defined(self, repo):
         """Row 20."""
         _composer_repo(repo)
@@ -393,7 +413,8 @@ def _npm_gate(repo: Path, tools=ALL_TOOLS, **env: str) -> subprocess.CompletedPr
 
 class TestNpmManifests:
     """#561: npm is found at the root or one level under themes/ and plugins/,
-    as composer is, and each manifest's scripts run in its own directory."""
+    as composer is, where a nested manifest counts only when git tracks it
+    (CR 1844), and each manifest's scripts run in its own directory."""
 
     def test_the_issues_layout(self, repo):
         """The issue's own reproduction: no root package.json, and a theme's
@@ -498,6 +519,68 @@ class TestNpmManifests:
         assert result.returncode == 1
         assert "no toolchain detected" in result.stderr
         assert _cwd_calls(repo, "npm") == []
+
+    def test_a_theme_vendored_as_a_submodule_runs(self, repo, tmp_path):
+        """CR 1862: a submodule is one gitlink to the superproject, so the
+        tracked-only listing lost a vendored theme's scripts while composer
+        still validated its composer.json. The listing recurses now."""
+        src = tmp_path / "theme-src"
+        src.mkdir()
+        _git(src, "init", "-q", "-b", "main")
+        _git(src, "config", "user.email", "test@example.com")
+        _git(src, "config", "user.name", "test")
+        _manifest(src, "package.json", {"test:js": "jest"})
+        _commit(src)
+        _git(
+            repo,
+            *("-c", "protocol.file.allow=always", "submodule", "add", "-q"),
+            *(str(src), "themes/sub"),
+        )
+        _commit(repo)
+        result = _npm_gate(repo, FAKE_FAIL="test:js")
+        assert result.returncode == 1, result.stdout + result.stderr
+        assert "Detected: toolchain npm (themes/sub/package.json)" in result.stdout
+        assert "npm run test:js (themes/sub) (exit 1)" in result.stderr
+
+    def test_an_untracked_themes_user_is_pointed_at_git_add(self, repo):
+        """CR 1867: a new theme's package.json, not yet added, is not
+        detected; the advice and --help say a nested one must be tracked
+        instead of saying it is found one level under themes/."""
+        _commit(repo)
+        _manifest(repo, "themes/new/package.json", {"lint:js": "eslint ."})
+        result = _npm_gate(repo)
+        assert result.returncode == 1
+        assert "no toolchain detected" in result.stderr
+        assert "only once git tracks it (git add" in result.stderr, result.stderr
+        help_text = subprocess.run(
+            ["bash", str(GATE), "--help"], capture_output=True, text=True
+        ).stdout
+        assert "each one git" in help_text and "git add" in help_text, help_text
+
+    def test_a_dot_directorys_manifest_is_not_run(self, repo):
+        """CR 1866: git's `:(glob)` `*` matches a leading dot, bash's
+        `themes/*` (composer's reach) does not, so a tracked
+        themes/.old/package.json ran its scripts."""
+        _manifest(repo, "package.json", {"test:js": "jest"})
+        _manifest(repo, "themes/.old/package.json", {"lint:js": "eslint ."})
+        _commit(repo)
+        result = _npm_gate(repo)
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert _cwd_calls(repo, "npm") == [(".", ["run", "test:js"])]
+        assert "themes/.old" not in result.stdout
+
+    @pytest.mark.parametrize("setting", PATHSPEC_SETTINGS)
+    def test_a_global_pathspec_setting_keeps_a_themes_failure(self, repo, setting):
+        """CR 1861: under GIT_LITERAL_PATHSPECS=1, which `git
+        --literal-pathspecs` exports to hooks, `:(glob)…` was a literal path,
+        so a theme's failing test:js dropped out and the gate passed."""
+        _manifest(repo, "themes/sage/package.json", {"test:js": "jest"})
+        _manifest(repo, "package.json", {"lint:js": "eslint ."})
+        _commit(repo)
+        result = _npm_gate(repo, FAKE_FAIL="test:js", **{setting: "1"})
+        assert result.returncode == 1, result.stdout + result.stderr
+        assert "npm run test:js (themes/sage) (exit 1)" in result.stderr
+        assert ("themes/sage", ["run", "test:js"]) in _cwd_calls(repo, "npm")
 
     def test_a_nested_trigger_keys_the_npm_tools(self, repo):
         """The stamp key carries node's and npm's versions for a nested
