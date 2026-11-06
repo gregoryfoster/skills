@@ -10,7 +10,9 @@
 #             installed, and xdist when the project's environment has it
 #   composer  composer validate at each composer.json, php -l on every tracked
 #             PHP file, and composer test when the project defines it
-#   npm       whichever of lint:js, format:js:check and test:js it declares
+#   npm       whichever of lint:js, format:js:check and test:js each
+#             package.json declares, in its own directory: the root's, and
+#             one level under themes/ and plugins/ (#561)
 #
 # Every check runs even after one fails, and the gate then exits 1 naming each
 # failure, so one run shows everything there is to fix. A tooling failure
@@ -37,7 +39,8 @@ usage() {
   echo "            the project's own marker expression, --no-cov when pytest-cov"
   echo "            is installed, -n N --dist loadfile when xdist is"
   echo "  composer  composer validate ; php -l on tracked PHP files ; composer test"
-  echo "  npm       npm run lint:js / format:js:check / test:js, when declared"
+  echo "  npm       npm run lint:js / format:js:check / test:js, when declared,"
+  echo "            in each package.json's directory: the root, themes/*/, plugins/*/"
   echo ""
   echo "Every check runs; the gate then exits 1 naming each one that failed."
   echo "Nothing detected exits 1: supply scripts/pre-ship.sh at your repo root."
@@ -198,7 +201,8 @@ no_gate() {
   echo "       This gate runs the checks of the toolchains it can detect: uv" >&2
   echo "       (pyproject.toml with uv.lock or [tool.uv]), composer" >&2
   echo "       (composer.json) and npm (package.json scripts lint:js," >&2
-  echo "       format:js:check, test:js). For anything else, write" >&2
+  echo "       format:js:check, test:js); composer and npm at the root or" >&2
+  echo "       one level under themes/ or plugins/. For anything else, write" >&2
   echo "       scripts/pre-ship.sh at your repo root with your test runner in" >&2
   echo "       it; SKILL.md Step 1 resolves it ahead of this script (#301)." >&2
   echo "       Do not copy shipping-work/ into your own skills/ directory: a" >&2
@@ -209,9 +213,32 @@ no_gate() {
 if [[ $UV -eq 0 && $COMPOSER -eq 0 && $NPM -eq 0 ]]; then
   no_gate "no toolchain detected, so there is nothing for this gate to run."
 fi
+# Every directory whose package.json detected npm, with composer's reach: the
+# root, then one level under themes/ and plugins/ (#561). Each one's scripts
+# run in that directory.
+NPM_DIRS=()
+NPM_MANIFESTS=""
+if [[ $NPM -eq 1 ]]; then
+  if [[ -f package.json ]]; then NPM_DIRS+=("."); fi
+  for f in themes/*/package.json plugins/*/package.json; do
+    if [[ -f "$f" ]]; then NPM_DIRS+=("${f%/package.json}"); fi
+  done
+fi
+manifest() {
+  if [[ $1 == . ]]; then echo package.json; else echo "$1/package.json"; fi
+}
+for d in ${NPM_DIRS[@]+"${NPM_DIRS[@]}"}; do
+  NPM_MANIFESTS="${NPM_MANIFESTS:+$NPM_MANIFESTS, }$(manifest "$d")"
+done
+
 # SKILL.md reads this line: each `framework <name>` names the
-# references/stack-<name>.md that holds that framework's next steps.
-echo "Detected: $(awk -F'\t' '{printf "%s%s %s", (NR > 1 ? ", " : ""), $1, $2}' "$TMP/stack")"
+# references/stack-<name>.md that holds that framework's next steps. npm
+# names its manifests when any is nested, so a theme's scripts are seen to run.
+NPM_SEEN=""
+if [[ -n "$NPM_MANIFESTS" && "$NPM_MANIFESTS" != package.json ]]; then
+  NPM_SEEN=$NPM_MANIFESTS
+fi
+echo "Detected: $(awk -F'\t' -v npm="$NPM_SEEN" '{printf "%s%s %s%s", (NR > 1 ? ", " : ""), $1, $2, ($1 == "toolchain" && $2 == "npm" && npm != "" ? " (" npm ")" : "")}' "$TMP/stack")"
 
 # A detected toolchain whose tool is missing is a tooling failure, not a pass.
 need() {
@@ -222,23 +249,26 @@ need() {
 }
 if [[ $UV -eq 1 ]]; then need uv "is a uv project"; fi
 if [[ $COMPOSER -eq 1 ]]; then need composer "has a composer.json"; fi
-if [[ $NPM -eq 1 ]]; then need node "has a package.json (node reads its scripts)"; fi
+if [[ $NPM -eq 1 ]]; then need node "has $NPM_MANIFESTS (node reads its scripts)"; fi
 
-# The project's declared npm scripts, read once. node parses package.json; a
+# Each manifest's declared npm scripts, read once, in its own directory, into
+# two parallel lists: where each runs, and what. node parses package.json; a
 # file it cannot parse is a tooling failure, never "no scripts".
-NPM_SCRIPTS=()
-if [[ $NPM -eq 1 ]]; then
-  if ! node -e 'require("./package.json")' >/dev/null; then
-    echo "ERROR: package.json failed to parse" >&2
+NPM_RUN_DIRS=()
+NPM_RUN_SCRIPTS=()
+for d in ${NPM_DIRS[@]+"${NPM_DIRS[@]}"}; do
+  if ! (cd "$d" && node -e 'require("./package.json")') >/dev/null; then
+    echo "ERROR: $(manifest "$d") failed to parse" >&2
     exit 2
   fi
   for s in lint:js format:js:check test:js; do
-    if SCRIPT="$s" node -e 'const s=require("./package.json").scripts; process.exit(s&&s[process.env.SCRIPT]?0:1)'; then
-      NPM_SCRIPTS+=("$s")
+    if (cd "$d" && SCRIPT="$s" node -e 'const s=require("./package.json").scripts; process.exit(s&&s[process.env.SCRIPT]?0:1)'); then
+      NPM_RUN_DIRS+=("$d")
+      NPM_RUN_SCRIPTS+=("$s")
     fi
   done
-  if [[ ${#NPM_SCRIPTS[@]} -gt 0 ]]; then need npm "declares npm scripts"; fi
-fi
+done
+if [[ ${#NPM_RUN_SCRIPTS[@]} -gt 0 ]]; then need npm "declares npm scripts"; fi
 
 # Tracked PHP files, captured with git's own status so a failing ls-files can
 # never read as "no PHP to lint".
@@ -255,8 +285,8 @@ if [[ $COMPOSER -eq 1 ]]; then
   if [[ ${#TRACKED_PHP[@]} -gt 0 ]]; then need php "has tracked PHP files"; fi
 fi
 
-if [[ $UV -eq 0 && $COMPOSER -eq 0 && ${#NPM_SCRIPTS[@]} -eq 0 ]]; then
-  no_gate "package.json declares none of lint:js, format:js:check or test:js, so there is nothing for this gate to run."
+if [[ $UV -eq 0 && $COMPOSER -eq 0 && ${#NPM_RUN_SCRIPTS[@]} -eq 0 ]]; then
+  no_gate "no package.json ($NPM_MANIFESTS) declares lint:js, format:js:check or test:js, so there is nothing for this gate to run."
 fi
 
 # --- .skills/pre-ship-uv-args ------------------------------------------------
@@ -560,8 +590,18 @@ if [[ $COMPOSER -eq 1 ]]; then
   fi
 fi
 
-for s in ${NPM_SCRIPTS[@]+"${NPM_SCRIPTS[@]}"}; do
-  check "npm run $s" npm run "$s"
+# The root's keep the heading they always had; a nested one names its
+# directory, so a failure says which theme or plugin it was.
+npm_run_in() {
+  local dir=$1
+  shift
+  (cd "$dir" && npm run "$@")
+}
+for ((i = 0; i < ${#NPM_RUN_SCRIPTS[@]}; i++)); do
+  d=${NPM_RUN_DIRS[i]} s=${NPM_RUN_SCRIPTS[i]}
+  label="npm run $s"
+  if [[ $d != . ]]; then label="$label ($d)"; fi
+  check "$label" npm_run_in "$d" "$s"
 done
 
 echo ""

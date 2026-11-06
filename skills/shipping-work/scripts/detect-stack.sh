@@ -11,7 +11,10 @@
 #               project uv does not manage, so it gets the remedy instead.
 #     composer  composer.json at the root, or one level under themes/ or
 #               plugins/ (the layout the PHP gate validates).
-#     npm       package.json.
+#     npm       package.json, with composer's reach: at the root, or one level
+#               under themes/ or plugins/, where a Sage/Bedrock-style
+#               monorepo keeps every one (#561). pre-ship.sh runs each
+#               one's scripts in its own directory.
 #
 #   framework   decides only which DOCS apply: doc-check.sh's default watch
 #               list and which references/stack-*.md to load. Never a check.
@@ -239,22 +242,22 @@ if [[ -f pyproject.toml ]]; then
   fi
 fi
 
-composer=0
-if [[ -f composer.json ]]; then
-  composer=1
-else
-  for f in themes/*/composer.json plugins/*/composer.json; do
-    if [[ -f "$f" ]]; then
-      composer=1
-      break
-    fi
+# Whether manifest $1 is at the root or one level under themes/ or plugins/:
+# the reach of composer and npm alike, so neither misses the other's layout.
+present() {
+  local f
+  if [[ -f "$1" ]]; then return 0; fi
+  for f in themes/*/"$1" plugins/*/"$1"; do
+    if [[ -f "$f" ]]; then return 0; fi
   done
-fi
-if [[ "$composer" -eq 1 ]]; then
+  return 1
+}
+
+if present composer.json; then
   printf 'toolchain\tcomposer\n'
   printf 'framework\tphp\n'
 fi
 
-if [[ -f package.json ]]; then
+if present package.json; then
   printf 'toolchain\tnpm\n'
 fi
