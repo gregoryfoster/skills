@@ -279,6 +279,24 @@ def test_step_6_waits_for_step_8_when_the_check_is_set():
     assert ".skills/pre_restart" in first and "Step 8 first" in first, first
 
 
+def test_step_8s_no_deploy_path_runs_before_step_6_when_the_check_is_set():
+    """CR 1846: Step 6 waits for Step 8, so Step 8 can't wait for Step 7's table."""
+    step8 = _section(SKILL_MD, "### Step 8")
+    para = next(p for p in step8.split("\n\n") if p.startswith("**Without it**"))
+    assert re.search(
+        r"with `\.skills/pre_restart` set, after Step 5, before Step 6", para
+    ), para
+
+
+def test_the_hard_gate_holds_a_production_requirement_to_the_check():
+    """CR 1846: item 4 named only deploy_command, so a refused check closed."""
+    step6 = _section(SKILL_MD, "### Step 6")
+    gate = step6[step6.index("<HARD-GATE>") : step6.index("</HARD-GATE>")]
+    item = next(line for line in gate.splitlines() if ".skills/pre_restart" in line)
+    assert re.search(r"passed in this session", item), item
+    assert re.search(r"refusal closes nothing", item), item
+
+
 def test_the_fastapi_restart_rows_point_at_the_check():
     text = (SKILL / "references" / "stack-fastapi.md").read_text()
     assert "<run-pre-restart.sh>" in text

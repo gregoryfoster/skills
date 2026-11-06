@@ -163,6 +163,7 @@ Before closing any issue, verify the original requirements against what was impl
 2. Confirm each stated requirement is addressed in commits
 3. If any requirement is missing: do NOT close — ask the user whether to descope or continue
 4. With `.skills/deploy_command` set: if a requirement concerns what production runs, the deploy has run and exited 0 in this session. A failed deploy closes nothing
+5. With `.skills/pre_restart` set: such a requirement needs the check to have passed in this session. A refusal closes nothing
 </HARD-GATE>
 
 ```bash
@@ -191,7 +192,7 @@ Present a summary table:
 2. `bash "<run-deploy-command.sh>" --check` prints the command line, with the pushed SHA last. If it exits 2, fix what it names before offering. Offer to run it, once. On a yes, run `bash "<run-deploy-command.sh>"`.
 3. Report its exit status and the tail of its output. Exit 1 is a failed deploy: quote the command's own exit code and output verbatim, and close nothing. Exit 2 means nothing ran; fix what it names. A command that detaches without waiting exits 0 once the deploy has *started*, so check production the project's own way before Step 6.
 
-**Without it** (`--check` exits 3), after the summary table, review commits and changes shipped to identify any post-deploy work the user may need to perform, from one source, and name it. `bash "<read-next-steps.sh>"` prints the project's own rows (`.skills/next-steps`, [#564](https://github.com/gregoryfoster/skills/issues/564)), which replace the rest; exit 2: fix the file, never fall back. Exit 3: the detected framework's stack file, else these common categories:
+**Without it** (`--check` exits 3), after the summary table (with `.skills/pre_restart` set, after Step 5, before Step 6), review commits and changes shipped to identify any post-deploy work the user may need to perform, from one source, and name it. `bash "<read-next-steps.sh>"` prints the project's own rows (`.skills/next-steps`, [#564](https://github.com/gregoryfoster/skills/issues/564)), which replace the rest; exit 2: fix the file, never fall back. Exit 3: the detected framework's stack file, else these common categories:
 
 | Category | Trigger | Example action |
 |---|---|---|
