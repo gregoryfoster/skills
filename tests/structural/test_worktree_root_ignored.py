@@ -464,3 +464,19 @@ def test_a_root_that_cannot_be_created_exits_2_not_1(repo: Path, tmp_path: Path)
     assert "could not create the worktree root" in r.stderr, r.stderr
     assert r.stdout == ""
     assert len(_worktrees(repo)) == 1
+
+
+def test_conventions_say_where_the_knob_is_read():
+    """CR 1838: CONVENTIONS.md said the file sits "under the repo root".
+
+    From a linked worktree that is the wrong checkout: the knob is read from
+    the primary one, and a relative path resolves against it (#562, #567).
+    """
+    doc = (REPO_ROOT / "docs" / "CONVENTIONS.md").read_text()
+    start = doc.index("## Worktree root convention")
+    section = doc[start : doc.index("\n## ", start + 1)]
+    step = next(ln for ln in section.splitlines() if ln.startswith("2. "))
+    assert "under the repo root" not in step, step
+    assert "primary checkout" in step, step
+    assert "relative" in step, step
+    assert "#567" in step or "/issues/567" in step, step
