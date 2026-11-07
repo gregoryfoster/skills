@@ -78,7 +78,7 @@ Behaviour:
     progress). The second run in a row killed inside its commit spends the
     day instead, and says why on stderr: the commit through the repo's
     pre-commit hooks did not fit the timeout (.git/skills-update.commit-kills
-    counts them; a commit that lands resets it).
+    counts them; a commit that returns, landed or refused, resets it).
   - Runs only on the main branch.
   - Scopes the submodule update to skills-vendor/ — never touches other
     submodules.
@@ -170,14 +170,15 @@ LOG="$gitdir/skills-update.log"
 # names the run that owns it, `pid <PID> <epoch seconds>`; then one path per
 # line — the ones that run may stage — so a later session can tell what the
 # hook staged from what a human did; a heal that has said a killed run's
-# staging on stderr appends `noted`. A heal claims a dead marker as its own
+# staging on stderr appends `noted`, and a run whose commit returned appends
+# `done` (CR 1900). A heal claims a dead marker as its own
 # (CR 1897), adding `heals <the killed run's owner line>`; while it takes one,
 # the marker is `$STAGING.heal.<pid>.<epoch>`. See _heal_staged, _take_marker
 # and _marker_owner_live.
 STAGING="$gitdir/skills-update.staging"
 # Refreshes killed inside their commit, in a row (#575): one line, `<count>
 # <the last one's marker owner line>`. Written by the heal, removed by a run
-# whose commit lands. See _count_commit_kill.
+# whose commit returns, landed or refused (CR 1900). See _count_commit_kill.
 COMMIT_KILLS="$gitdir/skills-update.commit-kills"
 # How long a marker's owner can be believed alive (CR 1789): the hook's 120 s
 # ceiling plus margin. Past it, a live PID is a reused one — an unrelated
@@ -1165,8 +1166,9 @@ _stamp_lock() {
 # many sessions heal it. A kill before `git add` never gets here, and does not
 # reset the count either: the extension's kill nearly always lands there, and
 # resetting on it would let a slow suite interleaved with it retry forever.
-# Only a commit that lands resets it. A count past 2 backs off at once: a
-# suite that has not fitted twice is not retried a second time in a day.
+# Only a commit that returns resets it, landed or refused (CR 1900). A count
+# past 2 backs off at once: a suite that has not fitted twice is not retried a
+# second time in a day.
 #
 # Called as soon as the heal knows the killed run left the hook's paths
 # staged, before it undoes anything (CR 1899): counted last, a heal killed at
@@ -1267,9 +1269,9 @@ _heal_staged() {
     rc=0
     rm -f "$TAKEN" 2>/dev/null || true
     marked=1
-    # The paths, without the owner lines, a pr-mode run's `mode pr`, or the
-    # `noted` an earlier heal appended (CR 1801).
-    listed="$(grep -v -e '^pid ' -e '^heals ' -e '^mode ' -e '^noted$' "$STAGING" 2>>"$LOG")" || rc=$?
+    # The paths, without the owner lines, a pr-mode run's `mode pr`, the
+    # `noted` an earlier heal appended (CR 1801), or a returned commit's `done`.
+    listed="$(grep -v -e '^pid ' -e '^heals ' -e '^mode ' -e '^noted$' -e '^done$' "$STAGING" 2>>"$LOG")" || rc=$?
     if [ "$rc" -gt 1 ]; then
       _log "heal: could not read $STAGING (grep exited $rc) — leaving the index alone"
       return 0
@@ -1316,8 +1318,10 @@ STAGED_EOF
   fi
 
   # The kill fell between `git add` and the end of `git commit` (#575).
-  # Counted first, before anything is undone (CR 1899).
-  if [ "${#own[@]}" -gt 0 ]; then
+  # Counted first, before anything is undone (CR 1899) — unless the run's
+  # commit returned (`done`, CR 1900): its paths are still staged because its
+  # unstage failed, not because a kill cut its commit short.
+  if [ "${#own[@]}" -gt 0 ] && ! grep -qx 'done' "$STAGING" 2>/dev/null; then
     _count_commit_kill "$owner"
   fi
 
@@ -2451,10 +2455,20 @@ if [ "$STATUS_RC" -eq 0 ] && [ -n "$STATUS_OUT" ]; then
         # unstaging alone left both ahead, with stderr silent and the day
         # spent.
         #
-        # A commit that lands ends a run of commit-stage kills (#575).
-        if _hook_git commit -m "$MSG" -- "${STAGED_PATHS[@]}" 2>&1; then
-          rm -f "$COMMIT_KILLS" 2>/dev/null || true
-        else
+        #
+        # A commit that RETURNS ends a run of commit-stage kills (#575),
+        # landed or refused (CR 1900): either way the pre-commit suite
+        # finished inside the budget, and a refusal spends the day anyway.
+        # The marker says so with `done`, so that if the unstage below fails
+        # and _finish_refresh keeps it, the heal does not count the paths
+        # still staged as a kill.
+        COMMIT_RC=0
+        _hook_git commit -m "$MSG" -- "${STAGED_PATHS[@]}" 2>&1 || COMMIT_RC=$?
+        rm -f "$COMMIT_KILLS" 2>/dev/null || true
+        if [ -f "$STAGING" ]; then
+          printf 'done\n' >>"$STAGING" 2>/dev/null || true
+        fi
+        if [ "$COMMIT_RC" -ne 0 ]; then
           echo "commit failed — undoing the bump: unstaging, then the content and the doctor back on the recorded pointer"
           echo "skills update: the commit failed (git's words in $LOG), so this run undoes its bump — the staging, the vendored content and the doctor; anything it cannot put back is said separately. The next day's refresh tries again" >&2 || true
           _unstage "a failed commit" "${COMMIT_PATHS[@]}"
