@@ -69,6 +69,10 @@ marker with the killed run's bump still staged:
 CR 1912 — a marker's drop keeps a take in flight (also a run's second take,
 `.2` after the epoch) and a copy of a live run's marker, and drops a take
 whose heal is over.
+
+CR 1916 — a marker's drop takes a copy of the run's own marker (first line
+`pid $$`) whatever else is staged:
+- a human's bump staged on a path it names → the copy goes; the bump stays
 """
 
 import os
@@ -797,3 +801,48 @@ class TestADropKeepsWhatIsNotOver:
             "a copy of a live run's marker was dropped (_marker_owner_live)"
         )
         assert not over.exists(), "a take whose heal is over was kept"
+
+
+# CR 1916 ------------------------------------------------------------------
+
+
+class TestADropTakesACopyOfItsOwnMarker:
+    """CR 1916: a taken file whose first line is this run's own `pid $$` is a
+    copy of its marker or claim — a slower take, killed after linking it
+    back. `_drop_taken` kept one while a human's staged bump touched a path
+    it names; a later session with no marker adopted it, counted a phantom
+    kill and unstaged the human's bump. The run drops because nothing of its
+    own is staged, so its copy goes whatever else is."""
+
+    def test_the_copy_goes_beside_a_manual_bump(self, consumer):
+        c = consumer
+        newer = _a_manual_bump(c)
+        now = int(time.time())
+        copy = c.path / ".git" / f"skills-update.staging.heal.{_dead_pid()}.{now}"
+        witness = c.path.parent / "copied-marker"
+        # Planted when the refresh's update starts, its claim written by then;
+        # the update fails, so `_finish_refresh` drops the marker with nothing
+        # of the run's own staged.
+        shim = c.bindir / "git"
+        first, rest = shim.read_text().split("\n", 1)
+        shim.write_text(
+            f"{first}\nif {REFRESH_UPDATE}; then "
+            f'cp "{c.path / MARKER}" "{copy}"; cp "{c.path / MARKER}" "{witness}"; '
+            f"exit 1; fi\n{rest}"
+        )
+        try:
+            result = run_hook(c)
+        finally:
+            write_shim(c)
+
+        assert result.returncode == 0, result.stderr
+        assert "skills update failed" in result.stderr, result.stderr
+        assert witness.read_text().startswith("pid "), "fixture: no copy planted"
+        assert staged(c) == [VENDOR] and content(c) == newer
+        assert not copy.exists(), (
+            "a copy of the run's own marker outlived its drop, kept by the "
+            "human's staged bump:\n" + copy.read_text()
+        )
+        kills = c.path / KILLS
+        kills_before = kills.read_text() if kills.exists() else ""
+        _the_manual_bump_is_left_alone(c, newer, kills_before)
