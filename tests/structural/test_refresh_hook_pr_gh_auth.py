@@ -33,6 +33,7 @@ from pathlib import Path
 
 import pytest
 
+from tests.structural import merge_mode_layouts as layouts
 from tests.structural.test_pre_ship_env_override import _extract_loader
 from tests.structural.test_refresh_hook_pr_mode import (
     PR_BRANCH,
@@ -288,10 +289,14 @@ class TestTheReaderHoldsLoadEnvsGrammar:
 
 
 def _token_source(cwd: Path, env: dict) -> tuple[int, str, str]:
+    """_pr_token as the hook reaches it: after _read_merge_mode, which
+    resolves the primary checkout whose .env the fallback reads."""
     r = _bash(
         'PR_GH_REPO="github.com/o/r"\n'
+        + _function("_read_merge_mode")
         + _function("_env_value")
         + _function("_pr_token")
+        + "_read_merge_mode\n"
         + 'rc=0; _pr_token || rc=$?\nprintf "%s\\n%s\\n%s" "$rc" "$PR_TOKEN_FROM" "$PR_GH_TOKEN"\n',
         cwd,
         env,
@@ -321,6 +326,30 @@ class TestWhereTheTokenComesFrom:
         primary = git(wt, "worktree", "list", "--porcelain").stdout.split("\n")[0]
         assert (rc, tok) == (0, "primary")
         assert src == primary.removeprefix("worktree ") + "/.env", src
+
+    def test_a_submodules_linked_worktree_reads_its_primarys_env(self, tmp_path):
+        """CR 1894: the first list entry is `<super>/.git/modules/sub`, a git
+        dir, and the fallback read `.env` there. The primary is the
+        submodule's work tree, which _read_merge_mode has already resolved."""
+        wt = layouts.submodule_linked(tmp_path, "pr\n")
+        primary = (tmp_path / "super" / "sub").resolve()
+        (primary / ".env").write_text("GH_TOKEN=primary\n")
+        env = _no_token_env()
+        env["PATH"] = "/usr/bin:/bin"  # no gh: the .env must answer alone
+
+        rc, src, tok = _token_source(wt, env)
+
+        assert (rc, tok) == (0, "primary"), src
+        assert src == f"{primary}/.env", src
+
+    def test_where_the_primary_is_this_checkout_its_env_is_named_so(self, tmp_path):
+        """A bare primary's checkout is this one: the fallback named
+        `repo.git/.env`, a path inside the git dir, in the refusal."""
+        home = layouts.bare_home(tmp_path, "pr\n")
+        env = _no_token_env()
+        env["PATH"] = "/usr/bin:/bin"
+
+        assert _token_source(home, env) == (1, ".env", "")
 
     def test_the_environment_outranks_the_env_file(self, tmp_path):
         git(tmp_path, "init", "-q", "-b", "main", str(tmp_path / "r"))
