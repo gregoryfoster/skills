@@ -144,8 +144,8 @@ bash .claude/hooks/socraticode-reminder.sh
 
 ## Graph health
 
-`READY` means a build finished, not that it resolved anything. Measure yield
-from the main checkout, never a worktree:
+`READY` means a build finished, not that it resolved anything. Measure the
+main checkout's yield, never a worktree's; this names it from anywhere:
 
 ```bash
 node skills/init-socraticode/scripts/mcp-driver.mjs health-check \
