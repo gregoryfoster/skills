@@ -455,6 +455,15 @@ class TestTheReaderHoldsMergeModeShsGrammar:
             assert mode == "unusable", mode
             assert ".skills/merge_mode" in err
 
+    @pytest.mark.parametrize("layout", sorted(layouts.LAYOUTS))
+    def test_an_inherited_git_dir_does_not_answer(self, tmp_path, layout):
+        """CR 1895: an inherited GIT_DIR beats `-C`, so the submodule's
+        entry named itself as the work tree and the read said `direct`."""
+        checkout = layouts.LAYOUTS[layout](tmp_path, "pr\n")
+        env = clean_env()
+        env["GIT_DIR"] = layouts.git(checkout, "rev-parse", "--absolute-git-dir")
+        assert _read_mode(checkout, env) == ("pr", "")
+
     def test_a_primary_git_cannot_open_is_unusable(self, tmp_path):
         """Only the primary is refused ("dubious ownership"): unusable, with
         git's reason, never a fallback to this checkout or the raw path."""

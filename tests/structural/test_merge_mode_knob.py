@@ -248,6 +248,24 @@ class TestPrimaryLayouts:
         assert (r.returncode, r.stdout) == (2, ""), r.stderr
         assert ".skills/merge_mode" in r.stderr
 
+    @pytest.mark.parametrize("layout", LAYOUTS)
+    def test_an_inherited_git_dir_does_not_answer(self, reader, tmp_path, layout):
+        """CR 1895: git exports GIT_DIR to every hook, absolute in a linked
+        worktree, and it beats `-C`: asked for the submodule's work tree, git
+        named the entry itself, and the read said `direct`."""
+        checkout = layouts.LAYOUTS[layout](tmp_path, "pr\n")
+        env = _env()
+        env["GIT_DIR"] = layouts.git(checkout, "rev-parse", "--absolute-git-dir")
+        r = subprocess.run(
+            ["bash", str(reader)],
+            cwd=checkout,
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=30,
+        )
+        assert (r.returncode, r.stdout) == (0, "pr\n"), r.stderr
+
     def test_a_primary_git_cannot_open_is_exit_2(self, reader, repo, tmp_path):
         """Only the primary is refused ("dubious ownership"); never a fallback."""
         _knob(repo, "pr\n")

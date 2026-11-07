@@ -581,6 +581,22 @@ class TestTheInlineReadersHoldMergeModeShsGrammar:
             assert r.stdout == "", "an unusable knob must render nothing"
             assert ".skills/merge_mode" in r.stderr
 
+    @pytest.mark.parametrize("layout", sorted(layouts.LAYOUTS))
+    def test_an_inherited_git_dir_does_not_answer(self, tmp_path, layout):
+        """CR 1895: as knob_tracked and git_config already scrub it."""
+        checkout = layouts.LAYOUTS[layout](tmp_path, "pr\n")
+        gitdir = layouts.git(checkout, "rev-parse", "--absolute-git-dir")
+        r = subprocess.run(
+            ["bash", str(INSTALL_CADENCE), "--print", "--cron", "0 15 * * 1"],
+            cwd=checkout,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            env=_env(GIT_DIR=gitdir),
+        )
+        assert r.returncode == 0, r.stderr
+        assert READ_STEP in r.stdout, "read as direct"
+
     @pytest.mark.parametrize(
         ("layout", "committed"),
         [("bare_home", True), ("submodule_linked", False)],

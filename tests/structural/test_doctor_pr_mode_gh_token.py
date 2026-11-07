@@ -256,6 +256,21 @@ class TestItReadsThePrimaryAsTheHookDoes:
         quiet = _doctor(consumer, cwd=checkout)
         assert MARKER not in quiet.stderr, quiet.stderr
 
+    @pytest.mark.parametrize("layout", sorted(layouts.LAYOUTS))
+    def test_an_inherited_git_dir_does_not_answer(self, consumer, tmp_path, layout):
+        """CR 1895: an inherited GIT_DIR beats `-C`."""
+        checkout = _layout_consumer(
+            consumer, layouts.LAYOUTS[layout](tmp_path / "l", "pr\n")
+        )
+        gitdir = layouts.git(checkout, "rev-parse", "--absolute-git-dir")
+        result = _doctor(
+            consumer,
+            cwd=checkout,
+            PATH=str(_tools_without_gh(tmp_path)),
+            GIT_DIR=gitdir,
+        )
+        assert NO_GH in result.stderr, result.stderr
+
     def test_a_separate_git_dir_primary(self, consumer, tmp_path):
         """CR 1892's layout: from the primary, its own knob."""
         primary, _ = layouts.separate_git_dir(tmp_path / "l", "pr\n")
