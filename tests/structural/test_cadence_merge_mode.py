@@ -597,6 +597,23 @@ class TestTheInlineReadersHoldMergeModeShsGrammar:
         assert r.returncode == 0, r.stderr
         assert READ_STEP in r.stdout, "read as direct"
 
+    @pytest.mark.parametrize("layout", sorted(layouts.LAYOUTS))
+    def test_an_inherited_git_work_tree_does_not_answer(self, tmp_path, layout):
+        """CR 1903: an inherited GIT_WORK_TREE beats the submodule's
+        core.worktree, so its entry named this linked checkout, whose
+        committed knob says `direct`."""
+        checkout = layouts.LAYOUTS[layout](tmp_path, "pr\n")
+        r = subprocess.run(
+            ["bash", str(INSTALL_CADENCE), "--print", "--cron", "0 15 * * 1"],
+            cwd=checkout,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            env=_env(GIT_WORK_TREE=str(checkout)),
+        )
+        assert r.returncode == 0, r.stderr
+        assert READ_STEP in r.stdout, "read as direct"
+
     @pytest.mark.parametrize(
         "layout", [*sorted(layouts.LAYOUTS), "separate_git_dir_primary"]
     )

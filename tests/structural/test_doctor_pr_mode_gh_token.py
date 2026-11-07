@@ -271,6 +271,24 @@ class TestItReadsThePrimaryAsTheHookDoes:
         )
         assert NO_GH in result.stderr, result.stderr
 
+    @pytest.mark.parametrize("layout", sorted(layouts.LAYOUTS))
+    def test_an_inherited_git_work_tree_does_not_answer(
+        self, consumer, tmp_path, layout
+    ):
+        """CR 1903: an inherited GIT_WORK_TREE beats the submodule's
+        core.worktree, so its entry named this linked checkout, whose
+        committed knob says `direct`, and the doctor was silent."""
+        checkout = _layout_consumer(
+            consumer, layouts.LAYOUTS[layout](tmp_path / "l", "pr\n")
+        )
+        result = _doctor(
+            consumer,
+            cwd=checkout,
+            PATH=str(_tools_without_gh(tmp_path)),
+            GIT_WORK_TREE=str(checkout),
+        )
+        assert NO_GH in result.stderr, result.stderr
+
     def test_a_separate_git_dir_primary(self, consumer, tmp_path):
         """CR 1892's layout: from the primary, its own knob."""
         primary, _ = layouts.separate_git_dir(tmp_path / "l", "pr\n")
