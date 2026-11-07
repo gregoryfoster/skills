@@ -303,6 +303,9 @@ TAKEN=""
 _take_marker() {
   local judged="$1" first
   TAKEN="$STAGING.heal.$$.$(date +%s 2>/dev/null || echo 0)"
+  # Only this run names a take with its PID, so one there is its heal's,
+  # kept since that claim lost (CR 1911): `mv` would replace it.
+  [ ! -e "$TAKEN" ] || TAKEN="$TAKEN.2"
   mv "$STAGING" "$TAKEN" 2>/dev/null || return 1
   first="$(head -n 1 "$TAKEN" 2>/dev/null)" || first=""
   if [ "$first" != "$judged" ] || _marker_owner_live "$TAKEN"; then
@@ -314,7 +317,7 @@ _take_marker() {
 }
 
 # _taker_live <taken file> — true while the heal named in the file's name
-# (`.heal.<pid>.<epoch>`) may still be between its take and its claim: its pid
+# (`.heal.<pid>.<epoch>[.2]`) may still be between its take and its claim: its pid
 # is not this run's, is under MARKER_MAX_AGE, and `kill -0` reaches it. A name
 # that is not a heal's reads as live, so nothing acts on it.
 _taker_live() {
@@ -322,6 +325,7 @@ _taker_live() {
   rest="${1#"$STAGING".heal.}"
   pid="${rest%%.*}"
   started="${rest#*.}"
+  started="${started%%.*}"
   case "$pid" in '' | *[!0-9]*) return 0 ;; esac
   case "$started" in '' | *[!0-9]*) started=0 ;; esac
   now="$(date +%s 2>/dev/null)" || now=0
@@ -333,9 +337,9 @@ _taker_live() {
 # its own leaves only `$STAGING.heal.<pid>.<epoch>`, and with no marker the
 # heal would leave its staging alone for good (CR 1897). Its pid gone, or past
 # MARKER_MAX_AGE (a reused pid), it becomes the marker again — linked, so
-# never over a marker already there — and is healed as one. Only a heal
-# killed in that gap leaves one with no marker: every other is dropped when
-# the marker that supersedes it goes (_drop_marker, CR 1906).
+# never over a marker already there — and is healed as one. One is left with
+# no marker by a heal killed in that gap, and by a marker's drop, which keeps
+# one while anything it names is staged (_drop_taken, CR 1911).
 _adopt_taken() {
   local f
   [ ! -e "$STAGING" ] || return 0
@@ -352,23 +356,31 @@ _adopt_taken() {
 }
 
 # _drop_marker — the marker's job is done: drop it, and (_drop_taken) every
-# taken file whose heal is over (CR 1906). A taken file outlives its heal
-# when the heal is killed after its claim and before dropping what it took,
-# when a take that found a live marker is killed after putting it back, and
-# when a refresh claims $STAGING in a heal's gap. Each is superseded by a
-# marker that names its paths — the claim, the live run's, the refresh's —
-# so once that marker goes, nothing is left for it to mark. Kept, a later
-# session with no marker adopted it: a human's manual bump unstaged, a
-# healed kill counted again. Kept still: a take in flight (_taker_live), and
-# a copy of a live run's marker, taken in error and not put back, which is
-# its run's to drop. Before $STAGING goes, so that no _adopt_taken can link
-# one in between.
+# taken file whose heal is over and of which nothing is staged (CR 1906, CR
+# 1911). A taken file outlives its heal when the heal is killed after its
+# claim and before dropping what it took, when a take that found a live
+# marker is killed after putting it back, and when a run claims $STAGING in
+# a heal's gap. Left with no marker, a later session adopts it: what is
+# wanted while the killed run's bump is still staged (the run that claimed
+# in the gap may end without `git add`), and wrong once it is not — a
+# human's manual bump unstaged, a healed kill counted again. Kept also: a
+# take in flight (_taker_live), and a copy of a live run's marker, taken in
+# error and not put back, which is its run's to drop. Before $STAGING goes,
+# so that no _adopt_taken can link one in between.
 _drop_taken() {
-  local f
+  local f p paths=()
   for f in "$STAGING".heal.*; do
     [ -f "$f" ] || continue
     ! _taker_live "$f" || continue
     ! _marker_owner_live "$f" || continue
+    paths=()
+    while IFS= read -r p; do
+      case "$p" in 'pid '* | 'heals '* | 'mode '* | noted | done | '') : ;; *) paths+=("$p") ;; esac
+    done 2>/dev/null <"$f"
+    if [ "${#paths[@]}" -gt 0 ] &&
+      ! git diff --cached --quiet --ignore-submodules=none -- "${paths[@]}" 2>/dev/null; then
+      continue
+    fi
     rm -f "$f" 2>/dev/null || true
   done
   return 0
@@ -1321,9 +1333,8 @@ _heal_staged() {
     # next session heals. `heals` keeps the killed run's owner line, which is
     # what a kill is counted by (_count_commit_kill). The claim fails when a
     # run claimed $STAGING in the instant it was gone: that run owns the
-    # checkout, and its marker names the paths, so what was taken is dropped
-    # (CR 1906). Failed with no marker there, it stays where _adopt_taken
-    # finds it.
+    # checkout, and what was taken stays, for _drop_taken or _adopt_taken
+    # (CR 1911).
     if ! _take_marker "$owner"; then
       _log "heal: another session took $STAGING first — leaving the index to it"
       return 0
@@ -1355,12 +1366,7 @@ _heal_staged() {
 $carried
 CARRIED_EOF
     if [ "$rc" -gt 1 ] || ! _write_marker "$body${carried:+$'\n'$carried}"; then
-      if [ -e "$STAGING" ]; then
-        _drop_taken
-        _log "heal: could not claim $STAGING after taking it — another run claimed it first and owns the checkout; leaving the index to it"
-      else
-        _log "heal: could not claim $STAGING after taking it — leaving the index alone; $TAKEN is healed by a later session"
-      fi
+      _log "heal: could not claim $STAGING after taking it — leaving the index alone; $TAKEN stays until nothing it names is staged"
       return 0
     fi
     rc=0
