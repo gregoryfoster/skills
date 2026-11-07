@@ -50,9 +50,15 @@ counted again.
 - the heal keeps the marker (someone's work staged beside), and the same
   session's refresh then finishes        → the same
 - a refresh claims in the heal's gap     → the heal drops what it took
+
+CR 1908 — the heal reads the marker it claimed from its private copy, never
+from `$STAGING`, which a slower session's take renames away for an instant:
+- the paths read in that instant         → the heal still heals
+- `mode pr` read in that instant         → still healed as a pr-mode run's
 """
 
 import os
+import shutil
 import subprocess
 import time
 
@@ -529,4 +535,83 @@ class TestATakenFileOutlivesNoHeal:
         assert marker.read_text().startswith(f"pid {owner.pid} "), (
             "the claim that landed in the gap was touched"
         )
+        _no_heal_leftovers(c)
+
+
+# CR 1908 ------------------------------------------------------------------
+
+
+def _marker_renamed_away_when_read(c, only_with: str = "") -> None:
+    """A `grep` that, once, finds the marker renamed away for the length of
+    its read and put back after: a slower session's take, which moves
+    `$STAGING` to its own `.heal` name, re-checks it and links it back.
+    `only_with` narrows it to a grep carrying that argument."""
+    marker = c.path / MARKER
+    real = shutil.which("grep") or "/usr/bin/grep"
+    narrow = f'[ "$a" = "{only_with}" ] && w=1; ' if only_with else ""
+    shim = c.bindir / "grep"
+    shim.write_text(
+        "#!/bin/bash\n"
+        f"hit=0; w={0 if only_with else 1}\n"
+        # The hook names it by its git dir, `.git` here: matched by suffix.
+        'for a in "$@"; do case "$a" in *skills-update.staging) hit=1 ;; esac; '
+        f"{narrow}done\n"
+        f'if [ -f "{c.kill_flag}" ] && [ $hit = 1 ] && [ $w = 1 ]; then\n'
+        f'  rm -f "{c.kill_flag}"\n'
+        f'  mv "{marker}" "{marker}.away"\n'
+        f'  {real} "$@"; rc=$?\n'
+        f'  mv "{marker}.away" "{marker}"\n'
+        "  exit $rc\n"
+        "fi\n"
+        f'exec {real} "$@"\n'
+    )
+    shim.chmod(0o755)
+    c.kill_flag.write_text("")
+
+
+class TestTheHealReadsWhatItTook:
+    """CR 1908: after claiming, the heal read the paths, `mode pr`, `done`
+    and `noted` from `$STAGING` — the file a slower session's take renames
+    away for an instant before linking it back. Read in that instant, the
+    paths read failed and the heal gave up, and `mode pr` read false, so a
+    pr-mode run's marker was healed as a direct one's. They are read from
+    `$TAKEN`, the heal's private copy, before it is dropped."""
+
+    def test_the_paths_read_in_the_window(self, consumer):
+        c = consumer
+        _killed_in_commit(c)
+        spend_todays_lock(c)
+        _marker_renamed_away_when_read(c)
+
+        result = run_hook(c)
+
+        assert result.returncode == 0, result.stderr
+        assert "could not read" not in log_text(c), log_text(c)
+        assert staged(c) == [], "the heal gave up on a marker it had claimed"
+        assert content(c) == gitlink(c) == c.before
+        assert not (c.path / MARKER).exists()
+        _no_heal_leftovers(c)
+
+    def test_mode_pr_read_in_the_window(self, consumer):
+        """A pr-mode run never stages here, so a staged hook path beside its
+        marker is a human's manual bump: never unstaged, never a kill."""
+        c = consumer
+        newer = _a_manual_bump(c)
+        spend_todays_lock(c)
+        now = int(time.time())
+        (c.path / MARKER).write_text(
+            f"pid {_dead_pid()} {now}\nmode pr\n{VENDOR}\n{DOCTOR_PATH}\n"
+        )
+        _marker_renamed_away_when_read(c, only_with="mode pr")
+
+        result = run_hook(c)
+
+        assert result.returncode == 0, result.stderr
+        assert staged(c) == [VENDOR], (
+            "a pr-mode marker was healed as a direct one: the human's bump "
+            "was unstaged\n" + log_text(c)
+        )
+        assert content(c) == newer
+        assert not (c.path / KILLS).exists(), "a kill was counted"
+        assert not (c.path / MARKER).exists()
         _no_heal_leftovers(c)
