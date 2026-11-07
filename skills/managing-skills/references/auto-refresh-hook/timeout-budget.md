@@ -12,7 +12,7 @@ The harness kills the hook at its `timeout`: 120 s, from `skills-submodule-updat
 - the commit, through the consumer's **pre-commit** hooks;
 - the push, through its **pre-push** hooks.
 
-The hook never passes `--no-verify`, so a consumer whose hooks run a full test suite spends the budget there. CannObserv/power-map's suite took about 550 s on a pointer-only commit and CannObserv/cli's took 112 s. A killed run leaves nothing on stderr. Its log ends mid-`pytest`, and since [#555](https://github.com/gregoryfoster/skills/issues/555) the next session tries again ([#575](https://github.com/gregoryfoster/skills/issues/575) tracks the back-off).
+The hook never passes `--no-verify`, so a consumer whose hooks run a full test suite spends the budget there. CannObserv/power-map's suite took about 550 s on a pointer-only commit and CannObserv/cli's took 112 s. A killed run leaves nothing on stderr, and its log ends mid-`pytest`. Since [#555](https://github.com/gregoryfoster/skills/issues/555) the next session tries again. The second run in a row killed inside its commit spends the day instead, and the session that finds it says on stderr that the commit did not fit and names this knob ([#575](https://github.com/gregoryfoster/skills/issues/575)). So a suite that never fits is tried twice on the first day and once a day after, until a commit lands.
 
 ## `.skills/refresh-skip-hooks`
 
