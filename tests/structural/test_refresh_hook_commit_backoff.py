@@ -39,6 +39,14 @@ Coverage:
                                             reset the count
 - a commit-stage kill, a run that commits, a commit-stage kill
                                           → retried: the commit reset the count
+- a commit-stage kill, a heal killed at its restore, a commit-stage kill
+  (CR 1899: the count was taken last, so a killed heal lost it)
+                                          → backs off
+- a commit-stage kill, a commit the pre-commit hook refuses, the next day a
+  commit-stage kill (CR 1900: a commit that returns resets the count)
+                                          → retried
+- a refused commit whose unstage also fails, so its marker is kept
+  (CR 1900)                               → the heal does not count it
 """
 
 import pytest
@@ -231,3 +239,100 @@ class TestWhatCounts:
         _kill_in_commit(c)
 
         _assert_landed(c, run_hook(c), newer)
+
+
+# CR 1899 ------------------------------------------------------------------
+
+# The heal's restore, after its unstage: the last git it runs before the
+# count used to be taken.
+HEAL_RESTORE = '[ "$1" = submodule ] && [ "$2" = update ] && [ "$3" = --checkout ]'
+
+
+class TestAKilledHealStillCounts:
+    def test_a_heal_killed_at_its_restore_counts_the_kill(self, consumer):
+        """The count came last, after the restore and the marker's removal.
+        A heal killed at its restore lost it, and the next heal found the
+        staging already undone and counted nothing — so two commit-stage
+        kills with a killed heal between them read as one, and a suite too
+        slow for the budget was retried at every session again."""
+        c = consumer
+        _kill_in_commit(c)
+        write_shim(c, kill_when=HEAL_RESTORE, signal_name="TERM")
+        c.kill_flag.write_text("")
+        healer = run_hook(c)
+        write_shim(c)
+        assert healer.returncode < 0, (
+            f"fixture: the heal was meant to be killed at its restore:\n{healer.stderr}"
+        )
+        assert staged(c) == [], "fixture: the kill should fall after the unstage"
+        _kill_in_commit(c)  # heals what the killed heal left, then its own kill
+
+        _assert_backed_off(c, run_hook(c))
+
+
+# CR 1900 ------------------------------------------------------------------
+
+MARKER = ".git/skills-update.staging"
+
+
+def _refuse_commits(c) -> None:
+    hook = c.path / ".git" / "hooks" / "pre-commit"
+    hook.write_text("#!/bin/sh\necho 'pre-commit: refused' >&2\nexit 1\n")
+    hook.chmod(0o755)
+
+
+class TestACommitThatReturns:
+    def test_a_refused_commit_resets_the_count(self, consumer):
+        """Refused or landed, a commit that returns finished its pre-commit
+        suite inside the budget. Left at 1, the count turned the next
+        commit-stage kill — weeks later — into a back-off."""
+        c = consumer
+        _kill_in_commit(c)
+        _refuse_commits(c)
+
+        refused = run_hook(c)
+
+        assert refused.returncode == 0, refused.stderr
+        assert "the commit failed" in refused.stderr, refused.stderr
+        assert not (c.path / COUNTER).exists(), (
+            "a commit that returned, refused, left the count behind"
+        )
+
+        lock(c).unlink()  # the next UTC day
+        _kill_in_commit(c)
+
+        _assert_landed(c, run_hook(c), c.after)
+
+    def test_a_marker_kept_after_a_refused_commit_is_not_a_kill(self, consumer):
+        """A refused commit whose unstage also fails keeps its marker, with
+        the hook's paths staged — what a commit-stage kill leaves. The run
+        returned from its commit, so the heal must not count it."""
+        c = consumer
+        _refuse_commits(c)
+        write_shim(c)
+        shim = c.bindir / "git"
+        first, rest = shim.read_text().split("\n", 1)
+        shim.write_text(
+            f"{first}\n"
+            f'if [ -f "{c.kill_flag}" ] && [ "$1" = reset ]; then '
+            f'rm -f "{c.kill_flag}"; echo "fatal: simulated" >&2; exit 1; fi\n'
+            f"{rest}"
+        )
+        c.kill_flag.write_text("")
+
+        refused = run_hook(c)
+
+        write_shim(c)
+        assert refused.returncode == 0, refused.stderr
+        assert "still staged" in refused.stderr, refused.stderr
+        assert (c.path / MARKER).exists(), "fixture: the marker should be kept"
+        assert VENDOR in staged(c)
+
+        healed = run_hook(c)  # the day is spent: the heal alone
+
+        assert healed.returncode == 0, healed.stderr
+        assert staged(c) == []
+        assert not (c.path / COUNTER).exists(), (
+            "the heal counted a refused commit's kept marker as a kill: "
+            + (c.path / COUNTER).read_text()
+        )

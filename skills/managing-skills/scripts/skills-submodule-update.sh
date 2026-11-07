@@ -78,7 +78,7 @@ Behaviour:
     progress). The second run in a row killed inside its commit spends the
     day instead, and says why on stderr: the commit through the repo's
     pre-commit hooks did not fit the timeout (.git/skills-update.commit-kills
-    counts them; a commit that lands resets it).
+    counts them; a commit that returns, landed or refused, resets it).
   - Runs only on the main branch.
   - Scopes the submodule update to skills-vendor/ — never touches other
     submodules.
@@ -109,7 +109,9 @@ Behaviour:
     alike — and the next session retries. A commit or an update that
     fails is undone the same way (#550). The rollback moves HEAD by
     compare-and-swap, so two sessions refused together roll it back once
-    (#566). A run that cannot push does not refresh either. Never pulls,
+    (#566), and a push refused because another session's push of the same
+    commit landed rolls nothing back. A run that cannot push does not
+    refresh either. Never pulls,
     never force-pushes main, and never touches a commit this hook did not
     write.
   - With .skills/merge_mode 'pr' (read from the primary checkout, #560),
@@ -168,11 +170,15 @@ LOG="$gitdir/skills-update.log"
 # names the run that owns it, `pid <PID> <epoch seconds>`; then one path per
 # line — the ones that run may stage — so a later session can tell what the
 # hook staged from what a human did; a heal that has said a killed run's
-# staging on stderr appends `noted`. See _heal_staged and _marker_owner_live.
+# staging on stderr appends `noted`, and a run whose commit returned appends
+# `done` (CR 1900). A heal claims a dead marker as its own
+# (CR 1897), adding `heals <the killed run's owner line>`; while it takes one,
+# the marker is `$STAGING.heal.<pid>.<epoch>`. See _heal_staged, _take_marker
+# and _marker_owner_live.
 STAGING="$gitdir/skills-update.staging"
 # Refreshes killed inside their commit, in a row (#575): one line, `<count>
 # <the last one's marker owner line>`. Written by the heal, removed by a run
-# whose commit lands. See _count_commit_kill.
+# whose commit returns, landed or refused (CR 1900). See _count_commit_kill.
 COMMIT_KILLS="$gitdir/skills-update.commit-kills"
 # How long a marker's owner can be believed alive (CR 1789): the hook's 120 s
 # ceiling plus margin. Past it, a live PID is a reused one — an unrelated
@@ -237,25 +243,28 @@ _phase() {
 # _marker_being_written covers what is left of it, and is reached only for an
 # unparseable marker, so its `stat` costs a normal run nothing. Both ways
 # bounded: an mtime more than 2 s ahead (a clock set back) is not believed.
+#
+# Both read $STAGING, or the marker file named as their argument: the heal
+# checks again the one it has just taken (_take_marker).
 MARKER_OWNER=""
 _marker_being_written() {
-  local now mtime
+  local file="${1:-$STAGING}" now mtime
   now="$(date +%s 2>/dev/null)" || return 1
   # GNU and busybox take -c; BSD's (macOS) refuses it with nothing on stdout.
-  mtime="$(stat -c %Y "$STAGING" 2>/dev/null || stat -f %m "$STAGING" 2>/dev/null)" || return 1
+  mtime="$(stat -c %Y "$file" 2>/dev/null || stat -f %m "$file" 2>/dev/null)" || return 1
   case "$mtime" in '' | *[!0-9]*) return 1 ;; esac
   [ $((now - mtime)) -le 2 ] && [ $((mtime - now)) -le 2 ]
 }
 _marker_owner_live() {
-  local head tag pid started now
+  local file="${1:-$STAGING}" head tag pid started now
   MARKER_OWNER=""
-  [ -f "$STAGING" ] || return 1
-  head="$(head -n 1 "$STAGING" 2>/dev/null)" || return 1
+  [ -f "$file" ] || return 1
+  head="$(head -n 1 "$file" 2>/dev/null)" || return 1
   read -r tag pid started <<<"$head" || true
   case "$pid" in '' | *[!0-9]*) tag="" ;; esac
   case "$started" in '' | *[!0-9]*) tag="" ;; esac
   if [ "$tag" != "pid" ]; then
-    _marker_being_written || return 1
+    _marker_being_written "$file" || return 1
     MARKER_OWNER="unknown: its marker is still being written"
     return 0
   fi
@@ -264,6 +273,72 @@ _marker_owner_live() {
   [ $((now - started)) -le "$MARKER_MAX_AGE" ] || return 1
   kill -0 "$pid" 2>/dev/null || return 1
   MARKER_OWNER="$pid"
+  return 0
+}
+
+# _write_marker <body> — write $STAGING only if it is not there (`noclobber`),
+# in one builtin `printf` from content built beforehand (CR 1808). In a
+# subshell, so noclobber stays out of the rest of the run.
+_write_marker() {
+  (
+    set -o noclobber
+    printf '%s\n' "$1" >"$STAGING"
+  ) 2>/dev/null
+}
+
+# _take_marker <judged first line> — take the dead marker at $STAGING so that
+# no other session can (CR 1897), and set TAKEN to where it went.
+#
+# Judging a marker dead and then removing it are two steps, and two sessions
+# can be between them at once. The heal ended `rm -f "$STAGING"`: the slower
+# of two heals deleted what was by then the faster session's live claim, then
+# claimed its own and refreshed beside it — index.lock contention, a false
+# "commit failed", a double push. A rename is one step: of two sessions,
+# exactly one moves the inode, to `$STAGING.heal.<pid>.<epoch>`, and the other
+# finds nothing to move. What it moved is checked again, since a live claim
+# may have replaced the dead marker since it was judged: the same first line,
+# and still not live. Anything else is linked back (link(2) never replaces a
+# file) and left to its owner.
+TAKEN=""
+_take_marker() {
+  local judged="$1" first
+  TAKEN="$STAGING.heal.$$.$(date +%s 2>/dev/null || echo 0)"
+  mv "$STAGING" "$TAKEN" 2>/dev/null || return 1
+  first="$(head -n 1 "$TAKEN" 2>/dev/null)" || first=""
+  if [ "$first" != "$judged" ] || _marker_owner_live "$TAKEN"; then
+    ln "$TAKEN" "$STAGING" 2>/dev/null || _log "could not put back $STAGING, taken in error — its run may lose its marker"
+    rm -f "$TAKEN" 2>/dev/null || true
+    return 1
+  fi
+  return 0
+}
+
+# _adopt_taken — a heal killed between taking the marker and claiming it as
+# its own leaves only `$STAGING.heal.<pid>.<epoch>`, and with no marker the
+# heal would leave its staging alone for good (CR 1897). Its pid gone, or past
+# MARKER_MAX_AGE (a reused pid), it becomes the marker again — linked, so
+# never over a marker already there — and is healed as one.
+_adopt_taken() {
+  local f rest pid started now
+  [ ! -e "$STAGING" ] || return 0
+  for f in "$STAGING".heal.*; do
+    [ -f "$f" ] || continue
+    rest="${f#"$STAGING".heal.}"
+    pid="${rest%%.*}"
+    started="${rest#*.}"
+    case "$pid" in '' | *[!0-9]*) continue ;; esac
+    case "$started" in '' | *[!0-9]*) started=0 ;; esac
+    now="$(date +%s 2>/dev/null)" || now=0
+    if [ "$pid" != "$$" ] && [ $((now - started)) -le "$MARKER_MAX_AGE" ] &&
+      kill -0 "$pid" 2>/dev/null; then
+      continue
+    fi
+    if ln "$f" "$STAGING" 2>/dev/null; then
+      rm -f "$f" 2>/dev/null || true
+      _log "heal: $f, left by a heal killed part way, is the marker again"
+    fi
+    return 0
+  done
   return 0
 }
 
@@ -731,6 +806,30 @@ _reconcile_unpushed() {
   fi
   _phase "push"
 
+  # Refused because the remote already has it (CR 1896): two sessions pushing
+  # one stranded bump, the remote takes one and refuses the other ("incorrect
+  # old value provided"). Nothing moved local HEAD, so the swap below would
+  # succeed and leave main behind @{u} — and the hook never pulls, so every
+  # later bump would be refused until a human synced. @{u} first, which the
+  # winner's push updates; then the remote itself, once, since that write may
+  # not have landed yet — and @{u} is brought up to what it answered, so this
+  # run's own push later counts from there. Not a refusal: the bump is shared.
+  local remote_tip upref
+  if git merge-base --is-ancestor "$head" "@{u}" 2>/dev/null; then
+    _log "unpushed: push failed, but $upstream_name already has ${head:0:7} — another session pushed it; nothing rolled back"
+    return 0
+  fi
+  remote_tip="$(git ls-remote "$remote" "$merge" 2>>"$LOG" |
+    awk -v ref="$merge" '$2 == ref { print $1; exit }')" || remote_tip=""
+  if [ -n "$remote_tip" ] && [ "$remote_tip" = "$head" ]; then
+    if ! upref="$(git rev-parse --symbolic-full-name "@{u}" 2>/dev/null)" ||
+      ! git update-ref -m "skills update: $remote already has $merge at ${head:0:7}" "$upref" "$head" 2>>"$LOG"; then
+      _log "unpushed: could not bring @{u} up to ${head:0:7}"
+    fi
+    _log "unpushed: push failed, but $remote already has ${head:0:7} at $merge — another session pushed it; nothing rolled back"
+    return 0
+  fi
+
   # A compare-and-swap that keeps `reset --soft`'s semantics, to HEAD~N
   # rather than to @{u}. Each part is load-bearing.
   #
@@ -1090,8 +1189,16 @@ _stamp_lock() {
 # many sessions heal it. A kill before `git add` never gets here, and does not
 # reset the count either: the extension's kill nearly always lands there, and
 # resetting on it would let a slow suite interleaved with it retry forever.
-# Only a commit that lands resets it. A count past 2 backs off at once: a
-# suite that has not fitted twice is not retried a second time in a day.
+# Only a commit that returns resets it, landed or refused (CR 1900). A count
+# past 2 backs off at once: a suite that has not fitted twice is not retried a
+# second time in a day.
+#
+# Called as soon as the heal knows the killed run left the hook's paths
+# staged, before it undoes anything (CR 1899): counted last, a heal killed at
+# its restore lost the count, and the next heal found nothing staged to count.
+# The owner-line key makes a second call for one kill a no-op. Written through
+# a temp file and a rename, so a kill mid-write cannot leave it empty — which
+# reads as 0.
 _count_commit_kill() {
   local owner="$1" kills=0 last=""
   case "$owner" in "pid "*) : ;; *) return 0 ;; esac
@@ -1101,7 +1208,9 @@ _count_commit_kill() {
   fi
   [ "$last" != "$owner" ] || return 0
   kills=$((kills + 1))
-  if ! printf '%s %s\n' "$kills" "$owner" >"$COMMIT_KILLS" 2>/dev/null; then
+  if ! printf '%s %s\n' "$kills" "$owner" >"$COMMIT_KILLS.tmp" 2>/dev/null ||
+    ! mv -f "$COMMIT_KILLS.tmp" "$COMMIT_KILLS" 2>/dev/null; then
+    rm -f "$COMMIT_KILLS.tmp" 2>/dev/null || true
     _log "heal: could not write $COMMIT_KILLS — a refresh killed inside its commit is not counted, and the next session retries"
     return 0
   fi
@@ -1147,7 +1256,8 @@ _count_commit_kill() {
 _heal_staged() {
   [ "$BRANCH" = "main" ] || return 0
 
-  local listed="" marked=0 staged_now rc=0 spath own=() others=0 hook_paths owner=""
+  local listed="" marked=0 staged_now rc=0 spath own=() others=0 hook_paths owner="" body
+  _adopt_taken
   if [ -f "$STAGING" ]; then
     # A live owner's marker is never the heal's (CR 1789). The guard ahead of
     # the doctor install already exits on one; this keeps the heal honest on
@@ -1156,11 +1266,35 @@ _heal_staged() {
       _log "heal: $STAGING belongs to a refresh still in flight (pid $MARKER_OWNER) — leaving the index alone"
       return 0
     fi
-    marked=1
     owner="$(head -n 1 "$STAGING" 2>/dev/null)" || owner=""
-    # The paths, without the owner line, a pr-mode run's `mode pr`, or the
-    # `noted` an earlier heal appended (CR 1801).
-    listed="$(grep -v -e '^pid ' -e '^mode ' -e '^noted$' "$STAGING" 2>>"$LOG")" || rc=$?
+    # Taken, then claimed as this run's own for the length of the heal (CR
+    # 1897): a session starting meanwhile finds a live owner and leaves, and
+    # a heal killed part way leaves a marker, naming the same paths, that the
+    # next session heals. `heals` keeps the killed run's owner line, which is
+    # what a kill is counted by (_count_commit_kill). The claim fails only
+    # when a run claimed $STAGING in the instant it was gone: that run owns
+    # the checkout, and what was taken stays where _adopt_taken finds it.
+    if ! _take_marker "$owner"; then
+      _log "heal: another session took $STAGING first — leaving the index to it"
+      return 0
+    fi
+    body="$(grep -m 1 '^heals ' "$TAKEN" 2>/dev/null)" || body=""
+    if [ -n "$body" ]; then
+      owner="${body#heals }"
+    fi
+    body="pid $$ $(date +%s 2>/dev/null || true)"
+    case "$owner" in "pid "*) body="$body"$'\n'"heals $owner" ;; esac
+    listed="$(grep -v -e '^pid ' -e '^heals ' "$TAKEN" 2>>"$LOG")" || rc=$?
+    if [ "$rc" -gt 1 ] || ! _write_marker "$body${listed:+$'\n'$listed}"; then
+      _log "heal: could not claim $STAGING after taking it — leaving the index alone; $TAKEN is healed by a later session"
+      return 0
+    fi
+    rc=0
+    rm -f "$TAKEN" 2>/dev/null || true
+    marked=1
+    # The paths, without the owner lines, a pr-mode run's `mode pr`, the
+    # `noted` an earlier heal appended (CR 1801), or a returned commit's `done`.
+    listed="$(grep -v -e '^pid ' -e '^heals ' -e '^mode ' -e '^noted$' -e '^done$' "$STAGING" 2>>"$LOG")" || rc=$?
     if [ "$rc" -gt 1 ]; then
       _log "heal: could not read $STAGING (grep exited $rc) — leaving the index alone"
       return 0
@@ -1204,6 +1338,14 @@ STAGED_EOF
       _log "heal: ${own[*]} staged with no in-progress marker — a manual bump, or a hook from before #555; not this hook's to undo, leaving the index alone"
     fi
     return 0
+  fi
+
+  # The kill fell between `git add` and the end of `git commit` (#575).
+  # Counted first, before anything is undone (CR 1899) — unless the run's
+  # commit returned (`done`, CR 1900): its paths are still staged because its
+  # unstage failed, not because a kill cut its commit short.
+  if [ "${#own[@]}" -gt 0 ] && ! grep -qx 'done' "$STAGING" 2>/dev/null; then
+    _count_commit_kill "$owner"
   fi
 
   # The whole bump goes back, not only its staging (#550): a kill after the
@@ -1260,10 +1402,6 @@ LISTED_EOF
   if [ "${#own[@]}" -eq 0 ] ||
     git diff --cached --quiet --ignore-submodules=none -- "${own[@]}" 2>/dev/null; then
     rm -f "$STAGING" 2>/dev/null || true
-  fi
-  # The kill fell between `git add` and the end of `git commit` (#575).
-  if [ "${#own[@]}" -gt 0 ]; then
-    _count_commit_kill "$owner"
   fi
   return 0
 }
@@ -1673,8 +1811,8 @@ REFRESH_PATHS+=(.skills/doctor.sh)
 # exactly one owns the refresh. One already there is checked: a live owner's
 # means another session got here since this one passed the guard at the top,
 # so this run leaves; a dead owner's — kept by a heal whose unstage failed —
-# is replaced. In a subshell, so noclobber stays out of the rest of the run
-# (and `$$` there is still this run's PID).
+# is replaced, by _take_marker. _write_marker's subshell keeps noclobber out
+# of the rest of the run (and `$$` there is still this run's PID).
 #
 # The whole content is built first, `date` and all, and written by one
 # builtin `printf` (CR 1808): with the fork inside the redirect, the file sat
@@ -1691,17 +1829,18 @@ _claim_marker() {
   for p in "${REFRESH_PATHS[@]}"; do
     body="$body"$'\n'"$p"
   done
-  (
-    set -o noclobber
-    printf '%s\n' "$body" > "$STAGING"
-  ) 2>/dev/null
+  _write_marker "$body"
 }
 if ! _claim_marker; then
   if _marker_owner_live; then
     _log "another refresh is in flight (pid $MARKER_OWNER) — leaving this checkout to it"
     exit 0
   fi
-  rm -f "$STAGING" 2>/dev/null || true
+  # Taken, not removed (CR 1897): between judging it dead and removing it,
+  # another session may have replaced it with its own live claim.
+  if _take_marker "$(head -n 1 "$STAGING" 2>/dev/null || true)"; then
+    rm -f "$TAKEN" 2>/dev/null || true
+  fi
   if ! _claim_marker; then
     if [ -f "$STAGING" ]; then
       _log "another refresh claimed $STAGING first — leaving this checkout to it"
@@ -2340,10 +2479,20 @@ if [ "$STATUS_RC" -eq 0 ] && [ -n "$STATUS_OUT" ]; then
         # unstaging alone left both ahead, with stderr silent and the day
         # spent.
         #
-        # A commit that lands ends a run of commit-stage kills (#575).
-        if _hook_git commit -m "$MSG" -- "${STAGED_PATHS[@]}" 2>&1; then
-          rm -f "$COMMIT_KILLS" 2>/dev/null || true
-        else
+        #
+        # A commit that RETURNS ends a run of commit-stage kills (#575),
+        # landed or refused (CR 1900): either way the pre-commit suite
+        # finished inside the budget, and a refusal spends the day anyway.
+        # The marker says so with `done`, so that if the unstage below fails
+        # and _finish_refresh keeps it, the heal does not count the paths
+        # still staged as a kill.
+        COMMIT_RC=0
+        _hook_git commit -m "$MSG" -- "${STAGED_PATHS[@]}" 2>&1 || COMMIT_RC=$?
+        rm -f "$COMMIT_KILLS" 2>/dev/null || true
+        if [ -f "$STAGING" ]; then
+          printf 'done\n' >>"$STAGING" 2>/dev/null || true
+        fi
+        if [ "$COMMIT_RC" -ne 0 ]; then
           echo "commit failed — undoing the bump: unstaging, then the content and the doctor back on the recorded pointer"
           echo "skills update: the commit failed (git's words in $LOG), so this run undoes its bump — the staging, the vendored content and the doctor; anything it cannot put back is said separately. The next day's refresh tries again" >&2 || true
           _unstage "a failed commit" "${COMMIT_PATHS[@]}"

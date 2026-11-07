@@ -23,6 +23,22 @@ to its end:
                                     guards would be one they never read
 - a swap git refuses, HEAD unmoved → "neither pushed nor rolled back", and no
                                     unstage or restore runs
+
+CR 1896 — a push refused because ANOTHER session's push of the same commit
+landed first. Both sessions push one stranded bump; the remote takes one and
+rejects the other ("incorrect old value provided"), and nothing has moved
+local HEAD, so the loser's swap succeeded: main rolled back behind @{u} and
+origin, and stderr claimed the checkout now "matches" its upstream. The hook
+never pulls, so every later bump was refused until a human synced. Now a
+failed push first asks whether the remote already has the commit — @{u}, then
+one `git ls-remote` — and rolls back nothing if it does:
+- the reviewer's race, a pre-push barrier → both pushes go together, one is
+                                            refused; main stays on the bump
+- the other session's push lands while this one waits, then this one's
+  network fails                          → @{u} already holds it: no rollback
+- @{u} stale, the remote already holding the commit, and a pre-push hook
+  refusing                               → ls-remote finds it: no rollback, and
+                                            @{u} is brought up to it
 """
 
 import time
@@ -32,6 +48,7 @@ from tests.structural.test_refresh_hook_rollback_restores import (
     _stranded_bump,
 )
 from tests.utils.refresh_hook_consumer import (
+    break_remote,
     build,
     content,
     finish_hook,
@@ -39,6 +56,7 @@ from tests.utils.refresh_hook_consumer import (
     gitlink,
     log_text,
     run_hook,
+    spend_todays_lock,
     staged,
     start_hook,
     write_shim,
@@ -147,3 +165,99 @@ class TestASwapGitRefuses:
         assert content(c) == gitlink(c) == c.after
         assert RESTORED not in log_text(c), log_text(c)
         assert "simulated refusal" in log_text(c)
+
+
+# CR 1896 ------------------------------------------------------------------
+
+
+def _pushed_by_another(c, *results) -> None:
+    """The bump is on the remote, so nothing may roll it back locally."""
+    for r in results:
+        assert r.returncode == 0, r.stderr
+        assert "rolled" not in r.stderr, (
+            "a session rolled back a commit the remote already holds: " + r.stderr
+        )
+    head = _rev(c, "HEAD")
+    behind = git(c.path, "rev-list", "--count", "HEAD..@{u}").stdout.strip()
+    assert head == c.bump, (
+        f"main is at {head[:7]}, not the bump {c.bump[:7]} the remote holds — "
+        f"{behind} behind @{{u}}, and the hook never pulls"
+    )
+    assert git(c.origin, "rev-parse", "main").stdout.strip() == c.bump
+    assert _rev(c, "@{u}") == c.bump
+    assert content(c) == gitlink(c) == c.after
+    assert staged(c) == []
+    log = log_text(c)
+    assert RESTORED not in log, log
+    assert "already has" in log, log
+
+
+def _stranded(tmp_path):
+    c = build(tmp_path)
+    _stranded_bump(c)
+    spend_todays_lock(c)  # each session only reconciles
+    c.bump = _rev(c, "HEAD")
+    return c
+
+
+class TestAPushAnotherSessionLanded:
+    def test_two_pushes_of_one_bump_race(self, tmp_path):
+        """The reviewer's reproduction: a pre-push barrier holds both
+        sessions until each has its advertisement, so both pushes go
+        together and the remote refuses one."""
+        c = _stranded(tmp_path)
+        barrier = tmp_path / "barrier"
+        barrier.mkdir()
+        hook = c.path / ".git" / "hooks" / "pre-push"
+        hook.write_text(
+            "#!/bin/sh\n"
+            f': > "{barrier}/$$"\n'
+            f'while [ "$(ls "{barrier}" | wc -l)" -lt 2 ]; do sleep 0.02; done\n'
+            "exit 0\n"
+        )
+        hook.chmod(0o755)
+
+        a = start_hook(c)
+        b = start_hook(c)
+        a, b = finish_hook(a), finish_hook(b)
+
+        log = log_text(c)
+        assert log.count("unpushed: pushed 1 commit(s)") == 1, (
+            "fixture: one push should land and the other be refused\n" + log
+        )
+        _pushed_by_another(c, a, b)
+
+    def test_a_failed_push_after_the_other_sessions_landed(self, tmp_path):
+        """One session parked at its push while another pushes the same
+        bump; then the first's network fails. Its @{u} already holds it."""
+        c = _stranded(tmp_path)
+        write_shim(c, hold_when=AT_PUSH)
+        c.kill_flag.write_text("")
+        first = start_hook(c)
+        deadline = time.monotonic() + 60
+        while not c.held.exists():
+            assert time.monotonic() < deadline, "the first run never reached the hold"
+            time.sleep(0.05)
+        second = run_hook(c)
+        break_remote(c)
+        c.release.write_text("")
+        first = finish_hook(first)
+
+        assert "could not push" not in second.stderr, second.stderr
+        _pushed_by_another(c, first, second)
+
+    def test_a_stale_upstream_is_checked_against_the_remote(self, tmp_path):
+        """The remote already holds the bump, @{u} does not know it yet (the
+        winner's tracking-ref write not yet visible; rewound here), and this
+        session's push fails — a push URL it cannot reach, while the fetch
+        URL answers. Asked once, the remote has the commit."""
+        c = _stranded(tmp_path)
+        base = _rev(c, "@{u}")
+        git(c.path, "push", "-q", "origin", f"{c.bump}:refs/heads/main")
+        git(c.path, "update-ref", "refs/remotes/origin/main", base)
+        gone = str(c.path.parent / "gone.git")
+        git(c.path, "config", "remote.origin.pushurl", gone)
+
+        result = run_hook(c)
+
+        _pushed_by_another(c, result)
