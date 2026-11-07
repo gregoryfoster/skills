@@ -296,6 +296,25 @@ class TestItReadsThePrimaryAsTheHookDoes:
         result = _doctor(consumer, cwd=primary, PATH=str(_tools_without_gh(tmp_path)))
         assert NO_GH in result.stderr, result.stderr
 
+    def test_a_separate_git_dir_primarys_linked_worktree_is_silent(
+        self, consumer, tmp_path
+    ):
+        """CR 1904: CR 1892's fallback (this checkout is the primary) holds
+        only where the git dir is the common dir. From a linked worktree git
+        knows no path to the primary, so the hook reads the knob as unusable
+        and says so itself; the doctor says nothing, rather than reading this
+        checkout's committed knob as the primary's."""
+        _, linked = layouts.separate_git_dir(tmp_path / "l", "pr\n")
+        _layout_consumer(consumer, linked)
+        layouts.knob(linked, "pr\n")
+        layouts.git(linked, "add", "-A")
+        layouts.git(linked, "-c", "commit.gpgsign=false", "commit", "-qm", "knob")
+        assert _merge_mode_sh(linked)[0] == 2, "fixture: merge-mode.sh reads it"
+        result = _doctor(consumer, cwd=linked)
+        assert result.returncode == 0, result.stderr
+        assert MARKER not in result.stderr, result.stderr
+        assert NO_GH not in result.stderr, result.stderr
+
 
 class TestSilentWhereItHasNothingToSay:
     def test_without_the_hook_installed(self, consumer):
