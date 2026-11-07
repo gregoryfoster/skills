@@ -27,8 +27,9 @@
 # entry's work tree), as .skills/deploy_command is: an untracked file does
 # not exist in a linked worktree, so asking the current checkout would read
 # `direct` from every worktree of a `pr` repo. A bare primary has no work
-# tree, so there the current checkout's is read. Grammar: one word; blank
-# lines and whole-line `#` comments are ignored.
+# tree, so there the current checkout's is read; a `--separate-git-dir`
+# primary's is known only from inside it. Grammar: one word; blank lines and
+# whole-line `#` comments are ignored.
 
 set -euo pipefail
 
@@ -73,7 +74,12 @@ WT_LIST=$(git worktree list --porcelain) || die "git worktree list failed: not i
 # with a `bare` line has no work tree, so the knob can only live in the
 # current checkout; any other entry is asked for its work tree (a
 # submodule's via core.worktree). That ask failing is exit 2, never a
-# fallback: "dubious ownership" would read another checkout's knob.
+# fallback to another checkout: "dubious ownership" would read its knob.
+# One exception, which is no other checkout (CR 1892): a primary whose .git
+# is a pointer file (`git init --separate-git-dir`) lists its store, which
+# names no work tree. From that primary itself, the work tree is this one:
+# its git dir is the common dir. From a linked worktree git knows no path to
+# it, so that stays exit 2, and says so.
 PRIMARY_BLOCK=${WT_LIST%%$'\n\n'*}
 PRIMARY_ENTRY=${PRIMARY_BLOCK%%$'\n'*}
 PRIMARY_ENTRY=${PRIMARY_ENTRY#worktree }
@@ -83,8 +89,19 @@ case $'\n'"$PRIMARY_BLOCK"$'\n' in
       die "the primary is bare and this is not a work tree, so there is no checkout to read .skills/merge_mode from"
     ;;
   *)
-    PRIMARY=$(git -C "$PRIMARY_ENTRY" rev-parse --show-toplevel) ||
-      die "could not resolve the primary checkout '$PRIMARY_ENTRY' (git's reason is above)"
+    if ! PRIMARY=$(git -C "$PRIMARY_ENTRY" rev-parse --show-toplevel 2>/dev/null); then
+      DIRS=$(git rev-parse --path-format=absolute --git-dir --git-common-dir 2>/dev/null) || DIRS=""
+      if [ -z "$DIRS" ] || [ "${DIRS%%$'\n'*}" != "${DIRS#*$'\n'}" ] ||
+        ! PRIMARY=$(git rev-parse --show-toplevel 2>/dev/null); then
+        # Asked again for git's reason, which goes to stderr.
+        git -C "$PRIMARY_ENTRY" rev-parse --show-toplevel >/dev/null || true
+        HINT=""
+        if [ "$(git -C "$PRIMARY_ENTRY" rev-parse --is-inside-git-dir 2>/dev/null)" = true ]; then
+          HINT="; it is a git dir with no work tree, as a primary whose .git is a file makes it (git init --separate-git-dir), and only that primary knows its work tree, so run this from the primary checkout"
+        fi
+        die "could not resolve the primary checkout '$PRIMARY_ENTRY' (git's reason is above)$HINT"
+      fi
+    fi
     ;;
 esac
 

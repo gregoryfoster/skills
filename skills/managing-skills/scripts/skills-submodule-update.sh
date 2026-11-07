@@ -329,7 +329,7 @@ BRANCH="$(git symbolic-ref --short HEAD 2>/dev/null || true)"
 MERGE_MODE="direct"
 MERGE_MODE_ERR=""
 _read_merge_mode() {
-  local wt block entry primary reason knob remedy line word="" count=0 words
+  local wt block entry primary dirs reason hint knob remedy line word="" count=0 words
   MERGE_MODE="unusable"
   MERGE_MODE_ERR=""
   remedy="write one word, 'pr' or 'direct', or delete the file for the default ('direct')"
@@ -341,8 +341,12 @@ _read_merge_mode() {
   # bare primary (`repo.git`) and in a submodule (`<super>/.git/modules/<n>`),
   # which read as a checkout said `direct` in silence (#584). A `bare` block's
   # knob can only be this checkout's; any other entry is asked for its work
-  # tree, and that ask failing is `unusable`, never a fallback: "dubious
-  # ownership" would read another checkout's knob.
+  # tree, and that ask failing is `unusable`, never a fallback to another
+  # checkout: "dubious ownership" would read its knob. One exception, which
+  # is no other checkout (CR 1892): a primary whose .git is a pointer file
+  # (`git init --separate-git-dir`) lists its store, which names no work
+  # tree. From that primary, the work tree is this one (its git dir is the
+  # common dir); from a linked worktree git knows no path to it.
   block=${wt%%$'\n\n'*}
   entry=${block%%$'\n'*}
   entry=${entry#worktree }
@@ -355,9 +359,17 @@ _read_merge_mode() {
       ;;
     *)
       if ! primary="$(git -C "$entry" rev-parse --show-toplevel 2>/dev/null)"; then
-        reason="$(git -C "$entry" rev-parse --show-toplevel 2>&1 >/dev/null || true)"
-        MERGE_MODE_ERR="could not resolve the primary checkout '$entry' to read .skills/merge_mode: ${reason%%$'\n'*}"
-        return 0
+        dirs="$(git rev-parse --path-format=absolute --git-dir --git-common-dir 2>/dev/null)" || dirs=""
+        if [ -z "$dirs" ] || [ "${dirs%%$'\n'*}" != "${dirs#*$'\n'}" ] ||
+          ! primary="$(git rev-parse --show-toplevel 2>/dev/null)"; then
+          reason="$(git -C "$entry" rev-parse --show-toplevel 2>&1 >/dev/null || true)"
+          hint=""
+          if [ "$(git -C "$entry" rev-parse --is-inside-git-dir 2>/dev/null || true)" = true ]; then
+            hint="; it is a git dir with no work tree, as a primary whose .git is a file makes it (git init --separate-git-dir), and only that primary knows its work tree, so run this from the primary checkout"
+          fi
+          MERGE_MODE_ERR="could not resolve the primary checkout '$entry' to read .skills/merge_mode: ${reason%%$'\n'*}$hint"
+          return 0
+        fi
       fi
       ;;
   esac
