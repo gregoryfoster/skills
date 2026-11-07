@@ -55,7 +55,9 @@ from .test_socraticode_policy_split import DOC_REF, _template
 # a later trim finds more; never raise it. A rule a consumer acts on may
 # displace a sentence here, as CR 11's did two sentences of rationale, but an
 # addition that needs headroom belongs in references/graph-health.md or
-# another reference, which cost a consumer nothing.
+# another reference, which cost a consumer nothing. #337's `codebase_flow` fix
+# took it to 2,629 exact, red only in the weekly exact job; #596 trimmed it to
+# 2,495 and left the figure here, so the next rule fits without a re-trim.
 GENERATED_DOC_RATCHET = 2_600
 
 RATCHET_PHRASE = f"{GENERATED_DOC_RATCHET:,}-token ratchet (estimate and exact)"
