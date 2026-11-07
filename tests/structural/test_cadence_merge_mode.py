@@ -600,9 +600,7 @@ class TestTheInlineReadersHoldMergeModeShsGrammar:
     @pytest.mark.parametrize(
         "layout", [*sorted(layouts.LAYOUTS), "separate_git_dir_primary"]
     )
-    def test_an_inherited_git_dir_below_the_top_does_not_answer(
-        self, tmp_path, layout
-    ):
+    def test_an_inherited_git_dir_below_the_top_does_not_answer(self, tmp_path, layout):
         """CR 1902: with GIT_DIR inherited and no work tree named, git takes
         the cwd as the top, so $ROOT is the subdirectory. The `bare` branch
         and CR 1892's fallback read the knob from $ROOT itself: `direct`,
