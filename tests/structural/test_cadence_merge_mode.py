@@ -598,6 +598,43 @@ class TestTheInlineReadersHoldMergeModeShsGrammar:
         assert READ_STEP in r.stdout, "read as direct"
 
     @pytest.mark.parametrize(
+        "layout", [*sorted(layouts.LAYOUTS), "separate_git_dir_primary"]
+    )
+    def test_an_inherited_git_dir_below_the_top_does_not_answer(
+        self, tmp_path, layout
+    ):
+        """CR 1902: with GIT_DIR inherited and no work tree named, git takes
+        the cwd as the top, so $ROOT is the subdirectory. The `bare` branch
+        and CR 1892's fallback read the knob from $ROOT itself: `direct`,
+        where merge-mode.sh, from the same place, says `pr`."""
+        if layout == "separate_git_dir_primary":
+            checkout, _ = layouts.separate_git_dir(tmp_path, "pr\n")
+        else:
+            checkout = layouts.LAYOUTS[layout](tmp_path, "pr\n")
+        below = checkout / "docs"
+        below.mkdir()
+        env = _env(GIT_DIR=layouts.git(checkout, "rev-parse", "--absolute-git-dir"))
+        mm = subprocess.run(
+            ["bash", str(MERGE_MODE_SH)],
+            cwd=below,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            env=env,
+        )
+        assert (mm.returncode, mm.stdout) == (0, "pr\n"), "fixture: " + mm.stderr
+        r = subprocess.run(
+            ["bash", str(INSTALL_CADENCE), "--print", "--cron", "0 15 * * 1"],
+            cwd=below,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            env=env,
+        )
+        assert r.returncode == 0, r.stderr
+        assert READ_STEP in r.stdout, "read as direct"
+
+    @pytest.mark.parametrize(
         ("layout", "committed"),
         [("bare_home", True), ("submodule_linked", False)],
     )
