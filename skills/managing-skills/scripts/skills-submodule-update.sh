@@ -106,9 +106,12 @@ Behaviour:
     worktree; where a service reads the checkout it can refuse to start.
     If the push fails the commit is rolled back so the checkout matches the
     remote — the pointer, the vendored content and .skills/doctor.sh
-    alike — and the next session retries. A run that cannot push does not
-    refresh either. Never pulls, never force-pushes main, and never touches
-    a commit this hook did not write.
+    alike — and the next session retries. A commit or an update that
+    fails is undone the same way (#550). The rollback moves HEAD by
+    compare-and-swap, so two sessions refused together roll it back once
+    (#566). A run that cannot push does not refresh either. Never pulls,
+    never force-pushes main, and never touches a commit this hook did not
+    write.
   - With .skills/merge_mode 'pr' (read from the primary checkout, #560),
     never pushes to main: the bump is proposed as ONE pull request from
     skills/submodule-refresh, which later sessions update, and the
@@ -546,7 +549,7 @@ _reconcile_unpushed() {
   # and tells the operator nothing the first message did not.
   [ "$PUSH_BLOCKED" = "0" ] || return 0
 
-  local remote merge upstream_name ahead merges subject unknown seen rpath
+  local remote merge upstream_name ahead merges subject unknown seen rpath head target
   # Read from config rather than parsed out of `@{u}`: this yields the remote
   # name and the remote ref separately, which is exactly what an explicit push
   # refspec needs, and it stays unambiguous when a remote name contains a
@@ -560,10 +563,18 @@ _reconcile_unpushed() {
   fi
   upstream_name="$remote/${merge#refs/heads/}"
 
+  # HEAD is read once, here, and every read below — the guards, the push and
+  # the rollback — is of this commit, never of HEAD again (#566). Two sessions
+  # can be in this pass together: it runs ahead of the lock and of the
+  # in-progress marker. A HEAD re-read after the guards can be one the other
+  # session's rollback has already moved, so the guards would vet one range
+  # and the rollback move another, onto a commit that is not this hook's.
+  head="$(git rev-parse --verify -q HEAD 2>/dev/null)" || return 0
+
   # @{u} is the remote-tracking ref — the last fetch, not the live remote.
   # That is the right comparison anyway: it is this checkout's own record of
   # what has been shared, and a push settles the question authoritatively.
-  ahead="$(git rev-list --count '@{u}..HEAD' 2>/dev/null || true)"
+  ahead="$(git rev-list --count "@{u}..$head" 2>/dev/null || true)"
   case "$ahead" in ''|*[!0-9]*) return 0 ;; esac
   [ "$ahead" -gt 0 ] || return 0
 
@@ -578,12 +589,12 @@ _reconcile_unpushed() {
       "$MSG_SUB"|"$MSG_DOC"|"$MSG_BOTH") : ;;
       *) unknown=$((unknown + 1)) ;;
     esac
-  done < <(git log --no-show-signature --format=%s '@{u}..HEAD' 2>/dev/null || true)
+  done < <(git log --no-show-signature --format=%s "@{u}..$head" 2>/dev/null || true)
 
   # Not `direct`: this hook pushes nothing to $BRANCH (#560). Its guards and
   # its messages differ, so it has its own pass.
   if [ "$MERGE_MODE" != "direct" ]; then
-    _reconcile_pr "$ahead" "$seen" "$unknown" "$upstream_name"
+    _reconcile_pr "$ahead" "$seen" "$unknown" "$upstream_name" "$head"
     return 0
   fi
 
@@ -638,12 +649,20 @@ _reconcile_unpushed() {
   # every subject in the range one of this hook's three, a merge commit is
   # already close to impossible — but "close to" is not what the arithmetic
   # needs, and an empty count from a failed git reads as non-zero here.
-  merges="$(git rev-list --count --merges '@{u}..HEAD' 2>/dev/null || true)"
+  merges="$(git rev-list --count --merges "@{u}..$head" 2>/dev/null || true)"
   if [ "$merges" != "0" ]; then
     # Same reasoning as the count mismatch above: refusing to push means
     # refusing to commit, or the run strands what it makes.
     PUSH_BLOCKED=1
     _log "unpushed: refusing to roll back — $merges merge commit(s) in @{u}..HEAD, so HEAD~$ahead is not this hook's own history"
+    return 0
+  fi
+
+  # Where a refused push rolls back to, resolved before the push: a push it
+  # could not roll back is not made.
+  if ! target="$(git rev-parse --verify -q "$head~$ahead" 2>/dev/null)"; then
+    PUSH_BLOCKED=1
+    _log "unpushed: refusing to push — HEAD~$ahead does not resolve, so a refused push could not be rolled back"
     return 0
   fi
 
@@ -660,8 +679,10 @@ _reconcile_unpushed() {
     # Explicit refspec, never a bare `git push`: under push.default=matching
     # that pushes every matching branch, which is not an authority an
     # unattended SessionStart hook should be exercising. Never --force, in
-    # any spelling — a rejected push is information, not an obstacle.
-    _hook_git push "$remote" "HEAD:$merge" 2>&1
+    # any spelling — a rejected push is information, not an obstacle. The
+    # commit the guards read, not HEAD (#566): a HEAD moved since by someone's
+    # commit would publish work the authorship guard never saw.
+    _hook_git push "$remote" "$head:$merge" 2>&1
   } >>"$LOG"; then
     _phase "push"
     _log "unpushed: pushed $ahead commit(s) to $upstream_name"
@@ -669,32 +690,39 @@ _reconcile_unpushed() {
   fi
   _phase "push"
 
-  # --soft, and to HEAD~N rather than to @{u}. Both halves are load-bearing.
+  # A compare-and-swap that keeps `reset --soft`'s semantics, to HEAD~N
+  # rather than to @{u}. Each part is load-bearing.
   #
-  # --soft because --hard is whole-tree: it is NOT bounded by this hook's add
-  # scope, and it discards any uncommitted edit anywhere in the checkout.
-  # Measured on a repo with one unrelated dirty file, staged by nobody: the
-  # file was reverted. The add-scope discipline this script is careful about
-  # is a property of `git add`, and constrains `git reset --hard` not at all.
+  # --soft's semantics — HEAD moves, the index and the tree do not — because
+  # --hard is whole-tree: it is NOT bounded by this hook's add scope, and it
+  # discards any uncommitted edit anywhere in the checkout. Measured on a repo
+  # with one unrelated dirty file, staged by nobody: the file was reverted.
+  # The add-scope discipline this script is careful about is a property of
+  # `git add`, and constrains `git reset --hard` not at all.
   #
   # HEAD~N rather than @{u} because a *diverged* main — ours ahead, origin
   # also ahead — would move HEAD onto origin's tree while the working tree
   # stayed on ours, so every file origin had added would then read as
   # deleted-by-us. HEAD~N stays on this checkout's own history. The
   # authorship and merge guards above are what make that arithmetic sound.
+  #
+  # A swap (`update-ref HEAD <target> <head>`), not `reset --soft HEAD~N`
+  # (#566), as _reconcile_pr does: two sessions refused together each ran
+  # that relative reset, and the second rolled back N more commits that were
+  # not the hook's, leaving main behind its upstream. A swap moves HEAD only
+  # while it is still the commit the guards read, so the second one fails.
   PUSH_BLOCKED=1
 
-  # Captured here: before the RESET, which is what destroys the range — not
-  # before the push, which changes nothing when it fails. Deriving it from the
-  # commits themselves rather than re-deriving COMMIT_PATHS means the unstage
-  # covers exactly what the reset re-staged and nothing else, including a path
-  # some older version of this hook staged.
+  # Derived from the commits themselves rather than from COMMIT_PATHS, so the
+  # unstage covers exactly what the swap re-stages and nothing else, including
+  # a path some older version of this hook staged. From $target and $head, not
+  # HEAD: another session may have moved HEAD since.
   paths=()
   while IFS= read -r -d '' rpath; do
     paths+=("$rpath")
-  done < <(git diff --name-only -z "HEAD~$ahead" HEAD 2>/dev/null || true)
+  done < <(git diff --name-only -z "$target" "$head" 2>/dev/null || true)
 
-  if git reset -q --soft "HEAD~$ahead" 2>>"$LOG"; then
+  if git update-ref -m "skills update: roll back $ahead unpushed hook commit(s) after a failed push" HEAD "$target" "$head" 2>>"$LOG"; then
     _log "unpushed: push failed — rolled $ahead commit(s) back, vendored content with them; the next session retries"
     # A repository rule or branch protection (GH013, GH006) is not an outage
     # the next session's retry outlives: say which rule, and the knob that
@@ -709,13 +737,19 @@ _reconcile_unpushed() {
       # found it. A .skills/doctor.sh that was untracked before the commit
       # goes back to untracked rather than sitting staged in an index the
       # operator never touched. Then the content goes back to the pointer
-      # the reset restored (#550), bounded to these paths. After the report
+      # the swap restored (#550), bounded to these paths. After the report
       # above, so a warning that either fell short follows the rollback it
-      # belongs to.
+      # belongs to. Only after a swap that succeeded: after a failed one the
+      # index and the content are another run's, or still this range's.
       _restore_bump "a rolled-back push" "${paths[@]}"
     fi
+  elif [ "$(git rev-parse --verify -q HEAD 2>/dev/null || true)" != "$head" ]; then
+    # Never reported as a rollback: this run rolled nothing back. Most likely
+    # another session's rollback of the same range, which has said its own.
+    _log "unpushed: push failed, and rolling back $ahead commit(s) this hook made on $BRANCH failed (HEAD moved) — another session rolled them back, or someone committed; left $BRANCH where it is"
+    echo "skills update: could not push to $remote, and $BRANCH moved under this run before it could roll back — another session's rollback, most likely; this run rolled nothing back (see $LOG)" >&2
   else
-    _log "unpushed: push failed AND rollback failed — $BRANCH is still $ahead commit(s) ahead of $upstream_name"
+    _log "unpushed: push failed, and rolling back $ahead commit(s) this hook made on $BRANCH failed (git refused) — $BRANCH is still $ahead commit(s) ahead of $upstream_name"
     echo "skills update: $BRANCH is $ahead unpushed commit(s) ahead of $upstream_name and could be neither pushed nor rolled back — fix by hand (see $LOG)" >&2
   fi
   return 0
@@ -744,8 +778,9 @@ _rule_refusal() {
   return 0
 }
 
-# _reconcile_pr <ahead> <seen> <unknown> <upstream> — the unpushed pass when
-# merge_mode is not `direct` (#560). Nothing is ever pushed to $BRANCH here.
+# _reconcile_pr <ahead> <seen> <unknown> <upstream> <head> — the unpushed pass
+# when merge_mode is not `direct` (#560). Nothing is ever pushed to $BRANCH
+# here.
 #
 # `pr`: commits this hook wrote and never pushed — left by a run from before
 # the repo set `pr` — are rolled back with their content (#550), and the pull
@@ -758,12 +793,15 @@ _rule_refusal() {
 # HEAD moves by compare-and-swap (`update-ref <new> <old>`), not `reset --soft
 # HEAD~N`: two sessions starting together both reach this pass ahead of the
 # in-progress marker, and a relative reset run twice would roll back a commit
-# that is not this hook's. The second swap fails instead, and is logged.
+# that is not this hook's. The second swap fails instead, and is logged. Its
+# expected HEAD is the <head> the caller's guards read (#566): one re-read
+# after them can be the other session's rollback, and a swap from it rolls
+# back one commit further.
 #
 # `unusable`: neither pushed nor rolled back. The refresh, which runs once a
 # day, is where that is reported.
 _reconcile_pr() {
-  local ahead="$1" seen="$2" unknown="$3" upstream_name="$4" merges head target rpath paths=()
+  local ahead="$1" seen="$2" unknown="$3" upstream_name="$4" head="$5" merges target rpath paths=()
   if [ "$MERGE_MODE" != "pr" ]; then
     _log "unpushed: $BRANCH is $ahead commit(s) ahead of $upstream_name, and .skills/merge_mode is unusable — neither pushing nor rolling back until it reads pr or direct"
     return 0
@@ -772,13 +810,12 @@ _reconcile_pr() {
     _log "unpushed: $BRANCH is $ahead commit(s) ahead of $upstream_name, not all confirmed as this hook's — merge_mode is pr, so nothing is pushed or rolled back"
     return 0
   fi
-  merges="$(git rev-list --count --merges '@{u}..HEAD' 2>/dev/null || true)"
+  merges="$(git rev-list --count --merges "@{u}..$head" 2>/dev/null || true)"
   if [ "$merges" != "0" ]; then
     _log "unpushed: merge_mode is pr, and @{u}..HEAD holds merge commit(s) — not rolling back"
     return 0
   fi
-  head="$(git rev-parse --verify -q HEAD 2>/dev/null)" || return 0
-  target="$(git rev-parse --verify -q "HEAD~$ahead" 2>/dev/null)" || return 0
+  target="$(git rev-parse --verify -q "$head~$ahead" 2>/dev/null)" || return 0
   while IFS= read -r -d '' rpath; do
     paths+=("$rpath")
   done < <(git diff --name-only -z "$target" "$head" 2>/dev/null || true)
@@ -1212,9 +1249,9 @@ LISTED_EOF
 }
 
 # Ahead of _reconcile_unpushed: a failed push's rollback re-stages its range
-# with `reset --soft`, and the paths it then unstages are derived from that
-# range alone. Healed first, the index it starts from holds nothing a killed
-# run left there.
+# (a swap with `reset --soft`'s semantics), and the paths it then unstages are
+# derived from that range alone. Healed first, the index it starts from holds
+# nothing a killed run left there.
 _heal_staged
 
 # Call site 1 of 2: every session, ahead of both gates. This is the pass that

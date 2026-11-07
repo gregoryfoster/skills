@@ -47,7 +47,9 @@ from tests.utils.refresh_hook_consumer import (
 AT_PUSH = '[ "$1" = push ]'
 # The merge-commit guard: the last read of the range ahead of the push.
 AFTER_THE_GUARDS = '[ "$1" = rev-list ] && [ "$2" = --count ] && [ "$3" = --merges ]'
-RESTORED = "after a rolled-back push:"
+# The restore's header line, once per restore: the per-path line after it
+# reads "restored <path> after a rolled-back push: …".
+RESTORED = "to the pointer the index records, after a rolled-back push:"
 
 
 def _rev(c, rev: str) -> str:
@@ -83,13 +85,10 @@ def _rolled_back_once(c, parked, ran) -> None:
     assert parked.returncode == 0, parked.stderr
     assert ran.returncode == 0, ran.stderr
     head = _rev(c, "HEAD")
-    assert head == c.base, (
-        f"main is at {head[:7]}, not @{{u}} ({c.base[:7]}) — "
-        + (
-            "rolled back past its upstream: a commit that is not the hook's"
-            if head != c.bump
-            else "nothing rolled back"
-        )
+    assert head == c.base, f"main is at {head[:7]}, not @{{u}} ({c.base[:7]}) — " + (
+        "rolled back past its upstream: a commit that is not the hook's"
+        if head != c.bump
+        else "nothing rolled back"
     )
     assert content(c) == gitlink(c) == c.before
     assert staged(c) == []
@@ -99,7 +98,7 @@ def _rolled_back_once(c, parked, ran) -> None:
         "the unstage and restore ran for a rollback that was not this run's\n" + log
     )
     assert "rolled 1 commit(s) back" in ran.stderr, ran.stderr
-    assert "rolled" not in parked.stderr, (
+    assert "rolled 1" not in parked.stderr, (
         "a swap that failed was reported as a rollback: " + parked.stderr
     )
     assert "HEAD moved" in log, log
@@ -143,9 +142,7 @@ class TestASwapGitRefuses:
 
         assert result.returncode == 0, result.stderr
         assert _rev(c, "HEAD") == c.bump
-        assert "could be neither pushed nor rolled back" in result.stderr, (
-            result.stderr
-        )
+        assert "could be neither pushed nor rolled back" in result.stderr, result.stderr
         assert "rolled 1" not in result.stderr, result.stderr
         assert content(c) == gitlink(c) == c.after
         assert RESTORED not in log_text(c), log_text(c)
