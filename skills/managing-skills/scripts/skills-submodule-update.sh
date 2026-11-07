@@ -1303,6 +1303,7 @@ _heal_staged() {
   [ "$BRANCH" = "main" ] || return 0
 
   local listed="" marked=0 staged_now rc=0 spath own=() others=0 hook_paths owner="" body
+  local carried line pr_run=0 noted=0 returned=0
   _adopt_taken
   if [ -f "$STAGING" ]; then
     # A live owner's marker is never the heal's (CR 1789). The guard ahead of
@@ -1326,14 +1327,33 @@ _heal_staged() {
       _log "heal: another session took $STAGING first — leaving the index to it"
       return 0
     fi
+    # Everything the heal needs from the marker is read here, from $TAKEN —
+    # its private copy — and never from $STAGING once claimed (CR 1908): a
+    # slower session's take renames $STAGING away for an instant before it
+    # links it back, and a read then failed (the heal gave up) or read
+    # `mode pr` as absent (a pr-mode run's marker healed as a direct one's).
+    # Carried into the claim: every line but the owner lines. Read from it:
+    # the paths, and a pr-mode run's `mode pr`, the `noted` an earlier heal
+    # appended (CR 1801) and a returned commit's `done`.
     body="$(grep -m 1 '^heals ' "$TAKEN" 2>/dev/null)" || body=""
     if [ -n "$body" ]; then
       owner="${body#heals }"
     fi
     body="pid $$ $(date +%s 2>/dev/null || true)"
     case "$owner" in "pid "*) body="$body"$'\n'"heals $owner" ;; esac
-    listed="$(grep -v -e '^pid ' -e '^heals ' "$TAKEN" 2>>"$LOG")" || rc=$?
-    if [ "$rc" -gt 1 ] || ! _write_marker "$body${listed:+$'\n'$listed}"; then
+    carried="$(grep -v -e '^pid ' -e '^heals ' "$TAKEN" 2>>"$LOG")" || rc=$?
+    while IFS= read -r line; do
+      case "$line" in
+        'mode pr') pr_run=1 ;;
+        'mode '* | '') : ;;
+        'noted') noted=1 ;;
+        'done') returned=1 ;;
+        *) listed="$listed${listed:+$'\n'}$line" ;;
+      esac
+    done <<CARRIED_EOF
+$carried
+CARRIED_EOF
+    if [ "$rc" -gt 1 ] || ! _write_marker "$body${carried:+$'\n'$carried}"; then
       if [ -e "$STAGING" ]; then
         _drop_taken
         _log "heal: could not claim $STAGING after taking it — another run claimed it first and owns the checkout; leaving the index to it"
@@ -1345,17 +1365,9 @@ _heal_staged() {
     rc=0
     rm -f "$TAKEN" 2>/dev/null || true
     marked=1
-    # The paths, without the owner lines, a pr-mode run's `mode pr`, the
-    # `noted` an earlier heal appended (CR 1801), or a returned commit's `done`.
-    listed="$(grep -v -e '^pid ' -e '^heals ' -e '^mode ' -e '^noted$' -e '^done$' "$STAGING" 2>>"$LOG")" || rc=$?
-    if [ "$rc" -gt 1 ]; then
-      _log "heal: could not read $STAGING (grep exited $rc) — leaving the index alone"
-      return 0
-    fi
-    rc=0
     # A pr-mode run (#560) never stages in this index, so whatever is staged
     # is not its own: only its content goes back, and its private index goes.
-    if grep -qx 'mode pr' "$STAGING" 2>/dev/null; then
+    if [ "$pr_run" = "1" ]; then
       _heal_pr "$listed"
       return 0
     fi
@@ -1397,7 +1409,7 @@ STAGED_EOF
   # Counted first, before anything is undone (CR 1899) — unless the run's
   # commit returned (`done`, CR 1900): its paths are still staged because its
   # unstage failed, not because a kill cut its commit short.
-  if [ "${#own[@]}" -gt 0 ] && ! grep -qx 'done' "$STAGING" 2>/dev/null; then
+  if [ "${#own[@]}" -gt 0 ] && [ "$returned" = "0" ]; then
     _count_commit_kill "$owner"
   fi
 
@@ -1429,14 +1441,20 @@ LISTED_EOF
   if [ "$others" -gt 0 ]; then
     if [ "${#own[@]}" -gt 0 ]; then
       _log "heal: a killed refresh left ${own[*]} staged beside $others path(s) it did not stage — leaving the index alone; the content goes back on the pointer the index records"
-      if ! grep -qx 'noted' "$STAGING" 2>/dev/null; then
+      if [ "$noted" = "0" ]; then
         for p in "${own[@]}"; do
           if _listed "$p" "$REGISTERED"; then
             gitlinks+=("$p")
           fi
         done
         echo "skills update: a refresh killed part way left ${own[*]} staged beside $others staged path(s) it did not stage, so the index is left as it is; the next refresh to complete commits them through its own pathspec. To drop them instead: git reset -q -- ${own[*]}${gitlinks[0]:+ && git submodule update --checkout -- ${gitlinks[*]}} (see $LOG)" >&2 || true
-        printf 'noted\n' >>"$STAGING" 2>/dev/null || true
+        # Appended only to a marker that is there: `>>` would create a
+        # one-line stray in the instant a slower take has it renamed away
+        # (CR 1908), its link-back would then fail and it would delete the
+        # claim. Missed, the line is said again by the next heal.
+        if [ -f "$STAGING" ]; then
+          printf 'noted\n' >>"$STAGING" 2>/dev/null || true
+        fi
       fi
     else
       _log "heal: a killed refresh staged nothing, and $others path(s) it did not stage are staged — leaving the index alone; the content goes back on its pointer"
