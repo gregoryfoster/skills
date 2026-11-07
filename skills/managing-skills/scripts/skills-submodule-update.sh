@@ -322,14 +322,14 @@ BRANCH="$(git symbolic-ref --short HEAD 2>/dev/null || true)"
 # tests/structural/test_refresh_hook_pr_mode.py holds it to merge-mode.sh's
 # answers on the same inputs test_cadence_merge_mode.py uses.
 #
-# Read from the primary checkout (the first `git worktree list` entry), as
-# merge-mode.sh does: an untracked knob does not exist in a linked worktree.
-# Present but unusable is `unusable`, never `direct` — the run then neither
-# pushes nor refreshes, and says why.
+# Read from the primary checkout, resolved as merge-mode.sh resolves it: an
+# untracked knob does not exist in a linked worktree. Present but unusable is
+# `unusable`, never `direct` — the run then neither pushes nor refreshes, and
+# says why.
 MERGE_MODE="direct"
 MERGE_MODE_ERR=""
 _read_merge_mode() {
-  local wt primary knob remedy line word="" count=0 words
+  local wt block entry primary reason knob remedy line word="" count=0 words
   MERGE_MODE="unusable"
   MERGE_MODE_ERR=""
   remedy="write one word, 'pr' or 'direct', or delete the file for the default ('direct')"
@@ -337,12 +337,30 @@ _read_merge_mode() {
     MERGE_MODE_ERR="git worktree list failed, so .skills/merge_mode could not be read"
     return 0
   }
-  primary=${wt%%$'\n'*}
-  primary=${primary#worktree }
-  if [ ! -d "$primary" ]; then
-    MERGE_MODE_ERR="could not resolve the primary checkout (got '$primary') to read .skills/merge_mode"
-    return 0
-  fi
+  # The primary is the first porcelain block. Its entry is a git dir for a
+  # bare primary (`repo.git`) and in a submodule (`<super>/.git/modules/<n>`),
+  # which read as a checkout said `direct` in silence (#584). A `bare` block's
+  # knob can only be this checkout's; any other entry is asked for its work
+  # tree, and that ask failing is `unusable`, never a fallback: "dubious
+  # ownership" would read another checkout's knob.
+  block=${wt%%$'\n\n'*}
+  entry=${block%%$'\n'*}
+  entry=${entry#worktree }
+  case $'\n'"$block"$'\n' in
+    *$'\n'bare$'\n'*)
+      if ! primary="$(git rev-parse --show-toplevel 2>/dev/null)"; then
+        MERGE_MODE_ERR="the primary is bare and this is not a work tree, so there is no checkout to read .skills/merge_mode from"
+        return 0
+      fi
+      ;;
+    *)
+      if ! primary="$(git -C "$entry" rev-parse --show-toplevel 2>/dev/null)"; then
+        reason="$(git -C "$entry" rev-parse --show-toplevel 2>&1 >/dev/null || true)"
+        MERGE_MODE_ERR="could not resolve the primary checkout '$entry' to read .skills/merge_mode: ${reason%%$'\n'*}"
+        return 0
+      fi
+      ;;
+  esac
   knob="$primary/.skills/merge_mode"
   if [ ! -e "$knob" ] && [ ! -L "$knob" ]; then
     MERGE_MODE="direct"

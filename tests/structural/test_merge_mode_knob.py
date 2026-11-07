@@ -29,6 +29,7 @@ from pathlib import Path
 
 import pytest
 
+from tests.structural import merge_mode_layouts as layouts
 from tests.utils.skill_loader import SKILLS_DIR
 
 READERS = {
@@ -228,63 +229,21 @@ class TestPrimaryLayouts:
     For a bare primary it is `repo.git`; in a submodule (git 2.54),
     `<super>/.git/modules/<n>`. Read as a checkout, neither holds `.skills/`,
     so both printed `direct` in silence. A bare primary's knob is the current
-    checkout's; a submodule's primary is its work tree.
+    checkout's; a submodule's primary is its work tree. The layouts live in
+    merge_mode_layouts.py, which the inline readers' tests share (#584).
     """
 
-    @staticmethod
-    def _seed(path: Path, knob: str) -> Path:
-        path.mkdir(parents=True)
-        _git(path, "init", "-q", "-b", "main")
-        _git(path, "config", "user.email", "test@example.com")
-        _git(path, "config", "user.name", "test")
-        _knob(path, knob)
-        _git(path, "add", "-A")
-        _git(path, "-c", "commit.gpgsign=false", "commit", "-q", "-m", "knob")
-        return path
-
-    def _bare_home(self, tmp_path: Path, knob: str) -> Path:
-        seed = self._seed(tmp_path / "seed", knob)
-        bare = tmp_path / "repo.git"
-        _git(tmp_path, "clone", "-q", "--bare", str(seed), str(bare))
-        home = tmp_path / "home"
-        _git(bare, "worktree", "add", "-q", str(home), "main")
-        assert _git(home, "worktree", "list", "--porcelain").splitlines()[1] == "bare"
-        return home
-
-    def _submodule_linked(self, tmp_path: Path, knob: str) -> Path:
-        src = self._seed(tmp_path / "src", "direct\n")
-        sup = tmp_path / "super"
-        sup.mkdir()
-        _git(sup, "init", "-q", "-b", "main")
-        _git(
-            sup,
-            "-c",
-            "protocol.file.allow=always",
-            "submodule",
-            "-q",
-            "add",
-            str(src),
-            "sub",
-        )
-        sub = sup / "sub"
-        # Untracked in the submodule's checkout, as a machine-local knob is.
-        _knob(sub, knob)
-        wt = tmp_path / "wt"
-        _git(sub, "worktree", "add", "-q", "-b", "feature/x", str(wt))
-        assert "/.git/modules/" in _git(wt, "worktree", "list", "--porcelain")
-        return wt
-
-    LAYOUTS = ["_bare_home", "_submodule_linked"]
+    LAYOUTS = sorted(layouts.LAYOUTS)
 
     @pytest.mark.parametrize("layout", LAYOUTS)
     def test_pr_is_read(self, reader, tmp_path, layout):
-        checkout = getattr(self, layout)(tmp_path, "pr\n")
+        checkout = layouts.LAYOUTS[layout](tmp_path, "pr\n")
         r = _read(reader, checkout)
         assert (r.returncode, r.stdout) == (0, "pr\n"), r.stderr
 
     @pytest.mark.parametrize("layout", LAYOUTS)
     def test_an_unusable_word_is_still_exit_2(self, reader, tmp_path, layout):
-        checkout = getattr(self, layout)(tmp_path, "PR\n")
+        checkout = layouts.LAYOUTS[layout](tmp_path, "PR\n")
         r = _read(reader, checkout)
         assert (r.returncode, r.stdout) == (2, ""), r.stderr
         assert ".skills/merge_mode" in r.stderr
@@ -294,13 +253,7 @@ class TestPrimaryLayouts:
         _knob(repo, "pr\n")
         wt = tmp_path / "wt"
         _git(repo, "worktree", "add", "-q", "-b", "feature/x", str(wt))
-        env = _env()
-        env.update(
-            GIT_TEST_ASSUME_DIFFERENT_OWNER="1",
-            GIT_CONFIG_COUNT="1",
-            GIT_CONFIG_KEY_0="safe.directory",
-            GIT_CONFIG_VALUE_0=str(wt.resolve()),
-        )
+        env = layouts.different_owner(_env(), wt)
         r = subprocess.run(
             ["bash", str(reader)],
             cwd=wt,
