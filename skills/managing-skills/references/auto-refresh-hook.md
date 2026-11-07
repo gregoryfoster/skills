@@ -29,7 +29,7 @@ The hook installs `.skills/doctor.sh` through `install-doctor.sh` — a no-op wh
 
 No call fires in a checkout whose `skills-vendor/*` are empty gitlinks — every fresh linked worktree, until something initializes them. The glob finds no installer, and there is no vendored doctor to install from anyway; the hook itself, a symlink into that same tree, does not start there either (`SKILL.md` covers that first session). So "every session" means every session in a checkout with its submodules populated.
 
-**The first installer that succeeds wins**, in glob order ([#300](https://github.com/gregoryfoster/skills/issues/300)). The glob spans every vendored repo, so a second one shipping `managing-skills` is the fallback when the first fails; the loop used to stop after the first attempt either way. Each failure is logged, naming the installer, and when every one fails the session hears it on stderr — the channel every other failure here uses — once per run, although a run can install several times (three call sites, the third once per restore), and only when the run's *last* install failed, so the report is that install's. A broken pre-bump installer that the bump replaces with a working one is not reported: the second call installed and committed a fresh doctor, which "left as it was" would deny. When the last install was a restore's, the report says instead that the doctor may not be the version the restored pointer ships: the second call may already have replaced it from the bump's installer. A failing install otherwise leaves a stale doctor with one log line as its only trace.
+**The first installer that succeeds wins**, in glob order ([#300](https://github.com/gregoryfoster/skills/issues/300)). The glob spans every vendored repo, so a second one shipping `managing-skills` is the fallback when the first fails; the loop used to stop after the first attempt either way. Each failure is logged, naming the installer; when every one fails, stderr says so once per run, although a run can install several times (three call sites, the third once per restore), and only when the run's *last* install failed, so the report is that install's. A broken pre-bump installer that the bump replaces with a working one is not reported: the second call installed and committed a fresh doctor, which "left as it was" would deny. When the last install was a restore's, the report says instead that the doctor may not be the version the restored pointer ships: the second call may already have replaced it from the bump's installer. A failing install otherwise leaves a stale doctor with one log line as its only trace.
 
 ## Why the whole script is one `{ … }` block ([#306](https://github.com/gregoryfoster/skills/issues/306))
 
@@ -147,7 +147,7 @@ git add .claude/settings.json
 git commit -m "chore: disable skills auto-refresh hook"
 ```
 
-You may also want to delete the hook's files in `.git/` if you don't plan to reinstall. All but the lock and the log are transient files the hook removes itself (the `pr-index` pair in `pr` mode only), so they survive only a run that died mid-flight:
+You may also want to delete the hook's files in `.git/` if you don't plan to reinstall. All but the lock, the log and the kill count (`commit-kills`) are transient files the hook removes itself (the `pr-index` pair in `pr` mode only), so they survive only a run or heal that died mid-flight:
 
 ```bash
 rm -f .git/skills-update.lock .git/skills-update.log .git/skills-status.err .git/skills-update.staging \
