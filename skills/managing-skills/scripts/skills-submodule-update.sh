@@ -365,18 +365,26 @@ _adopt_taken() {
 # in the gap may end without `git add`), and wrong once it is not — a
 # human's manual bump unstaged, a healed kill counted again. Kept also: a
 # take in flight (_taker_live), and a copy of a live run's marker, taken in
-# error and not put back, which is its run's to drop. Before $STAGING goes,
-# so that no _adopt_taken can link one in between.
+# error and not put back, which is its run's to drop. Dropped whatever is
+# staged: a copy of this run's own marker or claim (`pid $$`), since the run
+# drops only with nothing of its own staged — kept beside a human's bump, it
+# was adopted later and unstaged it (CR 1916). Before $STAGING goes, so that
+# no _adopt_taken can link one in between.
 _drop_taken() {
-  local f p paths=()
+  local f p first paths=()
   for f in "$STAGING".heal.*; do
     [ -f "$f" ] || continue
     ! _taker_live "$f" || continue
     ! _marker_owner_live "$f" || continue
     paths=()
+    first=""
+    # Gone since the `[ -f ]` (another session adopted or dropped it): under
+    # `set -e`, bash 5 exits on a compound command's failed redirect (CR 1914).
     while IFS= read -r p; do
+      [ -n "$first" ] || first="${p:- }"
       case "$p" in 'pid '* | 'heals '* | 'mode '* | noted | done | '') : ;; *) paths+=("$p") ;; esac
-    done 2>/dev/null <"$f"
+    done 2>/dev/null <"$f" || continue
+    case "$first" in "pid $$ "*) paths=() ;; esac
     if [ "${#paths[@]}" -gt 0 ] &&
       ! git diff --cached --quiet --ignore-submodules=none -- "${paths[@]}" 2>/dev/null; then
       continue
@@ -1262,7 +1270,7 @@ _count_commit_kill() {
   local owner="$1" kills=0 last=""
   case "$owner" in "pid "*) : ;; *) return 0 ;; esac
   if [ -f "$COMMIT_KILLS" ]; then
-    read -r kills last <"$COMMIT_KILLS" 2>/dev/null || true
+    read -r kills last 2>/dev/null <"$COMMIT_KILLS" || true
     case "$kills" in '' | *[!0-9]*) kills=0 ;; esac
   fi
   [ "$last" != "$owner" ] || return 0
@@ -1619,6 +1627,7 @@ $PIN_PATH
       _log "pin drift: $PIN_PATH is recorded at $PIN_RECORDED but pinned at $PIN_ISH ($PIN_RESOLVED) — the hold is not in effect"
       echo "skills pin: $PIN_PATH is recorded at ${PIN_RECORDED:0:7}, not the pinned $PIN_ISH — the hold is not in effect (see $LOG)" >&2
     fi
+  # unguarded-read-ok: a committed knob no session removes; `|| true` would hold no pins
   done < "$PIN_FILE"
 fi
 

@@ -69,6 +69,10 @@ marker with the killed run's bump still staged:
 CR 1912 — a marker's drop keeps a take in flight (also a run's second take,
 `.2` after the epoch) and a copy of a live run's marker, and drops a take
 whose heal is over.
+
+CR 1916 — a marker's drop takes a copy of the run's own marker (first line
+`pid $$`) whatever else is staged:
+- a human's bump staged on a path it names → the copy goes; the bump stays
 """
 
 import os
@@ -453,12 +457,17 @@ def _the_manual_bump_is_left_alone(c, newer: str, kills_before: str) -> None:
     assert "is the marker again" not in log_text(c), log_text(c)
 
 
-def _claim_in_the_heals_gap(c, pid: int) -> None:
+def _claim_in_the_heals_gap(c, pid: int, epoch: int | None = None) -> None:
     """A `date` shim that, once, writes a claim owned by `pid` in the instant
     a heal has taken the marker and not yet claimed it: a refresh claiming
-    `$STAGING` in the heal's gap."""
+    `$STAGING` in the heal's gap. Given `epoch`, every `date +%s` answers it,
+    so the run's takes all fall in one second (CR 1915)."""
     marker = c.path / MARKER
     gd = c.path / ".git"
+    now = "/bin/date +%s" if epoch is None else f"echo {epoch}"
+    pinned = (
+        "" if epoch is None else f'[ "$*" != +%s ] || {{ echo {epoch}; exit 0; }}\n'
+    )
     shim = c.bindir / "date"
     shim.write_text(
         "#!/bin/bash\n"
@@ -466,8 +475,9 @@ def _claim_in_the_heals_gap(c, pid: int) -> None:
         f'ls "{gd}"/skills-update.staging.heal.* >/dev/null 2>&1; then\n'
         f'  rm -f "{c.kill_flag}"\n'
         f'  printf "pid {pid} %s\\n{VENDOR}\\n{DOCTOR_PATH}\\n" '
-        f'"$(/bin/date +%s)" > "{marker}"\n'
+        f'"$({now})" > "{marker}"\n'
         "fi\n"
+        f"{pinned}"
         'exec /bin/date "$@"\n'
     )
     shim.chmod(0o755)
@@ -726,10 +736,14 @@ class TestATakenFileOutlivesARefreshThatNeverStaged:
         """The refresh made real: the claim in the gap is a run killed before
         its update, so this session's own refresh takes it over — and its
         `submodule update` fails, so `_finish_refresh` drops the marker with
-        nothing added. The taken file names a path still staged: kept."""
+        nothing added. The taken file names a path still staged: kept.
+
+        The refresh's take of that claim then falls in the heal's second, so
+        names a `.2` take (CR 1911): pinned there (CR 1915), or a run whose
+        takes straddled a second passed without the `.2`."""
         c = consumer
         _killed_in_commit(c)
-        _claim_in_the_heals_gap(c, _dead_pid())
+        _claim_in_the_heals_gap(c, _dead_pid(), epoch=int(time.time()))
         shim = c.bindir / "git"
         first, rest = shim.read_text().split("\n", 1)
         shim.write_text(f"{first}\nif {REFRESH_UPDATE}; then exit 1; fi\n{rest}")
@@ -797,3 +811,48 @@ class TestADropKeepsWhatIsNotOver:
             "a copy of a live run's marker was dropped (_marker_owner_live)"
         )
         assert not over.exists(), "a take whose heal is over was kept"
+
+
+# CR 1916 ------------------------------------------------------------------
+
+
+class TestADropTakesACopyOfItsOwnMarker:
+    """CR 1916: a taken file whose first line is this run's own `pid $$` is a
+    copy of its marker or claim — a slower take, killed after linking it
+    back. `_drop_taken` kept one while a human's staged bump touched a path
+    it names; a later session with no marker adopted it, counted a phantom
+    kill and unstaged the human's bump. The run drops because nothing of its
+    own is staged, so its copy goes whatever else is."""
+
+    def test_the_copy_goes_beside_a_manual_bump(self, consumer):
+        c = consumer
+        newer = _a_manual_bump(c)
+        now = int(time.time())
+        copy = c.path / ".git" / f"skills-update.staging.heal.{_dead_pid()}.{now}"
+        witness = c.path.parent / "copied-marker"
+        # Planted when the refresh's update starts, its claim written by then;
+        # the update fails, so `_finish_refresh` drops the marker with nothing
+        # of the run's own staged.
+        shim = c.bindir / "git"
+        first, rest = shim.read_text().split("\n", 1)
+        shim.write_text(
+            f"{first}\nif {REFRESH_UPDATE}; then "
+            f'cp "{c.path / MARKER}" "{copy}"; cp "{c.path / MARKER}" "{witness}"; '
+            f"exit 1; fi\n{rest}"
+        )
+        try:
+            result = run_hook(c)
+        finally:
+            write_shim(c)
+
+        assert result.returncode == 0, result.stderr
+        assert "skills update failed" in result.stderr, result.stderr
+        assert witness.read_text().startswith("pid "), "fixture: no copy planted"
+        assert staged(c) == [VENDOR] and content(c) == newer
+        assert not copy.exists(), (
+            "a copy of the run's own marker outlived its drop, kept by the "
+            "human's staged bump:\n" + copy.read_text()
+        )
+        kills = c.path / KILLS
+        kills_before = kills.read_text() if kills.exists() else ""
+        _the_manual_bump_is_left_alone(c, newer, kills_before)
