@@ -151,6 +151,6 @@ You may also want to delete the hook's files in `.git/` if you don't plan to rei
 
 ```bash
 rm -f .git/skills-update.lock .git/skills-update.log .git/skills-status.err .git/skills-update.staging \
-  .git/skills-update.commit-kills .git/skills-update.log.tmp .git/skills-update.pr-index .git/skills-update.pr-index.lock
+  .git/skills-update.commit-kills .git/skills-update.commit-kills.tmp .git/skills-update.log.tmp .git/skills-update.pr-index .git/skills-update.pr-index.lock
 find .git -maxdepth 1 -name 'skills-update.staging.heal.*' -delete
 ```

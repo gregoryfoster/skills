@@ -1167,6 +1167,13 @@ _stamp_lock() {
 # resetting on it would let a slow suite interleaved with it retry forever.
 # Only a commit that lands resets it. A count past 2 backs off at once: a
 # suite that has not fitted twice is not retried a second time in a day.
+#
+# Called as soon as the heal knows the killed run left the hook's paths
+# staged, before it undoes anything (CR 1899): counted last, a heal killed at
+# its restore lost the count, and the next heal found nothing staged to count.
+# The owner-line key makes a second call for one kill a no-op. Written through
+# a temp file and a rename, so a kill mid-write cannot leave it empty — which
+# reads as 0.
 _count_commit_kill() {
   local owner="$1" kills=0 last=""
   case "$owner" in "pid "*) : ;; *) return 0 ;; esac
@@ -1176,7 +1183,9 @@ _count_commit_kill() {
   fi
   [ "$last" != "$owner" ] || return 0
   kills=$((kills + 1))
-  if ! printf '%s %s\n' "$kills" "$owner" >"$COMMIT_KILLS" 2>/dev/null; then
+  if ! printf '%s %s\n' "$kills" "$owner" >"$COMMIT_KILLS.tmp" 2>/dev/null ||
+    ! mv -f "$COMMIT_KILLS.tmp" "$COMMIT_KILLS" 2>/dev/null; then
+    rm -f "$COMMIT_KILLS.tmp" 2>/dev/null || true
     _log "heal: could not write $COMMIT_KILLS — a refresh killed inside its commit is not counted, and the next session retries"
     return 0
   fi
@@ -1306,6 +1315,12 @@ STAGED_EOF
     return 0
   fi
 
+  # The kill fell between `git add` and the end of `git commit` (#575).
+  # Counted first, before anything is undone (CR 1899).
+  if [ "${#own[@]}" -gt 0 ]; then
+    _count_commit_kill "$owner"
+  fi
+
   # The whole bump goes back, not only its staging (#550): a kill after the
   # update leaves the content ahead of the pointer whether or not it got as
   # far as `git add`, and a session that cannot redo the bump (main carrying
@@ -1360,10 +1375,6 @@ LISTED_EOF
   if [ "${#own[@]}" -eq 0 ] ||
     git diff --cached --quiet --ignore-submodules=none -- "${own[@]}" 2>/dev/null; then
     rm -f "$STAGING" 2>/dev/null || true
-  fi
-  # The kill fell between `git add` and the end of `git commit` (#575).
-  if [ "${#own[@]}" -gt 0 ]; then
-    _count_commit_kill "$owner"
   fi
   return 0
 }
