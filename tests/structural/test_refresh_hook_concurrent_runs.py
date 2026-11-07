@@ -49,12 +49,20 @@ counted again.
 - the next session only heals            → the same
 - the heal keeps the marker (someone's work staged beside), and the same
   session's refresh then finishes        → the same
-- a refresh claims in the heal's gap     → the heal drops what it took
+- a refresh claims in the heal's gap     → its claim is untouched, and what
+  the heal took is kept while the killed run's bump is staged (CR 1911)
+- the same, and the refresh then lands   → what the heal took goes with it
 
 CR 1908 — the heal reads the marker it claimed from its private copy, never
 from `$STAGING`, which a slower session's take renames away for an instant:
 - the paths read in that instant         → the heal still heals
 - `mode pr` read in that instant         → still healed as a pr-mode run's
+
+CR 1911 — a taken file is kept while anything it names is still staged. A
+refresh that beat a heal's claim can end without `git add`, dropping its
+marker with the killed run's bump still staged:
+- that refresh's end simulated           → the next session heals the bump
+- that refresh real, its update failing  → the same
 """
 
 import os
@@ -439,6 +447,27 @@ def _the_manual_bump_is_left_alone(c, newer: str, kills_before: str) -> None:
     assert "is the marker again" not in log_text(c), log_text(c)
 
 
+def _claim_in_the_heals_gap(c, pid: int) -> None:
+    """A `date` shim that, once, writes a claim owned by `pid` in the instant
+    a heal has taken the marker and not yet claimed it: a refresh claiming
+    `$STAGING` in the heal's gap."""
+    marker = c.path / MARKER
+    gd = c.path / ".git"
+    shim = c.bindir / "date"
+    shim.write_text(
+        "#!/bin/bash\n"
+        f'if [ -f "{c.kill_flag}" ] && [ ! -e "{marker}" ] && '
+        f'ls "{gd}"/skills-update.staging.heal.* >/dev/null 2>&1; then\n'
+        f'  rm -f "{c.kill_flag}"\n'
+        f'  printf "pid {pid} %s\\n{VENDOR}\\n{DOCTOR_PATH}\\n" '
+        f'"$(/bin/date +%s)" > "{marker}"\n'
+        "fi\n"
+        'exec /bin/date "$@"\n'
+    )
+    shim.chmod(0o755)
+    c.kill_flag.write_text("")
+
+
 class TestATakenFileOutlivesNoHeal:
     """CR 1906: `_adopt_taken` runs only when there is no marker, so a
     `.heal.<pid>.<epoch>` left beside one was skipped by the session that
@@ -501,33 +530,22 @@ class TestATakenFileOutlivesNoHeal:
     def test_a_heal_whose_claim_a_refresh_beat(self, consumer):
         """The heal took the dead marker, and before it could claim one, a
         refresh claimed `$STAGING` (here a live process's claim, written in
-        the gap by a `date` shim). That run owns the checkout and names the
-        paths; what the heal took must not outlive it."""
+        the gap by a `date` shim). That run owns the checkout: its claim is
+        not touched. What the heal took names the killed run's bump, still
+        staged, so it is kept (CR 1911) — the refresh may yet end without
+        `git add`."""
         c = consumer
         _killed_in_commit(c)
         spend_todays_lock(c)
         owner = subprocess.Popen(["sleep", "60"])
         marker = c.path / MARKER
-        gd = c.path / ".git"
-        shim = c.bindir / "date"
-        shim.write_text(
-            "#!/bin/bash\n"
-            f'if [ -f "{c.kill_flag}" ] && [ ! -e "{marker}" ] && '
-            f'ls "{gd}"/skills-update.staging.heal.* >/dev/null 2>&1; then\n'
-            f'  rm -f "{c.kill_flag}"\n'
-            f'  printf "pid {owner.pid} %s\\n{VENDOR}\\n{DOCTOR_PATH}\\n" '
-            f'"$(/bin/date +%s)" > "{marker}"\n'
-            "fi\n"
-            'exec /bin/date "$@"\n'
-        )
-        shim.chmod(0o755)
-        c.kill_flag.write_text("")
+        _claim_in_the_heals_gap(c, owner.pid)
         try:
             result = run_hook(c)
         finally:
             owner.kill()
             owner.wait()
-            shim.unlink()
+            (c.bindir / "date").unlink()
 
         assert result.returncode == 0, result.stderr
         assert not c.kill_flag.exists(), "fixture: no claim landed in the gap"
@@ -535,7 +553,33 @@ class TestATakenFileOutlivesNoHeal:
         assert marker.read_text().startswith(f"pid {owner.pid} "), (
             "the claim that landed in the gap was touched"
         )
-        _no_heal_leftovers(c)
+        assert VENDOR in staged(c)
+        left = list((c.path / ".git").glob("skills-update.staging.heal.*"))
+        assert len(left) == 1, (
+            f"what the heal took names a path still staged, so it stays: {left}"
+        )
+
+    def test_a_heal_whose_claim_a_refresh_beat_that_then_lands(self, consumer):
+        """The same, the refresh made real: the claim in the gap is a run
+        killed before its update, so this session's refresh takes it over
+        and commits. Its marker dropped, nothing the taken file names is
+        staged any more: the taken file goes with it."""
+        c = consumer
+        _killed_in_commit(c)
+        _claim_in_the_heals_gap(c, _dead_pid())
+        try:
+            result = run_hook(c)
+        finally:
+            (c.bindir / "date").unlink()
+
+        assert result.returncode == 0, result.stderr
+        assert not c.kill_flag.exists(), "fixture: no claim landed in the gap"
+        assert "could not claim" in log_text(c), log_text(c)
+        _refreshed_once_more(c)
+        kills = c.path / KILLS
+        kills_before = kills.read_text() if kills.exists() else ""
+        newer = _a_manual_bump(c)
+        _the_manual_bump_is_left_alone(c, newer, kills_before)
 
 
 # CR 1908 ------------------------------------------------------------------
@@ -615,3 +659,75 @@ class TestTheHealReadsWhatItTook:
         assert not (c.path / KILLS).exists(), "a kill was counted"
         assert not (c.path / MARKER).exists()
         _no_heal_leftovers(c)
+
+
+# CR 1911 ------------------------------------------------------------------
+
+
+def _the_killed_bump_is_healed(c, result) -> None:
+    assert result.returncode == 0, result.stderr
+    assert staged(c) == [], (
+        "the killed run's staged bump is stranded with no marker:\n" + log_text(c)
+    )
+    assert content(c) == gitlink(c) == c.before
+    assert "is the marker again" in log_text(c), log_text(c)
+    assert not (c.path / MARKER).exists()
+    _no_heal_leftovers(c)
+
+
+class TestATakenFileOutlivesARefreshThatNeverStaged:
+    """CR 1911: a heal whose claim a refresh beat dropped what it took, on the
+    grounds that the refresh's marker names the same paths (CR 1906). But
+    that refresh can end without `git add` — its `submodule update` fails —
+    and `_finish_refresh` drops its marker with the killed run's bump still
+    staged. Nothing then marked it: every later session logged "staged with
+    no in-progress marker", and a human's next commit on main absorbed it.
+    A taken file is kept while anything it names is still staged."""
+
+    def test_the_reviewers_reproduction(self, consumer):
+        """The refresh's end simulated: its marker goes, its owner exits."""
+        c = consumer
+        _killed_in_commit(c)
+        spend_todays_lock(c)
+        owner = subprocess.Popen(["sleep", "60"])
+        marker = c.path / MARKER
+        _claim_in_the_heals_gap(c, owner.pid)
+        try:
+            heal = run_hook(c)
+        finally:
+            (c.bindir / "date").unlink()
+        assert heal.returncode == 0, heal.stderr
+        assert not c.kill_flag.exists(), "fixture: no claim landed in the gap"
+        assert "could not claim" in log_text(c), log_text(c)
+        marker.unlink()
+        owner.kill()
+        owner.wait()
+        assert VENDOR in staged(c)
+
+        _the_killed_bump_is_healed(c, run_hook(c))
+
+    def test_a_refresh_whose_update_fails(self, consumer):
+        """The refresh made real: the claim in the gap is a run killed before
+        its update, so this session's own refresh takes it over — and its
+        `submodule update` fails, so `_finish_refresh` drops the marker with
+        nothing added. The taken file names a path still staged: kept."""
+        c = consumer
+        _killed_in_commit(c)
+        _claim_in_the_heals_gap(c, _dead_pid())
+        shim = c.bindir / "git"
+        first, rest = shim.read_text().split("\n", 1)
+        shim.write_text(f"{first}\nif {REFRESH_UPDATE}; then exit 1; fi\n{rest}")
+        try:
+            heal = run_hook(c)
+        finally:
+            (c.bindir / "date").unlink()
+            write_shim(c)
+        assert heal.returncode == 0, heal.stderr
+        assert not c.kill_flag.exists(), "fixture: no claim landed in the gap"
+        assert "could not claim" in log_text(c), log_text(c)
+        assert "skills update failed" in heal.stderr, heal.stderr
+        assert lock(c).exists(), "fixture: the failed refresh spent the day"
+        assert not (c.path / MARKER).exists()
+        assert VENDOR in staged(c)
+
+        _the_killed_bump_is_healed(c, run_hook(c))

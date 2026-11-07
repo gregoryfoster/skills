@@ -5,7 +5,8 @@
 it up past MARKER_MAX_AGE (a reused PID), and since CR 1906 one is adopted
 only with no marker there, every other being dropped with the marker that
 supersedes it. The sentence naming the file must say both: the age, read
-from the hook, and the drop.
+from the hook, and the drop — which waits, since CR 1911, until nothing the
+file names is staged.
 """
 
 import re
@@ -40,4 +41,12 @@ def test_it_says_the_others_are_dropped():
     assert "dropped" in sentence and "no marker" in sentence, (
         "a taken file is adopted only with no marker there; every other is "
         "dropped with the marker that supersedes it (CR 1906): " + sentence
+    )
+
+
+def test_it_says_a_staged_one_is_kept():
+    sentence = _sentence()
+    assert "staged" in sentence, (
+        "a taken file is dropped only once nothing it names is staged "
+        "(CR 1911): " + sentence
     )
