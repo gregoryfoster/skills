@@ -581,6 +581,22 @@ class TestTheInlineReadersHoldMergeModeShsGrammar:
             assert r.stdout == "", "an unusable knob must render nothing"
             assert ".skills/merge_mode" in r.stderr
 
+    @pytest.mark.parametrize("layout", sorted(layouts.LAYOUTS))
+    def test_an_inherited_git_dir_does_not_answer(self, tmp_path, layout):
+        """CR 1895: as knob_tracked and git_config already scrub it."""
+        checkout = layouts.LAYOUTS[layout](tmp_path, "pr\n")
+        gitdir = layouts.git(checkout, "rev-parse", "--absolute-git-dir")
+        r = subprocess.run(
+            ["bash", str(INSTALL_CADENCE), "--print", "--cron", "0 15 * * 1"],
+            cwd=checkout,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            env=_env(GIT_DIR=gitdir),
+        )
+        assert r.returncode == 0, r.stderr
+        assert READ_STEP in r.stdout, "read as direct"
+
     @pytest.mark.parametrize(
         ("layout", "committed"),
         [("bare_home", True), ("submodule_linked", False)],
@@ -623,6 +639,40 @@ class TestTheInlineReadersHoldMergeModeShsGrammar:
         assert r.stdout == "", "a primary git refuses must render nothing"
         assert "dubious ownership" in r.stderr, "git's reason is let through"
         assert str(repo.resolve()) in r.stderr, r.stderr
+
+    # CR 1892: a primary whose .git is a pointer file lists its store, which
+    # names no work tree; #584 made --print exit 5 there with no knob at all.
+
+    @pytest.mark.parametrize("text", [None, "pr\n"], ids=["absent", "pr"])
+    def test_a_separate_git_dir_primary_renders_by_its_own_knob(self, tmp_path, text):
+        primary, _ = layouts.separate_git_dir(tmp_path, text)
+        r = _install(primary, "--print", "--cron", "0 15 * * 1")
+        assert r.returncode == 0, r.stderr
+        assert "must be run in a work tree" not in r.stderr, r.stderr
+        assert (READ_STEP in r.stdout) is (text == "pr\n"), r.stdout
+
+    @pytest.mark.parametrize("text", [None, "pr\n"], ids=["absent", "pr"])
+    def test_its_linked_worktree_refuses_and_says_why(self, tmp_path, text):
+        _, linked = layouts.separate_git_dir(tmp_path, text)
+        r = _install(linked, "--print", "--cron", "0 15 * * 1")
+        assert r.returncode == 5, r.stdout + r.stderr
+        assert r.stdout == "", "an unreadable knob must render nothing"
+        assert layouts.SEPARATE_GIT_DIR_HINT in r.stderr, r.stderr
+        assert "primary checkout" in r.stderr, r.stderr
+
+    def test_its_store_git_cannot_open_is_never_the_fallback(self, tmp_path):
+        _, linked = layouts.separate_git_dir(tmp_path, "pr\n")
+        r = subprocess.run(
+            ["bash", str(INSTALL_CADENCE), "--print", "--cron", "0 15 * * 1"],
+            cwd=linked,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            env=layouts.different_owner(_env(), linked),
+        )
+        assert r.returncode == 5, r.stdout + r.stderr
+        assert "dubious ownership" in r.stderr, r.stderr
+        assert layouts.SEPARATE_GIT_DIR_HINT not in r.stderr, r.stderr
 
 
 # --- the two shapes --------------------------------------------------------

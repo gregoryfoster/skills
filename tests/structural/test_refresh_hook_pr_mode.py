@@ -455,6 +455,15 @@ class TestTheReaderHoldsMergeModeShsGrammar:
             assert mode == "unusable", mode
             assert ".skills/merge_mode" in err
 
+    @pytest.mark.parametrize("layout", sorted(layouts.LAYOUTS))
+    def test_an_inherited_git_dir_does_not_answer(self, tmp_path, layout):
+        """CR 1895: an inherited GIT_DIR beats `-C`, so the submodule's
+        entry named itself as the work tree and the read said `direct`."""
+        checkout = layouts.LAYOUTS[layout](tmp_path, "pr\n")
+        env = clean_env()
+        env["GIT_DIR"] = layouts.git(checkout, "rev-parse", "--absolute-git-dir")
+        assert _read_mode(checkout, env) == ("pr", "")
+
     def test_a_primary_git_cannot_open_is_unusable(self, tmp_path):
         """Only the primary is refused ("dubious ownership"): unusable, with
         git's reason, never a fallback to this checkout or the raw path."""
@@ -471,6 +480,32 @@ class TestTheReaderHoldsMergeModeShsGrammar:
         assert mode == "unusable", mode
         assert "dubious ownership" in err, err
         assert str(repo.resolve()) in err, err
+
+    # CR 1892: a primary whose .git is a pointer file lists its store, which
+    # names no work tree. #584 made that unusable from the primary itself,
+    # where the hook said "no refresh" daily on a repo with no knob at all.
+
+    @pytest.mark.parametrize(
+        ("text", "want"), [(None, "direct"), ("pr\n", "pr")], ids=["absent", "pr"]
+    )
+    def test_a_separate_git_dir_primary_reads_its_own_knob(self, tmp_path, text, want):
+        primary, _ = layouts.separate_git_dir(tmp_path, text)
+        assert _read_mode(primary) == (want, "")
+
+    @pytest.mark.parametrize("text", [None, "pr\n"], ids=["absent", "pr"])
+    def test_its_linked_worktree_is_unusable_and_says_why(self, tmp_path, text):
+        _, linked = layouts.separate_git_dir(tmp_path, text)
+        mode, err = _read_mode(linked)
+        assert mode == "unusable", mode
+        assert layouts.SEPARATE_GIT_DIR_HINT in err, err
+        assert "primary checkout" in err, err
+
+    def test_its_store_git_cannot_open_is_never_the_fallback(self, tmp_path):
+        _, linked = layouts.separate_git_dir(tmp_path, "pr\n")
+        mode, err = _read_mode(linked, layouts.different_owner(clean_env(), linked))
+        assert mode == "unusable", mode
+        assert "dubious ownership" in err, err
+        assert layouts.SEPARATE_GIT_DIR_HINT not in err, err
 
 
 # --- the PR, kept to one ------------------------------------------------------

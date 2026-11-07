@@ -13,11 +13,15 @@ a git dir rather than a work tree:
   submodule's work tree through `core.worktree`.
 
 Read as a checkout, neither holds `.skills/`, so a reader that did so said
-`direct` in silence. Each builder here returns the checkout to read from, with
+`direct` in silence. A third, `separate_git_dir` (CR 1892), names a store no
+`-C` can resolve; it is kept out of LAYOUTS because from its linked worktree
+the honest answer is unusable. Each builder here returns the checkout to read from, with
 the knob where that layout keeps it. `different_owner` makes git refuse the
 primary alone ("dubious ownership"), which must be a refusal, never a
-fallback. Shared by test_merge_mode_knob.py, test_cadence_merge_mode.py and
-test_refresh_hook_pr_mode.py; every git call scrubs the inherited `GIT_*`
+fallback. Shared by test_merge_mode_knob.py, test_cadence_merge_mode.py,
+test_refresh_hook_pr_mode.py, and, for the doctor's token check and the
+hook's `.env` fallback (CR 1893, 1894), test_doctor_pr_mode_gh_token.py and
+test_refresh_hook_pr_gh_auth.py; every git call scrubs the inherited `GIT_*`
 variables and names its repo explicitly (#189).
 """
 
@@ -104,6 +108,52 @@ LAYOUTS: dict[str, Callable[[Path, str], Path]] = {
     "bare_home": bare_home,
     "submodule_linked": submodule_linked,
 }
+
+
+def separate_git_dir(tmp_path: Path, text: str | None) -> tuple[Path, Path]:
+    """A primary whose `.git` is a pointer file to a store outside its work
+    tree (`git init --separate-git-dir`), and a linked worktree of it; the
+    knob, when `text` is given, untracked in the primary. Returns
+    `(primary, linked)`.
+
+    The first block names the store: no `bare` line and no `core.worktree`,
+    so `git -C <store> rev-parse --show-toplevel` fails ("must be run in a
+    work tree") and no reader can name the primary's work tree from it (CR
+    1892). From the primary itself that work tree is this checkout, whose git
+    dir is the common dir. From the linked worktree git knows no path to it,
+    so a reader there is unusable, honestly, and not in LAYOUTS: every
+    LAYOUTS entry reads `pr` from its checkout.
+    """
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    primary = tmp_path / "work"
+    git(
+        tmp_path,
+        "init",
+        "-q",
+        "-b",
+        "main",
+        "--separate-git-dir",
+        str(tmp_path / "store.git"),
+        str(primary),
+    )
+    git(primary, "config", "user.email", "test@example.com")
+    git(primary, "config", "user.name", "test")
+    (primary / "README.md").write_text("x\n")
+    git(primary, "add", "-A")
+    git(primary, "-c", "commit.gpgsign=false", "commit", "-q", "-m", "init")
+    if text is not None:
+        knob(primary, text)
+    linked = tmp_path / "wt"
+    git(primary, "worktree", "add", "-q", "-b", "feature/x", str(linked))
+    first = git(linked, "worktree", "list", "--porcelain").split("\n\n")[0]
+    assert first.splitlines()[0].endswith("/store.git"), first
+    assert "\nbare" not in first, first
+    return primary, linked
+
+
+# A linked worktree's message names the layout it cannot read, as long as git
+# can open the store; "dubious ownership" is git's reason alone.
+SEPARATE_GIT_DIR_HINT = "--separate-git-dir"
 
 
 def different_owner(base: dict, safe: Path) -> dict:

@@ -325,15 +325,25 @@ BRANCH="$(git symbolic-ref --short HEAD 2>/dev/null || true)"
 # Read from the primary checkout, resolved as merge-mode.sh resolves it: an
 # untracked knob does not exist in a linked worktree. Present but unusable is
 # `unusable`, never `direct` — the run then neither pushes nor refreshes, and
-# says why.
+# says why. The primary's work tree it resolved is kept in
+# MERGE_MODE_PRIMARY, empty when it resolved none: _pr_token reads its .env
+# from a linked worktree (CR 1894).
 MERGE_MODE="direct"
 MERGE_MODE_ERR=""
+MERGE_MODE_PRIMARY=""
 _read_merge_mode() {
-  local wt block entry primary reason knob remedy line word="" count=0 words
+  local wt block entry primary dirs reason hint knob remedy line word="" count=0 words
+  # git without an inherited GIT_DIR or GIT_WORK_TREE, for every call that
+  # resolves the primary (CR 1895). Git exports GIT_DIR to every hook,
+  # absolute in a linked worktree, and it beats -C: asked for a submodule's
+  # work tree, git named the entry itself and the read said `direct`. A
+  # local, not a helper: tests run this function on its own.
+  local -a g=(env -u GIT_DIR -u GIT_WORK_TREE git)
   MERGE_MODE="unusable"
   MERGE_MODE_ERR=""
+  MERGE_MODE_PRIMARY=""
   remedy="write one word, 'pr' or 'direct', or delete the file for the default ('direct')"
-  wt="$(git worktree list --porcelain 2>/dev/null)" || {
+  wt="$("${g[@]}" worktree list --porcelain 2>/dev/null)" || {
     MERGE_MODE_ERR="git worktree list failed, so .skills/merge_mode could not be read"
     return 0
   }
@@ -341,26 +351,39 @@ _read_merge_mode() {
   # bare primary (`repo.git`) and in a submodule (`<super>/.git/modules/<n>`),
   # which read as a checkout said `direct` in silence (#584). A `bare` block's
   # knob can only be this checkout's; any other entry is asked for its work
-  # tree, and that ask failing is `unusable`, never a fallback: "dubious
-  # ownership" would read another checkout's knob.
+  # tree, and that ask failing is `unusable`, never a fallback to another
+  # checkout: "dubious ownership" would read its knob. One exception, which
+  # is no other checkout (CR 1892): a primary whose .git is a pointer file
+  # (`git init --separate-git-dir`) lists its store, which names no work
+  # tree. From that primary, the work tree is this one (its git dir is the
+  # common dir); from a linked worktree git knows no path to it.
   block=${wt%%$'\n\n'*}
   entry=${block%%$'\n'*}
   entry=${entry#worktree }
   case $'\n'"$block"$'\n' in
     *$'\n'bare$'\n'*)
-      if ! primary="$(git rev-parse --show-toplevel 2>/dev/null)"; then
+      if ! primary="$("${g[@]}" rev-parse --show-toplevel 2>/dev/null)"; then
         MERGE_MODE_ERR="the primary is bare and this is not a work tree, so there is no checkout to read .skills/merge_mode from"
         return 0
       fi
       ;;
     *)
-      if ! primary="$(git -C "$entry" rev-parse --show-toplevel 2>/dev/null)"; then
-        reason="$(git -C "$entry" rev-parse --show-toplevel 2>&1 >/dev/null || true)"
-        MERGE_MODE_ERR="could not resolve the primary checkout '$entry' to read .skills/merge_mode: ${reason%%$'\n'*}"
-        return 0
+      if ! primary="$("${g[@]}" -C "$entry" rev-parse --show-toplevel 2>/dev/null)"; then
+        dirs="$("${g[@]}" rev-parse --path-format=absolute --git-dir --git-common-dir 2>/dev/null)" || dirs=""
+        if [ -z "$dirs" ] || [ "${dirs%%$'\n'*}" != "${dirs#*$'\n'}" ] ||
+          ! primary="$("${g[@]}" rev-parse --show-toplevel 2>/dev/null)"; then
+          reason="$("${g[@]}" -C "$entry" rev-parse --show-toplevel 2>&1 >/dev/null || true)"
+          hint=""
+          if [ "$("${g[@]}" -C "$entry" rev-parse --is-inside-git-dir 2>/dev/null || true)" = true ]; then
+            hint="; it is a git dir with no work tree, as a primary whose .git is a file makes it (git init --separate-git-dir), and only that primary knows its work tree, so run this from the primary checkout"
+          fi
+          MERGE_MODE_ERR="could not resolve the primary checkout '$entry' to read .skills/merge_mode: ${reason%%$'\n'*}$hint"
+          return 0
+        fi
       fi
       ;;
   esac
+  MERGE_MODE_PRIMARY=$primary
   knob="$primary/.skills/merge_mode"
   if [ ! -e "$knob" ] && [ ! -L "$knob" ]; then
     MERGE_MODE="direct"
@@ -1530,7 +1553,10 @@ _env_value() {
 # In order:
 #   1. GH_TOKEN or GITHUB_TOKEN already in this hook's environment;
 #   2. GH_TOKEN in the checkout's .env, or from a linked worktree the primary
-#      checkout's — read as data, held in PR_GH_TOKEN, and handed to gh (and
+#      checkout's, the work tree _read_merge_mode resolved (CR 1894: the raw
+#      first `git worktree list` entry is a git dir in a bare primary and in
+#      a submodule; where the primary is this checkout, `.env` is its file)
+#      — read as data, held in PR_GH_TOKEN, and handed to gh (and
 #      to git's network calls for an https remote) per call. Never exported:
 #      the refresh runs the new pointer's own install-doctor.sh before any
 #      human has reviewed the bump, and the token must not reach it;
@@ -1539,18 +1565,16 @@ _env_value() {
 # reads like a bad token (#334's power-map case), while the .env is what the
 # cohort keeps current.
 _pr_token() {
-  local env_file=".env" wt primary host
+  local env_file=".env" host
   PR_GH_TOKEN=""
   PR_TOKEN_FROM=""
   if [ -n "${GH_TOKEN:-}" ] || [ -n "${GITHUB_TOKEN:-}" ]; then
     PR_TOKEN_FROM="this hook's environment"
     return 0
   fi
-  if [ ! -r "$env_file" ]; then
-    wt="$(git worktree list --porcelain 2>/dev/null || true)"
-    primary=${wt%%$'\n'*}
-    primary=${primary#worktree }
-    [ -z "$primary" ] || env_file="$primary/.env"
+  if [ ! -r "$env_file" ] && [ -n "${MERGE_MODE_PRIMARY:-}" ] &&
+    ! [ "$MERGE_MODE_PRIMARY" -ef . ]; then
+    env_file="$MERGE_MODE_PRIMARY/.env"
   fi
   PR_GH_TOKEN="$(_env_value "$env_file" GH_TOKEN)"
   if [ -n "$PR_GH_TOKEN" ]; then
