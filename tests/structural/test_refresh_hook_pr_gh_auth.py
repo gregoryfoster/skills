@@ -351,6 +351,23 @@ class TestWhereTheTokenComesFrom:
 
         assert _token_source(home, env) == (1, ".env", "")
 
+    def test_run_without_the_reader_it_has_no_fallback(self, tmp_path):
+        """_pr_token alone, before any _read_merge_mode (as a harness runs
+        it): no resolved primary, so no fallback, and no unbound-variable
+        death under set -u."""
+        git(tmp_path, "init", "-q", "-b", "main", str(tmp_path / "r"))
+        env = _no_token_env()
+        env["PATH"] = "/usr/bin:/bin"
+        r = _bash(
+            'PR_GH_REPO=""\n'
+            + _function("_env_value")
+            + _function("_pr_token")
+            + 'rc=0; _pr_token || rc=$?\nprintf "%s|%s" "$rc" "$PR_TOKEN_FROM"\n',
+            tmp_path / "r",
+            env,
+        )
+        assert (r.returncode, r.stdout) == (0, "1|.env"), r.stderr
+
     def test_the_environment_outranks_the_env_file(self, tmp_path):
         git(tmp_path, "init", "-q", "-b", "main", str(tmp_path / "r"))
         (tmp_path / "r" / ".env").write_text("GH_TOKEN=from-dotenv\n")
