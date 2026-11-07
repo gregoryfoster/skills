@@ -75,7 +75,10 @@ Behaviour:
     spent when a run ends, not when it starts: a run killed part way
     leaves it for the next session, which first undoes any staging the
     killed run left behind (.git/skills-update.staging marks a refresh in
-    progress).
+    progress). The second run in a row killed inside its commit spends the
+    day instead, and says why on stderr: the commit through the repo's
+    pre-commit hooks did not fit the timeout (.git/skills-update.commit-kills
+    counts them; a commit that lands resets it).
   - Runs only on the main branch.
   - Scopes the submodule update to skills-vendor/ — never touches other
     submodules.
@@ -164,6 +167,10 @@ LOG="$gitdir/skills-update.log"
 # hook staged from what a human did; a heal that has said a killed run's
 # staging on stderr appends `noted`. See _heal_staged and _marker_owner_live.
 STAGING="$gitdir/skills-update.staging"
+# Refreshes killed inside their commit, in a row (#575): one line, `<count>
+# <the last one's marker owner line>`. Written by the heal, removed by a run
+# whose commit lands. See _count_commit_kill.
+COMMIT_KILLS="$gitdir/skills-update.commit-kills"
 # How long a marker's owner can be believed alive (CR 1789): the hook's 120 s
 # ceiling plus margin. Past it, a live PID is a reused one — an unrelated
 # process, or one in another PID namespace — and the marker is stale.
@@ -973,19 +980,58 @@ _restore_content() {
 }
 
 # The day's lock, written by every run that ENDS — success or failure — and by
-# no run that is killed part way (#555). Checked, not `|| true` (#193): this
-# one write IS the once-per-day contract, and the guard reads nothing else. A
-# read-only or root-owned .git, or a full disk, and the stamp never lands, the
-# guard falls through next session, and the whole refresh runs again — every
-# session, forever, with nothing said. That is the defect #187 fixed in
-# socraticode-health.sh, the script this file's pin comment names as its twin;
-# the shape is copied from it. Reported, never fatal: a SessionStart hook must
-# not block, so a failed stamp degrades to noisier reporting.
+# no run that is killed part way (#555) — except that the second in a row
+# killed inside its commit has it written by the next heal (#575). Checked,
+# not `|| true` (#193): this one write IS the once-per-day contract, and the
+# guard reads nothing else. A read-only or root-owned .git, or a full disk, and
+# the stamp never lands, the guard falls through next session, and the whole
+# refresh runs again — every session, forever, with nothing said. That is the
+# defect #187 fixed in socraticode-health.sh, the script this file's pin
+# comment names as its twin; the shape is copied from it. Reported, never
+# fatal: a SessionStart hook must not block, so a failed stamp degrades to
+# noisier reporting.
 _stamp_lock() {
   if ! date -u +%Y%m%d > "$LOCK" 2>/dev/null; then
     _log "could not stamp $LOCK — the once-per-day guard is off until this is fixed"
     echo "skills update: cannot write $LOCK; this refresh will repeat every session (see $LOG)" >&2 || true
   fi
+  return 0
+}
+
+# _count_commit_kill <marker owner line> — the heal found a killed run that
+# left the hook's own paths staged, so the kill fell between `git add` and the
+# end of `git commit` (#575). Since #555 such a run is retried at the next
+# session, which is right for the extension's 2-3 s kill and wrong for a
+# consumer whose pre-commit suite does not fit the 120 s timeout: that commit
+# is killed at every session start, and the operator sees a log ending
+# mid-`pytest`. So the second in a row stamps the day's lock, and says why on
+# stderr — once a back-off, since only a new kill gets here.
+#
+# Keyed on the killed run's owner line, so a marker the heal keeps (the hook's
+# staging beside a human's, or an unstage that failed) is counted once however
+# many sessions heal it. A kill before `git add` never gets here, and does not
+# reset the count either: the extension's kill nearly always lands there, and
+# resetting on it would let a slow suite interleaved with it retry forever.
+# Only a commit that lands resets it. A count past 2 backs off at once: a
+# suite that has not fitted twice is not retried a second time in a day.
+_count_commit_kill() {
+  local owner="$1" kills=0 last=""
+  case "$owner" in "pid "*) : ;; *) return 0 ;; esac
+  if [ -f "$COMMIT_KILLS" ]; then
+    read -r kills last <"$COMMIT_KILLS" 2>/dev/null || true
+    case "$kills" in '' | *[!0-9]*) kills=0 ;; esac
+  fi
+  [ "$last" != "$owner" ] || return 0
+  kills=$((kills + 1))
+  if ! printf '%s %s\n' "$kills" "$owner" >"$COMMIT_KILLS" 2>/dev/null; then
+    _log "heal: could not write $COMMIT_KILLS — a refresh killed inside its commit is not counted, and the next session retries"
+    return 0
+  fi
+  _log "heal: a refresh was killed inside its commit ($kills in a row)"
+  [ "$kills" -ge 2 ] || return 0
+  _log "heal: backing off — the next refresh waits for the next UTC day"
+  _stamp_lock
+  echo "skills update: $kills refreshes in a row were killed inside their commit, so the next waits for the next UTC day rather than the next session. The commit runs this repo's pre-commit hooks and did not fit in the hook's 120 s default timeout: list the slow hook ids in .skills/refresh-skip-hooks to skip them on this hook's own commit (see $LOG)" >&2 || true
   return 0
 }
 
@@ -1003,7 +1049,9 @@ _stamp_lock() {
 # Undone here, every session on main, ahead of the lock — the session after a
 # kill is usually the real one, a second later. Unstaged rather than
 # committed: the lock is now spent only when a run ends, so this same session
-# redoes the bump, and nothing is committed that this run has not verified.
+# redoes the bump, and nothing is committed that this run has not verified —
+# unless it is the second kill in a row inside the commit, which spends the
+# day (_count_commit_kill, #575).
 #
 # Only what the hook staged is touched, and the marker is how it knows. A
 # human's own `git add skills-vendor/<v>` — a manual bump — stages exactly the
@@ -1021,7 +1069,7 @@ _stamp_lock() {
 _heal_staged() {
   [ "$BRANCH" = "main" ] || return 0
 
-  local listed="" marked=0 staged_now rc=0 spath own=() others=0 hook_paths
+  local listed="" marked=0 staged_now rc=0 spath own=() others=0 hook_paths owner=""
   if [ -f "$STAGING" ]; then
     # A live owner's marker is never the heal's (CR 1789). The guard ahead of
     # the doctor install already exits on one; this keeps the heal honest on
@@ -1031,6 +1079,7 @@ _heal_staged() {
       return 0
     fi
     marked=1
+    owner="$(head -n 1 "$STAGING" 2>/dev/null)" || owner=""
     # The paths, without the owner line, a pr-mode run's `mode pr`, or the
     # `noted` an earlier heal appended (CR 1801).
     listed="$(grep -v -e '^pid ' -e '^mode ' -e '^noted$' "$STAGING" 2>>"$LOG")" || rc=$?
@@ -1133,6 +1182,10 @@ LISTED_EOF
   if [ "${#own[@]}" -eq 0 ] ||
     git diff --cached --quiet --ignore-submodules=none -- "${own[@]}" 2>/dev/null; then
     rm -f "$STAGING" 2>/dev/null || true
+  fi
+  # The kill fell between `git add` and the end of `git commit` (#575).
+  if [ "${#own[@]}" -gt 0 ]; then
+    _count_commit_kill "$owner"
   fi
   return 0
 }
@@ -2207,12 +2260,16 @@ if [ "$STATUS_RC" -eq 0 ] && [ -n "$STATUS_OUT" ]; then
         # Then the content goes back to its pointer and the doctor with it:
         # unstaging alone left both ahead, with stderr silent and the day
         # spent.
-        _hook_git commit -m "$MSG" -- "${STAGED_PATHS[@]}" 2>&1 || {
+        #
+        # A commit that lands ends a run of commit-stage kills (#575).
+        if _hook_git commit -m "$MSG" -- "${STAGED_PATHS[@]}" 2>&1; then
+          rm -f "$COMMIT_KILLS" 2>/dev/null || true
+        else
           echo "commit failed — undoing the bump: unstaging, then the content and the doctor back on the recorded pointer"
           echo "skills update: the commit failed (git's words in $LOG), so this run undoes its bump — the staging, the vendored content and the doctor; anything it cannot put back is said separately. The next day's refresh tries again" >&2 || true
           _unstage "a failed commit" "${COMMIT_PATHS[@]}"
           _restore_content "a failed commit" "${REFRESH_PATHS[@]}"
-        }
+        fi
       fi
     fi
   } >>"$LOG" || true
