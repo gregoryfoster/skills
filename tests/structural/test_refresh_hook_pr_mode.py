@@ -764,6 +764,38 @@ class TestReconcileInPrMode:
         _assert_content_matches_pointer(c)
         assert len(_creates(c.gh)) == 1
 
+    def test_one_parked_after_the_guards_read_the_range_rolls_back_nothing(
+        self, pr_consumer
+    ):
+        """#566: the swap's expected HEAD was read after the guards, so a
+        session parked between them took the other's rollback for its own
+        range — and swapped one commit further back, onto the operator's."""
+        c = pr_consumer
+        git(c.path, "submodule", "update", "--remote", "--merge", "--", VENDOR)
+        git(c.path, "add", VENDOR)
+        git(c.path, "commit", "-qm", MSG_SUB, "--", VENDOR)
+        write_shim(
+            c,
+            hold_when='[ "$1" = rev-list ] && [ "$2" = --count ] && [ "$3" = --merges ]',
+        )
+        c.kill_flag.write_text("")
+        first = start_hook(c)
+        deadline = time.monotonic() + 60
+        while not c.held.exists():
+            assert time.monotonic() < deadline, "the first run never reached the hold"
+            time.sleep(0.05)
+
+        second = run_hook(c)
+        c.release.write_text("")
+        assert finish_hook(first).returncode == 0
+
+        assert second.returncode == 0, second.stderr
+        _main_never_moved(c)
+        _assert_content_matches_pointer(c)
+        assert "rolling back 1 commit(s) this hook made on main failed" in (
+            log_text(c)
+        ), log_text(c)
+
 
 # --- a staged leftover the hook did not mark (CR 1791) -----------------------
 
