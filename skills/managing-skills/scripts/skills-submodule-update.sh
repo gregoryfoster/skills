@@ -317,9 +317,9 @@ _take_marker() {
 }
 
 # _taker_live <taken file> — true while the heal named in the file's name
-# (`.heal.<pid>.<epoch>[.2]`) may still be between its take and its claim: its pid
-# is not this run's, is under MARKER_MAX_AGE, and `kill -0` reaches it. A name
-# that is not a heal's reads as live, so nothing acts on it.
+# (`.heal.<pid>.<epoch>[.2]`) may still be between its take and its claim:
+# its pid is not this run's, is under MARKER_MAX_AGE, and `kill -0` reaches
+# it. A name that is not a heal's reads as live, so nothing acts on it.
 _taker_live() {
   local rest pid started now
   rest="${1#"$STAGING".heal.}"
