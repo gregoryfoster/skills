@@ -457,12 +457,17 @@ def _the_manual_bump_is_left_alone(c, newer: str, kills_before: str) -> None:
     assert "is the marker again" not in log_text(c), log_text(c)
 
 
-def _claim_in_the_heals_gap(c, pid: int) -> None:
+def _claim_in_the_heals_gap(c, pid: int, epoch: int | None = None) -> None:
     """A `date` shim that, once, writes a claim owned by `pid` in the instant
     a heal has taken the marker and not yet claimed it: a refresh claiming
-    `$STAGING` in the heal's gap."""
+    `$STAGING` in the heal's gap. Given `epoch`, every `date +%s` answers it,
+    so the run's takes all fall in one second (CR 1915)."""
     marker = c.path / MARKER
     gd = c.path / ".git"
+    now = "/bin/date +%s" if epoch is None else f"echo {epoch}"
+    pinned = (
+        "" if epoch is None else f'[ "$*" != +%s ] || {{ echo {epoch}; exit 0; }}\n'
+    )
     shim = c.bindir / "date"
     shim.write_text(
         "#!/bin/bash\n"
@@ -470,8 +475,9 @@ def _claim_in_the_heals_gap(c, pid: int) -> None:
         f'ls "{gd}"/skills-update.staging.heal.* >/dev/null 2>&1; then\n'
         f'  rm -f "{c.kill_flag}"\n'
         f'  printf "pid {pid} %s\\n{VENDOR}\\n{DOCTOR_PATH}\\n" '
-        f'"$(/bin/date +%s)" > "{marker}"\n'
+        f'"$({now})" > "{marker}"\n'
         "fi\n"
+        f"{pinned}"
         'exec /bin/date "$@"\n'
     )
     shim.chmod(0o755)
@@ -730,10 +736,14 @@ class TestATakenFileOutlivesARefreshThatNeverStaged:
         """The refresh made real: the claim in the gap is a run killed before
         its update, so this session's own refresh takes it over — and its
         `submodule update` fails, so `_finish_refresh` drops the marker with
-        nothing added. The taken file names a path still staged: kept."""
+        nothing added. The taken file names a path still staged: kept.
+
+        The refresh's take of that claim then falls in the heal's second, so
+        names a `.2` take (CR 1911): pinned there (CR 1915), or a run whose
+        takes straddled a second passed without the `.2`."""
         c = consumer
         _killed_in_commit(c)
-        _claim_in_the_heals_gap(c, _dead_pid())
+        _claim_in_the_heals_gap(c, _dead_pid(), epoch=int(time.time()))
         shim = c.bindir / "git"
         first, rest = shim.read_text().split("\n", 1)
         shim.write_text(f"{first}\nif {REFRESH_UPDATE}; then exit 1; fi\n{rest}")
