@@ -39,6 +39,15 @@ the length of the heal:
 - a heal killed part way                 → the next session heals what it left
 - a heal killed between taking the marker and claiming it, leaving only the
   renamed file                           → the next session heals that
+
+CR 1906 — a taken file must not outlive the heal or refresh that supersedes
+it. Left beside a marker (a heal killed after its claim, before dropping what
+it took), or by a heal whose claim a refresh beat, it used to be adopted by a
+later session with no marker: a human's manual bump unstaged, a healed kill
+counted again.
+- the next session heals and refreshes   → a later manual bump is left alone
+- the next session only heals            → the same
+- a refresh claims in the heal's gap     → the heal drops what it took
 """
 
 import os
@@ -50,6 +59,7 @@ import pytest
 from tests.utils.refresh_hook_consumer import (
     DOCTOR_PATH,
     VENDOR,
+    _vendor_commit,
     ahead,
     arm_pre_commit_kill,
     build,
@@ -363,4 +373,137 @@ class TestTwoHealsOfOneDeadMarker:
         assert staged(c) == [], "the renamed marker's staging was stranded"
         assert content(c) == gitlink(c) == c.before
         assert not (c.path / MARKER).exists()
+        _no_heal_leftovers(c)
+
+
+# CR 1906 ------------------------------------------------------------------
+
+KILLS = ".git/skills-update.commit-kills"
+
+
+def _heal_killed_before_dropping_what_it_took(c) -> None:
+    """The reviewer's state: a run killed inside its commit, then a heal
+    killed after its claim and before its `rm -f "$TAKEN"` — the claim and
+    the taken file side by side."""
+    _killed_in_commit(c)
+    (c.path / ".git" / "hooks" / "pre-commit").unlink()
+    rm = c.bindir / "rm"
+    rm.write_text(
+        "#!/usr/bin/env bash\n"
+        'for a in "$@"; do case "$a" in *skills-update.staging.heal.*)\n'
+        f'  if [ -f "{c.kill_flag}" ]; then /bin/rm -f "{c.kill_flag}"; '
+        "kill -TERM 0; sleep 5; fi;; esac; done\n"
+        'exec /bin/rm "$@"\n'
+    )
+    rm.chmod(0o755)
+    c.kill_flag.write_text("")
+    killed = run_hook(c)
+    rm.unlink()
+    assert killed.returncode < 0, killed.stderr
+    left = sorted(p.name for p in (c.path / ".git").glob("skills-update.staging*"))
+    assert len(left) == 2 and "skills-update.staging" in left, (
+        f"fixture: the claim and the taken file side by side, got {left}"
+    )
+
+
+def _a_manual_bump(c) -> str:
+    """A human's `git add skills-vendor/<v>`, later the same day."""
+    newer = _vendor_commit(c.up, c.v2 + "# c3\n", "vendor c3")
+    git(c.path / VENDOR, "fetch", "-q", "origin")
+    git(c.path / VENDOR, "checkout", "-q", newer)
+    git(c.path, "add", VENDOR)
+    assert staged(c) == [VENDOR]
+    return newer
+
+
+def _the_manual_bump_is_left_alone(c, newer: str, kills_before: str) -> None:
+    kills = c.path / KILLS
+    result = run_hook(c)
+    assert result.returncode == 0, result.stderr
+    assert staged(c) == [VENDOR], (
+        "a taken file left by a finished heal was adopted as a marker and "
+        "unstaged a human's manual bump:\n" + log_text(c)
+    )
+    assert content(c) == newer
+    assert (kills.read_text() if kills.exists() else "") == kills_before, (
+        "an already-healed kill was counted again"
+    )
+    assert "is the marker again" not in log_text(c), log_text(c)
+
+
+class TestATakenFileOutlivesNoHeal:
+    """CR 1906: `_adopt_taken` runs only when there is no marker, so a
+    `.heal.<pid>.<epoch>` left beside one was skipped by the session that
+    healed that marker and refreshed to completion — and adopted by a later
+    session with no marker, which then unstaged a human's manual bump and
+    counted an already-healed kill, with stderr empty."""
+
+    def test_the_reviewers_reproduction(self, consumer):
+        """The next session heals the claim and refreshes to completion."""
+        c = consumer
+        _heal_killed_before_dropping_what_it_took(c)
+
+        result = run_hook(c)
+
+        assert result.returncode == 0, result.stderr
+        _refreshed_once_more(c)
+        kills = c.path / KILLS
+        kills_before = kills.read_text() if kills.exists() else ""
+        newer = _a_manual_bump(c)
+        _the_manual_bump_is_left_alone(c, newer, kills_before)
+
+    def test_a_heal_that_ends_without_a_refresh(self, consumer):
+        """The day already spent: the session only heals."""
+        c = consumer
+        _heal_killed_before_dropping_what_it_took(c)
+        spend_todays_lock(c)
+
+        result = run_hook(c)
+
+        assert result.returncode == 0, result.stderr
+        assert staged(c) == []
+        assert not (c.path / MARKER).exists()
+        _no_heal_leftovers(c)
+        kills = c.path / KILLS
+        kills_before = kills.read_text() if kills.exists() else ""
+        newer = _a_manual_bump(c)
+        _the_manual_bump_is_left_alone(c, newer, kills_before)
+
+    def test_a_heal_whose_claim_a_refresh_beat(self, consumer):
+        """The heal took the dead marker, and before it could claim one, a
+        refresh claimed `$STAGING` (here a live process's claim, written in
+        the gap by a `date` shim). That run owns the checkout and names the
+        paths; what the heal took must not outlive it."""
+        c = consumer
+        _killed_in_commit(c)
+        spend_todays_lock(c)
+        owner = subprocess.Popen(["sleep", "60"])
+        marker = c.path / MARKER
+        gd = c.path / ".git"
+        shim = c.bindir / "date"
+        shim.write_text(
+            "#!/bin/bash\n"
+            f'if [ -f "{c.kill_flag}" ] && [ ! -e "{marker}" ] && '
+            f'ls "{gd}"/skills-update.staging.heal.* >/dev/null 2>&1; then\n'
+            f'  rm -f "{c.kill_flag}"\n'
+            f'  printf "pid {owner.pid} %s\\n{VENDOR}\\n{DOCTOR_PATH}\\n" '
+            f'"$(/bin/date +%s)" > "{marker}"\n'
+            "fi\n"
+            'exec /bin/date "$@"\n'
+        )
+        shim.chmod(0o755)
+        c.kill_flag.write_text("")
+        try:
+            result = run_hook(c)
+        finally:
+            owner.kill()
+            owner.wait()
+            shim.unlink()
+
+        assert result.returncode == 0, result.stderr
+        assert not c.kill_flag.exists(), "fixture: no claim landed in the gap"
+        assert "could not claim" in log_text(c), log_text(c)
+        assert marker.read_text().startswith(f"pid {owner.pid} "), (
+            "the claim that landed in the gap was touched"
+        )
         _no_heal_leftovers(c)
