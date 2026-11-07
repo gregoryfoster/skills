@@ -36,9 +36,13 @@ one `git ls-remote` — and rolls back nothing if it does:
                                             refused; main stays on the bump
 - the other session's push lands while this one waits, then this one's
   network fails                          → @{u} already holds it: no rollback
-- @{u} stale, the remote already holding the commit, and a pre-push hook
-  refusing                               → ls-remote finds it: no rollback, and
+- @{u} stale, the remote's main moved to the commit after this push read it,
+  so the remote refuses it               → ls-remote finds it: no rollback, and
                                             @{u} is brought up to it
+
+CR 1907 — that `git ls-remote` is a second network wait. Asked only when the
+push's own output shows the remote refused the ref:
+- a push that never reaches the remote   → no ls-remote; rolled back
 """
 
 import time
@@ -247,17 +251,57 @@ class TestAPushAnotherSessionLanded:
         _pushed_by_another(c, first, second)
 
     def test_a_stale_upstream_is_checked_against_the_remote(self, tmp_path):
-        """The remote already holds the bump, @{u} does not know it yet (the
-        winner's tracking-ref write not yet visible; rewound here), and this
-        session's push fails — a push URL it cannot reach, while the fetch
-        URL answers. Asked once, the remote has the commit."""
+        """The remote already holds the bump and @{u} does not know it: the
+        other session's push moved the remote's main after this one read its
+        advertisement, and nothing has written this checkout's tracking ref.
+        A pre-push hook moves it here, so the remote refuses this push for
+        real ("incorrect old value provided"). Asked once, the remote has
+        the commit."""
         c = _stranded(tmp_path)
-        base = _rev(c, "@{u}")
-        git(c.path, "push", "-q", "origin", f"{c.bump}:refs/heads/main")
-        git(c.path, "update-ref", "refs/remotes/origin/main", base)
+        # The bump's objects on the remote, so its main can be moved to it.
+        git(c.path, "push", "-q", "origin", f"{c.bump}:refs/heads/elsewhere")
+        hook = c.path / ".git" / "hooks" / "pre-push"
+        hook.write_text(
+            "#!/bin/sh\n"
+            f'git --git-dir="{c.origin}" update-ref refs/heads/main {c.bump}\n'
+            "exit 0\n"
+        )
+        hook.chmod(0o755)
+
+        result = run_hook(c)
+
+        assert "incorrect old value" in log_text(c), (
+            "fixture: the remote should refuse the push itself\n" + log_text(c)
+        )
+        _pushed_by_another(c, result)
+
+
+# CR 1907 ------------------------------------------------------------------
+
+
+class TestAPushThatNeverReachedTheRemote:
+    def test_it_does_not_ask_the_remote_again(self, tmp_path):
+        """A remote that drops packets costs the push its whole network wait;
+        a `git ls-remote` after it costs a second one, and the 120 s kill
+        then lands before the rollback, every session. Only a refusal by
+        the remote itself — the two-session race always produces one —
+        asks it again."""
+        c = _stranded(tmp_path)
+        asked = tmp_path / "ls-remote-calls"
+        write_shim(c)
+        shim = c.bindir / "git"
+        first, rest = shim.read_text().split("\n", 1)
+        shim.write_text(
+            f'{first}\nif [ "$1" = ls-remote ]; then echo x >> "{asked}"; fi\n{rest}'
+        )
         gone = str(c.path.parent / "gone.git")
         git(c.path, "config", "remote.origin.pushurl", gone)
 
         result = run_hook(c)
 
-        _pushed_by_another(c, result)
+        assert result.returncode == 0, result.stderr
+        assert not asked.exists(), (
+            "a push that never reached the remote asked it again with ls-remote"
+        )
+        assert "rolled 1 commit(s) back" in result.stderr, result.stderr
+        assert _rev(c, "HEAD") == _rev(c, "@{u}")
