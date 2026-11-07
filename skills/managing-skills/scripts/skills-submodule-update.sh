@@ -980,15 +980,16 @@ _restore_content() {
 }
 
 # The day's lock, written by every run that ENDS — success or failure — and by
-# no run that is killed part way (#555), except that the second in a row
-# killed inside its commit has it written by the next heal (#575). Checked, not `|| true` (#193): this
-# one write IS the once-per-day contract, and the guard reads nothing else. A
-# read-only or root-owned .git, or a full disk, and the stamp never lands, the
-# guard falls through next session, and the whole refresh runs again — every
-# session, forever, with nothing said. That is the defect #187 fixed in
-# socraticode-health.sh, the script this file's pin comment names as its twin;
-# the shape is copied from it. Reported, never fatal: a SessionStart hook must
-# not block, so a failed stamp degrades to noisier reporting.
+# no run that is killed part way (#555) — except that the second in a row
+# killed inside its commit has it written by the next heal (#575). Checked,
+# not `|| true` (#193): this one write IS the once-per-day contract, and the
+# guard reads nothing else. A read-only or root-owned .git, or a full disk, and
+# the stamp never lands, the guard falls through next session, and the whole
+# refresh runs again — every session, forever, with nothing said. That is the
+# defect #187 fixed in socraticode-health.sh, the script this file's pin
+# comment names as its twin; the shape is copied from it. Reported, never
+# fatal: a SessionStart hook must not block, so a failed stamp degrades to
+# noisier reporting.
 _stamp_lock() {
   if ! date -u +%Y%m%d > "$LOCK" 2>/dev/null; then
     _log "could not stamp $LOCK — the once-per-day guard is off until this is fixed"
