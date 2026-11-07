@@ -6,7 +6,8 @@ it up past MARKER_MAX_AGE (a reused PID), and since CR 1906 one is adopted
 only with no marker there, every other being dropped with the marker that
 supersedes it. The sentence naming the file must say both: the age, read
 from the hook, and the drop — which waits, since CR 1911, until nothing the
-file names is staged.
+file names is staged. One so kept becomes the marker again at a later
+session, as a killed heal's does (CR 1917).
 """
 
 import re
@@ -49,4 +50,13 @@ def test_it_says_a_staged_one_is_kept():
     assert "staged" in sentence, (
         "a taken file is dropped only once nothing it names is staged "
         "(CR 1911): " + sentence
+    )
+
+
+def test_it_says_a_kept_one_becomes_the_marker_again():
+    sentence = _sentence()
+    assert re.search(r"as does any other [^;]*staged", sentence), (
+        "a taken file a marker's drop keeps while a path it names is staged "
+        "becomes the marker at a later session, as a killed heal's does "
+        "(CR 1917): " + sentence
     )
