@@ -313,26 +313,35 @@ _take_marker() {
   return 0
 }
 
+# _taker_live <taken file> — true while the heal named in the file's name
+# (`.heal.<pid>.<epoch>`) may still be between its take and its claim: its pid
+# is not this run's, is under MARKER_MAX_AGE, and `kill -0` reaches it. A name
+# that is not a heal's reads as live, so nothing acts on it.
+_taker_live() {
+  local rest pid started now
+  rest="${1#"$STAGING".heal.}"
+  pid="${rest%%.*}"
+  started="${rest#*.}"
+  case "$pid" in '' | *[!0-9]*) return 0 ;; esac
+  case "$started" in '' | *[!0-9]*) started=0 ;; esac
+  now="$(date +%s 2>/dev/null)" || now=0
+  [ "$pid" != "$$" ] && [ $((now - started)) -le "$MARKER_MAX_AGE" ] &&
+    kill -0 "$pid" 2>/dev/null
+}
+
 # _adopt_taken — a heal killed between taking the marker and claiming it as
 # its own leaves only `$STAGING.heal.<pid>.<epoch>`, and with no marker the
 # heal would leave its staging alone for good (CR 1897). Its pid gone, or past
 # MARKER_MAX_AGE (a reused pid), it becomes the marker again — linked, so
-# never over a marker already there — and is healed as one.
+# never over a marker already there — and is healed as one. Only a heal
+# killed in that gap leaves one with no marker: every other is dropped when
+# the marker that supersedes it goes (_drop_marker, CR 1906).
 _adopt_taken() {
-  local f rest pid started now
+  local f
   [ ! -e "$STAGING" ] || return 0
   for f in "$STAGING".heal.*; do
     [ -f "$f" ] || continue
-    rest="${f#"$STAGING".heal.}"
-    pid="${rest%%.*}"
-    started="${rest#*.}"
-    case "$pid" in '' | *[!0-9]*) continue ;; esac
-    case "$started" in '' | *[!0-9]*) started=0 ;; esac
-    now="$(date +%s 2>/dev/null)" || now=0
-    if [ "$pid" != "$$" ] && [ $((now - started)) -le "$MARKER_MAX_AGE" ] &&
-      kill -0 "$pid" 2>/dev/null; then
-      continue
-    fi
+    ! _taker_live "$f" || continue
     if ln "$f" "$STAGING" 2>/dev/null; then
       rm -f "$f" 2>/dev/null || true
       _log "heal: $f, left by a heal killed part way, is the marker again"
@@ -340,6 +349,33 @@ _adopt_taken() {
     return 0
   done
   return 0
+}
+
+# _drop_marker — the marker's job is done: drop it, and (_drop_taken) every
+# taken file whose heal is over (CR 1906). A taken file outlives its heal
+# when the heal is killed after its claim and before dropping what it took,
+# when a take that found a live marker is killed after putting it back, and
+# when a refresh claims $STAGING in a heal's gap. Each is superseded by a
+# marker that names its paths — the claim, the live run's, the refresh's —
+# so once that marker goes, nothing is left for it to mark. Kept, a later
+# session with no marker adopted it: a human's manual bump unstaged, a
+# healed kill counted again. Kept still: a take in flight (_taker_live), and
+# a copy of a live run's marker, taken in error and not put back, which is
+# its run's to drop. Before $STAGING goes, so that no _adopt_taken can link
+# one in between.
+_drop_taken() {
+  local f
+  for f in "$STAGING".heal.*; do
+    [ -f "$f" ] || continue
+    ! _taker_live "$f" || continue
+    ! _marker_owner_live "$f" || continue
+    rm -f "$f" 2>/dev/null || true
+  done
+  return 0
+}
+_drop_marker() {
+  _drop_taken
+  rm -f "$STAGING" 2>/dev/null || true
 }
 
 # _unstage <after> <path>... — unstage the paths, then read the index back
@@ -814,13 +850,24 @@ _reconcile_unpushed() {
   # winner's push updates; then the remote itself, once, since that write may
   # not have landed yet — and @{u} is brought up to what it answered, so this
   # run's own push later counts from there. Not a refusal: the bump is shared.
-  local remote_tip upref
+  #
+  # The remote is asked only when this push's own output shows it refused the
+  # ref (CR 1907), which the race always produces from a reachable remote. A
+  # push that never reached it — a firewall dropping packets, about 75 s —
+  # would make `ls-remote` a second such wait, and the 120 s kill would land
+  # before the rollback at every session, `main` left ahead with no stamp.
+  local remote_tip="" upref push_out
+  push_out="$(tail -c +$((log_before + 1)) "$LOG" 2>/dev/null || true)"
   if git merge-base --is-ancestor "$head" "@{u}" 2>/dev/null; then
     _log "unpushed: push failed, but $upstream_name already has ${head:0:7} — another session pushed it; nothing rolled back"
     return 0
   fi
-  remote_tip="$(git ls-remote "$remote" "$merge" 2>>"$LOG" |
-    awk -v ref="$merge" '$2 == ref { print $1; exit }')" || remote_tip=""
+  case "$push_out" in
+    *"[rejected]"* | *"[remote rejected]"* | *"stale info"* | *"incorrect old value"* | *"fetch first"*)
+      remote_tip="$(git ls-remote "$remote" "$merge" 2>>"$LOG" |
+        awk -v ref="$merge" '$2 == ref { print $1; exit }')" || remote_tip=""
+      ;;
+  esac
   if [ -n "$remote_tip" ] && [ "$remote_tip" = "$head" ]; then
     if ! upref="$(git rev-parse --symbolic-full-name "@{u}" 2>/dev/null)" ||
       ! git update-ref -m "skills update: $remote already has $merge at ${head:0:7}" "$upref" "$head" 2>>"$LOG"; then
@@ -867,7 +914,7 @@ _reconcile_unpushed() {
     # A repository rule or branch protection (GH013, GH006) is not an outage
     # the next session's retry outlives: say which rule, and the knob that
     # answers it (#560). Every other failure keeps the line it always had.
-    if _rule_refusal "$(tail -c +$((log_before + 1)) "$LOG" 2>/dev/null || true)"; then
+    if _rule_refusal "$push_out"; then
       echo "skills update: could not push to $remote — a repository rule refused it ($RULE_TEXT), so $BRANCH takes changes by pull request here: write pr to .skills/merge_mode and this hook proposes its bump as one pull request instead; rolled $ahead commit(s) back so this checkout matches $upstream_name (see $LOG)" >&2
     else
       echo "skills update: could not push to $remote — rolled $ahead commit(s) back so this checkout matches $upstream_name (see $LOG)" >&2
@@ -1257,6 +1304,7 @@ _heal_staged() {
   [ "$BRANCH" = "main" ] || return 0
 
   local listed="" marked=0 staged_now rc=0 spath own=() others=0 hook_paths owner="" body
+  local carried line pr_run=0 noted=0 returned=0
   _adopt_taken
   if [ -f "$STAGING" ]; then
     # A live owner's marker is never the heal's (CR 1789). The guard ahead of
@@ -1271,38 +1319,56 @@ _heal_staged() {
     # 1897): a session starting meanwhile finds a live owner and leaves, and
     # a heal killed part way leaves a marker, naming the same paths, that the
     # next session heals. `heals` keeps the killed run's owner line, which is
-    # what a kill is counted by (_count_commit_kill). The claim fails only
-    # when a run claimed $STAGING in the instant it was gone: that run owns
-    # the checkout, and what was taken stays where _adopt_taken finds it.
+    # what a kill is counted by (_count_commit_kill). The claim fails when a
+    # run claimed $STAGING in the instant it was gone: that run owns the
+    # checkout, and its marker names the paths, so what was taken is dropped
+    # (CR 1906). Failed with no marker there, it stays where _adopt_taken
+    # finds it.
     if ! _take_marker "$owner"; then
       _log "heal: another session took $STAGING first — leaving the index to it"
       return 0
     fi
+    # Everything the heal needs from the marker is read here, from $TAKEN —
+    # its private copy — and never from $STAGING once claimed (CR 1908): a
+    # slower session's take renames $STAGING away for an instant before it
+    # links it back, and a read then failed (the heal gave up) or read
+    # `mode pr` as absent (a pr-mode run's marker healed as a direct one's).
+    # Carried into the claim: every line but the owner lines. Read from it:
+    # the paths, and a pr-mode run's `mode pr`, the `noted` an earlier heal
+    # appended (CR 1801) and a returned commit's `done`.
     body="$(grep -m 1 '^heals ' "$TAKEN" 2>/dev/null)" || body=""
     if [ -n "$body" ]; then
       owner="${body#heals }"
     fi
     body="pid $$ $(date +%s 2>/dev/null || true)"
     case "$owner" in "pid "*) body="$body"$'\n'"heals $owner" ;; esac
-    listed="$(grep -v -e '^pid ' -e '^heals ' "$TAKEN" 2>>"$LOG")" || rc=$?
-    if [ "$rc" -gt 1 ] || ! _write_marker "$body${listed:+$'\n'$listed}"; then
-      _log "heal: could not claim $STAGING after taking it — leaving the index alone; $TAKEN is healed by a later session"
+    carried="$(grep -v -e '^pid ' -e '^heals ' "$TAKEN" 2>>"$LOG")" || rc=$?
+    while IFS= read -r line; do
+      case "$line" in
+        'mode pr') pr_run=1 ;;
+        'mode '* | '') : ;;
+        'noted') noted=1 ;;
+        'done') returned=1 ;;
+        *) listed="$listed${listed:+$'\n'}$line" ;;
+      esac
+    done <<CARRIED_EOF
+$carried
+CARRIED_EOF
+    if [ "$rc" -gt 1 ] || ! _write_marker "$body${carried:+$'\n'$carried}"; then
+      if [ -e "$STAGING" ]; then
+        _drop_taken
+        _log "heal: could not claim $STAGING after taking it — another run claimed it first and owns the checkout; leaving the index to it"
+      else
+        _log "heal: could not claim $STAGING after taking it — leaving the index alone; $TAKEN is healed by a later session"
+      fi
       return 0
     fi
     rc=0
     rm -f "$TAKEN" 2>/dev/null || true
     marked=1
-    # The paths, without the owner lines, a pr-mode run's `mode pr`, the
-    # `noted` an earlier heal appended (CR 1801), or a returned commit's `done`.
-    listed="$(grep -v -e '^pid ' -e '^heals ' -e '^mode ' -e '^noted$' -e '^done$' "$STAGING" 2>>"$LOG")" || rc=$?
-    if [ "$rc" -gt 1 ]; then
-      _log "heal: could not read $STAGING (grep exited $rc) — leaving the index alone"
-      return 0
-    fi
-    rc=0
     # A pr-mode run (#560) never stages in this index, so whatever is staged
     # is not its own: only its content goes back, and its private index goes.
-    if grep -qx 'mode pr' "$STAGING" 2>/dev/null; then
+    if [ "$pr_run" = "1" ]; then
       _heal_pr "$listed"
       return 0
     fi
@@ -1344,7 +1410,7 @@ STAGED_EOF
   # Counted first, before anything is undone (CR 1899) — unless the run's
   # commit returned (`done`, CR 1900): its paths are still staged because its
   # unstage failed, not because a kill cut its commit short.
-  if [ "${#own[@]}" -gt 0 ] && ! grep -qx 'done' "$STAGING" 2>/dev/null; then
+  if [ "${#own[@]}" -gt 0 ] && [ "$returned" = "0" ]; then
     _count_commit_kill "$owner"
   fi
 
@@ -1376,14 +1442,20 @@ LISTED_EOF
   if [ "$others" -gt 0 ]; then
     if [ "${#own[@]}" -gt 0 ]; then
       _log "heal: a killed refresh left ${own[*]} staged beside $others path(s) it did not stage — leaving the index alone; the content goes back on the pointer the index records"
-      if ! grep -qx 'noted' "$STAGING" 2>/dev/null; then
+      if [ "$noted" = "0" ]; then
         for p in "${own[@]}"; do
           if _listed "$p" "$REGISTERED"; then
             gitlinks+=("$p")
           fi
         done
         echo "skills update: a refresh killed part way left ${own[*]} staged beside $others staged path(s) it did not stage, so the index is left as it is; the next refresh to complete commits them through its own pathspec. To drop them instead: git reset -q -- ${own[*]}${gitlinks[0]:+ && git submodule update --checkout -- ${gitlinks[*]}} (see $LOG)" >&2 || true
-        printf 'noted\n' >>"$STAGING" 2>/dev/null || true
+        # Appended only to a marker that is there: `>>` would create a
+        # one-line stray in the instant a slower take has it renamed away
+        # (CR 1908), its link-back would then fail and it would delete the
+        # claim. Missed, the line is said again by the next heal.
+        if [ -f "$STAGING" ]; then
+          printf 'noted\n' >>"$STAGING" 2>/dev/null || true
+        fi
       fi
     else
       _log "heal: a killed refresh staged nothing, and $others path(s) it did not stage are staged — leaving the index alone; the content goes back on its pointer"
@@ -1401,7 +1473,7 @@ LISTED_EOF
   # tries again; _unstage has already said so on stderr.
   if [ "${#own[@]}" -eq 0 ] ||
     git diff --cached --quiet --ignore-submodules=none -- "${own[@]}" 2>/dev/null; then
-    rm -f "$STAGING" 2>/dev/null || true
+    _drop_marker
   fi
   return 0
 }
@@ -1423,7 +1495,8 @@ LISTED_EOF
   if [ "${#marked_paths[@]}" -gt 0 ]; then
     _restore_content "a killed refresh" "${marked_paths[@]}"
   fi
-  rm -f "$PR_INDEX" "$PR_INDEX.lock" "$STAGING" 2>/dev/null || true
+  rm -f "$PR_INDEX" "$PR_INDEX.lock" 2>/dev/null || true
+  _drop_marker
   return 0
 }
 
@@ -1920,7 +1993,7 @@ fi
 _finish_refresh() {
   if [ "$HOOK_ADDED" = "0" ] ||
     git diff --cached --quiet --ignore-submodules=none -- "${REFRESH_PATHS[@]}" 2>/dev/null; then
-    rm -f "$STAGING" 2>/dev/null || true
+    _drop_marker
   fi
   _stamp_lock
 }
