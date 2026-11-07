@@ -365,20 +365,26 @@ _adopt_taken() {
 # in the gap may end without `git add`), and wrong once it is not — a
 # human's manual bump unstaged, a healed kill counted again. Kept also: a
 # take in flight (_taker_live), and a copy of a live run's marker, taken in
-# error and not put back, which is its run's to drop. Before $STAGING goes,
-# so that no _adopt_taken can link one in between.
+# error and not put back, which is its run's to drop. Dropped whatever is
+# staged: a copy of this run's own marker or claim (`pid $$`), since the run
+# drops only with nothing of its own staged — kept beside a human's bump, it
+# was adopted later and unstaged it (CR 1916). Before $STAGING goes, so that
+# no _adopt_taken can link one in between.
 _drop_taken() {
-  local f p paths=()
+  local f p first paths=()
   for f in "$STAGING".heal.*; do
     [ -f "$f" ] || continue
     ! _taker_live "$f" || continue
     ! _marker_owner_live "$f" || continue
     paths=()
+    first=""
     # Gone since the `[ -f ]` (another session adopted or dropped it): under
     # `set -e`, bash 5 exits on a compound command's failed redirect (CR 1914).
     while IFS= read -r p; do
+      [ -n "$first" ] || first="${p:- }"
       case "$p" in 'pid '* | 'heals '* | 'mode '* | noted | done | '') : ;; *) paths+=("$p") ;; esac
     done 2>/dev/null <"$f" || continue
+    case "$first" in "pid $$ "*) paths=() ;; esac
     if [ "${#paths[@]}" -gt 0 ] &&
       ! git diff --cached --quiet --ignore-submodules=none -- "${paths[@]}" 2>/dev/null; then
       continue
