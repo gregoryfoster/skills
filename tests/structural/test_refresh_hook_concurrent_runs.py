@@ -47,6 +47,8 @@ later session with no marker: a human's manual bump unstaged, a healed kill
 counted again.
 - the next session heals and refreshes   → a later manual bump is left alone
 - the next session only heals            → the same
+- the heal keeps the marker (someone's work staged beside), and the same
+  session's refresh then finishes        → the same
 - a refresh claims in the heal's gap     → the heal drops what it took
 """
 
@@ -466,6 +468,27 @@ class TestATakenFileOutlivesNoHeal:
         _no_heal_leftovers(c)
         kills = c.path / KILLS
         kills_before = kills.read_text() if kills.exists() else ""
+        newer = _a_manual_bump(c)
+        _the_manual_bump_is_left_alone(c, newer, kills_before)
+
+    def test_a_heal_that_keeps_the_marker_then_refreshes(self, consumer):
+        """Someone's work staged beside the hook's keeps the marker through
+        the heal; the same session's refresh then claims it and finishes."""
+        c = consumer
+        _heal_killed_before_dropping_what_it_took(c)
+        (c.path / "notes.txt").write_text("someone's work\n")
+        git(c.path, "add", "notes.txt")
+
+        result = run_hook(c)
+
+        assert result.returncode == 0, result.stderr
+        assert gitlink(c) == c.after and ahead(c) == 0
+        assert staged(c) == ["notes.txt"]
+        assert not (c.path / MARKER).exists()
+        _no_heal_leftovers(c)
+        kills = c.path / KILLS
+        kills_before = kills.read_text() if kills.exists() else ""
+        git(c.path, "reset", "-q", "--", "notes.txt")
         newer = _a_manual_bump(c)
         _the_manual_bump_is_left_alone(c, newer, kills_before)
 
