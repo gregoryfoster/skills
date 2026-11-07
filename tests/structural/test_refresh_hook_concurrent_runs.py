@@ -63,6 +63,10 @@ refresh that beat a heal's claim can end without `git add`, dropping its
 marker with the killed run's bump still staged:
 - that refresh's end simulated           → the next session heals the bump
 - that refresh real, its update failing  → the same
+
+CR 1912 — a marker's drop keeps a take in flight (also a run's second take,
+`.2` after the epoch) and a copy of a live run's marker, and drops a take
+whose heal is over.
 """
 
 import os
@@ -731,3 +735,53 @@ class TestATakenFileOutlivesARefreshThatNeverStaged:
         assert VENDOR in staged(c)
 
         _the_killed_bump_is_healed(c, run_hook(c))
+
+
+# CR 1912 ------------------------------------------------------------------
+
+
+class TestADropKeepsWhatIsNotOver:
+    """CR 1912: `_drop_taken`'s two keep-checks had no test — deleting both
+    kept every hook test green. Planted beside a normal refresh, held at
+    its update, and dropped by its `_finish_refresh`:
+    - a take still in flight: its taker live      → kept (_taker_live), also
+      a run's second take, `.2` after the epoch    (CR 1911's name)
+    - a copy of a live run's marker               → kept (_marker_owner_live)
+    - taker and owner dead, nothing it names staged → dropped"""
+
+    def test_each_keep_check_holds(self, consumer):
+        c = consumer
+        live = subprocess.Popen(["sleep", "60"])
+        now = int(time.time())
+        gd = c.path / ".git"
+        paths = f"{VENDOR}\n{DOCTOR_PATH}\n"
+        in_flight = gd / f"skills-update.staging.heal.{live.pid}.{now}"
+        second_take = gd / f"skills-update.staging.heal.{live.pid}.{now}.2"
+        live_copy = gd / f"skills-update.staging.heal.{_dead_pid()}.{now}"
+        over = gd / f"skills-update.staging.heal.{_dead_pid()}.{now - 1}"
+        write_shim(c, hold_when=REFRESH_UPDATE)
+        c.kill_flag.write_text("")
+        run = start_hook(c)
+        try:
+            _wait_for(c.held)
+            in_flight.write_text(f"pid {_dead_pid()} {now}\n{paths}")
+            second_take.write_text(f"pid {_dead_pid()} {now}\n{paths}")
+            live_copy.write_text(f"pid {live.pid} {now}\n{paths}")
+            over.write_text(f"pid {_dead_pid()} {now}\n{paths}")
+        finally:
+            c.release.write_text("")
+            result = finish_hook(run)
+            live.kill()
+            live.wait()
+
+        assert result.returncode == 0, result.stderr
+        assert gitlink(c) == c.after and ahead(c) == 0
+        assert staged(c) == [] and not (c.path / MARKER).exists()
+        assert in_flight.exists(), "a take in flight was dropped (_taker_live)"
+        assert second_take.exists(), (
+            "a run's second take in flight was dropped: `.2` read as no epoch"
+        )
+        assert live_copy.exists(), (
+            "a copy of a live run's marker was dropped (_marker_owner_live)"
+        )
+        assert not over.exists(), "a take whose heal is over was kept"
