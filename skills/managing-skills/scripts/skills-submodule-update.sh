@@ -109,7 +109,9 @@ Behaviour:
     alike — and the next session retries. A commit or an update that
     fails is undone the same way (#550). The rollback moves HEAD by
     compare-and-swap, so two sessions refused together roll it back once
-    (#566). A run that cannot push does not refresh either. Never pulls,
+    (#566), and a push refused because another session's push of the same
+    commit landed rolls nothing back. A run that cannot push does not
+    refresh either. Never pulls,
     never force-pushes main, and never touches a commit this hook did not
     write.
   - With .skills/merge_mode 'pr' (read from the primary checkout, #560),
@@ -707,6 +709,30 @@ _reconcile_unpushed() {
     return 0
   fi
   _phase "push"
+
+  # Refused because the remote already has it (CR 1896): two sessions pushing
+  # one stranded bump, the remote takes one and refuses the other ("incorrect
+  # old value provided"). Nothing moved local HEAD, so the swap below would
+  # succeed and leave main behind @{u} — and the hook never pulls, so every
+  # later bump would be refused until a human synced. @{u} first, which the
+  # winner's push updates; then the remote itself, once, since that write may
+  # not have landed yet — and @{u} is brought up to what it answered, so this
+  # run's own push later counts from there. Not a refusal: the bump is shared.
+  local remote_tip upref
+  if git merge-base --is-ancestor "$head" "@{u}" 2>/dev/null; then
+    _log "unpushed: push failed, but $upstream_name already has ${head:0:7} — another session pushed it; nothing rolled back"
+    return 0
+  fi
+  remote_tip="$(git ls-remote "$remote" "$merge" 2>>"$LOG" |
+    awk -v ref="$merge" '$2 == ref { print $1; exit }')" || remote_tip=""
+  if [ -n "$remote_tip" ] && [ "$remote_tip" = "$head" ]; then
+    if ! upref="$(git rev-parse --symbolic-full-name "@{u}" 2>/dev/null)" ||
+      ! git update-ref -m "skills update: $remote already has $merge at ${head:0:7}" "$upref" "$head" 2>>"$LOG"; then
+      _log "unpushed: could not bring @{u} up to ${head:0:7}"
+    fi
+    _log "unpushed: push failed, but $remote already has ${head:0:7} at $merge — another session pushed it; nothing rolled back"
+    return 0
+  fi
 
   # A compare-and-swap that keeps `reset --soft`'s semantics, to HEAD~N
   # rather than to @{u}. Each part is load-bearing.
