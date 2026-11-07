@@ -19,6 +19,10 @@ What this file pins:
   included.
 - **The readers agree**: the doctor reads `pr` exactly when `merge-mode.sh`
   does, and its `env_value` answers as the hook's `_env_value` does.
+- **From the primary the hook reads** (CR 1893): in a bare primary and a
+  submodule the first `git worktree list` entry is a git dir, so the knob
+  and the `.env` fallback are read from the work tree resolved as the hook
+  resolves it.
 """
 
 import os
@@ -30,6 +34,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from tests.structural import merge_mode_layouts as layouts
 from tests.structural.test_cadence_merge_mode import CASES, _merge_mode_sh
 from tests.structural.test_refresh_hook_pr_gh_auth import ENV_CASES
 
@@ -92,6 +97,26 @@ def consumer(tmp_path: Path):
     return SimpleNamespace(path=repo, bindir=bindir, login=login)
 
 
+def _tools_without_gh(tmp_path: Path) -> Path:
+    """A PATH directory holding every runnable on this PATH except gh."""
+    tools = tmp_path / "tools"
+    tools.mkdir()
+    for d in os.environ.get("PATH", "/usr/bin:/bin").split(os.pathsep):
+        if not os.path.isdir(d):
+            continue
+        for name in os.listdir(d):
+            if name == "gh" or (tools / name).exists() or (tools / name).is_symlink():
+                continue
+            src = Path(d) / name
+            try:
+                runnable = src.is_file() and os.access(src, os.X_OK)
+            except OSError:
+                runnable = False
+            if runnable:
+                (tools / name).symlink_to(src)
+    return tools
+
+
 def _doctor(c, *args: str, cwd: Path | None = None, **env: str):
     return subprocess.run(
         ["bash", str(DOCTOR), "--no-preflight", *args],
@@ -120,27 +145,7 @@ class TestItSays:
 
     def test_gh_missing_from_path_is_said(self, consumer, tmp_path):
         (consumer.bindir / "gh").unlink()
-        tools = tmp_path / "tools"
-        tools.mkdir()
-        for d in os.environ.get("PATH", "/usr/bin:/bin").split(os.pathsep):
-            if not os.path.isdir(d):
-                continue
-            for name in os.listdir(d):
-                if (
-                    name == "gh"
-                    or (tools / name).exists()
-                    or (tools / name).is_symlink()
-                ):
-                    continue
-                src = Path(d) / name
-                try:
-                    runnable = src.is_file() and os.access(src, os.X_OK)
-                except OSError:
-                    runnable = False
-                if runnable:
-                    (tools / name).symlink_to(src)
-
-        result = _doctor(consumer, PATH=str(tools))
+        result = _doctor(consumer, PATH=str(_tools_without_gh(tmp_path)))
 
         assert result.returncode == 0, result.stderr
         assert NO_GH in result.stderr, result.stderr
@@ -202,6 +207,61 @@ class TestTheHooksSourcesSilenceIt:
         (consumer.path / ".env").write_text("GH_TOKEN=t\n")
         quiet = _doctor(consumer, cwd=wt)
         assert MARKER not in quiet.stderr, quiet.stderr
+
+
+def _primary(checkout: Path) -> Path:
+    """The primary work tree, as the hook's _read_merge_mode resolves it."""
+    first = layouts.git(checkout, "worktree", "list", "--porcelain").split("\n\n")[0]
+    if "\nbare" in first:
+        return checkout.resolve()
+    entry = Path(first.splitlines()[0].removeprefix("worktree "))
+    return Path(layouts.git(entry, "rev-parse", "--show-toplevel"))
+
+
+def _layout_consumer(c, checkout: Path) -> Path:
+    """`checkout` with the hook installed, as the doctor finds it."""
+    hooks = checkout / ".claude" / "hooks"
+    hooks.mkdir(parents=True, exist_ok=True)
+    (hooks / "skills-submodule-update.sh").write_text("#!/bin/sh\n")
+    return checkout
+
+
+class TestItReadsThePrimaryAsTheHookDoes:
+    """CR 1893: the doctor read the knob and the .env fallback from the raw
+    first `git worktree list` entry, a git dir in a bare primary and in a
+    submodule, so it was silent where the hook refuses every day. It resolves
+    the primary as the hook's _read_merge_mode does, and says nothing when
+    that fails: the hook names an unusable knob itself, every run."""
+
+    @pytest.mark.parametrize("layout", sorted(layouts.LAYOUTS))
+    def test_gh_missing_is_said_in_each_layout(self, consumer, tmp_path, layout):
+        checkout = _layout_consumer(
+            consumer, layouts.LAYOUTS[layout](tmp_path / "l", "pr\n")
+        )
+        result = _doctor(consumer, cwd=checkout, PATH=str(_tools_without_gh(tmp_path)))
+        assert NO_GH in result.stderr, result.stderr
+
+    @pytest.mark.parametrize("layout", sorted(layouts.LAYOUTS))
+    def test_the_primarys_env_answers_in_each_layout(self, consumer, tmp_path, layout):
+        checkout = _layout_consumer(
+            consumer, layouts.LAYOUTS[layout](tmp_path / "l", "pr\n")
+        )
+        primary = _primary(checkout)
+        said = _doctor(consumer, cwd=checkout)
+        assert MARKER in said.stderr, said.stderr
+        named = ".env" if primary == checkout.resolve() else f"{primary}/.env"
+        assert f"{named} sets no GH_TOKEN" in said.stderr, said.stderr
+
+        (primary / ".env").write_text("GH_TOKEN=t\n")
+        quiet = _doctor(consumer, cwd=checkout)
+        assert MARKER not in quiet.stderr, quiet.stderr
+
+    def test_a_separate_git_dir_primary(self, consumer, tmp_path):
+        """CR 1892's layout: from the primary, its own knob."""
+        primary, _ = layouts.separate_git_dir(tmp_path / "l", "pr\n")
+        _layout_consumer(consumer, primary)
+        result = _doctor(consumer, cwd=primary, PATH=str(_tools_without_gh(tmp_path)))
+        assert NO_GH in result.stderr, result.stderr
 
 
 class TestSilentWhereItHasNothingToSay:
