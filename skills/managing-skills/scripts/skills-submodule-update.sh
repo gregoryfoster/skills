@@ -1572,7 +1572,7 @@ _pr_token() {
     PR_TOKEN_FROM="this hook's environment"
     return 0
   fi
-  if [ ! -r "$env_file" ] && [ -n "$MERGE_MODE_PRIMARY" ] &&
+  if [ ! -r "$env_file" ] && [ -n "${MERGE_MODE_PRIMARY:-}" ] &&
     ! [ "$MERGE_MODE_PRIMARY" -ef . ]; then
     env_file="$MERGE_MODE_PRIMARY/.env"
   fi
