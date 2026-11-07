@@ -849,13 +849,24 @@ _reconcile_unpushed() {
   # winner's push updates; then the remote itself, once, since that write may
   # not have landed yet — and @{u} is brought up to what it answered, so this
   # run's own push later counts from there. Not a refusal: the bump is shared.
-  local remote_tip upref
+  #
+  # The remote is asked only when this push's own output shows it refused the
+  # ref (CR 1907), which the race always produces from a reachable remote. A
+  # push that never reached it — a firewall dropping packets, about 75 s —
+  # would make `ls-remote` a second such wait, and the 120 s kill would land
+  # before the rollback at every session, `main` left ahead with no stamp.
+  local remote_tip="" upref push_out
+  push_out="$(tail -c +$((log_before + 1)) "$LOG" 2>/dev/null || true)"
   if git merge-base --is-ancestor "$head" "@{u}" 2>/dev/null; then
     _log "unpushed: push failed, but $upstream_name already has ${head:0:7} — another session pushed it; nothing rolled back"
     return 0
   fi
-  remote_tip="$(git ls-remote "$remote" "$merge" 2>>"$LOG" |
-    awk -v ref="$merge" '$2 == ref { print $1; exit }')" || remote_tip=""
+  case "$push_out" in
+    *"[rejected]"* | *"[remote rejected]"* | *"stale info"* | *"incorrect old value"* | *"fetch first"*)
+      remote_tip="$(git ls-remote "$remote" "$merge" 2>>"$LOG" |
+        awk -v ref="$merge" '$2 == ref { print $1; exit }')" || remote_tip=""
+      ;;
+  esac
   if [ -n "$remote_tip" ] && [ "$remote_tip" = "$head" ]; then
     if ! upref="$(git rev-parse --symbolic-full-name "@{u}" 2>/dev/null)" ||
       ! git update-ref -m "skills update: $remote already has $merge at ${head:0:7}" "$upref" "$head" 2>>"$LOG"; then
@@ -902,7 +913,7 @@ _reconcile_unpushed() {
     # A repository rule or branch protection (GH013, GH006) is not an outage
     # the next session's retry outlives: say which rule, and the knob that
     # answers it (#560). Every other failure keeps the line it always had.
-    if _rule_refusal "$(tail -c +$((log_before + 1)) "$LOG" 2>/dev/null || true)"; then
+    if _rule_refusal "$push_out"; then
       echo "skills update: could not push to $remote — a repository rule refused it ($RULE_TEXT), so $BRANCH takes changes by pull request here: write pr to .skills/merge_mode and this hook proposes its bump as one pull request instead; rolled $ahead commit(s) back so this checkout matches $upstream_name (see $LOG)" >&2
     else
       echo "skills update: could not push to $remote — rolled $ahead commit(s) back so this checkout matches $upstream_name (see $LOG)" >&2
