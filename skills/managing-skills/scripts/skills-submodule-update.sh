@@ -352,16 +352,17 @@ _adopt_taken() {
 }
 
 # _drop_marker — the marker's job is done: drop it, and (_drop_taken) every
-# taken file whose heal is over (CR 1906). A taken file outlives its heal when the heal is
-# killed after its claim and before dropping what it took, when a take that
-# found a live marker is killed after putting it back, and when a refresh
-# claims $STAGING in a heal's gap. Each is superseded by a marker that names
-# its paths — the claim, the live run's, the refresh's — so once that marker
-# goes, nothing is left for it to mark. Kept, a later session with no marker
-# adopted it: a human's manual bump unstaged, a healed kill counted again.
-# Kept still: a take in flight (_taker_live), and a copy of a live run's
-# marker, taken in error and not put back, which is its run's to drop.
-# Before $STAGING goes, so that no _adopt_taken can link one in between.
+# taken file whose heal is over (CR 1906). A taken file outlives its heal
+# when the heal is killed after its claim and before dropping what it took,
+# when a take that found a live marker is killed after putting it back, and
+# when a refresh claims $STAGING in a heal's gap. Each is superseded by a
+# marker that names its paths — the claim, the live run's, the refresh's —
+# so once that marker goes, nothing is left for it to mark. Kept, a later
+# session with no marker adopted it: a human's manual bump unstaged, a
+# healed kill counted again. Kept still: a take in flight (_taker_live), and
+# a copy of a live run's marker, taken in error and not put back, which is
+# its run's to drop. Before $STAGING goes, so that no _adopt_taken can link
+# one in between.
 _drop_taken() {
   local f
   for f in "$STAGING".heal.*; do
