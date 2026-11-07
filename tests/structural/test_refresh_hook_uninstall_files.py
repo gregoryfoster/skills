@@ -14,6 +14,9 @@ Two checks, both derived where they can be:
   heal's `.heal.<pid>.<epoch>`) — is in the uninstall commands;
 - the sentence names the kill count beside the lock and the log as the
   files that are not transient.
+
+CR 1909 — the derivation is held to the suffixed files too, in either
+quoting (`"$VAR.suffix"` and `"$VAR".suffix`), or the check passed on none.
 """
 
 import re
@@ -26,8 +29,9 @@ DOC = ROOT / "skills/managing-skills/references/auto-refresh-hook.md"
 ASSIGNED = re.compile(r'^\s*([A-Z_]+)="\$gitdir/([\w.-]+)"', re.M)
 
 
-def _hook_files() -> set[str]:
-    text = HOOK.read_text()
+def _hook_files(text: str | None = None) -> set[str]:
+    if text is None:
+        text = HOOK.read_text()
     files = set()
     for var, name in ASSIGNED.findall(text):
         files.add(name)
@@ -53,8 +57,24 @@ def test_the_derivation_sees_the_files_it_must():
         "skills-update.staging",
         "skills-update.commit-kills",
         "skills-update.pr-index",
+        # The suffixed siblings (CR 1909): without them the scan for
+        # suffixes could find none and the next test would pass on nothing.
+        "skills-update.commit-kills.tmp",
+        "skills-update.pr-index.lock",
+        "skills-update.staging.heal",
     ):
         assert name in files, sorted(files)
+
+
+def test_a_suffix_after_the_closing_quote_is_seen():
+    """CR 1909: `"$STAGING".heal…` — the spelling `_adopt_taken` already
+    uses — names the same file as `"$STAGING.heal…`. Respelled so, the
+    taken file vanished from the derivation, and dropping the uninstall
+    step's `find … -delete` stayed green."""
+    text = HOOK.read_text()
+    respelled = text.replace('TAKEN="$STAGING.heal.', 'TAKEN="$STAGING".heal.')
+    assert respelled != text, "fixture: TAKEN's assignment has moved"
+    assert "skills-update.staging.heal" in _hook_files(respelled)
 
 
 def test_every_file_the_hook_writes_is_in_the_uninstall_commands():
