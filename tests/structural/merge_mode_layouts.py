@@ -18,8 +18,10 @@ Read as a checkout, neither holds `.skills/`, so a reader that did so said
 the honest answer is unusable. Each builder here returns the checkout to read from, with
 the knob where that layout keeps it. `different_owner` makes git refuse the
 primary alone ("dubious ownership"), which must be a refusal, never a
-fallback. Shared by test_merge_mode_knob.py, test_cadence_merge_mode.py and
-test_refresh_hook_pr_mode.py; every git call scrubs the inherited `GIT_*`
+fallback. Shared by test_merge_mode_knob.py, test_cadence_merge_mode.py,
+test_refresh_hook_pr_mode.py, and, for the doctor's token check and the
+hook's `.env` fallback (CR 1893, 1894), test_doctor_pr_mode_gh_token.py and
+test_refresh_hook_pr_gh_auth.py; every git call scrubs the inherited `GIT_*`
 variables and names its repo explicitly (#189).
 """
 
