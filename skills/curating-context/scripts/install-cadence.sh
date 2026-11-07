@@ -241,10 +241,17 @@ fi
 KNOB_MODE="absent"   # absent | direct | pr | unusable
 KNOB_ERR=""
 KNOB_PRIMARY=""
+# primary_git <args> — git without an inherited GIT_DIR or GIT_WORK_TREE, for
+# the calls that resolve the primary (CR 1895), as knob_tracked and
+# git_config already run: GIT_DIR beats -C, so asked for a submodule's work
+# tree git named the entry itself and the knob read as absent.
+primary_git() {
+  env -u GIT_DIR -u GIT_WORK_TREE git "$@"
+}
 read_merge_mode() {
   local wt block entry dirs hint knob remedy line word="" count=0 words
   remedy="write one word, 'pr' or 'direct', or delete the file for the default ('direct')"
-  wt="$(git -C "$ROOT" worktree list --porcelain)" || {
+  wt="$(primary_git -C "$ROOT" worktree list --porcelain)" || {
     KNOB_MODE="unusable"; KNOB_ERR="git worktree list failed"; return 0; }
   # The primary is the first porcelain block. Its entry is a git dir for a
   # bare primary (`repo.git`) and in a submodule (`<super>/.git/modules/<n>`),
@@ -263,15 +270,15 @@ read_merge_mode() {
   case $'\n'"$block"$'\n' in
     *$'\n'bare$'\n'*) KNOB_PRIMARY=$ROOT ;;
     *)
-      if ! KNOB_PRIMARY="$(git -C "$entry" rev-parse --show-toplevel 2>/dev/null)"; then
-        dirs="$(git -C "$ROOT" rev-parse --path-format=absolute --git-dir --git-common-dir 2>/dev/null)" || dirs=""
+      if ! KNOB_PRIMARY="$(primary_git -C "$entry" rev-parse --show-toplevel 2>/dev/null)"; then
+        dirs="$(primary_git -C "$ROOT" rev-parse --path-format=absolute --git-dir --git-common-dir 2>/dev/null)" || dirs=""
         if [ -n "$dirs" ] && [ "${dirs%%$'\n'*}" = "${dirs#*$'\n'}" ]; then
           KNOB_PRIMARY=$ROOT
         else
           # Asked again for git's reason, which goes to stderr.
-          git -C "$entry" rev-parse --show-toplevel >/dev/null || true
+          primary_git -C "$entry" rev-parse --show-toplevel >/dev/null || true
           hint=""
-          if [ "$(git -C "$entry" rev-parse --is-inside-git-dir 2>/dev/null || true)" = true ]; then
+          if [ "$(primary_git -C "$entry" rev-parse --is-inside-git-dir 2>/dev/null || true)" = true ]; then
             hint="; it is a git dir with no work tree, as a primary whose .git is a file makes it (git init --separate-git-dir), and only that primary knows its work tree, so run this from the primary checkout"
           fi
           KNOB_MODE="unusable"

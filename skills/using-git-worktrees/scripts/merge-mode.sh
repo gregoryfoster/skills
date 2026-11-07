@@ -58,6 +58,15 @@ die() {
   exit 2
 }
 
+# here_git <args> — git for resolving the primary, without an inherited
+# GIT_DIR or GIT_WORK_TREE (CR 1895). Git exports GIT_DIR to every hook,
+# absolute in a linked worktree, and it beats -C: asked for a submodule's
+# work tree, git named the entry itself, and the read said `direct`. Every
+# call below answers for the checkout this runs in (docs/STYLE.md, #189).
+here_git() {
+  env -u GIT_DIR -u GIT_WORK_TREE git "$@"
+}
+
 case "${1:-}" in
   --help | -h)
     usage
@@ -67,7 +76,7 @@ case "${1:-}" in
   *) die "unknown argument: $1 (see --help)" ;;
 esac
 
-WT_LIST=$(git worktree list --porcelain) || die "git worktree list failed: not in a git checkout?"
+WT_LIST=$(here_git worktree list --porcelain) || die "git worktree list failed: not in a git checkout?"
 # The primary is the first porcelain block, up to the first blank line. Its
 # entry is a git dir, not a work tree, in two layouts (CR 1860): `repo.git`
 # for a bare primary, and `<super>/.git/modules/<n>` in a submodule. A block
@@ -85,18 +94,18 @@ PRIMARY_ENTRY=${PRIMARY_BLOCK%%$'\n'*}
 PRIMARY_ENTRY=${PRIMARY_ENTRY#worktree }
 case $'\n'"$PRIMARY_BLOCK"$'\n' in
   *$'\n'bare$'\n'*)
-    PRIMARY=$(git rev-parse --show-toplevel) ||
+    PRIMARY=$(here_git rev-parse --show-toplevel) ||
       die "the primary is bare and this is not a work tree, so there is no checkout to read .skills/merge_mode from"
     ;;
   *)
-    if ! PRIMARY=$(git -C "$PRIMARY_ENTRY" rev-parse --show-toplevel 2>/dev/null); then
-      DIRS=$(git rev-parse --path-format=absolute --git-dir --git-common-dir 2>/dev/null) || DIRS=""
+    if ! PRIMARY=$(here_git -C "$PRIMARY_ENTRY" rev-parse --show-toplevel 2>/dev/null); then
+      DIRS=$(here_git rev-parse --path-format=absolute --git-dir --git-common-dir 2>/dev/null) || DIRS=""
       if [ -z "$DIRS" ] || [ "${DIRS%%$'\n'*}" != "${DIRS#*$'\n'}" ] ||
-        ! PRIMARY=$(git rev-parse --show-toplevel 2>/dev/null); then
+        ! PRIMARY=$(here_git rev-parse --show-toplevel 2>/dev/null); then
         # Asked again for git's reason, which goes to stderr.
-        git -C "$PRIMARY_ENTRY" rev-parse --show-toplevel >/dev/null || true
+        here_git -C "$PRIMARY_ENTRY" rev-parse --show-toplevel >/dev/null || true
         HINT=""
-        if [ "$(git -C "$PRIMARY_ENTRY" rev-parse --is-inside-git-dir 2>/dev/null)" = true ]; then
+        if [ "$(here_git -C "$PRIMARY_ENTRY" rev-parse --is-inside-git-dir 2>/dev/null)" = true ]; then
           HINT="; it is a git dir with no work tree, as a primary whose .git is a file makes it (git init --separate-git-dir), and only that primary knows its work tree, so run this from the primary checkout"
         fi
         die "could not resolve the primary checkout '$PRIMARY_ENTRY' (git's reason is above)$HINT"

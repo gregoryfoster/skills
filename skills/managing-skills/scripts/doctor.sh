@@ -791,6 +791,10 @@ env_value() {
 
 check_pr_mode_gh_token() {
   local wt block entry dirs primary knob line words word="" count=0 env_file=".env"
+  # git without an inherited GIT_DIR or GIT_WORK_TREE, as the hook's reader
+  # resolves the primary (CR 1895): GIT_DIR beats -C, so asked for a
+  # submodule's work tree git named the entry itself.
+  local -a g=(env -u GIT_DIR -u GIT_WORK_TREE git)
   [ -e .claude/hooks/skills-submodule-update.sh ] || return 0
   # Read from the primary checkout, resolved as the hook's _read_merge_mode
   # resolves it (CR 1893): the first `git worktree list` block, whose entry
@@ -801,21 +805,21 @@ check_pr_mode_gh_token() {
   # be resolved is silent here, not a note: the hook then reads the knob as
   # unusable and says so itself on every run, which is the one place that
   # failure is stated, as for any other unusable knob.
-  wt="$(git worktree list --porcelain 2>/dev/null)" || return 0
+  wt="$("${g[@]}" worktree list --porcelain 2>/dev/null)" || return 0
   block=${wt%%$'\n\n'*}
   entry=${block%%$'\n'*}
   entry=${entry#worktree }
   case $'\n'"$block"$'\n' in
     *$'\n'bare$'\n'*)
-      primary="$(git rev-parse --show-toplevel 2>/dev/null)" || return 0
+      primary="$("${g[@]}" rev-parse --show-toplevel 2>/dev/null)" || return 0
       ;;
     *)
-      if ! primary="$(git -C "$entry" rev-parse --show-toplevel 2>/dev/null)"; then
-        dirs="$(git rev-parse --path-format=absolute --git-dir --git-common-dir 2>/dev/null)" || return 0
+      if ! primary="$("${g[@]}" -C "$entry" rev-parse --show-toplevel 2>/dev/null)"; then
+        dirs="$("${g[@]}" rev-parse --path-format=absolute --git-dir --git-common-dir 2>/dev/null)" || return 0
         if [ -z "$dirs" ] || [ "${dirs%%$'\n'*}" != "${dirs#*$'\n'}" ]; then
           return 0
         fi
-        primary="$(git rev-parse --show-toplevel 2>/dev/null)" || return 0
+        primary="$("${g[@]}" rev-parse --show-toplevel 2>/dev/null)" || return 0
       fi
       ;;
   esac

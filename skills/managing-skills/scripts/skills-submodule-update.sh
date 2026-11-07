@@ -333,11 +333,17 @@ MERGE_MODE_ERR=""
 MERGE_MODE_PRIMARY=""
 _read_merge_mode() {
   local wt block entry primary dirs reason hint knob remedy line word="" count=0 words
+  # git without an inherited GIT_DIR or GIT_WORK_TREE, for every call that
+  # resolves the primary (CR 1895). Git exports GIT_DIR to every hook,
+  # absolute in a linked worktree, and it beats -C: asked for a submodule's
+  # work tree, git named the entry itself and the read said `direct`. A
+  # local, not a helper: tests run this function on its own.
+  local -a g=(env -u GIT_DIR -u GIT_WORK_TREE git)
   MERGE_MODE="unusable"
   MERGE_MODE_ERR=""
   MERGE_MODE_PRIMARY=""
   remedy="write one word, 'pr' or 'direct', or delete the file for the default ('direct')"
-  wt="$(git worktree list --porcelain 2>/dev/null)" || {
+  wt="$("${g[@]}" worktree list --porcelain 2>/dev/null)" || {
     MERGE_MODE_ERR="git worktree list failed, so .skills/merge_mode could not be read"
     return 0
   }
@@ -356,19 +362,19 @@ _read_merge_mode() {
   entry=${entry#worktree }
   case $'\n'"$block"$'\n' in
     *$'\n'bare$'\n'*)
-      if ! primary="$(git rev-parse --show-toplevel 2>/dev/null)"; then
+      if ! primary="$("${g[@]}" rev-parse --show-toplevel 2>/dev/null)"; then
         MERGE_MODE_ERR="the primary is bare and this is not a work tree, so there is no checkout to read .skills/merge_mode from"
         return 0
       fi
       ;;
     *)
-      if ! primary="$(git -C "$entry" rev-parse --show-toplevel 2>/dev/null)"; then
-        dirs="$(git rev-parse --path-format=absolute --git-dir --git-common-dir 2>/dev/null)" || dirs=""
+      if ! primary="$("${g[@]}" -C "$entry" rev-parse --show-toplevel 2>/dev/null)"; then
+        dirs="$("${g[@]}" rev-parse --path-format=absolute --git-dir --git-common-dir 2>/dev/null)" || dirs=""
         if [ -z "$dirs" ] || [ "${dirs%%$'\n'*}" != "${dirs#*$'\n'}" ] ||
-          ! primary="$(git rev-parse --show-toplevel 2>/dev/null)"; then
-          reason="$(git -C "$entry" rev-parse --show-toplevel 2>&1 >/dev/null || true)"
+          ! primary="$("${g[@]}" rev-parse --show-toplevel 2>/dev/null)"; then
+          reason="$("${g[@]}" -C "$entry" rev-parse --show-toplevel 2>&1 >/dev/null || true)"
           hint=""
-          if [ "$(git -C "$entry" rev-parse --is-inside-git-dir 2>/dev/null || true)" = true ]; then
+          if [ "$("${g[@]}" -C "$entry" rev-parse --is-inside-git-dir 2>/dev/null || true)" = true ]; then
             hint="; it is a git dir with no work tree, as a primary whose .git is a file makes it (git init --separate-git-dir), and only that primary knows its work tree, so run this from the primary checkout"
           fi
           MERGE_MODE_ERR="could not resolve the primary checkout '$entry' to read .skills/merge_mode: ${reason%%$'\n'*}$hint"
