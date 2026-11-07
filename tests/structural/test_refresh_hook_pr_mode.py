@@ -33,6 +33,7 @@ from pathlib import Path
 
 import pytest
 
+from tests.structural import merge_mode_layouts as layouts
 from tests.structural.test_cadence_merge_mode import (
     CASES,
     NOT_TEXT,
@@ -366,7 +367,7 @@ def _reader_source() -> str:
     return m.group(0)
 
 
-def _read_mode(cwd: Path) -> tuple[str, str]:
+def _read_mode(cwd: Path, env: dict | None = None) -> tuple[str, str]:
     script = (
         "set -euo pipefail\n"
         + _reader_source()
@@ -377,7 +378,7 @@ def _read_mode(cwd: Path) -> tuple[str, str]:
         cwd=cwd,
         capture_output=True,
         text=True,
-        env=clean_env(),
+        env=clean_env() if env is None else env,
         timeout=30,
     )
     assert r.returncode == 0, r.stderr
@@ -436,6 +437,40 @@ class TestTheReaderHoldsMergeModeShsGrammar:
         git(repo, "worktree", "add", "-q", "-b", "feature/x", str(wt))
         assert _merge_mode_sh(wt) == (0, "pr")
         assert _read_mode(wt) == ("pr", "")
+
+    # #584: in a bare primary and a submodule, the first list entry is a git
+    # dir, and the reader read it as the checkout: `direct`, in silence, and
+    # the hook pushed to main in a repo that asked for review.
+
+    @pytest.mark.parametrize("layout", sorted(layouts.LAYOUTS))
+    @pytest.mark.parametrize("text", ["pr\n", "PR\n"], ids=["pr", "PR"])
+    def test_it_reads_the_primary_in_each_layout(self, tmp_path, layout, text):
+        checkout = layouts.LAYOUTS[layout](tmp_path, text)
+        want = (0, "pr") if text == "pr\n" else (2, "")
+        assert _merge_mode_sh(checkout) == want, "fixture: merge-mode.sh disagrees"
+        mode, err = _read_mode(checkout)
+        if want[0] == 0:
+            assert (mode, err) == ("pr", ""), "read as direct"
+        else:
+            assert mode == "unusable", mode
+            assert ".skills/merge_mode" in err
+
+    def test_a_primary_git_cannot_open_is_unusable(self, tmp_path):
+        """Only the primary is refused ("dubious ownership"): unusable, with
+        git's reason, never a fallback to this checkout or the raw path."""
+        repo = tmp_path / "r"
+        git(tmp_path, "init", "-q", "-b", "main", str(repo))
+        (repo / "README.md").write_text("x\n")
+        git(repo, "add", "-A")
+        git(repo, "commit", "-qm", "init")
+        (repo / ".skills").mkdir()
+        (repo / ".skills" / "merge_mode").write_text("pr\n")
+        wt = tmp_path / "wt"
+        git(repo, "worktree", "add", "-q", "-b", "feature/x", str(wt))
+        mode, err = _read_mode(wt, layouts.different_owner(clean_env(), wt))
+        assert mode == "unusable", mode
+        assert "dubious ownership" in err, err
+        assert str(repo.resolve()) in err, err
 
 
 # --- the PR, kept to one ------------------------------------------------------
