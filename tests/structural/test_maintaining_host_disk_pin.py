@@ -13,14 +13,14 @@ from tests.structural import maintaining_host_disk_rig as rig
 
 PIN = rig.SCRIPTS / "_pin.sh"
 
-# VERSION 3 (2026-10-27), from
-# https://github.com/gregoryfoster/skills/issues/510
-TAG = "a4857ac9332f0aa368ae427d39d2e8df0cee0bb5"
-DIGEST = "sha256:7cbad644d2ece3e163bd3087727d710b05beceff1d935bf64813f2fd3fa23168"
+# VERSION 4 (2026-11-01), from
+# https://github.com/gregoryfoster/skills/issues/551
+TAG = "d675fcbcd20db77a7af5576bd133fc0c577d3808"
+DIGEST = "sha256:25d9289e246b42a9e00589482cb39afd0ceb013be1a9a950083186f0c241fded"
 # The layer's own MANIFEST, from the same issue. pull-disk-gc.sh at this pin
-# staged layer sha256:9a5bbd46…9d030 (23,039 bytes) and its step 8 matched
-# this, 2026-10-28.
-MANIFEST_SHA256 = "9347ffff2ff66e3925efa25d2cc5d4e5b70d83d512619de6a6ac96cb5abfe258"
+# staged layer sha256:7cb85040…b291 (23,132 bytes) and its step 8 matched
+# this, 2026-11-02.
+MANIFEST_SHA256 = "89059897fdde255419676ba486742bd0ee63ce7063a61c0c5ee3a316bd3fc00a"
 
 
 def pin_values() -> dict:
@@ -29,11 +29,11 @@ def pin_values() -> dict:
     )
 
 
-def test_pin_is_version_3():
+def test_pin_is_version_4():
     values = pin_values()
     assert values["DISK_GC_TAG"] == TAG
     assert values["DISK_GC_MANIFEST_DIGEST"] == DIGEST
-    assert values["DISK_GC_VERSION"] == "3"
+    assert values["DISK_GC_VERSION"] == "4"
     assert values["DISK_GC_MANIFEST_SHA256"] == MANIFEST_SHA256
     assert values["DISK_GC_REGISTRY"] == "https://ghcr.io"
     assert values["DISK_GC_REPOSITORY"] == "cannobserv/co-image-base"
