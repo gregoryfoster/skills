@@ -265,3 +265,41 @@ class TestPrimaryLayouts:
         assert (r.returncode, r.stdout) == (2, ""), r.stderr
         assert "dubious ownership" in r.stderr, "git's reason is let through"
         assert f"'{repo.resolve()}'" in r.stderr, r.stderr
+
+
+class TestASeparateGitDirPrimary:
+    """CR 1892: a primary whose `.git` is a pointer file lists its store, and
+    `-C <store>` names no work tree. From the primary, that work tree is this
+    checkout; from a linked worktree git cannot say, so exit 2 says why."""
+
+    @pytest.mark.parametrize(
+        ("text", "want"), [(None, "direct\n"), ("pr\n", "pr\n")], ids=["absent", "pr"]
+    )
+    def test_the_primary_reads_its_own_knob(self, reader, tmp_path, text, want):
+        primary, _ = layouts.separate_git_dir(tmp_path, text)
+        r = _read(reader, primary)
+        assert (r.returncode, r.stdout, r.stderr) == (0, want, "")
+
+    @pytest.mark.parametrize("text", [None, "pr\n"], ids=["absent", "pr"])
+    def test_a_linked_worktree_is_exit_2_and_says_why(self, reader, tmp_path, text):
+        _, linked = layouts.separate_git_dir(tmp_path, text)
+        r = _read(reader, linked)
+        assert (r.returncode, r.stdout) == (2, ""), r.stderr
+        assert layouts.SEPARATE_GIT_DIR_HINT in r.stderr, r.stderr
+        assert "primary checkout" in r.stderr, r.stderr
+
+    def test_a_store_git_cannot_open_is_still_exit_2(self, reader, tmp_path):
+        """Never the fallback: from the linked worktree, "dubious ownership"
+        of the store is git's reason, and the hint is not offered."""
+        _, linked = layouts.separate_git_dir(tmp_path, "pr\n")
+        r = subprocess.run(
+            ["bash", str(reader)],
+            cwd=linked,
+            capture_output=True,
+            text=True,
+            env=layouts.different_owner(_env(), linked),
+            timeout=30,
+        )
+        assert (r.returncode, r.stdout) == (2, ""), r.stderr
+        assert "dubious ownership" in r.stderr, r.stderr
+        assert layouts.SEPARATE_GIT_DIR_HINT not in r.stderr, r.stderr

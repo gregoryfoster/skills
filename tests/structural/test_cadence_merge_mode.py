@@ -624,6 +624,40 @@ class TestTheInlineReadersHoldMergeModeShsGrammar:
         assert "dubious ownership" in r.stderr, "git's reason is let through"
         assert str(repo.resolve()) in r.stderr, r.stderr
 
+    # CR 1892: a primary whose .git is a pointer file lists its store, which
+    # names no work tree; #584 made --print exit 5 there with no knob at all.
+
+    @pytest.mark.parametrize("text", [None, "pr\n"], ids=["absent", "pr"])
+    def test_a_separate_git_dir_primary_renders_by_its_own_knob(self, tmp_path, text):
+        primary, _ = layouts.separate_git_dir(tmp_path, text)
+        r = _install(primary, "--print", "--cron", "0 15 * * 1")
+        assert r.returncode == 0, r.stderr
+        assert "must be run in a work tree" not in r.stderr, r.stderr
+        assert (READ_STEP in r.stdout) is (text == "pr\n"), r.stdout
+
+    @pytest.mark.parametrize("text", [None, "pr\n"], ids=["absent", "pr"])
+    def test_its_linked_worktree_refuses_and_says_why(self, tmp_path, text):
+        _, linked = layouts.separate_git_dir(tmp_path, text)
+        r = _install(linked, "--print", "--cron", "0 15 * * 1")
+        assert r.returncode == 5, r.stdout + r.stderr
+        assert r.stdout == "", "an unreadable knob must render nothing"
+        assert layouts.SEPARATE_GIT_DIR_HINT in r.stderr, r.stderr
+        assert "primary checkout" in r.stderr, r.stderr
+
+    def test_its_store_git_cannot_open_is_never_the_fallback(self, tmp_path):
+        _, linked = layouts.separate_git_dir(tmp_path, "pr\n")
+        r = subprocess.run(
+            ["bash", str(INSTALL_CADENCE), "--print", "--cron", "0 15 * * 1"],
+            cwd=linked,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            env=layouts.different_owner(_env(), linked),
+        )
+        assert r.returncode == 5, r.stdout + r.stderr
+        assert "dubious ownership" in r.stderr, r.stderr
+        assert layouts.SEPARATE_GIT_DIR_HINT not in r.stderr, r.stderr
+
 
 # --- the two shapes --------------------------------------------------------
 
