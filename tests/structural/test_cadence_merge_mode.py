@@ -42,6 +42,8 @@ from pathlib import Path
 import pytest
 import yaml
 
+from tests.structural import merge_mode_layouts as layouts
+
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 SCRIPTS = REPO_ROOT / "skills" / "curating-context" / "scripts"
 INSTALL_CADENCE = SCRIPTS / "install-cadence.sh"
@@ -555,6 +557,174 @@ class TestTheInlineReadersHoldMergeModeShsGrammar:
         r = _install(wt, "--print", "--cron", "0 15 * * 1")
         assert r.returncode == 0, r.stderr
         assert READ_STEP in r.stdout
+
+    # #584: in a bare primary and a submodule, the first list entry is a git
+    # dir, and the installer read it as the checkout: `direct`, in silence.
+    # The workflow step needs no such case: it reads `.skills/merge_mode`
+    # relative to the job's checkout, which actions/checkout makes a plain
+    # clone, never bare and never a submodule's worktree.
+
+    @pytest.mark.parametrize("layout", sorted(layouts.LAYOUTS))
+    @pytest.mark.parametrize("text", ["pr\n", "PR\n"], ids=["pr", "PR"])
+    def test_the_installer_reads_the_primary_in_each_layout(
+        self, tmp_path, layout, text
+    ):
+        checkout = layouts.LAYOUTS[layout](tmp_path, text)
+        want = (0, "pr") if text == "pr\n" else (2, "")
+        assert _merge_mode_sh(checkout) == want, "fixture: merge-mode.sh disagrees"
+        r = _install(checkout, "--print", "--cron", "0 15 * * 1")
+        if want[0] == 0:
+            assert r.returncode == 0, r.stderr
+            assert READ_STEP in r.stdout, "read as direct"
+        else:
+            assert r.returncode == 5, r.stdout + r.stderr
+            assert r.stdout == "", "an unusable knob must render nothing"
+            assert ".skills/merge_mode" in r.stderr
+
+    @pytest.mark.parametrize("layout", sorted(layouts.LAYOUTS))
+    def test_an_inherited_git_dir_does_not_answer(self, tmp_path, layout):
+        """CR 1895: as knob_tracked and git_config already scrub it."""
+        checkout = layouts.LAYOUTS[layout](tmp_path, "pr\n")
+        gitdir = layouts.git(checkout, "rev-parse", "--absolute-git-dir")
+        r = subprocess.run(
+            ["bash", str(INSTALL_CADENCE), "--print", "--cron", "0 15 * * 1"],
+            cwd=checkout,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            env=_env(GIT_DIR=gitdir),
+        )
+        assert r.returncode == 0, r.stderr
+        assert READ_STEP in r.stdout, "read as direct"
+
+    @pytest.mark.parametrize("layout", sorted(layouts.LAYOUTS))
+    def test_an_inherited_git_work_tree_does_not_answer(self, tmp_path, layout):
+        """CR 1903: an inherited GIT_WORK_TREE beats the submodule's
+        core.worktree, so its entry named this linked checkout, whose
+        committed knob says `direct`."""
+        checkout = layouts.LAYOUTS[layout](tmp_path, "pr\n")
+        r = subprocess.run(
+            ["bash", str(INSTALL_CADENCE), "--print", "--cron", "0 15 * * 1"],
+            cwd=checkout,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            env=_env(GIT_WORK_TREE=str(checkout)),
+        )
+        assert r.returncode == 0, r.stderr
+        assert READ_STEP in r.stdout, "read as direct"
+
+    @pytest.mark.parametrize(
+        "layout", [*sorted(layouts.LAYOUTS), "separate_git_dir_primary"]
+    )
+    def test_an_inherited_git_dir_below_the_top_does_not_answer(self, tmp_path, layout):
+        """CR 1902: with GIT_DIR inherited and no work tree named, git takes
+        the cwd as the top, so $ROOT is the subdirectory. The `bare` branch
+        and CR 1892's fallback read the knob from $ROOT itself: `direct`,
+        where merge-mode.sh, from the same place, says `pr`."""
+        if layout == "separate_git_dir_primary":
+            checkout, _ = layouts.separate_git_dir(tmp_path, "pr\n")
+        else:
+            checkout = layouts.LAYOUTS[layout](tmp_path, "pr\n")
+        below = checkout / "docs"
+        below.mkdir()
+        env = _env(GIT_DIR=layouts.git(checkout, "rev-parse", "--absolute-git-dir"))
+        mm = subprocess.run(
+            ["bash", str(MERGE_MODE_SH)],
+            cwd=below,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            env=env,
+        )
+        assert (mm.returncode, mm.stdout) == (0, "pr\n"), "fixture: " + mm.stderr
+        r = subprocess.run(
+            ["bash", str(INSTALL_CADENCE), "--print", "--cron", "0 15 * * 1"],
+            cwd=below,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            env=env,
+        )
+        assert r.returncode == 0, r.stderr
+        assert READ_STEP in r.stdout, "read as direct"
+
+    @pytest.mark.parametrize(
+        ("layout", "committed"),
+        [("bare_home", True), ("submodule_linked", False)],
+    )
+    def test_the_committed_check_asks_the_primary_work_tree(
+        self, tmp_path, layout, committed
+    ):
+        """KNOB_PRIMARY's other reader: whether the knob is committed as it
+        reads is asked of the primary's work tree. The bare layout's knob is
+        committed; the submodule's is untracked in its checkout."""
+        checkout = layouts.LAYOUTS[layout](tmp_path, "pr\n")
+        r = _install(checkout)
+        assert r.returncode == 0, r.stdout + r.stderr
+        wf = checkout / ".github" / "workflows" / "context-cadence.yml"
+        assert READ_STEP in wf.read_text(), "read as direct"
+        assert ("not committed" in r.stdout) is not committed, r.stdout
+        check = _install(checkout, "--check")
+        assert "merge mode:         pr" in check.stdout, check.stdout
+        assert ("not committed" in check.stdout) is not committed, check.stdout
+
+    def test_the_installer_refuses_a_primary_git_cannot_open(self, tmp_path: Path):
+        """Only the primary is refused ("dubious ownership"): unusable, exit
+        5, never a fallback to this checkout or to the primary's raw path."""
+        repo = _init(tmp_path / "r")
+        (repo / "README.md").write_text("x\n")
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-qm", "init")
+        _knob(repo, "pr\n")
+        wt = tmp_path / "wt"
+        _git(repo, "worktree", "add", "-q", "-b", "feature/x", str(wt))
+        r = subprocess.run(
+            ["bash", str(INSTALL_CADENCE), "--print", "--cron", "0 15 * * 1"],
+            cwd=wt,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            env=layouts.different_owner(_env(), wt),
+        )
+        assert r.returncode == 5, r.stdout + r.stderr
+        assert r.stdout == "", "a primary git refuses must render nothing"
+        assert "dubious ownership" in r.stderr, "git's reason is let through"
+        assert str(repo.resolve()) in r.stderr, r.stderr
+
+    # CR 1892: a primary whose .git is a pointer file lists its store, which
+    # names no work tree; #584 made --print exit 5 there with no knob at all.
+
+    @pytest.mark.parametrize("text", [None, "pr\n"], ids=["absent", "pr"])
+    def test_a_separate_git_dir_primary_renders_by_its_own_knob(self, tmp_path, text):
+        primary, _ = layouts.separate_git_dir(tmp_path, text)
+        r = _install(primary, "--print", "--cron", "0 15 * * 1")
+        assert r.returncode == 0, r.stderr
+        assert "must be run in a work tree" not in r.stderr, r.stderr
+        assert (READ_STEP in r.stdout) is (text == "pr\n"), r.stdout
+
+    @pytest.mark.parametrize("text", [None, "pr\n"], ids=["absent", "pr"])
+    def test_its_linked_worktree_refuses_and_says_why(self, tmp_path, text):
+        _, linked = layouts.separate_git_dir(tmp_path, text)
+        r = _install(linked, "--print", "--cron", "0 15 * * 1")
+        assert r.returncode == 5, r.stdout + r.stderr
+        assert r.stdout == "", "an unreadable knob must render nothing"
+        assert layouts.SEPARATE_GIT_DIR_HINT in r.stderr, r.stderr
+        assert "primary checkout" in r.stderr, r.stderr
+
+    def test_its_store_git_cannot_open_is_never_the_fallback(self, tmp_path):
+        _, linked = layouts.separate_git_dir(tmp_path, "pr\n")
+        r = subprocess.run(
+            ["bash", str(INSTALL_CADENCE), "--print", "--cron", "0 15 * * 1"],
+            cwd=linked,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            env=layouts.different_owner(_env(), linked),
+        )
+        assert r.returncode == 5, r.stdout + r.stderr
+        assert "dubious ownership" in r.stderr, r.stderr
+        assert layouts.SEPARATE_GIT_DIR_HINT not in r.stderr, r.stderr
 
 
 # --- the two shapes --------------------------------------------------------

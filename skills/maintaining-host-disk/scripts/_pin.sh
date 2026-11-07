@@ -37,12 +37,12 @@ case "${0##*/}" in
   _pin.sh) case "${1-}" in -h | --help) pin_usage; exit 0 ;; esac ;;
 esac
 
-# VERSION 3: VS Code server builds kept by version, newer than the newest
-# live one, or the newest when none is live (2026-10-27, #510).
+# VERSION 4: of the VS Code server builds newer than the newest live one,
+# only the newest is kept (2026-11-01, #551).
 DISK_GC_REGISTRY=https://ghcr.io
 DISK_GC_REPOSITORY=cannobserv/co-image-base
-DISK_GC_TAG=a4857ac9332f0aa368ae427d39d2e8df0cee0bb5
-DISK_GC_MANIFEST_DIGEST=sha256:7cbad644d2ece3e163bd3087727d710b05beceff1d935bf64813f2fd3fa23168
-DISK_GC_VERSION=3
-# From the release (#510); the puller's step 8 matched it, 2026-10-28.
-DISK_GC_MANIFEST_SHA256=9347ffff2ff66e3925efa25d2cc5d4e5b70d83d512619de6a6ac96cb5abfe258
+DISK_GC_TAG=d675fcbcd20db77a7af5576bd133fc0c577d3808
+DISK_GC_MANIFEST_DIGEST=sha256:25d9289e246b42a9e00589482cb39afd0ceb013be1a9a950083186f0c241fded
+DISK_GC_VERSION=4
+# From the release (#551); the puller's step 8 matched it, 2026-11-02.
+DISK_GC_MANIFEST_SHA256=89059897fdde255419676ba486742bd0ee63ce7063a61c0c5ee3a316bd3fc00a

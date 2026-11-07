@@ -229,8 +229,8 @@ fi
 
 # .skills/merge_mode (#342) picks which workflow renders (#560): `pr` adds the
 # PR path, `direct` or absent renders today's bytes. Read with merge-mode.sh's
-# grammar and from the same place, the primary checkout (the first `git
-# worktree list` entry): an untracked knob does not exist in a linked
+# grammar and from the same place, the primary checkout, resolved as that
+# script resolves it: an untracked knob does not exist in a linked
 # worktree. Inline, not a call to that script: it ships in shipping-work and
 # using-git-worktrees, and a consumer need not vendor either.
 # tests/structural/test_cadence_merge_mode.py holds this reader, and the
@@ -241,17 +241,60 @@ fi
 KNOB_MODE="absent"   # absent | direct | pr | unusable
 KNOB_ERR=""
 KNOB_PRIMARY=""
+# primary_git <args> — git without an inherited GIT_DIR or GIT_WORK_TREE, for
+# the calls that resolve the primary (CR 1895), as knob_tracked and
+# git_config already run: GIT_DIR beats -C, so asked for a submodule's work
+# tree git named the entry itself and the knob read as absent.
+primary_git() {
+  env -u GIT_DIR -u GIT_WORK_TREE git "$@"
+}
 read_merge_mode() {
-  local wt knob remedy line word="" count=0 words
+  local wt block entry dirs hint knob remedy line word="" count=0 words
   remedy="write one word, 'pr' or 'direct', or delete the file for the default ('direct')"
-  wt="$(git -C "$ROOT" worktree list --porcelain)" || {
+  wt="$(primary_git -C "$ROOT" worktree list --porcelain)" || {
     KNOB_MODE="unusable"; KNOB_ERR="git worktree list failed"; return 0; }
-  KNOB_PRIMARY=${wt%%$'\n'*}
-  KNOB_PRIMARY=${KNOB_PRIMARY#worktree }
-  [ -d "$KNOB_PRIMARY" ] || {
-    KNOB_MODE="unusable"
-    KNOB_ERR="could not resolve the primary checkout (got '$KNOB_PRIMARY')"
-    return 0; }
+  # The primary is the first porcelain block. Its entry is a git dir for a
+  # bare primary (`repo.git`) and in a submodule (`<super>/.git/modules/<n>`),
+  # which read as a checkout rendered `direct` in silence (#584). A `bare`
+  # block's knob can only be this checkout's; any other entry is asked for
+  # its work tree, so KNOB_PRIMARY is always one (knob_tracked asks git
+  # there). That ask failing is unusable, never a fallback to another
+  # checkout. One exception, which is no other checkout (CR 1892): a primary
+  # whose .git is a pointer file (`git init --separate-git-dir`) lists its
+  # store, which names no work tree. From that primary, the work tree is
+  # this checkout (its git dir is the common dir); from a linked worktree
+  # git knows no path to it. "This checkout" is its top asked again without
+  # the inherited GIT_DIR, never $ROOT (CR 1902): with GIT_DIR set and no
+  # work tree named, git takes the cwd for the top, so from a subdirectory
+  # $ROOT is that subdirectory and its knob read as absent.
+  block=${wt%%$'\n\n'*}
+  entry=${block%%$'\n'*}
+  entry=${entry#worktree }
+  case $'\n'"$block"$'\n' in
+    *$'\n'bare$'\n'*)
+      KNOB_PRIMARY="$(primary_git -C "$ROOT" rev-parse --show-toplevel)" || {
+        KNOB_MODE="unusable"
+        KNOB_ERR="the primary is bare and this is not a work tree (git's reason is above), so there is no checkout to read .skills/merge_mode from"
+        return 0; } ;;
+    *)
+      if ! KNOB_PRIMARY="$(primary_git -C "$entry" rev-parse --show-toplevel 2>/dev/null)"; then
+        dirs="$(primary_git -C "$ROOT" rev-parse --path-format=absolute --git-dir --git-common-dir 2>/dev/null)" || dirs=""
+        if [ -n "$dirs" ] && [ "${dirs%%$'\n'*}" = "${dirs#*$'\n'}" ] &&
+          KNOB_PRIMARY="$(primary_git -C "$ROOT" rev-parse --show-toplevel 2>/dev/null)"; then
+          :
+        else
+          # Asked again for git's reason, which goes to stderr.
+          primary_git -C "$entry" rev-parse --show-toplevel >/dev/null || true
+          hint=""
+          if [ "$(primary_git -C "$entry" rev-parse --is-inside-git-dir 2>/dev/null || true)" = true ]; then
+            hint="; it is a git dir with no work tree, as a primary whose .git is a file makes it (git init --separate-git-dir), and only that primary knows its work tree, so run this from the primary checkout"
+          fi
+          KNOB_MODE="unusable"
+          KNOB_ERR="could not resolve the primary checkout '$entry' (git's reason is above)$hint"
+          return 0
+        fi
+      fi ;;
+  esac
   knob="$KNOB_PRIMARY/.skills/merge_mode"
   if [ ! -e "$knob" ] && [ ! -L "$knob" ]; then
     return 0

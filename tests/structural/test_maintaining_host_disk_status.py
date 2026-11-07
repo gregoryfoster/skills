@@ -39,6 +39,18 @@ def test_the_status_line_names_no_private_repo_or_host():
     assert "still unproven" in line.lower(), line
 
 
+def test_the_status_line_names_the_pinned_version():
+    # #551: the pin moved to VERSION 4 while the line still told of hosts
+    # taking VERSION 2 -> 3. The line moves with the pin, so it names it.
+    # CR 1891: in its bold head — a later clause naming the pin would let a
+    # head still claiming the old one pass.
+    pin = (rig.SCRIPTS / "_pin.sh").read_text()
+    version = re.search(r"^DISK_GC_VERSION=(\d+)$", pin, re.M)
+    assert version, "_pin.sh sets DISK_GC_VERSION"
+    line = _status()
+    assert re.search(rf"^\*\*Status:[^*]*\bVERSION {version[1]}\b", line), line
+
+
 def test_the_status_line_states_the_roster_not_a_sessions_access():
     # CR 1496: "couldn't be read" was the cloud session's reach, not the
     # repo's state. The private repo's bump issue is read, and stays unnamed.

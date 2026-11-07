@@ -29,6 +29,7 @@ from pathlib import Path
 
 import pytest
 
+from tests.structural import merge_mode_layouts as layouts
 from tests.utils.skill_loader import SKILLS_DIR
 
 READERS = {
@@ -228,79 +229,67 @@ class TestPrimaryLayouts:
     For a bare primary it is `repo.git`; in a submodule (git 2.54),
     `<super>/.git/modules/<n>`. Read as a checkout, neither holds `.skills/`,
     so both printed `direct` in silence. A bare primary's knob is the current
-    checkout's; a submodule's primary is its work tree.
+    checkout's; a submodule's primary is its work tree. The layouts live in
+    merge_mode_layouts.py, which the inline readers' tests share (#584).
     """
 
-    @staticmethod
-    def _seed(path: Path, knob: str) -> Path:
-        path.mkdir(parents=True)
-        _git(path, "init", "-q", "-b", "main")
-        _git(path, "config", "user.email", "test@example.com")
-        _git(path, "config", "user.name", "test")
-        _knob(path, knob)
-        _git(path, "add", "-A")
-        _git(path, "-c", "commit.gpgsign=false", "commit", "-q", "-m", "knob")
-        return path
-
-    def _bare_home(self, tmp_path: Path, knob: str) -> Path:
-        seed = self._seed(tmp_path / "seed", knob)
-        bare = tmp_path / "repo.git"
-        _git(tmp_path, "clone", "-q", "--bare", str(seed), str(bare))
-        home = tmp_path / "home"
-        _git(bare, "worktree", "add", "-q", str(home), "main")
-        assert _git(home, "worktree", "list", "--porcelain").splitlines()[1] == "bare"
-        return home
-
-    def _submodule_linked(self, tmp_path: Path, knob: str) -> Path:
-        src = self._seed(tmp_path / "src", "direct\n")
-        sup = tmp_path / "super"
-        sup.mkdir()
-        _git(sup, "init", "-q", "-b", "main")
-        _git(
-            sup,
-            "-c",
-            "protocol.file.allow=always",
-            "submodule",
-            "-q",
-            "add",
-            str(src),
-            "sub",
-        )
-        sub = sup / "sub"
-        # Untracked in the submodule's checkout, as a machine-local knob is.
-        _knob(sub, knob)
-        wt = tmp_path / "wt"
-        _git(sub, "worktree", "add", "-q", "-b", "feature/x", str(wt))
-        assert "/.git/modules/" in _git(wt, "worktree", "list", "--porcelain")
-        return wt
-
-    LAYOUTS = ["_bare_home", "_submodule_linked"]
+    LAYOUTS = sorted(layouts.LAYOUTS)
 
     @pytest.mark.parametrize("layout", LAYOUTS)
     def test_pr_is_read(self, reader, tmp_path, layout):
-        checkout = getattr(self, layout)(tmp_path, "pr\n")
+        checkout = layouts.LAYOUTS[layout](tmp_path, "pr\n")
         r = _read(reader, checkout)
         assert (r.returncode, r.stdout) == (0, "pr\n"), r.stderr
 
     @pytest.mark.parametrize("layout", LAYOUTS)
     def test_an_unusable_word_is_still_exit_2(self, reader, tmp_path, layout):
-        checkout = getattr(self, layout)(tmp_path, "PR\n")
+        checkout = layouts.LAYOUTS[layout](tmp_path, "PR\n")
         r = _read(reader, checkout)
         assert (r.returncode, r.stdout) == (2, ""), r.stderr
         assert ".skills/merge_mode" in r.stderr
+
+    @pytest.mark.parametrize("layout", LAYOUTS)
+    def test_an_inherited_git_dir_does_not_answer(self, reader, tmp_path, layout):
+        """CR 1895: git exports GIT_DIR to every hook, absolute in a linked
+        worktree, and it beats `-C`: asked for the submodule's work tree, git
+        named the entry itself, and the read said `direct`."""
+        checkout = layouts.LAYOUTS[layout](tmp_path, "pr\n")
+        env = _env()
+        env["GIT_DIR"] = layouts.git(checkout, "rev-parse", "--absolute-git-dir")
+        r = subprocess.run(
+            ["bash", str(reader)],
+            cwd=checkout,
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=30,
+        )
+        assert (r.returncode, r.stdout) == (0, "pr\n"), r.stderr
+
+    @pytest.mark.parametrize("layout", LAYOUTS)
+    def test_an_inherited_git_work_tree_does_not_answer(self, reader, tmp_path, layout):
+        """CR 1903, the scrub's other half: an inherited GIT_WORK_TREE beats
+        the submodule's core.worktree, so asked for its work tree the entry
+        named this linked checkout, whose committed knob says `direct`."""
+        checkout = layouts.LAYOUTS[layout](tmp_path, "pr\n")
+        env = _env()
+        env["GIT_WORK_TREE"] = str(checkout)
+        r = subprocess.run(
+            ["bash", str(reader)],
+            cwd=checkout,
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=30,
+        )
+        assert (r.returncode, r.stdout) == (0, "pr\n"), r.stderr
 
     def test_a_primary_git_cannot_open_is_exit_2(self, reader, repo, tmp_path):
         """Only the primary is refused ("dubious ownership"); never a fallback."""
         _knob(repo, "pr\n")
         wt = tmp_path / "wt"
         _git(repo, "worktree", "add", "-q", "-b", "feature/x", str(wt))
-        env = _env()
-        env.update(
-            GIT_TEST_ASSUME_DIFFERENT_OWNER="1",
-            GIT_CONFIG_COUNT="1",
-            GIT_CONFIG_KEY_0="safe.directory",
-            GIT_CONFIG_VALUE_0=str(wt.resolve()),
-        )
+        env = layouts.different_owner(_env(), wt)
         r = subprocess.run(
             ["bash", str(reader)],
             cwd=wt,
@@ -312,3 +301,41 @@ class TestPrimaryLayouts:
         assert (r.returncode, r.stdout) == (2, ""), r.stderr
         assert "dubious ownership" in r.stderr, "git's reason is let through"
         assert f"'{repo.resolve()}'" in r.stderr, r.stderr
+
+
+class TestASeparateGitDirPrimary:
+    """CR 1892: a primary whose `.git` is a pointer file lists its store, and
+    `-C <store>` names no work tree. From the primary, that work tree is this
+    checkout; from a linked worktree git cannot say, so exit 2 says why."""
+
+    @pytest.mark.parametrize(
+        ("text", "want"), [(None, "direct\n"), ("pr\n", "pr\n")], ids=["absent", "pr"]
+    )
+    def test_the_primary_reads_its_own_knob(self, reader, tmp_path, text, want):
+        primary, _ = layouts.separate_git_dir(tmp_path, text)
+        r = _read(reader, primary)
+        assert (r.returncode, r.stdout, r.stderr) == (0, want, "")
+
+    @pytest.mark.parametrize("text", [None, "pr\n"], ids=["absent", "pr"])
+    def test_a_linked_worktree_is_exit_2_and_says_why(self, reader, tmp_path, text):
+        _, linked = layouts.separate_git_dir(tmp_path, text)
+        r = _read(reader, linked)
+        assert (r.returncode, r.stdout) == (2, ""), r.stderr
+        assert layouts.SEPARATE_GIT_DIR_HINT in r.stderr, r.stderr
+        assert "primary checkout" in r.stderr, r.stderr
+
+    def test_a_store_git_cannot_open_is_still_exit_2(self, reader, tmp_path):
+        """Never the fallback: from the linked worktree, "dubious ownership"
+        of the store is git's reason, and the hint is not offered."""
+        _, linked = layouts.separate_git_dir(tmp_path, "pr\n")
+        r = subprocess.run(
+            ["bash", str(reader)],
+            cwd=linked,
+            capture_output=True,
+            text=True,
+            env=layouts.different_owner(_env(), linked),
+            timeout=30,
+        )
+        assert (r.returncode, r.stdout) == (2, ""), r.stderr
+        assert "dubious ownership" in r.stderr, r.stderr
+        assert layouts.SEPARATE_GIT_DIR_HINT not in r.stderr, r.stderr

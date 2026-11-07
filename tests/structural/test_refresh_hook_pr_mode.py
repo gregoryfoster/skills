@@ -33,6 +33,7 @@ from pathlib import Path
 
 import pytest
 
+from tests.structural import merge_mode_layouts as layouts
 from tests.structural.test_cadence_merge_mode import (
     CASES,
     NOT_TEXT,
@@ -366,7 +367,7 @@ def _reader_source() -> str:
     return m.group(0)
 
 
-def _read_mode(cwd: Path) -> tuple[str, str]:
+def _read_mode(cwd: Path, env: dict | None = None) -> tuple[str, str]:
     script = (
         "set -euo pipefail\n"
         + _reader_source()
@@ -377,7 +378,7 @@ def _read_mode(cwd: Path) -> tuple[str, str]:
         cwd=cwd,
         capture_output=True,
         text=True,
-        env=clean_env(),
+        env=clean_env() if env is None else env,
         timeout=30,
     )
     assert r.returncode == 0, r.stderr
@@ -436,6 +437,85 @@ class TestTheReaderHoldsMergeModeShsGrammar:
         git(repo, "worktree", "add", "-q", "-b", "feature/x", str(wt))
         assert _merge_mode_sh(wt) == (0, "pr")
         assert _read_mode(wt) == ("pr", "")
+
+    # #584: in a bare primary and a submodule, the first list entry is a git
+    # dir, and the reader read it as the checkout: `direct`, in silence, and
+    # the hook pushed to main in a repo that asked for review.
+
+    @pytest.mark.parametrize("layout", sorted(layouts.LAYOUTS))
+    @pytest.mark.parametrize("text", ["pr\n", "PR\n"], ids=["pr", "PR"])
+    def test_it_reads_the_primary_in_each_layout(self, tmp_path, layout, text):
+        checkout = layouts.LAYOUTS[layout](tmp_path, text)
+        want = (0, "pr") if text == "pr\n" else (2, "")
+        assert _merge_mode_sh(checkout) == want, "fixture: merge-mode.sh disagrees"
+        mode, err = _read_mode(checkout)
+        if want[0] == 0:
+            assert (mode, err) == ("pr", ""), "read as direct"
+        else:
+            assert mode == "unusable", mode
+            assert ".skills/merge_mode" in err
+
+    @pytest.mark.parametrize("layout", sorted(layouts.LAYOUTS))
+    def test_an_inherited_git_dir_does_not_answer(self, tmp_path, layout):
+        """CR 1895: an inherited GIT_DIR beats `-C`, so the submodule's
+        entry named itself as the work tree and the read said `direct`."""
+        checkout = layouts.LAYOUTS[layout](tmp_path, "pr\n")
+        env = clean_env()
+        env["GIT_DIR"] = layouts.git(checkout, "rev-parse", "--absolute-git-dir")
+        assert _read_mode(checkout, env) == ("pr", "")
+
+    @pytest.mark.parametrize("layout", sorted(layouts.LAYOUTS))
+    def test_an_inherited_git_work_tree_does_not_answer(self, tmp_path, layout):
+        """CR 1903: an inherited GIT_WORK_TREE beats the submodule's
+        core.worktree, so its entry named this linked checkout, whose
+        committed knob says `direct`."""
+        checkout = layouts.LAYOUTS[layout](tmp_path, "pr\n")
+        env = clean_env()
+        env["GIT_WORK_TREE"] = str(checkout)
+        assert _read_mode(checkout, env) == ("pr", "")
+
+    def test_a_primary_git_cannot_open_is_unusable(self, tmp_path):
+        """Only the primary is refused ("dubious ownership"): unusable, with
+        git's reason, never a fallback to this checkout or the raw path."""
+        repo = tmp_path / "r"
+        git(tmp_path, "init", "-q", "-b", "main", str(repo))
+        (repo / "README.md").write_text("x\n")
+        git(repo, "add", "-A")
+        git(repo, "commit", "-qm", "init")
+        (repo / ".skills").mkdir()
+        (repo / ".skills" / "merge_mode").write_text("pr\n")
+        wt = tmp_path / "wt"
+        git(repo, "worktree", "add", "-q", "-b", "feature/x", str(wt))
+        mode, err = _read_mode(wt, layouts.different_owner(clean_env(), wt))
+        assert mode == "unusable", mode
+        assert "dubious ownership" in err, err
+        assert str(repo.resolve()) in err, err
+
+    # CR 1892: a primary whose .git is a pointer file lists its store, which
+    # names no work tree. #584 made that unusable from the primary itself,
+    # where the hook said "no refresh" daily on a repo with no knob at all.
+
+    @pytest.mark.parametrize(
+        ("text", "want"), [(None, "direct"), ("pr\n", "pr")], ids=["absent", "pr"]
+    )
+    def test_a_separate_git_dir_primary_reads_its_own_knob(self, tmp_path, text, want):
+        primary, _ = layouts.separate_git_dir(tmp_path, text)
+        assert _read_mode(primary) == (want, "")
+
+    @pytest.mark.parametrize("text", [None, "pr\n"], ids=["absent", "pr"])
+    def test_its_linked_worktree_is_unusable_and_says_why(self, tmp_path, text):
+        _, linked = layouts.separate_git_dir(tmp_path, text)
+        mode, err = _read_mode(linked)
+        assert mode == "unusable", mode
+        assert layouts.SEPARATE_GIT_DIR_HINT in err, err
+        assert "primary checkout" in err, err
+
+    def test_its_store_git_cannot_open_is_never_the_fallback(self, tmp_path):
+        _, linked = layouts.separate_git_dir(tmp_path, "pr\n")
+        mode, err = _read_mode(linked, layouts.different_owner(clean_env(), linked))
+        assert mode == "unusable", mode
+        assert "dubious ownership" in err, err
+        assert layouts.SEPARATE_GIT_DIR_HINT not in err, err
 
 
 # --- the PR, kept to one ------------------------------------------------------
@@ -763,6 +843,38 @@ class TestReconcileInPrMode:
         _main_never_moved(c)
         _assert_content_matches_pointer(c)
         assert len(_creates(c.gh)) == 1
+
+    def test_one_parked_after_the_guards_read_the_range_rolls_back_nothing(
+        self, pr_consumer
+    ):
+        """#566: the swap's expected HEAD was read after the guards, so a
+        session parked between them took the other's rollback for its own
+        range — and swapped one commit further back, onto the operator's."""
+        c = pr_consumer
+        git(c.path, "submodule", "update", "--remote", "--merge", "--", VENDOR)
+        git(c.path, "add", VENDOR)
+        git(c.path, "commit", "-qm", MSG_SUB, "--", VENDOR)
+        write_shim(
+            c,
+            hold_when='[ "$1" = rev-list ] && [ "$2" = --count ] && [ "$3" = --merges ]',
+        )
+        c.kill_flag.write_text("")
+        first = start_hook(c)
+        deadline = time.monotonic() + 60
+        while not c.held.exists():
+            assert time.monotonic() < deadline, "the first run never reached the hold"
+            time.sleep(0.05)
+
+        second = run_hook(c)
+        c.release.write_text("")
+        assert finish_hook(first).returncode == 0
+
+        assert second.returncode == 0, second.stderr
+        _main_never_moved(c)
+        _assert_content_matches_pointer(c)
+        assert "rolling back 1 commit(s) this hook made on main failed" in (
+            log_text(c)
+        ), log_text(c)
 
 
 # --- a staged leftover the hook did not mark (CR 1791) -----------------------

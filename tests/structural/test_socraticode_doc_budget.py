@@ -20,9 +20,12 @@ wordings of the `unresolvedPct` note — to `references/graph-health.md`, and
 this file stops the template regrowing. The ratchet follows
 `test_skill_self_budget.py`'s rules, because it is the same kind of number: it
 binds the offline estimate on every commit and `count_tokens` when
-`SKILL_BUDGET_EXACT=1`, it sits at the larger reading rounded up to the next
-50, and it only comes down. The reference names the figure in prose, so the
-gate and a reader quote the same number.
+`SKILL_BUDGET_EXACT=1`, and it only comes down. Since #596 it departs on
+purpose from one: it no longer sits at the larger reading rounded up to the
+next 50. #596 trimmed the template to 2,495 exact and margin was asked for,
+and 2,500 would leave about 5 tokens, so the next small edit would go red. The
+reference names the figure in prose, so the gate and a reader quote the same
+number.
 
 What is measured is the template as a consumer receives it — the ````markdown
 fence's contents, markers included — not `references/socraticode-doc.md`,
@@ -51,10 +54,14 @@ from .test_skill_self_budget import (
 from .test_socraticode_policy_split import DOC_REF, _template
 
 # 2,593 exact after #329, and 2,599 once the verdict table said which measure
-# rules (CR 11) — the larger reading, rounded up to the next 50. Lower it when
-# a later trim finds more; never raise it. A rule a consumer acts on may
-# displace a sentence here, as CR 11's did two sentences of rationale, but an
-# addition that needs headroom belongs in references/graph-health.md or
+# rules (CR 11) — the larger reading, rounded up to the next 50. #337's
+# `codebase_flow` fix took it to 2,629 exact, red only in the weekly exact job.
+# #596 trimmed it to 2,495 and kept 2,600, departing on purpose from the
+# rounding rule's 2,500: margin was asked for, and 2,500 would leave about 5
+# tokens, so the next small edit would go red. It still only comes down: lower
+# it when a later trim finds more; never raise it. A rule a consumer acts on
+# may displace a sentence here, as CR 11's did two sentences of rationale, but
+# an addition that needs headroom belongs in references/graph-health.md or
 # another reference, which cost a consumer nothing.
 GENERATED_DOC_RATCHET = 2_600
 

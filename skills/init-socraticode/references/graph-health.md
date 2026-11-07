@@ -20,6 +20,13 @@ notes. A consumer reaches this file through the vendored skill, at
 that path in plain text, since a relative link from `docs/` would resolve here
 and nowhere else.
 
+**The graph is built apart from the embeddings.** A `codebase_search` that
+answers well says nothing about it: the graph can be stale or low-yield while
+the code index is current, and then `codebase_impact` and
+`codebase_graph_query` answer *empty* rather than erroring
+([#596](https://github.com/gregoryfoster/skills/issues/596) moved this from the
+generated doc's per-tool notes).
+
 ## Name the checkout, not the cwd
 
 SocratiCode indexes by absolute project path, so a literal `.` run from a git

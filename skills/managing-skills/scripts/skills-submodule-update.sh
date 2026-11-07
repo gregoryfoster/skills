@@ -75,7 +75,10 @@ Behaviour:
     spent when a run ends, not when it starts: a run killed part way
     leaves it for the next session, which first undoes any staging the
     killed run left behind (.git/skills-update.staging marks a refresh in
-    progress).
+    progress). The second run in a row killed inside its commit spends the
+    day instead, and says why on stderr: the commit through the repo's
+    pre-commit hooks did not fit the timeout (.git/skills-update.commit-kills
+    counts them; a commit that returns, landed or refused, resets it).
   - Runs only on the main branch.
   - Scopes the submodule update to skills-vendor/ — never touches other
     submodules.
@@ -103,9 +106,14 @@ Behaviour:
     worktree; where a service reads the checkout it can refuse to start.
     If the push fails the commit is rolled back so the checkout matches the
     remote — the pointer, the vendored content and .skills/doctor.sh
-    alike — and the next session retries. A run that cannot push does not
-    refresh either. Never pulls, never force-pushes main, and never touches
-    a commit this hook did not write.
+    alike — and the next session retries. A commit or an update that
+    fails is undone the same way (#550). The rollback moves HEAD by
+    compare-and-swap, so two sessions refused together roll it back once
+    (#566), and a push refused because another session's push of the same
+    commit landed rolls nothing back. A run that cannot push does not
+    refresh either. Never pulls,
+    never force-pushes main, and never touches a commit this hook did not
+    write.
   - With .skills/merge_mode 'pr' (read from the primary checkout, #560),
     never pushes to main: the bump is proposed as ONE pull request from
     skills/submodule-refresh, which later sessions update, and the
@@ -162,8 +170,16 @@ LOG="$gitdir/skills-update.log"
 # names the run that owns it, `pid <PID> <epoch seconds>`; then one path per
 # line — the ones that run may stage — so a later session can tell what the
 # hook staged from what a human did; a heal that has said a killed run's
-# staging on stderr appends `noted`. See _heal_staged and _marker_owner_live.
+# staging on stderr appends `noted`, and a run whose commit returned appends
+# `done` (CR 1900). A heal claims a dead marker as its own
+# (CR 1897), adding `heals <the killed run's owner line>`; while it takes one,
+# the marker is `$STAGING.heal.<pid>.<epoch>`. See _heal_staged, _take_marker
+# and _marker_owner_live.
 STAGING="$gitdir/skills-update.staging"
+# Refreshes killed inside their commit, in a row (#575): one line, `<count>
+# <the last one's marker owner line>`. Written by the heal, removed by a run
+# whose commit returns, landed or refused (CR 1900). See _count_commit_kill.
+COMMIT_KILLS="$gitdir/skills-update.commit-kills"
 # How long a marker's owner can be believed alive (CR 1789): the hook's 120 s
 # ceiling plus margin. Past it, a live PID is a reused one — an unrelated
 # process, or one in another PID namespace — and the marker is stale.
@@ -227,25 +243,28 @@ _phase() {
 # _marker_being_written covers what is left of it, and is reached only for an
 # unparseable marker, so its `stat` costs a normal run nothing. Both ways
 # bounded: an mtime more than 2 s ahead (a clock set back) is not believed.
+#
+# Both read $STAGING, or the marker file named as their argument: the heal
+# checks again the one it has just taken (_take_marker).
 MARKER_OWNER=""
 _marker_being_written() {
-  local now mtime
+  local file="${1:-$STAGING}" now mtime
   now="$(date +%s 2>/dev/null)" || return 1
   # GNU and busybox take -c; BSD's (macOS) refuses it with nothing on stdout.
-  mtime="$(stat -c %Y "$STAGING" 2>/dev/null || stat -f %m "$STAGING" 2>/dev/null)" || return 1
+  mtime="$(stat -c %Y "$file" 2>/dev/null || stat -f %m "$file" 2>/dev/null)" || return 1
   case "$mtime" in '' | *[!0-9]*) return 1 ;; esac
   [ $((now - mtime)) -le 2 ] && [ $((mtime - now)) -le 2 ]
 }
 _marker_owner_live() {
-  local head tag pid started now
+  local file="${1:-$STAGING}" head tag pid started now
   MARKER_OWNER=""
-  [ -f "$STAGING" ] || return 1
-  head="$(head -n 1 "$STAGING" 2>/dev/null)" || return 1
+  [ -f "$file" ] || return 1
+  head="$(head -n 1 "$file" 2>/dev/null)" || return 1
   read -r tag pid started <<<"$head" || true
   case "$pid" in '' | *[!0-9]*) tag="" ;; esac
   case "$started" in '' | *[!0-9]*) tag="" ;; esac
   if [ "$tag" != "pid" ]; then
-    _marker_being_written || return 1
+    _marker_being_written "$file" || return 1
     MARKER_OWNER="unknown: its marker is still being written"
     return 0
   fi
@@ -255,6 +274,128 @@ _marker_owner_live() {
   kill -0 "$pid" 2>/dev/null || return 1
   MARKER_OWNER="$pid"
   return 0
+}
+
+# _write_marker <body> — write $STAGING only if it is not there (`noclobber`),
+# in one builtin `printf` from content built beforehand (CR 1808). In a
+# subshell, so noclobber stays out of the rest of the run.
+_write_marker() {
+  (
+    set -o noclobber
+    printf '%s\n' "$1" >"$STAGING"
+  ) 2>/dev/null
+}
+
+# _take_marker <judged first line> — take the dead marker at $STAGING so that
+# no other session can (CR 1897), and set TAKEN to where it went.
+#
+# Judging a marker dead and then removing it are two steps, and two sessions
+# can be between them at once. The heal ended `rm -f "$STAGING"`: the slower
+# of two heals deleted what was by then the faster session's live claim, then
+# claimed its own and refreshed beside it — index.lock contention, a false
+# "commit failed", a double push. A rename is one step: of two sessions,
+# exactly one moves the inode, to `$STAGING.heal.<pid>.<epoch>`, and the other
+# finds nothing to move. What it moved is checked again, since a live claim
+# may have replaced the dead marker since it was judged: the same first line,
+# and still not live. Anything else is linked back (link(2) never replaces a
+# file) and left to its owner.
+TAKEN=""
+_take_marker() {
+  local judged="$1" first
+  TAKEN="$STAGING.heal.$$.$(date +%s 2>/dev/null || echo 0)"
+  # Only this run names a take with its PID, so one there is its heal's,
+  # kept since that claim lost (CR 1911): `mv` would replace it.
+  [ ! -e "$TAKEN" ] || TAKEN="$TAKEN.2"
+  mv "$STAGING" "$TAKEN" 2>/dev/null || return 1
+  first="$(head -n 1 "$TAKEN" 2>/dev/null)" || first=""
+  if [ "$first" != "$judged" ] || _marker_owner_live "$TAKEN"; then
+    ln "$TAKEN" "$STAGING" 2>/dev/null || _log "could not put back $STAGING, taken in error — its run may lose its marker"
+    rm -f "$TAKEN" 2>/dev/null || true
+    return 1
+  fi
+  return 0
+}
+
+# _taker_live <taken file> — true while the heal named in the file's name
+# (`.heal.<pid>.<epoch>[.2]`) may still be between its take and its claim:
+# its pid is not this run's, is under MARKER_MAX_AGE, and `kill -0` reaches
+# it. A name that is not a heal's reads as live, so nothing acts on it.
+_taker_live() {
+  local rest pid started now
+  rest="${1#"$STAGING".heal.}"
+  pid="${rest%%.*}"
+  started="${rest#*.}"
+  started="${started%%.*}"
+  case "$pid" in '' | *[!0-9]*) return 0 ;; esac
+  case "$started" in '' | *[!0-9]*) started=0 ;; esac
+  now="$(date +%s 2>/dev/null)" || now=0
+  [ "$pid" != "$$" ] && [ $((now - started)) -le "$MARKER_MAX_AGE" ] &&
+    kill -0 "$pid" 2>/dev/null
+}
+
+# _adopt_taken — a heal killed between taking the marker and claiming it as
+# its own leaves only `$STAGING.heal.<pid>.<epoch>`, and with no marker the
+# heal would leave its staging alone for good (CR 1897). Its pid gone, or past
+# MARKER_MAX_AGE (a reused pid), it becomes the marker again — linked, so
+# never over a marker already there — and is healed as one. One is left with
+# no marker by a heal killed in that gap, and by a marker's drop, which keeps
+# one while anything it names is staged (_drop_taken, CR 1911).
+_adopt_taken() {
+  local f
+  [ ! -e "$STAGING" ] || return 0
+  for f in "$STAGING".heal.*; do
+    [ -f "$f" ] || continue
+    ! _taker_live "$f" || continue
+    if ln "$f" "$STAGING" 2>/dev/null; then
+      rm -f "$f" 2>/dev/null || true
+      _log "heal: $f, left by a heal killed part way, is the marker again"
+    fi
+    return 0
+  done
+  return 0
+}
+
+# _drop_marker — the marker's job is done: drop it, and (_drop_taken) every
+# taken file whose heal is over and of which nothing is staged (CR 1906, CR
+# 1911). A taken file outlives its heal when the heal is killed after its
+# claim and before dropping what it took, when a take that found a live
+# marker is killed after putting it back, and when a run claims $STAGING in
+# a heal's gap. Left with no marker, a later session adopts it: what is
+# wanted while the killed run's bump is still staged (the run that claimed
+# in the gap may end without `git add`), and wrong once it is not — a
+# human's manual bump unstaged, a healed kill counted again. Kept also: a
+# take in flight (_taker_live), and a copy of a live run's marker, taken in
+# error and not put back, which is its run's to drop. Dropped whatever is
+# staged: a copy of this run's own marker or claim (`pid $$`), since the run
+# drops only with nothing of its own staged — kept beside a human's bump, it
+# was adopted later and unstaged it (CR 1916). Before $STAGING goes, so that
+# no _adopt_taken can link one in between.
+_drop_taken() {
+  local f p first paths=()
+  for f in "$STAGING".heal.*; do
+    [ -f "$f" ] || continue
+    ! _taker_live "$f" || continue
+    ! _marker_owner_live "$f" || continue
+    paths=()
+    first=""
+    # Gone since the `[ -f ]` (another session adopted or dropped it): under
+    # `set -e`, bash 5 exits on a compound command's failed redirect (CR 1914).
+    while IFS= read -r p; do
+      [ -n "$first" ] || first="${p:- }"
+      case "$p" in 'pid '* | 'heals '* | 'mode '* | noted | done | '') : ;; *) paths+=("$p") ;; esac
+    done 2>/dev/null <"$f" || continue
+    case "$first" in "pid $$ "*) paths=() ;; esac
+    if [ "${#paths[@]}" -gt 0 ] &&
+      ! git diff --cached --quiet --ignore-submodules=none -- "${paths[@]}" 2>/dev/null; then
+      continue
+    fi
+    rm -f "$f" 2>/dev/null || true
+  done
+  return 0
+}
+_drop_marker() {
+  _drop_taken
+  rm -f "$STAGING" 2>/dev/null || true
 }
 
 # _unstage <after> <path>... — unstage the paths, then read the index back
@@ -312,27 +453,68 @@ BRANCH="$(git symbolic-ref --short HEAD 2>/dev/null || true)"
 # tests/structural/test_refresh_hook_pr_mode.py holds it to merge-mode.sh's
 # answers on the same inputs test_cadence_merge_mode.py uses.
 #
-# Read from the primary checkout (the first `git worktree list` entry), as
-# merge-mode.sh does: an untracked knob does not exist in a linked worktree.
-# Present but unusable is `unusable`, never `direct` — the run then neither
-# pushes nor refreshes, and says why.
+# Read from the primary checkout, resolved as merge-mode.sh resolves it: an
+# untracked knob does not exist in a linked worktree. Present but unusable is
+# `unusable`, never `direct` — the run then neither pushes nor refreshes, and
+# says why. The primary's work tree it resolved is kept in
+# MERGE_MODE_PRIMARY, empty when it resolved none: _pr_token reads its .env
+# from a linked worktree (CR 1894).
 MERGE_MODE="direct"
 MERGE_MODE_ERR=""
+MERGE_MODE_PRIMARY=""
 _read_merge_mode() {
-  local wt primary knob remedy line word="" count=0 words
+  local wt block entry primary dirs reason hint knob remedy line word="" count=0 words
+  # git without an inherited GIT_DIR or GIT_WORK_TREE, for every call that
+  # resolves the primary (CR 1895). Git exports GIT_DIR to every hook,
+  # absolute in a linked worktree, and it beats -C: asked for a submodule's
+  # work tree, git named the entry itself and the read said `direct`. A
+  # local, not a helper: tests run this function on its own.
+  local -a g=(env -u GIT_DIR -u GIT_WORK_TREE git)
   MERGE_MODE="unusable"
   MERGE_MODE_ERR=""
+  MERGE_MODE_PRIMARY=""
   remedy="write one word, 'pr' or 'direct', or delete the file for the default ('direct')"
-  wt="$(git worktree list --porcelain 2>/dev/null)" || {
+  wt="$("${g[@]}" worktree list --porcelain 2>/dev/null)" || {
     MERGE_MODE_ERR="git worktree list failed, so .skills/merge_mode could not be read"
     return 0
   }
-  primary=${wt%%$'\n'*}
-  primary=${primary#worktree }
-  if [ ! -d "$primary" ]; then
-    MERGE_MODE_ERR="could not resolve the primary checkout (got '$primary') to read .skills/merge_mode"
-    return 0
-  fi
+  # The primary is the first porcelain block. Its entry is a git dir for a
+  # bare primary (`repo.git`) and in a submodule (`<super>/.git/modules/<n>`),
+  # which read as a checkout said `direct` in silence (#584). A `bare` block's
+  # knob can only be this checkout's; any other entry is asked for its work
+  # tree, and that ask failing is `unusable`, never a fallback to another
+  # checkout: "dubious ownership" would read its knob. One exception, which
+  # is no other checkout (CR 1892): a primary whose .git is a pointer file
+  # (`git init --separate-git-dir`) lists its store, which names no work
+  # tree. From that primary, the work tree is this one (its git dir is the
+  # common dir); from a linked worktree git knows no path to it.
+  block=${wt%%$'\n\n'*}
+  entry=${block%%$'\n'*}
+  entry=${entry#worktree }
+  case $'\n'"$block"$'\n' in
+    *$'\n'bare$'\n'*)
+      if ! primary="$("${g[@]}" rev-parse --show-toplevel 2>/dev/null)"; then
+        MERGE_MODE_ERR="the primary is bare and this is not a work tree, so there is no checkout to read .skills/merge_mode from"
+        return 0
+      fi
+      ;;
+    *)
+      if ! primary="$("${g[@]}" -C "$entry" rev-parse --show-toplevel 2>/dev/null)"; then
+        dirs="$("${g[@]}" rev-parse --path-format=absolute --git-dir --git-common-dir 2>/dev/null)" || dirs=""
+        if [ -z "$dirs" ] || [ "${dirs%%$'\n'*}" != "${dirs#*$'\n'}" ] ||
+          ! primary="$("${g[@]}" rev-parse --show-toplevel 2>/dev/null)"; then
+          reason="$("${g[@]}" -C "$entry" rev-parse --show-toplevel 2>&1 >/dev/null || true)"
+          hint=""
+          if [ "$("${g[@]}" -C "$entry" rev-parse --is-inside-git-dir 2>/dev/null || true)" = true ]; then
+            hint="; it is a git dir with no work tree, as a primary whose .git is a file makes it (git init --separate-git-dir), and only that primary knows its work tree, so run this from the primary checkout"
+          fi
+          MERGE_MODE_ERR="could not resolve the primary checkout '$entry' to read .skills/merge_mode: ${reason%%$'\n'*}$hint"
+          return 0
+        fi
+      fi
+      ;;
+  esac
+  MERGE_MODE_PRIMARY=$primary
   knob="$primary/.skills/merge_mode"
   if [ ! -e "$knob" ] && [ ! -L "$knob" ]; then
     MERGE_MODE="direct"
@@ -539,7 +721,7 @@ _reconcile_unpushed() {
   # and tells the operator nothing the first message did not.
   [ "$PUSH_BLOCKED" = "0" ] || return 0
 
-  local remote merge upstream_name ahead merges subject unknown seen rpath
+  local remote merge upstream_name ahead merges subject unknown seen rpath head target
   # Read from config rather than parsed out of `@{u}`: this yields the remote
   # name and the remote ref separately, which is exactly what an explicit push
   # refspec needs, and it stays unambiguous when a remote name contains a
@@ -553,10 +735,18 @@ _reconcile_unpushed() {
   fi
   upstream_name="$remote/${merge#refs/heads/}"
 
+  # HEAD is read once, here, and every read below — the guards, the push and
+  # the rollback — is of this commit, never of HEAD again (#566). Two sessions
+  # can be in this pass together: it runs ahead of the lock and of the
+  # in-progress marker. A HEAD re-read after the guards can be one the other
+  # session's rollback has already moved, so the guards would vet one range
+  # and the rollback move another, onto a commit that is not this hook's.
+  head="$(git rev-parse --verify -q HEAD 2>/dev/null)" || return 0
+
   # @{u} is the remote-tracking ref — the last fetch, not the live remote.
   # That is the right comparison anyway: it is this checkout's own record of
   # what has been shared, and a push settles the question authoritatively.
-  ahead="$(git rev-list --count '@{u}..HEAD' 2>/dev/null || true)"
+  ahead="$(git rev-list --count "@{u}..$head" 2>/dev/null || true)"
   case "$ahead" in ''|*[!0-9]*) return 0 ;; esac
   [ "$ahead" -gt 0 ] || return 0
 
@@ -571,12 +761,12 @@ _reconcile_unpushed() {
       "$MSG_SUB"|"$MSG_DOC"|"$MSG_BOTH") : ;;
       *) unknown=$((unknown + 1)) ;;
     esac
-  done < <(git log --no-show-signature --format=%s '@{u}..HEAD' 2>/dev/null || true)
+  done < <(git log --no-show-signature --format=%s "@{u}..$head" 2>/dev/null || true)
 
   # Not `direct`: this hook pushes nothing to $BRANCH (#560). Its guards and
   # its messages differ, so it has its own pass.
   if [ "$MERGE_MODE" != "direct" ]; then
-    _reconcile_pr "$ahead" "$seen" "$unknown" "$upstream_name"
+    _reconcile_pr "$ahead" "$seen" "$unknown" "$upstream_name" "$head"
     return 0
   fi
 
@@ -631,12 +821,20 @@ _reconcile_unpushed() {
   # every subject in the range one of this hook's three, a merge commit is
   # already close to impossible — but "close to" is not what the arithmetic
   # needs, and an empty count from a failed git reads as non-zero here.
-  merges="$(git rev-list --count --merges '@{u}..HEAD' 2>/dev/null || true)"
+  merges="$(git rev-list --count --merges "@{u}..$head" 2>/dev/null || true)"
   if [ "$merges" != "0" ]; then
     # Same reasoning as the count mismatch above: refusing to push means
     # refusing to commit, or the run strands what it makes.
     PUSH_BLOCKED=1
     _log "unpushed: refusing to roll back — $merges merge commit(s) in @{u}..HEAD, so HEAD~$ahead is not this hook's own history"
+    return 0
+  fi
+
+  # Where a refused push rolls back to, resolved before the push: a push it
+  # could not roll back is not made.
+  if ! target="$(git rev-parse --verify -q "$head~$ahead" 2>/dev/null)"; then
+    PUSH_BLOCKED=1
+    _log "unpushed: refusing to push — HEAD~$ahead does not resolve, so a refused push could not be rolled back"
     return 0
   fi
 
@@ -653,8 +851,10 @@ _reconcile_unpushed() {
     # Explicit refspec, never a bare `git push`: under push.default=matching
     # that pushes every matching branch, which is not an authority an
     # unattended SessionStart hook should be exercising. Never --force, in
-    # any spelling — a rejected push is information, not an obstacle.
-    _hook_git push "$remote" "HEAD:$merge" 2>&1
+    # any spelling — a rejected push is information, not an obstacle. The
+    # commit the guards read, not HEAD (#566): a HEAD moved since by someone's
+    # commit would publish work the authorship guard never saw.
+    _hook_git push "$remote" "$head:$merge" 2>&1
   } >>"$LOG"; then
     _phase "push"
     _log "unpushed: pushed $ahead commit(s) to $upstream_name"
@@ -662,37 +862,79 @@ _reconcile_unpushed() {
   fi
   _phase "push"
 
-  # --soft, and to HEAD~N rather than to @{u}. Both halves are load-bearing.
+  # Refused because the remote already has it (CR 1896): two sessions pushing
+  # one stranded bump, the remote takes one and refuses the other ("incorrect
+  # old value provided"). Nothing moved local HEAD, so the swap below would
+  # succeed and leave main behind @{u} — and the hook never pulls, so every
+  # later bump would be refused until a human synced. @{u} first, which the
+  # winner's push updates; then the remote itself, once, since that write may
+  # not have landed yet — and @{u} is brought up to what it answered, so this
+  # run's own push later counts from there. Not a refusal: the bump is shared.
   #
-  # --soft because --hard is whole-tree: it is NOT bounded by this hook's add
-  # scope, and it discards any uncommitted edit anywhere in the checkout.
-  # Measured on a repo with one unrelated dirty file, staged by nobody: the
-  # file was reverted. The add-scope discipline this script is careful about
-  # is a property of `git add`, and constrains `git reset --hard` not at all.
+  # The remote is asked only when this push's own output shows it refused the
+  # ref (CR 1907), which the race always produces from a reachable remote. A
+  # push that never reached it — a firewall dropping packets, about 75 s —
+  # would make `ls-remote` a second such wait, and the 120 s kill would land
+  # before the rollback at every session, `main` left ahead with no stamp.
+  local remote_tip="" upref push_out
+  push_out="$(tail -c +$((log_before + 1)) "$LOG" 2>/dev/null || true)"
+  if git merge-base --is-ancestor "$head" "@{u}" 2>/dev/null; then
+    _log "unpushed: push failed, but $upstream_name already has ${head:0:7} — another session pushed it; nothing rolled back"
+    return 0
+  fi
+  case "$push_out" in
+    *"[rejected]"* | *"[remote rejected]"* | *"stale info"* | *"incorrect old value"* | *"fetch first"*)
+      remote_tip="$(git ls-remote "$remote" "$merge" 2>>"$LOG" |
+        awk -v ref="$merge" '$2 == ref { print $1; exit }')" || remote_tip=""
+      ;;
+  esac
+  if [ -n "$remote_tip" ] && [ "$remote_tip" = "$head" ]; then
+    if ! upref="$(git rev-parse --symbolic-full-name "@{u}" 2>/dev/null)" ||
+      ! git update-ref -m "skills update: $remote already has $merge at ${head:0:7}" "$upref" "$head" 2>>"$LOG"; then
+      _log "unpushed: could not bring @{u} up to ${head:0:7}"
+    fi
+    _log "unpushed: push failed, but $remote already has ${head:0:7} at $merge — another session pushed it; nothing rolled back"
+    return 0
+  fi
+
+  # A compare-and-swap that keeps `reset --soft`'s semantics, to HEAD~N
+  # rather than to @{u}. Each part is load-bearing.
+  #
+  # --soft's semantics — HEAD moves, the index and the tree do not — because
+  # --hard is whole-tree: it is NOT bounded by this hook's add scope, and it
+  # discards any uncommitted edit anywhere in the checkout. Measured on a repo
+  # with one unrelated dirty file, staged by nobody: the file was reverted.
+  # The add-scope discipline this script is careful about is a property of
+  # `git add`, and constrains `git reset --hard` not at all.
   #
   # HEAD~N rather than @{u} because a *diverged* main — ours ahead, origin
   # also ahead — would move HEAD onto origin's tree while the working tree
   # stayed on ours, so every file origin had added would then read as
   # deleted-by-us. HEAD~N stays on this checkout's own history. The
   # authorship and merge guards above are what make that arithmetic sound.
+  #
+  # A swap (`update-ref HEAD <target> <head>`), not `reset --soft HEAD~N`
+  # (#566), as _reconcile_pr does: two sessions refused together each ran
+  # that relative reset, and the second rolled back N more commits that were
+  # not the hook's, leaving main behind its upstream. A swap moves HEAD only
+  # while it is still the commit the guards read, so the second one fails.
   PUSH_BLOCKED=1
 
-  # Captured here: before the RESET, which is what destroys the range — not
-  # before the push, which changes nothing when it fails. Deriving it from the
-  # commits themselves rather than re-deriving COMMIT_PATHS means the unstage
-  # covers exactly what the reset re-staged and nothing else, including a path
-  # some older version of this hook staged.
+  # Derived from the commits themselves rather than from COMMIT_PATHS, so the
+  # unstage covers exactly what the swap re-stages and nothing else, including
+  # a path some older version of this hook staged. From $target and $head, not
+  # HEAD: another session may have moved HEAD since.
   paths=()
   while IFS= read -r -d '' rpath; do
     paths+=("$rpath")
-  done < <(git diff --name-only -z "HEAD~$ahead" HEAD 2>/dev/null || true)
+  done < <(git diff --name-only -z "$target" "$head" 2>/dev/null || true)
 
-  if git reset -q --soft "HEAD~$ahead" 2>>"$LOG"; then
+  if git update-ref -m "skills update: roll back $ahead unpushed hook commit(s) after a failed push" HEAD "$target" "$head" 2>>"$LOG"; then
     _log "unpushed: push failed — rolled $ahead commit(s) back, vendored content with them; the next session retries"
     # A repository rule or branch protection (GH013, GH006) is not an outage
     # the next session's retry outlives: say which rule, and the knob that
     # answers it (#560). Every other failure keeps the line it always had.
-    if _rule_refusal "$(tail -c +$((log_before + 1)) "$LOG" 2>/dev/null || true)"; then
+    if _rule_refusal "$push_out"; then
       echo "skills update: could not push to $remote — a repository rule refused it ($RULE_TEXT), so $BRANCH takes changes by pull request here: write pr to .skills/merge_mode and this hook proposes its bump as one pull request instead; rolled $ahead commit(s) back so this checkout matches $upstream_name (see $LOG)" >&2
     else
       echo "skills update: could not push to $remote — rolled $ahead commit(s) back so this checkout matches $upstream_name (see $LOG)" >&2
@@ -702,13 +944,19 @@ _reconcile_unpushed() {
       # found it. A .skills/doctor.sh that was untracked before the commit
       # goes back to untracked rather than sitting staged in an index the
       # operator never touched. Then the content goes back to the pointer
-      # the reset restored (#550), bounded to these paths. After the report
+      # the swap restored (#550), bounded to these paths. After the report
       # above, so a warning that either fell short follows the rollback it
-      # belongs to.
+      # belongs to. Only after a swap that succeeded: after a failed one the
+      # index and the content are another run's, or still this range's.
       _restore_bump "a rolled-back push" "${paths[@]}"
     fi
+  elif [ "$(git rev-parse --verify -q HEAD 2>/dev/null || true)" != "$head" ]; then
+    # Never reported as a rollback: this run rolled nothing back. Most likely
+    # another session's rollback of the same range, which has said its own.
+    _log "unpushed: push failed, and rolling back $ahead commit(s) this hook made on $BRANCH failed (HEAD moved) — another session rolled them back, or someone committed; left $BRANCH where it is"
+    echo "skills update: could not push to $remote, and $BRANCH moved under this run before it could roll back — another session's rollback, most likely; this run rolled nothing back (see $LOG)" >&2
   else
-    _log "unpushed: push failed AND rollback failed — $BRANCH is still $ahead commit(s) ahead of $upstream_name"
+    _log "unpushed: push failed, and rolling back $ahead commit(s) this hook made on $BRANCH failed (git refused) — $BRANCH is still $ahead commit(s) ahead of $upstream_name"
     echo "skills update: $BRANCH is $ahead unpushed commit(s) ahead of $upstream_name and could be neither pushed nor rolled back — fix by hand (see $LOG)" >&2
   fi
   return 0
@@ -737,8 +985,9 @@ _rule_refusal() {
   return 0
 }
 
-# _reconcile_pr <ahead> <seen> <unknown> <upstream> — the unpushed pass when
-# merge_mode is not `direct` (#560). Nothing is ever pushed to $BRANCH here.
+# _reconcile_pr <ahead> <seen> <unknown> <upstream> <head> — the unpushed pass
+# when merge_mode is not `direct` (#560). Nothing is ever pushed to $BRANCH
+# here.
 #
 # `pr`: commits this hook wrote and never pushed — left by a run from before
 # the repo set `pr` — are rolled back with their content (#550), and the pull
@@ -751,12 +1000,15 @@ _rule_refusal() {
 # HEAD moves by compare-and-swap (`update-ref <new> <old>`), not `reset --soft
 # HEAD~N`: two sessions starting together both reach this pass ahead of the
 # in-progress marker, and a relative reset run twice would roll back a commit
-# that is not this hook's. The second swap fails instead, and is logged.
+# that is not this hook's. The second swap fails instead, and is logged. Its
+# expected HEAD is the <head> the caller's guards read (#566): one re-read
+# after them can be the other session's rollback, and a swap from it rolls
+# back one commit further.
 #
 # `unusable`: neither pushed nor rolled back. The refresh, which runs once a
 # day, is where that is reported.
 _reconcile_pr() {
-  local ahead="$1" seen="$2" unknown="$3" upstream_name="$4" merges head target rpath paths=()
+  local ahead="$1" seen="$2" unknown="$3" upstream_name="$4" head="$5" merges target rpath paths=()
   if [ "$MERGE_MODE" != "pr" ]; then
     _log "unpushed: $BRANCH is $ahead commit(s) ahead of $upstream_name, and .skills/merge_mode is unusable — neither pushing nor rolling back until it reads pr or direct"
     return 0
@@ -765,13 +1017,12 @@ _reconcile_pr() {
     _log "unpushed: $BRANCH is $ahead commit(s) ahead of $upstream_name, not all confirmed as this hook's — merge_mode is pr, so nothing is pushed or rolled back"
     return 0
   fi
-  merges="$(git rev-list --count --merges '@{u}..HEAD' 2>/dev/null || true)"
+  merges="$(git rev-list --count --merges "@{u}..$head" 2>/dev/null || true)"
   if [ "$merges" != "0" ]; then
     _log "unpushed: merge_mode is pr, and @{u}..HEAD holds merge commit(s) — not rolling back"
     return 0
   fi
-  head="$(git rev-parse --verify -q HEAD 2>/dev/null)" || return 0
-  target="$(git rev-parse --verify -q "HEAD~$ahead" 2>/dev/null)" || return 0
+  target="$(git rev-parse --verify -q "$head~$ahead" 2>/dev/null)" || return 0
   while IFS= read -r -d '' rpath; do
     paths+=("$rpath")
   done < <(git diff --name-only -z "$target" "$head" 2>/dev/null || true)
@@ -973,19 +1224,68 @@ _restore_content() {
 }
 
 # The day's lock, written by every run that ENDS — success or failure — and by
-# no run that is killed part way (#555). Checked, not `|| true` (#193): this
-# one write IS the once-per-day contract, and the guard reads nothing else. A
-# read-only or root-owned .git, or a full disk, and the stamp never lands, the
-# guard falls through next session, and the whole refresh runs again — every
-# session, forever, with nothing said. That is the defect #187 fixed in
-# socraticode-health.sh, the script this file's pin comment names as its twin;
-# the shape is copied from it. Reported, never fatal: a SessionStart hook must
-# not block, so a failed stamp degrades to noisier reporting.
+# no run that is killed part way (#555) — except that the second in a row
+# killed inside its commit has it written by the next heal (#575). Checked,
+# not `|| true` (#193): this one write IS the once-per-day contract, and the
+# guard reads nothing else. A read-only or root-owned .git, or a full disk, and
+# the stamp never lands, the guard falls through next session, and the whole
+# refresh runs again — every session, forever, with nothing said. That is the
+# defect #187 fixed in socraticode-health.sh, the script this file's pin
+# comment names as its twin; the shape is copied from it. Reported, never
+# fatal: a SessionStart hook must not block, so a failed stamp degrades to
+# noisier reporting.
 _stamp_lock() {
   if ! date -u +%Y%m%d > "$LOCK" 2>/dev/null; then
     _log "could not stamp $LOCK — the once-per-day guard is off until this is fixed"
     echo "skills update: cannot write $LOCK; this refresh will repeat every session (see $LOG)" >&2 || true
   fi
+  return 0
+}
+
+# _count_commit_kill <marker owner line> — the heal found a killed run that
+# left the hook's own paths staged, so the kill fell between `git add` and the
+# end of `git commit` (#575). Since #555 such a run is retried at the next
+# session, which is right for the extension's 2-3 s kill and wrong for a
+# consumer whose pre-commit suite does not fit the 120 s timeout: that commit
+# is killed at every session start, and the operator sees a log ending
+# mid-`pytest`. So the second in a row stamps the day's lock, and says why on
+# stderr — once a back-off, since only a new kill gets here.
+#
+# Keyed on the killed run's owner line, so a marker the heal keeps (the hook's
+# staging beside a human's, or an unstage that failed) is counted once however
+# many sessions heal it. A kill before `git add` never gets here, and does not
+# reset the count either: the extension's kill nearly always lands there, and
+# resetting on it would let a slow suite interleaved with it retry forever.
+# Only a commit that returns resets it, landed or refused (CR 1900). A count
+# past 2 backs off at once: a suite that has not fitted twice is not retried a
+# second time in a day.
+#
+# Called as soon as the heal knows the killed run left the hook's paths
+# staged, before it undoes anything (CR 1899): counted last, a heal killed at
+# its restore lost the count, and the next heal found nothing staged to count.
+# The owner-line key makes a second call for one kill a no-op. Written through
+# a temp file and a rename, so a kill mid-write cannot leave it empty — which
+# reads as 0.
+_count_commit_kill() {
+  local owner="$1" kills=0 last=""
+  case "$owner" in "pid "*) : ;; *) return 0 ;; esac
+  if [ -f "$COMMIT_KILLS" ]; then
+    read -r kills last 2>/dev/null <"$COMMIT_KILLS" || true
+    case "$kills" in '' | *[!0-9]*) kills=0 ;; esac
+  fi
+  [ "$last" != "$owner" ] || return 0
+  kills=$((kills + 1))
+  if ! printf '%s %s\n' "$kills" "$owner" >"$COMMIT_KILLS.tmp" 2>/dev/null ||
+    ! mv -f "$COMMIT_KILLS.tmp" "$COMMIT_KILLS" 2>/dev/null; then
+    rm -f "$COMMIT_KILLS.tmp" 2>/dev/null || true
+    _log "heal: could not write $COMMIT_KILLS — a refresh killed inside its commit is not counted, and the next session retries"
+    return 0
+  fi
+  _log "heal: a refresh was killed inside its commit ($kills in a row)"
+  [ "$kills" -ge 2 ] || return 0
+  _log "heal: backing off — the next refresh waits for the next UTC day"
+  _stamp_lock
+  echo "skills update: $kills refreshes in a row were killed inside their commit, so the next waits for the next UTC day rather than the next session. The commit runs this repo's pre-commit hooks and did not fit in the hook's 120 s default timeout: list the slow hook ids in .skills/refresh-skip-hooks to skip them on this hook's own commit (see $LOG)" >&2 || true
   return 0
 }
 
@@ -1003,7 +1303,9 @@ _stamp_lock() {
 # Undone here, every session on main, ahead of the lock — the session after a
 # kill is usually the real one, a second later. Unstaged rather than
 # committed: the lock is now spent only when a run ends, so this same session
-# redoes the bump, and nothing is committed that this run has not verified.
+# redoes the bump, and nothing is committed that this run has not verified —
+# unless it is the second kill in a row inside the commit, which spends the
+# day (_count_commit_kill, #575).
 #
 # Only what the hook staged is touched, and the marker is how it knows. A
 # human's own `git add skills-vendor/<v>` — a manual bump — stages exactly the
@@ -1021,7 +1323,9 @@ _stamp_lock() {
 _heal_staged() {
   [ "$BRANCH" = "main" ] || return 0
 
-  local listed="" marked=0 staged_now rc=0 spath own=() others=0 hook_paths
+  local listed="" marked=0 staged_now rc=0 spath own=() others=0 hook_paths owner="" body
+  local carried line pr_run=0 noted=0 returned=0
+  _adopt_taken
   if [ -f "$STAGING" ]; then
     # A live owner's marker is never the heal's (CR 1789). The guard ahead of
     # the doctor install already exits on one; this keeps the heal honest on
@@ -1030,18 +1334,55 @@ _heal_staged() {
       _log "heal: $STAGING belongs to a refresh still in flight (pid $MARKER_OWNER) — leaving the index alone"
       return 0
     fi
-    marked=1
-    # The paths, without the owner line, a pr-mode run's `mode pr`, or the
-    # `noted` an earlier heal appended (CR 1801).
-    listed="$(grep -v -e '^pid ' -e '^mode ' -e '^noted$' "$STAGING" 2>>"$LOG")" || rc=$?
-    if [ "$rc" -gt 1 ]; then
-      _log "heal: could not read $STAGING (grep exited $rc) — leaving the index alone"
+    owner="$(head -n 1 "$STAGING" 2>/dev/null)" || owner=""
+    # Taken, then claimed as this run's own for the length of the heal (CR
+    # 1897): a session starting meanwhile finds a live owner and leaves, and
+    # a heal killed part way leaves a marker, naming the same paths, that the
+    # next session heals. `heals` keeps the killed run's owner line, which is
+    # what a kill is counted by (_count_commit_kill). The claim fails when a
+    # run claimed $STAGING in the instant it was gone: that run owns the
+    # checkout, and what was taken stays, for _drop_taken or _adopt_taken
+    # (CR 1911).
+    if ! _take_marker "$owner"; then
+      _log "heal: another session took $STAGING first — leaving the index to it"
+      return 0
+    fi
+    # Everything the heal needs from the marker is read here, from $TAKEN —
+    # its private copy — and never from $STAGING once claimed (CR 1908): a
+    # slower session's take renames $STAGING away for an instant before it
+    # links it back, and a read then failed (the heal gave up) or read
+    # `mode pr` as absent (a pr-mode run's marker healed as a direct one's).
+    # Carried into the claim: every line but the owner lines. Read from it:
+    # the paths, and a pr-mode run's `mode pr`, the `noted` an earlier heal
+    # appended (CR 1801) and a returned commit's `done`.
+    body="$(grep -m 1 '^heals ' "$TAKEN" 2>/dev/null)" || body=""
+    if [ -n "$body" ]; then
+      owner="${body#heals }"
+    fi
+    body="pid $$ $(date +%s 2>/dev/null || true)"
+    case "$owner" in "pid "*) body="$body"$'\n'"heals $owner" ;; esac
+    carried="$(grep -v -e '^pid ' -e '^heals ' "$TAKEN" 2>>"$LOG")" || rc=$?
+    while IFS= read -r line; do
+      case "$line" in
+        'mode pr') pr_run=1 ;;
+        'mode '* | '') : ;;
+        'noted') noted=1 ;;
+        'done') returned=1 ;;
+        *) listed="$listed${listed:+$'\n'}$line" ;;
+      esac
+    done <<CARRIED_EOF
+$carried
+CARRIED_EOF
+    if [ "$rc" -gt 1 ] || ! _write_marker "$body${carried:+$'\n'$carried}"; then
+      _log "heal: could not claim $STAGING after taking it — leaving the index alone; $TAKEN stays until nothing it names is staged"
       return 0
     fi
     rc=0
+    rm -f "$TAKEN" 2>/dev/null || true
+    marked=1
     # A pr-mode run (#560) never stages in this index, so whatever is staged
     # is not its own: only its content goes back, and its private index goes.
-    if grep -qx 'mode pr' "$STAGING" 2>/dev/null; then
+    if [ "$pr_run" = "1" ]; then
       _heal_pr "$listed"
       return 0
     fi
@@ -1079,6 +1420,14 @@ STAGED_EOF
     return 0
   fi
 
+  # The kill fell between `git add` and the end of `git commit` (#575).
+  # Counted first, before anything is undone (CR 1899) — unless the run's
+  # commit returned (`done`, CR 1900): its paths are still staged because its
+  # unstage failed, not because a kill cut its commit short.
+  if [ "${#own[@]}" -gt 0 ] && [ "$returned" = "0" ]; then
+    _count_commit_kill "$owner"
+  fi
+
   # The whole bump goes back, not only its staging (#550): a kill after the
   # update leaves the content ahead of the pointer whether or not it got as
   # far as `git add`, and a session that cannot redo the bump (main carrying
@@ -1107,14 +1456,22 @@ LISTED_EOF
   if [ "$others" -gt 0 ]; then
     if [ "${#own[@]}" -gt 0 ]; then
       _log "heal: a killed refresh left ${own[*]} staged beside $others path(s) it did not stage — leaving the index alone; the content goes back on the pointer the index records"
-      if ! grep -qx 'noted' "$STAGING" 2>/dev/null; then
+      if [ "$noted" = "0" ]; then
         for p in "${own[@]}"; do
           if _listed "$p" "$REGISTERED"; then
             gitlinks+=("$p")
           fi
         done
         echo "skills update: a refresh killed part way left ${own[*]} staged beside $others staged path(s) it did not stage, so the index is left as it is; the next refresh to complete commits them through its own pathspec. To drop them instead: git reset -q -- ${own[*]}${gitlinks[0]:+ && git submodule update --checkout -- ${gitlinks[*]}} (see $LOG)" >&2 || true
-        printf 'noted\n' >>"$STAGING" 2>/dev/null || true
+        # Tested, then appended: `>>` alone would create a one-line stray in
+        # the instant a slower take has the marker renamed away (CR 1908),
+        # its link-back would then fail and it would delete the claim. A
+        # take landing between the test and the append still does that; the
+        # window is two builtins, microseconds. Missed, the line is said
+        # again by the next heal.
+        if [ -f "$STAGING" ]; then
+          printf 'noted\n' >>"$STAGING" 2>/dev/null || true
+        fi
       fi
     else
       _log "heal: a killed refresh staged nothing, and $others path(s) it did not stage are staged — leaving the index alone; the content goes back on its pointer"
@@ -1132,7 +1489,7 @@ LISTED_EOF
   # tries again; _unstage has already said so on stderr.
   if [ "${#own[@]}" -eq 0 ] ||
     git diff --cached --quiet --ignore-submodules=none -- "${own[@]}" 2>/dev/null; then
-    rm -f "$STAGING" 2>/dev/null || true
+    _drop_marker
   fi
   return 0
 }
@@ -1154,14 +1511,15 @@ LISTED_EOF
   if [ "${#marked_paths[@]}" -gt 0 ]; then
     _restore_content "a killed refresh" "${marked_paths[@]}"
   fi
-  rm -f "$PR_INDEX" "$PR_INDEX.lock" "$STAGING" 2>/dev/null || true
+  rm -f "$PR_INDEX" "$PR_INDEX.lock" 2>/dev/null || true
+  _drop_marker
   return 0
 }
 
 # Ahead of _reconcile_unpushed: a failed push's rollback re-stages its range
-# with `reset --soft`, and the paths it then unstages are derived from that
-# range alone. Healed first, the index it starts from holds nothing a killed
-# run left there.
+# (a swap with `reset --soft`'s semantics), and the paths it then unstages are
+# derived from that range alone. Healed first, the index it starts from holds
+# nothing a killed run left there.
 _heal_staged
 
 # Call site 1 of 2: every session, ahead of both gates. This is the pass that
@@ -1269,6 +1627,7 @@ $PIN_PATH
       _log "pin drift: $PIN_PATH is recorded at $PIN_RECORDED but pinned at $PIN_ISH ($PIN_RESOLVED) — the hold is not in effect"
       echo "skills pin: $PIN_PATH is recorded at ${PIN_RECORDED:0:7}, not the pinned $PIN_ISH — the hold is not in effect (see $LOG)" >&2
     fi
+  # unguarded-read-ok: a committed knob no session removes; `|| true` would hold no pins
   done < "$PIN_FILE"
 fi
 
@@ -1422,7 +1781,10 @@ _env_value() {
 # In order:
 #   1. GH_TOKEN or GITHUB_TOKEN already in this hook's environment;
 #   2. GH_TOKEN in the checkout's .env, or from a linked worktree the primary
-#      checkout's — read as data, held in PR_GH_TOKEN, and handed to gh (and
+#      checkout's, the work tree _read_merge_mode resolved (CR 1894: the raw
+#      first `git worktree list` entry is a git dir in a bare primary and in
+#      a submodule; where the primary is this checkout, `.env` is its file)
+#      — read as data, held in PR_GH_TOKEN, and handed to gh (and
 #      to git's network calls for an https remote) per call. Never exported:
 #      the refresh runs the new pointer's own install-doctor.sh before any
 #      human has reviewed the bump, and the token must not reach it;
@@ -1431,18 +1793,16 @@ _env_value() {
 # reads like a bad token (#334's power-map case), while the .env is what the
 # cohort keeps current.
 _pr_token() {
-  local env_file=".env" wt primary host
+  local env_file=".env" host
   PR_GH_TOKEN=""
   PR_TOKEN_FROM=""
   if [ -n "${GH_TOKEN:-}" ] || [ -n "${GITHUB_TOKEN:-}" ]; then
     PR_TOKEN_FROM="this hook's environment"
     return 0
   fi
-  if [ ! -r "$env_file" ]; then
-    wt="$(git worktree list --porcelain 2>/dev/null || true)"
-    primary=${wt%%$'\n'*}
-    primary=${primary#worktree }
-    [ -z "$primary" ] || env_file="$primary/.env"
+  if [ ! -r "$env_file" ] && [ -n "${MERGE_MODE_PRIMARY:-}" ] &&
+    ! [ "$MERGE_MODE_PRIMARY" -ef . ]; then
+    env_file="$MERGE_MODE_PRIMARY/.env"
   fi
   PR_GH_TOKEN="$(_env_value "$env_file" GH_TOKEN)"
   if [ -n "$PR_GH_TOKEN" ]; then
@@ -1541,8 +1901,8 @@ REFRESH_PATHS+=(.skills/doctor.sh)
 # exactly one owns the refresh. One already there is checked: a live owner's
 # means another session got here since this one passed the guard at the top,
 # so this run leaves; a dead owner's — kept by a heal whose unstage failed —
-# is replaced. In a subshell, so noclobber stays out of the rest of the run
-# (and `$$` there is still this run's PID).
+# is replaced, by _take_marker. _write_marker's subshell keeps noclobber out
+# of the rest of the run (and `$$` there is still this run's PID).
 #
 # The whole content is built first, `date` and all, and written by one
 # builtin `printf` (CR 1808): with the fork inside the redirect, the file sat
@@ -1559,17 +1919,18 @@ _claim_marker() {
   for p in "${REFRESH_PATHS[@]}"; do
     body="$body"$'\n'"$p"
   done
-  (
-    set -o noclobber
-    printf '%s\n' "$body" > "$STAGING"
-  ) 2>/dev/null
+  _write_marker "$body"
 }
 if ! _claim_marker; then
   if _marker_owner_live; then
     _log "another refresh is in flight (pid $MARKER_OWNER) — leaving this checkout to it"
     exit 0
   fi
-  rm -f "$STAGING" 2>/dev/null || true
+  # Taken, not removed (CR 1897): between judging it dead and removing it,
+  # another session may have replaced it with its own live claim.
+  if _take_marker "$(head -n 1 "$STAGING" 2>/dev/null || true)"; then
+    rm -f "$TAKEN" 2>/dev/null || true
+  fi
   if ! _claim_marker; then
     if [ -f "$STAGING" ]; then
       _log "another refresh claimed $STAGING first — leaving this checkout to it"
@@ -1649,7 +2010,7 @@ fi
 _finish_refresh() {
   if [ "$HOOK_ADDED" = "0" ] ||
     git diff --cached --quiet --ignore-submodules=none -- "${REFRESH_PATHS[@]}" 2>/dev/null; then
-    rm -f "$STAGING" 2>/dev/null || true
+    _drop_marker
   fi
   _stamp_lock
 }
@@ -2207,12 +2568,26 @@ if [ "$STATUS_RC" -eq 0 ] && [ -n "$STATUS_OUT" ]; then
         # Then the content goes back to its pointer and the doctor with it:
         # unstaging alone left both ahead, with stderr silent and the day
         # spent.
-        _hook_git commit -m "$MSG" -- "${STAGED_PATHS[@]}" 2>&1 || {
+        #
+        #
+        # A commit that RETURNS ends a run of commit-stage kills (#575),
+        # landed or refused (CR 1900): either way the pre-commit suite
+        # finished inside the budget, and a refusal spends the day anyway.
+        # The marker says so with `done`, so that if the unstage below fails
+        # and _finish_refresh keeps it, the heal does not count the paths
+        # still staged as a kill.
+        COMMIT_RC=0
+        _hook_git commit -m "$MSG" -- "${STAGED_PATHS[@]}" 2>&1 || COMMIT_RC=$?
+        rm -f "$COMMIT_KILLS" 2>/dev/null || true
+        if [ -f "$STAGING" ]; then
+          printf 'done\n' >>"$STAGING" 2>/dev/null || true
+        fi
+        if [ "$COMMIT_RC" -ne 0 ]; then
           echo "commit failed — undoing the bump: unstaging, then the content and the doctor back on the recorded pointer"
           echo "skills update: the commit failed (git's words in $LOG), so this run undoes its bump — the staging, the vendored content and the doctor; anything it cannot put back is said separately. The next day's refresh tries again" >&2 || true
           _unstage "a failed commit" "${COMMIT_PATHS[@]}"
           _restore_content "a failed commit" "${REFRESH_PATHS[@]}"
-        }
+        fi
       fi
     fi
   } >>"$LOG" || true
