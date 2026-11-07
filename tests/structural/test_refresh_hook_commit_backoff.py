@@ -39,6 +39,9 @@ Coverage:
                                             reset the count
 - a commit-stage kill, a run that commits, a commit-stage kill
                                           → retried: the commit reset the count
+- a commit-stage kill, a heal killed at its restore, a commit-stage kill
+  (CR 1899: the count was taken last, so a killed heal lost it)
+                                          → backs off
 """
 
 import pytest
@@ -231,3 +234,32 @@ class TestWhatCounts:
         _kill_in_commit(c)
 
         _assert_landed(c, run_hook(c), newer)
+
+
+# CR 1899 ------------------------------------------------------------------
+
+# The heal's restore, after its unstage: the last git it runs before the
+# count used to be taken.
+HEAL_RESTORE = '[ "$1" = submodule ] && [ "$2" = update ] && [ "$3" = --checkout ]'
+
+
+class TestAKilledHealStillCounts:
+    def test_a_heal_killed_at_its_restore_counts_the_kill(self, consumer):
+        """The count came last, after the restore and the marker's removal.
+        A heal killed at its restore lost it, and the next heal found the
+        staging already undone and counted nothing — so two commit-stage
+        kills with a killed heal between them read as one, and a suite too
+        slow for the budget was retried at every session again."""
+        c = consumer
+        _kill_in_commit(c)
+        write_shim(c, kill_when=HEAL_RESTORE, signal_name="TERM")
+        c.kill_flag.write_text("")
+        healer = run_hook(c)
+        write_shim(c)
+        assert healer.returncode < 0, (
+            f"fixture: the heal was meant to be killed at its restore:\n{healer.stderr}"
+        )
+        assert staged(c) == [], "fixture: the kill should fall after the unstage"
+        _kill_in_commit(c)  # heals what the killed heal left, then its own kill
+
+        _assert_backed_off(c, run_hook(c))
