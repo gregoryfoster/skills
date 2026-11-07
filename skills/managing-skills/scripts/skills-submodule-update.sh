@@ -374,9 +374,11 @@ _drop_taken() {
     ! _taker_live "$f" || continue
     ! _marker_owner_live "$f" || continue
     paths=()
+    # Gone since the `[ -f ]` (another session adopted or dropped it): under
+    # `set -e`, bash 5 exits on a compound command's failed redirect (CR 1914).
     while IFS= read -r p; do
       case "$p" in 'pid '* | 'heals '* | 'mode '* | noted | done | '') : ;; *) paths+=("$p") ;; esac
-    done 2>/dev/null <"$f"
+    done 2>/dev/null <"$f" || continue
     if [ "${#paths[@]}" -gt 0 ] &&
       ! git diff --cached --quiet --ignore-submodules=none -- "${paths[@]}" 2>/dev/null; then
       continue
@@ -1262,7 +1264,7 @@ _count_commit_kill() {
   local owner="$1" kills=0 last=""
   case "$owner" in "pid "*) : ;; *) return 0 ;; esac
   if [ -f "$COMMIT_KILLS" ]; then
-    read -r kills last <"$COMMIT_KILLS" 2>/dev/null || true
+    read -r kills last 2>/dev/null <"$COMMIT_KILLS" || true
     case "$kills" in '' | *[!0-9]*) kills=0 ;; esac
   fi
   [ "$last" != "$owner" ] || return 0
@@ -1619,6 +1621,7 @@ $PIN_PATH
       _log "pin drift: $PIN_PATH is recorded at $PIN_RECORDED but pinned at $PIN_ISH ($PIN_RESOLVED) — the hold is not in effect"
       echo "skills pin: $PIN_PATH is recorded at ${PIN_RECORDED:0:7}, not the pinned $PIN_ISH — the hold is not in effect (see $LOG)" >&2
     fi
+  # unguarded-read-ok: a committed knob no session removes; `|| true` would hold no pins
   done < "$PIN_FILE"
 fi
 
