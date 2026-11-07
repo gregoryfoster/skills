@@ -35,8 +35,9 @@ def _hook_files(text: str | None = None) -> set[str]:
     files = set()
     for var, name in ASSIGNED.findall(text):
         files.add(name)
-        # "$VAR.suffix" — a sibling the script writes beside it.
-        for suffix in re.findall(rf'"\${var}(\.[a-z]+)', text):
+        # "$VAR.suffix" or "$VAR".suffix — a sibling the script writes
+        # beside it.
+        for suffix in re.findall(rf'"\${var}"?(\.[a-z]+)', text):
             files.add(name + suffix)
     return files
 
