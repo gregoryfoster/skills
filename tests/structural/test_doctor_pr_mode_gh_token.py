@@ -271,12 +271,49 @@ class TestItReadsThePrimaryAsTheHookDoes:
         )
         assert NO_GH in result.stderr, result.stderr
 
+    @pytest.mark.parametrize("layout", sorted(layouts.LAYOUTS))
+    def test_an_inherited_git_work_tree_does_not_answer(
+        self, consumer, tmp_path, layout
+    ):
+        """CR 1903: an inherited GIT_WORK_TREE beats the submodule's
+        core.worktree, so its entry named this linked checkout, whose
+        committed knob says `direct`, and the doctor was silent."""
+        checkout = _layout_consumer(
+            consumer, layouts.LAYOUTS[layout](tmp_path / "l", "pr\n")
+        )
+        result = _doctor(
+            consumer,
+            cwd=checkout,
+            PATH=str(_tools_without_gh(tmp_path)),
+            GIT_WORK_TREE=str(checkout),
+        )
+        assert NO_GH in result.stderr, result.stderr
+
     def test_a_separate_git_dir_primary(self, consumer, tmp_path):
         """CR 1892's layout: from the primary, its own knob."""
         primary, _ = layouts.separate_git_dir(tmp_path / "l", "pr\n")
         _layout_consumer(consumer, primary)
         result = _doctor(consumer, cwd=primary, PATH=str(_tools_without_gh(tmp_path)))
         assert NO_GH in result.stderr, result.stderr
+
+    def test_a_separate_git_dir_primarys_linked_worktree_is_silent(
+        self, consumer, tmp_path
+    ):
+        """CR 1904: CR 1892's fallback (this checkout is the primary) holds
+        only where the git dir is the common dir. From a linked worktree git
+        knows no path to the primary, so the hook reads the knob as unusable
+        and says so itself; the doctor says nothing, rather than reading this
+        checkout's committed knob as the primary's."""
+        _, linked = layouts.separate_git_dir(tmp_path / "l", "pr\n")
+        _layout_consumer(consumer, linked)
+        layouts.knob(linked, "pr\n")
+        layouts.git(linked, "add", "-A")
+        layouts.git(linked, "-c", "commit.gpgsign=false", "commit", "-qm", "knob")
+        assert _merge_mode_sh(linked)[0] == 2, "fixture: merge-mode.sh reads it"
+        result = _doctor(consumer, cwd=linked)
+        assert result.returncode == 0, result.stderr
+        assert MARKER not in result.stderr, result.stderr
+        assert NO_GH not in result.stderr, result.stderr
 
 
 class TestSilentWhereItHasNothingToSay:

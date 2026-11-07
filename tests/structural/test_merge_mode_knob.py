@@ -266,6 +266,24 @@ class TestPrimaryLayouts:
         )
         assert (r.returncode, r.stdout) == (0, "pr\n"), r.stderr
 
+    @pytest.mark.parametrize("layout", LAYOUTS)
+    def test_an_inherited_git_work_tree_does_not_answer(self, reader, tmp_path, layout):
+        """CR 1903, the scrub's other half: an inherited GIT_WORK_TREE beats
+        the submodule's core.worktree, so asked for its work tree the entry
+        named this linked checkout, whose committed knob says `direct`."""
+        checkout = layouts.LAYOUTS[layout](tmp_path, "pr\n")
+        env = _env()
+        env["GIT_WORK_TREE"] = str(checkout)
+        r = subprocess.run(
+            ["bash", str(reader)],
+            cwd=checkout,
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=30,
+        )
+        assert (r.returncode, r.stdout) == (0, "pr\n"), r.stderr
+
     def test_a_primary_git_cannot_open_is_exit_2(self, reader, repo, tmp_path):
         """Only the primary is refused ("dubious ownership"); never a fallback."""
         _knob(repo, "pr\n")

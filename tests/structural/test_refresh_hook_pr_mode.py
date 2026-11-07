@@ -464,6 +464,16 @@ class TestTheReaderHoldsMergeModeShsGrammar:
         env["GIT_DIR"] = layouts.git(checkout, "rev-parse", "--absolute-git-dir")
         assert _read_mode(checkout, env) == ("pr", "")
 
+    @pytest.mark.parametrize("layout", sorted(layouts.LAYOUTS))
+    def test_an_inherited_git_work_tree_does_not_answer(self, tmp_path, layout):
+        """CR 1903: an inherited GIT_WORK_TREE beats the submodule's
+        core.worktree, so its entry named this linked checkout, whose
+        committed knob says `direct`."""
+        checkout = layouts.LAYOUTS[layout](tmp_path, "pr\n")
+        env = clean_env()
+        env["GIT_WORK_TREE"] = str(checkout)
+        assert _read_mode(checkout, env) == ("pr", "")
+
     def test_a_primary_git_cannot_open_is_unusable(self, tmp_path):
         """Only the primary is refused ("dubious ownership"): unusable, with
         git's reason, never a fallback to this checkout or the raw path."""

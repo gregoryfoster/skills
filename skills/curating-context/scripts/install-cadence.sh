@@ -256,24 +256,32 @@ read_merge_mode() {
   # The primary is the first porcelain block. Its entry is a git dir for a
   # bare primary (`repo.git`) and in a submodule (`<super>/.git/modules/<n>`),
   # which read as a checkout rendered `direct` in silence (#584). A `bare`
-  # block's knob can only be this checkout's, $ROOT; any other entry is asked
-  # for its work tree, so KNOB_PRIMARY is always one (knob_tracked asks git
+  # block's knob can only be this checkout's; any other entry is asked for
+  # its work tree, so KNOB_PRIMARY is always one (knob_tracked asks git
   # there). That ask failing is unusable, never a fallback to another
   # checkout. One exception, which is no other checkout (CR 1892): a primary
   # whose .git is a pointer file (`git init --separate-git-dir`) lists its
   # store, which names no work tree. From that primary, the work tree is
-  # $ROOT (its git dir is the common dir); from a linked worktree git knows
-  # no path to it.
+  # this checkout (its git dir is the common dir); from a linked worktree
+  # git knows no path to it. "This checkout" is its top asked again without
+  # the inherited GIT_DIR, never $ROOT (CR 1902): with GIT_DIR set and no
+  # work tree named, git takes the cwd for the top, so from a subdirectory
+  # $ROOT is that subdirectory and its knob read as absent.
   block=${wt%%$'\n\n'*}
   entry=${block%%$'\n'*}
   entry=${entry#worktree }
   case $'\n'"$block"$'\n' in
-    *$'\n'bare$'\n'*) KNOB_PRIMARY=$ROOT ;;
+    *$'\n'bare$'\n'*)
+      KNOB_PRIMARY="$(primary_git -C "$ROOT" rev-parse --show-toplevel)" || {
+        KNOB_MODE="unusable"
+        KNOB_ERR="the primary is bare and this is not a work tree (git's reason is above), so there is no checkout to read .skills/merge_mode from"
+        return 0; } ;;
     *)
       if ! KNOB_PRIMARY="$(primary_git -C "$entry" rev-parse --show-toplevel 2>/dev/null)"; then
         dirs="$(primary_git -C "$ROOT" rev-parse --path-format=absolute --git-dir --git-common-dir 2>/dev/null)" || dirs=""
-        if [ -n "$dirs" ] && [ "${dirs%%$'\n'*}" = "${dirs#*$'\n'}" ]; then
-          KNOB_PRIMARY=$ROOT
+        if [ -n "$dirs" ] && [ "${dirs%%$'\n'*}" = "${dirs#*$'\n'}" ] &&
+          KNOB_PRIMARY="$(primary_git -C "$ROOT" rev-parse --show-toplevel 2>/dev/null)"; then
+          :
         else
           # Asked again for git's reason, which goes to stderr.
           primary_git -C "$entry" rev-parse --show-toplevel >/dev/null || true
