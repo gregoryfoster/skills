@@ -57,6 +57,8 @@ CR 1908 — the heal reads the marker it claimed from its private copy, never
 from `$STAGING`, which a slower session's take renames away for an instant:
 - the paths read in that instant         → the heal still heals
 - `mode pr` read in that instant         → still healed as a pr-mode run's
+(CR 1913: forced by moving `$STAGING` away from the drop of `$TAKEN` to
+`_drop_marker`, so a re-read by any tool fails, not only a `grep`.)
 
 CR 1911 — a taken file is kept while anything it names is still staged. A
 refresh that beat a heal's claim can end without `git add`, dropping its
@@ -589,32 +591,36 @@ class TestATakenFileOutlivesNoHeal:
 # CR 1908 ------------------------------------------------------------------
 
 
-def _marker_renamed_away_when_read(c, only_with: str = "") -> None:
-    """A `grep` that, once, finds the marker renamed away for the length of
-    its read and put back after: a slower session's take, which moves
-    `$STAGING` to its own `.heal` name, re-checks it and links it back.
-    `only_with` narrows it to a grep carrying that argument."""
+def _marker_away_once_claimed(c) -> None:
+    """An `rm` that, once, when the heal drops what it took (`rm -f
+    "$TAKEN"`, its first `rm` of a `.heal` file), moves `$STAGING` — by
+    then the heal's claim — away, and puts it back when `_drop_marker`
+    removes it. Any read of `$STAGING` in between finds nothing: what a
+    slower session's take, which renames it away for an instant, can make
+    of any one read. The shim must fire, or the test proves nothing."""
     marker = c.path / MARKER
-    real = shutil.which("grep") or "/usr/bin/grep"
-    narrow = f'[ "$a" = "{only_with}" ] && w=1; ' if only_with else ""
-    shim = c.bindir / "grep"
+    real = shutil.which("rm") or "/bin/rm"
+    shim = c.bindir / "rm"
     shim.write_text(
         "#!/bin/bash\n"
-        f"hit=0; w={0 if only_with else 1}\n"
-        # The hook names it by its git dir, `.git` here: matched by suffix.
-        'for a in "$@"; do case "$a" in *skills-update.staging) hit=1 ;; esac; '
-        f"{narrow}done\n"
-        f'if [ -f "{c.kill_flag}" ] && [ $hit = 1 ] && [ $w = 1 ]; then\n'
-        f'  rm -f "{c.kill_flag}"\n'
-        f'  mv "{marker}" "{marker}.away"\n'
-        f'  {real} "$@"; rc=$?\n'
-        f'  mv "{marker}.away" "{marker}"\n'
-        "  exit $rc\n"
-        "fi\n"
+        # The hook names them by its git dir, `.git` here: matched by suffix.
+        'for a in "$@"; do case "$a" in\n'
+        f'  *skills-update.staging.heal.*) if [ -f "{c.kill_flag}" ]; then\n'
+        f'    {real} -f "{c.kill_flag}"; mv "{marker}" "{marker}.away"; fi ;;\n'
+        f'  *skills-update.staging) if [ -e "{marker}.away" ]; then\n'
+        f'    mv "{marker}.away" "{marker}"; fi ;;\n'
+        "esac; done\n"
         f'exec {real} "$@"\n'
     )
     shim.chmod(0o755)
     c.kill_flag.write_text("")
+
+
+def _the_shim_fired(c) -> None:
+    assert not c.kill_flag.exists(), "fixture: the heal never dropped what it took"
+    assert not (c.path / f"{MARKER}.away").exists(), (
+        "the claim was not dropped through `_drop_marker`"
+    )
 
 
 class TestTheHealReadsWhatItTook:
@@ -623,17 +629,22 @@ class TestTheHealReadsWhatItTook:
     away for an instant before linking it back. Read in that instant, the
     paths read failed and the heal gave up, and `mode pr` read false, so a
     pr-mode run's marker was healed as a direct one's. They are read from
-    `$TAKEN`, the heal's private copy, before it is dropped."""
+    `$TAKEN`, the heal's private copy, before it is dropped.
+
+    CR 1913: a `grep` shim caught only a `grep` re-read, and on the fixed
+    code never fired at all. `$STAGING` is now gone from the heal's drop of
+    `$TAKEN` to `_drop_marker`, so a re-read by any means fails."""
 
     def test_the_paths_read_in_the_window(self, consumer):
         c = consumer
         _killed_in_commit(c)
         spend_todays_lock(c)
-        _marker_renamed_away_when_read(c)
+        _marker_away_once_claimed(c)
 
         result = run_hook(c)
 
         assert result.returncode == 0, result.stderr
+        _the_shim_fired(c)
         assert "could not read" not in log_text(c), log_text(c)
         assert staged(c) == [], "the heal gave up on a marker it had claimed"
         assert content(c) == gitlink(c) == c.before
@@ -650,11 +661,12 @@ class TestTheHealReadsWhatItTook:
         (c.path / MARKER).write_text(
             f"pid {_dead_pid()} {now}\nmode pr\n{VENDOR}\n{DOCTOR_PATH}\n"
         )
-        _marker_renamed_away_when_read(c, only_with="mode pr")
+        _marker_away_once_claimed(c)
 
         result = run_hook(c)
 
         assert result.returncode == 0, result.stderr
+        _the_shim_fired(c)
         assert staged(c) == [VENDOR], (
             "a pr-mode marker was healed as a direct one: the human's bump "
             "was unstaged\n" + log_text(c)

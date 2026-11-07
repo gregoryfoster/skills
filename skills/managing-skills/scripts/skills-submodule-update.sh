@@ -1455,10 +1455,12 @@ LISTED_EOF
           fi
         done
         echo "skills update: a refresh killed part way left ${own[*]} staged beside $others staged path(s) it did not stage, so the index is left as it is; the next refresh to complete commits them through its own pathspec. To drop them instead: git reset -q -- ${own[*]}${gitlinks[0]:+ && git submodule update --checkout -- ${gitlinks[*]}} (see $LOG)" >&2 || true
-        # Appended only to a marker that is there: `>>` would create a
-        # one-line stray in the instant a slower take has it renamed away
-        # (CR 1908), its link-back would then fail and it would delete the
-        # claim. Missed, the line is said again by the next heal.
+        # Tested, then appended: `>>` alone would create a one-line stray in
+        # the instant a slower take has the marker renamed away (CR 1908),
+        # its link-back would then fail and it would delete the claim. A
+        # take landing between the test and the append still does that; the
+        # window is two builtins, microseconds. Missed, the line is said
+        # again by the next heal.
         if [ -f "$STAGING" ]; then
           printf 'noted\n' >>"$STAGING" 2>/dev/null || true
         fi
