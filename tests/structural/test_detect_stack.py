@@ -5,7 +5,8 @@ Two kinds of answer, kept apart (plan Step 5, rows 1 and 1b):
 - `toolchain` decides which CHECKS run: `uv` (a pyproject.toml with a uv.lock
   or a [tool.uv] table), `composer` (a composer.json at the root, or one level
   under themes/ or plugins/), `npm` (a package.json, with composer's reach,
-  #561, where a nested one counts only when git tracks it, CR 1844).
+  #561). A nested manifest of either counts only when git tracks it (CR 1844,
+  #588), and never through a submodule: a repo gates only its own code.
 - `framework` decides only which DOCS apply — doc-check's default watch list
   and which references/stack-*.md loads: `fastapi` when fastapi is a declared
   dependency, `click` when click or typer is and fastapi is not, `php` for any
@@ -144,7 +145,44 @@ class TestToolchains:
     def test_composer_one_level_under_themes_or_plugins(self, repo, parent):
         (repo / parent / "site").mkdir(parents=True)
         (repo / parent / "site" / "composer.json").write_text("{}\n")
+        _add(repo)
         assert ("toolchain", "composer") in _detect(repo)
+
+    @pytest.mark.parametrize("ignored", [True, False])
+    def test_a_nested_composer_json_git_does_not_track_is_not_one(self, repo, ignored):
+        """#588: composer validate ran on a gitignored, composer-installed
+        plugin's composer.json, code the repo doesn't own, while npm's reach
+        was already tracked only (CR 1844). Composer's nested reach is too."""
+        (repo / "plugins" / "vendor-plugin").mkdir(parents=True)
+        (repo / "plugins" / "vendor-plugin" / "composer.json").write_text("{}\n")
+        if ignored:
+            (repo / ".gitignore").write_text("/plugins/vendor-plugin/\n")
+            _add(repo)
+        assert _detect(repo) == set()
+
+    def test_the_root_composer_json_stays_a_tree_check(self, repo):
+        """#588's decision: an untracked root composer.json still counts, as
+        an untracked root package.json does."""
+        (repo / "composer.json").write_text("{}\n")
+        (repo / "package.json").write_text("{}\n")
+        assert _detect(repo) == {
+            ("toolchain", "composer"),
+            ("framework", "php"),
+            ("toolchain", "npm"),
+        }
+
+    def test_a_symlinked_theme_directory_is_neither(self, repo, tmp_path):
+        """git tracks a theme directory that is a symlink as one link, and
+        lists nothing under it. composer's filesystem glob used to follow it;
+        both listers now agree that it is not this repo's code."""
+        elsewhere = tmp_path / "elsewhere"
+        elsewhere.mkdir()
+        (elsewhere / "composer.json").write_text("{}\n")
+        (elsewhere / "package.json").write_text("{}\n")
+        (repo / "themes").mkdir()
+        (repo / "themes" / "linked").symlink_to(elsewhere)
+        _add(repo)
+        assert _detect(repo) == set()
 
     def test_npm(self, repo):
         (repo / "package.json").write_text("{}\n")
@@ -193,21 +231,23 @@ class TestToolchains:
             _add(repo)
         assert _detect(repo) == set()
 
-    def test_a_theme_vendored_as_a_submodule_is_one(self, repo, tmp_path):
-        """CR 1862: the superproject tracks a submodule as one gitlink, so the
-        tracked-only rule (CR 1844) lost a submodule theme's npm while
-        composer, which reads the tree, still found its composer.json."""
+    def test_a_theme_vendored_as_a_submodule_is_neither(self, repo, tmp_path):
+        """The operator's rule (2026-11-08, on #588 and #605): a repo gates
+        only its own code. A theme vendored as a submodule is its own repo's
+        to gate, so neither its package.json nor its composer.json counts,
+        checked out or not. This reverses CR 1862, which listed through the
+        gitlink because composer, reading the tree, found the composer.json."""
         _vendor_theme(repo, tmp_path)
-        assert _detect(repo) == {
-            ("toolchain", "composer"),
-            ("framework", "php"),
-            ("toolchain", "npm"),
-        }
+        assert (repo / "themes" / "sub" / "composer.json").is_file()
+        assert _detect(repo) == set()
 
-    def test_an_uninitialised_submodule_theme_is_neither(self, repo, tmp_path):
+    def test_an_uninitialised_submodule_beside_a_tracked_theme(self, repo, tmp_path):
         """A clone that never ran `git submodule update` has an empty
-        directory there: nothing to list and no composer.json on disk, so
-        the two stacks agree on nothing, and nothing fails."""
+        directory at the gitlink. Listing beside it fails nothing, and the
+        tracked theme next to it still counts for both stacks."""
+        (repo / "themes" / "site").mkdir(parents=True)
+        (repo / "themes" / "site" / "package.json").write_text("{}\n")
+        (repo / "themes" / "site" / "composer.json").write_text("{}\n")
         _vendor_theme(repo, tmp_path)
         clone = tmp_path / "clone"
         subprocess.run(
@@ -216,7 +256,12 @@ class TestToolchains:
             env=_clean_env(),
         )
         assert (clone / "themes" / "sub").is_dir()
-        assert _detect(clone) == set()
+        assert not (clone / "themes" / "sub" / "composer.json").exists()
+        assert _detect(clone) == {
+            ("toolchain", "composer"),
+            ("framework", "php"),
+            ("toolchain", "npm"),
+        }
 
     def test_a_dot_directory_is_not_one(self, repo):
         """CR 1866: git's `:(glob)` `*` matches a leading dot and bash's
@@ -244,6 +289,23 @@ class TestToolchains:
         )
         assert result.returncode == 0, result.stderr
         assert result.stdout == "toolchain\tnpm\n"
+
+    @pytest.mark.parametrize("setting", PATHSPEC_SETTINGS)
+    def test_a_global_pathspec_setting_does_not_hide_a_themes_composer(
+        self, repo, setting
+    ):
+        """#588: composer's nested reach is a git listing now, and holds
+        CR 1861's immunity as npm's does."""
+        (repo / "themes" / "site").mkdir(parents=True)
+        (repo / "themes" / "site" / "composer.json").write_text("{}\n")
+        _add(repo)
+        env = _clean_env()
+        env[setting] = "1"
+        result = subprocess.run(
+            ["bash", str(SCRIPT)], cwd=repo, capture_output=True, text=True, env=env
+        )
+        assert result.returncode == 0, result.stderr
+        assert result.stdout == "toolchain\tcomposer\nframework\tphp\n"
 
     def test_a_failing_ls_files_is_exit_2_not_none(self, repo, tmp_path):
         """git's own exit decides: a failure listing the nested manifests is
