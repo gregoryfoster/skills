@@ -51,10 +51,11 @@ A run that fails before step 5 leaves the old MANIFEST (or none) in place,
 so a re-run sees the same plan and finishes it.
 
 It reports, and never refuses, a host's own journald setting the layer's
-drop-in meets (journald_overrides). journald reads its main file from
-only /etc/systemd/journald.conf (systemd-analyze cat-config also lists one
-in /run or /usr/lib, which journald never reads), then every
-journald.conf.d/*.conf in /etc, /run, /usr/local/lib and /usr/lib by file
+drop-in meets (journald_overrides). journald reads its main file, by
+systemd's version in the root's dpkg database: systemd 255 and older only
+/etc/systemd/journald.conf, 256 and newer the first of /etc, /run,
+/usr/local/lib and /usr/lib's (an unreadable version reads as 256, with a
+note). Then every journald.conf.d/*.conf in those four directories by file
 name: a name in a higher directory masks the same name lower down, and
 among different names the later one wins each key. A value it can't parse,
 an empty one included, it ignores, keeping the one before. So the layer's
@@ -371,17 +372,55 @@ fi
 
 # --- what a host's own journald settings become (#604) ------------------------
 
-# journald's rule, measured by running systemd-journald itself on systemd
-# 249 and 255 (CR 1950, CR 1951): the main file is /etc's only, and the
-# drop-ins are every *.conf across the four directories by file name, a name
-# in a higher directory masking the same name lower down (a link to
-# /dev/null masks with nothing), all applied in C sort order, the last value
-# journald can parse winning. systemd-analyze cat-config also lists a main
-# file in /run or /usr/lib, which journald never reads, and prints values it
-# ignores. patching-hosts' read_journal reads files the same way (#515).
+# journald's rule, measured by running systemd-journald itself (CR 1950,
+# CR 1951, CR 1963). The main file: on 249 and 255, /etc's only; on 256, 257
+# and 259, the first of the four directories that has one, as cat-config
+# reads it, an /etc link to /dev/null masking the rest. The drop-ins, on all
+# five: every *.conf across the four directories by file name, a name in a
+# higher directory masking the same name lower down (a link to /dev/null
+# masks with nothing), all applied in C sort order, the last value journald
+# can parse winning; cat-config prints the values it ignores as written.
+# patching-hosts' read_journal (#515) reads the drop-ins the same way, and
+# the main file as 255 and older do.
 JOURNALD_DIRS="etc run usr/local/lib usr/lib"
-# The keys journald parses as sizes (parse_size, base 1024).
+# The keys journald parses as sizes (parse_size, base 1024), held to its
+# grammar; a size too big for 64 bits isn't caught, and every other key is
+# read as written, an empty value skipped (journald resets some, Compress=
+# among them, where it ignores the sizes'). LineMax, a size whose empty
+# value resets, isn't listed: none of this matters for SystemMaxUse=, all
+# the layer sets (CR 1964).
 SIZE_KEYS=" SystemMaxUse SystemKeepFree SystemMaxFileSize RuntimeMaxUse RuntimeKeepFree RuntimeMaxFileSize "
+
+# printable <var> <text>: VAR := text with each byte that isn't printable
+# ASCII shown as ?, so the report stays JSON and valid UTF-8 (CR 1966).
+printable() {
+  local LC_ALL=C
+  printf -v "$1" '%s' "${2//[^ -~]/?}"
+}
+
+# journald_main_rule: J_MAIN_ANY := 1 when journald takes its main file from
+# the first of the four directories (systemd 256 and newer), 0 when from
+# /etc only. The version is the root's dpkg database's: an unreadable one,
+# or a package not installed, reads as 256, which reports more, and
+# J_MAIN_NOTE says so.
+journald_main_rule() {
+  local got="" st v rc=0
+  J_MAIN_ANY=1 J_MAIN_NOTE=""
+  if command -v dpkg-query >/dev/null && command -v dpkg >/dev/null; then
+    # dpkg-query's own format, not a shell expansion.
+    # shellcheck disable=SC2016
+    got=$(dpkg-query --admindir="$R/var/lib/dpkg" -W -f='${db:Status-Status} ${Version}' systemd 2>/dev/null) || got=""
+  fi
+  st=${got%% *} v=${got#* }
+  if [ "$st" = installed ] && [ -n "$v" ]; then
+    dpkg --compare-versions "$v" lt 256~ 2>/dev/null || rc=$?
+    case $rc in
+      0) J_MAIN_ANY=0; return 0 ;;
+      1) return 0 ;;
+    esac
+  fi
+  J_MAIN_NOTE="couldn't read systemd's version from /var/lib/dpkg, so journald's main file is read as systemd 256 and newer read it: the first of /etc, /run, /usr/local/lib and /usr/lib"
+}
 
 layer_dropin() {  # <rel>: whether it's one of the staged layer's journald drop-ins
   case "$1" in
@@ -395,15 +434,21 @@ layer_dropin() {  # <rel>: whether it's one of the staged layer's journald drop-
 # reads, in its order: the file to read, its path on the host, and 1 for the
 # host's own, 0 for one the layer installs or did. With <after> 1, as they
 # will be once this run lands: the layer's drop-ins read from the staged
-# copy, and any it drops gone. A name's control characters show as ?, and
-# one holding a tab or a newline, which the sort below can't carry, is
-# passed over with a note.
+# copy, and any it drops gone. The main file is by journald_main_rule. A
+# name is sorted NUL-separated, so one holding a tab or a newline is merged
+# like the rest (CR 1966), and shown through printable.
 journald_files() {
-  local after=$1 d dir rel f n i seen=$'\n' order
-  local -a here=() names=() srcs=() shows=() hosts=()
+  local after=$1 d dir rel f n i shown
+  local -a here=() seen=() names=() srcs=() shows=() hosts=()
   J_SRC=() J_SHOW=() J_HOST=()
-  rel=etc/systemd/journald.conf
-  if [ -f "$R/$rel" ]; then J_SRC+=("$R/$rel") J_SHOW+=("/$rel") J_HOST+=(1); fi
+  for d in $JOURNALD_DIRS; do
+    [ "$J_MAIN_ANY" = 1 ] || [ "$d" = etc ] || continue
+    rel=$d/systemd/journald.conf
+    if [ -e "$R/$rel" ] || [ -L "$R/$rel" ]; then
+      if [ -f "$R/$rel" ]; then J_SRC+=("$R/$rel") J_SHOW+=("/$rel") J_HOST+=(1); fi
+      break
+    fi
+  done
   for d in $JOURNALD_DIRS; do
     dir=$d/systemd/journald.conf.d
     here=()
@@ -416,23 +461,16 @@ journald_files() {
       done
     fi
     for n in ${here[@]+"${here[@]}"}; do
-      case $n in
-        *$'\t'* | *$'\n'*)
-          if [ "$after" = 0 ]; then
-            echo "install-disk-gc: note: passed over a journald drop-in in /$dir whose name holds a tab or a newline" >&2
-          fi
-          continue
-          ;;
-      esac
-      case $seen in *$'\n'"$n"$'\n'*) continue ;; esac
+      if contains "$n" ${seen[@]+"${seen[@]}"}; then continue; fi
       rel=$dir/$n
       # One this run removes masks nothing once it's gone.
       if [ "$after" = 1 ] && contains "$rel" ${REMOVED[@]+"${REMOVED[@]}"}; then continue; fi
-      seen="$seen$n"$'\n'
+      seen+=("$n")
       f=$R/$rel
       if [ "$after" = 1 ] && layer_dropin "$rel"; then f=$STAGED/$rel; fi
       [ -f "$f" ] || continue
-      names+=("$n") srcs+=("$f") shows+=("/$dir/${n//[[:cntrl:]]/?}")
+      printable shown "$n"
+      names+=("$n") srcs+=("$f") shows+=("/$dir/$shown")
       if contains "$rel" ${S_PATHS[@]+"${S_PATHS[@]}"} ${I_PATHS[@]+"${I_PATHS[@]}"}; then
         hosts+=(0)
       else
@@ -441,11 +479,15 @@ journald_files() {
     done
   done
   [ ${#names[@]} -gt 0 ] || return 0
-  order=$(for i in "${!names[@]}"; do printf '%s\t%s\n' "${names[$i]}" "$i"; done |
-    LC_ALL=C sort -t $'\t' -k1,1 | cut -f2)
-  for i in $order; do
-    J_SRC+=("${srcs[$i]}") J_SHOW+=("${shows[$i]}") J_HOST+=("${hosts[$i]}")
-  done
+  # Names are unique here, so each sorted one finds its own index.
+  while IFS= read -r -d '' n; do
+    for i in "${!names[@]}"; do
+      if [ "${names[$i]}" = "$n" ]; then
+        J_SRC+=("${srcs[$i]}") J_SHOW+=("${shows[$i]}") J_HOST+=("${hosts[$i]}")
+        break
+      fi
+    done
+  done < <(printf '%s\0' "${names[@]}" | LC_ALL=C sort -z)
 }
 
 trim() {  # <var> <text>: VAR := text without its leading and trailing whitespace
@@ -504,9 +546,9 @@ journald_keys() {
     trim v "${line#*=}"
     ok=0
     if value_ok "$k" "$v"; then ok=1; fi
-    # The report carries both as JSON strings, which json_str doesn't
-    # escape control characters for.
-    k=${k//[[:cntrl:]]/?} v=${v//[[:cntrl:]]/?}
+    # The report carries both as JSON strings.
+    printable k "$k"
+    printable v "$v"
     found=""
     for i in ${J_KEYS[@]+"${!J_KEYS[@]}"}; do
       [ "${J_KEYS[$i]}" = "$k" ] || continue
@@ -566,6 +608,15 @@ journald_overrides() {
         if [ -n "$j" ]; then lv[j]=${J_VALS[$i]}; else lk+=("${J_KEYS[$i]}") lv+=("${J_VALS[$i]}"); fi
       done
     done < <(printf '%s\n' "${layers[@]}" | LC_ALL=C sort)
+  fi
+  journald_main_rule
+  if [ -n "$J_MAIN_NOTE" ] && [ ! -e "$R/etc/systemd/journald.conf" ] && [ ! -L "$R/etc/systemd/journald.conf" ]; then
+    for rel in run usr/local/lib usr/lib; do
+      if [ -e "$R/$rel/systemd/journald.conf" ]; then
+        echo "install-disk-gc: note: $J_MAIN_NOTE" >&2
+        break
+      fi
+    done
   fi
   # The host's files: those read once this run lands, then any read only
   # now (one in /usr/lib under the layer's own name, which it will mask).

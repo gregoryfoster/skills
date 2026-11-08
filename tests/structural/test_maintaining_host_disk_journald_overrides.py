@@ -16,6 +16,7 @@ in plan mode and on `--approve`, as `journald_overrides`, with the value in
 effect before and after. It never refuses: a lower cap is the host's call.
 """
 
+import os
 import re
 import shutil
 import subprocess
@@ -148,11 +149,6 @@ CASES = [
     ),
     # Nothing of the host's: nothing to list.
     ({}, []),
-    # CR 1950: journald reads its main file only from /etc (measured by
-    # running systemd-journald on 249 and 255: one only in /usr/lib or /run
-    # left it at the 4.0G default). cat-config lists it, journald doesn't.
-    ({"usr/lib/systemd/journald.conf": cap("200M")}, []),
-    ({"run/systemd/journald.conf": cap("200M")}, []),
     # CR 1953 (M1): a host file in /usr/lib under the layer's own name is
     # read now, and masked once the layer lands: read only before.
     (
@@ -182,8 +178,6 @@ IDS = [
     "other-key",
     "parsing",
     "none",
-    "main-only-in-usr-lib",
-    "main-only-in-run",
     "usr-lib-layer-name",
     "control-char-value",
     "control-char-name",
@@ -306,6 +300,20 @@ def test_a_size_journald_ignores_leaves_the_layers(tmp_path, host, value):
         entry(f"/etc/{JD}/zzz-x.conf", value, None, "512M")
     ]
     assert f"/etc/{JD}/zzz-x.conf" in result.stderr
+    # CR 1965: and the note says why the layer's value stays.
+    assert "can't parse" in result.stderr, result.stderr
+
+
+@pytest.mark.usefixtures("linux_tools")
+def test_cr_1965_a_layer_value_journald_ignores_is_no_layer_key(tmp_path, host):
+    # The layer's own SystemMaxUse= is empty: journald ignores it, so the
+    # layer sets nothing a host file could meet.
+    put(host, f"etc/{JD}/10-x.conf", cap("200M"))
+    files = rig.gc_files(zz_cannobserv_journal_conf=b"[Journal]\nSystemMaxUse=\n")
+    staging = rig.stage(tmp_path / "staging-e", files)
+    scripts = rig.pinned_scripts(tmp_path / "scripts-e", staging)
+    out = out_of(rig.run(scripts / INSTALL.name, "--staging", staging, "--root", host))
+    assert out["journald_overrides"] == []
 
 
 @pytest.mark.usefixtures("linux_tools")
@@ -321,12 +329,42 @@ def test_an_ignored_value_keeps_the_one_before_it_in_the_same_file(tmp_path, hos
 
 
 @pytest.mark.usefixtures("linux_tools")
-def test_a_name_holding_a_newline_is_passed_over_aloud(tmp_path, host):
-    put(host, f"etc/{JD}/10-a\nb.conf", cap("200M"))
-    result = install(tmp_path, host)
-    out = out_of(result)
-    assert out["journald_overrides"] == []
-    assert "passed over" in result.stderr
+@pytest.mark.parametrize(
+    "name, shown, after",
+    [
+        ("10-a\nb.conf", "10-a?b.conf", "512M"),
+        ("10-a\tb.conf", "10-a?b.conf", "512M"),
+        # A tab name sorting after the layer's is in the merge too.
+        ("zzz\tx.conf", "zzz?x.conf", "200M"),
+    ],
+    ids=["newline", "tab", "tab-sorts-after"],
+)
+def test_cr_1966_a_tab_or_newline_name_is_merged_and_reported(
+    tmp_path, host, name, shown, after
+):
+    # journald reads it, so it's sorted with the rest, not passed over.
+    put(host, f"etc/{JD}/{name}", cap("200M"))
+    out = out_of(install(tmp_path, host))
+    assert out["journald_overrides"] == [
+        entry(f"/etc/{JD}/{shown}", "200M", "200M", after)
+    ]
+
+
+@pytest.mark.usefixtures("linux_tools")
+def test_cr_1966_bytes_that_arent_printable_ascii_show_as_question_marks(
+    tmp_path, host
+):
+    # Neither a name nor a value may make stdout invalid UTF-8.
+    d = host / "etc" / JD
+    d.mkdir(parents=True, exist_ok=True)
+    with open(os.path.join(os.fsencode(d), b"10-\xffx.conf"), "wb") as f:
+        f.write(cap("200M").encode())
+    (d / "zzz-y.conf").write_bytes(b"[Journal]\nSystemMaxUse=200M\xc3\xa9\n")
+    out = out_of(install(tmp_path, host))
+    assert out["journald_overrides"] == [
+        entry(f"/etc/{JD}/10-?x.conf", "200M", "200M", "512M"),
+        entry(f"/etc/{JD}/zzz-y.conf", "200M??", "200M", "512M"),
+    ]
 
 
 @pytest.mark.usefixtures("linux_tools")
@@ -427,17 +465,101 @@ def _help(script):
     ).stdout
 
 
-def test_cr_1950_the_docs_say_journald_reads_its_main_file_from_etc_only():
-    # cat-config's rule (the first of four directories) isn't journald's.
+def test_cr_1963_the_docs_scope_the_main_file_rule_to_systemds_version():
+    # CR 1950 measured 249 and 255; 256, 257 and 259 read the first of the
+    # four directories, as cat-config does.
     usage = " ".join(_help(INSTALL.name).split())
-    assert "first of /etc, /run" not in usage, usage
-    assert "only /etc/systemd/journald.conf" in usage, usage
+    assert "systemd 255 and older" in usage, usage
+    assert "256 and newer" in usage, usage
     text = VERIFYING.read_text()
     section = text.split("## After an install or update", 1)[1].split("\n## ", 1)[0]
     flat = " ".join(section.split())
     assert "the last `SystemMaxUse=` is the cap in effect" not in flat, flat
-    assert "only from `/etc/systemd/journald.conf`" in flat, flat
+    assert "systemd 255 and older" in flat, flat
+    assert "256 and newer" in flat, flat
     assert "can't parse" in flat, flat
+
+
+# --- the main file, by systemd's version (CR 1963) -------------------------------
+# Measured by running systemd-journald: 249 (ubuntu:22.04) and 255 (24.04)
+# read the main file from /etc only; 256 (fedora:41), 257 (ubuntu:25.10) and
+# 259 (26.04) read the first of /etc, /run, /usr/local/lib and /usr/lib, an
+# /etc link to /dev/null masking the rest. The version is the root's dpkg
+# database's.
+
+
+def systemd_version(root, version, status="install ok installed"):
+    d = root / "var/lib/dpkg"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "status").write_text(
+        f"Package: systemd\nStatus: {status}\nVersion: {version}\n"
+        "Architecture: amd64\nMaintainer: x\nDescription: x\n"
+    )
+
+
+MAIN = "systemd/journald.conf"
+OLD, NEW = "255.4-1ubuntu8.18", "259.9-0ubuntu0.1"
+VERSIONED = [
+    (OLD, {f"usr/lib/{MAIN}": cap("200M")}, []),
+    (OLD, {f"run/{MAIN}": cap("200M")}, []),
+    (
+        "256.17-1",
+        {f"usr/lib/{MAIN}": cap("200M")},
+        [entry(f"/usr/lib/{MAIN}", "200M", "200M", "512M")],
+    ),
+    # The reviewer's case: 259, a /run main file at 200M, the layer's 512M.
+    (
+        NEW,
+        {f"run/{MAIN}": cap("200M")},
+        [entry(f"/run/{MAIN}", "200M", "200M", "512M")],
+    ),
+    # /etc's masks the rest, a link to /dev/null with nothing.
+    (NEW, {f"etc/{MAIN}": None, f"usr/lib/{MAIN}": cap("200M")}, []),
+    (
+        NEW,
+        {f"etc/{MAIN}": cap("300M"), f"run/{MAIN}": cap("200M")},
+        [entry(f"/etc/{MAIN}", "300M", "300M", "512M")],
+    ),
+]
+VERSIONED_IDS = [
+    "255-usr-lib",
+    "255-run",
+    "256-usr-lib",
+    "259-run",
+    "259-etc-null-masks",
+    "259-etc-masks-run",
+]
+
+
+@pytest.mark.usefixtures("linux_tools")
+@pytest.mark.parametrize("version, files, want", VERSIONED, ids=VERSIONED_IDS)
+def test_cr_1963_the_main_file_is_read_as_the_hosts_systemd_reads_it(
+    tmp_path, host, version, files, want
+):
+    if shutil.which("dpkg-query") is None:
+        pytest.skip("needs dpkg-query (a Debian or Ubuntu host)")
+    systemd_version(host, version)
+    for rel, text in files.items():
+        put(host, rel, text)
+    result = install(tmp_path, host)
+    assert out_of(result)["journald_overrides"] == want
+    assert "systemd's version" not in result.stderr
+
+
+@pytest.mark.usefixtures("linux_tools")
+@pytest.mark.parametrize("installed", [False, True], ids=["no-dpkg", "config-files"])
+def test_cr_1963_an_unreadable_version_reads_as_256_and_says_so(
+    tmp_path, host, installed
+):
+    # It reports more: a main file the newer rule reads and the older doesn't.
+    if installed:
+        systemd_version(host, "259.1", status="deinstall ok config-files")
+    put(host, f"usr/lib/{MAIN}", cap("200M"))
+    result = install(tmp_path, host)
+    assert out_of(result)["journald_overrides"] == [
+        entry(f"/usr/lib/{MAIN}", "200M", "200M", "512M")
+    ]
+    assert "systemd's version" in result.stderr, result.stderr
 
 
 def test_cr_1954_the_remove_usage_keeps_the_files_wrap():
