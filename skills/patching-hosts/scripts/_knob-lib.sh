@@ -216,7 +216,7 @@ _knob_directive() {  # <line> <sec> <text>
         *) _knob_malformed "$n" "cadence takes weekly or monthly" ;;
       esac ;;
     bulk-factor)
-      # #556: a number from 1 to 99, with at most two decimals. Below 1
+      # #556: a number from 1 to 99.99, at most two decimals. Below 1
       # would budget the bulk less than its own dry run took, which is
       # what a held step gets; 0.35 is more likely 3.5 mistyped than meant.
       # Two digits each side keep apply.sh's integer arithmetic in range.
@@ -224,7 +224,7 @@ _knob_directive() {  # <line> <sec> <text>
       if [ "$nt" -eq 1 ] && [[ ${tok[0]} =~ $bre ]]; then
         _knob_record "$n" "$sec" bulk-factor "" "${tok[0]}"
       else
-        _knob_malformed "$n" "bulk-factor takes one number from 1 to 99, with at most two decimals"
+        _knob_malformed "$n" "bulk-factor takes one number from 1 to 99.99, with at most two decimals"
       fi ;;
     window)
       # #421: a weekday, that weekday in one week of the month (Sun#2 is the
