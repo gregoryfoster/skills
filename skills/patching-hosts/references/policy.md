@@ -19,7 +19,7 @@ It suits a host with **no local data store**. On a host with one it means unsche
 
 ### `scheduled`: an owner-approved run at the host's cadence
 
-The host is patched in a scheduled, gated run at the host's cadence, and the apt timers stay masked. The knob's `cadence` says which: `weekly`, the default, or `monthly` (#529). Nothing checks a run against it yet: a host that runs monthly and doesn't say so fails nothing, and its knob just under-states it. A run is:
+The host is patched in a scheduled, gated run at the host's cadence, and the apt timers stay masked. The knob's `cadence` says which: `weekly`, the default, or `monthly` (#529). The probe checks the last run against it: a weekday or `#N` window that closed since is `cadence:overdue`, wherever the probe runs ([readings.md](readings.md#what-updates-this-host), #592). It makes a miss visible; it doesn't ask anyone to start the run. A run is:
 
 - a chosen window, clear of whatever the knob says constrains it;
 - a fresh recovery point, copied off the node, for each declared data store. A host with no data store records its before-versions;
@@ -70,12 +70,12 @@ The needrestart drop-in is part of both postures: every run relies on the hook r
 
 ### A pre-announced security release
 
-A project may announce a security release ahead of time: a fixed date and time, T, with the affected versions published only at release. Where the fix comes from a third-party origin the knob follows, the route is the bulletin's: a dated `window` line ([knob.md](knob.md), #421) and `apply.sh --lane origin:<origin>`, with the owner's approval. No knob line expedites an origin; the window does (#464). What the advance notice adds is the work that can be done before T, so none of it is done under time pressure.
+A project may announce a security release ahead of time: a fixed date and time, T, with the affected versions published only at release. Where the fix comes from a third-party origin the knob follows, the route is the bulletin's: a dated `window` line ([knob.md](knob.md), #421) and `apply.sh --lane origin:<origin>`, with the owner's approval. No knob line expedites an origin; the window does (#464). What the advance notice adds is the work that can be done before T, so none of it is done under time pressure. The same route, from "Then" below, answers an `exposure:<origin>` finding, a serving runtime's origin with a fix already pending ([readings.md](readings.md#impact)).
 
 **Before T:**
 
 1. **Record the before-versions**, the rollback path: `dpkg-query -W` of each package the origin serves on the host. An origin whose index lists only its newest version drops the old one at T, so where the rollback needs it, keep its `.deb` (`apt-get download <pkg>=<version>`). The bulk records the before-versions again in its run directory.
-2. **Refresh the lists and confirm the origin is reachable**: `probe.sh --refresh-into DIR`. A source that fails to fetch fails the whole refresh, `pending.lists.refreshed` false and a `lists:refresh` finding ([readings.md](readings.md)), and stops the lane until it fetches again.
+2. **Refresh the lists and confirm the origin is reachable**: `probe.sh --refresh-into DIR`, with no lane: it reads every class, and without `--dry-run-into` a `--lane` would be ignored, with a warning (#593). A source that fails to fetch fails the whole refresh, `pending.lists.refreshed` false and a `lists:refresh` finding ([readings.md](readings.md)), and stops the lane until it fetches again.
 3. **Take the recovery point early** where the host declares a `datastore` ([run.md](run.md#2-the-recovery-point)). The bulk refuses one that began more than 24 hours before it, so take it within the day before the run, and again if the release slips past that.
 
 **After T**, poll until the fixed version is in the origin's lists: refresh with `probe.sh --refresh-into DIR` again, then read `apt-cache -o Dir::State::Lists=DIR/lists/ policy <pkg>`. Plain `apt-cache policy` reads the host's own lists, which the probe never refreshes. A PPA can lag the upstream tag by hours: record the lag measured, from T to the version's first appearance, and never assume one.
@@ -111,6 +111,7 @@ exception <what> <review-by YYYY-MM-DD> <reason>
 - Keeping a dormant component is an exception: `exception keep:<component> <review-by> <reason>`.
 - Each prune stage is declared the same way, as `disabled:<component>`, `removed:<component>` or `purged:<component>`. The review-by date is the prune calendar: when it passes, the probe proposes the next stage for a component it reads, one of the six. An `apt:<package>` component's stage lines prompt nothing, so its next stage is `prune-plan.sh`'s `stage` ([pruning.md](pruning.md#any-other-apt-package)). A `purged:` line stays until the base image stops shipping the component.
 - **A package hold is declared as `held:<package>`.** A hold on a package in the pending set defers its update, and a security package never waits without an exception ([Two lanes](#two-lanes)). So an undeclared hold on a pending package is a finding, whether the owner placed it or an aborted run left it ([run.md](run.md)).
+- **A package the dry run passes over at a conffile prompt** (`dry-run:conffile:<pkg>`) is held this way, pruned, or settled by hand. A deleted conffile can be restored alone from the installed build, touching no package state ([the profile](environments/exe-dev-exeuntu.md#other-facts), #582). A `--force-confmiss` reinstall upgrades the package once that build has left the archive, and the finding says which applies.
 
 **What `<what>` names.** Each probe finding an exception can cover carries it as `exception_what`:
 
@@ -124,6 +125,8 @@ exception <what> <review-by YYYY-MM-DD> <reason>
 | `needrestart:restart` | no file sets `$nrconf{restart}` to `l`, or the file doesn't load (both postures) |
 | `unscoped:<origin>` | a followed origin at apt priority 500 or more: no `Package: *` pin below 500 for its site (both postures) |
 | `unpinned:<package>` | an installed package whose candidate comes from a followed origin, and that no package pin names (both postures) |
+| `cadence:overdue` | under `scheduled`, a weekday or `#N` window closed since the last run with no run (#592): a freeze the owner chose |
+| `exposure:<origin>` | a running service maps a pending package from a third-party origin, so its pending set is a security exposure (#464). Keyed as the knob names the origin. A security fix waits only on a declared exception, as for `held:` |
 | `tailscale:auto-update` | Tailscale updates itself (`tailscale set --auto-update`), or nothing ever set it on the node, so nothing on record says whether it does (both postures). The node's own setting isn't enough: on co-replicator, tailscaled re-applied the tailnet's default, on, over `--auto-update=false` at a later boot (2026-10-06, #357). Turn it off for the tailnet too, in the admin console's auto-updates. `--post-boot` reads it again |
 | `held:<package>` | an owner's hold on a pending package |
 | `database:<name>` | a cluster database no `datastore` line names. `<name>` may be a glob, `*` and `?`, so `database:app_test*` covers a test suite's per-worker databases; an exact name wins over a glob, and the more specific glob over another (#455). No other `<what>` takes one |
@@ -132,7 +135,7 @@ exception <what> <review-by YYYY-MM-DD> <reason>
 | `depends:<datastore>:<unit>` | a data store with no `After=` on a unit its `depends` line names; under `--post-boot`, that unit entering `active` after it. A unit that isn't up takes none |
 | `journal:volatile` | the journal doesn't survive a reboot |
 | `not-restarter:<service>` | a timer's service runs a program the restarter scan can't follow (a binary, `uv run`), and the owner says it starts or restarts nothing (#368). Also an `OnFailure=` target the scan can't read, which the owner says only notifies: its `restarter:<unit>` finding names the target, or its template for an instance (`not-restarter:unit-failure@.service`), and one line covers every unit hooked to it (#420). Also a script line the scan matched that the owner says isn't a call, such as a docstring naming `systemctl start`: the finding names the file and every line it matched, the first three with their text, and takes the same `<what>`, the target's or the timer's service's (#419). A restart on an Exec line the scan read takes none, whatever a script also matched: the unit's own, or one in any file of its target or its timer's service, a drop-in's included |
-| `session:adj` | a process of the session's own, below the platform's agent (`exe-init` or `sshd`), runs at `oom_score_adj` -1000 |
+| `session:adj` | a process of the session's own, below the platform's agent (`exe-init` or `sshd`), runs at `oom_score_adj` -1000, before a run and under `--post-boot` (#581) |
 | `setup-script:redelivered` | the platform delivers the VM's creation-time setup script at every boot, and it ran at each one. The host can stop the runs and contain the file in place (the profile), which the probe reads as `contained`. Revoking the script's key changes nothing the probe reads, so the owner declares the remedy here, such as the key's revocation date. The review-by date makes someone re-check it |
 | `keep:<component>` | a dormant component the owner keeps; a prune stage is `disabled:`, `removed:` or `purged:` |
 
@@ -140,7 +143,8 @@ The rest take no exception, because each is fixed where it is:
 - a provisioning leftover the host can fix, such as a setup script on disk that isn't contained;
 - a knob gap: an undeclared restarter (unless found only through what the scan couldn't read or a script line it matched, above), backup regime or third-party origin, or a `datastore redis` line with no user where the Redis's config sets the users, which the recovery point or the chain would refuse (`redis-login:<unit>`, #458);
 - a failing health check;
-- a pending reboot.
+- a pending reboot;
+- no run on record (`cadence:no-run`), which the next run records.
 
 ## Dormant components
 
