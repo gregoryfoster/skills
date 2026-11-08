@@ -134,7 +134,7 @@ The helper `bash skills/using-git-worktrees/scripts/resolve-worktree-root.sh` pr
 Skills that read or write plan documents resolve the plans directory via the same three-step lookup pattern (see [`writing-plans`](../skills/writing-plans/)):
 
 1. `PLANS_DIR` env var (highest priority — one-off overrides)
-2. `.skills/plans_dir` file under the repo root (single-line path; the project's persistent default)
+2. `.skills/plans_dir` file, read from the primary checkout (single-line path, a relative one resolved against that checkout; the project's persistent default)
 3. `<repo-root>/docs/plans/` (fallback)
 
 The helper `bash skills/writing-plans/scripts/resolve-plans-dir.sh` prints the resolved directory. Downstream projects that previously carried a `writing-plans` override solely to repoint the storage path can drop the override and configure `.skills/plans_dir` instead — the upstream skill's resolution order makes the path a knob rather than a fork.
