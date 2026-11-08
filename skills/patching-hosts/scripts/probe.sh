@@ -77,7 +77,8 @@ Options:
                       follows; or origin:<origin>, one followed origin and
                       nothing else, which counts only against lists this
                       run fetched, so it takes --refresh-into too. With
-                      --dry-run-into only
+                      --dry-run-into only: without it, a lane is ignored
+                      with a warning, so the after reading takes none
   --post-boot         the checks after a reboot (reboot-and-record.md
                       section 6), not the readings before a run. Takes
                       neither --refresh-into nor --dry-run-into
@@ -201,9 +202,11 @@ case $lane in
   "" | security | maintenance | origin:?*) ;;
   *) echo "ERROR --lane takes security, maintenance or origin:<an origin the knob follows>" >&2; exit 2 ;;
 esac
+# Only read_dry_run reads the lane, so without a dry run it scopes nothing:
+# the after reading, a refresh, is often passed the run's lane (#593).
 if [ -n "$lane" ] && [ -z "$dryrun" ]; then
-  echo "ERROR --lane names the dry run's selection: it goes with --dry-run-into" >&2
-  exit 2
+  echo "WARNING --lane scopes only the dry run, and without --dry-run-into it's ignored: a refresh reads every class anyway" >&2
+  lane=""
 fi
 lane=${lane:-security}
 if [ -n "$refresh$dryrun" ] && [ "$postboot" -eq 1 ]; then

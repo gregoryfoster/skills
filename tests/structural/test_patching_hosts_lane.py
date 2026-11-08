@@ -420,6 +420,9 @@ def test_a_lane_without_a_dry_run_is_ignored_with_a_warning(tmp_path, mode):
         args = [*mode, str(host.tmp / "fresh")] if refresh else mode
         out = host.run(*args, *lane)
         out["stderr"] = host.result.stderr
+        # The rig dates the boot from the clock, so two runs a second apart
+        # differ there whatever the lane.
+        del out["environment"]["boot"]
         # Where each run's own tree and scratch directory sit.
         return json.loads(json.dumps(out).replace(str(host.tmp), "<tmp>"))
 
