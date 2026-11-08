@@ -57,3 +57,14 @@ def test_the_status_line_states_the_roster_not_a_sessions_access():
     line = _status()
     assert "couldn't be read" not in line, line
     assert "one private repo" in line, line
+
+
+def test_604_a_retirement_read_end_to_end_is_no_longer_unproven():
+    # CannObserv/usa-wa#508 retired its own disk tooling end to end: the
+    # retire check and the GC's report (part 1), then the old units gone and
+    # both timers on in one change (part 2). The line cites both.
+    line = _status()
+    unproven = line.lower().split("still unproven", 1)[1]
+    assert "retirement" not in unproven, line
+    assert "usa-wa/issues/508#issuecomment-6669857450" in line, line
+    assert "usa-wa/issues/508#issuecomment-6672116232" in line, line

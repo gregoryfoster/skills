@@ -123,3 +123,16 @@ def test_each_not_disk_entry_is_named_in_the_doc():
         assert repo in bullet and f"`{unit}`" in bullet, (
             f"{DOC.name}'s not_disk line doesn't name {repo}'s {unit}"
         )
+
+
+def test_604_usa_wa_reads_as_retired_and_stays_matched():
+    """#604: usa-wa retired disk-gc.sh on 2026-11-05 (CannObserv/usa-wa#508),
+    the worked example. Its entry stays matched by name, so a host restored
+    from an older image is still caught."""
+    assert ("usa-wa", "disk-gc.sh") in {(r, e) for r, e, _ in scan_module().RETIRE_LIST}
+    (row,) = [r for r in doc_rows() if r[0] == "usa-wa"]
+    assert "retired 2026-11-05" in row[3], row
+    assert "usa-wa#508" in row[3], row
+    text = DOC.read_text()
+    assert "usa-wa/issues/508#issuecomment-6669857450" in text
+    assert "usa-wa/issues/508#issuecomment-6672116232" in text

@@ -73,3 +73,11 @@ class TestTheRetireChecklistAsks:
         assert "OnFailure=" in q4, q4
         assert "dead-man" in q4, q4
         assert "turning-on.md#5-the-timers" in q4, q4
+
+
+def test_604_close_a_points_at_a_host_side_verify_test():
+    # usa-wa tests its close (a) drop-in on the host side: systemd-analyze
+    # verify of the installed unit with it merged, and a misspelt one failing.
+    text = _gc_timer_only()
+    assert "systemd-analyze verify" in text, text
+    assert "scripts/tests/test_canonical_disk_gc.py" in text, text
