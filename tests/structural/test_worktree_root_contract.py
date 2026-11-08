@@ -43,6 +43,7 @@ No API calls. Self-contained: each test builds a throwaway repo under tmp_path.
 """
 
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -559,6 +560,36 @@ class TestTheSeparateGitDirPrimary:
         assert layouts.SEPARATE_GIT_DIR_HINT in r.stderr, r.stderr
         assert "run this from the primary checkout" in r.stderr, r.stderr
         assert r.stdout == "", f"a refusal prints no root: {r.stdout!r}"
+
+    @pytest.mark.parametrize("where", ["primary", "linked"])
+    def test_below_git_2_31_it_says_git_is_too_old(self, tmp_path: Path, where: str):
+        """CR 1990: git before 2.31 echoes `--path-format=absolute` back at
+        exit 0, so the primary cannot be told from a linked worktree. "Run
+        this from the primary checkout" was false from the primary itself.
+        A `git` shim plays 2.30 over the real one."""
+        real = shutil.which("git")
+        assert real, "git is on PATH"
+        shims = tmp_path.resolve() / "shims"
+        shims.mkdir()
+        shim = shims / "git"
+        shim.write_text(
+            "#!/usr/bin/env bash\n"
+            'if [ "$1" = --version ]; then echo "git version 2.30.6"; exit 0; fi\n'
+            "args=()\n"
+            "for a; do\n"
+            '  if [ "$a" = --path-format=absolute ]; then echo "$a"; else args+=("$a"); fi\n'
+            "done\n"
+            f'exec {real} "${{args[@]}}"\n'
+        )
+        shim.chmod(0o755)
+        primary, linked = layouts.separate_git_dir(tmp_path.resolve() / "l", None)
+        env = _clean_env()
+        env["PATH"] = f"{shims}{os.pathsep}{env['PATH']}"
+        r = _run_env(RESOLVE, primary if where == "primary" else linked, env)
+        assert r.returncode == 2, r.stdout + r.stderr
+        assert "git 2.30.6 predates 2.31, which this layout needs" in r.stderr, r.stderr
+        assert "set WORKTREE_ROOT" in r.stderr, r.stderr
+        assert "run this from the primary checkout" not in r.stderr, r.stderr
 
 
 class TestAnInheritedGitDir:

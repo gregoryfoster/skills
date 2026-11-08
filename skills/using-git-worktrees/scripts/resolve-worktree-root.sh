@@ -27,7 +27,8 @@ if [[ "${1:-}" == "--help" ]]; then
   echo "A primary git refuses (\"dubious ownership\") is exit 2, never this"
   echo "checkout. A bare primary has no checkout, so there this one is the"
   echo "repo root. A primary whose .git is a file (git init --separate-git-dir)"
-  echo "is known only from inside it: from its linked worktrees, exit 2."
+  echo "is known only from inside it (git >= 2.31): from its linked worktrees,"
+  echo "exit 2, and below 2.31 from the primary too."
   echo ""
   echo "Exit codes:"
   echo "  0  Resolution succeeded"
@@ -95,7 +96,8 @@ fi
 #      submodule's own checkout, or a primary whose .git is a pointer file
 #      (`git init --separate-git-dir`), whose common dir's parent is no
 #      checkout. Set R's test (CR 1892), which needs git 2.31: below that a
-#      submodule's checkout still lands in 3, and that primary is exit 2.
+#      submodule's checkout still lands in 3, and that primary is exit 2
+#      saying git is too old (CR 1990).
 #   2. A bare primary (a `bare` line in the first `git worktree list` block)
 #      has no checkout, so the current one is the project (set T, CR 1839).
 #   3. The candidate is inside a git dir: a submodule's linked worktree, #203.
@@ -154,6 +156,12 @@ else
     : # 2. a bare primary
   elif [[ "$(here_git -C "$CANDIDATE" rev-parse --is-inside-git-dir 2>/dev/null)" == true ]]; then
     : # 3. a submodule's linked worktree (#203)
+  elif [[ "${DIRS%%$'\n'*}" == --path-format=absolute ]]; then
+    # Below 2.31 rev-parse echoes the option back at exit 0 (CR 1990), so
+    # case 1 cannot be told: run from the primary it is no answer either.
+    GIT_VERSION=$(here_git --version 2>/dev/null) || GIT_VERSION="git version (unknown)"
+    echo "ERROR: could not resolve the primary checkout: git ${GIT_VERSION#git version } predates 2.31, which this layout needs to tell its primary from a linked worktree: upgrade git, or set WORKTREE_ROOT" >&2
+    exit 2
   else
     echo "ERROR: could not resolve the primary checkout: this repository's common dir '$COMMON_DIR' is no checkout's .git, as a primary whose .git is a file makes it (git init --separate-git-dir), and only that primary knows its work tree, so run this from the primary checkout" >&2
     exit 2
