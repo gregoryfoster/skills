@@ -176,14 +176,17 @@ else
   PRIMARY_BLOCK=${WT_LIST%%$'\n\n'*}
   if [[ -n "$DIRS" && "${DIRS%%$'\n'*}" == "${DIRS#*$'\n'}" ]]; then
     : # 1. the main worktree
-  elif [[ $CANDIDATE_FAILED -eq 1 && (-e "$CANDIDATE/.git" || -L "$CANDIDATE/.git") ]]; then
-    # The candidate has a .git of its own, and git would not answer for it:
-    # the primary is there, or meant to be, and git refused it. Asked before
-    # the bare case, since a `.bare` store with a `<dir>/.git` gitfile is
-    # bare too and its knob is <dir>'s (CR 1988). One rule, not one case per
-    # way a .git can break (CR 2033): dubious ownership, a gitfile that is
-    # unreadable, CRLF, mistyped, empty, or names a missing store. Git
-    # says which.
+  elif [[ $CANDIDATE_FAILED -eq 1 &&
+    (-L "$CANDIDATE/.git" || -f "$CANDIDATE/.git" || "$CANDIDATE/.git" -ef "$COMMON_DIR") ]]; then
+    # The candidate has a .git that can be this repository's, and git would
+    # not answer for it: the primary is there, or meant to be, and git
+    # refused it. Asked before the bare case, since a `.bare` store with a
+    # `<dir>/.git` gitfile is bare too and its knob is <dir>'s (CR 1988). One
+    # rule, not one case per way a .git can break (CR 2033): dubious
+    # ownership, a gitfile that is unreadable, CRLF, mistyped, empty, or
+    # names a missing store, or a dangling link. Git says which. A .git
+    # directory that is not the common dir is another repository's (R4-1):
+    # beside a plain repo.git, git refusing it says nothing about this one.
     candidate_reason
     echo "ERROR: could not resolve the primary checkout '$CANDIDATE' (git's reason, if any, is above)" >&2
     exit 2
