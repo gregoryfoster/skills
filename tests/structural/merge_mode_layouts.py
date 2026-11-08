@@ -23,7 +23,10 @@ primary alone ("dubious ownership"), which must be a refusal, never a
 fallback. Shared by test_merge_mode_knob.py, test_cadence_merge_mode.py,
 test_refresh_hook_pr_mode.py, and, for the doctor's token check and the
 hook's `.env` fallback (CR 1893, 1894), test_doctor_pr_mode_gh_token.py and
-test_refresh_hook_pr_gh_auth.py; every git call scrubs the inherited `GIT_*`
+test_refresh_hook_pr_gh_auth.py, and, for `using-git-worktrees`' root
+resolver and its create and destroy (#585, #605),
+test_worktree_root_contract.py and test_worktree_primary_layouts.py; every
+git call scrubs the inherited `GIT_*`
 variables and names its repo explicitly (#189).
 """
 

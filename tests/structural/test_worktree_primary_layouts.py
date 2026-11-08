@@ -289,3 +289,14 @@ class TestCreatesVenvKnobFromThePrimary:
         r, new = self._create(home, tmp_path)
         assert not (new / ".venv").is_symlink()
         assert "worktree_venv=none" in r.stderr, r.stderr
+
+
+def test_pr_modes_exit_2_is_not_only_an_unusable_file():
+    """CR 1905's note on #605: from a linked worktree of a --separate-git-dir
+    primary, merge-mode.sh's exit 2 means "run from the primary", not "the
+    file is unusable". shipping-work's pr-mode.md says the same."""
+    doc = SCRIPTS.parent / "references" / "pr-mode.md"
+    text = " ".join(doc.read_text().split())
+    assert "One exit 2 is not about the file." in text
+    assert "`git init --separate-git-dir`" in text
+    assert "run from the primary checkout" in text

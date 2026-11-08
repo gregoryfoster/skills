@@ -5,8 +5,11 @@ through a pull request merged on GitHub, never through a local merge
 ([#342](https://github.com/gregoryfoster/skills/issues/342)). Absent, or
 `direct`, Phase 4 merges locally as written. The knob is one word, read from
 the primary checkout, like `.skills/worktree_root`. `bash "<merge-mode.sh>"`
-prints it, and its exit 2 means the file is unusable: fix it, and never read
-it as `direct`.
+prints it. Its exit 2 means the file is unusable: fix it, and never read it
+as `direct`. One exit 2 is not about the file. From a linked worktree of a
+primary made with `git init --separate-git-dir`, git knows no path to the
+primary's work tree, so the message says to run from the primary checkout:
+do that.
 
 ## Phase 4: push and open the PR
 
