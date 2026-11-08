@@ -57,7 +57,7 @@ here_git() {
 # tree is this one: its git dir is the common dir. From a linked worktree git
 # knows no path to it, so that stays exit 2, and says so.
 primary_checkout() {
-  local wt_list block entry dirs hint
+  local wt_list block entry dirs hint ver
   wt_list=$(here_git worktree list --porcelain) || die "git worktree list failed: not in a git checkout?"
   block=${wt_list%%$'\n\n'*}
   entry=${block%%$'\n'*}
@@ -77,7 +77,16 @@ primary_checkout() {
           here_git -C "$entry" rev-parse --show-toplevel >/dev/null || true
           hint=""
           if [ "$(here_git -C "$entry" rev-parse --is-inside-git-dir 2>/dev/null)" = true ]; then
-            hint="; it is a git dir with no work tree, as a primary whose .git is a file makes it (git init --separate-git-dir), and only that primary knows its work tree, so run this from the primary checkout"
+            # Below git 2.31, rev-parse echoes the flag back as a line, so
+            # the fallback above can't fire even from the primary (CR 1999).
+            # The core phrase is chain W's resolver's, word for word.
+            if [ "${dirs%%$'\n'*}" = --path-format=absolute ]; then
+              ver=$(here_git --version 2>/dev/null) || ver=""
+              ver=${ver#git version }
+              hint="; it is a git dir with no work tree, as a primary whose .git is a file makes it (git init --separate-git-dir), and git ${ver:-(unknown version)} predates 2.31, which this layout needs to tell its primary from a linked worktree: upgrade git"
+            else
+              hint="; it is a git dir with no work tree, as a primary whose .git is a file makes it (git init --separate-git-dir), and only that primary knows its work tree, so run this from the primary checkout"
+            fi
           fi
           die "could not resolve the primary checkout's working tree from $entry (git's reason is above)$hint"
         fi

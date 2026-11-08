@@ -20,8 +20,10 @@ checkout**: the work tree of the first `git worktree list` entry. A bare
 primary has none, so there it is the current checkout's. A primary made with
 `git init --separate-git-dir` names no work tree from its linked worktrees, so
 there the script exits 2 and says to run from the primary itself
-([#605](https://github.com/gregoryfoster/skills/issues/605)). The command
-runs from that checkout's root.
+([#605](https://github.com/gregoryfoster/skills/issues/605)). Reading that
+layout needs git 2.31 or later; older git is exit 2 from the primary too, and
+says so. A store whose path ends in `/.git` isn't covered. The command runs
+from that checkout's root.
 
 ```
 # .skills/deploy_command

@@ -95,7 +95,16 @@ case $'\n'"$WT_BLOCK"$'\n' in
         here_git -C "$WT_ENTRY" rev-parse --show-toplevel >/dev/null || true
         HINT=""
         if [ "$(here_git -C "$WT_ENTRY" rev-parse --is-inside-git-dir 2>/dev/null)" = true ]; then
-          HINT="; it is a git dir with no work tree, as a primary whose .git is a file makes it (git init --separate-git-dir), and only that primary knows its work tree, so run this from the primary checkout"
+          # Below git 2.31, rev-parse echoes the flag back as a line, so the
+          # fallback above can't fire even from the primary (CR 1999).
+          # The core phrase is chain W's resolver's, word for word.
+          if [ "${DIRS%%$'\n'*}" = --path-format=absolute ]; then
+            VER=$(here_git --version 2>/dev/null) || VER=""
+            VER=${VER#git version }
+            HINT="; it is a git dir with no work tree, as a primary whose .git is a file makes it (git init --separate-git-dir), and git ${VER:-(unknown version)} predates 2.31, which this layout needs to tell its primary from a linked worktree: upgrade git"
+          else
+            HINT="; it is a git dir with no work tree, as a primary whose .git is a file makes it (git init --separate-git-dir), and only that primary knows its work tree, so run this from the primary checkout"
+          fi
         fi
         die "could not resolve the primary checkout's working tree from $WT_ENTRY (git's reason is above)$HINT"
       fi
