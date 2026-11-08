@@ -438,8 +438,11 @@ def test_a_span_that_starts_inside_a_window_but_runs_past_its_close_is_refused(h
         ("bulk-factor 2.5\n", 2.5, 1650, 3210),
         # Rounded up to the second: 540 times 3.33 is 1798.2.
         ("bulk-factor 3.33\n", 3.33, 2099, 3659),
+        # CR 1941: hundredths with a leading zero are decimal, not octal
+        # (bash reads a bare 09 as a bad octal): 540 times 2.09 is 1128.6.
+        ("bulk-factor 2.09\n", 2.09, 1429, 2989),
     ],
-    ids=["default", "4", "2.5", "rounded-up"],
+    ids=["default", "4", "2.5", "rounded-up", "leading-zero"],
 )
 def test_the_bulks_span_takes_the_knobs_bulk_factor(host, line, factor, bulk, run):
     host.knob(KNOB + line)
