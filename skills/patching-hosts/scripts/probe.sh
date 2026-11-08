@@ -3090,7 +3090,8 @@ unit_of_pid() {  # <var> <pid>: the systemd unit its cgroup names, or empty
 
 # Which processes map a shared object from a pending package: Postgres needs
 # a restart when its backends map libc6 or libxml2, even with its own
-# package out of the set.
+# package out of the set. MAPS_PAIRS keeps each "<unit>|<package>|<pid>".
+MAPS_PAIRS=""
 read_maps() {
   local p f out line pid pkg u e w pairs="" ulist="" pk pids np
   local -a maps=()
@@ -3146,6 +3147,7 @@ read_maps() {
     pairs="$pairs ${u:-unknown}|$pkg|$pid"
     in_words "${u:-unknown}" "$ulist" || ulist="$ulist ${u:-unknown}"
   done <<<"$out"
+  MAPS_PAIRS=$pairs
   local byunit=""
   for u in $ulist; do
     pk="" pids="" np=0
@@ -3170,6 +3172,67 @@ read_maps() {
     jpush byunit "{$e}"
   done
   R_MAPS="{\"units\": [$byunit], \"source\": \"/proc/*/maps, read as root, against each pending package's shared objects\"}"
+}
+
+# A third-party origin carrying a serving runtime (#464): a pending package
+# from a non-Ubuntu origin whose shared object a running service maps puts
+# that origin's whole pending set at security, not maintenance. It reads
+# read_maps' pairs, never a second process scan. Whether a process listens
+# isn't there (ss -Hltn names no pid), so a process in a .service unit, a
+# daemon or a worker, stands in; a session's .scope, or a process whose unit
+# can't be read, doesn't. The map matches shared objects only, so a runtime
+# that's one executable with none of its own (NodeSource's node) isn't seen.
+check_exposure() {
+  local e u p c i j n key pol val s
+  local -a eo=() eu=() ep=() f=()
+  for e in $MAPS_PAIRS; do
+    u=${e%%|*} p=${e#*|}
+    p=${p%%|*}
+    case $u in *.service) ;; *) continue ;; esac
+    c=""
+    for i in ${PK_NAME[@]+"${!PK_NAME[@]}"}; do
+      if [ "${PK_NAME[$i]}" = "$p" ]; then c=${PK_CLASS[$i]}; break; fi
+    done
+    case $c in third-party:?*) c=${c#third-party:} ;; *) continue ;; esac
+    j=""
+    for i in ${eo[@]+"${!eo[@]}"}; do
+      if [ "${eo[$i]}" = "$c" ]; then j=$i; fi
+    done
+    if [ -z "$j" ]; then
+      j=${#eo[@]}
+      eo+=("$c") eu+=(" ") ep+=(" ")
+    fi
+    in_words "$u" "${eu[$j]}" || eu[j]="${eu[$j]}$u "
+    in_words "$p" "${ep[$j]}" || ep[j]="${ep[$j]}$p "
+  done
+  for j in ${eo[@]+"${!eo[@]}"}; do
+    c=${eo[$j]}
+    n=0
+    for i in ${PK_CLASS[@]+"${!PK_CLASS[@]}"}; do
+      if [ "${PK_CLASS[$i]}" = "third-party:$c" ]; then n=$((n + 1)); fi
+    done
+    # As the knob names it: its o= field, or a site apt lists it at.
+    key="" pol="" val=""
+    for e in ${KNOB_ORIGIN[@]+"${KNOB_ORIGIN[@]}"}; do
+      IFS=$KNOB_US read -r -a f <<<"$e"
+      if [ "${f[0]}" = "$c" ]; then key=${f[0]} pol=${f[1]} val=${f[2]-}; break; fi
+      case ${f[0]} in *.*) ;; *) continue ;; esac
+      for i in ${THIRD_PARTY[@]+"${THIRD_PARTY[@]}"}; do
+        if [ "$i" = "$c|${f[0]}" ] && [ -z "$key" ]; then key=${f[0]} pol=${f[1]} val=${f[2]-}; fi
+      done
+    done
+    s=s
+    [ "$n" -ne 1 ] || s=""
+    u=${eu[$j]# } p=${ep[$j]# }
+    e="$n package$s pending from the third-party origin ${c//_/ }, and running services map its ${p% }: ${u% }. So its pending set is a security exposure, not maintenance (readings.md)."
+    case $pol in
+      follow) e="$e The knob follows it, which takes it only in the maintenance lane, at the host's cadence. Expedite it: a dated window line from date -u (#421), then apply.sh --lane origin:$key with the owner's approval (policy.md, a pre-announced security release)." ;;
+      pin) e="$e The knob pins it at $val, so no lane takes the set: the exposure stays until the owner moves the pin (policy.md)." ;;
+      hold) e="$e The knob holds it ($val), so no lane takes the set: the exposure stays until the owner lifts the hold (policy.md)." ;;
+      *) e="$e No knob line names it (the origin:${c//_/ } finding), so no lane takes the set: follow it to have an expedite path (knob.md)." ;;
+    esac
+    finding risk "exposure:${key:-$c}" "exposure:${key:-$c}" "$e"
+  done
 }
 
 PG_CLUSTERS=""  # " ver/name/port/status/logfile ..."
@@ -4984,6 +5047,7 @@ else
   evaluate_posture
   read_pending
   read_impact
+  check_exposure
   read_dormant
   owner_lines
 fi
