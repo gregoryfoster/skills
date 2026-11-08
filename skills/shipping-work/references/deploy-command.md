@@ -16,8 +16,12 @@ It is wrong there both ways:
 ## The knob
 
 `.skills/deploy_command` names the command, as one line, in the **primary
-checkout**: the first `git worktree list` entry, as for `worktree_root`. The
-command runs from that checkout's root.
+checkout**: the work tree of the first `git worktree list` entry. A bare
+primary has none, so there it is the current checkout's. A primary made with
+`git init --separate-git-dir` names no work tree from its linked worktrees, so
+there the script exits 2 and says to run from the primary itself
+([#605](https://github.com/gregoryfoster/skills/issues/605)). The command
+runs from that checkout's root.
 
 ```
 # .skills/deploy_command

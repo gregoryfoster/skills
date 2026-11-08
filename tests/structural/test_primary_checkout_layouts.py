@@ -15,6 +15,10 @@ forbids. Both now normalise the entry with `git -C <entry> rev-parse
 current checkout's, as `using-git-worktrees` does.
 
 Each fixture commits the knobs, so every checkout of the layout has them.
+
+Two more cases (#605) take set R's rule from merge-mode.sh: a primary made
+with `git init --separate-git-dir`, and a GIT_DIR or GIT_WORK_TREE inherited
+from a hook. Their layouts are merge_mode_layouts.py's.
 """
 
 from __future__ import annotations
@@ -25,6 +29,7 @@ from pathlib import Path
 
 import pytest
 
+from tests.structural import merge_mode_layouts as layouts
 from tests.utils.skill_loader import SKILLS_DIR
 
 SCRIPTS = SKILLS_DIR / "shipping-work" / "scripts"
@@ -212,3 +217,191 @@ def test_an_unreadable_primary_exits_2_naming_it(
     assert BRANCH_ROW not in result.stdout
     assert str(src) in result.stderr
     assert "dubious ownership" in result.stderr, result.stderr
+
+
+# --- #605: set R's rule, for both of its cases (CR 1892, CR 1895) ----------
+# Set R fixed merge-mode.sh and the inline merge_mode readers; these three
+# scripts kept both gaps. A primary made with `git init --separate-git-dir`
+# lists its store first, which names no work tree, so every reader refused,
+# even run from the primary itself. And git exports GIT_DIR to every hook,
+# where it beats `-C <entry>`: in a submodule's linked worktree the entry
+# named itself, which holds no .skills/, and the knob read as absent (exit
+# 3), the silent fallback #564 forbids. The layouts are merge_mode_layouts.py's,
+# shared with merge-mode.sh's own tests; each script reads its own knob there.
+
+KNOBS = {
+    "read-next-steps.sh": "next-steps",
+    "run-pre-restart.sh": "pre_restart",
+    "run-deploy-command.sh": "deploy_command",
+}
+SCRIPT_NAMES = sorted(KNOBS)
+
+
+def _knob_text(script: str, tmp_path: Path) -> str:
+    """The script's knob: the row, or the stub by its absolute path, which
+    needs no checkout to resolve it from."""
+    if script == "read-next-steps.sh":
+        return f"# rows\n{ROW}\n"
+    stub = tmp_path / "bin" / "stub.sh"
+    stub.parent.mkdir(parents=True, exist_ok=True)
+    stub.write_text(STUB)
+    stub.chmod(0o755)
+    return f"{stub}\n"
+
+
+def _pushed(checkout: Path) -> None:
+    """The branch is its own upstream, so run-deploy-command.sh's check that
+    HEAD was pushed passes and only the primary's resolution is tested."""
+    branch = layouts.git(checkout, "symbolic-ref", "--short", "HEAD")
+    layouts.git(checkout, "config", f"branch.{branch}.remote", ".")
+    layouts.git(checkout, "config", f"branch.{branch}.merge", f"refs/heads/{branch}")
+
+
+def _run_with(
+    script: str, cwd: Path, record: Path, env: dict | None = None
+) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["bash", str(SCRIPTS / script)],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        env={**(env if env is not None else _env()), "STUB_RECORD": str(record)},
+        timeout=60,
+    )
+
+
+def _assert_read_from(
+    script: str, result: subprocess.CompletedProcess, record: Path, primary: Path
+) -> None:
+    assert result.returncode == 0, result.stdout + result.stderr
+    if script == "read-next-steps.sh":
+        assert result.stdout.splitlines() == [ROW]
+    else:
+        assert record.read_text().strip() == str(primary.resolve())
+
+
+def _assert_nothing_read(
+    script: str, result: subprocess.CompletedProcess, record: Path
+) -> None:
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert not record.exists(), "a command ran"
+    assert ROW not in result.stdout
+
+
+class TestASeparateGitDirPrimary:
+    """CR 1892's case: the first block names the store, and `-C <store>`
+    names no work tree. From the primary itself that work tree is this
+    checkout, whose git dir is the common dir; from a linked worktree git
+    knows no path to it, so exit 2 says to run from the primary."""
+
+    @pytest.mark.parametrize("script", SCRIPT_NAMES)
+    def test_the_primary_reads_its_own_knob(self, tmp_path, script):
+        text = _knob_text(script, tmp_path)
+        primary, _ = layouts.separate_git_dir(tmp_path / "l", text, name=KNOBS[script])
+        _pushed(primary)
+        record = tmp_path / "record"
+        result = _run_with(script, primary, record)
+        _assert_read_from(script, result, record, primary)
+
+    def test_from_a_subdirectory_of_the_primary_too(self, tmp_path):
+        text = _knob_text("read-next-steps.sh", tmp_path)
+        primary, _ = layouts.separate_git_dir(tmp_path / "l", text, name="next-steps")
+        sub = primary / "docs"
+        sub.mkdir()
+        result = _run_with("read-next-steps.sh", sub, tmp_path / "record")
+        _assert_read_from("read-next-steps.sh", result, tmp_path / "record", primary)
+
+    @pytest.mark.parametrize("script", SCRIPT_NAMES)
+    def test_no_knob_in_the_primary_is_absent_not_unusable(self, tmp_path, script):
+        primary, _ = layouts.separate_git_dir(tmp_path / "l", None)
+        _pushed(primary)
+        result = _run_with(script, primary, tmp_path / "record")
+        assert result.returncode == 3, result.stdout + result.stderr
+        assert f".skills/{KNOBS[script]}" in result.stdout
+
+    @pytest.mark.parametrize("script", SCRIPT_NAMES)
+    def test_a_linked_worktree_is_exit_2_and_says_why(self, tmp_path, script):
+        text = _knob_text(script, tmp_path)
+        _, linked = layouts.separate_git_dir(tmp_path / "l", text, name=KNOBS[script])
+        _pushed(linked)
+        record = tmp_path / "record"
+        result = _run_with(script, linked, record)
+        _assert_nothing_read(script, result, record)
+        assert layouts.SEPARATE_GIT_DIR_HINT in result.stderr, result.stderr
+        assert "primary checkout" in result.stderr, result.stderr
+
+    @pytest.mark.parametrize("script", SCRIPT_NAMES)
+    def test_a_store_git_cannot_open_is_still_exit_2(self, tmp_path, script):
+        """Never the fallback: "dubious ownership" of the store is git's
+        reason, and the hint is not offered."""
+        text = _knob_text(script, tmp_path)
+        _, linked = layouts.separate_git_dir(tmp_path / "l", text, name=KNOBS[script])
+        record = tmp_path / "record"
+        result = _run_with(
+            script, linked, record, env=layouts.different_owner(_env(), linked)
+        )
+        _assert_nothing_read(script, result, record)
+        assert "dubious ownership" in result.stderr, result.stderr
+        assert layouts.SEPARATE_GIT_DIR_HINT not in result.stderr, result.stderr
+
+
+# Where each layout keeps its primary, which is where the scripts run.
+PRIMARY_OF = {
+    "bare_home": lambda tmp_path, checkout: checkout,
+    "submodule_linked": lambda tmp_path, checkout: tmp_path / "super" / "sub",
+}
+
+
+class TestAnInheritedGitEnvironmentDoesNotAnswer:
+    """CR 1895 and CR 1903's case: git exports GIT_DIR to every hook, and an
+    inherited GIT_WORK_TREE beats a submodule's core.worktree. Either one
+    made `-C <entry>` answer for this checkout, not the primary."""
+
+    @pytest.mark.parametrize("script", SCRIPT_NAMES)
+    @pytest.mark.parametrize("layout", sorted(layouts.LAYOUTS))
+    def test_an_inherited_git_dir(self, tmp_path, layout, script):
+        text = _knob_text(script, tmp_path)
+        checkout = layouts.LAYOUTS[layout](tmp_path / "l", text, name=KNOBS[script])
+        _pushed(checkout)
+        env = _env(GIT_DIR=layouts.git(checkout, "rev-parse", "--absolute-git-dir"))
+        record = tmp_path / "record"
+        result = _run_with(script, checkout, record, env=env)
+        primary = PRIMARY_OF[layout](tmp_path / "l", checkout)
+        _assert_read_from(script, result, record, primary)
+
+    @pytest.mark.parametrize("script", SCRIPT_NAMES)
+    @pytest.mark.parametrize("layout", sorted(layouts.LAYOUTS))
+    def test_an_inherited_git_work_tree(self, tmp_path, layout, script):
+        text = _knob_text(script, tmp_path)
+        checkout = layouts.LAYOUTS[layout](tmp_path / "l", text, name=KNOBS[script])
+        _pushed(checkout)
+        env = _env(GIT_WORK_TREE=str(checkout))
+        record = tmp_path / "record"
+        result = _run_with(script, checkout, record, env=env)
+        primary = PRIMARY_OF[layout](tmp_path / "l", checkout)
+        _assert_read_from(script, result, record, primary)
+
+
+def _prose(name: str) -> str:
+    text = (SKILLS_DIR / "shipping-work" / "references" / name).read_text()
+    return " ".join(text.split())
+
+
+def test_the_deploy_reference_says_where_a_separate_git_dir_primary_is_read():
+    """#605: the knob's home moved with the fix, from "the first `git
+    worktree list` entry, as for `worktree_root`" to that entry's work tree,
+    with the two layouts that have none named."""
+    text = _prose("deploy-command.md")
+    assert "the work tree of the first `git worktree list` entry" in text
+    assert "`git init --separate-git-dir`" in text
+    assert "exits 2 and says to run from the primary itself" in text
+
+
+def test_pr_modes_exit_2_is_not_only_an_unusable_file():
+    """CR 1905's note on #605: from a linked worktree of a --separate-git-dir
+    primary, merge-mode.sh's exit 2 means "run from the primary", not
+    "the file is unusable"."""
+    text = _prose("pr-mode.md")
+    assert "One exit 2 is not about the file." in text
+    assert "`git init --separate-git-dir`" in text
+    assert "run from the primary checkout" in text
