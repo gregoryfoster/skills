@@ -24,14 +24,28 @@ if [[ "${1:-}" == "--help" ]]; then
   echo "A relative PLANS_DIR is printed as given: it resolves against the"
   echo "directory of whoever reads it."
   echo ""
+  echo "A primary git refuses (\"dubious ownership\") is exit 2, never this"
+  echo "checkout. A bare primary has no checkout, so there this one is the"
+  echo "repo root. A primary whose .git is a file (git init --separate-git-dir)"
+  echo "is known only from inside it: from its linked worktrees, exit 2."
+  echo ""
   echo "Exit codes:"
   echo "  0  Resolution succeeded"
-  echo "  2  Not inside a git repository"
+  echo "  2  Not inside a git repository, git failed, or the primary checkout"
+  echo "     could not be resolved (the reason is on stderr)"
   exit 0
 fi
 
-PROJECT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || {
-  echo "ERROR: not inside a git repository" >&2
+# here_git <args> — git without an inherited GIT_DIR or GIT_WORK_TREE (#605).
+# Git exports GIT_DIR to every hook, and it beats both cwd and -C: in a
+# submodule `git -C "$CANDIDATE"` answered for this checkout and put the plans
+# directory inside .git. Why, beside the twin in resolve-worktree-root.sh.
+here_git() {
+  env -u GIT_DIR -u GIT_WORK_TREE git "$@"
+}
+
+PROJECT_ROOT=$(here_git rev-parse --show-toplevel) || {
+  echo "ERROR: not inside a git repository, or git refused it (git's reason is above)" >&2
   exit 2
 }
 
@@ -74,15 +88,52 @@ fi
 # restated here: two copies of one decision drift into two accounts of it, and
 # only the copy someone happens to edit gets corrected. Pinned by
 # tests/structural/test_plans_dir_contract.py (TestSubmoduleWorktreeBoundary).
-COMMON_DIR=$(git rev-parse --git-common-dir 2>/dev/null || true)
-if [[ -n "$COMMON_DIR" ]] && COMMON_DIR=$(cd "$COMMON_DIR" 2>/dev/null && pwd -P); then
-  CANDIDATE=$(dirname "$COMMON_DIR")
-  # `git -C "$CANDIDATE"` answers relative to CANDIDATE, not to our $PWD.
-  CANDIDATE_COMMON=$(git -C "$CANDIDATE" rev-parse --git-common-dir 2>/dev/null || true)
-  if [[ -n "$CANDIDATE_COMMON" ]] &&
-     CANDIDATE_COMMON=$(cd "$CANDIDATE" && cd "$CANDIDATE_COMMON" 2>/dev/null && pwd -P) &&
-     [[ "$CANDIDATE_COMMON" == "$COMMON_DIR" ]]; then
-    PROJECT_ROOT="$CANDIDATE"
+#
+# A rejected candidate falls back to --show-toplevel only in three layouts:
+# the main worktree, a bare primary, and #203's submodule worktree. Anything
+# else is exit 2, never a fallback (#585, #605): git refusing the primary had
+# read as "not a checkout", and the primary's knob went unread. Which layouts,
+# and why, is written once beside the twin, as above; this block is a copy of
+# it, held to the same answers by test_plans_dir_contract.py's parity test.
+if ! COMMON_DIR=$(here_git rev-parse --git-common-dir) ||
+  ! COMMON_DIR=$(cd "$COMMON_DIR" && pwd -P); then
+  echo "ERROR: could not resolve this checkout's git common dir (the reason is above)" >&2
+  exit 2
+fi
+CANDIDATE=$(dirname "$COMMON_DIR")
+# `git -C "$CANDIDATE"` answers relative to CANDIDATE, not to our $PWD. Asked
+# in silence: in layouts 1–3 the candidate is no checkout, and git saying so
+# is not a failure. Where it is one, git is asked again for its reason.
+if ! CANDIDATE_COMMON=$(here_git -C "$CANDIDATE" rev-parse --git-common-dir 2>/dev/null) ||
+  ! CANDIDATE_COMMON=$(cd "$CANDIDATE" && cd "$CANDIDATE_COMMON" 2>/dev/null && pwd -P); then
+  CANDIDATE_COMMON=""
+fi
+if [[ "$CANDIDATE_COMMON" == "$COMMON_DIR" ]]; then
+  PROJECT_ROOT="$CANDIDATE"
+else
+  DIRS=$(here_git rev-parse --path-format=absolute --git-dir --git-common-dir 2>/dev/null) || DIRS=""
+  WT_LIST=$(here_git worktree list --porcelain) || {
+    echo "ERROR: failed to enumerate worktrees (git worktree list --porcelain)" >&2
+    exit 2
+  }
+  PRIMARY_BLOCK=${WT_LIST%%$'\n\n'*}
+  if [[ -n "$DIRS" && "${DIRS%%$'\n'*}" == "${DIRS#*$'\n'}" ]]; then
+    : # 1. the main worktree
+  elif [[ $'\n'"$PRIMARY_BLOCK"$'\n' == *$'\n'bare$'\n'* ]]; then
+    : # 2. a bare primary
+  elif [[ "$(here_git -C "$CANDIDATE" rev-parse --is-inside-git-dir 2>/dev/null)" == true ]]; then
+    : # 3. a submodule's linked worktree (#203)
+  elif [[ "$CANDIDATE/.git" -ef "$COMMON_DIR" ]]; then
+    # The primary is right there, and git would not answer for it.
+    WHY="git's reason is above"
+    if here_git -C "$CANDIDATE" rev-parse --git-common-dir >/dev/null; then
+      WHY="git names another common dir there"
+    fi
+    echo "ERROR: could not resolve the primary checkout '$CANDIDATE' ($WHY)" >&2
+    exit 2
+  else
+    echo "ERROR: could not resolve the primary checkout: this repository's common dir '$COMMON_DIR' is no checkout's .git, as a primary whose .git is a file makes it (git init --separate-git-dir), and only that primary knows its work tree, so run this from the primary checkout" >&2
+    exit 2
   fi
 fi
 
