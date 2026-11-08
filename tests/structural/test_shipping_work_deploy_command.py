@@ -140,7 +140,8 @@ class TestTheCommandRuns:
         assert _recorded(record)["cwd"] == [str(repo.resolve())]
 
     def test_from_a_worktree_the_primary_checkouts_knob_is_read(self, repo, tmp_path):
-        """The knob is read like `worktree_root`: from the primary checkout."""
+        """The knob is read from the primary checkout, whichever checkout
+        runs the script (test_primary_checkout_layouts.py has the layouts)."""
         _knob(repo, "scripts/deploy.sh\n")  # untracked: the worktree has no copy
         wt = tmp_path / "wt"
         _git(repo, "worktree", "add", "-q", "-b", "feature", str(wt))
