@@ -680,7 +680,7 @@ gate_dry() {
 # bulk-factor line (#556), or 3. Three is the typical figure, not a ceiling,
 # from the measured spread run.md's gate section records (2.0 to 4.0 across
 # the cohort's runs), so an owner whose bulks run past it sets their host's
-# own. The library takes a number from 1 to 99 with at most two decimals. A
+# own. The library takes a number from 1 to 99.99, at most two decimals. A
 # held step takes a group's few packages, and keeps the whole dry run's wall
 # time as its own.
 BULK_FACTOR=$KNOB_BULK_FACTOR
