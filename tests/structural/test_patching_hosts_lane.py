@@ -57,6 +57,7 @@ tailscale in the host's own blacklist, the bulk failed on it, nothing
 upgraded.
 """
 
+import json
 import subprocess
 
 import pytest
@@ -382,7 +383,7 @@ def test_the_probes_dry_run_counts_the_maintenance_lane(tmp_path):
 @pytest.mark.parametrize(
     "args, message",
     [
-        (["--lane", "maintenance"], "it goes with --dry-run-into"),
+        (["--lane", "monthly"], "--lane takes security, maintenance or origin:"),
         (
             ["--lane", "monthly", "--dry-run-into", "d"],
             "--lane takes security, maintenance or origin:",
@@ -398,6 +399,53 @@ def test_the_probes_lane_is_a_dry_runs(args, message):
     )
     assert r.returncode == 2
     assert message in r.stderr
+
+
+# #593: the after reading (reboot-and-record.md section 7) is a refresh with
+# no dry run, and a maintenance run passes it the lane it gave the rest. The
+# lane scopes only the dry run, so without one it's ignored with a warning,
+# never an exit 2 that costs the run a re-run.
+@pytest.mark.parametrize(
+    "mode",
+    [["--refresh-into"], [], ["--post-boot"]],
+    ids=["refresh", "plain", "post-boot"],
+)
+def test_a_lane_without_a_dry_run_is_ignored_with_a_warning(tmp_path, mode):
+    def probe(lane: list[str]) -> dict:
+        where = tmp_path / ("lane" if lane else "none")
+        where.mkdir()
+        host = ProbeHost(where).knob("class production\nposture scheduled\n" + ORIGINS)
+        host.apt_update()
+        refresh = mode == ["--refresh-into"]
+        args = [*mode, str(host.tmp / "fresh")] if refresh else mode
+        out = host.run(*args, *lane)
+        out["stderr"] = host.result.stderr
+        # Where each run's own tree and scratch directory sit.
+        return json.loads(json.dumps(out).replace(str(host.tmp), "<tmp>"))
+
+    laned = probe(["--lane", "maintenance"])
+    plain = probe([])
+    assert "--lane scopes only the dry run" in laned["stderr"]
+    assert "--lane" not in plain["stderr"]
+    del laned["stderr"], plain["stderr"]
+    assert laned == plain
+    if "pending" in laned:
+        assert laned["pending"]["dry_run"] is None
+
+
+def test_the_after_reading_is_documented_as_taking_no_lane():
+    # #593: the usage text and section 7, where the after reading is taken.
+    r = subprocess.run(
+        ["bash", str(SKILL / "scripts" / "probe.sh"), "--help"],
+        capture_output=True,
+        text=True,
+        env=clean_env(),
+    )
+    lane = r.stdout.split("  --lane LANE")[1].split("\n  --")[0]
+    assert "the after reading takes none" in " ".join(lane.split())
+    record = (SKILL / "references" / "reboot-and-record.md").read_text()
+    section = record.split("## 7. The record")[1].split("\n## ")[0]
+    assert "takes no `--lane`" in section
 
 
 @pytest.mark.parametrize("script", ["probe.sh", "apply.sh"])
