@@ -27,7 +27,8 @@ if [[ "${1:-}" == "--help" ]]; then
   echo "A primary git refuses (\"dubious ownership\") is exit 2, never this"
   echo "checkout. A bare primary has no checkout, so there this one is the"
   echo "repo root. A primary whose .git is a file (git init --separate-git-dir)"
-  echo "is known only from inside it: from its linked worktrees, exit 2."
+  echo "is known only from inside it (git >= 2.31): from its linked worktrees,"
+  echo "exit 2, and below 2.31 from the primary too."
   echo ""
   echo "Exit codes:"
   echo "  0  Resolution succeeded"
@@ -95,14 +96,18 @@ fi
 #      submodule's own checkout, or a primary whose .git is a pointer file
 #      (`git init --separate-git-dir`), whose common dir's parent is no
 #      checkout. Set R's test (CR 1892), which needs git 2.31: below that a
-#      submodule's checkout still lands in 3, and that primary is exit 2.
+#      submodule's checkout still lands in 3, and that primary is exit 2
+#      saying git is too old (CR 1990).
 #   2. A bare primary (a `bare` line in the first `git worktree list` block)
 #      has no checkout, so the current one is the project (set T, CR 1839).
 #   3. The candidate is inside a git dir: a submodule's linked worktree, #203.
-# Past those, exit 2. Where the candidate's .git is the common dir, the
-# primary is there and git refused it: git is asked again for its reason.
-# Anywhere else this is a linked worktree of a --separate-git-dir primary,
-# which git knows no path to, so the message says to run from the primary.
+# Anything else is exit 2. Where the candidate's .git, or its gitfile's
+# target, is the common dir, the primary is there and git refused it: that
+# is asked before 2, since a `.bare` store is bare too, and git is asked
+# again for its reason. Anywhere else this is a linked worktree of a primary
+# git knows no path to (a --separate-git-dir or symlinked .git), or git
+# refused the candidate, which hides a submodule's linked worktree too: the
+# message carries git's reason and says to run from the primary.
 if ! COMMON_DIR=$(here_git rev-parse --git-common-dir) ||
   ! COMMON_DIR=$(cd "$COMMON_DIR" && pwd -P); then
   echo "ERROR: could not resolve this checkout's git common dir (the reason is above)" >&2
@@ -125,22 +130,45 @@ else
     exit 2
   }
   PRIMARY_BLOCK=${WT_LIST%%$'\n\n'*}
+  # The candidate's .git: a directory, or a gitfile's `gitdir:` read against
+  # the candidate, as `<dir>/.git` naming `./.bare` is (CR 1988).
+  CANDIDATE_GIT="$CANDIDATE/.git"
+  if [[ -f "$CANDIDATE_GIT" ]]; then
+    GITFILE=""
+    { IFS= read -r GITFILE <"$CANDIDATE_GIT"; } 2>/dev/null || true
+    GITFILE=${GITFILE#gitdir: }
+    case $GITFILE in
+      /*) CANDIDATE_GIT=$GITFILE ;;
+      ?*) CANDIDATE_GIT="$CANDIDATE/$GITFILE" ;;
+    esac
+  fi
   if [[ -n "$DIRS" && "${DIRS%%$'\n'*}" == "${DIRS#*$'\n'}" ]]; then
     : # 1. the main worktree
-  elif [[ $'\n'"$PRIMARY_BLOCK"$'\n' == *$'\n'bare$'\n'* ]]; then
-    : # 2. a bare primary
-  elif [[ "$(here_git -C "$CANDIDATE" rev-parse --is-inside-git-dir 2>/dev/null)" == true ]]; then
-    : # 3. a submodule's linked worktree (#203)
-  elif [[ "$CANDIDATE/.git" -ef "$COMMON_DIR" ]]; then
-    # The primary is right there, and git would not answer for it.
+  elif [[ "$CANDIDATE_GIT" -ef "$COMMON_DIR" ]]; then
+    # The primary is right there, and git would not answer for it. Asked
+    # before the bare case (CR 1988): a `.bare` store with a `<dir>/.git`
+    # gitfile is bare too, and its knob is <dir>'s.
     WHY="git's reason is above"
     if here_git -C "$CANDIDATE" rev-parse --git-common-dir >/dev/null; then
       WHY="git names another common dir there"
     fi
     echo "ERROR: could not resolve the primary checkout '$CANDIDATE' ($WHY)" >&2
     exit 2
+  elif [[ $'\n'"$PRIMARY_BLOCK"$'\n' == *$'\n'bare$'\n'* ]]; then
+    : # 2. a bare primary
+  elif [[ "$(here_git -C "$CANDIDATE" rev-parse --is-inside-git-dir 2>/dev/null)" == true ]]; then
+    : # 3. a submodule's linked worktree (#203)
+  elif [[ "${DIRS%%$'\n'*}" == --path-format=absolute ]]; then
+    # Below 2.31 rev-parse echoes the option back at exit 0 (CR 1990), so
+    # case 1 cannot be told: run from the primary it is no answer either.
+    GIT_VERSION=$(here_git --version 2>/dev/null) || GIT_VERSION="git version (unknown)"
+    echo "ERROR: could not resolve the primary checkout: git ${GIT_VERSION#git version } predates 2.31, which this layout needs to tell its primary from a linked worktree: upgrade git, or set WORKTREE_ROOT" >&2
+    exit 2
   else
-    echo "ERROR: could not resolve the primary checkout: this repository's common dir '$COMMON_DIR' is no checkout's .git, as a primary whose .git is a file makes it (git init --separate-git-dir), and only that primary knows its work tree, so run this from the primary checkout" >&2
+    # Git's reason for the silent ask above, when it has one (CR 1991): a
+    # superproject git refuses lands here too, as no submodule at all.
+    here_git -C "$CANDIDATE" rev-parse --git-common-dir >/dev/null || true
+    echo "ERROR: could not resolve the primary checkout (git's reason, if any, is above): this repository's common dir '$COMMON_DIR' is no checkout's .git (as with \`git init --separate-git-dir\` or a symlinked \`.git\`), and only the primary knows its work tree, so run this from the primary checkout" >&2
     exit 2
   fi
 fi

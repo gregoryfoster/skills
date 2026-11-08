@@ -43,6 +43,7 @@ No API calls. Self-contained: each test builds a throwaway repo under tmp_path.
 """
 
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -489,19 +490,44 @@ class TestAGitFailureOnThePrimaryIsExit2:
         assert r.returncode == 0, r.stderr
         assert Path(r.stdout.strip()) == home / ".worktrees"
 
-    def test_a_dot_bare_layout_still_names_the_directory_holding_it(
-        self, tmp_path: Path, primary: Path
-    ):
-        """`<dir>/.bare` plus a `<dir>/.git` file naming it: `<dir>` shares the
-        common dir, so it is the project, as before #585."""
+    @staticmethod
+    def _dot_bare(tmp_path: Path, primary: Path) -> Path:
+        """`<dir>/.bare`, a `<dir>/.git` gitfile naming it, `<dir>/main` linked."""
         top = tmp_path.resolve() / "dx"
         top.mkdir()
         _git(tmp_path, "clone", "-q", "--bare", str(primary), str(top / ".bare"))
         (top / ".git").write_text("gitdir: ./.bare\n")
         _git(top, "worktree", "add", "-q", str(top / "main"), "main")
+        return top
+
+    def test_a_dot_bare_layout_still_names_the_directory_holding_it(
+        self, tmp_path: Path, primary: Path
+    ):
+        """`<dir>/.bare` plus a `<dir>/.git` file naming it: `<dir>` shares the
+        common dir, so it is the project, as before #585."""
+        top = self._dot_bare(tmp_path, primary)
         r = _run(RESOLVE, cwd=top / "main")
         assert r.returncode == 0, r.stderr
         assert Path(r.stdout.strip()) == top / ".worktrees"
+
+    def test_a_dot_bare_directory_git_refuses_is_exit_2(
+        self, tmp_path: Path, primary: Path
+    ):
+        """CR 1988: the store is bare, but `<dir>` holds the knob, and git
+        refusing `<dir>` had read as the bare case: the current checkout,
+        with `<dir>/.skills/worktree_root` unread at exit 0."""
+        top = self._dot_bare(tmp_path, primary)
+        (top / ".skills").mkdir()
+        (top / ".skills" / "worktree_root").write_text(str(top / "configured") + "\n")
+        main = top / "main"
+        r = _run_env(RESOLVE, main, layouts.different_owner(_clean_env(), main))
+        assert r.returncode == 2, (
+            f"expected exit 2, got {r.returncode}\n"
+            f"stdout: {r.stdout}\nstderr: {r.stderr}"
+        )
+        assert "dubious ownership" in r.stderr, r.stderr
+        assert f"'{top}'" in r.stderr, f"the error names <dir>: {r.stderr}"
+        assert r.stdout == ""
 
 
 class TestTheSeparateGitDirPrimary:
@@ -534,6 +560,65 @@ class TestTheSeparateGitDirPrimary:
         assert layouts.SEPARATE_GIT_DIR_HINT in r.stderr, r.stderr
         assert "run this from the primary checkout" in r.stderr, r.stderr
         assert r.stdout == "", f"a refusal prints no root: {r.stdout!r}"
+
+    @pytest.mark.parametrize("where", ["primary", "linked"])
+    def test_below_git_2_31_it_says_git_is_too_old(self, tmp_path: Path, where: str):
+        """CR 1990: git before 2.31 echoes `--path-format=absolute` back at
+        exit 0, so the primary cannot be told from a linked worktree. "Run
+        this from the primary checkout" was false from the primary itself.
+        A `git` shim plays 2.30 over the real one."""
+        real = shutil.which("git")
+        assert real, "git is on PATH"
+        shims = tmp_path.resolve() / "shims"
+        shims.mkdir()
+        shim = shims / "git"
+        shim.write_text(
+            "#!/usr/bin/env bash\n"
+            'if [ "$1" = --version ]; then echo "git version 2.30.6"; exit 0; fi\n'
+            "args=()\n"
+            "for a; do\n"
+            '  if [ "$a" = --path-format=absolute ]; then echo "$a"; else args+=("$a"); fi\n'
+            "done\n"
+            f'exec {real} "${{args[@]}}"\n'
+        )
+        shim.chmod(0o755)
+        primary, linked = layouts.separate_git_dir(tmp_path.resolve() / "l", None)
+        env = _clean_env()
+        env["PATH"] = f"{shims}{os.pathsep}{env['PATH']}"
+        r = _run_env(RESOLVE, primary if where == "primary" else linked, env)
+        assert r.returncode == 2, r.stdout + r.stderr
+        assert "git 2.30.6 predates 2.31, which this layout needs" in r.stderr, r.stderr
+        assert "set WORKTREE_ROOT" in r.stderr, r.stderr
+        assert "run this from the primary checkout" not in r.stderr, r.stderr
+
+
+class TestTheRefusalCarriesGitsReason:
+    """CR 1991: the last refusal blamed `--separate-git-dir` and dropped
+    git's reason, which was false for a symlinked `.git`, and for a
+    submodule's linked worktree whose superproject git refuses: that one
+    is exit 2 now (#585's rule: a git failure is exit 2), no longer #203's
+    nest, and git's reason says why."""
+
+    def test_a_superproject_git_refuses(self, tmp_path: Path):
+        wt = layouts.submodule_linked(tmp_path.resolve(), "direct\n").resolve()
+        r = _run_env(RESOLVE, wt, layouts.different_owner(_clean_env(), wt))
+        assert r.returncode == 2, r.stdout + r.stderr
+        assert "dubious ownership" in r.stderr, r.stderr
+        assert r.stdout == ""
+
+    def test_a_symlinked_git_dir_names_that_layout(self, tmp_path: Path, primary: Path):
+        store = tmp_path.resolve() / "store" / "repo.git"
+        store.parent.mkdir()
+        (primary / ".git").rename(store)
+        (primary / ".git").symlink_to(store)
+        linked = tmp_path.resolve() / "linked"
+        _git(primary, "worktree", "add", "-q", "-b", "l", str(linked))
+        r = _run(RESOLVE, cwd=linked)
+        assert r.returncode == 2, r.stdout + r.stderr
+        assert "symlinked `.git`" in r.stderr, r.stderr
+        assert "not a git repository" in r.stderr, f"git's reason: {r.stderr}"
+        assert "run this from the primary checkout" in r.stderr, r.stderr
+        assert r.stdout == ""
 
 
 class TestAnInheritedGitDir:

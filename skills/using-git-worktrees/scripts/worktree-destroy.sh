@@ -203,6 +203,16 @@ PROJECT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || {
 }
 cd "$PROJECT_ROOT"
 
+# here_git <args>: git for resolving the primary, without an inherited
+# GIT_DIR or GIT_WORK_TREE (#605, set R's CR 1895, 1903). Git exports GIT_DIR
+# to every hook, and it beats -C: asked for a submodule's work tree, git
+# named the entry itself, and the primary's knob read as absent. merge-mode.sh
+# holds the same rule. Each call answers for the checkout this runs in
+# (docs/STYLE.md, #189).
+here_git() {
+  env -u GIT_DIR -u GIT_WORK_TREE git "$@"
+}
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT=$(bash "$SCRIPT_DIR/resolve-worktree-root.sh") || {
   echo "ERROR: failed to resolve worktree root" >&2
@@ -413,7 +423,7 @@ if [[ $DESCOPED -eq 0 ]]; then
     # destroying from its own orchestrate/<topic> worktree read nothing here
     # and checked the merge against origin/HEAD or main instead. PROJECT_ROOT
     # stays the current checkout, which the self-destruction guard needs.
-    WT_LIST=$(git worktree list --porcelain) || {
+    WT_LIST=$(here_git worktree list --porcelain) || {
       echo "ERROR: failed to enumerate worktrees (git worktree list --porcelain)" >&2
       exit 2
     }
@@ -425,16 +435,31 @@ if [[ $DESCOPED -eq 0 ]]; then
     # asked for its work tree (a submodule's via core.worktree). That ask
     # failing is exit 2, never a fallback (CR 1858): "dubious ownership"
     # silently read the current linked worktree's knob instead.
+    # One exception, which is no other checkout (#605, set R's CR 1892): a
+    # primary whose .git is a pointer file (`git init --separate-git-dir`)
+    # lists its store, which names no work tree. From that primary itself,
+    # the work tree is this one: its git dir is the common dir. From a linked
+    # worktree git knows no path to it, so that stays exit 2, and says so.
     PRIMARY_BLOCK=${WT_LIST%%$'\n\n'*}
     PRIMARY_ENTRY=${PRIMARY_BLOCK%%$'\n'*}
     PRIMARY_ENTRY=${PRIMARY_ENTRY#worktree }
     case $'\n'"$PRIMARY_BLOCK"$'\n' in
       *$'\n'bare$'\n'*) PRIMARY=$PROJECT_ROOT ;;
       *)
-        PRIMARY=$(git -C "$PRIMARY_ENTRY" rev-parse --show-toplevel) || {
-          echo "ERROR: could not resolve the primary checkout '$PRIMARY_ENTRY' (git's reason is above), so its .skills/default_branch cannot be read" >&2
-          exit 2
-        }
+        if ! PRIMARY=$(here_git -C "$PRIMARY_ENTRY" rev-parse --show-toplevel 2>/dev/null); then
+          DIRS=$(here_git rev-parse --path-format=absolute --git-dir --git-common-dir 2>/dev/null) || DIRS=""
+          if [[ -z "$DIRS" || "${DIRS%%$'\n'*}" != "${DIRS#*$'\n'}" ]] ||
+            ! PRIMARY=$(here_git rev-parse --show-toplevel 2>/dev/null); then
+            # Asked again for git's reason, which goes to stderr.
+            here_git -C "$PRIMARY_ENTRY" rev-parse --show-toplevel >/dev/null || true
+            HINT=""
+            if [[ "$(here_git -C "$PRIMARY_ENTRY" rev-parse --is-inside-git-dir 2>/dev/null)" == true ]]; then
+              HINT="; it is a git dir with no work tree, as a primary whose .git is a file makes it (git init --separate-git-dir), and only that primary knows its work tree, so run this from the primary checkout"
+            fi
+            echo "ERROR: could not resolve the primary checkout '$PRIMARY_ENTRY' (git's reason is above), so its .skills/default_branch cannot be read$HINT" >&2
+            exit 2
+          fi
+        fi
         ;;
     esac
     BASE=""
