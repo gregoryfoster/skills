@@ -1,14 +1,18 @@
 # Stack: PHP / WordPress
 
 Applies when `pre-ship.sh` reports `framework php`: a `composer.json` at the
-root, or one level under `themes/` or `plugins/`. The checks are the composer
-toolchain's (see [gate-topology.md](gate-topology.md)): `composer validate`
-at each `composer.json`, `php -l` on every tracked PHP file, and
-`composer test` when the project defines it. A repo that also has a
-`package.json` at the root, or a tracked one one level under `themes/` or
-`plugins/`, gets its npm scripts too. A theme vendored as a git submodule
-counts once it is checked out; a theme directory that is a symlink does
-not, though composer follows the link.
+root, or a tracked one one level under `themes/` or `plugins/`. The checks
+are the composer toolchain's (see [gate-topology.md](gate-topology.md)):
+`composer validate` at each of those `composer.json` files, `php -l` on
+every tracked PHP file, and `composer test` when the project defines it. A
+repo that also has a `package.json` at the root, or a tracked one one level
+under `themes/` or `plugins/`, gets its npm scripts too. A nested manifest
+counts only when git tracks it, so a gitignored plugin that composer
+installs is neither validated nor run
+([#588](https://github.com/gregoryfoster/skills/issues/588)). A theme
+vendored as a git submodule, or a theme directory that is a symlink, is
+not this repo's code, and neither of its manifests counts: a submodule's
+code is its own repo's to gate.
 
 ## Lint workers
 

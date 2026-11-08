@@ -219,6 +219,16 @@ class TestToolchains:
         assert "web/app/" in bedrock, bedrock
         assert "composer.json" in bedrock and "package.json" in bedrock, bedrock
 
+    def test_the_php_reference_states_the_tracked_only_rule(self):
+        """#588: stack-php.md said a submodule theme counts once checked out,
+        and that composer follows a symlinked theme. Neither holds now."""
+        php = (SCRIPT.parents[1] / "references" / "stack-php.md").read_text()
+        intro = " ".join(php.split("\n## ", 1)[0].split())
+        assert "A nested manifest counts only when git tracks it" in intro
+        assert "a submodule's code is its own repo's to gate" in intro
+        assert "composer follows" not in intro
+        assert "counts once it is checked out" not in intro
+
     @pytest.mark.parametrize("ignored", [True, False])
     def test_a_nested_npm_manifest_git_does_not_track_is_not_one(self, repo, ignored):
         """CR 1844: a plugin composer installs is gitignored, and its
