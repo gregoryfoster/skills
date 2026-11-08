@@ -246,9 +246,10 @@ def test_candidates_are_host_local_lookalikes_only(host):
     assert not names & found_units
 
 
-def test_observo_is_by_hand(host):
+def test_558_observo_is_no_longer_by_hand(host):
+    # observo#705 retired its cache units: nothing is left to list by hand.
     out = check(host)
-    assert [b for b in out["by_hand"] if b["repo"] == "observo"]
+    assert not [b for b in out["by_hand"] if b["repo"] == "observo"]
 
 
 def test_gc_report_from_a_file(host, tmp_path):

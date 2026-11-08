@@ -4,8 +4,8 @@
 `scripts/_retire_scan.py` is the list retire-check.sh matches a host against.
 A host retirement added to one and not the other is either never found or
 never explained, so each entry must be in both, by repo and implementation,
-and an entry the script can only leave to the operator must say "by hand" in
-the doc.
+an entry the script can only leave to the operator must say "by hand" in the
+doc, and one its repo has already retired must say "retired" (#558).
 """
 
 import importlib.util
@@ -66,12 +66,46 @@ def test_each_by_hand_entry_says_so_in_the_doc():
         )
 
 
+def test_each_retired_entry_says_so_in_the_doc():
+    """#558: an entry whose tool its repo has already retired is matched by
+    nothing; the doc's row says "retired" where the match would be, and names
+    the issue the script's note names."""
+    rows = doc_rows()
+    for repo, entry, note in scan_module().RETIRED:
+        hits = [r for r in rows if r[0] == repo and r[2] == "retired"]
+        assert hits, f"{repo} {entry} must read 'retired' in {DOC.name}"
+        issue = re.search(r"\w+/[\w-]+#\d+", note)
+        assert issue, f"the script's note for {repo} names no issue: {note!r}"
+        assert issue[0] in hits[0][3], (
+            f"{DOC.name}'s {repo} row doesn't name {issue[0]}, as the script does"
+        )
+
+
+def test_558_observo_reads_as_retired_in_both_copies():
+    """#558: observo's cache units had fixed names all along, so "no fixed
+    name to match" was never true; and CannObserv/observo#705 retired them
+    when observo adopted the canonical GC. Its row is retired, in the doc and
+    the script alike, and names no unit: observo is a private repo."""
+    module = scan_module()
+    assert "observo" not in {repo for repo, _, _ in module.BY_HAND}
+    (note,) = [n for repo, _e, n in module.RETIRED if repo == "observo"]
+    assert "CannObserv/observo#705" in note
+    assert "no fixed" not in note
+    (row,) = [r for r in doc_rows() if r[0] == "observo"]
+    assert row[2] == "retired", row
+    assert "CannObserv/observo#705" in row[3], row
+    assert "no fixed name" not in " | ".join(row), row
+
+
 def test_each_doc_row_is_in_the_script():
     module = scan_module()
     scripted = {(repo, entry) for repo, entry, _ in module.RETIRE_LIST}
     by_hand = {repo for repo, _, _ in module.BY_HAND}
+    retired = {repo for repo, _, _ in module.RETIRED}
     for row in doc_rows():
         if row[0] in by_hand and "by hand" in row[2]:
+            continue
+        if row[0] in retired and row[2] == "retired":
             continue
         entry = re.sub(r"^scripts/", "", row[1].strip("`"))
         assert (row[0], entry) in scripted, (
