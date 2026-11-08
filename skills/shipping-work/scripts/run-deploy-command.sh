@@ -128,8 +128,9 @@ read_command_knob "$KNOB"
 
 SHA=$(git rev-parse --verify HEAD) || die "git rev-parse HEAD failed"
 
-MODE=$(bash "$SCRIPT_DIR/merge-mode.sh") || die "could not read .skills/merge_mode (merge-mode.sh's reason is above); nothing ran"
-if [ "$MODE" = pr ]; then
+# DEFAULT := the default branch: .skills/default_branch (from the primary
+# checkout), then origin's HEAD, then main, as worktree-destroy.sh resolves it.
+resolve_default() {
   DEFAULT=""
   DB_KNOB="$PRIMARY/.skills/default_branch"
   if [ -e "$DB_KNOB" ] || [ -L "$DB_KNOB" ]; then
@@ -148,6 +149,11 @@ if [ "$MODE" = pr ]; then
     esac
   fi
   [ -n "$DEFAULT" ] || DEFAULT=main
+}
+
+MODE=$(bash "$SCRIPT_DIR/merge-mode.sh") || die "could not read .skills/merge_mode (merge-mode.sh's reason is above); nothing ran"
+if [ "$MODE" = pr ]; then
+  resolve_default
   REMEDY="in the main checkout, git switch $DEFAULT && git pull --ff-only, then re-run"
   CURRENT=$(git symbolic-ref --quiet --short HEAD) ||
     die "HEAD is detached; merge_mode is pr, so only the default branch ($DEFAULT) is deployed, at the merge: $REMEDY"
@@ -155,8 +161,18 @@ if [ "$MODE" = pr ]; then
     die "HEAD is on $CURRENT; merge_mode is pr, so only the default branch ($DEFAULT) is deployed, at the merge, never a branch's tip: $REMEDY"
 fi
 
-UPSTREAM=$(git rev-parse --verify '@{u}') ||
+# No upstream on the default branch is a tracking gap, not unpushed code
+# (CR 2009, #587): `git clone --bare` sets no upstream and no fetch refspec,
+# so a bare layout's default branch has no @{u} even after the post-merge
+# pull. Off the default branch it is a branch nobody pushed.
+if ! UPSTREAM=$(git rev-parse --verify '@{u}'); then
+  CURRENT=$(git symbolic-ref --quiet --short HEAD) || CURRENT=""
+  resolve_default
+  if [ -n "$CURRENT" ] && [ "$CURRENT" = "$DEFAULT" ]; then
+    die "HEAD ($DEFAULT, the default branch) has no upstream, which a bare clone never sets: git fetch origin && git branch --set-upstream-to=origin/$DEFAULT, then re-run (with no remote.origin.fetch, first: git config remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*')"
+  fi
   die "HEAD has no upstream to compare with: push it first (Step 4)"
+fi
 [ "$SHA" = "$UPSTREAM" ] ||
   die "HEAD ($SHA) is not what was pushed (upstream is $UPSTREAM): push first (Step 4). Only pushed code is deployed"
 

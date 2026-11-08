@@ -106,14 +106,20 @@ refusal.
 Started by "ship it" once `gh pr view` shows `MERGED`:
 
 1. **Move to the main checkout,** the work tree of the first row of `git
-   worktree list`. Run `git switch <default>`, then `git pull --ff-only`. If
-   the pull refuses, the local default branch has commits of its own: stop
-   and report. Don't merge or rebase them. A first row marked `(bare)` is a
-   bare repository, with no work tree to switch in
+   worktree list`. Run `git switch <default>`, then `git pull --ff-only`. Only
+   a pull that refuses to fast-forward means the local default branch has
+   commits of its own: stop and report. Don't merge or rebase them. A first
+   row marked `(bare)` is a bare repository, with no work tree to switch in
    ([#587](https://github.com/gregoryfoster/skills/issues/587)). There the
    main checkout is the linked worktree that holds the default branch, the
    row ending `[<default>]`: pull in it. If no worktree holds it, stop and
    ask which checkout is deployed. Don't add one, since no unit runs from it.
+   A bare clone sets no upstream. If the pull says "There is no tracking
+   information", or step 2 says the default branch has no upstream, run
+   `git fetch origin` and `git branch --set-upstream-to=origin/<default>`,
+   pull again, and report it. When `git config --get remote.origin.fetch`
+   prints nothing, first run `git config remote.origin.fetch
+   '+refs/heads/*:refs/remotes/origin/*'`.
    A primary made with `git init --separate-git-dir` lists its store there,
    which names no work tree: ask where the primary checkout is
    ([#605](https://github.com/gregoryfoster/skills/issues/605)).

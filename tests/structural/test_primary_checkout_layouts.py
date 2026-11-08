@@ -488,3 +488,68 @@ def test_each_help_names_the_run_from_the_primary_exit_2(script):
         "From a linked worktree of a --separate-git-dir primary: run from the"
         " primary checkout"
     ) in text, text
+
+
+# CR 2009 (#587): `git clone --bare` sets no upstream, and no fetch refspec,
+# so after the post-merge pass's pull the default branch in a bare layout has
+# no @{u}. run-deploy-command.sh then said "push it first (Step 4)", which is
+# the wrong remedy: the code is pushed, and only the tracking is missing.
+# These fixtures skip _pushed on purpose: it sets the tracking by hand, which
+# hides the case.
+
+UPSTREAM_REMEDY = "git branch --set-upstream-to=origin/main"
+
+
+def _bare_home_unpushed(tmp_path: Path, mode: str | None) -> Path:
+    text = _knob_text("run-deploy-command.sh", tmp_path)
+    home = layouts.bare_home(tmp_path / "l", text, name="deploy_command")
+    if mode is not None:
+        layouts.knob(home, f"{mode}\n")
+    return home
+
+
+@pytest.mark.parametrize("mode", [None, "pr"], ids=["direct", "pr"])
+@pytest.mark.parametrize("check", [False, True], ids=["run", "check"])
+def test_a_bare_clones_default_branch_gets_the_set_upstream_remedy(
+    tmp_path, mode, check
+):
+    home = _bare_home_unpushed(tmp_path, mode)
+    record = tmp_path / "record"
+    args = ["--check"] if check else []
+    result = subprocess.run(
+        ["bash", str(SCRIPTS / "run-deploy-command.sh"), *args],
+        cwd=home,
+        capture_output=True,
+        text=True,
+        env={**_env(), "STUB_RECORD": str(record)},
+        timeout=60,
+    )
+    _assert_nothing_read("run-deploy-command.sh", result, record)
+    assert UPSTREAM_REMEDY in result.stderr, result.stderr
+    assert "push it first" not in result.stderr, result.stderr
+
+
+def test_the_set_upstream_remedy_works_as_written(tmp_path):
+    """The remedy, run as the message words it, leaves a checkout the
+    deploy accepts: a plain bare clone needs the fetch refspec first."""
+    home = _bare_home_unpushed(tmp_path, None)
+    assert layouts.git(home, "config", "--default", "", "remote.origin.fetch") == ""
+    layouts.git(
+        home, "config", "remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*"
+    )
+    layouts.git(home, "fetch", "-q", "origin")
+    layouts.git(home, "branch", "--set-upstream-to=origin/main")
+    record = tmp_path / "record"
+    result = _run_with("run-deploy-command.sh", home, record)
+    _assert_read_from("run-deploy-command.sh", result, record, home)
+
+
+def test_a_feature_branch_with_no_upstream_is_still_told_to_push(tmp_path):
+    """Off the default branch, a missing upstream is an unpushed branch."""
+    home = _bare_home_unpushed(tmp_path, None)
+    layouts.git(home, "switch", "-q", "-c", "feature/y")
+    record = tmp_path / "record"
+    result = _run_with("run-deploy-command.sh", home, record)
+    _assert_nothing_read("run-deploy-command.sh", result, record)
+    assert "push it first (Step 4)" in result.stderr, result.stderr
+    assert UPSTREAM_REMEDY not in result.stderr, result.stderr

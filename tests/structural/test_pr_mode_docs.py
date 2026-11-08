@@ -157,3 +157,15 @@ def test_the_post_merge_pass_can_be_followed_from_a_bare_primary():
     assert "(bare)" in step, step
     assert "the linked worktree that holds the default branch" in step, step
     assert "If no worktree holds it, stop" in step, step
+
+
+def test_a_bare_clones_missing_upstream_is_set_not_read_as_local_commits():
+    """CR 2009: `git clone --bare` sets no upstream and no fetch refspec, so
+    the pull says "There is no tracking information", or step 2's deploy
+    says there is no upstream. Neither means local commits: only a refusal
+    to fast-forward does. The step names the commands that set it."""
+    step = _post_merge_step_1()
+    assert "Only a pull that refuses to fast-forward" in step, step
+    assert "There is no tracking information" in step, step
+    assert "git branch --set-upstream-to=origin/<default>" in step, step
+    assert "'+refs/heads/*:refs/remotes/origin/*'" in step, step
