@@ -10,9 +10,13 @@ under `themes/` or `plugins/`, gets its npm scripts too. A nested manifest
 counts only when git tracks it, so a gitignored plugin that composer
 installs is neither validated nor run
 ([#588](https://github.com/gregoryfoster/skills/issues/588)). A theme
-vendored as a git submodule, or a theme directory that is a symlink, is
-not this repo's code, and neither of its manifests counts: a submodule's
-code is its own repo's to gate.
+vendored as a git submodule is its own repo, and neither of its manifests
+counts: a submodule's code is its own repo's to gate. A theme directory
+that is a symlink is one link to git, so nothing under it is listed
+either. Its files are checked where git tracks them: its PHP is linted
+there, but a `composer.json` under `web/app/` is not validated, since
+neither reach searches there (the Bedrock question below, and
+[gate-topology.md](gate-topology.md) row 18).
 
 ## Lint workers
 

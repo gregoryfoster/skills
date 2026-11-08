@@ -176,7 +176,8 @@ class TestToolchains:
     def test_a_symlinked_theme_directory_is_neither(self, repo, tmp_path):
         """git tracks a theme directory that is a symlink as one link, and
         lists nothing under it. composer's filesystem glob used to follow it;
-        both listers now agree that it is not this repo's code."""
+        both listers now stop at the link. Its files are checked where git
+        tracks them, if anywhere (CR 2004, and stack-php.md)."""
         elsewhere = tmp_path / "elsewhere"
         elsewhere.mkdir()
         (elsewhere / "composer.json").write_text("{}\n")
@@ -230,6 +231,10 @@ class TestToolchains:
         assert "a submodule's code is its own repo's to gate" in intro
         assert "composer follows" not in intro
         assert "counts once it is checked out" not in intro
+        # CR 2004: an in-repo symlinked theme is the repo's own code; the
+        # reference states the mechanism instead of calling it someone else's.
+        assert "is a symlink is one link to git" in intro, intro
+        assert "is not this repo's code" not in intro, intro
 
     @pytest.mark.parametrize("ignored", [True, False])
     def test_a_nested_npm_manifest_git_does_not_track_is_not_one(self, repo, ignored):
