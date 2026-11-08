@@ -4,24 +4,27 @@
 nothing reported a window that closed with no run: co-processor's weekly
 window passed unattended (2026-11-03), and wslcb-licensing-tracker's four
 Tuesday windows did, 2026-10-13 to 11-03, while 51 security packages piled
-up. The probe now reads the last run from local facts only, the newest
-`/var/backups/patching-hosts-<UTC>` directory and the marker a run with
-nothing pending writes, and counts the weekday and `#N` windows that have
-closed since.
+up. The probe now reads the last run from local facts only: a run
+directory's bulk line or reboot chain, a directory its retention emptied by
+its name, or the marker a run that left no bulk record writes. It counts
+the weekday and `#N` windows that have closed since, each only once it opens
+most of a period after the last run, and the periods missed.
 
 What this file pins:
 
 - wslcb's case: weekly by default, `window Tue 05:00-10:00`, the last run
-  directory 2026-10-06, now 2026-11-03T12:47Z: overdue, 4 windows missed;
+  2026-10-06, now 2026-11-03T12:47Z: overdue, 4 weeks missed;
 - co-processor's: the last run a week earlier, now just after this
   Tuesday's window closed: overdue, 1 missed;
-- a window still open, or a dated one that closed, is no miss;
-- no run directory and no marker is `cadence:no-run`, never "not overdue";
-- a marker newer than the newest run directory is the last run, and one
-  that doesn't parse is ignored and named in not_read;
-- `monthly` counts a closed `#N` window, and a plain weekday window only
-  once it opens more than 31 days after the last run;
-- `automatic` has no window to miss;
+- a window still open, or a dated one that closed, is no miss, and window
+  lines are alternatives (CR 1957);
+- no run on record is `cadence:no-run`, never "not overdue";
+- what dates a run directory, and what's no run or unread (CR 1956, 1969,
+  1971, 1972);
+- a marker newer than the newest run is the last run; one that doesn't
+  parse, or a stamp past the clock, is ignored and named in not_read, and
+  one within the hour past it is taken as now (CR 1960, 1970);
+- `monthly`'s floors; `automatic` has no window to miss;
 - an exception covers `cadence:overdue`.
 
 "Now" is the probe's clock, `date +%s`, which the stub answers: `--today`
@@ -461,3 +464,142 @@ def test_a_root_only_marker_is_read_as_root(tmp_path):
     assert c["windows_missed"] == 0
     if os.geteuid() != 0:
         assert [c for c in h.calls("sudo") if "patching-hosts-last-reading" in c[1]]
+
+
+# --- CR 1969: a directory its retention emptied ------------------------------
+
+
+def test_a_directory_its_retention_emptied_still_dates_the_run(tmp_path):
+    # recovery-point.sh says to delete every file in the run on its retention
+    # date: the empty directory left is dated by its name, within the day
+    # the bulk allows its recovery point.
+    h = ClockHost(tmp_path).knob(WEEKLY_TUE)
+    h.run_dir("20261006T070000Z")
+    out = h.at("2026-11-03T12:47").run()
+    c = out["updates"]["cadence"]
+    assert c["last_run"] == "2026-10-06T07:00:00Z"
+    assert (c["windows_missed"], c["periods_missed"]) == (4, 4)
+    assert "cadence:overdue" in _ids(out)
+
+
+def test_an_emptied_directory_newer_than_a_full_one_is_the_last_run(tmp_path):
+    h = ClockHost(tmp_path).knob(WEEKLY_TUE).ran("20260901T070000Z")
+    h.run_dir("20261006T070000Z")
+    out = h.at("2026-11-03T12:47").run()
+    c = out["updates"]["cadence"]
+    assert c["last_run_from"] == "/var/backups/patching-hosts-20261006T070000Z"
+    assert (c["windows_missed"], c["first_missed"]) == (4, "2026-10-13T05:00:00Z")
+
+
+# --- CR 1970: a stamp within the hour past the clock is now -------------------
+
+
+def test_a_chain_firing_just_past_the_clock_is_taken_as_now(tmp_path):
+    h = ClockHost(tmp_path).knob(WEEKLY_TUE_PM).ran("20261006T150000Z")
+    h.rebooted("20261103T203000Z", "2026-11-03T21:25:00Z")
+    out = h.at("2026-11-03T21:05").run()
+    c = out["updates"]["cadence"]
+    assert c["last_run"] == "2026-11-03T21:05:00Z"
+    assert c["last_run_from"] == "/var/backups/patching-hosts-20261103T203000Z"
+    assert c["windows_missed"] == 0
+    assert not [n for n in out["not_read"] if "patching-hosts-" in n]
+
+
+def test_a_marker_just_past_the_clock_is_taken_as_now(tmp_path):
+    h = ClockHost(tmp_path).knob(WEEKLY_TUE).ran("20261006T070000Z")
+    h.marker("20261103T130700Z\n")
+    out = h.at("2026-11-03T12:47").run()
+    c = out["updates"]["cadence"]
+    assert c["last_run"] == "2026-11-03T12:47:00Z"
+    assert c["last_run_from"] == "/var/backups/patching-hosts-last-reading"
+    assert c["windows_missed"] == 0
+    assert not [n for n in out["not_read"] if "patching-hosts-" in n]
+
+
+# --- CR 1971: a run's records are root's alone ---------------------------------
+
+
+class RootRecordHost(ClockHost):
+    """cat answers for a run's records as root would: on a host they're
+    0600 in a 0700 directory. Its fallback is the system's cat, which the
+    stubs' own case outputs reach too."""
+
+    STUBBED = (*ClockHost.STUBBED, "cat")
+    FALLBACKS = {
+        **ClockHost.FALLBACKS,
+        "cat": 'for d in /bin /usr/bin; do [ -x "$d/cat" ] && exec "$d/cat" "$@"; done; exit 127',
+    }
+
+
+@pytest.mark.parametrize(
+    "name, text, last",
+    [
+        ("steps", "bulk\tok\t1793719800\t300\t2048\n", "2026-11-03T15:30:00Z"),
+        (
+            "reboot-chain.unit",
+            "patching-hosts-reboot-x 2026-11-03T15:42:00Z\n",
+            "2026-11-03T15:42:00Z",
+        ),
+    ],
+    ids=["steps", "reboot-chain"],
+)
+def test_a_root_only_run_record_is_read_as_root(tmp_path, name, text, last):
+    h = RootRecordHost(tmp_path).knob(WEEKLY_TUE_PM)
+    rec = h.run_dir("20261103T140000Z") / name
+    rec.write_text(text)
+    rec.chmod(0o000)
+    h.on("cat", f"-- */{name}", text)
+    try:
+        out = h.at("2026-11-03T21:05").run()
+    finally:
+        rec.chmod(0o600)
+    assert out["updates"]["cadence"]["last_run"] == last
+    assert out["updates"]["cadence"]["windows_missed"] == 0
+    if os.geteuid() != 0:
+        assert [c for c in h.calls("sudo") if c[1].endswith(f"/{name}")]
+
+
+# --- CR 1972: a bulk cut off before it ended ----------------------------------
+
+
+def test_a_bulk_cut_off_before_it_recorded_its_step_leaves_the_count_unread(
+    tmp_path,
+):
+    # holds is written just before the bulk starts, and its steps line only
+    # once it ends: a bulk killed between them left the first alone.
+    h = ClockHost(tmp_path).knob(WEEKLY_TUE_PM).ran("20261006T150000Z")
+    d = h.run_dir("20261103T140000Z")
+    (d / "recovery-point").write_text("began 0\n")
+    (d / "holds").write_text("postgres postgresql-16\n")
+    out = h.at("2026-11-03T21:05").run()
+    c = out["updates"]["cadence"]
+    assert c["windows_missed"] is None
+    assert "holds" in c["unchecked_why"]
+    assert not [i for i in _ids(out) if i.startswith("cadence:")]
+    assert [n for n in out["not_read"] if "patching-hosts-20261103T140000Z" in n]
+
+
+# --- CR 1973: periods, not windows --------------------------------------------
+
+
+def test_daily_windows_miss_weeks_not_days(tmp_path):
+    days = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+    h = ClockHost(tmp_path).knob(
+        "posture scheduled\n" + "".join(f"window {d} 05:00-10:00\n" for d in days)
+    )
+    h.ran("20261006T070000Z")
+    out = h.at("2026-11-03T12:47").run()
+    c = out["updates"]["cadence"]
+    assert (c["periods_missed"], c["windows_missed"]) == (4, 22)
+    m = _finding(out, "cadence:overdue")["message"]
+    assert "4 weeks" in m and "22 windows" in m
+
+
+def test_a_missed_month_is_one_period(tmp_path):
+    h = ClockHost(tmp_path).knob(
+        "posture scheduled\ncadence monthly\nwindow Sun#2 08:00-12:00\n"
+    )
+    h.ran("20261011T090000Z")
+    out = h.at("2026-11-08T13:00").run()
+    assert out["updates"]["cadence"]["periods_missed"] == 1
+    assert "1 month " in _finding(out, "cadence:overdue")["message"]
