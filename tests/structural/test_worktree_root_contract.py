@@ -489,19 +489,44 @@ class TestAGitFailureOnThePrimaryIsExit2:
         assert r.returncode == 0, r.stderr
         assert Path(r.stdout.strip()) == home / ".worktrees"
 
-    def test_a_dot_bare_layout_still_names_the_directory_holding_it(
-        self, tmp_path: Path, primary: Path
-    ):
-        """`<dir>/.bare` plus a `<dir>/.git` file naming it: `<dir>` shares the
-        common dir, so it is the project, as before #585."""
+    @staticmethod
+    def _dot_bare(tmp_path: Path, primary: Path) -> Path:
+        """`<dir>/.bare`, a `<dir>/.git` gitfile naming it, `<dir>/main` linked."""
         top = tmp_path.resolve() / "dx"
         top.mkdir()
         _git(tmp_path, "clone", "-q", "--bare", str(primary), str(top / ".bare"))
         (top / ".git").write_text("gitdir: ./.bare\n")
         _git(top, "worktree", "add", "-q", str(top / "main"), "main")
+        return top
+
+    def test_a_dot_bare_layout_still_names_the_directory_holding_it(
+        self, tmp_path: Path, primary: Path
+    ):
+        """`<dir>/.bare` plus a `<dir>/.git` file naming it: `<dir>` shares the
+        common dir, so it is the project, as before #585."""
+        top = self._dot_bare(tmp_path, primary)
         r = _run(RESOLVE, cwd=top / "main")
         assert r.returncode == 0, r.stderr
         assert Path(r.stdout.strip()) == top / ".worktrees"
+
+    def test_a_dot_bare_directory_git_refuses_is_exit_2(
+        self, tmp_path: Path, primary: Path
+    ):
+        """CR 1988: the store is bare, but `<dir>` holds the knob, and git
+        refusing `<dir>` had read as the bare case: the current checkout,
+        with `<dir>/.skills/worktree_root` unread at exit 0."""
+        top = self._dot_bare(tmp_path, primary)
+        (top / ".skills").mkdir()
+        (top / ".skills" / "worktree_root").write_text(str(top / "configured") + "\n")
+        main = top / "main"
+        r = _run_env(RESOLVE, main, layouts.different_owner(_clean_env(), main))
+        assert r.returncode == 2, (
+            f"expected exit 2, got {r.returncode}\n"
+            f"stdout: {r.stdout}\nstderr: {r.stderr}"
+        )
+        assert "dubious ownership" in r.stderr, r.stderr
+        assert f"'{top}'" in r.stderr, f"the error names <dir>: {r.stderr}"
+        assert r.stdout == ""
 
 
 class TestTheSeparateGitDirPrimary:

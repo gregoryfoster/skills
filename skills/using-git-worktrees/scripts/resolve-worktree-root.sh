@@ -99,10 +99,11 @@ fi
 #   2. A bare primary (a `bare` line in the first `git worktree list` block)
 #      has no checkout, so the current one is the project (set T, CR 1839).
 #   3. The candidate is inside a git dir: a submodule's linked worktree, #203.
-# Past those, exit 2. Where the candidate's .git is the common dir, the
-# primary is there and git refused it: git is asked again for its reason.
-# Anywhere else this is a linked worktree of a --separate-git-dir primary,
-# which git knows no path to, so the message says to run from the primary.
+# Anything else is exit 2. Where the candidate's .git, or its gitfile's
+# target, is the common dir, the primary is there and git refused it: that
+# is asked before 2, since a `.bare` store is bare too, and git is asked
+# again for its reason. Anywhere else this is a linked worktree of a primary
+# git knows no path to, so the message says to run from the primary.
 if ! COMMON_DIR=$(here_git rev-parse --git-common-dir) ||
   ! COMMON_DIR=$(cd "$COMMON_DIR" && pwd -P); then
   echo "ERROR: could not resolve this checkout's git common dir (the reason is above)" >&2
@@ -125,20 +126,34 @@ else
     exit 2
   }
   PRIMARY_BLOCK=${WT_LIST%%$'\n\n'*}
+  # The candidate's .git: a directory, or a gitfile's `gitdir:` read against
+  # the candidate, as `<dir>/.git` naming `./.bare` is (CR 1988).
+  CANDIDATE_GIT="$CANDIDATE/.git"
+  if [[ -f "$CANDIDATE_GIT" ]]; then
+    GITFILE=""
+    { IFS= read -r GITFILE <"$CANDIDATE_GIT"; } 2>/dev/null || true
+    GITFILE=${GITFILE#gitdir: }
+    case $GITFILE in
+      /*) CANDIDATE_GIT=$GITFILE ;;
+      ?*) CANDIDATE_GIT="$CANDIDATE/$GITFILE" ;;
+    esac
+  fi
   if [[ -n "$DIRS" && "${DIRS%%$'\n'*}" == "${DIRS#*$'\n'}" ]]; then
     : # 1. the main worktree
-  elif [[ $'\n'"$PRIMARY_BLOCK"$'\n' == *$'\n'bare$'\n'* ]]; then
-    : # 2. a bare primary
-  elif [[ "$(here_git -C "$CANDIDATE" rev-parse --is-inside-git-dir 2>/dev/null)" == true ]]; then
-    : # 3. a submodule's linked worktree (#203)
-  elif [[ "$CANDIDATE/.git" -ef "$COMMON_DIR" ]]; then
-    # The primary is right there, and git would not answer for it.
+  elif [[ "$CANDIDATE_GIT" -ef "$COMMON_DIR" ]]; then
+    # The primary is right there, and git would not answer for it. Asked
+    # before the bare case (CR 1988): a `.bare` store with a `<dir>/.git`
+    # gitfile is bare too, and its knob is <dir>'s.
     WHY="git's reason is above"
     if here_git -C "$CANDIDATE" rev-parse --git-common-dir >/dev/null; then
       WHY="git names another common dir there"
     fi
     echo "ERROR: could not resolve the primary checkout '$CANDIDATE' ($WHY)" >&2
     exit 2
+  elif [[ $'\n'"$PRIMARY_BLOCK"$'\n' == *$'\n'bare$'\n'* ]]; then
+    : # 2. a bare primary
+  elif [[ "$(here_git -C "$CANDIDATE" rev-parse --is-inside-git-dir 2>/dev/null)" == true ]]; then
+    : # 3. a submodule's linked worktree (#203)
   else
     echo "ERROR: could not resolve the primary checkout: this repository's common dir '$COMMON_DIR' is no checkout's .git, as a primary whose .git is a file makes it (git init --separate-git-dir), and only that primary knows its work tree, so run this from the primary checkout" >&2
     exit 2
