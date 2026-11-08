@@ -1590,12 +1590,15 @@ read_tailscale() {
 # /var/backups/patching-hosts-<UTC>, is named for when it was made, which on
 # a datastore host is the recovery point's start, before the window (CR
 # 1956). So a directory dates a run by the bulk's own line in its steps,
-# which apply.sh appends once the bulk has started, with that start; or, for
-# a reboot-only run, whose directory is made by hand, by the fire time
+# which apply.sh appends when the bulk step ends, dated by its start; or,
+# for a reboot-only run, whose directory is made by hand, by the fire time
 # reboot-chain.sh records in reboot-chain.unit. A directory with neither is
-# a recovery point whose bulk never started: no run. A run with nothing
-# pending writes the marker instead (run.md). The newest of them all is the
-# last run.
+# no run while it still holds the recovery point's files; one its retention
+# emptied, every file deleted, is dated by its name, within the day the bulk
+# allows its recovery point (CR 1969). One with holds and no bulk line is a
+# bulk cut off before it ended: unread, never no run (CR 1972). A run that
+# left no bulk record, one with nothing pending or one done by hand, writes
+# the marker instead (run.md). The newest of them all is the last run.
 RUN_MARKER=/var/backups/patching-hosts-last-reading
 # A stamp further past the probe's clock than this is a clock or a typo,
 # never the last run (CR 1960); one within it is taken as now.
@@ -1614,25 +1617,41 @@ stamp_epoch() {  # <var> <YYYYMMDDTHHMMSSZ>: VAR := its seconds since 1970, or e
 }
 
 # When the run in one directory took place: RUN_AT, or empty when it holds
-# no bulk line and no chain. RUN_UNREAD=1 when neither file could be looked
-# for: no root, and a directory the user can't enter.
-run_at() {  # <directory>
-  local _ra_o _ra_s _ra_r _ra_at _ra_rest _ra_u
-  RUN_AT="" RUN_UNREAD=0
-  capture _ra_o as_reader cat -- "$1/steps"
-  if [ "$CAP_RC" -eq 0 ]; then
-    while read -r _ra_s _ra_r _ra_at _ra_rest; do
-      if [ "$_ra_s" = bulk ] && [[ $_ra_at =~ ^[0-9]+$ ]]; then RUN_AT=$_ra_at; fi
-    done <<<"$_ra_o"
+# none. RUN_UNREAD says why it couldn't be told, or is empty.
+run_at() {  # <directory> <the epoch its name says>
+  local _ra_o _ra_ls _ra_s _ra_r _ra_at _ra_rest _ra_u _ra_f
+  RUN_AT="" RUN_UNREAD=""
+  capture _ra_ls as_reader ls -A -- "$1"
+  if [ "$CAP_RC" -ne 0 ]; then
+    RUN_UNREAD="its files can't be listed${CAP_ERR:+ ($CAP_ERR)}"
+    if [ "$P_PRIV" = none ]; then RUN_UNREAD="its files can't be listed without root"; fi
+    return 0
   fi
-  [ -z "$RUN_AT" ] || return 0
-  capture _ra_o as_reader cat -- "$1/reboot-chain.unit"
-  if [ "$CAP_RC" -eq 0 ]; then
-    read -r _ra_u _ra_at <<<"$_ra_o" || true
-    _ra_at=${_ra_at//[-:]/}
-    stamp_epoch RUN_AT "$_ra_at"
+  if [ -z "$_ra_ls" ]; then
+    RUN_AT=$2
+    return 0
   fi
-  if [ -z "$RUN_AT" ] && [ "$P_PRIV" = none ] && [ ! -x "$1" ]; then RUN_UNREAD=1; fi
+  for _ra_f in steps reboot-chain.unit; do
+    case $'\n'$_ra_ls$'\n' in *$'\n'$_ra_f$'\n'*) ;; *) continue ;; esac
+    capture _ra_o as_reader cat -- "$1/$_ra_f"
+    if [ "$CAP_RC" -ne 0 ]; then
+      RUN_UNREAD="its $_ra_f can't be read"
+      return 0
+    fi
+    if [ "$_ra_f" = steps ]; then
+      while read -r _ra_s _ra_r _ra_at _ra_rest; do
+        if [ "$_ra_s" = bulk ] && [[ $_ra_at =~ ^[0-9]+$ ]]; then RUN_AT=$_ra_at; fi
+      done <<<"$_ra_o"
+    else
+      read -r _ra_u _ra_at <<<"$_ra_o" || true
+      _ra_at=${_ra_at//[-:]/}
+      stamp_epoch RUN_AT "$_ra_at"
+    fi
+    [ -z "$RUN_AT" ] || return 0
+  done
+  case $'\n'$_ra_ls$'\n' in
+    *$'\n'holds$'\n'*) RUN_UNREAD="it holds the bulk's holds and no bulk line: a bulk cut off before it ended, whose start isn't recorded" ;;
+  esac
   return 0
 }
 
@@ -1647,15 +1666,16 @@ CADENCE_WEEK_S=$((6 * 86400)) CADENCE_MONTH_WEEK_S=$((21 * 86400)) CADENCE_MONTH
 R_CADENCE=""
 read_cadence() {
   local t e last="" from="" m="" r ws we len wd d os oe md missed="" first="" why="" recurring=0 iso floor unread=""
-  local -a f=()
+  local periods="" prev pfloor unit
+  local -a f=() opens=()
   for t in "$P_ROOT"/var/backups/patching-hosts-2*; do
     [ -d "$t" ] || continue
     stamp_epoch e "${t##*/patching-hosts-}"
     [ -n "$e" ] || continue
-    run_at "$t"
-    if [ "$RUN_UNREAD" -eq 1 ]; then
-      not_read "the run directory ${t#"$P_ROOT"}: its steps and reboot-chain.unit can't be read without root, so whether it holds a run, and when, is unknown"
-      unread="$unread ${t#"$P_ROOT"}"
+    run_at "$t" "$e"
+    if [ -n "$RUN_UNREAD" ]; then
+      not_read "the run directory ${t#"$P_ROOT"}: $RUN_UNREAD, so whether it holds a run, and when, is unknown"
+      unread="$unread ${t#"$P_ROOT"} ($RUN_UNREAD)"
       continue
     fi
     [ -n "$RUN_AT" ] || continue
@@ -1691,7 +1711,7 @@ read_cadence() {
   elif [ "$recurring" -eq 0 ]; then
     why="no weekday or #N window says when a run is due, and a dated window is a one-off"
   elif [ -n "$unread" ]; then
-    why="a run directory's records couldn't be read without root:$unread"
+    why="a run directory couldn't be read or dated:$unread"
   elif [ -z "$last" ]; then
     why="no run on record"
     finding unknown cadence:no-run "" "No run is on record: no /var/backups/patching-hosts-<UTC> directory holds a bulk that started or a reboot chain, and there's no $RUN_MARKER marker, so whether a $KNOB_CADENCE window was missed can't be read. A retention sweep that removed every run directory reads the same. Read the last run in the host's records; the next run records one again, and so does one with nothing pending, which writes the marker (run.md)."
@@ -1723,25 +1743,41 @@ read_cadence() {
           [ $(((md - 1) / 7 + 1)) -eq "${f[5]}" ] || continue
         fi
         missed=$((missed + 1))
+        opens+=("$os")
         if [ -z "$first" ] || [ "$os" -lt "$first" ]; then first=$os; fi
       done
     done
+    # The periods missed (CR 1973): windows are alternatives, so seven daily
+    # windows in a week are one week. A window opening more than a period's
+    # floor after the last one counted starts the next period.
+    periods=0 prev=""
+    pfloor=$CADENCE_WEEK_S
+    [ "$KNOB_CADENCE" != monthly ] || pfloor=$CADENCE_MONTH_WEEK_S
+    if [ "${#opens[@]}" -gt 0 ]; then
+      while read -r os; do
+        if [ -z "$prev" ] || [ "$os" -gt $((prev + pfloor)) ]; then periods=$((periods + 1)) prev=$os; fi
+      done < <(printf '%s\n' "${opens[@]}" | sort -n)
+    fi
   fi
   R_CADENCE=""
   jadds R_CADENCE cadence "$KNOB_CADENCE"
   iso_utc iso "$last"
   jaddsn R_CADENCE last_run "$iso"
   jaddsn R_CADENCE last_run_from "$from"
+  jaddn R_CADENCE periods_missed "$periods"
   jaddn R_CADENCE windows_missed "$missed"
   iso_utc iso "$first"
   jaddsn R_CADENCE first_missed "$iso"
   jaddsn R_CADENCE unchecked_why "$why"
-  if is_int "$missed" && [ "$missed" -gt 0 ]; then
-    local s=s lr fm
-    [ "$missed" -ne 1 ] || s=""
+  if is_int "$periods" && [ "$periods" -gt 0 ]; then
+    local s=s ws_=s lr fm
+    unit=week
+    [ "$KNOB_CADENCE" != monthly ] || unit=month
+    [ "$periods" -ne 1 ] || s=""
+    [ "$missed" -ne 1 ] || ws_=""
     iso_utc lr "$last"
     iso_utc fm "$first"
-    finding deviation cadence:overdue cadence:overdue "No run since $lr ($from): $missed window$s of this $KNOB_CADENCE host closed since with none, the first $fm (knob.md). A scheduled host is patched only when someone starts its run: run it in the next window, or declare a freeze the owner chose as exception cadence:overdue <review-by> <reason>. A run that found nothing pending counts only once it writes the marker $RUN_MARKER (run.md, A run with nothing pending)."
+    finding deviation cadence:overdue cadence:overdue "No run since $lr ($from): $periods $unit$s of this $KNOB_CADENCE host went by with none, $missed window$ws_ closed since, the first $fm (knob.md). A scheduled host is patched only when someone starts its run: run it in the next window, or declare a freeze the owner chose as exception cadence:overdue <review-by> <reason>. A run that left no bulk record, one that found nothing pending or one done by hand, counts only once it writes the marker $RUN_MARKER (run.md, A run with nothing pending)."
   fi
 }
 
