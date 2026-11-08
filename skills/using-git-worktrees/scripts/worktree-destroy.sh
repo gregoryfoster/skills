@@ -440,7 +440,12 @@ if [[ $DESCOPED -eq 0 ]]; then
     # primary whose .git is a pointer file (`git init --separate-git-dir`)
     # lists its store, which names no work tree. From that primary itself,
     # the work tree is this one: its git dir is the common dir. From a linked
-    # worktree git knows no path to it, so that stays exit 2, and says so.
+    # worktree git knows no path to it, so that stays exit 2.
+    #
+    # The refusal itself is merge-mode.sh's (CR 2029). It runs first, on this
+    # same rule, and refuses every layout this would, with git's reason and
+    # the hint; here the ask failing is exit 2 without more, for a merge-mode.sh
+    # that answered anyway (a project's own scripts/ copy, say).
     PRIMARY_BLOCK=${WT_LIST%%$'\n\n'*}
     PRIMARY_ENTRY=${PRIMARY_BLOCK%%$'\n'*}
     PRIMARY_ENTRY=${PRIMARY_ENTRY#worktree }
@@ -451,13 +456,7 @@ if [[ $DESCOPED -eq 0 ]]; then
           DIRS=$(here_git rev-parse --path-format=absolute --git-dir --git-common-dir 2>/dev/null) || DIRS=""
           if [[ -z "$DIRS" || "${DIRS%%$'\n'*}" != "${DIRS#*$'\n'}" ]] ||
             ! PRIMARY=$(here_git rev-parse --show-toplevel 2>/dev/null); then
-            # Asked again for git's reason, which goes to stderr.
-            here_git -C "$PRIMARY_ENTRY" rev-parse --show-toplevel >/dev/null || true
-            HINT=""
-            if [[ "$(here_git -C "$PRIMARY_ENTRY" rev-parse --is-inside-git-dir 2>/dev/null)" == true ]]; then
-              HINT="; it is a git dir with no work tree, as a primary whose .git is a file makes it (git init --separate-git-dir), and only that primary knows its work tree, so run this from the primary checkout"
-            fi
-            echo "ERROR: could not resolve the primary checkout '$PRIMARY_ENTRY' (git's reason is above), so its .skills/default_branch cannot be read$HINT" >&2
+            echo "ERROR: could not resolve the primary checkout '$PRIMARY_ENTRY', so its .skills/default_branch cannot be read" >&2
             exit 2
           fi
         fi

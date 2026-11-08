@@ -106,6 +106,8 @@ class TestDestroyFromASeparateGitDirPrimary:
         assert "ancestor of 'trunk'" in r.stdout, r.stdout
 
     def test_a_linked_worktree_is_exit_2_and_says_why(self, tmp_path: Path):
+        """The message is merge-mode.sh's (CR 2029): it runs first, on the
+        same rule, and refuses before destroy's own read is reached."""
         primary, linked = layouts.separate_git_dir(
             tmp_path / "l", "trunk\n", name="default_branch"
         )
@@ -117,7 +119,8 @@ class TestDestroyFromASeparateGitDirPrimary:
         assert "ancestor of" not in r.stdout, "no verdict against a guessed base"
 
     def test_a_store_git_cannot_open_is_exit_2_without_the_hint(self, tmp_path: Path):
-        """Never the fallback: "dubious ownership" is git's reason alone."""
+        """Never the fallback: "dubious ownership" is git's reason alone.
+        The message is merge-mode.sh's, as above (CR 2029)."""
         primary, linked = layouts.separate_git_dir(
             tmp_path / "l", "trunk\n", name="default_branch"
         )
