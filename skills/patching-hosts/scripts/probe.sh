@@ -2935,6 +2935,9 @@ read_dry_run() {
     installed_fetchable "$p"
     if [ "$IF_STATE" = yes ] && [[ $p =~ $DEB_NAME_RE ]] && [[ $IF_VERSION =~ $DEB_VERSION_RE ]]; then
       w="reinstall that build, named: apt-get install --reinstall -o Dpkg::Options::=--force-confmiss '$p=$IF_VERSION' (a deleted conffile; unnamed, apt takes the candidate)"
+    elif [ "$IF_STATE" = yes ]; then
+      # Read, and fetchable, but not safe to paste (CR 1967).
+      w="apt can fetch its installed build, but the name or version apt printed has a character outside Debian's own characters, so no command is given: a reinstall with --force-confmiss must name that build, or it upgrades"
     elif [ "$IF_STATE" = no ]; then
       w="no reinstall: apt lists its installed $IF_VERSION from no archive, only dpkg's status file, so naming that version fails, and a reinstall with --force-confmiss would upgrade it to ${IF_CANDIDATE:-its candidate}"
     else
@@ -3017,8 +3020,9 @@ read_holds() {
 # resolves to the candidate: an upgrade, outside every gate.
 # A version line starts " *** " or five spaces and the version. A source
 # line is seven spaces and its priority right-aligned in four columns, so
-# one of 1000 or more has seven leading spaces, not eight (noble's apt,
-# Pin-Priority 1001, CR 1946).
+# one four or more characters wide (1000 and up, -100 and down) has seven
+# leading spaces, and only -1 to -99 keep eight like 100 to 999 (noble's
+# apt, Pin-Priority 1001, 32767, -10 and -1000; CR 1946, CR 1968).
 # A package name and a version in Debian policy's characters, which a
 # command quoted in single quotes can print as they are (CR 1955).
 DEB_NAME_RE='^[a-z0-9][a-z0-9.+-]*$'
