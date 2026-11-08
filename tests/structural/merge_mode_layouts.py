@@ -16,7 +16,9 @@ Read as a checkout, neither holds `.skills/`, so a reader that did so said
 `direct` in silence. A third, `separate_git_dir` (CR 1892), names a store no
 `-C` can resolve; it is kept out of LAYOUTS because from its linked worktree
 the honest answer is unusable. Each builder here returns the checkout to read from, with
-the knob where that layout keeps it. `different_owner` makes git refuse the
+the knob where that layout keeps it: `.skills/merge_mode`, or the file its
+`name` gives, as `shipping-work`'s other primary-checkout readers take theirs
+(#605, test_primary_checkout_layouts.py). `different_owner` makes git refuse the
 primary alone ("dubious ownership"), which must be a refusal, never a
 fallback. Shared by test_merge_mode_knob.py, test_cadence_merge_mode.py,
 test_refresh_hook_pr_mode.py, and, for the doctor's token check and the
@@ -49,28 +51,28 @@ def git(repo: Path, *args: str) -> str:
     ).stdout.strip()
 
 
-def knob(repo: Path, text: str) -> Path:
+def knob(repo: Path, text: str, name: str = "merge_mode") -> Path:
     (repo / ".skills").mkdir(exist_ok=True)
-    path = repo / ".skills" / "merge_mode"
+    path = repo / ".skills" / name
     path.write_text(text)
     return path
 
 
-def seed(path: Path, text: str) -> Path:
+def seed(path: Path, text: str, name: str = "merge_mode") -> Path:
     """A one-commit repo whose commit carries the knob."""
     path.mkdir(parents=True)
     git(path, "init", "-q", "-b", "main")
     git(path, "config", "user.email", "test@example.com")
     git(path, "config", "user.name", "test")
-    knob(path, text)
+    knob(path, text, name)
     git(path, "add", "-A")
     git(path, "-c", "commit.gpgsign=false", "commit", "-q", "-m", "knob")
     return path
 
 
-def bare_home(tmp_path: Path, text: str) -> Path:
+def bare_home(tmp_path: Path, text: str, name: str = "merge_mode") -> Path:
     """A bare primary, read from its linked worktree on main."""
-    src = seed(tmp_path / "seed", text)
+    src = seed(tmp_path / "seed", text, name)
     bare = tmp_path / "repo.git"
     git(tmp_path, "clone", "-q", "--bare", str(src), str(bare))
     home = tmp_path / "home"
@@ -79,7 +81,7 @@ def bare_home(tmp_path: Path, text: str) -> Path:
     return home
 
 
-def submodule_linked(tmp_path: Path, text: str) -> Path:
+def submodule_linked(tmp_path: Path, text: str, name: str = "merge_mode") -> Path:
     """A submodule's linked worktree; the knob is untracked in the
     submodule's own checkout, as a machine-local knob is."""
     src = seed(tmp_path / "src", "direct\n")
@@ -97,20 +99,22 @@ def submodule_linked(tmp_path: Path, text: str) -> Path:
         "sub",
     )
     sub = sup / "sub"
-    knob(sub, text)
+    knob(sub, text, name)
     wt = tmp_path / "wt"
     git(sub, "worktree", "add", "-q", "-b", "feature/x", str(wt))
     assert "/.git/modules/" in git(wt, "worktree", "list", "--porcelain")
     return wt
 
 
-LAYOUTS: dict[str, Callable[[Path, str], Path]] = {
+LAYOUTS: dict[str, Callable[..., Path]] = {
     "bare_home": bare_home,
     "submodule_linked": submodule_linked,
 }
 
 
-def separate_git_dir(tmp_path: Path, text: str | None) -> tuple[Path, Path]:
+def separate_git_dir(
+    tmp_path: Path, text: str | None, name: str = "merge_mode"
+) -> tuple[Path, Path]:
     """A primary whose `.git` is a pointer file to a store outside its work
     tree (`git init --separate-git-dir`), and a linked worktree of it; the
     knob, when `text` is given, untracked in the primary. Returns
@@ -142,7 +146,7 @@ def separate_git_dir(tmp_path: Path, text: str | None) -> tuple[Path, Path]:
     git(primary, "add", "-A")
     git(primary, "-c", "commit.gpgsign=false", "commit", "-q", "-m", "init")
     if text is not None:
-        knob(primary, text)
+        knob(primary, text, name)
     linked = tmp_path / "wt"
     git(primary, "worktree", "add", "-q", "-b", "feature/x", str(linked))
     first = git(linked, "worktree", "list", "--porcelain").split("\n\n")[0]
