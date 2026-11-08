@@ -513,6 +513,13 @@ class TestAnInheritedGitDir:
         assert Path(self._assert_same_answer(linked)) == primary / "docs" / "plans"
 
 
+GITFILES = {
+    "-no-space": "gitdir:./.bare\n",
+    "-empty": "",
+    "-missing-target": "gitdir: ./.bar\n",
+}
+
+
 def _layout(name: str, tmp_path: Path) -> tuple[Path, dict]:
     """Build one layout; return the checkout to run from and its env."""
     tmp = tmp_path.resolve()
@@ -523,6 +530,12 @@ def _layout(name: str, tmp_path: Path) -> tuple[Path, dict]:
         return cwd, env
     if name == "bare-home":
         cwd = layouts.bare_home(tmp, "direct\n").resolve()
+    elif name == "bare-in-checkout":
+        # A bare repo.git whose parent is another repository's checkout:
+        # git answers there with another common dir, so still bare (CR 2033).
+        outer = tmp / "outer"
+        layouts.git(tmp, "init", "-q", "-b", "main", str(outer))
+        cwd = layouts.bare_home(outer, "direct\n").resolve()
     elif name.startswith("submodule-linked"):
         cwd = layouts.submodule_linked(tmp, "direct\n").resolve()
     elif name.startswith("separate-"):
@@ -549,6 +562,10 @@ def _layout(name: str, tmp_path: Path) -> tuple[Path, dict]:
         if "-crlf" in name:
             # Git strips a CRLF gitfile's `\r` (CR 1993a).
             (top / ".git").write_bytes(b"gitdir: ./.bare\r\n")
+        # Gitfiles git rejects, each once its own special case (CR 2033).
+        for suffix, text in GITFILES.items():
+            if name.endswith(suffix):
+                (top / ".git").write_text(text)
         if name.endswith("-unreadable"):
             # git fails "Permission denied" (CR 1993b); root reads it anyway.
             (top / ".git").chmod(0)
@@ -578,6 +595,10 @@ def _layout(name: str, tmp_path: Path) -> tuple[Path, dict]:
         env = layouts.different_owner(env, cwd)
     if name.endswith("-git-dir"):
         env["GIT_DIR"] = layouts.git(cwd, "rev-parse", "--absolute-git-dir")
+    if name.endswith("-de"):
+        # A translated git (CR 2034): the filter runs under LC_ALL=C. Where
+        # no de_DE locale exists git speaks English, and parity still holds.
+        env.update(LC_ALL="de_DE.UTF-8", LANG="de_DE.UTF-8")
     if "-git230" in name:
         env["PATH"] = f"{_git_2_30_shim(tmp)}{os.pathsep}{env['PATH']}"
     return cwd, env
@@ -635,8 +656,13 @@ PARITY_LAYOUTS = [
     "dot-bare-dubious",
     "dot-bare-crlf-dubious",
     "dot-bare-unreadable",
+    "dot-bare-no-space",
+    "dot-bare-empty",
+    "dot-bare-missing-target",
+    "bare-in-checkout",
     "separate-primary",
     "separate-linked",
+    "separate-linked-de",
     "separate-primary-git230",
     "separate-linked-git230",
     "symlinked-git-primary",
