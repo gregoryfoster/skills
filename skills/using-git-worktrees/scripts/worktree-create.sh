@@ -145,9 +145,14 @@ physical_pwd() {
 canonical_path() {
   local p=$1 rest="" head comp
   case $p in /*) ;; *) p="$PWD/$p" ;; esac
+  # Every step is checked (#586). Past PATH_MAX, macOS's dirname fails ("File
+  # name too long"): unchecked, `p` emptied, the walk ended at `.`, and the
+  # root became `$PWD/<last component>`, so a root outside the repo was
+  # refused as inside it. A failure here is the caller's exit 2.
   while [[ ! -d "$p" ]]; do
-    rest="$(basename -- "$p")${rest:+/$rest}"
-    p=$(dirname -- "$p")
+    if ! comp=$(basename -- "$p") || [[ -z "$comp" ]]; then return 1; fi
+    rest="$comp${rest:+/$rest}"
+    if ! p=$(dirname -- "$p") || [[ -z "$p" ]]; then return 1; fi
   done
   head=$(cd -P -- "$p" && physical_pwd) || return 1
   while [[ -n "$rest" ]]; do
@@ -155,7 +160,7 @@ canonical_path() {
     if [[ "$rest" == */* ]]; then rest=${rest#*/}; else rest=""; fi
     case $comp in
       "" | .) ;;
-      ..) head=$(dirname -- "$head") ;;
+      ..) head=$(dirname -- "$head") || return 1 ;;
       *) head="${head%/}/$comp" ;;
     esac
   done
@@ -200,7 +205,7 @@ WORKTREE_PATH="$ROOT/$SLUG"
 # check-ignore failing (exit 128) is a refusal too: an unanswered question is
 # not "ignored". A root that IS the work tree is refused without asking.
 ROOT_CANON=$(canonical_path "$ROOT") || {
-  echo "ERROR: could not resolve the worktree root '$ROOT'" >&2
+  echo "ERROR: could not resolve the worktree root '$ROOT' (the reason is above)" >&2
   exit 2
 }
 

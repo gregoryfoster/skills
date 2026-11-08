@@ -29,7 +29,13 @@ checkout.
    `test_resolve_from_a_subdirectory_is_absolute_and_names_the_repo_root`
    closes that asymmetry.
 
-3. `TestGitignoreVenvRule` pins the untrailing-slash `.venv` rule that keeps a
+3. Around the guard (#585, #605): a git failure on the primary, a
+   `--separate-git-dir` primary and an inherited `GIT_DIR`, using
+   merge_mode_layouts.py's builders. Only the main worktree, a bare primary
+   and #203's submodule case take the current checkout; anything else is
+   exit 2, never a fallback.
+
+4. `TestGitignoreVenvRule` pins the untrailing-slash `.venv` rule that keeps a
    worktree's venv symlink ignored, and keeps its comment from re-acquiring
    the motivating example that #156 retired.
 
@@ -41,6 +47,8 @@ import subprocess
 from pathlib import Path
 
 import pytest
+
+from tests.structural import merge_mode_layouts as layouts
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 SCRIPTS = REPO_ROOT / "skills" / "using-git-worktrees" / "scripts"
@@ -426,3 +434,145 @@ class TestGitignoreVenvRule:
             "'the hook's `source .venv/bin/activate` breaks' is no longer a "
             "consequence of the missing slash — cite a live failure instead"
         )
+
+
+def _run_env(script: Path, cwd: Path, env: dict) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["bash", str(script)],
+        capture_output=True,
+        text=True,
+        cwd=str(cwd),
+        env=env,
+    )
+
+
+class TestAGitFailureOnThePrimaryIsExit2:
+    """#585: the primary lookup hid git's failures behind `2>/dev/null`.
+
+    git refusing the primary checkout ("dubious ownership", as on a
+    service-owned checkout) read as "the candidate is not a checkout", and
+    resolution fell back to the current linked worktree: the root nested and
+    the primary's `.skills/worktree_root` went unread, in silence. Set T's
+    rule (CR 1858) holds here too: only a bare primary takes the current
+    checkout, and a git failure on any other is exit 2 with git's reason.
+    """
+
+    def test_dubious_ownership_of_the_primary_is_exit_2(
+        self, primary: Path, linked: Path
+    ):
+        """The issue's own reproduction: only the linked worktree is safe."""
+        (primary / ".skills").mkdir()
+        (primary / ".skills" / "worktree_root").write_text(
+            str(primary / "configured") + "\n"
+        )
+        r = _run_env(RESOLVE, linked, layouts.different_owner(_clean_env(), linked))
+        assert r.returncode == 2, (
+            f"expected exit 2, got {r.returncode}\n"
+            f"stdout: {r.stdout}\nstderr: {r.stderr}"
+        )
+        assert "dubious ownership" in r.stderr, (
+            f"git's reason is let through: {r.stderr}"
+        )
+        assert f"'{primary}'" in r.stderr, f"the error names the primary: {r.stderr}"
+        assert r.stdout == "", f"a refusal prints no root: {r.stdout!r}"
+
+    def test_the_primary_itself_still_resolves_when_it_is_safe(self, primary: Path):
+        """The refusal is about the primary git cannot open, not the variable."""
+        r = _run_env(RESOLVE, primary, layouts.different_owner(_clean_env(), primary))
+        assert r.returncode == 0, r.stderr
+        assert Path(r.stdout.strip()) == primary / ".worktrees"
+
+    def test_a_bare_primary_takes_the_current_checkout(self, tmp_path: Path):
+        """The one layout that takes the current checkout (set T's rule)."""
+        home = layouts.bare_home(tmp_path.resolve(), "direct\n").resolve()
+        r = _run(RESOLVE, cwd=home)
+        assert r.returncode == 0, r.stderr
+        assert Path(r.stdout.strip()) == home / ".worktrees"
+
+    def test_a_dot_bare_layout_still_names_the_directory_holding_it(
+        self, tmp_path: Path, primary: Path
+    ):
+        """`<dir>/.bare` plus a `<dir>/.git` file naming it: `<dir>` shares the
+        common dir, so it is the project, as before #585."""
+        top = tmp_path.resolve() / "dx"
+        top.mkdir()
+        _git(tmp_path, "clone", "-q", "--bare", str(primary), str(top / ".bare"))
+        (top / ".git").write_text("gitdir: ./.bare\n")
+        _git(top, "worktree", "add", "-q", str(top / "main"), "main")
+        r = _run(RESOLVE, cwd=top / "main")
+        assert r.returncode == 0, r.stderr
+        assert Path(r.stdout.strip()) == top / ".worktrees"
+
+
+class TestTheSeparateGitDirPrimary:
+    """#605, case 1: a primary whose `.git` is a pointer file to a store.
+
+    The parent of the common dir is the store's parent, which is no checkout.
+    From the primary this checkout is the primary (its git dir is the common
+    dir), so its own top level answers. From a linked worktree git knows no
+    path to the primary: resolution fell back to the linked worktree, so the
+    root nested and the primary's knob went unread. Set R's rule (CR 1892):
+    that is exit 2, and the message says why.
+    """
+
+    def test_from_the_primary_it_names_the_primary(self, tmp_path: Path):
+        primary, _ = layouts.separate_git_dir(tmp_path.resolve(), None)
+        primary = primary.resolve()
+        (primary / ".skills").mkdir()
+        (primary / ".skills" / "worktree_root").write_text("wt\n")
+        r = _run(RESOLVE, cwd=primary)
+        assert r.returncode == 0, r.stderr
+        assert Path(r.stdout.strip()) == primary / "wt"
+
+    def test_from_a_linked_worktree_it_is_exit_2_and_says_why(self, tmp_path: Path):
+        primary, linked = layouts.separate_git_dir(tmp_path.resolve(), None)
+        r = _run(RESOLVE, cwd=linked)
+        assert r.returncode == 2, (
+            f"expected exit 2, got {r.returncode}\n"
+            f"stdout: {r.stdout}\nstderr: {r.stderr}"
+        )
+        assert layouts.SEPARATE_GIT_DIR_HINT in r.stderr, r.stderr
+        assert "run this from the primary checkout" in r.stderr, r.stderr
+        assert r.stdout == "", f"a refusal prints no root: {r.stdout!r}"
+
+
+class TestAnInheritedGitDir:
+    """#605, case 2: git exports GIT_DIR to every hook.
+
+    It beats both cwd and `-C`, so `git -C <candidate>` answered for the
+    current checkout. In a submodule, where the candidate is
+    `<super>/.git/modules`, that matched the common dir and the root became
+    `<super>/.git/modules/.worktrees`: worktrees inside `.git`. Each answer
+    under an inherited GIT_DIR must equal the answer without it.
+    """
+
+    @staticmethod
+    def _with_git_dir(checkout: Path) -> dict:
+        env = _clean_env()
+        env["GIT_DIR"] = _git(
+            checkout, "rev-parse", "--absolute-git-dir"
+        ).stdout.strip()
+        return env
+
+    def _assert_same_answer(self, checkout: Path) -> str:
+        plain = _run(RESOLVE, cwd=checkout)
+        hooked = _run_env(RESOLVE, checkout, self._with_git_dir(checkout))
+        assert plain.returncode == 0, plain.stderr
+        assert hooked.returncode == 0, hooked.stderr
+        assert "/.git/" not in hooked.stdout, (
+            f"an inherited GIT_DIR put the root inside .git: {hooked.stdout!r}"
+        )
+        assert hooked.stdout == plain.stdout, (hooked.stdout, plain.stdout)
+        return plain.stdout.strip()
+
+    def test_in_a_submodules_linked_worktree(self, tmp_path: Path):
+        """The issue's layout. Its answer is #203's, nested, with or without."""
+        wt = layouts.submodule_linked(tmp_path.resolve(), "direct\n").resolve()
+        assert Path(self._assert_same_answer(wt)) == wt / ".worktrees"
+
+    def test_in_a_submodules_own_checkout(self, primary: Path, tmp_path: Path):
+        vendor = _add_submodule(primary, tmp_path)
+        assert Path(self._assert_same_answer(vendor)) == vendor / ".worktrees"
+
+    def test_in_a_linked_worktree(self, primary: Path, linked: Path):
+        assert Path(self._assert_same_answer(linked)) == primary / ".worktrees"
