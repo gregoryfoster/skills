@@ -70,7 +70,7 @@ bash "${SD:?}/$S"
 
 The first line is a preflight: when `.skills/doctor.sh` is present, it heals any dangling vendor symlinks (or reports an actionable error); when absent, the group is a no-op. `|| exit 1` skips `gather-context.sh` if the doctor reports unrecoverable state so the original "No such file or directory" noise doesn't drown out the doctor's message. The loop then resolves the script against the skill directory rather than the cwd — a bare `scripts/` path resolves relative to the project root, where the script does not exist ([#63](https://github.com/gregoryfoster/skills/issues/63)). A project-local `scripts/` copy still wins if one exists; when no candidate resolves, the block stops, naming the script and the searched paths. Resolution runs *after* the doctor so a freshly healed symlink chain is visible to it.
 
-The script runs `composer validate --no-check-publish` at root and at every auto-discovered composer directory under `themes/` and `plugins/`, plus `php -l` on changed PHP files.
+The script runs `composer validate --no-check-publish` at root and at every `themes/*/` or `plugins/*/` directory whose `composer.json` git tracks (never a gitignored plugin, a dot-directory or a submodule: a repo reviews only its own code), plus `php -l` on changed PHP files.
 
 Also:
 - Read AGENTS.md conventions relevant to changed files

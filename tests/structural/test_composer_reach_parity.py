@@ -202,3 +202,11 @@ def test_the_review_names_its_twin():
     """The copy says where its twin lives, so a fix to one reaches both."""
     text = REVIEW.read_text()
     assert "detect-stack.sh" in text and "test_composer_reach_parity.py" in text
+
+
+def test_the_php_review_skill_says_which_composer_dirs_it_validates():
+    """CR 2003: SKILL.md said "every auto-discovered composer directory"."""
+    skill = (SKILLS_DIR / "reviewing-code-php" / "SKILL.md").read_text()
+    text = " ".join(skill.split())
+    assert "auto-discovered composer directory" not in text
+    assert "directory whose `composer.json` git tracks" in text, text
