@@ -247,9 +247,9 @@ def test_the_procedure_rides_a_dated_window_and_the_origin_lane():
 def test_before_t_records_versions_refreshes_and_bounds_the_recovery_point():
     before = _pre().split("**After T**")[0]
     assert "before-versions" in before
-    # The probe refuses --lane without --dry-run-into, so the early refresh
-    # names no lane.
-    assert "it goes with --dry-run-into" in PROBE_SH
+    # The probe ignores --lane without --dry-run-into, with a warning
+    # (#593), so the early refresh names no lane.
+    assert "--lane scopes only the dry run" in PROBE_SH
     assert "`probe.sh --refresh-into DIR`" in before
     assert "--lane" not in before.split("**Before T:**")[1]
     assert "`lists:refresh`" in before
