@@ -247,11 +247,14 @@ def test_the_procedure_rides_a_dated_window_and_the_origin_lane():
 def test_before_t_records_versions_refreshes_and_bounds_the_recovery_point():
     before = _pre().split("**After T**")[0]
     assert "before-versions" in before
-    # The probe refuses --lane without --dry-run-into, so the early refresh
-    # names no lane.
-    assert "it goes with --dry-run-into" in PROBE_SH
+    # Without --dry-run-into the probe ignores --lane, with a warning (#593):
+    # a refresh reads every class anyway, so the early refresh names none,
+    # and the procedure says a lane passed there would be ignored.
+    assert "without --dry-run-into it's ignored" in PROBE_SH
     assert "`probe.sh --refresh-into DIR`" in before
-    assert "--lane" not in before.split("**Before T:**")[1]
+    step = before.split("**Before T:**")[1]
+    assert "--lane" not in step.replace("`--lane` would be ignored", "")
+    assert "`--lane` would be ignored, with a warning" in step
     assert "`lists:refresh`" in before
     # The bulk refuses a recovery point that began more than a day before it.
     assert "\nRP_MAX_AGE=86400\n" in APPLY_SH
