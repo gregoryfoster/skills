@@ -606,6 +606,37 @@ class TestAGitFailureOnThePrimaryIsExit2:
         assert f"{top}/.git" in r.stderr, r.stderr
         assert r.stdout == ""
 
+    @pytest.mark.parametrize(
+        "gitfile",
+        ["gitdir:./.bare\n", "", "gitdir: ./.bar\n"],
+        ids=["no-space", "empty", "missing-target"],
+    )
+    def test_a_dot_bare_gitfile_git_rejects_is_exit_2(
+        self, tmp_path: Path, primary: Path, gitfile: str
+    ):
+        """CR 2033: any `<dir>/.git` git will not answer for is exit 2 with
+        git's reason, not one special case per way to break it. Each of
+        these took the bare case at exit 0, with `<dir>`'s knob unread."""
+        top = self._dot_bare(tmp_path, primary)
+        (top / ".git").write_text(gitfile)
+        r = _run(RESOLVE, cwd=top / "main")
+        assert r.returncode == 2, r.stdout + r.stderr
+        assert f"'{top}'" in r.stderr, f"the error names <dir>: {r.stderr}"
+        assert "fatal:" in r.stderr, f"git's reason: {r.stderr}"
+        assert r.stdout == ""
+
+    def test_a_plain_bare_primary_inside_a_checkout_is_still_bare(self, tmp_path: Path):
+        """The rule's edge: a bare `repo.git` whose parent IS a checkout of
+        another repository. git answers for that parent, with another common
+        dir, so this is no refusal: the bare case, as before."""
+        outer = tmp_path.resolve() / "outer"
+        outer.mkdir()
+        _git(tmp_path, "init", "-q", "-b", "main", str(outer))
+        home = layouts.bare_home(outer, "direct\n").resolve()
+        r = _run(RESOLVE, cwd=home)
+        assert r.returncode == 0, r.stderr
+        assert Path(r.stdout.strip()) == home / ".worktrees"
+
 
 class TestTheSeparateGitDirPrimary:
     """#605, case 1: a primary whose `.git` is a pointer file to a store.
@@ -709,6 +740,28 @@ class TestTheRefusalCarriesGitsReason:
         r = _run(RESOLVE, cwd=linked)
         assert r.returncode == 2, r.stdout + r.stderr
         assert "not a git repository" not in r.stderr, r.stderr
+        assert layouts.SEPARATE_GIT_DIR_HINT in r.stderr, r.stderr
+
+    def test_the_filter_holds_under_a_translated_git(self, tmp_path: Path):
+        """CR 2034: the re-ask runs under LC_ALL=C, so a git with German
+        translations does not print its "Kein Git-Repository" past a filter
+        that matches the English line. Skips where no locale translates."""
+        probe_dir = tmp_path.resolve() / "not-a-repo"
+        probe_dir.mkdir()
+        env = _clean_env()
+        env.update(LC_ALL="de_DE.UTF-8", LANG="de_DE.UTF-8")
+        probe = subprocess.run(
+            ["git", "-C", str(probe_dir), "rev-parse", "--git-dir"],
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+        if "not a git repository" in probe.stderr or not probe.stderr:
+            pytest.skip("no translated git here (de_DE.UTF-8)")
+        _, linked = layouts.separate_git_dir(tmp_path.resolve() / "l", None)
+        r = _run_env(RESOLVE, linked, env)
+        assert r.returncode == 2, r.stdout + r.stderr
+        assert probe.stderr.splitlines()[0][:20] not in r.stderr, r.stderr
         assert layouts.SEPARATE_GIT_DIR_HINT in r.stderr, r.stderr
 
 

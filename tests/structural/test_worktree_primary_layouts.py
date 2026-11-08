@@ -353,6 +353,24 @@ class TestCreatesVenvKnobFromThePrimary:
         assert not (new / ".venv").exists() and not (new / ".venv").is_symlink()
         assert "worktree_venv=none" in r.stderr, r.stderr
 
+    def test_a_dot_bare_gitfile_git_rejects_links_nothing(self, tmp_path: Path):
+        """CR 2033: `gitdir:./.bare` (no space) is no gitfile to git. The
+        resolver took the bare case, `--project-root` named this checkout,
+        and the venv linked past `<dir>`'s `none`: #201's hazard."""
+        src = layouts.seed(tmp_path / "seed", "direct\n")
+        top = tmp_path / "dx"
+        top.mkdir()
+        layouts.git(tmp_path, "clone", "-q", "--bare", str(src), str(top / ".bare"))
+        (top / ".git").write_text("gitdir: ./.bare\n")
+        main = top / "main"
+        layouts.git(top, "worktree", "add", "-q", str(main), "main")
+        layouts.knob(top, "none\n", name="worktree_venv")
+        (top / ".git").write_text("gitdir:./.bare\n")
+        self._venv(main)
+        r, new = self._create(main, tmp_path)
+        assert not (new / ".venv").exists() and not (new / ".venv").is_symlink()
+        assert "could not resolve where .skills/worktree_venv lives" in r.stderr
+
     def test_a_dot_bare_directory_git_refuses_links_nothing(self, tmp_path: Path):
         """The knob's home unknown is no `link`: git refusing `<dir>` makes
         the resolver exit 2, and the venv is left unlinked, saying why."""
