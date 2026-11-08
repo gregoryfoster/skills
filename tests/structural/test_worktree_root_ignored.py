@@ -681,3 +681,51 @@ class TestARootCanonicalPathCannotWalk:
         assert r.stdout == ""
         assert len(_worktrees(repo)) == 1, "no worktree may be created"
         assert not (repo / "feature-x").exists()
+
+    def test_a_dirname_that_fails_on_the_dotdot_step_is_exit_2(
+        self, repo: Path, tmp_path: Path
+    ):
+        """CR 1992c: the lexical `..` step's dirname is checked too.
+
+        The root `<alias>/missing/../wt` walks up through `<alias>/missing`
+        (the alias's spelling), then applies `missing/..` to the canonical
+        head, `<real>/missing`. A dirname that fails only on that spelling
+        fails only the `..` step. Unchecked, the head emptied, the root became
+        `/wt`, and the run went on to create a worktree.
+        """
+        real_dirname = shutil.which("dirname")
+        assert real_dirname, "dirname is on PATH"
+        real = tmp_path.resolve() / "real"
+        real.mkdir()
+        alias = tmp_path.resolve() / "alias"
+        alias.symlink_to(real)
+        shims = tmp_path.resolve() / "shims"
+        shims.mkdir()
+        shim = shims / "dirname"
+        shim.write_text(
+            "#!/bin/sh\n"
+            'for a in "$@"; do\n'
+            f'  if [ "$a" = "{real}/missing" ]; then\n'
+            '    echo "dirname: $a: refused by the test" >&2\n'
+            "    exit 1\n"
+            "  fi\n"
+            "done\n"
+            f'exec {real_dirname} "$@"\n'
+        )
+        shim.chmod(0o755)
+        root = f"{alias}/missing/../wt"
+        r = _run(
+            CREATE,
+            "--new",
+            "feature/x",
+            cwd=repo,
+            WORKTREE_ROOT=root,
+            PATH=f"{shims}{os.pathsep}{os.environ['PATH']}",
+        )
+        assert r.returncode == 2, (
+            f"expected exit 2, got {r.returncode}\nstderr: {r.stderr[-600:]}"
+        )
+        assert f"could not resolve the worktree root '{root}'" in r.stderr, r.stderr
+        assert "refused by the test" in r.stderr, "the failing step's reason shows"
+        assert r.stdout == ""
+        assert len(_worktrees(repo)) == 1, "no worktree may be created"
