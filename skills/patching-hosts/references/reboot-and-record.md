@@ -66,7 +66,7 @@ If the reboot slips out of the window, say so, and redo the gate and the quiet-h
 
 ## 7. The record
 
-**Take the after reading last, in every run, whether it rebooted or not:** `probe.sh --refresh-into <dir>`. It's the only probe that reads the language class: `--post-boot`, `--dry-run-into` alone and `apply.sh`'s probe after each step leave it in `not_read`. It takes no `--lane`, which scopes only a dry run: one passed is ignored with a warning (#593). A class in `not_read`, or a tree not audited (`audited: false`, `lockfile: null` among them), is recorded as *no read*, never as 0.
+**Take the after reading last, in every run, whether it rebooted or not:** `probe.sh --refresh-into <dir>`. It's the only probe that reads the language class: `--post-boot`, `--dry-run-into` alone and `apply.sh`'s probe after each step leave it in `not_read`. It takes no `--lane`, which scopes only a dry run: one passed is ignored with a warning (#593). A class in `not_read`, or a tree not audited (`audited: false`, `lockfile: null` among them), is recorded as *no read*, never as 0. A run that found nothing pending writes the marker the next probe dates it by, or reads as a missed window ([run.md](run.md#a-run-with-nothing-pending), #592).
 
 Post the before and after readings where the knob's `records` says:
 - counts;
