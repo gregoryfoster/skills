@@ -637,6 +637,64 @@ class TestAGitFailureOnThePrimaryIsExit2:
         assert r.returncode == 0, r.stderr
         assert Path(r.stdout.strip()) == home / ".worktrees"
 
+    def test_a_plain_bare_primary_in_a_dubious_checkout_is_still_bare(
+        self, tmp_path: Path
+    ):
+        """R4-1: the parent's `.git` is a directory that is not this common
+        dir, so it is another repository's, and git refusing it says nothing
+        about this one. The bare case, as at the base."""
+        outer = tmp_path.resolve() / "outer"
+        outer.mkdir()
+        _git(tmp_path, "init", "-q", "-b", "main", str(outer))
+        home = layouts.bare_home(outer, "direct\n").resolve()
+        r = _run_env(RESOLVE, home, layouts.different_owner(_clean_env(), home))
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert Path(r.stdout.strip()) == home / ".worktrees"
+
+    def test_a_plain_bare_primary_beside_an_empty_git_dir_is_still_bare(
+        self, tmp_path: Path
+    ):
+        """R4-1: an empty `.git/` beside `repo.git` is no repository's, and
+        not this one's common dir. The bare case, as at the base."""
+        base = tmp_path.resolve() / "b"
+        base.mkdir()
+        (base / ".git").mkdir()
+        home = layouts.bare_home(base, "direct\n").resolve()
+        r = _run(RESOLVE, cwd=home)
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert Path(r.stdout.strip()) == home / ".worktrees"
+
+    def test_a_dangling_git_symlink_beside_dot_bare_is_exit_2(
+        self, tmp_path: Path, primary: Path
+    ):
+        """R4-4a: `<dir>/.git` a dangling link. git gives no reason of its
+        own, so the message names the link (R4-5); falling to the bare case
+        would read this checkout's knob in silence."""
+        top = self._dot_bare(tmp_path, primary)
+        main = top / "main"
+        (top / ".git").unlink()
+        (top / ".git").symlink_to(top / "missing-store")
+        r = _run(RESOLVE, cwd=main)
+        assert r.returncode == 2, r.stdout + r.stderr
+        assert f"'{top}/.git'" in r.stderr, r.stderr
+        assert "if any" not in r.stderr, r.stderr
+        assert r.stdout == ""
+
+    def test_a_bare_store_as_dot_git_git_refuses_is_exit_2(self, tmp_path: Path):
+        """R4-4b: `<dir>/.git` is itself the bare store (its common dir), so
+        `<dir>` is the project, and git refusing it is exit 2, not the bare
+        case."""
+        src = layouts.seed(tmp_path / "seed", "direct\n")
+        top = tmp_path.resolve() / "bx"
+        top.mkdir()
+        layouts.git(tmp_path, "clone", "-q", "--bare", str(src), str(top / ".git"))
+        main = top / "main"
+        layouts.git(top / ".git", "worktree", "add", "-q", str(main), "main")
+        r = _run_env(RESOLVE, main, layouts.different_owner(_clean_env(), main))
+        assert r.returncode == 2, r.stdout + r.stderr
+        assert "dubious ownership" in r.stderr, r.stderr
+        assert r.stdout == ""
+
 
 class TestTheSeparateGitDirPrimary:
     """#605, case 1: a primary whose `.git` is a pointer file to a store.
