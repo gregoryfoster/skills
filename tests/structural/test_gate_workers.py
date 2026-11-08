@@ -238,3 +238,59 @@ class TestAuto:
 def test_slots_live_in_the_common_dir_shared_by_worktrees(repo):
     slots = Path(_run(repo, "--slot-dir").stdout.strip())
     assert slots == (repo / ".git" / "gate-slots").resolve()
+
+
+class TestTheKnobReadsOneWord:
+    """#589: set T brought `.skills/test-dist`'s reader up (CR 1853) and left
+    `.skills/test-workers`'s with the old flaws. It deleted inner whitespace,
+    so `1 2` read as `12`, and a knob that was a directory or a dangling link
+    fell back to auto without a word. Now it reads one word, as test-dist's
+    reader does, and says on stderr what it ignored."""
+
+    def test_a_second_word_warns_and_is_not_joined(self, repo, tmp_path):
+        _knob(repo, "test-workers", "# workers\n1 2  # typo\n")
+        result = _run(repo, PATH=_fake_cores(tmp_path, 14))
+        assert result.returncode == 0, result.stderr
+        assert result.stdout == "1\n"
+        assert "WARN" in result.stderr and "'1 2'" in result.stderr
+
+    def test_a_malformed_first_word_is_still_exit_2(self, repo):
+        """The exit-2 rule for a malformed count stays, extra words or not."""
+        _knob(repo, "test-workers", "several 4\n")
+        result = _run(repo)
+        assert result.returncode == 2
+        assert result.stdout == ""
+        assert "'several'" in result.stderr
+
+    def test_one_word_and_a_crlf_ending_does_not_warn(self, repo, tmp_path):
+        _knob(repo, "test-workers", "  6 \t\r\n")
+        result = _run(repo, PATH=_fake_cores(tmp_path, 14))
+        assert result.stdout == "6\n"
+        assert "WARN" not in result.stderr
+
+    @pytest.mark.parametrize("kind", ["directory", "dangling-link"])
+    def test_a_knob_that_is_not_a_file_warns_and_is_auto(self, repo, tmp_path, kind):
+        (repo / ".skills").mkdir()
+        knob = repo / ".skills" / "test-workers"
+        if kind == "directory":
+            knob.mkdir()
+        else:
+            knob.symlink_to(repo / "no-such-file")
+        result = _run(repo, PATH=_fake_cores(tmp_path, 14))
+        assert result.returncode == 0, result.stderr
+        assert result.stdout == "8\n", "auto, on 14 cores"
+        assert "WARN" in result.stderr and "not a readable file" in result.stderr
+        assert ".skills/test-workers" in result.stderr
+
+    @pytest.mark.skipif(os.geteuid() == 0, reason="root reads a mode-000 file")
+    def test_an_unreadable_knob_warns_and_is_auto(self, repo, tmp_path):
+        _knob(repo, "test-workers", "off\n")
+        knob = repo / ".skills" / "test-workers"
+        knob.chmod(0)
+        try:
+            result = _run(repo, PATH=_fake_cores(tmp_path, 14))
+        finally:
+            knob.chmod(0o644)
+        assert result.returncode == 0, result.stderr
+        assert result.stdout == "8\n"
+        assert "WARN" in result.stderr and "not a readable file" in result.stderr
