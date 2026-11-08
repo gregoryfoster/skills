@@ -36,9 +36,10 @@ Coverage:
                                         → the live push is not counted
 - a commit-stage kill, then a dead push line in the count file
                                         → both count: one count for the two
-- `pr` mode: a kill after the branch push landed, then a refresh that finds
-  the branch already proposing the bump (CR 2014)
-                                        → the count resets; one later kill
+- `pr` mode: a kill after the branch push landed, then a refresh with
+  nothing of its bump left to push: the branch already proposes it
+  (CR 2014), the PR merged and main pulled, merged and not yet pulled, or
+  declined (CR 2018)                    → the count resets; one later kill
                                           does not back off
 """
 
@@ -359,16 +360,88 @@ class TestPrMode:
             + (c.path / COUNTER).read_text()
         )
 
-        _new_day(c)
-        newer = _upstream_moves(c, "c3")
-        _kill_in_push(c)
-        retried = run_hook(c)
+        _one_later_kill_does_not_back_off(c)
 
-        assert retried.returncode == 0, retried.stderr
-        assert BACKOFF_LINE not in retried.stderr, (
-            "one kill inside the push backed off the day: " + retried.stderr
-        )
-        assert _branch_gitlink(c) == newer, "the session did not push the branch"
+    # CR 2018: pr mode makes no commit, so its count is per bump by rule. A
+    # refresh that concludes nothing of its bump is left for the hook to
+    # push resets it, wherever it ends.
+
+    def test_a_merged_and_pulled_pr_resets_the_count(self, pr_consumer):
+        """The reviewer's case: a kill after the branch push landed, then
+        the PR merged and main pulled. The next refresh finds main already
+        recording the bump ("nothing to propose"), pushes nothing, and left
+        the kill counted for the next bump."""
+        c = pr_consumer
+        _kill_after_the_push_returns(c)
+        _merge_the_pr(c)
+        git(c.path, "pull", "-q", "--no-rebase", "origin", "main")
+
+        settled = run_hook(c)
+
+        assert settled.returncode == 0, settled.stderr
+        assert "already records the refreshed pointers" in log_text(c), log_text(c)
+        _count_is_reset(c)
+        _one_later_kill_does_not_back_off(c)
+
+    def test_a_merged_pr_not_yet_pulled_resets_the_count(self, pr_consumer):
+        """Merged but not pulled: main and its upstream record different
+        pointers, so no bump is proposed until main is pulled. The bump made
+        from this main is never proposed, and the one after the pull is
+        another."""
+        c = pr_consumer
+        _kill_after_the_push_returns(c)
+        _merge_the_pr(c)
+
+        settled = run_hook(c)
+
+        assert settled.returncode == 0, settled.stderr
+        assert "record different skills-vendor/ pointers" in log_text(c), log_text(c)
+        _count_is_reset(c)
+        git(c.path, "pull", "-q", "--no-rebase", "origin", "main")
+        _one_later_kill_does_not_back_off(c)
+
+    def test_a_declined_bump_resets_the_count(self, pr_consumer):
+        """A PR that proposed this bump was closed unmerged: the hook never
+        proposes the bump again."""
+        c = pr_consumer
+        _kill_after_the_push_returns(c)
+        tip = git(c.origin, "rev-parse", PR_BRANCH).stdout.strip()
+        (c.gh / "prs").write_text(f"7 CLOSED {tip}\n")
+
+        settled = run_hook(c)
+
+        assert settled.returncode == 0, settled.stderr
+        assert "closed unmerged" in log_text(c), log_text(c)
+        _count_is_reset(c)
+        _one_later_kill_does_not_back_off(c)
+
+
+def _merge_the_pr(c) -> None:
+    """The branch fast-forwarded onto the default branch, as a merge does."""
+    assert _branch_gitlink(c) == c.after, "fixture: the push should land"
+    tip = git(c.origin, "rev-parse", PR_BRANCH).stdout.strip()
+    git(c.origin, "update-ref", "refs/heads/main", tip)
+
+
+def _count_is_reset(c) -> None:
+    assert not (c.path / COUNTER).exists(), (
+        "a refresh with nothing of its bump left to push kept the count: "
+        + (c.path / COUNTER).read_text()
+    )
+
+
+def _one_later_kill_does_not_back_off(c) -> None:
+    """The next day, a new bump, and one kill inside its push: retried."""
+    _new_day(c)
+    newer = _upstream_moves(c, "c3")
+    _kill_in_push(c)
+    retried = run_hook(c)
+
+    assert retried.returncode == 0, retried.stderr
+    assert BACKOFF_LINE not in retried.stderr, (
+        "one kill inside the push backed off the day: " + retried.stderr
+    )
+    assert _branch_gitlink(c) == newer, "the session did not push the branch"
 
 
 class TestOneCount:
