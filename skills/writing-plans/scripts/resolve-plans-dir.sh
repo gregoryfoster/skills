@@ -14,7 +14,7 @@ if [[ "${1:-}" == "--help" ]]; then
   echo "Resolution order (first match wins):"
   echo "  1. PLANS_DIR env var"
   echo "  2. .skills/plans_dir file under the repo root (single-line path;"
-  echo "     a relative one resolves against <repo-root>)"
+  echo "     a relative one resolves against <repo-root>; \`~\` is not expanded)"
   echo "  3. <repo-root>/docs/plans/ (fallback)"
   echo ""
   echo "<repo-root> is the PRIMARY checkout, not whichever worktree you are"
