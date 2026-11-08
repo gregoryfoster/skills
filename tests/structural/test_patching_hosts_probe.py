@@ -1207,12 +1207,24 @@ def _conffile_prompt(host: Host, policy: str | None, missing: bool = True) -> di
     return _finding(out, "dry-run:conffile:fwupd")
 
 
-CONFMISS = "reinstall it with -o Dpkg::Options::=--force-confmiss"
+CONFMISS = "Dpkg::Options::=--force-confmiss"
+
+
+def _reinstall_offered(msg: str, version: str = FWUPD_INSTALLED) -> bool:
+    """Whether the finding offers the reinstall, which must name the build.
+
+    CR 1955: a conffile prompt always has a newer candidate pending, and an
+    unversioned apt-get install --reinstall takes it: on noble's apt, curl's
+    upgraded 2 packages where curl=<installed> reinstalled 1 (2026-11-07).
+    """
+    named = f"apt-get install --reinstall -o {CONFMISS} 'fwupd={version}'"
+    assert msg.count(CONFMISS) == msg.count(named), msg
+    return named in msg
 
 
 def test_a_reinstall_that_would_upgrade_isnt_offered_as_a_reinstall(host):
     f = _conffile_prompt(host, _fwupd_policy([]))
-    assert CONFMISS not in f["message"]
+    assert not _reinstall_offered(f["message"])
     assert (
         f"a reinstall with --force-confmiss would upgrade it to {FWUPD_CANDIDATE}"
         in f["message"]
@@ -1231,9 +1243,21 @@ def test_a_reinstall_of_a_build_still_in_an_archive_is_offered(host):
         "        500 http://archive.ubuntu.com/ubuntu noble-updates/main amd64 Packages"
     )
     f = _conffile_prompt(host, _fwupd_policy([archive]))
-    assert f"{CONFMISS} (a deleted conffile)" in f["message"]
+    assert _reinstall_offered(f["message"])
     assert "would upgrade" not in f["message"]
     assert "restore the deleted conffile alone" in f["message"]
+
+
+def test_a_reinstall_names_a_version_with_an_epoch_as_apt_prints_it(host):
+    # A version can carry an epoch, ~ and +: the command names it verbatim,
+    # quoted, never the bare package.
+    epoch = "1:1.9.33+dfsg-0ubuntu1~24.04.1"
+    archive = (
+        "        500 http://archive.ubuntu.com/ubuntu noble-updates/main amd64 Packages"
+    )
+    policy = _fwupd_policy([archive]).replace(FWUPD_INSTALLED, epoch)
+    f = _conffile_prompt(host, policy)
+    assert _reinstall_offered(f["message"], epoch)
 
 
 # CR 1946: apt right-aligns the priority in four columns after seven spaces,
@@ -1250,7 +1274,7 @@ def test_a_reinstall_of_a_build_still_in_an_archive_is_offered(host):
 )
 def test_a_source_of_any_priority_under_the_installed_version_counts(host, source):
     f = _conffile_prompt(host, _fwupd_policy([source]))
-    assert f"{CONFMISS} (a deleted conffile)" in f["message"]
+    assert _reinstall_offered(f["message"])
     assert "would upgrade" not in f["message"]
 
 
@@ -1258,13 +1282,13 @@ def test_a_status_line_of_four_digits_is_still_the_status_file(host):
     f = _conffile_prompt(
         host, _fwupd_policy([], status="       1001 /var/lib/dpkg/status")
     )
-    assert CONFMISS not in f["message"]
+    assert not _reinstall_offered(f["message"])
     assert f"apt lists its installed {FWUPD_INSTALLED} from no archive" in f["message"]
 
 
 def test_a_reinstall_whose_source_cant_be_read_says_so(host):
     f = _conffile_prompt(host, None)
-    assert CONFMISS not in f["message"]
+    assert not _reinstall_offered(f["message"])
     assert "whether apt can fetch its installed build couldn't be read" in f["message"]
 
 
