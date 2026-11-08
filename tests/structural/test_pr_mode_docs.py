@@ -169,3 +169,13 @@ def test_a_bare_clones_missing_upstream_is_set_not_read_as_local_commits():
     assert "There is no tracking information" in step, step
     assert "git branch --set-upstream-to=origin/<default>" in step, step
     assert "'+refs/heads/*:refs/remotes/origin/*'" in step, step
+
+
+def test_step_1_finds_the_main_checkout_by_asking_git():
+    """CR 2010a: a --separate-git-dir store's row carries no marker, so "the
+    work tree of the first row" could not be followed. One question covers
+    every layout; test_primary_checkout_layouts.py holds git to its answers."""
+    step = _post_merge_step_1()
+    assert "`git -C <row> rev-parse --show-toplevel`" in step, step
+    assert "**Marked `(bare)`:**" in step, step
+    assert "**Unmarked:** the store of a primary made with" in step, step

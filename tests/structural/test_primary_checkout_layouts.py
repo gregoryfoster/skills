@@ -553,3 +553,57 @@ def test_a_feature_branch_with_no_upstream_is_still_told_to_push(tmp_path):
     _assert_nothing_read("run-deploy-command.sh", result, record)
     assert "push it first (Step 4)" in result.stderr, result.stderr
     assert UPSTREAM_REMEDY not in result.stderr, result.stderr
+
+
+# CR 2010a: pr-mode.md's post-merge step 1 finds the main checkout with
+# `git -C <first row> rev-parse --show-toplevel`. Held here against each
+# layout: it names the main checkout for a plain primary and a submodule's
+# row, and fails for a bare primary and a --separate-git-dir store, the two
+# cases the step then tells apart by the `(bare)` marker.
+
+
+def _first_row(checkout: Path) -> str:
+    return layouts.git(checkout, "worktree", "list").splitlines()[0]
+
+
+def _ask(row_path: str) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["git", "-C", row_path, "rev-parse", "--show-toplevel"],
+        capture_output=True,
+        text=True,
+        env=layouts.env(),
+    )
+
+
+def test_step_1s_question_names_a_plain_primary(tmp_path):
+    primary = layouts.seed(tmp_path / "p", "direct\n")
+    wt = tmp_path / "wt"
+    layouts.git(primary, "worktree", "add", "-q", "-b", "feature/x", str(wt))
+    answer = _ask(_first_row(wt).split()[0])
+    assert answer.returncode == 0, answer.stderr
+    assert Path(answer.stdout.strip()).resolve() == primary.resolve()
+
+
+def test_step_1s_question_names_a_submodules_work_tree(tmp_path):
+    wt = layouts.submodule_linked(tmp_path, "direct\n")
+    row = _first_row(wt).split()[0]
+    assert "/.git/modules/" in row, row
+    answer = _ask(row)
+    assert answer.returncode == 0, answer.stderr
+    assert (
+        Path(answer.stdout.strip()).resolve() == (tmp_path / "super" / "sub").resolve()
+    )
+
+
+def test_step_1s_question_fails_for_a_bare_row_marked_bare(tmp_path):
+    home = layouts.bare_home(tmp_path, "direct\n")
+    row = _first_row(home)
+    assert row.endswith("(bare)"), row
+    assert _ask(row.split()[0]).returncode != 0
+
+
+def test_step_1s_question_fails_for_an_unmarked_store(tmp_path):
+    _, linked = layouts.separate_git_dir(tmp_path, None)
+    row = _first_row(linked)
+    assert "(bare)" not in row, row
+    assert _ask(row.split()[0]).returncode != 0
