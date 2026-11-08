@@ -181,8 +181,11 @@ else
   elif [[ "${DIRS%%$'\n'*}" == --path-format=absolute ]]; then
     # Below 2.31 rev-parse echoes the option back at exit 0 (CR 1990), so
     # case 1 cannot be told: run from the primary it is no answer either.
+    # Git's reason first (CR 1994): a superproject git refuses lands here
+    # too, and upgrading git does not help that.
+    candidate_reason
     GIT_VERSION=$(here_git --version 2>/dev/null) || GIT_VERSION="git version (unknown)"
-    echo "ERROR: could not resolve the primary checkout: git ${GIT_VERSION#git version } predates 2.31, which this layout needs to tell its primary from a linked worktree: upgrade git, or set WORKTREE_ROOT" >&2
+    echo "ERROR: could not resolve the primary checkout: git ${GIT_VERSION#git version } predates 2.31, which this layout needs to tell its primary from a linked worktree: upgrade git (from a linked worktree, then run from the primary checkout), or set WORKTREE_ROOT" >&2
     exit 2
   else
     # Git's reason for the silent ask above, when it has one (CR 1991): a

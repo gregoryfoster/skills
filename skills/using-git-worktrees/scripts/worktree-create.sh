@@ -309,7 +309,7 @@ primary_checkout() {
     # Below 2.31 rev-parse echoes the option back (CR 1990's case): "run
     # this from the primary checkout" would be false from the primary.
     hint=$(here_git --version 2>/dev/null) || hint="git version (unknown)"
-    hint="; git ${hint#git version } predates 2.31, which this layout needs to tell its primary from a linked worktree: upgrade git"
+    hint="; git ${hint#git version } predates 2.31, which this layout needs to tell its primary from a linked worktree: upgrade git (from a linked worktree, then run from the primary checkout)"
   elif [[ "$(here_git -C "$entry" rev-parse --is-inside-git-dir 2>/dev/null)" == true ]]; then
     hint="; it is a git dir with no work tree, as a primary whose .git is a file makes it (git init --separate-git-dir), and only that primary knows its work tree, so run this from the primary checkout"
   fi
