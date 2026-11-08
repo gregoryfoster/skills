@@ -1586,19 +1586,17 @@ read_tailscale() {
 }
 
 # The last run, from local facts only (#592): never the knob's records, so
-# a probe needs no gh and no network. A run directory,
-# /var/backups/patching-hosts-<UTC>, is named for when it was made, which on
-# a datastore host is the recovery point's start, before the window (CR
-# 1956). So a directory dates a run by the bulk's own line in its steps,
-# which apply.sh appends when the bulk step ends, dated by its start; or,
-# for a reboot-only run, whose directory is made by hand, by the fire time
-# reboot-chain.sh records in reboot-chain.unit. A directory with neither is
-# no run while it still holds the recovery point's files; one its retention
-# emptied, every file deleted, is dated by its name, within the day the bulk
-# allows its recovery point (CR 1969). One with holds and no bulk line is a
-# bulk cut off before it ended: unread, never no run (CR 1972). A run that
-# left no bulk record, one with nothing pending or one done by hand, writes
-# the marker instead (run.md). The newest of them all is the last run.
+# a probe needs no gh and no network. Every run directory,
+# /var/backups/patching-hosts-<UTC>, is a run (CR 1979-1983). Its name says
+# when it was made, which on a datastore host is the recovery point's start,
+# before the window, so it's dated by the bulk's line in its steps, which
+# apply.sh writes when the bulk step ends, with its start; else by the fire
+# time reboot-chain.sh records in reboot-chain.unit; else, emptied by its
+# retention, unreadable or abandoned, by its name. The period floor below
+# absorbs a recovery point taken before its window; an abandoned attempt can
+# hide at most one period. A run that left no bulk record, one with nothing
+# pending or one done by hand, writes the marker (run.md). The newest is the
+# last run.
 RUN_MARKER=/var/backups/patching-hosts-last-reading
 # A stamp further past the probe's clock than this is a clock or a typo,
 # never the last run (CR 1960); one within it is taken as now.
@@ -1616,43 +1614,24 @@ stamp_epoch() {  # <var> <YYYYMMDDTHHMMSSZ>: VAR := its seconds since 1970, or e
   printf -v "$_se_v" '%s' "$((_se_day * 86400 + _se_h * 3600 + _se_mi * 60 + _se_s))"
 }
 
-# When the run in one directory took place: RUN_AT, or empty when it holds
-# none. RUN_UNREAD says why it couldn't be told, or is empty.
+# When the run in one directory took place: RUN_AT.
 run_at() {  # <directory> <the epoch its name says>
-  local _ra_o _ra_ls _ra_s _ra_r _ra_at _ra_rest _ra_u _ra_f
-  RUN_AT="" RUN_UNREAD=""
-  capture _ra_ls as_reader ls -A -- "$1"
-  if [ "$CAP_RC" -ne 0 ]; then
-    RUN_UNREAD="its files can't be listed${CAP_ERR:+ ($CAP_ERR)}"
-    if [ "$P_PRIV" = none ]; then RUN_UNREAD="its files can't be listed without root"; fi
-    return 0
+  local _ra_o _ra_s _ra_r _ra_at _ra_rest _ra_u
+  RUN_AT=""
+  capture _ra_o as_reader cat -- "$1/steps"
+  if [ "$CAP_RC" -eq 0 ]; then
+    while read -r _ra_s _ra_r _ra_at _ra_rest; do
+      if [ "$_ra_s" = bulk ] && [[ $_ra_at =~ ^[0-9]+$ ]]; then RUN_AT=$_ra_at; fi
+    done <<<"$_ra_o"
   fi
-  if [ -z "$_ra_ls" ]; then
-    RUN_AT=$2
-    return 0
-  fi
-  for _ra_f in steps reboot-chain.unit; do
-    case $'\n'$_ra_ls$'\n' in *$'\n'$_ra_f$'\n'*) ;; *) continue ;; esac
-    capture _ra_o as_reader cat -- "$1/$_ra_f"
-    if [ "$CAP_RC" -ne 0 ]; then
-      RUN_UNREAD="its $_ra_f can't be read"
-      return 0
-    fi
-    if [ "$_ra_f" = steps ]; then
-      while read -r _ra_s _ra_r _ra_at _ra_rest; do
-        if [ "$_ra_s" = bulk ] && [[ $_ra_at =~ ^[0-9]+$ ]]; then RUN_AT=$_ra_at; fi
-      done <<<"$_ra_o"
-    else
+  if [ -z "$RUN_AT" ]; then
+    capture _ra_o as_reader cat -- "$1/reboot-chain.unit"
+    if [ "$CAP_RC" -eq 0 ]; then
       read -r _ra_u _ra_at <<<"$_ra_o" || true
-      _ra_at=${_ra_at//[-:]/}
-      stamp_epoch RUN_AT "$_ra_at"
+      stamp_epoch RUN_AT "${_ra_at//[-:]/}"
     fi
-    [ -z "$RUN_AT" ] || return 0
-  done
-  case $'\n'$_ra_ls$'\n' in
-    *$'\n'holds$'\n'*) RUN_UNREAD="it holds the bulk's holds and no bulk line: a bulk cut off before it ended, whose start isn't recorded" ;;
-  esac
-  return 0
+  fi
+  RUN_AT=${RUN_AT:-$2}
 }
 
 # A scheduled host's weekday and #N windows that closed since its last run.
@@ -1665,7 +1644,7 @@ run_at() {  # <directory> <the epoch its name says>
 CADENCE_WEEK_S=$((6 * 86400)) CADENCE_MONTH_WEEK_S=$((21 * 86400)) CADENCE_MONTH_S=$((31 * 86400))
 R_CADENCE=""
 read_cadence() {
-  local t e last="" from="" m="" r ws we len wd d os oe md missed="" first="" why="" recurring=0 iso floor unread=""
+  local t e last="" from="" m="" r ws we len wd d os oe md missed="" first="" why="" recurring=0 iso floor
   local periods="" prev pfloor unit
   local -a f=() opens=()
   for t in "$P_ROOT"/var/backups/patching-hosts-2*; do
@@ -1673,12 +1652,6 @@ read_cadence() {
     stamp_epoch e "${t##*/patching-hosts-}"
     [ -n "$e" ] || continue
     run_at "$t" "$e"
-    if [ -n "$RUN_UNREAD" ]; then
-      not_read "the run directory ${t#"$P_ROOT"}: $RUN_UNREAD, so whether it holds a run, and when, is unknown"
-      unread="$unread ${t#"$P_ROOT"} ($RUN_UNREAD)"
-      continue
-    fi
-    [ -n "$RUN_AT" ] || continue
     if [ "$RUN_AT" -gt $((P_NOW + RUN_CLOCK_SLACK_S)) ]; then
       iso_utc iso "$RUN_AT"
       not_read "the run in ${t#"$P_ROOT"}: it's dated $iso, past the probe's clock, so it isn't counted"
@@ -1710,11 +1683,9 @@ read_cadence() {
     why="posture $KNOB_POSTURE: the apt timers patch daily, and there's no window to miss"
   elif [ "$recurring" -eq 0 ]; then
     why="no weekday or #N window says when a run is due, and a dated window is a one-off"
-  elif [ -n "$unread" ]; then
-    why="a run directory couldn't be read or dated:$unread"
   elif [ -z "$last" ]; then
     why="no run on record"
-    finding unknown cadence:no-run "" "No run is on record: no /var/backups/patching-hosts-<UTC> directory holds a bulk that started or a reboot chain, and there's no $RUN_MARKER marker, so whether a $KNOB_CADENCE window was missed can't be read. A retention sweep that removed every run directory reads the same. Read the last run in the host's records; the next run records one again, and so does one with nothing pending, which writes the marker (run.md)."
+    finding unknown cadence:no-run "" "No run is on record: no /var/backups/patching-hosts-<UTC> directory and no $RUN_MARKER marker, so whether a $KNOB_CADENCE window was missed can't be read. A retention sweep that removed every run directory reads the same. Read the last run in the host's records; the next run records one again, and so does one with nothing pending, which writes the marker (run.md)."
   else
     missed=0
     for r in ${KNOB_WINDOW[@]+"${KNOB_WINDOW[@]}"}; do
