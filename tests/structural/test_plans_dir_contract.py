@@ -43,6 +43,7 @@ No API calls. Self-contained: each test builds a throwaway repo under tmp_path.
 """
 
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -526,7 +527,7 @@ def _layout(name: str, tmp_path: Path) -> tuple[Path, dict]:
         cwd = layouts.submodule_linked(tmp, "direct\n").resolve()
     elif name.startswith("separate-"):
         primary, linked = layouts.separate_git_dir(tmp, None)
-        cwd = (primary if name == "separate-primary" else linked).resolve()
+        cwd = (primary if name.startswith("separate-primary") else linked).resolve()
     elif name.startswith("dot-bare"):
         src = layouts.seed(tmp / "seed", "direct\n")
         top = tmp / "dx"
@@ -561,7 +562,42 @@ def _layout(name: str, tmp_path: Path) -> tuple[Path, dict]:
         env = layouts.different_owner(env, cwd)
     if name.endswith("-git-dir"):
         env["GIT_DIR"] = layouts.git(cwd, "rev-parse", "--absolute-git-dir")
+    if name.endswith("-git230"):
+        env["PATH"] = f"{_git_2_30_shim(tmp)}{os.pathsep}{env['PATH']}"
     return cwd, env
+
+
+def _git_2_30_shim(tmp: Path) -> Path:
+    """A `git` that plays 2.30 over the real one: it echoes
+    `--path-format=absolute` back, as git before 2.31 does (CR 1990). The
+    twin's test_below_git_2_31_it_says_git_is_too_old uses the same shim."""
+    real = shutil.which("git")
+    assert real, "git is on PATH"
+    shims = tmp / "shims"
+    shims.mkdir()
+    shim = shims / "git"
+    shim.write_text(
+        "#!/usr/bin/env bash\n"
+        'if [ "$1" = --version ]; then echo "git version 2.30.6"; exit 0; fi\n'
+        "args=()\n"
+        "for a; do\n"
+        '  if [ "$a" = --path-format=absolute ]; then echo "$a"; else args+=("$a"); fi\n'
+        "done\n"
+        f'exec {real} "${{args[@]}}"\n'
+    )
+    shim.chmod(0o755)
+    return shims
+
+
+@pytest.mark.parametrize("where", ["primary", "linked"])
+def test_below_git_2_31_the_escape_is_plans_dir(where: str, tmp_path: Path):
+    """CR 1990, ported: git too old is said, and the escape is PLANS_DIR."""
+    cwd, env = _layout(f"separate-{where}-git230", tmp_path)
+    r = _run_env(RESOLVE, cwd, env)
+    assert r.returncode == 2, r.stdout + r.stderr
+    assert "git 2.30.6 predates 2.31, which this layout needs" in r.stderr, r.stderr
+    assert "set PLANS_DIR" in r.stderr, r.stderr
+    assert "run this from the primary checkout" not in r.stderr, r.stderr
 
 
 PARITY_LAYOUTS = [
@@ -575,9 +611,12 @@ PARITY_LAYOUTS = [
     "dot-bare-dubious",
     "separate-primary",
     "separate-linked",
+    "separate-primary-git230",
+    "separate-linked-git230",
     "symlinked-git-primary",
     "symlinked-git-linked",
     "linked-dubious",
+    "submodule-linked-dubious",
     "linked-git-dir",
     "submodule-git-dir",
     "submodule-linked-git-dir",
@@ -589,14 +628,16 @@ PARITY_LAYOUTS = [
 def test_the_lookup_is_the_worktree_root_lookup(name: str, tmp_path: Path):
     """#585's port, held by output: both resolvers, one layout, one answer.
 
-    The same exit code, the same stderr, and the same project root under
-    `/docs/plans` where the worktree root has `/.worktrees`. A change to
-    either script's lookup fails here until the other matches.
+    The same exit code, the same stderr apart from the env var each names as
+    the escape, and the same project root under `/docs/plans` where the
+    worktree root has `/.worktrees`. A change to either script's lookup fails
+    here until the other matches.
     """
     cwd, env = _layout(name, tmp_path)
     plans = _run_env(RESOLVE, cwd, env)
     root = _run_env(WORKTREE_RESOLVE, cwd, env)
-    assert (plans.returncode, plans.stderr) == (root.returncode, root.stderr), (
+    plans_err = plans.stderr.replace("set PLANS_DIR", "set WORKTREE_ROOT")
+    assert (plans.returncode, plans_err) == (root.returncode, root.stderr), (
         f"{name}: plans_dir exit {plans.returncode} {plans.stderr!r}; "
         f"worktree_root exit {root.returncode} {root.stderr!r}"
     )
