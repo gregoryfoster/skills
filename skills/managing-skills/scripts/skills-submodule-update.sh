@@ -2405,10 +2405,14 @@ _pr_refused() {
 # the next bump's first kill backed off the day as the second in a row.
 #
 # Every refresh that concludes so ends here: main already records the bump;
-# its upstream does; main and the upstream disagree, so no bump is proposed
-# until main is pulled, and the bump after the pull is another one; a PR
-# closed unmerged declined this bump; the branch already proposes it, whoever
-# pushed it. The ways out that leave the bump pending do not reset: a refused
+# its upstream does (effectively unreachable: step 4 already requires main
+# and the upstream to agree on the hook's paths, CR 2022); main and the
+# upstream disagree, so no bump is proposed until main is pulled; a PR closed
+# unmerged declined this bump; the branch already proposes it, whoever pushed
+# it. The bump after a pull may be the same one, when only the pin differed
+# (_pr_same_bump leaves .skills/skills-pin out): one kill is forgotten per
+# pull, bounded by the day's lock (CR 2021). The reset stays, since a merged
+# PR not yet pulled needs it. The ways out that leave the bump pending do not reset: a refused
 # `gh`, ls-remote or fetch, a branch holding a foreign commit, and a local
 # failure building the bump. A push that returns resets the count itself.
 _pr_nothing_left() {

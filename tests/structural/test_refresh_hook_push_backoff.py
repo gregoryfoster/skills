@@ -386,8 +386,9 @@ class TestPrMode:
     def test_a_merged_pr_not_yet_pulled_resets_the_count(self, pr_consumer):
         """Merged but not pulled: main and its upstream record different
         pointers, so no bump is proposed until main is pulled. The bump made
-        from this main is never proposed, and the one after the pull is
-        another."""
+        from this main is never proposed. The one after the pull may be the
+        same one, when only the pin differed: one kill is forgotten per
+        pull, bounded by the day's lock (CR 2021)."""
         c = pr_consumer
         _kill_after_the_push_returns(c)
         _merge_the_pr(c)
