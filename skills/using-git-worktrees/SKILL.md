@@ -79,7 +79,7 @@ Set it to `none` when **the main checkout is also a running service's `WorkingDi
 
 The hazard runs both ways: a worktree's own `uv sync` mutates what the live workers import from. With `none`, `worktree-create.sh` creates no `.venv` and says so on stderr; provision one — sub-second against a warm cache.
 
-**Tracking.** Read from the **primary checkout**, like `.skills/worktree_root`, so untracked works: such a file does not exist in a linked worktree at all, and reading the current checkout would drop the opt-out exactly where it is needed. Commit it only if it holds for every clone — a service's working directory is a property of one machine, not of the repo.
+**Tracking.** Read from the **primary checkout**, so untracked works: such a file does not exist in a linked worktree at all, and reading the current checkout would drop the opt-out exactly where it is needed. Commit it only if it holds for every clone — a service's working directory is a property of one machine, not of the repo.
 
 ## Procedure
 
@@ -148,7 +148,7 @@ When the branch is ready:
 4. `git merge <branch>` (a project whose AGENTS.md requires PRs sets `.skills/merge_mode` to `pr`; see below)
 5. Confirm the merge succeeded before Phase 5
 
-**`pr` mode** (`bash "<merge-mode.sh>"` prints `pr` from `.skills/merge_mode`; exit 2 is an unusable knob, never `direct`): no local merge. Push, then open the PR or hand off to `shipping-work`; once it merges, pull the main checkout and run Phase 5 ([references/pr-mode.md](references/pr-mode.md)).
+**`pr` mode** (`bash "<merge-mode.sh>"` prints `pr` from `.skills/merge_mode`; its exit 2 is never `direct`): no local merge. Push, then open the PR or hand off to `shipping-work`; once it merges, pull the main checkout and run Phase 5 ([references/pr-mode.md](references/pr-mode.md)).
 
 If the branch is **descoped** (will not be merged), document why before Phase 5: a one-line note in the related issue or PR. The descope reason is required input to `worktree-destroy.sh --descoped <reason>`.
 

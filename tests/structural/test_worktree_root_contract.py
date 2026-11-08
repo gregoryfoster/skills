@@ -306,6 +306,24 @@ class TestWorktreeRootDoesNotNest:
             f"configured root must be honored from a linked worktree, got {r.stdout!r}"
         )
 
+    def test_project_root_names_the_primary_whatever_the_env_says(
+        self, primary: Path, linked: Path
+    ):
+        """CR 2028: `--project-root` prints the checkout holding the knobs,
+        which worktree-create.sh reads `.skills/worktree_venv` from when the
+        primary is bare. WORKTREE_ROOT names no checkout, so it is ignored."""
+        env = _clean_env()
+        env["WORKTREE_ROOT"] = "/tmp/override-root"
+        r = subprocess.run(
+            ["bash", str(RESOLVE), "--project-root"],
+            capture_output=True,
+            text=True,
+            cwd=str(linked),
+            env=env,
+        )
+        assert r.returncode == 0, r.stderr
+        assert r.stdout == f"{primary}\n"
+
     def test_env_var_still_wins(self, primary: Path, linked: Path):
         env = _clean_env()
         env["WORKTREE_ROOT"] = "/tmp/override-root"

@@ -3,13 +3,17 @@
 # Prints the resolved worktree root for the current repo on stdout.
 # Resolution order: WORKTREE_ROOT env var → .skills/worktree_root file → <repo>/.worktrees/
 #
-# Usage: bash "<resolve-worktree-root.sh>" [--help]
+# Usage: bash "<resolve-worktree-root.sh>" [--project-root] [--help]
 set -euo pipefail
 
 if [[ "${1:-}" == "--help" ]]; then
-  echo "Usage: bash \"$0\""
+  echo "Usage: bash \"$0\" [--project-root]"
   echo ""
   echo "Prints the resolved worktree root for the current repo on stdout."
+  echo ""
+  echo "--project-root prints <repo-root> instead, the checkout that holds"
+  echo "the .skills/ knobs, ignoring WORKTREE_ROOT. worktree-create.sh reads"
+  echo ".skills/worktree_venv there when the primary is bare."
   echo ""
   echo "Resolution order (first match wins):"
   echo "  1. WORKTREE_ROOT env var"
@@ -51,7 +55,10 @@ PROJECT_ROOT=$(here_git rev-parse --show-toplevel) || {
   exit 2
 }
 
-if [[ -n "${WORKTREE_ROOT:-}" ]]; then
+PRINT=root
+if [[ "${1:-}" == "--project-root" ]]; then PRINT=project; fi
+
+if [[ -n "${WORKTREE_ROOT:-}" && $PRINT == root ]]; then
   echo "$WORKTREE_ROOT"
   exit 0
 fi
@@ -194,6 +201,11 @@ else
     echo "ERROR: could not resolve the primary checkout (git's reason, if any, is above): this repository's common dir '$COMMON_DIR' is no checkout's .git (as with \`git init --separate-git-dir\` or a symlinked \`.git\`), and only the primary knows its work tree, so run this from the primary checkout" >&2
     exit 2
   fi
+fi
+
+if [[ $PRINT == project ]]; then
+  printf '%s\n' "$PROJECT_ROOT"
+  exit 0
 fi
 
 CONFIG_FILE="$PROJECT_ROOT/.skills/worktree_root"

@@ -106,6 +106,8 @@ class TestDestroyFromASeparateGitDirPrimary:
         assert "ancestor of 'trunk'" in r.stdout, r.stdout
 
     def test_a_linked_worktree_is_exit_2_and_says_why(self, tmp_path: Path):
+        """The message is merge-mode.sh's (CR 2029): it runs first, on the
+        same rule, and refuses before destroy's own read is reached."""
         primary, linked = layouts.separate_git_dir(
             tmp_path / "l", "trunk\n", name="default_branch"
         )
@@ -117,7 +119,8 @@ class TestDestroyFromASeparateGitDirPrimary:
         assert "ancestor of" not in r.stdout, "no verdict against a guessed base"
 
     def test_a_store_git_cannot_open_is_exit_2_without_the_hint(self, tmp_path: Path):
-        """Never the fallback: "dubious ownership" is git's reason alone."""
+        """Never the fallback: "dubious ownership" is git's reason alone.
+        The message is merge-mode.sh's, as above (CR 2029)."""
         primary, linked = layouts.separate_git_dir(
             tmp_path / "l", "trunk\n", name="default_branch"
         )
@@ -332,6 +335,40 @@ class TestCreatesVenvKnobFromThePrimary:
         assert not (new / ".venv").is_symlink()
         assert "worktree_venv=none" in r.stderr, r.stderr
 
+    def test_a_dot_bare_layout_reads_the_directory_holding_it(self, tmp_path: Path):
+        """CR 2028: `<dir>/.bare` with a `<dir>/.git` gitfile naming it is a
+        bare primary too, but every checkout is a linked worktree, and the
+        knob lives in `<dir>`, where the resolver reads `worktree_root`.
+        Read from the current checkout, `none` was missed and the venv
+        linked: #201's hazard, at exit 0."""
+        src = layouts.seed(tmp_path / "seed", "direct\n")
+        top = tmp_path / "dx"
+        top.mkdir()
+        layouts.git(tmp_path, "clone", "-q", "--bare", str(src), str(top / ".bare"))
+        (top / ".git").write_text("gitdir: ./.bare\n")
+        layouts.git(top, "worktree", "add", "-q", str(top / "main"), "main")
+        layouts.knob(top, "none\n", name="worktree_venv")
+        self._venv(top / "main")
+        r, new = self._create(top / "main", tmp_path)
+        assert not (new / ".venv").exists() and not (new / ".venv").is_symlink()
+        assert "worktree_venv=none" in r.stderr, r.stderr
+
+    def test_a_dot_bare_directory_git_refuses_links_nothing(self, tmp_path: Path):
+        """The knob's home unknown is no `link`: git refusing `<dir>` makes
+        the resolver exit 2, and the venv is left unlinked, saying why."""
+        src = layouts.seed(tmp_path / "seed", "direct\n")
+        top = tmp_path / "dx"
+        top.mkdir()
+        layouts.git(tmp_path, "clone", "-q", "--bare", str(src), str(top / ".bare"))
+        (top / ".git").write_text("gitdir: ./.bare\n")
+        main = top / "main"
+        layouts.git(top, "worktree", "add", "-q", str(main), "main")
+        self._venv(main)
+        r, new = self._create(main, tmp_path, **layouts.different_owner({}, main))
+        assert not (new / ".venv").exists() and not (new / ".venv").is_symlink()
+        assert "dubious ownership" in r.stderr, r.stderr
+        assert "could not resolve where .skills/worktree_venv lives" in r.stderr
+
 
 def test_pr_modes_exit_2_is_not_only_an_unusable_file():
     """CR 1905's note on #605: from a linked worktree of a --separate-git-dir
@@ -342,3 +379,20 @@ def test_pr_modes_exit_2_is_not_only_an_unusable_file():
     assert "One exit 2 is not about the file." in text
     assert "`git init --separate-git-dir`" in text
     assert "run from the primary checkout" in text
+
+
+@pytest.mark.parametrize(
+    ("script", "phrases"),
+    [
+        (CREATE, ["primary checkout", "--separate-git-dir", "git < 2.31"]),
+        (DESTROY, ["primary checkout", "no registered", "worktree root"]),
+    ],
+    ids=["create", "destroy"],
+)
+def test_help_names_the_new_exit_2s(script: Path, phrases: list[str]):
+    """CR 2030: each --help's exit-2 list names what #585 and #605 added."""
+    r = subprocess.run(["bash", str(script), "--help"], capture_output=True, text=True)
+    codes = r.stdout[r.stdout.index("Exit codes:") :]
+    exit_2 = " ".join(codes[codes.index("  2  ") :].split())
+    for phrase in phrases:
+        assert phrase in exit_2, (phrase, exit_2)
