@@ -546,6 +546,12 @@ def _layout(name: str, tmp_path: Path) -> tuple[Path, dict]:
         (top / ".git").write_text("gitdir: ./.bare\n")
         layouts.git(top, "worktree", "add", "-q", str(top / "main"), "main")
         cwd = top / "main"
+        if "-crlf" in name:
+            # Git strips a CRLF gitfile's `\r` (CR 1993a).
+            (top / ".git").write_bytes(b"gitdir: ./.bare\r\n")
+        if name.endswith("-unreadable"):
+            # git fails "Permission denied" (CR 1993b); root reads it anyway.
+            (top / ".git").chmod(0)
     elif name.startswith("symlinked-git"):
         # A primary whose .git is a symlink to a store outside it (CR 1991).
         repo = layouts.seed(tmp / "repo", "direct\n")
@@ -572,7 +578,7 @@ def _layout(name: str, tmp_path: Path) -> tuple[Path, dict]:
         env = layouts.different_owner(env, cwd)
     if name.endswith("-git-dir"):
         env["GIT_DIR"] = layouts.git(cwd, "rev-parse", "--absolute-git-dir")
-    if name.endswith("-git230"):
+    if "-git230" in name:
         env["PATH"] = f"{_git_2_30_shim(tmp)}{os.pathsep}{env['PATH']}"
     return cwd, env
 
@@ -605,9 +611,14 @@ def test_below_git_2_31_the_escape_is_plans_dir(where: str, tmp_path: Path):
     cwd, env = _layout(f"separate-{where}-git230", tmp_path)
     r = _run_env(RESOLVE, cwd, env)
     assert r.returncode == 2, r.stdout + r.stderr
-    assert "git 2.30.6 predates 2.31, which this layout needs" in r.stderr, r.stderr
-    assert "set PLANS_DIR" in r.stderr, r.stderr
-    assert "run this from the primary checkout" not in r.stderr, r.stderr
+    assert (
+        "git 2.30.6 predates 2.31, which this layout needs to tell its "
+        "primary from a linked worktree: upgrade git (from a linked "
+        "worktree, then run from the primary checkout), or set PLANS_DIR"
+    ) in r.stderr, r.stderr
+    assert "not a git repository" not in r.stderr, (
+        f"CR 1996: the store's parent is no failure: {r.stderr}"
+    )
 
 
 PARITY_LAYOUTS = [
@@ -621,6 +632,8 @@ PARITY_LAYOUTS = [
     "bare-in-git-dubious",
     "dot-bare",
     "dot-bare-dubious",
+    "dot-bare-crlf-dubious",
+    "dot-bare-unreadable",
     "separate-primary",
     "separate-linked",
     "separate-primary-git230",
@@ -630,6 +643,7 @@ PARITY_LAYOUTS = [
     "linked-dubious",
     "submodule-dubious",
     "submodule-linked-dubious",
+    "submodule-linked-git230-dubious",
     "linked-git-dir",
     "submodule-git-dir",
     "submodule-linked-git-dir",
@@ -646,6 +660,8 @@ def test_the_lookup_is_the_worktree_root_lookup(name: str, tmp_path: Path):
     worktree root has `/.worktrees`. A change to either script's lookup fails
     here until the other matches.
     """
+    if name.endswith("-unreadable") and os.geteuid() == 0:
+        pytest.skip("root reads a mode-000 file")
     cwd, env = _layout(name, tmp_path)
     plans = _run_env(RESOLVE, cwd, env)
     root = _run_env(WORKTREE_RESOLVE, cwd, env)
