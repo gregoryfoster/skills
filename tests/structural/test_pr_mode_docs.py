@@ -184,3 +184,20 @@ def test_step_1_finds_the_main_checkout_by_asking_git():
     assert "`git -C <row> rev-parse --show-toplevel`" in step, step
     assert "**Marked `(bare)`:**" in step, step
     assert "**Unmarked:** the store of a primary made with" in step, step
+
+
+def test_step_1_tells_a_refusal_from_a_layout():
+    """CR 2027e: "dubious ownership" also makes the question fail, and read
+    as "no work tree" it fell under the separate-git-dir bullet."""
+    step = _post_merge_step_1()
+    assert 'When it fails with "must be run in a work tree"' in step, step
+    assert '"dubious ownership", is a refusal, not a layout' in step, step
+
+
+def test_step_1_names_what_a_plain_bare_clones_pull_does():
+    """CR 2027b: with no fetch refspec a plain bare clone's pull fetches
+    origin's HEAD and fast-forwards with exit 0, so "There is no tracking
+    information" never appears there: step 2's no-upstream is the trigger."""
+    step = _post_merge_step_1()
+    assert "With a fetch refspec, its pull says" in step, step
+    assert "its pull fetches origin's HEAD and fast-forwards" in step, step
