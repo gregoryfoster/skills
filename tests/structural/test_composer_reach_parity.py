@@ -112,13 +112,34 @@ def _literal(repo: Path, tmp_path: Path) -> dict:
     return {"GIT_LITERAL_PATHSPECS": "1"}
 
 
+def _deeper(repo: Path, tmp_path: Path) -> dict:
+    """CR 2026: without `:(glob)` magic a pathspec's `*` crosses `/`, so a
+    tracked composer.json two levels down matched `themes/*/composer.json`."""
+    _manifest(repo, "themes/site/inner/deep")
+    _commit(repo)
+    return {}
+
+
+def _noglob(repo: Path, tmp_path: Path) -> dict:
+    """CR 2026: under the noglob setting a bare pattern is a literal path,
+    so without `:(glob)` magic the tracked theme was missed."""
+    return {"GIT_NOGLOB_PATHSPECS": "1"}
+
+
+def _glob(repo: Path, tmp_path: Path) -> dict:
+    return {"GIT_GLOB_PATHSPECS": "1"}
+
+
 CASES: dict[str, Callable[[Path, Path], dict]] = {
     "gitignored": _gitignored,
     "untracked": _untracked,
     "dot-directory": _dot_directory,
     "submodule": _submodule,
+    "deeper-than-one-level": _deeper,
     "icase-pathspecs": _icase,
     "literal-pathspecs": _literal,
+    "noglob-pathspecs": _noglob,
+    "glob-pathspecs": _glob,
 }
 
 
