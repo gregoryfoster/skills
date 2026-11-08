@@ -117,6 +117,16 @@ PROJECT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || {
 }
 cd "$PROJECT_ROOT"
 
+# here_git <args>: git for asking about another checkout, the primary above
+# all, without an inherited GIT_DIR or GIT_WORK_TREE (#605, set R's CR 1895,
+# 1903). Git exports GIT_DIR to every hook, and it beats -C: asked about a
+# submodule's primary, git answered for this checkout or for the entry
+# itself, so the primary's ignore check was skipped. merge-mode.sh holds the
+# same rule. Each call answers for the checkout it names (docs/STYLE.md, #189).
+here_git() {
+  env -u GIT_DIR -u GIT_WORK_TREE git "$@"
+}
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT=$(bash "$SCRIPT_DIR/resolve-worktree-root.sh") || {
   echo "ERROR: failed to resolve worktree root" >&2
@@ -239,7 +249,7 @@ gitlink_prefix() {
     comp=${rest%%/*}
     if [[ "$rest" == */* ]]; then rest=${rest#*/}; else rest=""; fi
     p=${p:+$p/}$comp
-    if git -C "$1" -c core.quotePath=false ls-files --stage -- ":(literal)$p" |
+    if here_git -C "$1" -c core.quotePath=false ls-files --stage -- ":(literal)$p" |
       awk -F '\t' -v p="$p" '$2 == p && $1 ~ /^160000 / { f = 1 } END { exit !f }'; then
       printf '%s\n' "$p"
       return 0
@@ -249,11 +259,11 @@ gitlink_prefix() {
 }
 
 tree_unknown() {
-  echo "ERROR: could not resolve the work tree of '$1' (the reason is above), so whether it ignores the worktree root '$ROOT' is unknown" >&2
+  echo "ERROR: could not resolve the work tree of '$1' (the reason is above), so whether it ignores the worktree root '$ROOT' is unknown${2:-}" >&2
   exit 2
 }
 
-WT_LIST=$(git worktree list --porcelain) || {
+WT_LIST=$(here_git worktree list --porcelain) || {
   echo "ERROR: failed to enumerate worktrees (git worktree list --porcelain)" >&2
   exit 2
 }
@@ -261,13 +271,35 @@ WT_LIST=$(git worktree list --porcelain) || {
 # block with a `bare` line is `repo.git`, which has no work tree and so
 # cannot commit anything: it is not queued (CR 1840).
 PRIMARY_BLOCK=${WT_LIST%%$'\n\n'*}
-PRIMARY=${PRIMARY_BLOCK%%$'\n'*}
-PRIMARY=${PRIMARY#worktree }
+PRIMARY_ENTRY=${PRIMARY_BLOCK%%$'\n'*}
+PRIMARY_ENTRY=${PRIMARY_ENTRY#worktree }
+PRIMARY=$PRIMARY_ENTRY
 # A queue, not a fixed pair: a root inside a submodule adds that submodule's
 # checkout (CR 1849).
+#
+# One entry needs more than the loop's ask (#605, set R's CR 1892): a primary
+# whose .git is a pointer file (`git init --separate-git-dir`) lists its
+# store, which names no work tree. From that primary itself, the work tree is
+# this one: its git dir is the common dir. From a linked worktree git knows no
+# path to it, so whether it ignores the root is unknown: exit 2, saying so.
 case $'\n'"$PRIMARY_BLOCK"$'\n' in
   *$'\n'bare$'\n'*) TREES=("$PROJECT_ROOT") ;;
-  *) TREES=("$PRIMARY" "$PROJECT_ROOT") ;;
+  *)
+    if ! here_git -C "$PRIMARY_ENTRY" rev-parse --show-toplevel >/dev/null 2>&1; then
+      DIRS=$(here_git rev-parse --path-format=absolute --git-dir --git-common-dir 2>/dev/null) || DIRS=""
+      if [[ -z "$DIRS" || "${DIRS%%$'\n'*}" != "${DIRS#*$'\n'}" ]] ||
+        ! PRIMARY=$(here_git rev-parse --show-toplevel 2>/dev/null); then
+        # Asked again for git's reason, which goes to stderr.
+        here_git -C "$PRIMARY_ENTRY" rev-parse --show-toplevel >/dev/null || true
+        HINT=""
+        if [[ "$(here_git -C "$PRIMARY_ENTRY" rev-parse --is-inside-git-dir 2>/dev/null)" == true ]]; then
+          HINT="; it is a git dir with no work tree, as a primary whose .git is a file makes it (git init --separate-git-dir), and only that primary knows its work tree, so run this from the primary checkout"
+        fi
+        tree_unknown "$PRIMARY_ENTRY" "$HINT"
+      fi
+    fi
+    TREES=("$PRIMARY" "$PROJECT_ROOT")
+    ;;
 esac
 CHECKED=()
 i=0
@@ -279,7 +311,7 @@ while [[ $i -lt ${#TREES[@]} ]]; do
   # tree git names via core.worktree. A tree git cannot answer for is exit
   # 2 with git's reason (CR 1858): skipping it skipped the one check that
   # could refuse the root, so "dubious ownership" let any root through.
-  TOP=$(git -C "$TREE" rev-parse --show-toplevel) || tree_unknown "$TREE"
+  TOP=$(here_git -C "$TREE" rev-parse --show-toplevel) || tree_unknown "$TREE"
   TREE=$(cd -P -- "$TOP" && pwd -P) || tree_unknown "$TREE"
   SEEN=0
   for C in ${CHECKED[@]+"${CHECKED[@]}"}; do
@@ -292,7 +324,7 @@ while [[ $i -lt ${#TREES[@]} ]]; do
   IGNORE_ERR=""
   if [[ -n "$REL" ]]; then
     IGNORE_RC=0
-    IGNORE_ERR=$(git -C "$TREE" check-ignore -q -- "$REL/$SLUG/" 2>&1) || IGNORE_RC=$?
+    IGNORE_ERR=$(here_git -C "$TREE" check-ignore -q -- "$REL/$SLUG/" 2>&1) || IGNORE_RC=$?
   fi
   [[ $IGNORE_RC -ne 0 ]] || continue
   # A root inside a submodule of this tree (CR 1849): git cannot answer for
@@ -420,11 +452,11 @@ fi
 worktree_venv_mode() {
   local common_dir candidate candidate_common knob_root knob configured
   knob_root="$PROJECT_ROOT"
-  common_dir=$(git rev-parse --git-common-dir 2>/dev/null || true)
+  common_dir=$(here_git rev-parse --git-common-dir 2>/dev/null || true)
   if [[ -n "$common_dir" ]] && common_dir=$(cd "$common_dir" 2>/dev/null && pwd -P); then
     candidate=$(dirname "$common_dir")
     # `git -C "$candidate"` answers relative to candidate, not to our $PWD.
-    candidate_common=$(git -C "$candidate" rev-parse --git-common-dir 2>/dev/null || true)
+    candidate_common=$(here_git -C "$candidate" rev-parse --git-common-dir 2>/dev/null || true)
     if [[ -n "$candidate_common" ]] &&
        candidate_common=$(cd "$candidate" && cd "$candidate_common" 2>/dev/null && pwd -P) &&
        [[ "$candidate_common" == "$common_dir" ]]; then
