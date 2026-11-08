@@ -304,10 +304,12 @@ def test_a_run_is_dated_by_its_bulk_not_by_its_recovery_point(tmp_path):
     assert "cadence:overdue" not in _ids(out)
 
 
-def test_an_abandoned_recovery_point_hides_at_most_one_period(tmp_path):
-    # CR 1979-1983: every run directory is a run. One whose bulk never ran
-    # is dated by its name, and can hide the window right after it; the
-    # next one still fires.
+def test_an_abandoned_recovery_point_is_an_attempt_the_next_window_counts_from(
+    tmp_path,
+):
+    # CR 1979-1984: every run directory is an attempt, and the finding counts
+    # from the last attempt. One whose bulk never ran is dated by its name,
+    # and only windows after it count.
     h = ClockHost(tmp_path).knob(WEEKLY_TUE_PM)
     h.ran("20261027T150000Z", bulk="2026-10-27T15:30")
     h.recovery_point_only("20261103T140000Z")
@@ -318,6 +320,35 @@ def test_an_abandoned_recovery_point_hides_at_most_one_period(tmp_path):
     c = out["updates"]["cadence"]
     assert (c["windows_missed"], c["first_missed"]) == (1, "2026-11-10T15:00:00Z")
     assert "cadence:overdue" in _ids(out)
+
+
+def test_an_attempt_after_four_missed_weeks_resets_the_count(tmp_path):
+    # CR 1984, S1 on wslcb's history: a real run on 10-06, four Tuesdays
+    # missed, then a recovery point at 04:00 on 11-03 whose bulk never ran.
+    # The finding reads periods since that attempt: none yet, then one.
+    h = ClockHost(tmp_path).knob(WEEKLY_TUE).ran("20261006T070000Z")
+    h.recovery_point_only("20261103T040000Z")
+    out = h.at("2026-11-03T12:47").run()
+    c = out["updates"]["cadence"]
+    assert (c["last_run"], c["periods_missed"]) == ("2026-11-03T04:00:00Z", 0)
+    assert "cadence:overdue" not in _ids(out)
+    h.cases["date"] = []
+    c = h.at("2026-11-10T12:47").run()["updates"]["cadence"]
+    assert (c["periods_missed"], c["first_missed"]) == (1, "2026-11-10T05:00:00Z")
+
+
+def test_bulks_that_failed_before_their_holds_are_attempts(tmp_path):
+    # CR 1984, S6: apply.sh makes the directory, then fails before holds and
+    # steps (its apt-get update, say). A failed attempt's record is where the
+    # failure shows; this finding reads it as attended.
+    h = ClockHost(tmp_path).knob(WEEKLY_TUE).ran("20261006T070000Z")
+    for day in ("13", "20", "27"):
+        (h.run_dir(f"202610{day}T050500Z") / "apt-get-update.log").write_text("E\n")
+    (h.run_dir("20261103T050500Z") / "apt-get-update.log").write_text("E\n")
+    out = h.at("2026-11-03T12:47").run()
+    c = out["updates"]["cadence"]
+    assert (c["last_run"], c["periods_missed"]) == ("2026-11-03T05:05:00Z", 0)
+    assert "cadence:overdue" not in _ids(out)
 
 
 def test_a_recovery_point_alone_is_a_run_not_no_run_on_record(tmp_path):
