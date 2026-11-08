@@ -408,6 +408,36 @@ class TestPhp:
         linted = sorted(c[2] for c in _calls(repo, "php") if c[1] == "-l")
         assert linted == ["index.php", "themes/site/functions.php"]
 
+    def test_php_lint_stops_at_a_submodule(self, repo, tmp_path):
+        """#591, decided no (operator, 2026-11-08): a repo gates only its own
+        code, so a theme vendored as a submodule has its PHP linted in its
+        own repo's gate, not here."""
+        src = tmp_path / "theme-src"
+        src.mkdir()
+        _git(src, "init", "-q", "-b", "main")
+        _git(src, "config", "user.email", "test@example.com")
+        _git(src, "config", "user.name", "test")
+        (src / "functions.php").write_text("<?php\n")
+        _commit(src)
+        _composer_repo(repo)
+        _git(
+            repo,
+            *("-c", "protocol.file.allow=always", "submodule", "add", "-q"),
+            *(str(src), "themes/sub"),
+        )
+        _commit(repo)
+        assert (repo / "themes" / "sub" / "functions.php").is_file()
+        assert _gate(repo).returncode == 0
+        linted = sorted(c[2] for c in _calls(repo, "php") if c[1] == "-l")
+        assert linted == ["index.php", "themes/site/functions.php"]
+
+    def test_the_php_reference_says_php_lint_stops_at_a_submodule(self):
+        """#591: the decision is written where a PHP repo reads its checks."""
+        php = (GATE.parents[1] / "references" / "stack-php.md").read_text()
+        text = " ".join(php.split())
+        assert "`php -l` stops at a submodule" in text, text
+        assert "a submodule's PHP is linted by its own repo's gate" in text, text
+
     @pytest.mark.parametrize("setting", PATHSPEC_SETTINGS)
     def test_a_global_pathspec_setting_lints_every_tracked_php_file(
         self, repo, setting
