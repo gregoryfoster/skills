@@ -108,7 +108,12 @@ Started by "ship it" once `gh pr view` shows `MERGED`:
 1. **Move to the main checkout,** the first row of `git worktree list`. Run
    `git switch <default>`, then `git pull --ff-only`. If the pull refuses,
    the local default branch has commits of its own: stop and report. Don't
-   merge or rebase them.
+   merge or rebase them. A first row marked `(bare)` is a bare repository,
+   with no work tree to switch in
+   ([#587](https://github.com/gregoryfoster/skills/issues/587)). There the
+   main checkout is the linked worktree that holds the default branch, the
+   row ending `[<default>]`: pull in it. If no worktree holds it, stop and
+   ask which checkout is deployed. Don't add one, since no unit runs from it.
 2. **Step 8 runs there.** Without `.skills/deploy_command`, a checkout that is
    a unit's `WorkingDirectory=` became production at the pull, so the next
    steps table follows it, and a restart row waits on `.skills/pre_restart`
