@@ -39,7 +39,9 @@ Options:
                       /var/lib/apt/lists, and count against them (the ESM
                       count, from pro, still reads the host's own lists).
                       It also audits each service's uv.lock against OSV
-                      (pending.language), which nothing else asks for
+                      (pending.language), which nothing else asks for: per
+                      package, its advisories' ids, and in the same order
+                      the versions that fix each ([] none, null unread)
   --dry-run-into DIR  count the selection with unattended-upgrade --dry-run,
                       as root, with apt's cache in DIR/archives. It downloads
                       the whole set (290 MB and 9 minutes on one host) and
@@ -2079,10 +2081,34 @@ root_only() {  # <path>
 # its user can rewrite. A root-owned lock, such as a release tree a deploy
 # builds as root, is audited as nobody, with a uv only root can change
 # (#456). uv 0.11.8 exits 0 clean, 1 with advisories and 2 on an error; its
-# output is text only. It never fetches a newer uv for one without `audit`
-# (#422). Sets LA_AUDITED, LA_N, LA_PKGS (a JSON array body) and LA_WHY.
+# output is text only (0.13.5 adds --output-format json, which the minimum
+# lacks). It never fetches a newer uv for one without `audit` (#422). Sets
+# LA_AUDITED, LA_N, LA_PKGS (a JSON array body) and LA_WHY.
+#
+# Each package's advisories come from the lines beneath its header (#594):
+# "- <id>: <title>", then "  Fixed in: <v>, <v>" or "  No fix versions
+# available" (uv 0.11.8 and 0.13.5, read 2026-11-07). ids keeps uv's order,
+# and fixed_in follows it, one list per advisory: its versions, [] where uv
+# says no fix exists, or null where it said neither. A fix can span release
+# lines (urllib3's "2.0.7, 1.26.18"), and a union per package would lose
+# which advisory has none.
+LA_P="" LA_IDS="" LA_FIXES="" LA_FIX="" LA_IN_ADV=0
+la_adv_end() {
+  [ "$LA_IN_ADV" -eq 1 ] || return 0
+  jpush LA_FIXES "$LA_FIX"
+  LA_IN_ADV=0
+}
+la_pkg_end() {
+  la_adv_end
+  [ -n "$LA_P" ] || return 0
+  jadd LA_P ids "[$LA_IDS]"
+  jadd LA_P fixed_in "[$LA_FIXES]"
+  jpush LA_PKGS "{$LA_P}"
+  LA_P="" LA_IDS="" LA_FIXES=""
+}
 lang_audit() {  # <dir> <user> <home>
-  local d=$1 u=$2 home=$3 uvb="" out err="" line re rc n=0 sum="" p v
+  local d=$1 u=$2 home=$3 uvb="" out err="" line re ra rf rc n=0 sum="" p v
+  local -a fv=()
   LA_AUDITED=0 LA_N="" LA_PKGS="" LA_WHY=""
   if [ ! -e "$P_ROOT$d/pyproject.toml" ] && ! as_root test -e "$P_ROOT$d/pyproject.toml" 2>/dev/null; then
     LA_WHY="no pyproject.toml beside its uv.lock, which uv audit needs"
@@ -2148,16 +2174,30 @@ lang_audit() {  # <dir> <user> <home>
       ;;
   esac
   re='^([^ ]+) ([^ ]+) has ([0-9]+) known vulnerabilit(y|ies):$'
+  ra='^- ([^ :]+): '
+  rf='^  Fixed in: (.+)$'
+  LA_P="" LA_IDS="" LA_FIXES="" LA_IN_ADV=0
   while IFS= read -r line; do
     if [[ $line =~ $re ]]; then
-      p=""
-      jadds p name "${BASH_REMATCH[1]}"
-      jadds p version "${BASH_REMATCH[2]}"
-      jaddn p advisories "${BASH_REMATCH[3]}"
-      jpush LA_PKGS "{$p}"
+      la_pkg_end
+      jadds LA_P name "${BASH_REMATCH[1]}"
+      jadds LA_P version "${BASH_REMATCH[2]}"
+      jaddn LA_P advisories "${BASH_REMATCH[3]}"
       n=$((n + BASH_REMATCH[3]))
+    elif [ -n "$LA_P" ] && [[ $line =~ $ra ]]; then
+      la_adv_end
+      jpushs LA_IDS "${BASH_REMATCH[1]}"
+      LA_FIX=null LA_IN_ADV=1
+    elif [ "$LA_IN_ADV" -eq 1 ] && [[ $line =~ $rf ]]; then
+      p=""
+      read -r -a fv <<<"${BASH_REMATCH[1]//,/ }" || true
+      for v in ${fv[@]+"${fv[@]}"}; do jpushs p "$v"; done
+      LA_FIX="[$p]"
+    elif [ "$LA_IN_ADV" -eq 1 ] && [ "$line" = "  No fix versions available" ]; then
+      LA_FIX="[]"
     fi
   done <<<"$out"
+  la_pkg_end
   re='Found ([0-9]+) known vulnerabilit'
   if [[ $err =~ $re ]]; then sum=${BASH_REMATCH[1]}; fi
   if [ "$rc" -eq 0 ]; then
