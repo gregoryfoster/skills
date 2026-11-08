@@ -1156,7 +1156,10 @@ FWUPD_INSTALLED = "1.9.33-0ubuntu1~24.04.1ubuntu1"
 FWUPD_CANDIDATE = "2.0.20-1ubuntu2~24.04.2"
 
 
-def _fwupd_policy(installed_sources: list[str]) -> str:
+def _fwupd_policy(
+    installed_sources: list[str],
+    status: str = "        100 /var/lib/dpkg/status",
+) -> str:
     lines = [
         "fwupd:",
         f"  Installed: {FWUPD_INSTALLED}",
@@ -1166,7 +1169,7 @@ def _fwupd_policy(installed_sources: list[str]) -> str:
         "        500 http://archive.ubuntu.com/ubuntu noble-updates/main amd64 Packages",
         f" *** {FWUPD_INSTALLED} 100",
         *installed_sources,
-        "        100 /var/lib/dpkg/status",
+        status,
         "     1.9.15-2 500",
         "        500 http://archive.ubuntu.com/ubuntu noble/main amd64 Packages",
     ]
@@ -1231,6 +1234,32 @@ def test_a_reinstall_of_a_build_still_in_an_archive_is_offered(host):
     assert f"{CONFMISS} (a deleted conffile)" in f["message"]
     assert "would upgrade" not in f["message"]
     assert "restore the deleted conffile alone" in f["message"]
+
+
+# CR 1946: apt right-aligns the priority in four columns after seven spaces,
+# so a priority of 1000 or more prints one space short of the usual eight,
+# and a negative one keeps eight (noble's apt, Pin-Priority 1001 and -10,
+# measured 2026-11-07). Each is still a source line.
+@pytest.mark.parametrize(
+    "source",
+    [
+        "       1001 http://archive.ubuntu.com/ubuntu noble-updates/main amd64 Packages",
+        "        -10 http://archive.ubuntu.com/ubuntu noble-updates/main amd64 Packages",
+    ],
+    ids=["1001", "-10"],
+)
+def test_a_source_of_any_priority_under_the_installed_version_counts(host, source):
+    f = _conffile_prompt(host, _fwupd_policy([source]))
+    assert f"{CONFMISS} (a deleted conffile)" in f["message"]
+    assert "would upgrade" not in f["message"]
+
+
+def test_a_status_line_of_four_digits_is_still_the_status_file(host):
+    f = _conffile_prompt(
+        host, _fwupd_policy([], status="       1001 /var/lib/dpkg/status")
+    )
+    assert CONFMISS not in f["message"]
+    assert f"apt lists its installed {FWUPD_INSTALLED} from no archive" in f["message"]
 
 
 def test_a_reinstall_whose_source_cant_be_read_says_so(host):
