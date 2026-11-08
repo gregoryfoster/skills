@@ -2935,6 +2935,9 @@ read_dry_run() {
     installed_fetchable "$p"
     if [ "$IF_STATE" = yes ] && [[ $p =~ $DEB_NAME_RE ]] && [[ $IF_VERSION =~ $DEB_VERSION_RE ]]; then
       w="reinstall that build, named: apt-get install --reinstall -o Dpkg::Options::=--force-confmiss '$p=$IF_VERSION' (a deleted conffile; unnamed, apt takes the candidate)"
+    elif [ "$IF_STATE" = yes ]; then
+      # Read, and fetchable, but not safe to paste (CR 1967).
+      w="apt can fetch its installed build, but the name or version apt printed has a character outside Debian's own characters, so no command is given: a reinstall with --force-confmiss must name that build, or it upgrades"
     elif [ "$IF_STATE" = no ]; then
       w="no reinstall: apt lists its installed $IF_VERSION from no archive, only dpkg's status file, so naming that version fails, and a reinstall with --force-confmiss would upgrade it to ${IF_CANDIDATE:-its candidate}"
     else
