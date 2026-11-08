@@ -35,6 +35,9 @@ so the two are peers rather than an original and a copy. The scripts they pin
 are line-for-line the same resolution block; an edit to either half should be
 checked against the other.
 
+The relative knob (#590) is held to that script by running both resolvers on
+the same values, rather than by a copied expectation.
+
 No API calls. Self-contained: each test builds a throwaway repo under tmp_path.
 """
 
@@ -46,6 +49,9 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 RESOLVE = REPO_ROOT / "skills" / "writing-plans" / "scripts" / "resolve-plans-dir.sh"
+# The twin whose rule the relative knob is held to (#590).
+WORKTREES = REPO_ROOT / "skills" / "using-git-worktrees" / "scripts"
+WORKTREE_RESOLVE = WORKTREES / "resolve-worktree-root.sh"
 
 
 def _clean_env() -> dict:
@@ -250,6 +256,93 @@ class TestPlansDirDoesNotNest:
         r = _run(RESOLVE, cwd=outside)
         assert r.returncode == 2, f"expected exit 2, got {r.returncode}"
         assert "not inside a git repository" in r.stderr
+
+
+class TestRelativeConfiguredDir:
+    """#590: a relative `.skills/plans_dir` is the primary checkout's.
+
+    Echoed verbatim, it resolved against the caller's directory: from a
+    subdirectory it named a directory under that subdirectory, and from a
+    linked worktree one inside that worktree. #562 and #567 fixed the same
+    defect in `resolve-worktree-root.sh`; this is its twin.
+    """
+
+    @pytest.fixture
+    def knob(self, primary: Path) -> Path:
+        (primary / ".skills").mkdir()
+        (primary / ".skills" / "plans_dir").write_text("# configured\nnotes/plans\n")
+        return primary
+
+    def test_resolve_from_a_subdirectory_names_the_primary(self, knob: Path):
+        deep = knob / "src" / "pkg"
+        deep.mkdir(parents=True)
+        r = _run(RESOLVE, cwd=deep)
+        assert r.returncode == 0, r.stderr
+        assert r.stdout.strip() == str(knob / "notes" / "plans"), (
+            "a relative knob echoed verbatim resolves against the caller's "
+            f"directory, here src/pkg/notes/plans; got {r.stdout.strip()!r}"
+        )
+
+    def test_resolve_from_a_linked_worktree_names_the_primary(
+        self, knob: Path, linked: Path
+    ):
+        r = _run(RESOLVE, cwd=linked)
+        assert r.returncode == 0, r.stderr
+        assert r.stdout.strip() == str(knob / "notes" / "plans"), (
+            "a relative knob echoed verbatim files the plan inside the linked "
+            f"worktree; got {r.stdout.strip()!r}"
+        )
+
+    def test_a_relative_env_var_is_printed_as_given(self, knob: Path):
+        """PLANS_DIR keeps its meaning: the reader's directory, as before."""
+        env = _clean_env()
+        env["PLANS_DIR"] = "elsewhere"
+        r = subprocess.run(
+            ["bash", str(RESOLVE)],
+            capture_output=True,
+            text=True,
+            cwd=str(knob),
+            env=env,
+        )
+        assert r.returncode == 0, r.stderr
+        assert r.stdout.strip() == "elsewhere"
+
+    @pytest.mark.parametrize(
+        "value",
+        ["notes", "./notes", "notes/", "../shared-plans", "~/plans", "/abs/plans"],
+        ids=["bare", "dot-slash", "trailing-slash", "dotdot", "tilde", "absolute"],
+    )
+    @pytest.mark.parametrize("vantage", ["subdirectory", "linked"])
+    def test_the_rule_is_the_worktree_root_rule(
+        self, primary: Path, linked: Path, value: str, vantage: str
+    ):
+        """One rule for both knobs, held by running both resolvers.
+
+        An absolute value is kept; anything else, `~` and `..` included, is
+        joined to the primary checkout with a leading `./` dropped. Neither
+        script expands `~` or folds `..`: the knob file is not shell input.
+        Compared by output, not by a restated expectation, so a change to
+        either script's rule fails here until the other matches.
+        """
+        (primary / ".skills").mkdir()
+        (primary / ".skills" / "plans_dir").write_text(value + "\n")
+        (primary / ".skills" / "worktree_root").write_text(value + "\n")
+        if vantage == "subdirectory":
+            cwd = primary / "src"
+            cwd.mkdir()
+        else:
+            cwd = linked
+        plans = _run(RESOLVE, cwd=cwd)
+        root = _run(WORKTREE_RESOLVE, cwd=cwd)
+        assert plans.returncode == 0 and root.returncode == 0, (
+            f"{plans.stderr!r} / {root.stderr!r}"
+        )
+        assert plans.stdout == root.stdout, (
+            f"knob {value!r} from the {vantage}: plans_dir printed "
+            f"{plans.stdout.strip()!r}, worktree_root {root.stdout.strip()!r}"
+        )
+        if not value.startswith("/"):
+            assert plans.stdout.strip().startswith(str(primary) + "/")
 
 
 class TestSubmoduleWorktreeBoundary:
