@@ -42,7 +42,7 @@ def host(tmp_path):
     return rig.make_host(tmp_path / "root")
 
 
-def install(tmp_path, root, *extra, files=None):
+def install(tmp_path, root, *extra, files=None, env=None):
     staging = rig.stage(
         tmp_path / f"staging-{len(list(tmp_path.glob('staging-*')))}", files
     )
@@ -58,6 +58,7 @@ def install(tmp_path, root, *extra, files=None):
         "--systemctl",
         stub,
         *extra,
+        env=env,
     )
     return result
 
@@ -67,11 +68,17 @@ def out_of(result, code=0):
     return rig.stdout_json(result)
 
 
+DANGLING = "-> /nonexistent"
+
+
 def put(root, rel, text):
+    """A file, a link to /dev/null (None), or a dangling link (DANGLING)."""
     p = root / rel
     p.parent.mkdir(parents=True, exist_ok=True)
     if text is None:
         p.symlink_to("/dev/null")
+    elif text == DANGLING:
+        p.symlink_to("/nonexistent")
     else:
         p.write_text(text)
 
@@ -350,17 +357,31 @@ def test_cr_1966_a_tab_or_newline_name_is_merged_and_reported(
     ]
 
 
+def _has_locale(name):
+    try:
+        listed = subprocess.run(["locale", "-a"], capture_output=True, text=True).stdout
+    except OSError:
+        return False
+    want = name.lower().replace("-", "")
+    return want in {line.lower().replace("-", "") for line in listed.split()}
+
+
 @pytest.mark.usefixtures("linux_tools")
+@pytest.mark.parametrize("locale", ["C", "C.UTF-8"])
 def test_cr_1966_bytes_that_arent_printable_ascii_show_as_question_marks(
-    tmp_path, host
+    tmp_path, host, locale
 ):
-    # Neither a name nor a value may make stdout invalid UTF-8.
+    # Neither a name nor a value may make stdout invalid UTF-8. CR 1976: a
+    # ? per byte whatever the host's locale; in C.UTF-8 a bracket range is
+    # by character, so "é" would be one ? without printable's own LC_ALL=C.
+    if locale != "C" and not _has_locale(locale):
+        pytest.skip(f"no {locale} locale here")
     d = host / "etc" / JD
     d.mkdir(parents=True, exist_ok=True)
     with open(os.path.join(os.fsencode(d), b"10-\xffx.conf"), "wb") as f:
         f.write(cap("200M").encode())
     (d / "zzz-y.conf").write_bytes(b"[Journal]\nSystemMaxUse=200M\xc3\xa9\n")
-    out = out_of(install(tmp_path, host))
+    out = out_of(install(tmp_path, host, env={"LC_ALL": locale}))
     assert out["journald_overrides"] == [
         entry(f"/etc/{JD}/10-?x.conf", "200M", "200M", "512M"),
         entry(f"/etc/{JD}/zzz-y.conf", "200M??", "200M", "512M"),
@@ -521,6 +542,22 @@ VERSIONED = [
         [entry(f"/etc/{MAIN}", "300M", "300M", "512M")],
     ),
 ]
+VERSIONED += [
+    # CR 1975: from 256, journald skips a dangling link at a main file and
+    # reads on (measured on 257 and 259); a link to /dev/null, a directory
+    # or an empty file stops it. On 255 and older, /etc's only: nothing.
+    (
+        NEW,
+        {f"etc/{MAIN}": DANGLING, f"usr/lib/{MAIN}": cap("200M")},
+        [entry(f"/usr/lib/{MAIN}", "200M", "200M", "512M")],
+    ),
+    (
+        NEW,
+        {f"run/{MAIN}": DANGLING, f"usr/lib/{MAIN}": cap("200M")},
+        [entry(f"/usr/lib/{MAIN}", "200M", "200M", "512M")],
+    ),
+    (OLD, {f"etc/{MAIN}": DANGLING, f"usr/lib/{MAIN}": cap("200M")}, []),
+]
 VERSIONED_IDS = [
     "255-usr-lib",
     "255-run",
@@ -528,6 +565,9 @@ VERSIONED_IDS = [
     "259-run",
     "259-etc-null-masks",
     "259-etc-masks-run",
+    "259-etc-dangling",
+    "259-run-dangling",
+    "255-etc-dangling",
 ]
 
 
@@ -547,13 +587,20 @@ def test_cr_1963_the_main_file_is_read_as_the_hosts_systemd_reads_it(
 
 
 @pytest.mark.usefixtures("linux_tools")
-@pytest.mark.parametrize("installed", [False, True], ids=["no-dpkg", "config-files"])
+@pytest.mark.parametrize(
+    "installed, etc",
+    [(False, False), (True, False), (False, True)],
+    ids=["no-dpkg", "config-files", "etc-dangling"],
+)
 def test_cr_1963_an_unreadable_version_reads_as_256_and_says_so(
-    tmp_path, host, installed
+    tmp_path, host, installed, etc
 ):
     # It reports more: a main file the newer rule reads and the older doesn't.
+    # A dangling /etc link is no main file there (CR 1975).
     if installed:
         systemd_version(host, "259.1", status="deinstall ok config-files")
+    if etc:
+        put(host, f"etc/{MAIN}", DANGLING)
     put(host, f"usr/lib/{MAIN}", cap("200M"))
     result = install(tmp_path, host)
     assert out_of(result)["journald_overrides"] == [
@@ -565,3 +612,17 @@ def test_cr_1963_an_unreadable_version_reads_as_256_and_says_so(
 def test_cr_1954_the_remove_usage_keeps_the_files_wrap():
     wide = [line for line in _help("remove-disk-gc.sh").splitlines() if len(line) > 77]
     assert not wide, wide
+
+
+@pytest.mark.usefixtures("linux_tools")
+def test_cr_1977_an_unreadable_version_is_quiet_when_etc_has_the_main_file(
+    tmp_path, host
+):
+    # Both rules read /etc's then, so there's nothing to say.
+    put(host, f"etc/{MAIN}", cap("300M"))
+    put(host, f"usr/lib/{MAIN}", cap("200M"))
+    result = install(tmp_path, host)
+    assert out_of(result)["journald_overrides"] == [
+        entry(f"/etc/{MAIN}", "300M", "300M", "512M")
+    ]
+    assert "systemd's version" not in result.stderr, result.stderr

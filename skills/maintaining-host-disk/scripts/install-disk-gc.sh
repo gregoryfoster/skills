@@ -375,7 +375,8 @@ fi
 # journald's rule, measured by running systemd-journald itself (CR 1950,
 # CR 1951, CR 1963). The main file: on 249 and 255, /etc's only; on 256, 257
 # and 259, the first of the four directories that has one, as cat-config
-# reads it, an /etc link to /dev/null masking the rest. The drop-ins, on all
+# reads it: a dangling link is passed over, and a link to /dev/null, an
+# empty file or a directory masks the rest (CR 1975). The drop-ins, on all
 # five: every *.conf across the four directories by file name, a name in a
 # higher directory masking the same name lower down (a link to /dev/null
 # masks with nothing), all applied in C sort order, the last value journald
@@ -444,7 +445,9 @@ journald_files() {
   for d in $JOURNALD_DIRS; do
     [ "$J_MAIN_ANY" = 1 ] || [ "$d" = etc ] || continue
     rel=$d/systemd/journald.conf
-    if [ -e "$R/$rel" ] || [ -L "$R/$rel" ]; then
+    # -e follows a link: a dangling one is passed over, as journald does
+    # (CR 1975); a link to /dev/null, a directory or an empty file stops it.
+    if [ -e "$R/$rel" ]; then
       if [ -f "$R/$rel" ]; then J_SRC+=("$R/$rel") J_SHOW+=("/$rel") J_HOST+=(1); fi
       break
     fi
@@ -610,7 +613,7 @@ journald_overrides() {
     done < <(printf '%s\n' "${layers[@]}" | LC_ALL=C sort)
   fi
   journald_main_rule
-  if [ -n "$J_MAIN_NOTE" ] && [ ! -e "$R/etc/systemd/journald.conf" ] && [ ! -L "$R/etc/systemd/journald.conf" ]; then
+  if [ -n "$J_MAIN_NOTE" ] && [ ! -e "$R/etc/systemd/journald.conf" ]; then
     for rel in run usr/local/lib usr/lib; do
       if [ -e "$R/$rel/systemd/journald.conf" ]; then
         echo "install-disk-gc: note: $J_MAIN_NOTE" >&2
