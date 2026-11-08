@@ -332,6 +332,24 @@ class TestCreatesVenvKnobFromThePrimary:
         assert not (new / ".venv").is_symlink()
         assert "worktree_venv=none" in r.stderr, r.stderr
 
+    def test_a_dot_bare_layout_reads_the_directory_holding_it(self, tmp_path: Path):
+        """CR 2028: `<dir>/.bare` with a `<dir>/.git` gitfile naming it is a
+        bare primary too, but every checkout is a linked worktree, and the
+        knob lives in `<dir>`, where the resolver reads `worktree_root`.
+        Read from the current checkout, `none` was missed and the venv
+        linked: #201's hazard, at exit 0."""
+        src = layouts.seed(tmp_path / "seed", "direct\n")
+        top = tmp_path / "dx"
+        top.mkdir()
+        layouts.git(tmp_path, "clone", "-q", "--bare", str(src), str(top / ".bare"))
+        (top / ".git").write_text("gitdir: ./.bare\n")
+        layouts.git(top, "worktree", "add", "-q", str(top / "main"), "main")
+        layouts.knob(top, "none\n", name="worktree_venv")
+        self._venv(top / "main")
+        r, new = self._create(top / "main", tmp_path)
+        assert not (new / ".venv").exists() and not (new / ".venv").is_symlink()
+        assert "worktree_venv=none" in r.stderr, r.stderr
+
 
 def test_pr_modes_exit_2_is_not_only_an_unusable_file():
     """CR 1905's note on #605: from a linked worktree of a --separate-git-dir
