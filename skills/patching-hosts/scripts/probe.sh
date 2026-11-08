@@ -2817,7 +2817,18 @@ read_dry_run() {
     else
       cfs="unknown: dpkg-query couldn't list them"
     fi
-    finding risk "dry-run:conffile:$p" "" "unattended-upgrade passes over $p at a conffile prompt, so the lane won't install it${k:+, though by_class.$k counts it (by_class.passed_over marks it)} (the dry run exited $rc). Its conffiles on disk: $cfs. Choose a remedy: hold it, declared as exception held:$p <review-by> <reason>; reinstall it with -o Dpkg::Options::=--force-confmiss (a deleted conffile) or settle the change by hand; or prune it (policy.md)."
+    # --force-confmiss reinstalls only a build apt can still fetch, and a
+    # deleted conffile can be restored alone from that build's .deb (#582).
+    installed_fetchable "$p"
+    case $IF_STATE in
+      yes) w="reinstall it with -o Dpkg::Options::=--force-confmiss (a deleted conffile)" ;;
+      no) w="a reinstall with --force-confmiss would upgrade it to ${IF_CANDIDATE:-its candidate}, since apt lists its installed $IF_VERSION from no archive, only dpkg's status file" ;;
+      *) w="whether apt can fetch its installed build couldn't be read, and a reinstall with --force-confmiss of one it can't upgrades it instead" ;;
+    esac
+    case ${cf_states[$((i - 1))]} in
+      *'"state": "missing"'*) w="$w; restore the deleted conffile alone from the ${IF_VERSION:-installed} .deb, checked against dpkg's md5 (references/environments/exe-dev-exeuntu.md)" ;;
+    esac
+    finding risk "dry-run:conffile:$p" "" "unattended-upgrade passes over $p at a conffile prompt, so the lane won't install it${k:+, though by_class.$k counts it (by_class.passed_over marks it)} (the dry run exited $rc). Its conffiles on disk: $cfs. Choose a remedy: hold it, declared as exception held:$p <review-by> <reason>; $w; settle the change by hand (a modified conffile); or prune it (policy.md)."
   done
   if [ -n "$unlisted" ]; then
     finding risk dry-run:unlisted "" "The dry run selects${unlisted}, which the pending set's class lists don't name: the proposal's counts leave them out, and the apply would take them. Read each in apt-cache policy before proposing."
@@ -2883,6 +2894,31 @@ read_holds() {
     jpush R_OWNERHOLDS "{$e}"
   done <<<"$hl"
   R_OWNERHOLDS="[$R_OWNERHOLDS]"
+}
+
+# Whether apt can fetch the installed build again (#582): apt-cache policy
+# lists it from a source other than dpkg's status file. A build superseded
+# in -updates is listed from the status file alone, and a reinstall then
+# resolves to the candidate: an upgrade, outside every gate.
+installed_fetchable() {  # <package>: IF_STATE := yes, no, or empty when unread; IF_VERSION and IF_CANDIDATE
+  local out line mine=0
+  IF_STATE="" IF_VERSION="" IF_CANDIDATE=""
+  have apt-cache || return 0
+  capture out apt_env apt-cache "${APT_OPTS[@]}" ${LISTS_OPT[@]+"${LISTS_OPT[@]}"} policy "$1"
+  [ "$CAP_RC" -eq 0 ] || return 0
+  while IFS= read -r line; do
+    case $line in
+      "  Candidate: "*) IF_CANDIDATE=${line#"  Candidate: "} ;;
+      " *** "*)
+        mine=1 IF_STATE=no
+        read -r _ IF_VERSION _ <<<"$line" ;;
+      "     "[!\ ]*) mine=0 ;;
+      "        "*)
+        if [ "$mine" -eq 1 ]; then
+          case $line in */var/lib/dpkg/status) ;; *) IF_STATE=yes ;; esac
+        fi ;;
+    esac
+  done <<<"$out"
 }
 
 held_versions() {  # <package>: HV_INSTALLED, HV_CANDIDATE, and HV_SECURITY 1 when a newer version is in a -security suite

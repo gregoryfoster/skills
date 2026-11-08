@@ -1224,7 +1224,9 @@ def test_a_reinstall_that_would_upgrade_isnt_offered_as_a_reinstall(host):
 
 
 def test_a_reinstall_of_a_build_still_in_an_archive_is_offered(host):
-    archive = "        500 http://archive.ubuntu.com/ubuntu noble-updates/main amd64 Packages"
+    archive = (
+        "        500 http://archive.ubuntu.com/ubuntu noble-updates/main amd64 Packages"
+    )
     f = _conffile_prompt(host, _fwupd_policy([archive]))
     assert f"{CONFMISS} (a deleted conffile)" in f["message"]
     assert "would upgrade" not in f["message"]
