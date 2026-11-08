@@ -447,6 +447,30 @@ def _run_env(script: Path, cwd: Path, env: dict) -> subprocess.CompletedProcess:
     )
 
 
+def _old_git_env(tmp_path: Path) -> dict:
+    """A clean env whose `git` plays 2.30 over the real one: `--version`
+    says so, and `--path-format=absolute` is echoed back as git before 2.31
+    does, at exit 0."""
+    real = shutil.which("git")
+    assert real, "git is on PATH"
+    shims = tmp_path.resolve() / "shims"
+    shims.mkdir()
+    shim = shims / "git"
+    shim.write_text(
+        "#!/usr/bin/env bash\n"
+        'if [ "$1" = --version ]; then echo "git version 2.30.6"; exit 0; fi\n'
+        "args=()\n"
+        "for a; do\n"
+        '  if [ "$a" = --path-format=absolute ]; then echo "$a"; else args+=("$a"); fi\n'
+        "done\n"
+        f'exec {real} "${{args[@]}}"\n'
+    )
+    shim.chmod(0o755)
+    env = _clean_env()
+    env["PATH"] = f"{shims}{os.pathsep}{env['PATH']}"
+    return env
+
+
 class TestAGitFailureOnThePrimaryIsExit2:
     """#585: the primary lookup hid git's failures behind `2>/dev/null`.
 
@@ -529,6 +553,41 @@ class TestAGitFailureOnThePrimaryIsExit2:
         assert f"'{top}'" in r.stderr, f"the error names <dir>: {r.stderr}"
         assert r.stdout == ""
 
+    def test_a_dot_bare_crlf_gitfile_git_refuses_is_exit_2(
+        self, tmp_path: Path, primary: Path
+    ):
+        """CR 1993a: git strips a CRLF gitfile's `\\r`; a read that kept it
+        missed `<dir>` and took the bare case at exit 0."""
+        top = self._dot_bare(tmp_path, primary)
+        (top / ".git").write_bytes(b"gitdir: ./.bare\r\n")
+        main = top / "main"
+        assert _run(RESOLVE, cwd=main).stdout.strip() == str(top / ".worktrees"), (
+            "precondition: git accepts the CRLF gitfile"
+        )
+        r = _run_env(RESOLVE, main, layouts.different_owner(_clean_env(), main))
+        assert r.returncode == 2, r.stdout + r.stderr
+        assert "dubious ownership" in r.stderr, r.stderr
+        assert r.stdout == ""
+
+    @pytest.mark.skipif(os.geteuid() == 0, reason="root reads a mode-000 file")
+    def test_a_dot_bare_unreadable_gitfile_is_exit_2(
+        self, tmp_path: Path, primary: Path
+    ):
+        """CR 1993b: `<dir>/.git` unreadable. Git fails ("Permission
+        denied"), and a read that failed open took the bare case at exit 0,
+        with no ownership problem needed."""
+        top = self._dot_bare(tmp_path, primary)
+        gitfile = top / ".git"
+        gitfile.chmod(0)
+        try:
+            r = _run(RESOLVE, cwd=top / "main")
+        finally:
+            gitfile.chmod(0o644)
+        assert r.returncode == 2, r.stdout + r.stderr
+        assert "Permission denied" in r.stderr, f"git's reason: {r.stderr}"
+        assert f"{top}/.git" in r.stderr, r.stderr
+        assert r.stdout == ""
+
 
 class TestTheSeparateGitDirPrimary:
     """#605, case 1: a primary whose `.git` is a pointer file to a store.
@@ -566,30 +625,34 @@ class TestTheSeparateGitDirPrimary:
         """CR 1990: git before 2.31 echoes `--path-format=absolute` back at
         exit 0, so the primary cannot be told from a linked worktree. "Run
         this from the primary checkout" was false from the primary itself.
-        A `git` shim plays 2.30 over the real one."""
-        real = shutil.which("git")
-        assert real, "git is on PATH"
-        shims = tmp_path.resolve() / "shims"
-        shims.mkdir()
-        shim = shims / "git"
-        shim.write_text(
-            "#!/usr/bin/env bash\n"
-            'if [ "$1" = --version ]; then echo "git version 2.30.6"; exit 0; fi\n'
-            "args=()\n"
-            "for a; do\n"
-            '  if [ "$a" = --path-format=absolute ]; then echo "$a"; else args+=("$a"); fi\n'
-            "done\n"
-            f'exec {real} "${{args[@]}}"\n'
-        )
-        shim.chmod(0o755)
+        CR 1994: upgrading alone never fixes the linked worktree, so the
+        message says what to do there after it."""
         primary, linked = layouts.separate_git_dir(tmp_path.resolve() / "l", None)
-        env = _clean_env()
-        env["PATH"] = f"{shims}{os.pathsep}{env['PATH']}"
-        r = _run_env(RESOLVE, primary if where == "primary" else linked, env)
+        r = _run_env(
+            RESOLVE, primary if where == "primary" else linked, _old_git_env(tmp_path)
+        )
         assert r.returncode == 2, r.stdout + r.stderr
-        assert "git 2.30.6 predates 2.31, which this layout needs" in r.stderr, r.stderr
-        assert "set WORKTREE_ROOT" in r.stderr, r.stderr
+        assert (
+            "git 2.30.6 predates 2.31, which this layout needs to tell its "
+            "primary from a linked worktree: upgrade git (from a linked "
+            "worktree, then run from the primary checkout), or set WORKTREE_ROOT"
+        ) in r.stderr, r.stderr
         assert "run this from the primary checkout" not in r.stderr, r.stderr
+        assert "not a git repository" not in r.stderr, (
+            f"CR 1996: the store's parent is no failure: {r.stderr}"
+        )
+
+    def test_below_git_2_31_a_refused_superproject_keeps_gits_reason(
+        self, tmp_path: Path
+    ):
+        """CR 1994: below 2.31 the old-git message ran before git was asked
+        again, so "dubious ownership" was dropped for a submodule's linked
+        worktree, where upgrading git does not help."""
+        wt = layouts.submodule_linked(tmp_path.resolve() / "l", "direct\n").resolve()
+        env = layouts.different_owner(_old_git_env(tmp_path), wt)
+        r = _run_env(RESOLVE, wt, env)
+        assert r.returncode == 2, r.stdout + r.stderr
+        assert "dubious ownership" in r.stderr, r.stderr
 
 
 class TestTheRefusalCarriesGitsReason:
@@ -616,9 +679,18 @@ class TestTheRefusalCarriesGitsReason:
         r = _run(RESOLVE, cwd=linked)
         assert r.returncode == 2, r.stdout + r.stderr
         assert "symlinked `.git`" in r.stderr, r.stderr
-        assert "not a git repository" in r.stderr, f"git's reason: {r.stderr}"
         assert "run this from the primary checkout" in r.stderr, r.stderr
         assert r.stdout == ""
+
+    def test_the_store_parents_not_a_repository_is_not_printed(self, tmp_path: Path):
+        """CR 1996: from a --separate-git-dir linked worktree the second ask
+        is about the store's parent, which is no repository by design; git
+        saying so is not a reason, and was printed as one."""
+        _, linked = layouts.separate_git_dir(tmp_path.resolve(), None)
+        r = _run(RESOLVE, cwd=linked)
+        assert r.returncode == 2, r.stdout + r.stderr
+        assert "not a git repository" not in r.stderr, r.stderr
+        assert layouts.SEPARATE_GIT_DIR_HINT in r.stderr, r.stderr
 
 
 class TestAnInheritedGitDir:
