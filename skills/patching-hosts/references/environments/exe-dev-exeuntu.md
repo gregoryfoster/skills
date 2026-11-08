@@ -161,7 +161,7 @@ So a copy isn't the recovery point: that's the data store's own ([run.md](../run
 
   **On the Feb-2026 image every `/etc/update-motd.d/*` conffile is absent:** 11, across `base-files` (3), `overlayroot`, `ubuntu-pro-client`, `ubuntu-release-upgrader-core`, `unattended-upgrades` and `update-notifier-common` (4), read with `dpkg-query -W -f='${Conffiles}'` on address-validator, 2026-11-06 (#582). Any whose new version changes its motd script hits the same prompt.
 
-  **A `--force-confmiss` reinstall upgrades once the installed build has left the archive:** there, `apt-cache policy fwupd` listed 1.9.33 from `/var/lib/dpkg/status` alone, so it resolved to a three-package upgrade to 2.0.20, outside every gate (#582). The finding says which applies. **Restore a deleted conffile alone** instead, touching no package state:
+  **A `--force-confmiss` reinstall must name the installed build**, `'<pkg>=<version>'`: unnamed, apt takes the pending candidate, an upgrade outside every gate; named, it refuses a build no archive lists (noble, 2026-11-07, CR 1955). On address-validator, `apt-cache policy fwupd` listed 1.9.33 from `/var/lib/dpkg/status` alone, and the unnamed one resolved to a three-package upgrade (#582). The finding gives the command. **Restore a deleted conffile alone** instead, touching no package state:
   1. fetch the installed build's `.deb` from snapshot.ubuntu.com into an empty scratch directory (`/ubuntu/20260301T000000Z/pool/main/f/fwupd/fwupd_1.9.33-0ubuntu1%7E24.04.1ubuntu1_amd64.deb`);
   2. extract only the file: `dpkg-deb --fsys-tarfile <deb> | tar -x ./etc/update-motd.d/85-fwupd`;
   3. check its md5 against `dpkg-query -W -f='${Conffiles}' fwupd` (`ded254e0…`, matching the snapshot `.deb`, 2026-11-07);

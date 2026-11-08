@@ -2819,12 +2819,17 @@ read_dry_run() {
     fi
     # --force-confmiss reinstalls only a build apt can still fetch, and a
     # deleted conffile can be restored alone from that build's .deb (#582).
+    # The command names the build: a newer candidate is always pending here,
+    # and an unversioned --reinstall takes it (noble's apt, CR 1955). Quoted,
+    # and only for a name and version in Debian's own characters.
     installed_fetchable "$p"
-    case $IF_STATE in
-      yes) w="reinstall it with -o Dpkg::Options::=--force-confmiss (a deleted conffile)" ;;
-      no) w="a reinstall with --force-confmiss would upgrade it to ${IF_CANDIDATE:-its candidate}, since apt lists its installed $IF_VERSION from no archive, only dpkg's status file" ;;
-      *) w="whether apt can fetch its installed build couldn't be read, and a reinstall with --force-confmiss of one it can't upgrades it instead" ;;
-    esac
+    if [ "$IF_STATE" = yes ] && [[ $p =~ $DEB_NAME_RE ]] && [[ $IF_VERSION =~ $DEB_VERSION_RE ]]; then
+      w="reinstall that build, named: apt-get install --reinstall -o Dpkg::Options::=--force-confmiss '$p=$IF_VERSION' (a deleted conffile; unnamed, apt takes the candidate)"
+    elif [ "$IF_STATE" = no ]; then
+      w="no reinstall: apt lists its installed $IF_VERSION from no archive, only dpkg's status file, so naming that version fails, and a reinstall with --force-confmiss would upgrade it to ${IF_CANDIDATE:-its candidate}"
+    else
+      w="whether apt can fetch its installed build couldn't be read, and a reinstall with --force-confmiss must name that build or it upgrades"
+    fi
     case ${cf_states[$((i - 1))]} in
       *'"state": "missing"'*) w="$w; restore the deleted conffile alone from the ${IF_VERSION:-installed} .deb, checked against dpkg's md5 (references/environments/exe-dev-exeuntu.md)" ;;
     esac
@@ -2904,6 +2909,10 @@ read_holds() {
 # line is seven spaces and its priority right-aligned in four columns, so
 # one of 1000 or more has seven leading spaces, not eight (noble's apt,
 # Pin-Priority 1001, CR 1946).
+# A package name and a version in Debian policy's characters, which a
+# command quoted in single quotes can print as they are (CR 1955).
+DEB_NAME_RE='^[a-z0-9][a-z0-9.+-]*$'
+DEB_VERSION_RE='^[A-Za-z0-9][A-Za-z0-9.+~:-]*$'
 installed_fetchable() {  # <package>: IF_STATE := yes, no, or empty when unread; IF_VERSION and IF_CANDIDATE
   local out line mine=0 src='^       +-?[0-9]+ '
   IF_STATE="" IF_VERSION="" IF_CANDIDATE=""
