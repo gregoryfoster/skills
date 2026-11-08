@@ -19,6 +19,9 @@
 - CR 1948: the conffile restore's general recipe lives in policy.md, which
   the finding points at; the exeuntu profile keeps fwupd as its worked
   example. A --force-confmiss reinstall names the installed build (CR 1955).
+- CR 1949: section 7's rule for a public record covers the language
+  advisories #594 lists: counts and whether a fix exists, and their ids and
+  fixed-in versions only once the fix has shipped.
 """
 
 import re
@@ -305,3 +308,10 @@ def test_the_conffile_restore_recipe_is_general_and_in_policy_md():
     profile = (SKILL / "references" / "environments" / "exe-dev-exeuntu.md").read_text()
     assert "../policy.md#exceptions" in profile
     assert "ded254e0" in profile
+
+
+def test_a_public_record_gives_language_advisories_as_counts_and_fix_or_none():
+    s7 = _section(AFTER, "## 7. The record")
+    assert "`ids` and `fixed_in`" in s7
+    assert '"fix available"' in s7 and '"no fix"' in s7
+    assert "once the fix has shipped on the host" in s7
