@@ -527,7 +527,7 @@ def _layout(name: str, tmp_path: Path) -> tuple[Path, dict]:
     elif name.startswith("separate-"):
         primary, linked = layouts.separate_git_dir(tmp, None)
         cwd = (primary if name == "separate-primary" else linked).resolve()
-    elif name == "dot-bare":
+    elif name.startswith("dot-bare"):
         src = layouts.seed(tmp / "seed", "direct\n")
         top = tmp / "dx"
         top.mkdir()
@@ -535,19 +535,29 @@ def _layout(name: str, tmp_path: Path) -> tuple[Path, dict]:
         (top / ".git").write_text("gitdir: ./.bare\n")
         layouts.git(top, "worktree", "add", "-q", str(top / "main"), "main")
         cwd = top / "main"
+    elif name.startswith("symlinked-git"):
+        # A primary whose .git is a symlink to a store outside it (CR 1991).
+        repo = layouts.seed(tmp / "repo", "direct\n")
+        (repo / ".git").rename(tmp / "store.git")
+        (repo / ".git").symlink_to(tmp / "store.git")
+        if name == "symlinked-git-primary":
+            cwd = repo
+        else:
+            cwd = tmp / "wt"
+            layouts.git(repo, "worktree", "add", "-q", "-b", "wt/one", str(cwd))
     else:
         repo = layouts.seed(tmp / "repo", "direct\n")
         if name == "subdirectory":
             cwd = repo / "a" / "b"
             cwd.mkdir(parents=True)
-        elif name.startswith(("linked", "dubious")):
+        elif name.startswith("linked"):
             cwd = tmp / "wt"
             layouts.git(repo, "worktree", "add", "-q", "-b", "wt/one", str(cwd))
         elif name.startswith("submodule"):
             cwd = _add_submodule(repo, tmp)
         else:
             cwd = repo
-    if name == "dubious-primary":
+    if name.endswith("dubious"):
         env = layouts.different_owner(env, cwd)
     if name.endswith("-git-dir"):
         env["GIT_DIR"] = layouts.git(cwd, "rev-parse", "--absolute-git-dir")
@@ -562,9 +572,12 @@ PARITY_LAYOUTS = [
     "submodule-linked",
     "bare-home",
     "dot-bare",
+    "dot-bare-dubious",
     "separate-primary",
     "separate-linked",
-    "dubious-primary",
+    "symlinked-git-primary",
+    "symlinked-git-linked",
+    "linked-dubious",
     "linked-git-dir",
     "submodule-git-dir",
     "submodule-linked-git-dir",
