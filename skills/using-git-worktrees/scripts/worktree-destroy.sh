@@ -96,7 +96,9 @@ usage() {
   echo "  2  Tooling/infra failure (not a git repo, missing arg, worktree not"
   echo "     found, worktree locked without --unlock, target is the worktree this"
   echo "     command runs from, git list/unlock/remove failed, merge_mode"
-  echo "     unusable; in pr mode, gh missing or failing when it is needed)"
+  echo "     unusable, the primary checkout unresolved for .skills/default_branch,"
+  echo "     the worktree root unresolved for a branch with no registered"
+  echo "     worktree; in pr mode, gh missing or failing when it is needed)"
 }
 
 # One line, not the whole block. The full usage dump is 69 lines here, and it

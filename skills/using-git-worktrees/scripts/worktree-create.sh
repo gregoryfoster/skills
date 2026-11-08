@@ -44,9 +44,11 @@ usage() {
   echo "  0  Worktree created; absolute path printed on stdout"
   echo "  1  Iron Law violation (branch already checked out elsewhere)"
   echo "  2  Tooling/infra failure (not a git repo, missing arg, the root could"
-  echo "     not be created, git worktree add failed), or the root is inside a"
-  echo "     work tree that does not ignore it (git check-ignore) or in a"
-  echo "     submodule that is not checked out, which creates nothing"
+  echo "     not be created, git worktree add failed), the primary checkout"
+  echo "     could not be resolved (git refused it, a linked worktree of a"
+  echo "     --separate-git-dir primary, git < 2.31 there), or the root is"
+  echo "     inside a work tree that does not ignore it (git check-ignore) or"
+  echo "     in a submodule that is not checked out, which creates nothing"
 }
 
 # One line, not the whole block. An argument error used to print the full usage

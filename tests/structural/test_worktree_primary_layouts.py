@@ -379,3 +379,20 @@ def test_pr_modes_exit_2_is_not_only_an_unusable_file():
     assert "One exit 2 is not about the file." in text
     assert "`git init --separate-git-dir`" in text
     assert "run from the primary checkout" in text
+
+
+@pytest.mark.parametrize(
+    ("script", "phrases"),
+    [
+        (CREATE, ["primary checkout", "--separate-git-dir", "git < 2.31"]),
+        (DESTROY, ["primary checkout", "no registered", "worktree root"]),
+    ],
+    ids=["create", "destroy"],
+)
+def test_help_names_the_new_exit_2s(script: Path, phrases: list[str]):
+    """CR 2030: each --help's exit-2 list names what #585 and #605 added."""
+    r = subprocess.run(["bash", str(script), "--help"], capture_output=True, text=True)
+    codes = r.stdout[r.stdout.index("Exit codes:") :]
+    exit_2 = " ".join(codes[codes.index("  2  ") :].split())
+    for phrase in phrases:
+        assert phrase in exit_2, (phrase, exit_2)
