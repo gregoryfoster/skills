@@ -616,6 +616,7 @@ def test_below_git_2_31_the_escape_is_plans_dir(where: str, tmp_path: Path):
         "primary from a linked worktree: upgrade git (from a linked "
         "worktree, then run from the primary checkout), or set PLANS_DIR"
     ) in r.stderr, r.stderr
+    assert layouts.OLD_GIT_HINT in r.stderr, r.stderr
     assert "not a git repository" not in r.stderr, (
         f"CR 1996: the store's parent is no failure: {r.stderr}"
     )

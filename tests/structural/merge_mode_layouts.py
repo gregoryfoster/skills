@@ -162,6 +162,14 @@ def separate_git_dir(
 # can open the store; "dubious ownership" is git's reason alone.
 SEPARATE_GIT_DIR_HINT = "--separate-git-dir"
 
+# The old-git refusal's shared core (CR 1990, CR 2010e): shipping-work's
+# readers and both primary-checkout resolvers say this much alike, each
+# with its own tail after it.
+OLD_GIT_HINT = (
+    "predates 2.31, which this layout needs to tell its primary from a "
+    "linked worktree: upgrade git"
+)
+
 
 def different_owner(base: dict, safe: Path) -> dict:
     """`base` with git told every repo has another owner, `safe` excepted:
