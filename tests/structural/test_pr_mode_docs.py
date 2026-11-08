@@ -169,6 +169,11 @@ def test_a_bare_clones_missing_upstream_is_set_not_read_as_local_commits():
     assert "There is no tracking information" in step, step
     assert "git branch --set-upstream-to=origin/<default>" in step, step
     assert "'+refs/heads/*:refs/remotes/origin/*'" in step, step
+    # CR 2012: the steps in the order they work, the refspec first.
+    refspec = step.index("remote.origin.fetch '+refs/heads/*")
+    fetch = step.index("`git fetch origin`")
+    upstream = step.index("--set-upstream-to=origin/<default>")
+    assert refspec < fetch < upstream, step
 
 
 def test_step_1_finds_the_main_checkout_by_asking_git():
@@ -179,3 +184,20 @@ def test_step_1_finds_the_main_checkout_by_asking_git():
     assert "`git -C <row> rev-parse --show-toplevel`" in step, step
     assert "**Marked `(bare)`:**" in step, step
     assert "**Unmarked:** the store of a primary made with" in step, step
+
+
+def test_step_1_tells_a_refusal_from_a_layout():
+    """CR 2027e: "dubious ownership" also makes the question fail, and read
+    as "no work tree" it fell under the separate-git-dir bullet."""
+    step = _post_merge_step_1()
+    assert 'When it fails with "must be run in a work tree"' in step, step
+    assert '"dubious ownership", is a refusal, not a layout' in step, step
+
+
+def test_step_1_names_what_a_plain_bare_clones_pull_does():
+    """CR 2027b: with no fetch refspec a plain bare clone's pull fetches
+    origin's HEAD and fast-forwards with exit 0, so "There is no tracking
+    information" never appears there: step 2's no-upstream is the trigger."""
+    step = _post_merge_step_1()
+    assert "With a fetch refspec, its pull says" in step, step
+    assert "its pull fetches origin's HEAD and fast-forwards" in step, step

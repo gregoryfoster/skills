@@ -108,7 +108,10 @@ Started by "ship it" once `gh pr view` shows `MERGED`:
 1. **Move to the main checkout,** which `git -C <row> rev-parse
    --show-toplevel` names, `<row>` being the path on the first row of `git
    worktree list`. That holds for a plain primary and for a submodule, whose
-   first row is its git dir. When it fails, the row has no work tree:
+   first row is its git dir. When it fails with "must be run in a work
+   tree", the row has no work tree. Any other error from git, such as
+   "dubious ownership", is a refusal, not a layout: stop and report it.
+   With no work tree:
    - **Marked `(bare)`:** a bare repository
      ([#587](https://github.com/gregoryfoster/skills/issues/587)). The main
      checkout is the linked worktree that holds the default branch, the row
@@ -122,12 +125,15 @@ Started by "ship it" once `gh pr view` shows `MERGED`:
    There, run `git switch <default>`, then `git pull --ff-only`. Only a pull
    that refuses to fast-forward means the local default branch has commits
    of its own: stop and report. Don't merge or rebase them. A bare clone
-   sets no upstream. If the pull says "There is no tracking information", or
-   step 2 says the default branch has no upstream, run `git fetch origin`
-   and `git branch --set-upstream-to=origin/<default>`, pull again, and
-   report it. When `git config --get remote.origin.fetch` prints nothing,
-   first run `git config remote.origin.fetch
-   '+refs/heads/*:refs/remotes/origin/*'`.
+   sets no upstream. With a fetch refspec, its pull says "There is no
+   tracking information". A plain `git clone --bare` has no refspec either,
+   so its pull fetches origin's HEAD and fast-forwards, and only step 2
+   notices, saying the branch has no upstream. Either way, set it, in this
+   order: when `git
+   config --get-all remote.origin.fetch` prints nothing, `git config
+   remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*'`; then `git
+   fetch origin`; then `git branch --set-upstream-to=origin/<default>`. Pull
+   again, and report it.
 2. **Step 8 runs there.** Without `.skills/deploy_command`, a checkout that is
    a unit's `WorkingDirectory=` became production at the pull, so the next
    steps table follows it, and a restart row waits on `.skills/pre_restart`
