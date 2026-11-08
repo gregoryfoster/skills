@@ -1800,6 +1800,33 @@ def test_post_boot_honours_a_depends_exception_only_for_the_order(
     assert (fid in _ids(out)) is not excepted
 
 
+# #581: the knob's exception session:adj covers the post-boot reading of the
+# same chain, as it does the reading before a run. On an exe.dev host whose
+# platform lineage runs at -1000, a clean boot otherwise kept one finding no
+# knob line could cover (CannObserv/address-validator#311).
+@pytest.mark.parametrize(
+    "line, excepted",
+    [
+        ("exception session:adj 2099-01-01 platform session lineage\n", True),
+        ("exception session:adj 2026-01-01 platform session lineage\n", False),
+        ("", False),
+    ],
+    ids=["excepted", "expired", "none"],
+)
+def test_post_boot_honours_a_session_adj_exception(host, line, excepted):
+    host.knob("class production\nposture automatic\n" + line)
+    host.chain([(4242, "node", -1000), (4200, "sh", -1000), (1, "systemd", 0)])
+    out = host.run("--post-boot")
+    checks = {c["check"]: c for c in out["post_boot"]}
+    assert checks["session-adj"]["ok"] is False
+    session = {"session:adj", "post-boot:session-adj"}
+    assert (session <= set(_ids(out, "excepted"))) is excepted
+    assert (session & set(_ids(out))) == (set() if excepted else session)
+    key = "excepted" if excepted else "findings"
+    f = _finding(out, "post-boot:session-adj", key)
+    assert f["exception_what"] == "session:adj"
+
+
 # --- what the probe changes (#423, #490, #501) ---------------------------------
 
 
