@@ -263,44 +263,62 @@ tree_unknown() {
   exit 2
 }
 
-WT_LIST=$(here_git worktree list --porcelain) || {
-  echo "ERROR: failed to enumerate worktrees (git worktree list --porcelain)" >&2
-  exit 2
-}
+# primary_checkout: sets PRIMARY_TREE to the primary checkout's work tree,
+# or to "" for a bare primary, which has none. Shared by the ignore check
+# below and worktree_venv_mode (CR 1992a), in the shape merge-mode.sh and
+# shipping-work's _command-knob.sh share.
+#
 # The primary is the first porcelain block, up to the first blank line. A
 # block with a `bare` line is `repo.git`, which has no work tree and so
-# cannot commit anything: it is not queued (CR 1840).
-PRIMARY_BLOCK=${WT_LIST%%$'\n\n'*}
-PRIMARY_ENTRY=${PRIMARY_BLOCK%%$'\n'*}
-PRIMARY_ENTRY=${PRIMARY_ENTRY#worktree }
-PRIMARY=$PRIMARY_ENTRY
+# cannot commit anything (CR 1840). Any other entry is asked for its work
+# tree: in a submodule (git 2.54) it is `<super>/.git/modules/<name>`, whose
+# work tree git names via core.worktree. That ask failing is exit 2 with
+# git's reason, never a fallback (CR 1858), with one exception, which is no
+# other checkout (#605, set R's CR 1892): a primary whose .git is a pointer
+# file (`git init --separate-git-dir`) lists its store, which names no work
+# tree. From that primary itself the work tree is this one, whose git dir is
+# the common dir. From a linked worktree git knows no path to it: exit 2,
+# saying so.
+primary_checkout() {
+  local wt_list block entry dirs hint
+  wt_list=$(here_git worktree list --porcelain) || {
+    echo "ERROR: failed to enumerate worktrees (git worktree list --porcelain)" >&2
+    exit 2
+  }
+  block=${wt_list%%$'\n\n'*}
+  entry=${block%%$'\n'*}
+  entry=${entry#worktree }
+  case $'\n'"$block"$'\n' in
+    *$'\n'bare$'\n'*)
+      PRIMARY_TREE=""
+      return 0
+      ;;
+  esac
+  if PRIMARY_TREE=$(here_git -C "$entry" rev-parse --show-toplevel 2>/dev/null); then
+    return 0
+  fi
+  dirs=$(here_git rev-parse --path-format=absolute --git-dir --git-common-dir 2>/dev/null) || dirs=""
+  if [[ -n "$dirs" && "${dirs%%$'\n'*}" == "${dirs#*$'\n'}" ]] &&
+    PRIMARY_TREE=$(here_git rev-parse --show-toplevel 2>/dev/null); then
+    return 0
+  fi
+  # Asked again for git's reason, which goes to stderr.
+  here_git -C "$entry" rev-parse --show-toplevel >/dev/null || true
+  hint=""
+  if [[ "$(here_git -C "$entry" rev-parse --is-inside-git-dir 2>/dev/null)" == true ]]; then
+    hint="; it is a git dir with no work tree, as a primary whose .git is a file makes it (git init --separate-git-dir), and only that primary knows its work tree, so run this from the primary checkout"
+  fi
+  tree_unknown "$entry" "$hint"
+}
+
+primary_checkout
 # A queue, not a fixed pair: a root inside a submodule adds that submodule's
-# checkout (CR 1849).
-#
-# One entry needs more than the loop's ask (#605, set R's CR 1892): a primary
-# whose .git is a pointer file (`git init --separate-git-dir`) lists its
-# store, which names no work tree. From that primary itself, the work tree is
-# this one: its git dir is the common dir. From a linked worktree git knows no
-# path to it, so whether it ignores the root is unknown: exit 2, saying so.
-case $'\n'"$PRIMARY_BLOCK"$'\n' in
-  *$'\n'bare$'\n'*) TREES=("$PROJECT_ROOT") ;;
-  *)
-    if ! here_git -C "$PRIMARY_ENTRY" rev-parse --show-toplevel >/dev/null 2>&1; then
-      DIRS=$(here_git rev-parse --path-format=absolute --git-dir --git-common-dir 2>/dev/null) || DIRS=""
-      if [[ -z "$DIRS" || "${DIRS%%$'\n'*}" != "${DIRS#*$'\n'}" ]] ||
-        ! PRIMARY=$(here_git rev-parse --show-toplevel 2>/dev/null); then
-        # Asked again for git's reason, which goes to stderr.
-        here_git -C "$PRIMARY_ENTRY" rev-parse --show-toplevel >/dev/null || true
-        HINT=""
-        if [[ "$(here_git -C "$PRIMARY_ENTRY" rev-parse --is-inside-git-dir 2>/dev/null)" == true ]]; then
-          HINT="; it is a git dir with no work tree, as a primary whose .git is a file makes it (git init --separate-git-dir), and only that primary knows its work tree, so run this from the primary checkout"
-        fi
-        tree_unknown "$PRIMARY_ENTRY" "$HINT"
-      fi
-    fi
-    TREES=("$PRIMARY" "$PROJECT_ROOT")
-    ;;
-esac
+# checkout (CR 1849). A bare primary is not queued.
+if [[ -n "$PRIMARY_TREE" ]]; then
+  TREES=("$PRIMARY_TREE" "$PROJECT_ROOT")
+else
+  TREES=("$PROJECT_ROOT")
+fi
 CHECKED=()
 i=0
 while [[ $i -lt ${#TREES[@]} ]]; do
@@ -443,28 +461,15 @@ fi
 # not exist in a linked worktree at all — so a knob read from the current
 # checkout would be invisible whenever this script runs from inside a worktree,
 # silently restoring the link in the one deployment the knob exists to protect.
-# This is the derivation `resolve-worktree-root.sh` uses for the same reason,
-# including its submodule guard: the parent of `<super>/.git/modules/<name>` is
-# not a work tree, so the candidate is accepted only if it is a checkout
-# sharing this common dir. The #203 gap is inherited with it — in a linked
-# worktree OF a submodule the candidate is rejected and the knob is read from
-# the current checkout, where an untracked file is absent.
+# The primary is primary_checkout's, which the ignore check above already
+# resolved (CR 1992a): a bare primary's knob is the current checkout's, and a
+# submodule's linked worktree reads its submodule's primary, which the old
+# copy of resolve-worktree-root.sh's lookup here could not (#203). That copy
+# also fell back to this checkout on any git failure, and asked under an
+# inherited GIT_DIR, where a submodule's knob read as absent.
 worktree_venv_mode() {
-  local common_dir candidate candidate_common knob_root knob configured
-  knob_root="$PROJECT_ROOT"
-  common_dir=$(here_git rev-parse --git-common-dir 2>/dev/null || true)
-  if [[ -n "$common_dir" ]] && common_dir=$(cd "$common_dir" 2>/dev/null && pwd -P); then
-    candidate=$(dirname "$common_dir")
-    # `git -C "$candidate"` answers relative to candidate, not to our $PWD.
-    candidate_common=$(here_git -C "$candidate" rev-parse --git-common-dir 2>/dev/null || true)
-    if [[ -n "$candidate_common" ]] &&
-       candidate_common=$(cd "$candidate" && cd "$candidate_common" 2>/dev/null && pwd -P) &&
-       [[ "$candidate_common" == "$common_dir" ]]; then
-      knob_root="$candidate"
-    fi
-  fi
-
-  knob="$knob_root/.skills/worktree_venv"
+  local knob configured
+  knob="${PRIMARY_TREE:-$PROJECT_ROOT}/.skills/worktree_venv"
   [[ -f "$knob" ]] || { echo link; return 0; }
 
   # First non-blank, non-comment line, trimmed — the same read

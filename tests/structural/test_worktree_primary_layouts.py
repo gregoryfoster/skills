@@ -239,3 +239,53 @@ class TestCreateUnderAnInheritedGitEnvironment:
         assert ".gitignore" in r.stderr, r.stderr
         assert _worktrees(wt) == before, "no worktree may be created"
         assert not (root / "feature-y").exists()
+
+
+class TestCreatesVenvKnobFromThePrimary:
+    """CR 1992a: worktree_venv_mode had its own copy of the old lookup, with
+    `2>/dev/null` fallbacks and no GIT_DIR scrub. It now reads
+    primary_checkout's answer, so `.skills/worktree_venv` is found where the
+    ignore check found the primary."""
+
+    @staticmethod
+    def _venv(checkout: Path) -> None:
+        (checkout / ".venv" / "bin").mkdir(parents=True)
+        (checkout / ".venv" / "bin" / "activate").write_text("")
+
+    def _create(self, cwd: Path, tmp_path: Path, **extra: str):
+        out = tmp_path / "out"
+        r = _run(CREATE, "--new", "feature/y", cwd=cwd, WORKTREE_ROOT=str(out), **extra)
+        assert r.returncode == 0, r.stdout + r.stderr
+        return r, Path(r.stdout.strip())
+
+    @pytest.mark.parametrize("kind", INHERITED)
+    def test_a_submodules_own_checkout_under_an_inherited_variable(
+        self, tmp_path: Path, kind: str
+    ):
+        """The reviewer's case: the knob says none, and the hook's GIT_DIR
+        made the lookup miss it, so `.venv` was linked anyway."""
+        layouts.submodule_linked(tmp_path / "l", "direct\n")
+        sub = tmp_path / "l" / "super" / "sub"
+        layouts.knob(sub, "none\n", name="worktree_venv")
+        self._venv(sub)
+        r, wt = self._create(sub, tmp_path, **_inherited(kind, sub))
+        assert not (wt / ".venv").exists() and not (wt / ".venv").is_symlink()
+        assert "worktree_venv=none" in r.stderr, r.stderr
+
+    def test_a_submodules_linked_worktree_reads_its_primarys_knob(self, tmp_path: Path):
+        """Before, #203's gap was inherited here: the knob, untracked in the
+        submodule's primary, was looked for in this linked worktree."""
+        wt = layouts.submodule_linked(tmp_path / "l", "direct\n")
+        sub = tmp_path / "l" / "super" / "sub"
+        layouts.knob(sub, "none\n", name="worktree_venv")
+        self._venv(wt)
+        r, new = self._create(wt, tmp_path)
+        assert not (new / ".venv").exists() and not (new / ".venv").is_symlink()
+        assert "worktree_venv=none" in r.stderr, r.stderr
+
+    def test_a_bare_primary_reads_the_current_checkouts_knob(self, tmp_path: Path):
+        home = layouts.bare_home(tmp_path / "l", "none\n", name="worktree_venv")
+        self._venv(home)
+        r, new = self._create(home, tmp_path)
+        assert not (new / ".venv").is_symlink()
+        assert "worktree_venv=none" in r.stderr, r.stderr
