@@ -2482,6 +2482,15 @@ PRS_EOF
 
   if [ -n "$tip" ] && _pr_same_bump "$tip" "$c"; then
     _log "pr: $PR_BRANCH already proposes this bump — nothing to push"
+    # The branch holds what the push would send, so the last push of it
+    # landed: a kill counted since fell after it returned (CR 2014). Reset,
+    # as a returned push does. pr mode has no commit to reset it, so a count
+    # left here turned one later kill into a back-off. No other way out of
+    # the pr path without a push resets: a declined PR, a refused `gh` or
+    # fetch, a branch holding a foreign commit, and a base that already
+    # records the bump (a bump by hand gets there too) say nothing of
+    # whether the hook's push landed.
+    _push_returned
   else
     # The lease is the tip just read; empty means "must not exist". Never a
     # plain --force: a push landing between the read and here is refused.

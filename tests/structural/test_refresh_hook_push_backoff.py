@@ -36,8 +36,13 @@ Coverage:
                                         → the live push is not counted
 - a commit-stage kill, then a dead push line in the count file
                                         → both count: one count for the two
+- `pr` mode: a kill after the branch push landed, then a refresh that finds
+  the branch already proposing the bump (CR 2014)
+                                        → the count resets; one later kill
+                                          does not back off
 """
 
+import shutil
 import subprocess
 import time
 
@@ -45,10 +50,12 @@ import pytest
 
 from tests.structural.test_refresh_hook_pr_mode import (
     PR_BRANCH,
+    _branch_gitlink,
     _commit_knob,
     _creates,
     _gh,
     _new_day,
+    _upstream_moves,
 )
 from tests.utils.refresh_hook_consumer import (
     VENDOR,
@@ -144,6 +151,32 @@ def _kill_in_push(c):
     )
     assert _pushes(c) == before + 1, "fixture: the kill was not inside the push"
     assert not c.kill_flag.exists()
+    return result
+
+
+def _kill_after_the_push_returns(c):
+    """One session start, SIGKILLed right after its push returned: a `git`
+    shim on the hook's PATH runs the real push, then kills the group, once."""
+    real = shutil.which("git") or "/usr/bin/git"
+    shim = c.bindir / "git"
+    saved = shim.read_text()
+    shim.write_text(
+        "#!/usr/bin/env bash\n"
+        f'if [ "$1" = push ] && [ -f "{c.kill_flag}" ]; then\n'
+        f'  rm -f "{c.kill_flag}"\n'
+        f'  {real} "$@"\n'
+        "  kill -KILL 0\n"
+        "  sleep 5\n"
+        "fi\n"
+        f'exec {real} "$@"\n'
+    )
+    c.kill_flag.write_text("")
+    result = run_hook(c)
+    shim.write_text(saved)
+    assert result.returncode < 0, (
+        f"fixture: the run was meant to be killed after its push, and "
+        f"exited {result.returncode}:\n{result.stderr}"
+    )
     return result
 
 
@@ -304,6 +337,38 @@ class TestPrMode:
         )
         r = git(c.origin, "rev-parse", "--verify", "-q", PR_BRANCH, check=False)
         assert r.returncode != 0, "fixture: the killed pushes never landed"
+
+    def test_a_branch_that_already_proposes_the_bump_resets_the_count(
+        self, pr_consumer
+    ):
+        """CR 2014: a kill after the branch push landed is counted, and the
+        next refresh finds the branch already proposing the bump, so it
+        pushes nothing. pr mode has no commit to reset the count, and the
+        kill stayed counted: one later kill inside the push then backed off
+        the day as the second in a row."""
+        c = pr_consumer
+        _kill_after_the_push_returns(c)
+        assert _branch_gitlink(c) == c.after, "fixture: the push should land"
+
+        settled = run_hook(c)
+
+        assert settled.returncode == 0, settled.stderr
+        assert "already proposes this bump" in log_text(c), log_text(c)
+        assert not (c.path / COUNTER).exists(), (
+            "a branch already proposing the bump left the count behind: "
+            + (c.path / COUNTER).read_text()
+        )
+
+        _new_day(c)
+        newer = _upstream_moves(c, "c3")
+        _kill_in_push(c)
+        retried = run_hook(c)
+
+        assert retried.returncode == 0, retried.stderr
+        assert BACKOFF_LINE not in retried.stderr, (
+            "one kill inside the push backed off the day: " + retried.stderr
+        )
+        assert _branch_gitlink(c) == newer, "the session did not push the branch"
 
 
 class TestOneCount:
