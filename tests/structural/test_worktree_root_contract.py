@@ -805,3 +805,38 @@ class TestAnInheritedGitDir:
 
     def test_in_a_linked_worktree(self, primary: Path, linked: Path):
         assert Path(self._assert_same_answer(linked)) == primary / ".worktrees"
+
+
+class TestEveryArgumentIsRead:
+    """CR 2035: `--project-root` was read as `$1` only, so a stray word
+    before it, or `--project-root=1`, printed the worktree root at exit 0,
+    and `--project-root --help` printed a root, not the help."""
+
+    @pytest.mark.parametrize(
+        "args",
+        [["--bogus", "--project-root"], ["--project-root=1"], ["x"]],
+        ids=["bogus-first", "with-value", "bare-word"],
+    )
+    def test_an_unknown_argument_is_exit_2(self, primary: Path, args: list[str]):
+        r = subprocess.run(
+            ["bash", str(RESOLVE), *args],
+            capture_output=True,
+            text=True,
+            cwd=str(primary),
+            env=_clean_env(),
+        )
+        assert r.returncode == 2, r.stdout + r.stderr
+        assert f"unknown argument: {args[0]} (see --help)" in r.stderr, r.stderr
+        assert r.stdout == ""
+
+    @pytest.mark.parametrize("flag", ["--help", "-h"])
+    def test_help_anywhere_wins(self, primary: Path, flag: str):
+        r = subprocess.run(
+            ["bash", str(RESOLVE), "--project-root", flag],
+            capture_output=True,
+            text=True,
+            cwd=str(primary),
+            env=_clean_env(),
+        )
+        assert r.returncode == 0, r.stderr
+        assert r.stdout.startswith("Usage:"), r.stdout
