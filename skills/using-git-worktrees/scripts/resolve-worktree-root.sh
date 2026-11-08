@@ -108,9 +108,9 @@ fi
 #   2. A bare primary (a `bare` line in the first `git worktree list` block)
 #      has no checkout, so the current one is the project (set T, CR 1839).
 #   3. The candidate is inside a git dir: a submodule's linked worktree, #203.
-# Anything else is exit 2. Where the candidate's .git, or its gitfile's
-# target, is the common dir, the primary is there and git refused it: that
-# is asked before 2, since a `.bare` store is bare too, and git is asked
+# Anything else is exit 2. Where the ask about the candidate failed and the
+# candidate has a .git of its own, the primary is there and git refused it:
+# that is asked before 2, since a `.bare` store is bare too, and git is asked
 # again for its reason. Anywhere else this is a linked worktree of a primary
 # git knows no path to (a --separate-git-dir or symlinked .git), or git
 # refused the candidate, which hides a submodule's linked worktree too: the
@@ -124,22 +124,27 @@ CANDIDATE=$(dirname "$COMMON_DIR")
 # `git -C "$CANDIDATE"` answers relative to CANDIDATE, not to our $PWD. Asked
 # in silence: in layouts 1–3 the candidate is no checkout, and git saying so
 # is not a failure. Where it is one, git is asked again for its reason.
+CANDIDATE_FAILED=0
 if ! CANDIDATE_COMMON=$(here_git -C "$CANDIDATE" rev-parse --git-common-dir 2>/dev/null) ||
   ! CANDIDATE_COMMON=$(cd "$CANDIDATE" && cd "$CANDIDATE_COMMON" 2>/dev/null && pwd -P); then
   CANDIDATE_COMMON=""
+  CANDIDATE_FAILED=1
 fi
 if [[ "$CANDIDATE_COMMON" == "$COMMON_DIR" ]]; then
   PROJECT_ROOT="$CANDIDATE"
 else
   # candidate_reason: git's reason for the silent ask about the candidate,
-  # on stderr. "Not a git repository" is dropped (CR 1996): it says only
-  # that the candidate is no checkout, which for a --separate-git-dir
-  # store's parent is the layout, not a failure.
+  # on stderr. Discovery finding no repository at all is dropped (CR 1996):
+  # it says only that the candidate is no checkout, which for a
+  # --separate-git-dir store's parent is the layout, not a failure. Asked
+  # under LC_ALL=C so a translated git's line is matched too, and only the
+  # discovery form (CR 2034): `not a git repository: <path>`, a gitfile git
+  # rejects, is a reason.
   candidate_reason() {
     local err
-    err=$(here_git -C "$CANDIDATE" rev-parse --git-common-dir 2>&1 >/dev/null) || true
+    err=$(LC_ALL=C here_git -C "$CANDIDATE" rev-parse --git-common-dir 2>&1 >/dev/null) || true
     case $err in
-      "fatal: not a git repository"*) ;;
+      "fatal: not a git repository (or any of the parent directories)"*) ;;
       ?*) printf '%s\n' "$err" >&2 ;;
     esac
   }
@@ -149,37 +154,18 @@ else
     exit 2
   }
   PRIMARY_BLOCK=${WT_LIST%%$'\n\n'*}
-  # The candidate's .git: a directory, or a gitfile's `gitdir:` read against
-  # the candidate, as `<dir>/.git` naming `./.bare` is (CR 1988).
-  # Never failing open (CR 1993): a gitfile this cannot read is exit 2 with
-  # git's reason, and a CRLF one is read as git reads it, without the `\r`.
-  CANDIDATE_GIT="$CANDIDATE/.git"
-  if [[ -f "$CANDIDATE_GIT" && ! -r "$CANDIDATE_GIT" ]]; then
-    here_git -C "$CANDIDATE" rev-parse --git-common-dir >/dev/null || true
-    echo "ERROR: could not resolve the primary checkout '$CANDIDATE': its gitfile '$CANDIDATE_GIT' cannot be read (git's reason, if any, is above)" >&2
-    exit 2
-  fi
-  if [[ -f "$CANDIDATE_GIT" ]]; then
-    GITFILE=""
-    { IFS= read -r GITFILE <"$CANDIDATE_GIT"; } 2>/dev/null || true
-    GITFILE=${GITFILE%$'\r'}
-    GITFILE=${GITFILE#gitdir: }
-    case $GITFILE in
-      /*) CANDIDATE_GIT=$GITFILE ;;
-      ?*) CANDIDATE_GIT="$CANDIDATE/$GITFILE" ;;
-    esac
-  fi
   if [[ -n "$DIRS" && "${DIRS%%$'\n'*}" == "${DIRS#*$'\n'}" ]]; then
     : # 1. the main worktree
-  elif [[ "$CANDIDATE_GIT" -ef "$COMMON_DIR" ]]; then
-    # The primary is right there, and git would not answer for it. Asked
-    # before the bare case (CR 1988): a `.bare` store with a `<dir>/.git`
-    # gitfile is bare too, and its knob is <dir>'s.
-    WHY="git's reason is above"
-    if here_git -C "$CANDIDATE" rev-parse --git-common-dir >/dev/null; then
-      WHY="git names another common dir there"
-    fi
-    echo "ERROR: could not resolve the primary checkout '$CANDIDATE' ($WHY)" >&2
+  elif [[ $CANDIDATE_FAILED -eq 1 && (-e "$CANDIDATE/.git" || -L "$CANDIDATE/.git") ]]; then
+    # The candidate has a .git of its own, and git would not answer for it:
+    # the primary is there, or meant to be, and git refused it. Asked before
+    # the bare case, since a `.bare` store with a `<dir>/.git` gitfile is
+    # bare too and its knob is <dir>'s (CR 1988). One rule, not one case per
+    # way a .git can break (CR 2033): dubious ownership, a gitfile that is
+    # unreadable, CRLF, mistyped, empty, or names a missing store. Git
+    # says which.
+    candidate_reason
+    echo "ERROR: could not resolve the primary checkout '$CANDIDATE' (git's reason, if any, is above)" >&2
     exit 2
   elif [[ $'\n'"$PRIMARY_BLOCK"$'\n' == *$'\n'bare$'\n'* ]]; then
     : # 2. a bare primary
