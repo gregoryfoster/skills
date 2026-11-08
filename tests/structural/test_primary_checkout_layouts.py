@@ -380,3 +380,28 @@ class TestAnInheritedGitEnvironmentDoesNotAnswer:
         result = _run_with(script, checkout, record, env=env)
         primary = PRIMARY_OF[layout](tmp_path / "l", checkout)
         _assert_read_from(script, result, record, primary)
+
+
+def _prose(name: str) -> str:
+    text = (SKILLS_DIR / "shipping-work" / "references" / name).read_text()
+    return " ".join(text.split())
+
+
+def test_the_deploy_reference_says_where_a_separate_git_dir_primary_is_read():
+    """#605: the knob's home moved with the fix, from "the first `git
+    worktree list` entry, as for `worktree_root`" to that entry's work tree,
+    with the two layouts that have none named."""
+    text = _prose("deploy-command.md")
+    assert "the work tree of the first `git worktree list` entry" in text
+    assert "`git init --separate-git-dir`" in text
+    assert "exits 2 and says to run from the primary itself" in text
+
+
+def test_pr_modes_exit_2_is_not_only_an_unusable_file():
+    """CR 1905's note on #605: from a linked worktree of a --separate-git-dir
+    primary, merge-mode.sh's exit 2 means "run from the primary", not
+    "the file is unusable"."""
+    text = _prose("pr-mode.md")
+    assert "One exit 2 is not about the file." in text
+    assert "`git init --separate-git-dir`" in text
+    assert "run from the primary checkout" in text
