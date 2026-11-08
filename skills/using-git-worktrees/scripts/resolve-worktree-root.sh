@@ -124,6 +124,18 @@ fi
 if [[ "$CANDIDATE_COMMON" == "$COMMON_DIR" ]]; then
   PROJECT_ROOT="$CANDIDATE"
 else
+  # candidate_reason: git's reason for the silent ask about the candidate,
+  # on stderr. "Not a git repository" is dropped (CR 1996): it says only
+  # that the candidate is no checkout, which for a --separate-git-dir
+  # store's parent is the layout, not a failure.
+  candidate_reason() {
+    local err
+    err=$(here_git -C "$CANDIDATE" rev-parse --git-common-dir 2>&1 >/dev/null) || true
+    case $err in
+      "fatal: not a git repository"*) ;;
+      ?*) printf '%s\n' "$err" >&2 ;;
+    esac
+  }
   DIRS=$(here_git rev-parse --path-format=absolute --git-dir --git-common-dir 2>/dev/null) || DIRS=""
   WT_LIST=$(here_git worktree list --porcelain) || {
     echo "ERROR: failed to enumerate worktrees (git worktree list --porcelain)" >&2
@@ -175,7 +187,7 @@ else
   else
     # Git's reason for the silent ask above, when it has one (CR 1991): a
     # superproject git refuses lands here too, as no submodule at all.
-    here_git -C "$CANDIDATE" rev-parse --git-common-dir >/dev/null || true
+    candidate_reason
     echo "ERROR: could not resolve the primary checkout (git's reason, if any, is above): this repository's common dir '$COMMON_DIR' is no checkout's .git (as with \`git init --separate-git-dir\` or a symlinked \`.git\`), and only the primary knows its work tree, so run this from the primary checkout" >&2
     exit 2
   fi
