@@ -1582,6 +1582,114 @@ read_tailscale() {
   R_TAILSCALE="{$R_TAILSCALE}"
 }
 
+# The last run, from local facts only (#592): the newest run directory,
+# /var/backups/patching-hosts-<UTC> as apply.sh and recovery-point.sh name
+# it, and the marker a run with nothing pending writes (run.md), whichever
+# is newer. Never the knob's records: a probe needs no gh and no network.
+RUN_MARKER=/var/backups/patching-hosts-last-reading
+stamp_epoch() {  # <var> <YYYYMMDDTHHMMSSZ>: VAR := its seconds since 1970, or empty when it isn't one
+  local _se_v=$1 _se_y _se_mo _se_d _se_h _se_mi _se_s _se_day
+  local re='^([0-9]{4})([0-9]{2})([0-9]{2})T([0-9]{2})([0-9]{2})([0-9]{2})Z$'
+  printf -v "$_se_v" '%s' ""
+  [[ $2 =~ $re ]] || return 0
+  _se_y=${BASH_REMATCH[1]} _se_mo=${BASH_REMATCH[2]} _se_d=${BASH_REMATCH[3]}
+  _se_h=$((10#${BASH_REMATCH[4]})) _se_mi=$((10#${BASH_REMATCH[5]})) _se_s=$((10#${BASH_REMATCH[6]}))
+  _knob_is_day "$_se_y-$_se_mo-$_se_d" || return 0
+  if [ "$_se_h" -gt 23 ] || [ "$_se_mi" -gt 59 ] || [ "$_se_s" -gt 59 ]; then return 0; fi
+  knob_epoch_day _se_day "$_se_y-$_se_mo-$_se_d"
+  printf -v "$_se_v" '%s' "$((_se_day * 86400 + _se_h * 3600 + _se_mi * 60 + _se_s))"
+}
+
+# A scheduled host's weekday and #N windows that closed since its last run.
+# A dated window is a one-off, and missing it isn't overdue. Under monthly,
+# a plain weekday window is one of a month's several, so it counts only once
+# it opens more than 31 days after the last run: with windows a week apart,
+# the first past a month. automatic has no window to miss.
+CADENCE_MONTH_S=$((31 * 86400))
+R_CADENCE=""
+read_cadence() {
+  local t e last="" from="" m="" r ws we len wd d os oe md missed="" first="" why="" recurring=0 iso
+  local -a f=()
+  for t in "$P_ROOT"/var/backups/patching-hosts-2*; do
+    [ -d "$t" ] || continue
+    stamp_epoch e "${t##*/patching-hosts-}"
+    if [ -n "$e" ] && { [ -z "$last" ] || [ "$e" -gt "$last" ]; }; then last=$e from=${t#"$P_ROOT"}; fi
+  done
+  if [ -e "$P_ROOT$RUN_MARKER" ]; then
+    if [ -r "$P_ROOT$RUN_MARKER" ]; then
+      IFS= read -r m <"$P_ROOT$RUN_MARKER" || true
+      CAP_RC=0
+    else
+      capture m as_root head -n 1 -- "$P_ROOT$RUN_MARKER"
+    fi
+    trim m "$m"
+    stamp_epoch e "$m"
+    if [ "$CAP_RC" -ne 0 ]; then
+      not_read "the run marker $RUN_MARKER: it couldn't be read, so it isn't counted"
+    elif [ -z "$e" ]; then
+      not_read "the run marker $RUN_MARKER: its first line isn't a UTC stamp, YYYYMMDDTHHMMSSZ, so it isn't counted"
+    elif [ -z "$last" ] || [ "$e" -gt "$last" ]; then
+      last=$e from=$RUN_MARKER
+    fi
+  fi
+  for r in ${KNOB_WINDOW[@]+"${KNOB_WINDOW[@]}"}; do
+    IFS=$KNOB_US read -r -a f <<<"$r"
+    if [ -z "${f[6]}" ]; then recurring=1; fi
+  done
+  if [ "$KNOB_POSTURE" != scheduled ]; then
+    why="posture $KNOB_POSTURE: the apt timers patch daily, and there's no window to miss"
+  elif [ "$recurring" -eq 0 ]; then
+    why="no weekday or #N window says when a run is due, and a dated window is a one-off"
+  elif [ -z "$last" ]; then
+    why="no run on record"
+    finding unknown cadence:no-run "" "No run is on record: no /var/backups/patching-hosts-<UTC> directory and no $RUN_MARKER marker, so whether a $KNOB_CADENCE window was missed can't be read. A retention sweep that removed every run directory reads the same. Read the last run in the host's records; the next run records one again, and so does one with nothing pending (run.md)."
+  else
+    missed=0
+    for r in ${KNOB_WINDOW[@]+"${KNOB_WINDOW[@]}"}; do
+      IFS=$KNOB_US read -r -a f <<<"$r"
+      [ -z "${f[6]}" ] || continue
+      ws=$((10#${f[1]%%:*} * 3600 + 10#${f[1]##*:} * 60))
+      we=$((10#${f[2]%%:*} * 3600 + 10#${f[2]##*:} * 60))
+      len=$((we - ws))
+      [ "${f[3]}" -eq 0 ] || len=$((len + 86400))
+      case ${f[0]} in Mon) wd=0 ;; Tue) wd=1 ;; Wed) wd=2 ;; Thu) wd=3 ;; Fri) wd=4 ;; Sat) wd=5 ;; *) wd=6 ;; esac
+      # The first such weekday on or after the last run's day: 1970-01-01
+      # was a Thursday, so (day + 3) % 7 is 0 on a Monday.
+      d=$((last / 86400))
+      d=$((d + (wd - (d + 3) % 7 + 7) % 7))
+      while os=$((d * 86400 + ws)) && [ "$os" -le "$P_NOW" ]; do
+        oe=$((os + len))
+        d=$((d + 7))
+        if [ "$os" -le "$last" ] || [ "$oe" -gt "$P_NOW" ]; then continue; fi
+        if [ -n "${f[5]}" ]; then
+          knob_mday md "$((os / 86400))"
+          [ $(((md - 1) / 7 + 1)) -eq "${f[5]}" ] || continue
+        elif [ "$KNOB_CADENCE" = monthly ] && [ "$os" -le $((last + CADENCE_MONTH_S)) ]; then
+          continue
+        fi
+        missed=$((missed + 1))
+        if [ -z "$first" ] || [ "$os" -lt "$first" ]; then first=$os; fi
+      done
+    done
+  fi
+  R_CADENCE=""
+  jadds R_CADENCE cadence "$KNOB_CADENCE"
+  iso_utc iso "$last"
+  jaddsn R_CADENCE last_run "$iso"
+  jaddsn R_CADENCE last_run_from "$from"
+  jaddn R_CADENCE windows_missed "$missed"
+  iso_utc iso "$first"
+  jaddsn R_CADENCE first_missed "$iso"
+  jaddsn R_CADENCE unchecked_why "$why"
+  if is_int "$missed" && [ "$missed" -gt 0 ]; then
+    local s=s lr fm
+    [ "$missed" -ne 1 ] || s=""
+    iso_utc lr "$last"
+    iso_utc fm "$first"
+    finding deviation cadence:overdue cadence:overdue "No run since $lr ($from): $missed window$s of this $KNOB_CADENCE host closed since with none, the first $fm (knob.md). A scheduled host is patched only when someone starts its run: run it in the next window, or declare a freeze the owner chose as exception cadence:overdue <review-by> <reason>."
+  fi
+}
+
 read_updates() {
   local o=""
   read_units
@@ -1592,6 +1700,7 @@ read_updates() {
   read_scope
   read_outside_apt
   read_tailscale
+  read_cadence
   jadd o units "[$R_UNITS]"
   jadd o periodic "{$R_PERIODIC}"
   jaddb o apt_config_read "$APT_CONFIG_OK"
@@ -1609,6 +1718,7 @@ read_updates() {
   jadd o origin_scope "[$R_SCOPE]"
   jadd o outside_apt "{$R_OUTSIDE}"
   jadd o tailscale "$R_TAILSCALE"
+  jadd o cadence "{$R_CADENCE}"
   R_UPD=$o
 }
 
@@ -2984,7 +3094,8 @@ unit_of_pid() {  # <var> <pid>: the systemd unit its cgroup names, or empty
 
 # Which processes map a shared object from a pending package: Postgres needs
 # a restart when its backends map libc6 or libxml2, even with its own
-# package out of the set.
+# package out of the set. MAPS_PAIRS keeps each "<unit>|<package>|<pid>".
+MAPS_PAIRS=""
 read_maps() {
   local p f out line pid pkg u e w pairs="" ulist="" pk pids np
   local -a maps=()
@@ -3040,6 +3151,7 @@ read_maps() {
     pairs="$pairs ${u:-unknown}|$pkg|$pid"
     in_words "${u:-unknown}" "$ulist" || ulist="$ulist ${u:-unknown}"
   done <<<"$out"
+  MAPS_PAIRS=$pairs
   local byunit=""
   for u in $ulist; do
     pk="" pids="" np=0
@@ -3064,6 +3176,67 @@ read_maps() {
     jpush byunit "{$e}"
   done
   R_MAPS="{\"units\": [$byunit], \"source\": \"/proc/*/maps, read as root, against each pending package's shared objects\"}"
+}
+
+# A third-party origin carrying a serving runtime (#464): a pending package
+# from a non-Ubuntu origin whose shared object a running service maps puts
+# that origin's whole pending set at security, not maintenance. It reads
+# read_maps' pairs, never a second process scan. Whether a process listens
+# isn't there (ss -Hltn names no pid), so a process in a .service unit, a
+# daemon or a worker, stands in; a session's .scope, or a process whose unit
+# can't be read, doesn't. The map matches shared objects only, so a runtime
+# that's one executable with none of its own (NodeSource's node) isn't seen.
+check_exposure() {
+  local e u p c i j n key pol val s
+  local -a eo=() eu=() ep=() f=()
+  for e in $MAPS_PAIRS; do
+    u=${e%%|*} p=${e#*|}
+    p=${p%%|*}
+    case $u in *.service) ;; *) continue ;; esac
+    c=""
+    for i in ${PK_NAME[@]+"${!PK_NAME[@]}"}; do
+      if [ "${PK_NAME[$i]}" = "$p" ]; then c=${PK_CLASS[$i]}; break; fi
+    done
+    case $c in third-party:?*) c=${c#third-party:} ;; *) continue ;; esac
+    j=""
+    for i in ${eo[@]+"${!eo[@]}"}; do
+      if [ "${eo[$i]}" = "$c" ]; then j=$i; fi
+    done
+    if [ -z "$j" ]; then
+      j=${#eo[@]}
+      eo+=("$c") eu+=(" ") ep+=(" ")
+    fi
+    in_words "$u" "${eu[$j]}" || eu[j]="${eu[$j]}$u "
+    in_words "$p" "${ep[$j]}" || ep[j]="${ep[$j]}$p "
+  done
+  for j in ${eo[@]+"${!eo[@]}"}; do
+    c=${eo[$j]}
+    n=0
+    for i in ${PK_CLASS[@]+"${!PK_CLASS[@]}"}; do
+      if [ "${PK_CLASS[$i]}" = "third-party:$c" ]; then n=$((n + 1)); fi
+    done
+    # As the knob names it: its o= field, or a site apt lists it at.
+    key="" pol="" val=""
+    for e in ${KNOB_ORIGIN[@]+"${KNOB_ORIGIN[@]}"}; do
+      IFS=$KNOB_US read -r -a f <<<"$e"
+      if [ "${f[0]}" = "$c" ]; then key=${f[0]} pol=${f[1]} val=${f[2]-}; break; fi
+      case ${f[0]} in *.*) ;; *) continue ;; esac
+      for i in ${THIRD_PARTY[@]+"${THIRD_PARTY[@]}"}; do
+        if [ "$i" = "$c|${f[0]}" ] && [ -z "$key" ]; then key=${f[0]} pol=${f[1]} val=${f[2]-}; fi
+      done
+    done
+    s=s
+    [ "$n" -ne 1 ] || s=""
+    u=${eu[$j]# } p=${ep[$j]# }
+    e="$n package$s pending from the third-party origin ${c//_/ }, and running services map its ${p% }: ${u% }. So its pending set is a security exposure, not maintenance (readings.md)."
+    case $pol in
+      follow) e="$e The knob follows it, which takes it only in the maintenance lane, at the host's cadence. Expedite it: a dated window line from date -u (#421), then apply.sh --lane origin:$key with the owner's approval (policy.md, a pre-announced security release)." ;;
+      pin) e="$e The knob pins it at $val, so no lane takes the set: the exposure stays until the owner moves the pin (policy.md)." ;;
+      hold) e="$e The knob holds it ($val), so no lane takes the set: the exposure stays until the owner lifts the hold (policy.md)." ;;
+      *) e="$e No knob line names it (the origin:${c//_/ } finding), so no lane takes the set: follow it to have an expedite path (knob.md)." ;;
+    esac
+    finding risk "exposure:${key:-$c}" "exposure:${key:-$c}" "$e"
+  done
 }
 
 PG_CLUSTERS=""  # " ver/name/port/status/logfile ..."
@@ -4878,6 +5051,7 @@ else
   evaluate_posture
   read_pending
   read_impact
+  check_exposure
   read_dormant
   owner_lines
 fi
