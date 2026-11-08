@@ -265,6 +265,8 @@ fi
 # to the hooks it runs, and under it `:(glob)…` is a literal path, which lists
 # nothing with exit 0. The explicit glob magic is immune to the glob and
 # noglob settings; `--glob-pathspecs` is fatal beside the literal one.
+# GIT_ICASE_PATHSPECS=0 (CR 2005): `--icase-pathspecs` exports it as 1, and
+# glob magic doesn't override it, so Plugins/X/composer.json matched.
 #
 # A dot-directory is skipped (CR 1866): git's `:(glob)` `*` matches a leading
 # dot, and `themes/.old/` is not a theme, as bash's `themes/*` never matched it.
@@ -290,7 +292,7 @@ nested() {
       esac
     done < <(
       rc=0
-      GIT_LITERAL_PATHSPECS=0 git ls-files -z -- ":(glob)$parent/*/$manifest" || rc=$?
+      GIT_LITERAL_PATHSPECS=0 GIT_ICASE_PATHSPECS=0 git ls-files -z -- ":(glob)$parent/*/$manifest" || rc=$?
       printf 'status %s\0' "$rc"
     )
     if [[ $status != 0 ]]; then

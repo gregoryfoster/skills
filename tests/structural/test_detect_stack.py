@@ -30,11 +30,13 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = REPO_ROOT / "skills" / "shipping-work" / "scripts" / "detect-stack.sh"
 # The global pathspec settings git exports to the hooks it runs, from
-# `git --literal-pathspecs`, `--glob-pathspecs` and `--noglob-pathspecs`.
+# `git --literal-pathspecs`, `--glob-pathspecs`, `--noglob-pathspecs` and
+# `--icase-pathspecs` (CR 2005).
 PATHSPEC_SETTINGS = [
     "GIT_LITERAL_PATHSPECS",
     "GIT_GLOB_PATHSPECS",
     "GIT_NOGLOB_PATHSPECS",
+    "GIT_ICASE_PATHSPECS",
 ]
 
 
@@ -174,7 +176,8 @@ class TestToolchains:
     def test_a_symlinked_theme_directory_is_neither(self, repo, tmp_path):
         """git tracks a theme directory that is a symlink as one link, and
         lists nothing under it. composer's filesystem glob used to follow it;
-        both listers now agree that it is not this repo's code."""
+        both listers now stop at the link. Its files are checked where git
+        tracks them, if anywhere (CR 2004, and stack-php.md)."""
         elsewhere = tmp_path / "elsewhere"
         elsewhere.mkdir()
         (elsewhere / "composer.json").write_text("{}\n")
@@ -228,6 +231,10 @@ class TestToolchains:
         assert "a submodule's code is its own repo's to gate" in intro
         assert "composer follows" not in intro
         assert "counts once it is checked out" not in intro
+        # CR 2004: an in-repo symlinked theme is the repo's own code; the
+        # reference states the mechanism instead of calling it someone else's.
+        assert "is a symlink is one link to git" in intro, intro
+        assert "is not this repo's code" not in intro, intro
 
     @pytest.mark.parametrize("ignored", [True, False])
     def test_a_nested_npm_manifest_git_does_not_track_is_not_one(self, repo, ignored):
@@ -276,7 +283,8 @@ class TestToolchains:
     def test_a_dot_directory_is_not_one(self, repo):
         """CR 1866: git's `:(glob)` `*` matches a leading dot and bash's
         `themes/*` does not, so a tracked themes/.old/package.json counted
-        while composer's reach skipped the same directory."""
+        while the bash glob composer's reach used before #588 skipped the
+        same directory. Both listers skip it now."""
         (repo / "themes" / ".old").mkdir(parents=True)
         (repo / "themes" / ".old" / "package.json").write_text("{}\n")
         (repo / "themes" / ".old" / "composer.json").write_text("{}\n")
@@ -316,6 +324,23 @@ class TestToolchains:
         )
         assert result.returncode == 0, result.stderr
         assert result.stdout == "toolchain\tcomposer\nframework\tphp\n"
+
+    def test_an_icase_pathspec_setting_does_not_widen_the_reach(self, repo):
+        """CR 2005: `git --icase-pathspecs` exports GIT_ICASE_PATHSPECS=1 to
+        the hooks it runs, and `:(glob)` doesn't override it, so a tracked
+        Plugins/Up/ manifest matched plugins/*/. The bash glob composer used
+        was case-sensitive; the listing is held to that."""
+        (repo / "Plugins" / "Up").mkdir(parents=True)
+        (repo / "Plugins" / "Up" / "composer.json").write_text("{}\n")
+        (repo / "Plugins" / "Up" / "package.json").write_text("{}\n")
+        _add(repo)
+        env = _clean_env()
+        env["GIT_ICASE_PATHSPECS"] = "1"
+        result = subprocess.run(
+            ["bash", str(SCRIPT)], cwd=repo, capture_output=True, text=True, env=env
+        )
+        assert result.returncode == 0, result.stderr
+        assert result.stdout == "", result.stdout
 
     def test_a_failing_ls_files_is_exit_2_not_none(self, repo, tmp_path):
         """git's own exit decides: a failure listing the nested manifests is

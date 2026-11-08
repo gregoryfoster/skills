@@ -405,6 +405,10 @@ def test_the_deploy_reference_says_where_a_separate_git_dir_primary_is_read():
     assert "exits 2 and says to run from the primary itself" in text
     # CR 1999 and CR 1998: the git it needs, and the store it doesn't cover.
     assert "needs git 2.31 or later" in text
+    # CR 2008: below about 2.25 the store is listed as bare, which is no
+    # exit 2: the old claim that older git always "says so" was false.
+    assert "below about 2.25 git lists such a store as bare" in text
+    assert "and says so" not in text
     assert "A store whose path ends in `/.git` isn't covered." in text
 
 
@@ -463,10 +467,13 @@ def test_git_older_than_2_31_says_so_rather_than_run_from_the_primary(
     record = tmp_path / "record"
     result = _run_with(script, checkout, record, env=_old_git_env(tmp_path))
     _assert_nothing_read(script, result, record)
-    # The core phrase is shared with chain W's resolve-worktree-root.sh.
+    # The core phrase and its tail are shared with chain W's
+    # resolve-worktree-root.sh and chain P's resolve-plans-dir.sh (CR 2010d):
+    # from a linked worktree, upgrading git alone still leaves exit 2.
     assert (
         "git 2.30.2 predates 2.31, which this layout needs to tell its primary"
-        " from a linked worktree: upgrade git"
+        " from a linked worktree: upgrade git (from a linked worktree, then run"
+        " from the primary checkout)"
     ) in result.stderr, result.stderr
     assert layouts.OLD_GIT_HINT in result.stderr, result.stderr
     assert "run this from the primary checkout" not in result.stderr, result.stderr
@@ -489,3 +496,122 @@ def test_each_help_names_the_run_from_the_primary_exit_2(script):
         "From a linked worktree of a --separate-git-dir primary: run from the"
         " primary checkout"
     ) in text, text
+
+
+# CR 2009 (#587): `git clone --bare` sets no upstream, and no fetch refspec,
+# so after the post-merge pass's pull the default branch in a bare layout has
+# no @{u}. run-deploy-command.sh then said "push it first (Step 4)", which is
+# the wrong remedy: the code is pushed, and only the tracking is missing.
+# These fixtures skip _pushed on purpose: it sets the tracking by hand, which
+# hides the case.
+
+UPSTREAM_REMEDY = "git branch --set-upstream-to=origin/main"
+
+
+def _bare_home_unpushed(tmp_path: Path, mode: str | None) -> Path:
+    text = _knob_text("run-deploy-command.sh", tmp_path)
+    home = layouts.bare_home(tmp_path / "l", text, name="deploy_command")
+    if mode is not None:
+        layouts.knob(home, f"{mode}\n")
+    return home
+
+
+@pytest.mark.parametrize("mode", [None, "pr"], ids=["direct", "pr"])
+@pytest.mark.parametrize("check", [False, True], ids=["run", "check"])
+def test_a_bare_clones_default_branch_gets_the_set_upstream_remedy(
+    tmp_path, mode, check
+):
+    home = _bare_home_unpushed(tmp_path, mode)
+    record = tmp_path / "record"
+    args = ["--check"] if check else []
+    result = subprocess.run(
+        ["bash", str(SCRIPTS / "run-deploy-command.sh"), *args],
+        cwd=home,
+        capture_output=True,
+        text=True,
+        env={**_env(), "STUB_RECORD": str(record)},
+        timeout=60,
+    )
+    _assert_nothing_read("run-deploy-command.sh", result, record)
+    assert UPSTREAM_REMEDY in result.stderr, result.stderr
+    assert "push it first" not in result.stderr, result.stderr
+
+
+def test_the_set_upstream_remedy_works_as_written(tmp_path):
+    """The remedy, run as the message words it, leaves a checkout the
+    deploy accepts: a plain bare clone needs the fetch refspec first."""
+    home = _bare_home_unpushed(tmp_path, None)
+    assert layouts.git(home, "config", "--default", "", "remote.origin.fetch") == ""
+    layouts.git(
+        home, "config", "remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*"
+    )
+    layouts.git(home, "fetch", "-q", "origin")
+    layouts.git(home, "branch", "--set-upstream-to=origin/main")
+    record = tmp_path / "record"
+    result = _run_with("run-deploy-command.sh", home, record)
+    _assert_read_from("run-deploy-command.sh", result, record, home)
+
+
+def test_a_feature_branch_with_no_upstream_is_still_told_to_push(tmp_path):
+    """Off the default branch, a missing upstream is an unpushed branch."""
+    home = _bare_home_unpushed(tmp_path, None)
+    layouts.git(home, "switch", "-q", "-c", "feature/y")
+    record = tmp_path / "record"
+    result = _run_with("run-deploy-command.sh", home, record)
+    _assert_nothing_read("run-deploy-command.sh", result, record)
+    assert "push it first (Step 4)" in result.stderr, result.stderr
+    assert UPSTREAM_REMEDY not in result.stderr, result.stderr
+
+
+# CR 2010a: pr-mode.md's post-merge step 1 finds the main checkout with
+# `git -C <first row> rev-parse --show-toplevel`. Held here against each
+# layout: it names the main checkout for a plain primary and a submodule's
+# row, and fails for a bare primary and a --separate-git-dir store, the two
+# cases the step then tells apart by the `(bare)` marker.
+
+
+def _first_row(checkout: Path) -> str:
+    return layouts.git(checkout, "worktree", "list").splitlines()[0]
+
+
+def _ask(row_path: str) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["git", "-C", row_path, "rev-parse", "--show-toplevel"],
+        capture_output=True,
+        text=True,
+        env=layouts.env(),
+    )
+
+
+def test_step_1s_question_names_a_plain_primary(tmp_path):
+    primary = layouts.seed(tmp_path / "p", "direct\n")
+    wt = tmp_path / "wt"
+    layouts.git(primary, "worktree", "add", "-q", "-b", "feature/x", str(wt))
+    answer = _ask(_first_row(wt).split()[0])
+    assert answer.returncode == 0, answer.stderr
+    assert Path(answer.stdout.strip()).resolve() == primary.resolve()
+
+
+def test_step_1s_question_names_a_submodules_work_tree(tmp_path):
+    wt = layouts.submodule_linked(tmp_path, "direct\n")
+    row = _first_row(wt).split()[0]
+    assert "/.git/modules/" in row, row
+    answer = _ask(row)
+    assert answer.returncode == 0, answer.stderr
+    assert (
+        Path(answer.stdout.strip()).resolve() == (tmp_path / "super" / "sub").resolve()
+    )
+
+
+def test_step_1s_question_fails_for_a_bare_row_marked_bare(tmp_path):
+    home = layouts.bare_home(tmp_path, "direct\n")
+    row = _first_row(home)
+    assert row.endswith("(bare)"), row
+    assert _ask(row.split()[0]).returncode != 0
+
+
+def test_step_1s_question_fails_for_an_unmarked_store(tmp_path):
+    _, linked = layouts.separate_git_dir(tmp_path, None)
+    row = _first_row(linked)
+    assert "(bare)" not in row, row
+    assert _ask(row.split()[0]).returncode != 0

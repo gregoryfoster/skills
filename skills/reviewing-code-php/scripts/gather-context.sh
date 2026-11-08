@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 # gather-context.sh (PHP variant)
 # Prints a structured summary of current repo state for use during code review.
-# Also runs PHP-specific checks: composer validate (root + each discovered
-# composer dir under themes/ and plugins/) and php -l on changed PHP files.
+# Also runs PHP-specific checks: composer validate (root + each composer dir
+# under themes/ and plugins/ whose composer.json git tracks) and php -l on
+# changed PHP files.
 #
 # Exit codes:
 #   0 = success
 #   2 = an argument other than --help (#549), or a tooling/infra
-#       failure on a gate-like discovery step (find for
+#       failure on a gate-like discovery step (git ls-files for
 #       composer.json failed, mktemp failed). Reporting-only sections
 #       (git status, diff, log) intentionally degrade silently and do not
 #       map to exit 2.
@@ -19,7 +20,8 @@ if [[ "${1:-}" == "--help" ]]; then
   echo "Usage: bash \"$0\""
   echo ""
   echo "Prints git status, staged/unstaged diffs, recent commits, changed files,"
-  echo "then runs composer validate at each composer.json location and php -l on"
+  echo "then runs composer validate at the root and at each tracked themes/*/ or"
+  echo "plugins/*/ composer.json (never a submodule's), and php -l on"
   echo "changed PHP files."
   echo ""
   echo "Changed files run from the merge base with the first of origin/HEAD,"
@@ -35,7 +37,7 @@ if [[ "${1:-}" == "--help" ]]; then
   echo "Exit codes:"
   echo "  0 = success"
   echo "  2 = an argument other than --help, or a tooling/infra failure"
-  echo "      (find for composer.json failed, mktemp failed)"
+  echo "      (git ls-files for composer.json failed, mktemp failed)"
   exit 0
 fi
 
@@ -160,48 +162,55 @@ fi
 
 # --- PHP-specific checks ------------------------------------------------------
 #
-# Discovery convention: gate-like discovery steps (the `find` below) harden to
-# ERROR/exit 2 on tool failure so a degraded composer-dir list never silently
-# narrows the review surface. Reporting-only `git ... 2>/dev/null || true` sites
-# above intentionally degrade-and-continue — a missing diff stat is acceptable
-# context, a missing composer dir is not.
+# Discovery convention: gate-like discovery steps (the `git ls-files` below)
+# harden to ERROR/exit 2 on tool failure so a degraded composer-dir list never
+# silently narrows the review surface. Reporting-only `git ... 2>/dev/null ||
+# true` sites above intentionally degrade-and-continue — a missing diff stat
+# is acceptable context, a missing composer dir is not.
 
 # Tempfile scalars (not an array) for bash 3.2 + `set -u` compatibility — only
-# the find step uses tempfiles in this script.
-FIND_OUT=""; FIND_ERR=""
-trap 'rm -f "$FIND_OUT" "$FIND_ERR"' EXIT
+# the composer-dir listing uses tempfiles in this script.
+LS_OUT=""; LS_ERR=""
+trap 'rm -f "$LS_OUT" "$LS_ERR"' EXIT
 
-# Discover composer dirs: root + every themes/<name>/ or plugins/<name>/ that
-# ships a composer.json. Portable across BSD/GNU find (no -printf).
+# Discover composer dirs: the root's composer.json on the filesystem, then
+# every themes/<name>/ or plugins/<name>/ whose composer.json git tracks
+# (#588, CR 2003). A repo reviews only its own code: a plugin composer
+# installs (gitignored), an untracked theme, a dot-directory and a theme
+# vendored as a submodule are not listed, nor is anything under a symlinked
+# theme directory, which git tracks as one link.
+#
+# THE TWIN: shipping-work's gate lists the same files the same way
+# (detect-stack.sh's `nested`, pre-ship.sh's `nested_dirs`). Skills are
+# self-contained, so this is a copy, and
+# tests/structural/test_composer_reach_parity.py holds the two to the same
+# answers. GIT_LITERAL_PATHSPECS=0 (CR 1861) and GIT_ICASE_PATHSPECS=0
+# (CR 2005): a hook's inherited `--literal-pathspecs` empties a `:(glob)`
+# listing, and `--icase-pathspecs` widens it to Plugins/X/; the explicit glob
+# magic holds against the glob and noglob settings.
 COMPOSER_DIRS=()
 [[ -f composer.json ]] && COMPOSER_DIRS+=(".")
 
-# Build find paths dynamically: passing a missing dir to `find` is itself an
-# error (non-zero exit + stderr), which would falsely trip the ERROR handler
-# below on repos that have only themes/ or only plugins/.
-FIND_PATHS=()
-[[ -d themes ]] && FIND_PATHS+=(themes)
-[[ -d plugins ]] && FIND_PATHS+=(plugins)
-if [[ ${#FIND_PATHS[@]} -gt 0 ]]; then
-  FIND_OUT=$(mktemp) || { echo "ERROR: mktemp failed (FIND_OUT)" >&2; exit 2; }
-  FIND_ERR=$(mktemp) || { echo "ERROR: mktemp failed (FIND_ERR)" >&2; exit 2; }
-  FIND_RC=0
-  find "${FIND_PATHS[@]}" -mindepth 2 -maxdepth 2 -name composer.json \
-    >"$FIND_OUT" 2>"$FIND_ERR" || FIND_RC=$?
-  if [[ $FIND_RC -ne 0 ]]; then
-    echo "ERROR: find for composer.json failed (exit $FIND_RC):" >&2
-    cat "$FIND_ERR" >&2
-    exit 2
-  fi
-  # `find` can exit 0 yet still write to stderr (e.g. permission-denied on a
-  # subdir). Surface those without aborting — discovered dirs are still valid.
-  if [[ -s "$FIND_ERR" ]]; then
-    echo "WARN: find for composer.json wrote diagnostics:" >&2
-    cat "$FIND_ERR" >&2
-  fi
-  while IFS= read -r f; do
-    [[ -n "$f" ]] && COMPOSER_DIRS+=("$(dirname "$f")")
-  done < "$FIND_OUT"
+# Only where there is something to list: outside a git checkout ls-files
+# fails, and a repo with neither directory has nothing nested.
+if [[ -d themes || -d plugins ]]; then
+  LS_OUT=$(mktemp) || { echo "ERROR: mktemp failed (LS_OUT)" >&2; exit 2; }
+  LS_ERR=$(mktemp) || { echo "ERROR: mktemp failed (LS_ERR)" >&2; exit 2; }
+  for parent in themes plugins; do
+    LS_RC=0
+    GIT_LITERAL_PATHSPECS=0 GIT_ICASE_PATHSPECS=0 git ls-files -z -- ":(glob)$parent/*/composer.json" \
+      >"$LS_OUT" 2>"$LS_ERR" || LS_RC=$?
+    if [[ $LS_RC -ne 0 ]]; then
+      echo "ERROR: git ls-files for $parent/*/composer.json failed (exit $LS_RC):" >&2
+      cat "$LS_ERR" >&2
+      exit 2
+    fi
+    while IFS= read -r -d '' f; do
+      # A dot-directory is never a theme (CR 1866).
+      case $f in "$parent"/.*) continue ;; esac
+      if [[ -f "$f" ]]; then COMPOSER_DIRS+=("${f%/composer.json}"); fi
+    done <"$LS_OUT"
+  done
 fi
 
 echo ""
