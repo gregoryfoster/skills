@@ -4706,8 +4706,10 @@ read_post_boot() {
     check pid1-deleted-maps "" "/proc/1/maps couldn't be read as root"
   fi
   if [ "$REBOOT_REQ" -eq 1 ]; then check reboot-required 0 "/run/reboot-required is still there"; else check reboot-required 1 absent; fi
+  # The same reading as session:adj's before a run, so its exception holds
+  # here too (#581).
   if [ -n "$R_SESSION_MIN" ] && [ "$R_SESSION_MIN" -le -1000 ]; then
-    check session-adj 0 "the session's chain still runs at $R_SESSION_MIN"
+    check session-adj 0 "the session's chain still runs at $R_SESSION_MIN" session:adj
   elif [ -n "$R_SESSION_MIN" ]; then
     check session-adj 1 "lowest adj in the session's chain, below the platform's agent: $R_SESSION_MIN"
   fi

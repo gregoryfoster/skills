@@ -1825,6 +1825,9 @@ def test_post_boot_honours_a_session_adj_exception(host, line, excepted):
     key = "excepted" if excepted else "findings"
     f = _finding(out, "post-boot:session-adj", key)
     assert f["exception_what"] == "session:adj"
+    if excepted:
+        # The issue's own reading: a clean boot reads no finding at all.
+        assert _ids(out) == []
 
 
 # --- what the probe changes (#423, #490, #501) ---------------------------------
