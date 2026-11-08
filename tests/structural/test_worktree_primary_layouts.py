@@ -23,6 +23,8 @@ explicitly (docs/STYLE.md, #189).
 
 from __future__ import annotations
 
+import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -204,6 +206,42 @@ class TestCreateFromASeparateGitDirPrimary:
         assert layouts.SEPARATE_GIT_DIR_HINT in r.stderr, r.stderr
         assert "primary checkout" in r.stderr, r.stderr
         assert r.stdout == ""
+        assert _worktrees(primary) == before
+
+    def test_below_git_2_31_it_says_git_is_too_old(self, tmp_path: Path):
+        """CR 1990's case in create: git before 2.31 echoes
+        `--path-format=absolute` back at exit 0, so from the primary itself
+        "run this from the primary checkout" would be false. A `git` shim
+        plays 2.30 over the real one."""
+        real = shutil.which("git")
+        assert real, "git is on PATH"
+        shims = tmp_path / "shims"
+        shims.mkdir()
+        shim = shims / "git"
+        shim.write_text(
+            "#!/usr/bin/env bash\n"
+            'if [ "$1" = --version ]; then echo "git version 2.30.6"; exit 0; fi\n'
+            "args=()\n"
+            "for a; do\n"
+            '  if [ "$a" = --path-format=absolute ]; then echo "$a"; '
+            'else args+=("$a"); fi\n'
+            "done\n"
+            f'exec {real} "${{args[@]}}"\n'
+        )
+        shim.chmod(0o755)
+        primary, _ = layouts.separate_git_dir(tmp_path / "l", None)
+        before = _worktrees(primary)
+        r = _run(
+            CREATE,
+            "--new",
+            "feature/y",
+            cwd=primary,
+            WORKTREE_ROOT=str(tmp_path / "out"),
+            PATH=f"{shims}{os.pathsep}{os.environ['PATH']}",
+        )
+        assert r.returncode == 2, r.stdout + r.stderr
+        assert "git 2.30.6 predates 2.31, which this layout needs" in r.stderr, r.stderr
+        assert "run this from the primary checkout" not in r.stderr, r.stderr
         assert _worktrees(primary) == before
 
 
