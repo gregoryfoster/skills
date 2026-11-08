@@ -470,7 +470,9 @@ class TestAGitFailureOnThePrimaryIsExit2:
             f"expected exit 2, got {r.returncode}\n"
             f"stdout: {r.stdout}\nstderr: {r.stderr}"
         )
-        assert "dubious ownership" in r.stderr, f"git's reason is let through: {r.stderr}"
+        assert "dubious ownership" in r.stderr, (
+            f"git's reason is let through: {r.stderr}"
+        )
         assert f"'{primary}'" in r.stderr, f"the error names the primary: {r.stderr}"
         assert r.stdout == "", f"a refusal prints no root: {r.stdout!r}"
 
@@ -547,7 +549,9 @@ class TestAnInheritedGitDir:
     @staticmethod
     def _with_git_dir(checkout: Path) -> dict:
         env = _clean_env()
-        env["GIT_DIR"] = _git(checkout, "rev-parse", "--absolute-git-dir").stdout.strip()
+        env["GIT_DIR"] = _git(
+            checkout, "rev-parse", "--absolute-git-dir"
+        ).stdout.strip()
         return env
 
     def _assert_same_answer(self, checkout: Path) -> str:
