@@ -14,7 +14,9 @@
 # resolve to the project's own script and skip the knob.
 #
 # THE KNOB is read from the primary checkout (the first `git worktree list`
-# entry), like worktree_root, and the command runs from that checkout's root.
+# entry's work tree), and the command runs from that checkout's root. A
+# primary made with --separate-git-dir names no work tree to its linked
+# worktrees, so only the primary itself can read it (#605).
 # Grammar: exactly one command line of whitespace-separated words; blank lines
 # and whole-line `#` comments are ignored. No shell evaluation: a pipe or a
 # redirect belongs in the project's script. _command-knob.sh holds the
@@ -66,7 +68,9 @@ Exit codes:
   2  Nothing ran: the knob is present but unusable (no command line, more than
      one, a command not found or not executable, not a readable file), HEAD
      is not what was pushed, in pr mode HEAD is not the default branch,
-     .skills/merge_mode is unusable, git failed, or a bad argument
+     .skills/merge_mode is unusable, git failed, or a bad argument. From a
+     linked worktree of a --separate-git-dir primary: run from the primary
+     checkout
   3  No .skills/deploy_command: nothing to deploy; Step 8 is the next-steps
      table, as before the knob existed
 EOF

@@ -12,6 +12,9 @@
 #      party that knows N, so it sets this in each worker's brief: cores / N.
 #   2. .skills/test-workers — the project's standing choice: `off`, `auto`, or
 #      a number. `off` is for a suite whose tests share a database or a port.
+#      One word, `#` comments, read as .skills/test-dist is (#589): a second
+#      word warns and is ignored, a knob that is a directory, a dangling link
+#      or unreadable warns and is auto, and any other word is exit 2.
 #   3. auto:
 #      - 2 cores or fewer -> 0. Every exe.dev VM shares two vCPUs, and a
 #        worker pool there competes with the agent driving it.
@@ -113,35 +116,48 @@ fi
 
 ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
 
-# --dist: the env, then the knob's first non-comment, non-blank line, then
-# loadfile. A value it does not know is a warning, never a stop: the mode
-# only sets how the suite is spread, and loadfile is what ran before.
+# knob_word PATH NAME DEFAULT — the one reader of a one-word knob, for
+# .skills/test-dist (CR 1853) and .skills/test-workers (#589). Returns 1 when
+# PATH is absent. Otherwise returns 0 with KNOB_WORD set to the first word of
+# the first line that has one (`#` starts a comment, a trailing CR is
+# dropped), or empty when the knob says nothing. Two cases warn on stderr
+# rather than pass in silence:
+#   - a second word on that line is a typo (`load scope`, `1 2`), never
+#     joined into a value; the first word is used;
+#   - a directory, a dangling link or an unreadable file is a knob that is
+#     there but says nothing, which must not pass for "no knob": DEFAULT.
+knob_word() {
+  local path=$1 name=$2 default=$3 line
+  local -a words
+  KNOB_WORD=""
+  [[ -e "$path" || -L "$path" ]] || return 1
+  if [[ ! -f "$path" || ! -r "$path" ]]; then
+    echo "WARN: $name exists but is not a readable file; using $default" >&2
+    return 0
+  fi
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line=${line%$'\r'}
+    line=${line%%#*}
+    read -r -a words <<<"$line"
+    [[ ${#words[@]} -gt 0 ]] || continue
+    KNOB_WORD=${words[0]}
+    if [[ ${#words[@]} -gt 1 ]]; then
+      echo "WARN: $name says '${words[*]}' — one word is read; using '$KNOB_WORD'" >&2
+    fi
+    break
+  done <"$path"
+  return 0
+}
+
+# --dist: the env, then the knob's one word, then loadfile. A value it does
+# not know is a warning, never a stop: the mode only sets how the suite is
+# spread, and loadfile is what ran before.
 if [[ "$DIST_ONLY" -eq 1 ]]; then
   MODE="" FROM=""
-  DIST_KNOB="$ROOT/.skills/test-dist"
   if [[ -n "${PYTEST_XDIST_DIST:-}" ]]; then
     MODE=$PYTEST_XDIST_DIST FROM="PYTEST_XDIST_DIST"
-  elif [[ -e "$DIST_KNOB" || -L "$DIST_KNOB" ]]; then
-    FROM=".skills/test-dist"
-    if [[ ! -f "$DIST_KNOB" || ! -r "$DIST_KNOB" ]]; then
-      # A directory, a dangling link or an unreadable file: the knob is
-      # there but says nothing, which must not pass for "no knob".
-      echo "WARN: .skills/test-dist exists but is not a readable file; using loadfile" >&2
-    else
-      # The first word of the first line with one; a second word is a
-      # typo (`load scope`), never joined into a mode.
-      while IFS= read -r line || [[ -n "$line" ]]; do
-        line=${line%$'\r'}
-        line=${line%%#*}
-        read -r -a words <<<"$line"
-        [[ ${#words[@]} -gt 0 ]] || continue
-        MODE=${words[0]}
-        if [[ ${#words[@]} -gt 1 ]]; then
-          echo "WARN: .skills/test-dist says '${words[*]}' — one word is read; using '$MODE'" >&2
-        fi
-        break
-      done <"$DIST_KNOB"
-    fi
+  elif knob_word "$ROOT/.skills/test-dist" .skills/test-dist loadfile; then
+    MODE=$KNOB_WORD FROM=".skills/test-dist"
   fi
   if [[ -z "$MODE" ]]; then
     answer loadfile "dist loadfile (the default)"
@@ -163,12 +179,11 @@ if [[ -n "${PYTEST_XDIST_AUTO_NUM_WORKERS:-}" ]]; then
     "PYTEST_XDIST_AUTO_NUM_WORKERS=$PYTEST_XDIST_AUTO_NUM_WORKERS (set by the caller)"
 fi
 
-# 2. The project's knob. First non-comment, non-blank line.
-KNOB="$ROOT/.skills/test-workers"
-SETTING=auto
-if [[ -f "$KNOB" ]]; then
-  SETTING=$(sed -e 's/#.*//' -e 's/[[:space:]]//g' "$KNOB" | grep -m1 . || true)
-  SETTING=${SETTING:-auto}
+# 2. The project's knob: its one word, read as .skills/test-dist's is (#589).
+# A knob that says nothing usable (not a readable file, or comments only)
+# is auto; a word that is not off, auto or a number is still exit 2.
+if knob_word "$ROOT/.skills/test-workers" .skills/test-workers auto; then
+  SETTING=${KNOB_WORD:-auto}
   case "$SETTING" in
     off) answer 0 ".skills/test-workers says off" ;;
     auto) ;;

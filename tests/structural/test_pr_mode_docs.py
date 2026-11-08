@@ -138,3 +138,22 @@ WT_REF = _read(WT / "references" / "pr-mode.md")
 )
 def test_the_worktree_reference_covers(needle):
     assert needle in WT_REF, needle
+
+
+def _post_merge_step_1() -> str:
+    """The post-merge pass's first step, whitespace-normalised."""
+    section = SW_REF[SW_REF.index("## The post-merge pass") :]
+    step = section[section.index("1. **Move to the main checkout,**") :]
+    return " ".join(step[: step.index("\n2. ")].split())
+
+
+def test_the_post_merge_pass_can_be_followed_from_a_bare_primary():
+    """#587: with a bare primary (`clone --bare` + `git worktree add`) the
+    first row of `git worktree list` is the bare repository, which has no
+    work tree to `git switch` in. The step names the checkout to use there,
+    the linked worktree that holds the default branch, and what to do when
+    none does."""
+    step = _post_merge_step_1()
+    assert "(bare)" in step, step
+    assert "the linked worktree that holds the default branch" in step, step
+    assert "If no worktree holds it, stop" in step, step

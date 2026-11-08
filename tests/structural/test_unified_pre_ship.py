@@ -351,12 +351,92 @@ class TestPhp:
             "--working-dir=themes/site",
         ]
 
+    def _validated(self, repo: Path) -> list[str]:
+        return sorted(c[1] for c in _calls(repo, "composer") if "validate" in c)
+
+    def test_a_gitignored_plugins_composer_json_is_not_validated(self, repo):
+        """#588: composer installs a plugin into a gitignored plugins/<vendor>/,
+        and `composer validate` ran on its composer.json as the repo's own,
+        where a failure fails the gate on code the repo doesn't own. A
+        nested composer.json counts only when git tracks it, as npm's does."""
+        (repo / ".gitignore").write_text("/plugins/third-party/\n")
+        _composer_repo(repo)
+        (repo / "plugins" / "third-party").mkdir(parents=True)
+        (repo / "plugins" / "third-party" / "composer.json").write_text("{}\n")
+        result = _gate(repo)
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert self._validated(repo) == [
+            "--working-dir=.",
+            "--working-dir=themes/site",
+        ]
+
+    def test_an_untracked_themes_composer_json_is_not_validated(self, repo):
+        _composer_repo(repo)
+        (repo / "themes" / "new").mkdir()
+        (repo / "themes" / "new" / "composer.json").write_text("{}\n")
+        assert _gate(repo).returncode == 0
+        assert "--working-dir=themes/new" not in self._validated(repo)
+
+    def test_a_submodule_themes_composer_json_is_not_validated(self, repo, tmp_path):
+        """The operator's rule (2026-11-08): a repo gates only its own code,
+        so a theme vendored as a submodule is validated in its own repo."""
+        src = tmp_path / "theme-src"
+        src.mkdir()
+        _git(src, "init", "-q", "-b", "main")
+        _git(src, "config", "user.email", "test@example.com")
+        _git(src, "config", "user.name", "test")
+        (src / "composer.json").write_text("{}\n")
+        _commit(src)
+        _composer_repo(repo)
+        _git(
+            repo,
+            *("-c", "protocol.file.allow=always", "submodule", "add", "-q"),
+            *(str(src), "themes/sub"),
+        )
+        _commit(repo)
+        assert (repo / "themes" / "sub" / "composer.json").is_file()
+        assert _gate(repo).returncode == 0
+        assert self._validated(repo) == [
+            "--working-dir=.",
+            "--working-dir=themes/site",
+        ]
+
     def test_lint_every_tracked_php_file(self, repo):
         """Row 19."""
         _composer_repo(repo)
         assert _gate(repo).returncode == 0
         linted = sorted(c[2] for c in _calls(repo, "php") if c[1] == "-l")
         assert linted == ["index.php", "themes/site/functions.php"]
+
+    def test_php_lint_stops_at_a_submodule(self, repo, tmp_path):
+        """#591, decided no (operator, 2026-11-08): a repo gates only its own
+        code, so a theme vendored as a submodule has its PHP linted in its
+        own repo's gate, not here."""
+        src = tmp_path / "theme-src"
+        src.mkdir()
+        _git(src, "init", "-q", "-b", "main")
+        _git(src, "config", "user.email", "test@example.com")
+        _git(src, "config", "user.name", "test")
+        (src / "functions.php").write_text("<?php\n")
+        _commit(src)
+        _composer_repo(repo)
+        _git(
+            repo,
+            *("-c", "protocol.file.allow=always", "submodule", "add", "-q"),
+            *(str(src), "themes/sub"),
+        )
+        _commit(repo)
+        assert (repo / "themes" / "sub" / "functions.php").is_file()
+        assert _gate(repo).returncode == 0
+        linted = sorted(c[2] for c in _calls(repo, "php") if c[1] == "-l")
+        assert linted == ["index.php", "themes/site/functions.php"]
+
+    def test_the_php_reference_says_php_lint_stops_at_a_submodule(self):
+        """#591: the decision is written where a PHP repo reads its checks."""
+        php = (GATE.parents[1] / "references" / "stack-php.md").read_text()
+        text = " ".join(php.split())
+        assert "`php -l` stops at a submodule" in text, text
+        assert "a submodule's PHP is linted by its own repo's gate" in text, text
 
     @pytest.mark.parametrize("setting", PATHSPEC_SETTINGS)
     def test_a_global_pathspec_setting_lints_every_tracked_php_file(
@@ -520,27 +600,30 @@ class TestNpmManifests:
         assert "no toolchain detected" in result.stderr
         assert _cwd_calls(repo, "npm") == []
 
-    def test_a_theme_vendored_as_a_submodule_runs(self, repo, tmp_path):
-        """CR 1862: a submodule is one gitlink to the superproject, so the
-        tracked-only listing lost a vendored theme's scripts while composer
-        still validated its composer.json. The listing recurses now."""
+    def test_a_theme_vendored_as_a_submodule_is_not_run(self, repo, tmp_path):
+        """The operator's rule (2026-11-08, on #588 and #605): a repo gates
+        only its own code. A theme vendored as a submodule runs its scripts
+        in its own repo's gate, so the listing no longer recurses into it.
+        This reverses CR 1862. The root's scripts still run."""
         src = tmp_path / "theme-src"
         src.mkdir()
         _git(src, "init", "-q", "-b", "main")
         _git(src, "config", "user.email", "test@example.com")
         _git(src, "config", "user.name", "test")
-        _manifest(src, "package.json", {"test:js": "jest"})
+        _manifest(src, "package.json", {"lint:js": "wp-scripts"})
         _commit(src)
+        _manifest(repo, "package.json", {"test:js": "jest"})
         _git(
             repo,
             *("-c", "protocol.file.allow=always", "submodule", "add", "-q"),
             *(str(src), "themes/sub"),
         )
         _commit(repo)
-        result = _npm_gate(repo, FAKE_FAIL="test:js")
-        assert result.returncode == 1, result.stdout + result.stderr
-        assert "Detected: toolchain npm (themes/sub/package.json)" in result.stdout
-        assert "npm run test:js (themes/sub) (exit 1)" in result.stderr
+        assert (repo / "themes" / "sub" / "package.json").is_file()
+        result = _npm_gate(repo, FAKE_FAIL="lint:js")
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert _cwd_calls(repo, "npm") == [(".", ["run", "test:js"])]
+        assert "themes/sub" not in result.stdout
 
     def test_an_untracked_themes_user_is_pointed_at_git_add(self, repo):
         """CR 1867: a new theme's package.json, not yet added, is not

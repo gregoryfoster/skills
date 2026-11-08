@@ -8,8 +8,10 @@
 #   uv        ruff check, ruff format --check, an import check, then pytest
 #             with integration tests deselected, --no-cov when pytest-cov is
 #             installed, and xdist when the project's environment has it
-#   composer  composer validate at each composer.json, php -l on every tracked
-#             PHP file, and composer test when the project defines it
+#   composer  composer validate at each composer.json (the root's, and each
+#             one git tracks one level under themes/ and plugins/, #588),
+#             php -l on every tracked PHP file, and composer test when the
+#             project defines it. A submodule is its own repo's to gate.
 #   npm       whichever of lint:js, format:js:check and test:js each
 #             package.json declares, in its own directory: the root's, and
 #             each one git tracks one level under themes/ and plugins/ (#561)
@@ -57,7 +59,9 @@ usage() {
   echo "            uv run pytest, integration-marked tests deselected on top of"
   echo "            the project's own marker expression, --no-cov when pytest-cov"
   echo "            is installed, -n N --dist MODE when xdist is"
-  echo "  composer  composer validate ; php -l on tracked PHP files ; composer test"
+  echo "  composer  composer validate at the root's composer.json and each one"
+  echo "            git tracks in themes/*/ or plugins/*/ ; php -l on tracked PHP"
+  echo "            files ; composer test"
   echo "  npm       npm run lint:js / format:js:check / test:js, when declared,"
   echo "            in each package.json's directory: the root, and each one git"
   echo "            tracks in themes/*/ or plugins/*/ (git add a new theme's)"
@@ -227,7 +231,7 @@ no_gate() {
   echo "       (pyproject.toml with uv.lock or [tool.uv]), composer" >&2
   echo "       (composer.json) and npm (package.json scripts lint:js," >&2
   echo "       format:js:check, test:js); composer and npm at the root or" >&2
-  echo "       one level under themes/ or plugins/, where a package.json counts" >&2
+  echo "       one level under themes/ or plugins/, where a manifest counts" >&2
   echo "       only once git tracks it (git add a new theme's). For anything" >&2
   echo "       else, write scripts/pre-ship.sh at your repo root with your test" >&2
   echo "       runner in it; SKILL.md Step 1 resolves it ahead of this script" >&2
@@ -240,35 +244,55 @@ no_gate() {
 if [[ $UV -eq 0 && $COMPOSER -eq 0 && $NPM -eq 0 ]]; then
   no_gate "no toolchain detected, so there is nothing for this gate to run."
 fi
-# Every directory whose package.json detected npm, with composer's reach: the
-# root, then one level under themes/ and plugins/ (#561). Each one's scripts
-# run in that directory. A nested one is listed from git, as detect-stack.sh
-# lists it, so a gitignored plugin composer installs is not run; a failing
-# ls-files is a tooling failure, never "none". Every ls-files here runs with
-# GIT_LITERAL_PATHSPECS=0 and explicit glob magic (CR 1861): `git
+# The directories one level under themes/ and plugins/ whose MANIFEST
+# (composer.json or package.json) git tracks and the tree has, into
+# NESTED_DIRS, themes first: detect-stack.sh's `nested`, which says why. Read
+# from git, so a gitignored plugin composer installs is neither validated nor
+# run (CR 1844, #588), and not through submodules, since a repo gates only
+# its own code (the operator's rule, 2026-11-08; CR 1862 is reversed). A
+# failing ls-files is a tooling failure, never "none". Every ls-files here
+# runs with GIT_LITERAL_PATHSPECS=0 and explicit glob magic (CR 1861): `git
 # --literal-pathspecs` exports the literal setting to hooks, and `--glob-` or
 # `--noglob-pathspecs` the others, and under any of them a bare pattern lists
-# less, or nothing, with exit 0. The npm listing recurses into submodules,
-# so a theme vendored as one runs its scripts (CR 1862; detect-stack.sh says
-# why, and what stays out of reach).
+# less, or nothing, with exit 0.
+nested_dirs() {
+  local manifest=$1 parent f
+  NESTED_DIRS=()
+  for parent in themes plugins; do
+    LS_RC=0
+    GIT_LITERAL_PATHSPECS=0 git ls-files -z -- ":(glob)$parent/*/$manifest" >"$TMP/nested" 2>"$TMP/nested.err" || LS_RC=$?
+    if [[ $LS_RC -ne 0 ]]; then
+      echo "ERROR: git ls-files failed (exit $LS_RC) listing $parent/*/$manifest:" >&2
+      cat "$TMP/nested.err" >&2
+      exit 2
+    fi
+    while IFS= read -r -d '' f; do
+      # A dot-directory is never a theme (CR 1866).
+      case $f in "$parent"/.*) continue ;; esac
+      if [[ -f "$f" ]]; then NESTED_DIRS+=("${f%/"$manifest"}"); fi
+    done <"$TMP/nested"
+  done
+}
+
+# Every directory whose package.json detected npm: the root, then the nested
+# ones (#561). Each one's scripts run in that directory.
 NPM_DIRS=()
 NPM_MANIFESTS=""
 if [[ $NPM -eq 1 ]]; then
   if [[ -f package.json ]]; then NPM_DIRS+=("."); fi
-  for parent in themes plugins; do
-    LS_RC=0
-    GIT_LITERAL_PATHSPECS=0 git ls-files --recurse-submodules -z -- ":(glob)$parent/*/package.json" >"$TMP/npm" 2>"$TMP/npm.err" || LS_RC=$?
-    if [[ $LS_RC -ne 0 ]]; then
-      echo "ERROR: git ls-files failed (exit $LS_RC) listing $parent/*/package.json:" >&2
-      cat "$TMP/npm.err" >&2
-      exit 2
-    fi
-    while IFS= read -r -d '' f; do
-      # A dot-directory, which composer's glob skips (CR 1866).
-      case $f in "$parent"/.*) continue ;; esac
-      if [[ -f "$f" ]]; then NPM_DIRS+=("${f%/package.json}"); fi
-    done <"$TMP/npm"
-  done
+  nested_dirs package.json
+  NPM_DIRS+=(${NESTED_DIRS[@]+"${NESTED_DIRS[@]}"})
+fi
+
+# Every directory whose composer.json `composer validate` checks, by the same
+# rule: the root's on the filesystem, as the root package.json is, then the
+# nested ones git tracks (#588). Listed here, before any check runs, so a
+# failing ls-files stops the gate rather than a check.
+COMPOSER_DIRS=()
+if [[ $COMPOSER -eq 1 ]]; then
+  if [[ -f composer.json ]]; then COMPOSER_DIRS+=("."); fi
+  nested_dirs composer.json
+  COMPOSER_DIRS+=(${NESTED_DIRS[@]+"${NESTED_DIRS[@]}"})
 fi
 manifest() {
   if [[ $1 == . ]]; then echo package.json; else echo "$1/package.json"; fi
@@ -318,7 +342,9 @@ if [[ ${#NPM_RUN_SCRIPTS[@]} -gt 0 ]]; then need npm "declares npm scripts"; fi
 
 # Tracked PHP files, captured with git's own status so a failing ls-files can
 # never read as "no PHP to lint". `**/` matches the root too, as the bare
-# `*.php` it replaces did (CR 1861).
+# `*.php` it replaces did (CR 1861). No --recurse-submodules, on purpose
+# (#591, the operator's decision): a submodule's PHP is linted by its own
+# repo's gate, as the nested manifests above stop at a submodule too.
 TRACKED_PHP=()
 if [[ $COMPOSER -eq 1 ]]; then
   LS_RC=0
@@ -599,12 +625,8 @@ PY
 fi
 
 if [[ $COMPOSER -eq 1 ]]; then
-  COMPOSER_DIRS=()
-  [[ -f composer.json ]] && COMPOSER_DIRS+=(".")
-  for f in themes/*/composer.json plugins/*/composer.json; do
-    [[ -f "$f" ]] && COMPOSER_DIRS+=("$(dirname "$f")")
-  done
-  for dir in "${COMPOSER_DIRS[@]}"; do
+  # Listed above, with the npm directories (#588).
+  for dir in ${COMPOSER_DIRS[@]+"${COMPOSER_DIRS[@]}"}; do
     check "composer validate ($dir)" composer --working-dir="$dir" validate --no-check-publish
   done
 

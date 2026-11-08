@@ -14,9 +14,10 @@
 #     npm       package.json, with composer's reach: at the root, or one level
 #               under themes/ or plugins/, where a Sage-style monorepo
 #               with themes/ and plugins/ at the root keeps them (#561); a
-#               Bedrock repo's web/app/themes/ is not searched. A nested
-#               one counts only when git tracks it. pre-ship.sh runs each
-#               one's scripts in its own directory.
+#               Bedrock repo's web/app/themes/ is not searched. pre-ship.sh
+#               runs each one's scripts in its own directory.
+#               A nested manifest of either counts only when git tracks it,
+#               and never through a submodule (#588; `nested`, below).
 #
 #   framework   decides only which DOCS apply: doc-check.sh's default watch
 #               list and which references/stack-*.md to load. Never a check.
@@ -244,76 +245,68 @@ if [[ -f pyproject.toml ]]; then
   fi
 fi
 
-# Whether manifest $1 is at the root or one level under themes/ or plugins/,
-# read from the tree: composer's reach. npm's has the same shape but counts a
-# nested package.json only when git tracks it (nested_npm, below).
-present() {
-  local f
-  if [[ -f "$1" ]]; then return 0; fi
-  for f in themes/*/"$1" plugins/*/"$1"; do
-    if [[ -f "$f" ]]; then return 0; fi
-  done
-  return 1
-}
-
-# The package.json files one level under themes/ or plugins/ that git tracks
-# and the tree has, into NESTED_NPM, themes first. Read from git, not the
-# filesystem: a plugin composer installs is gitignored, and its scripts are
-# not this repo's to run. pre-ship.sh lists them the same way, so the two
-# agree. A failing ls-files is a tooling failure, never "none".
+# nested MANIFEST: the MANIFEST files (composer.json or package.json) one
+# level under themes/ or plugins/ that git tracks and the tree has, into
+# NESTED, themes first. Composer's and npm's nested reach are this one
+# lister, and pre-ship.sh lists them the same way, so the two scripts agree.
+# A root manifest is not listed here: it stays a filesystem check, for both.
+#
+# Read from git, not the filesystem (CR 1844, #588): a plugin composer
+# installs is gitignored, and neither its scripts nor its composer.json are
+# this repo's to gate. A failing ls-files is a tooling failure, never "none".
+#
+# Not through submodules (the operator's rule, 2026-11-08, on #588 and #605:
+# a repo gates only its own code). A theme or plugin vendored as a submodule
+# is one gitlink here, so nothing under it is listed; its own repo gates it.
+# That reverses CR 1862's --recurse-submodules. A theme directory that is a
+# symlink is one tracked link, and nothing under it is listed either.
 #
 # GIT_LITERAL_PATHSPECS=0 (CR 1861): `git --literal-pathspecs` exports it as 1
 # to the hooks it runs, and under it `:(glob)…` is a literal path, which lists
 # nothing with exit 0. The explicit glob magic is immune to the glob and
 # noglob settings; `--glob-pathspecs` is fatal beside the literal one.
 #
-# --recurse-submodules (CR 1862): a theme or plugin vendored as a submodule
-# is one gitlink to the superproject, so its package.json is listed from the
-# submodule's own index, as composer, which reads the tree, already finds its
-# composer.json. An uninitialised one has no checkout: nothing is listed and
-# no composer.json is on disk, so the two agree. A theme directory that is a
-# symlink is one tracked link to git and stays out of npm's reach, while
-# composer's glob follows it.
-#
 # A dot-directory is skipped (CR 1866): git's `:(glob)` `*` matches a leading
-# dot, bash's `themes/*` does not, and composer's reach is bash's.
+# dot, and `themes/.old/` is not a theme, as bash's `themes/*` never matched it.
 #
 # No temp file, so nothing to leak on a signal or a set -e exit (CR 1868):
 # git writes straight into the loop, its stderr straight to ours, and its
 # exit status follows as one last NUL-terminated `status N` record, since
 # bash 3.2 can neither hold NULs in a variable nor wait on a process
 # substitution. No listed path can read as that record: each one ends in
-# /package.json. A missing record (the lister died first) is a failure too.
-NESTED_NPM=()
-nested_npm() {
-  local parent f status
+# /MANIFEST. A missing record (the lister died first) is a failure too.
+NESTED=()
+nested() {
+  local manifest=$1 parent f status
+  NESTED=()
   for parent in themes plugins; do
     status=""
     # unhardened: only in form; the lister's exit status arrives as the last record and is checked below
     while IFS= read -r -d '' f; do
       case $f in
         "status "*) status=${f#status } ;;
-        "$parent"/.*) ;; # a dot-directory, which composer's glob skips (CR 1866)
-        *) if [[ -f $f ]]; then NESTED_NPM+=("$f"); fi ;;
+        "$parent"/.*) ;; # a dot-directory, never a theme (CR 1866)
+        *) if [[ -f $f ]]; then NESTED+=("$f"); fi ;;
       esac
     done < <(
       rc=0
-      GIT_LITERAL_PATHSPECS=0 git ls-files --recurse-submodules -z -- ":(glob)$parent/*/package.json" || rc=$?
+      GIT_LITERAL_PATHSPECS=0 git ls-files -z -- ":(glob)$parent/*/$manifest" || rc=$?
       printf 'status %s\0' "$rc"
     )
     if [[ $status != 0 ]]; then
-      echo "ERROR: git ls-files failed (exit ${status:-unknown}) listing $parent/*/package.json." >&2
+      echo "ERROR: git ls-files failed (exit ${status:-unknown}) listing $parent/*/$manifest." >&2
       exit 2
     fi
   done
 }
 
-if present composer.json; then
+nested composer.json
+if [[ -f composer.json || ${#NESTED[@]} -gt 0 ]]; then
   printf 'toolchain\tcomposer\n'
   printf 'framework\tphp\n'
 fi
 
-nested_npm
-if [[ -f package.json || ${#NESTED_NPM[@]} -gt 0 ]]; then
+nested package.json
+if [[ -f package.json || ${#NESTED[@]} -gt 0 ]]; then
   printf 'toolchain\tnpm\n'
 fi

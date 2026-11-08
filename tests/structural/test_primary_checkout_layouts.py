@@ -345,40 +345,48 @@ class TestASeparateGitDirPrimary:
         assert layouts.SEPARATE_GIT_DIR_HINT not in result.stderr, result.stderr
 
 
-# Where each layout keeps its primary, which is where the scripts run.
-PRIMARY_OF = {
-    "bare_home": lambda tmp_path, checkout: checkout,
-    "submodule_linked": lambda tmp_path, checkout: tmp_path / "super" / "sub",
-}
-
-
 class TestAnInheritedGitEnvironmentDoesNotAnswer:
     """CR 1895 and CR 1903's case: git exports GIT_DIR to every hook, and an
     inherited GIT_WORK_TREE beats a submodule's core.worktree. Either one
-    made `-C <entry>` answer for this checkout, not the primary."""
+    made `-C <entry>` answer for this checkout, not the primary.
+
+    Only layouts where the inherited value changes the answer are here, so
+    each test fails without here_git (CR 2001, checked by mutation). A bare
+    primary is not one: its knob is the current checkout's, which an
+    inherited GIT_DIR or GIT_WORK_TREE also names."""
 
     @pytest.mark.parametrize("script", SCRIPT_NAMES)
-    @pytest.mark.parametrize("layout", sorted(layouts.LAYOUTS))
-    def test_an_inherited_git_dir(self, tmp_path, layout, script):
+    def test_an_inherited_git_dir_in_a_submodule(self, tmp_path, script):
         text = _knob_text(script, tmp_path)
-        checkout = layouts.LAYOUTS[layout](tmp_path / "l", text, name=KNOBS[script])
+        checkout = layouts.submodule_linked(tmp_path / "l", text, name=KNOBS[script])
         _pushed(checkout)
         env = _env(GIT_DIR=layouts.git(checkout, "rev-parse", "--absolute-git-dir"))
         record = tmp_path / "record"
         result = _run_with(script, checkout, record, env=env)
-        primary = PRIMARY_OF[layout](tmp_path / "l", checkout)
-        _assert_read_from(script, result, record, primary)
+        _assert_read_from(script, result, record, tmp_path / "l" / "super" / "sub")
 
     @pytest.mark.parametrize("script", SCRIPT_NAMES)
-    @pytest.mark.parametrize("layout", sorted(layouts.LAYOUTS))
-    def test_an_inherited_git_work_tree(self, tmp_path, layout, script):
+    def test_an_inherited_git_work_tree_in_a_submodule(self, tmp_path, script):
         text = _knob_text(script, tmp_path)
-        checkout = layouts.LAYOUTS[layout](tmp_path / "l", text, name=KNOBS[script])
+        checkout = layouts.submodule_linked(tmp_path / "l", text, name=KNOBS[script])
         _pushed(checkout)
         env = _env(GIT_WORK_TREE=str(checkout))
         record = tmp_path / "record"
         result = _run_with(script, checkout, record, env=env)
-        primary = PRIMARY_OF[layout](tmp_path / "l", checkout)
+        _assert_read_from(script, result, record, tmp_path / "l" / "super" / "sub")
+
+    @pytest.mark.parametrize("script", SCRIPT_NAMES)
+    def test_a_hook_in_a_separate_git_dir_primary(self, tmp_path, script):
+        """CR 2001, both of #605's cases at once: a hook run in the primary
+        inherits GIT_DIR=<store>, and `-C <store>` then names the store
+        itself as the work tree, which holds no .skills/."""
+        text = _knob_text(script, tmp_path)
+        primary, _ = layouts.separate_git_dir(tmp_path / "l", text, name=KNOBS[script])
+        _pushed(primary)
+        store = layouts.git(primary, "rev-parse", "--absolute-git-dir")
+        assert store.endswith("/store.git"), store
+        record = tmp_path / "record"
+        result = _run_with(script, primary, record, env=_env(GIT_DIR=store))
         _assert_read_from(script, result, record, primary)
 
 
@@ -395,6 +403,9 @@ def test_the_deploy_reference_says_where_a_separate_git_dir_primary_is_read():
     assert "the work tree of the first `git worktree list` entry" in text
     assert "`git init --separate-git-dir`" in text
     assert "exits 2 and says to run from the primary itself" in text
+    # CR 1999 and CR 1998: the git it needs, and the store it doesn't cover.
+    assert "needs git 2.31 or later" in text
+    assert "A store whose path ends in `/.git` isn't covered." in text
 
 
 def test_pr_modes_exit_2_is_not_only_an_unusable_file():
@@ -405,3 +416,75 @@ def test_pr_modes_exit_2_is_not_only_an_unusable_file():
     assert "One exit 2 is not about the file." in text
     assert "`git init --separate-git-dir`" in text
     assert "run from the primary checkout" in text
+
+
+# CR 1999: below git 2.31, rev-parse echoes `--path-format=absolute` back as
+# a line, so the fallback never fires and a --separate-git-dir primary is
+# exit 2 even from itself. That fails safe, but the hint told someone already
+# in the primary to run from the primary. A shim on PATH plays that git for
+# that call and for --version; every other call is the real git.
+OLD_GIT_SHIM = """\
+#!/bin/sh
+case " $* " in
+  " --version ") echo "git version 2.30.2"; exit 0 ;;
+  *" --path-format=absolute "*)
+    echo --path-format=absolute
+    for a do shift; [ "$a" = --path-format=absolute ] || set -- "$@" "$a"; done
+    ;;
+esac
+exec "{real}" "$@"
+"""
+
+
+def _old_git_env(tmp_path: Path) -> dict:
+    real = subprocess.run(
+        ["sh", "-c", "command -v git"],
+        capture_output=True,
+        text=True,
+        check=True,
+        env=_env(),
+    ).stdout.strip()
+    bin_dir = tmp_path / "old-git"
+    bin_dir.mkdir()
+    (bin_dir / "git").write_text(OLD_GIT_SHIM.replace("{real}", real))
+    (bin_dir / "git").chmod(0o755)
+    return _env(PATH=f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+
+
+@pytest.mark.parametrize("where", ["primary", "linked"])
+@pytest.mark.parametrize("script", SCRIPT_NAMES)
+def test_git_older_than_2_31_says_so_rather_than_run_from_the_primary(
+    tmp_path, script, where
+):
+    text = _knob_text(script, tmp_path)
+    primary, linked = layouts.separate_git_dir(tmp_path / "l", text, name=KNOBS[script])
+    checkout = primary if where == "primary" else linked
+    _pushed(checkout)
+    record = tmp_path / "record"
+    result = _run_with(script, checkout, record, env=_old_git_env(tmp_path))
+    _assert_nothing_read(script, result, record)
+    # The core phrase is shared with chain W's resolve-worktree-root.sh.
+    assert (
+        "git 2.30.2 predates 2.31, which this layout needs to tell its primary"
+        " from a linked worktree: upgrade git"
+    ) in result.stderr, result.stderr
+    assert "run this from the primary checkout" not in result.stderr, result.stderr
+
+
+@pytest.mark.parametrize("script", SCRIPT_NAMES)
+def test_each_help_names_the_run_from_the_primary_exit_2(script):
+    """CR 2000: every script on this reader says, under exit 2, what a
+    linked worktree of a --separate-git-dir primary should do."""
+    result = subprocess.run(
+        ["bash", str(SCRIPTS / script), "--help"],
+        capture_output=True,
+        text=True,
+        env=_env(),
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+    text = " ".join(result.stdout.split())
+    assert (
+        "From a linked worktree of a --separate-git-dir primary: run from the"
+        " primary checkout"
+    ) in text, text
