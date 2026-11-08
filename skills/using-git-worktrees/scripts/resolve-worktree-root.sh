@@ -6,7 +6,7 @@
 # Usage: bash "<resolve-worktree-root.sh>" [--project-root] [--help]
 set -euo pipefail
 
-if [[ "${1:-}" == "--help" ]]; then
+usage() {
   echo "Usage: bash \"$0\" [--project-root]"
   echo ""
   echo "Prints the resolved worktree root for the current repo on stdout."
@@ -28,17 +28,40 @@ if [[ "${1:-}" == "--help" ]]; then
   echo "directory of whoever reads it (worktree-create.sh and"
   echo "worktree-destroy.sh read it from the current checkout's top level)."
   echo ""
-  echo "A primary git refuses (\"dubious ownership\") is exit 2, never this"
-  echo "checkout. A bare primary has no checkout, so there this one is the"
-  echo "repo root. A primary whose .git is a file (git init --separate-git-dir)"
-  echo "is known only from inside it (git >= 2.31): from its linked worktrees,"
-  echo "exit 2, and below 2.31 from the primary too."
+  echo "A primary git refuses (\"dubious ownership\", a broken .git) is exit 2,"
+  echo "never this checkout. A bare primary has no checkout: a <dir>/.bare store"
+  echo "with a <dir>/.git gitfile naming it makes <dir> the repo root, and any"
+  echo "other makes this checkout it. A primary whose .git is a file (git init"
+  echo "--separate-git-dir) is known only from inside it (git >= 2.31): from"
+  echo "its linked worktrees, exit 2, and below 2.31 from the primary too."
   echo ""
   echo "Exit codes:"
   echo "  0  Resolution succeeded"
-  echo "  2  Not inside a git repository, git failed, or the primary checkout"
-  echo "     could not be resolved (the reason is on stderr)"
+  echo "  2  Not inside a git repository, git failed, the primary checkout"
+  echo "     could not be resolved, or an unknown argument (the reason is on"
+  echo "     stderr)"
+}
+
+# Every argument is read (CR 2035): --help or -h anywhere wins, and an
+# unknown one is exit 2, as merge-mode.sh does. Read as $1 alone, a stray
+# word before --project-root printed the worktree root instead, at exit 0.
+PRINT=root
+WANT_HELP=0
+UNKNOWN=""
+for arg in "$@"; do
+  case $arg in
+    --help | -h) WANT_HELP=1 ;;
+    --project-root) PRINT=project ;;
+    *) [[ -n "$UNKNOWN" ]] || UNKNOWN=$arg ;;
+  esac
+done
+if [[ $WANT_HELP -eq 1 ]]; then
+  usage
   exit 0
+fi
+if [[ -n "$UNKNOWN" ]]; then
+  echo "ERROR: unknown argument: $UNKNOWN (see --help)" >&2
+  exit 2
 fi
 
 # here_git <args> — git without an inherited GIT_DIR or GIT_WORK_TREE (#605,
@@ -54,9 +77,6 @@ PROJECT_ROOT=$(here_git rev-parse --show-toplevel) || {
   echo "ERROR: not inside a git repository, or git refused it (git's reason is above)" >&2
   exit 2
 }
-
-PRINT=root
-if [[ "${1:-}" == "--project-root" ]]; then PRINT=project; fi
 
 if [[ -n "${WORKTREE_ROOT:-}" && $PRINT == root ]]; then
   echo "$WORKTREE_ROOT"

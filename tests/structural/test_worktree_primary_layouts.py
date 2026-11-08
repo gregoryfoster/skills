@@ -414,3 +414,24 @@ def test_help_names_the_new_exit_2s(script: Path, phrases: list[str]):
     exit_2 = " ".join(codes[codes.index("  2  ") :].split())
     for phrase in phrases:
         assert phrase in exit_2, (phrase, exit_2)
+
+
+def test_help_says_where_a_bare_primarys_knobs_live():
+    """CR 2036: the resolver's --help said a bare primary's root is always
+    this checkout, against `--project-root` in `.bare`; create's did not say
+    where a bare primary's worktree_venv is read, or that an unresolvable
+    home links nothing."""
+    resolve = SCRIPTS / "resolve-worktree-root.sh"
+    text = " ".join(
+        subprocess.run(
+            ["bash", str(resolve), "--help"], capture_output=True, text=True
+        ).stdout.split()
+    )
+    assert "a <dir>/.bare store with a <dir>/.git gitfile naming it makes <dir>" in text
+    create = " ".join(
+        subprocess.run(
+            ["bash", str(CREATE), "--help"], capture_output=True, text=True
+        ).stdout.split()
+    )
+    assert "--project-root" in create, create
+    assert "nothing is linked" in create, create

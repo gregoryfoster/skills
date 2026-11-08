@@ -19,7 +19,10 @@ usage() {
   echo "checkout; 'link' is the default) to skip that — the right setting when"
   echo "the main checkout is also a running service's WorkingDirectory=, where"
   echo "the service's own 'uv run' / 'uv sync' rewrite the shared venv under a"
-  echo "worktree's test run."
+  echo "worktree's test run. A bare primary's knob is read where"
+  echo "'resolve-worktree-root.sh --project-root' says (<dir> for a <dir>/.bare"
+  echo "store); where that cannot be resolved, nothing is linked (a WARN on"
+  echo "stderr, exit 0)."
   echo ""
   echo "Options:"
   echo "  --new   Create the branch (passes -b to git worktree add). Default: branch must already exist."
@@ -533,7 +536,7 @@ worktree_venv_mode() {
 if [[ -e "$PROJECT_ROOT/.venv/bin/activate" && ! -e "$WORKTREE_PATH/.venv" && ! -L "$WORKTREE_PATH/.venv" ]]; then
   # Resolved here rather than up front so a repo with no venv pays none of it,
   # and so a malformed knob warns only where it would have changed something.
-  VENV_MODE=$(worktree_venv_mode)
+  VENV_MODE=$(worktree_venv_mode) || VENV_MODE=unresolved
   if [[ "$VENV_MODE" == "none" ]]; then
     # Announced, never silent. An absent .venv is also the signature of the
     # #156 bug this linker fixes, so the operator standing in a fresh worktree
