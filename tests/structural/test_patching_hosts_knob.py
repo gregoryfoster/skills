@@ -17,6 +17,8 @@ What this file pins, against references/knob.md:
   directives accumulate per key;
 - an exception expires the day after its review-by date;
 - `cadence weekly|monthly` is one value, weekly by default (#529);
+- `bulk-factor <n>` is one value, 3 by default: a number from 1 to 99.99 with
+  at most two decimals, and anything else is malformed (#556);
 - a window may name a week of the month (`Sun#2`) or a date, with a reason; a
   dated line is never replaced by a more specific scope's windows, and one
   whose close has passed is a finding, not a reason to go report-only (#421);
@@ -172,6 +174,21 @@ def test_a_last_line_without_a_newline_is_read(tmp_path):
         "cadence",
         "cadence daily",
         "cadence weekly monthly",
+        # #556: a number from 1 to 99.99, at most two decimals.
+        "bulk-factor",
+        "bulk-factor 0",
+        "bulk-factor 0.9",  # below the dry run itself
+        "bulk-factor 0.35",  # 3.5 mistyped
+        "bulk-factor -3",
+        "bulk-factor 3x",
+        "bulk-factor 3.",
+        "bulk-factor .5",
+        "bulk-factor 3.555",  # a third decimal
+        "bulk-factor 100",
+        "bulk-factor 03",
+        "bulk-factor 1e1",
+        "bulk-factor 3,5",
+        "bulk-factor 3 4",
         "quiet 25:00-01:00",  # bad hour
         "class prod",
         "posture sometimes",
@@ -644,6 +661,51 @@ def test_a_cadence_set_twice_at_one_precedence_is_a_repeat(tmp_path):
     assert out["report_only"] is False
 
 
+# --- #556: the bulk's factor -------------------------------------------------------
+
+
+def test_bulk_factor_defaults_to_3(tmp_path):
+    out = _read(tmp_path, "posture scheduled\n")
+    assert out["bulk_factor"] == {"value": 3, "line": None}
+    r = _run("--config", str(tmp_path / "absent"), "--host", "h", "--today", TODAY)
+    assert json.loads(r.stdout)["bulk_factor"] == {"value": 3, "line": None}
+
+
+@pytest.mark.parametrize("value", ["1", "4", "3.5", "2.25", "99.99", "10"])
+def test_a_bulk_factor_line_is_a_number_from_1_to_99_99(tmp_path, value):
+    out = _read(tmp_path, f"posture scheduled\nbulk-factor {value}\n")
+    assert out["bulk_factor"] == {"value": float(value), "line": 2}
+    assert out["findings"] == []
+    assert out["report_only"] is False
+
+
+def test_a_bad_bulk_factor_and_knob_md_name_the_range_the_parser_takes(tmp_path):
+    # CR 1944: the parser takes 99.99, so "1 to 99" understated the range.
+    [f] = _read(tmp_path, "posture scheduled\nbulk-factor 100\n")["findings"]
+    assert "from 1 to 99.99" in f["message"], f
+    table = KNOB_MD.read_text().split("## Directives", 1)[1]
+    [row] = [r for r in table.splitlines() if r.startswith("| `bulk-factor")]
+    assert "from 1 to 99.99" in row
+
+
+def test_a_bulk_factor_line_is_one_value_the_most_specific_scope_sets(tmp_path):
+    text = "posture scheduled\nbulk-factor 3.5\n[host web-*]\nbulk-factor 4\n"
+    assert _read(tmp_path, text, host="db-1")["bulk_factor"] == {
+        "value": 3.5,
+        "line": 2,
+    }
+    assert _read(tmp_path, text, host="web-1")["bulk_factor"] == {
+        "value": 4,
+        "line": 4,
+    }
+
+
+def test_a_bulk_factor_set_twice_at_one_precedence_is_a_repeat(tmp_path):
+    out = _read(tmp_path, "posture scheduled\nbulk-factor 4\nbulk-factor 3.5\n")
+    assert out["bulk_factor"] == {"value": 3.5, "line": 3}
+    assert _kinds(out) == ["repeated"]
+
+
 # --- the doc and the parser agree ------------------------------------------------
 
 
@@ -675,6 +737,7 @@ EVERY_DIRECTIVE = {
     "class": "class production",
     "posture": "posture scheduled",
     "cadence": "cadence monthly",
+    "bulk-factor": "bulk-factor 4",
     "window": "window Tue 15:00-21:00",
     "quiet": "quiet 07:25-08:15 Sun",
     "inflight": "inflight systemctl list-units 'app-task@*' --state=activating,active,deactivating --no-legend | wc -l",
@@ -722,6 +785,7 @@ def test_every_directive_in_knob_md_is_one_the_parser_reads(tmp_path):
     ):
         assert out[key], f"{key} parsed to nothing"
     assert out["records"]["value"] == "example-org/host-records"
+    assert out["bulk_factor"]["value"] == 4
 
 
 def test_a_recovery_line_is_a_command_list_apart_from_health(tmp_path):

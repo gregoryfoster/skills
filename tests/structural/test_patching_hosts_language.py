@@ -14,6 +14,9 @@ it (2026-10-29):
   can change, from `/usr/local/bin` or `/usr/bin`. uv never runs as root.
 - #422: a uv with no `audit` leaves the tree unaudited, naming its version
   and the first that has one. Nothing is fetched.
+- #594: each package keeps its advisories' ids, in uv's order, and beside
+  them one list per advisory of the versions that fix it: `[]` where uv says
+  none exists, `null` where it said neither.
 - #391: an origin of the shape `<user>@github*:Owner/repo(.git)` names its
   owner, by that shape alone: no ssh config is read and no ssh runs.
 
@@ -503,3 +506,124 @@ def test_a_scratch_directory_nobody_cant_make_says_so():
         assert not (out_dir / "who").exists()
     finally:
         shutil.rmtree(base)
+
+
+# --- #594: each advisory's id, and whether a fix exists ---------------------------
+
+# uv 0.11.8's own text for a project locking pyasn1 0.6.4, verbatim
+# (2026-11-07). uv 0.13.5 prints the same lines, in another order.
+UV_PYASN1 = (
+    "\nVulnerabilities:\n\n"
+    "pyasn1 0.6.4 has 4 known vulnerabilities:\n\n"
+    "- GHSA-2qm8-x737-gmw5: pyasn1 has quadratic CPU consumption in constructed BIT STRING decoding\n\n"
+    "  Fixed in: 0.6.5\n\n"
+    "  Advisory information: https://nvd.nist.gov/vuln/detail/CVE-2026-119196\n\n"
+    "- GHSA-9m75-vc3g-4x39: pyasn1 has quadratic-time denial of service in constructed string and indefinite-length ANY decoding\n\n"
+    "  Fixed in: 0.6.5\n\n"
+    "  Advisory information: https://nvd.nist.gov/vuln/detail/CVE-2026-119195\n\n"
+    "- GHSA-fm9c-5rcf-2q5p: pyasn1 has quadratic CPU use in schemaless BER/CER/DER container decoding\n\n"
+    "  Fixed in: 0.6.5\n\n"
+    "  Advisory information: https://nvd.nist.gov/vuln/detail/CVE-2026-119194\n\n"
+    "- GHSA-mm57-4v3p-rchx: pyasn1 has quadratic-complexity denial of service in binary REAL decoding\n\n"
+    "  Fixed in: 0.6.5\n\n"
+    "  Advisory information: https://nvd.nist.gov/vuln/detail/CVE-2026-119197\n\n"
+)
+# ecdsa's, from the same uv: an advisory with no fix says so on its own line.
+UV_ECDSA = (
+    "ecdsa 0.19.1 has 2 known vulnerabilities:\n\n"
+    "- GHSA-9f5j-8jwj-x28g: python-ecdsa: Denial of Service via improper DER length validation in crafted private keys\n\n"
+    "  Fixed in: 0.19.2\n\n"
+    "  Advisory information: https://nvd.nist.gov/vuln/detail/CVE-2026-33936\n\n"
+    "- GHSA-wj6h-64fc-37mp: Minerva timing attack on P-256 in python-ecdsa\n\n"
+    "  No fix versions available\n\n"
+    "  Advisory information: https://nvd.nist.gov/vuln/detail/CVE-2024-23342\n\n"
+)
+# urllib3's, two of its 20: a fix on two release lines lists both, unsorted.
+UV_URLLIB3 = (
+    "urllib3 2.0.0 has 2 known vulnerabilities:\n\n"
+    "- GHSA-g4mx-q9vg-27p4: urllib3's request body not stripped after redirect from 303 status changes request method to GET\n\n"
+    "  Fixed in: 2.0.7, 1.26.18\n\n"
+    "  Advisory information: https://nvd.nist.gov/vuln/detail/CVE-2023-45803\n\n"
+    "- GHSA-2xpw-w6gg-jr37: urllib3 streaming API improperly handles highly compressed data\n\n"
+    "  Fixed in: 2.6.0\n\n"
+    "  Advisory information: https://nvd.nist.gov/vuln/detail/CVE-2025-66471\n\n"
+)
+
+
+def _found(h: Host, stdout: str, n: int, pkgs: int) -> dict:
+    _tree(h)
+    _uv(
+        h,
+        stdout,
+        f"Found {n} known vulnerabilities and no adverse project statuses in {pkgs} packages\n",
+        rc=1,
+    )
+    [t] = _lang(_audit(h))
+    assert t["audited"] is True
+    return t
+
+
+def test_each_advisorys_id_and_fix_are_kept(host):
+    # #594: the probe read "pyasn1 0.6.4, advisories: 4", and the operator
+    # re-ran uv audit by hand for the IDs and the fix the record needs
+    # (CannObserv/wslcb-licensing-tracker#248).
+    t = _found(host, UV_PYASN1, 4, 1)
+    assert t["advisories"] == 4
+    assert t["packages"] == [
+        {
+            "name": "pyasn1",
+            "version": "0.6.4",
+            "advisories": 4,
+            "ids": [
+                "GHSA-2qm8-x737-gmw5",
+                "GHSA-9m75-vc3g-4x39",
+                "GHSA-fm9c-5rcf-2q5p",
+                "GHSA-mm57-4v3p-rchx",
+            ],
+            # One list per advisory, in ids' order.
+            "fixed_in": [["0.6.5"], ["0.6.5"], ["0.6.5"], ["0.6.5"]],
+        }
+    ]
+
+
+def test_no_fix_several_fixes_and_several_packages_each_read(host):
+    t = _found(host, UV_PYASN1 + UV_ECDSA + UV_URLLIB3, 8, 3)
+    by = {p["name"]: p for p in t["packages"]}
+    assert list(by) == ["pyasn1", "ecdsa", "urllib3"]
+    assert len(by["pyasn1"]["ids"]) == 4
+    assert by["ecdsa"]["ids"] == ["GHSA-9f5j-8jwj-x28g", "GHSA-wj6h-64fc-37mp"]
+    # uv's "No fix versions available": no fix, never an unread one.
+    assert by["ecdsa"]["fixed_in"] == [["0.19.2"], []]
+    # A fix on two release lines, in uv's order.
+    assert by["urllib3"]["ids"] == ["GHSA-g4mx-q9vg-27p4", "GHSA-2xpw-w6gg-jr37"]
+    assert by["urllib3"]["fixed_in"] == [["2.0.7", "1.26.18"], ["2.6.0"]]
+
+
+def test_a_header_alone_lists_none_and_an_advisory_without_a_fix_line_is_unread(
+    host,
+):
+    # A header with nothing beneath it lists no ids, and an advisory with
+    # neither line reads null: unread, which is neither a fix nor "no fix".
+    out = (
+        "cryptography 42.0.0 has 2 known vulnerabilities:\n\n"
+        "urllib3 2.0.0 has 1 known vulnerability:\n\n"
+        "- GHSA-v845-jxx5-vc9f: urllib3's Cookie header isn't stripped\n\n"
+        "  Advisory information: https://example.invalid/GHSA-v845-jxx5-vc9f\n"
+    )
+    t = _found(host, out, 3, 2)
+    assert t["packages"] == [
+        {
+            "name": "cryptography",
+            "version": "42.0.0",
+            "advisories": 2,
+            "ids": [],
+            "fixed_in": [],
+        },
+        {
+            "name": "urllib3",
+            "version": "2.0.0",
+            "advisories": 1,
+            "ids": ["GHSA-v845-jxx5-vc9f"],
+            "fixed_in": [None],
+        },
+    ]

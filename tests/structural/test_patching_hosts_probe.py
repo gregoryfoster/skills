@@ -1148,6 +1148,192 @@ def test_a_package_passed_over_at_a_conffile_prompt_is_named_with_its_conffiles(
     assert len(asks) == 1
 
 
+# #582: on address-validator's Feb-2026 image, fwupd's installed 1.9.33 had
+# left noble-updates, so apt-cache policy listed it from dpkg's status file
+# alone, and a --force-confmiss reinstall resolved to 2.0.20: a three-package
+# upgrade outside the gate, the window and the recovery point.
+FWUPD_INSTALLED = "1.9.33-0ubuntu1~24.04.1ubuntu1"
+FWUPD_CANDIDATE = "2.0.20-1ubuntu2~24.04.2"
+
+
+def _fwupd_policy(
+    installed_sources: list[str],
+    status: str = "        100 /var/lib/dpkg/status",
+) -> str:
+    lines = [
+        "fwupd:",
+        f"  Installed: {FWUPD_INSTALLED}",
+        f"  Candidate: {FWUPD_CANDIDATE}",
+        "  Version table:",
+        f"     {FWUPD_CANDIDATE} 500",
+        "        500 http://archive.ubuntu.com/ubuntu noble-updates/main amd64 Packages",
+        f" *** {FWUPD_INSTALLED} 100",
+        *installed_sources,
+        status,
+        "     1.9.15-2 500",
+        "        500 http://archive.ubuntu.com/ubuntu noble/main amd64 Packages",
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def _conffile_prompt(
+    host: Host, policy: str | None, missing: bool = True, name: str = "fwupd"
+) -> dict:
+    said = f"Package {name} has conffile prompt and needs to be upgraded manually\n"
+    fwupd = f"Inst {name} [{FWUPD_INSTALLED}] ({FWUPD_CANDIDATE} Ubuntu:24.04/noble-updates [amd64])\n"
+    host.cases["apt-get"].insert(
+        0, ("-s *dist-upgrade", SIMULATION + fwupd, 0, "", None)
+    )
+    host.on(
+        "unattended-upgrade",
+        "--dry-run -d",
+        said + "Packages that will be upgraded: libc6\n",
+        rc=1,
+    )
+    host.on(
+        "dpkg-query",
+        f"*-W -f ${{Conffiles}}\\n {name}",
+        " /etc/update-motd.d/85-fwupd 0123abcd\n /etc/fwupd/fwupd.conf 4567cdef\n",
+    )
+    host.write("etc/fwupd/fwupd.conf", "changed\n")
+    host.STUBBED = (*host.STUBBED, "md5sum")
+    host.cases["md5sum"] = [("*fwupd.conf", "ffff0000  x\n", 0, "", None)]
+    if not missing:
+        host.write("etc/update-motd.d/85-fwupd", "unchanged\n")
+        host.cases["md5sum"].insert(0, ("*85-fwupd", "0123abcd  x\n", 0, "", None))
+    if policy is None:
+        host.on("apt-cache", f"*policy {name}", "", rc=100, stderr="E: broken\n")
+    else:
+        host.on("apt-cache", f"*policy {name}", policy)
+    out = host.run("--dry-run-into", str(host.tmp / "dry"))
+    return _finding(out, f"dry-run:conffile:{name}")
+
+
+CONFMISS = "Dpkg::Options::=--force-confmiss"
+
+
+def _reinstall_offered(msg: str, version: str = FWUPD_INSTALLED) -> bool:
+    """Whether the finding offers the reinstall, which must name the build.
+
+    CR 1955: a conffile prompt always has a newer candidate pending, and an
+    unversioned apt-get install --reinstall takes it: on noble's apt, curl's
+    upgraded 2 packages where curl=<installed> reinstalled 1 (2026-11-07).
+    """
+    named = f"apt-get install --reinstall -o {CONFMISS} 'fwupd={version}'"
+    assert msg.count(CONFMISS) == msg.count(named), msg
+    return named in msg
+
+
+def test_a_reinstall_that_would_upgrade_isnt_offered_as_a_reinstall(host):
+    f = _conffile_prompt(host, _fwupd_policy([]))
+    assert not _reinstall_offered(f["message"])
+    assert (
+        f"a reinstall with --force-confmiss would upgrade it to {FWUPD_CANDIDATE}"
+        in f["message"]
+    )
+    assert f"apt lists its installed {FWUPD_INSTALLED} from no archive" in f["message"]
+    # The deleted conffile's own restore, which touches no package state.
+    assert (
+        f"restore the deleted conffile alone from the {FWUPD_INSTALLED} .deb"
+        in f["message"]
+    )
+    # CR 1948: the general recipe, not one host's worked example.
+    assert "(policy.md, the conffile restore)" in f["message"]
+    assert "exe-dev-exeuntu.md" not in f["message"]
+
+
+def test_a_reinstall_of_a_build_still_in_an_archive_is_offered(host):
+    archive = (
+        "        500 http://archive.ubuntu.com/ubuntu noble-updates/main amd64 Packages"
+    )
+    f = _conffile_prompt(host, _fwupd_policy([archive]))
+    assert _reinstall_offered(f["message"])
+    assert "would upgrade" not in f["message"]
+    assert "restore the deleted conffile alone" in f["message"]
+
+
+def test_a_reinstall_names_a_version_with_an_epoch_as_apt_prints_it(host):
+    # A version can carry an epoch, ~ and +: the command names it verbatim,
+    # quoted, never the bare package.
+    epoch = "1:1.9.33+dfsg-0ubuntu1~24.04.1"
+    archive = (
+        "        500 http://archive.ubuntu.com/ubuntu noble-updates/main amd64 Packages"
+    )
+    policy = _fwupd_policy([archive]).replace(FWUPD_INSTALLED, epoch)
+    f = _conffile_prompt(host, policy)
+    assert _reinstall_offered(f["message"], epoch)
+
+
+# CR 1946, CR 1968: apt right-aligns the priority in four columns after
+# seven spaces, so one four or more characters wide (1000 and up, -100 and
+# down) prints with seven leading spaces, and only -1 to -99 keep eight
+# like a positive three-digit one (noble's apt, Pin-Priority 1001, 32767,
+# -10 and -1000, measured 2026-11-07). Each is still a source line.
+@pytest.mark.parametrize(
+    "source",
+    [
+        "       1001 http://archive.ubuntu.com/ubuntu noble-updates/main amd64 Packages",
+        "        -10 http://archive.ubuntu.com/ubuntu noble-updates/main amd64 Packages",
+        "       -1000 http://archive.ubuntu.com/ubuntu noble-updates/main amd64 Packages",
+    ],
+    ids=["1001", "-10", "-1000"],
+)
+def test_a_source_of_any_priority_under_the_installed_version_counts(host, source):
+    f = _conffile_prompt(host, _fwupd_policy([source]))
+    assert _reinstall_offered(f["message"])
+    assert "would upgrade" not in f["message"]
+
+
+# CR 1967: a name or version outside Debian's own characters is never
+# pasted into a command, and the finding says why rather than claiming the
+# build's source couldn't be read.
+QUOTE = "outside Debian's own characters, so no command is given"
+
+
+def test_a_version_that_cant_be_quoted_gets_no_command(host):
+    archive = (
+        "        500 http://archive.ubuntu.com/ubuntu noble-updates/main amd64 Packages"
+    )
+    bad = "1.9.33'$(id)"
+    policy = _fwupd_policy([archive]).replace(FWUPD_INSTALLED, bad)
+    f = _conffile_prompt(host, policy)
+    assert CONFMISS not in f["message"]
+    assert QUOTE in f["message"]
+    assert "couldn't be read" not in f["message"]
+
+
+def test_a_package_name_that_cant_be_quoted_gets_no_command(host):
+    archive = (
+        "        500 http://archive.ubuntu.com/ubuntu noble-updates/main amd64 Packages"
+    )
+    policy = _fwupd_policy([archive]).replace("fwupd:", "Fwupd:")
+    f = _conffile_prompt(host, policy, name="Fwupd")
+    assert CONFMISS not in f["message"]
+    assert QUOTE in f["message"]
+
+
+def test_a_status_line_of_four_digits_is_still_the_status_file(host):
+    f = _conffile_prompt(
+        host, _fwupd_policy([], status="       1001 /var/lib/dpkg/status")
+    )
+    assert not _reinstall_offered(f["message"])
+    assert f"apt lists its installed {FWUPD_INSTALLED} from no archive" in f["message"]
+
+
+def test_a_reinstall_whose_source_cant_be_read_says_so(host):
+    f = _conffile_prompt(host, None)
+    assert not _reinstall_offered(f["message"])
+    assert "whether apt can fetch its installed build couldn't be read" in f["message"]
+
+
+def test_a_modified_conffile_alone_has_no_restore(host):
+    # Restoring the packaged file over an admin's change would lose it.
+    f = _conffile_prompt(host, _fwupd_policy([]), missing=False)
+    assert "/etc/fwupd/fwupd.conf (modified)" in f["message"]
+    assert "restore the deleted conffile" not in f["message"]
+    assert "settle the change by hand" in f["message"]
+
+
 def test_a_failed_dry_run_still_reports_its_cost(host):
     # GNU time writes the failed command's status line above its own.
     host.on("unattended-upgrade", "--dry-run -d", "An error occurred\n", rc=1)
@@ -1347,9 +1533,11 @@ def test_a_uv_lock_with_advisories_counts_them_by_package(host):
     )
     [t] = _lang(_audit(host))
     assert (t["audited"], t["advisories"]) == (True, 35)
-    assert t["packages"] == [
-        {"name": "cryptography", "version": "42.0.0", "advisories": 15},
-        {"name": "urllib3", "version": "2.0.0", "advisories": 20},
+    # The count is the header's. Each advisory's id and fix: #594, in
+    # test_patching_hosts_language.py.
+    assert [(p["name"], p["version"], p["advisories"]) for p in t["packages"]] == [
+        ("cryptography", "42.0.0", 15),
+        ("urllib3", "2.0.0", 20),
     ]
 
 

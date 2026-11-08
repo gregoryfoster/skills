@@ -57,8 +57,9 @@ esac
 # Every result variable, reset.
 #
 # Scalars: KNOB_PATH, KNOB_HOST, KNOB_TODAY, KNOB_PRESENT (0|1), KNOB_CLASS,
-# KNOB_POSTURE, KNOB_CADENCE, KNOB_IMAGE_OWNER and KNOB_RECORDS, each value with a *_LINE
-# (empty for a default), and KNOB_REPORT_ONLY (0|1).
+# KNOB_POSTURE, KNOB_CADENCE, KNOB_BULK_FACTOR, KNOB_IMAGE_OWNER and
+# KNOB_RECORDS, each value with a *_LINE (empty for a default), and
+# KNOB_REPORT_ONLY (0|1).
 # Lists of plain strings: KNOB_SECTIONS (applied, least specific first) and
 # KNOB_REPORT_ONLY_WHY.
 #
@@ -87,9 +88,11 @@ knob_reset() {
   KNOB_PATH="" KNOB_HOST="" KNOB_TODAY="" KNOB_PRESENT=0
   KNOB_CLASS="production" KNOB_CLASS_LINE=""
   KNOB_POSTURE="automatic" KNOB_POSTURE_LINE=""
-  # #529: how often the scheduled run comes round. Read and printed only:
-  # no script checks a run against it.
+  # #529: how often the scheduled run comes round. probe.sh's read_cadence
+  # checks the last run against it (#592).
   KNOB_CADENCE="weekly" KNOB_CADENCE_LINE=""
+  # #556: the bulk's span is this many times its dry run (apply.sh).
+  KNOB_BULK_FACTOR="3" KNOB_BULK_FACTOR_LINE=""
   KNOB_IMAGE_OWNER="" KNOB_IMAGE_OWNER_LINE=""
   KNOB_RECORDS="" KNOB_RECORDS_LINE=""
   KNOB_SECTIONS=()
@@ -212,6 +215,17 @@ _knob_directive() {  # <line> <sec> <text>
         1:weekly | 1:monthly) _knob_record "$n" "$sec" cadence "" "${tok[0]}" ;;
         *) _knob_malformed "$n" "cadence takes weekly or monthly" ;;
       esac ;;
+    bulk-factor)
+      # #556: a number from 1 to 99.99, at most two decimals. Below 1
+      # would budget the bulk less than its own dry run took, which is
+      # what a held step gets; 0.35 is more likely 3.5 mistyped than meant.
+      # Two digits each side keep apply.sh's integer arithmetic in range.
+      local bre='^[1-9][0-9]?([.][0-9][0-9]?)?$'
+      if [ "$nt" -eq 1 ] && [[ ${tok[0]} =~ $bre ]]; then
+        _knob_record "$n" "$sec" bulk-factor "" "${tok[0]}"
+      else
+        _knob_malformed "$n" "bulk-factor takes one number from 1 to 99.99, with at most two decimals"
+      fi ;;
     window)
       # #421: a weekday, that weekday in one week of the month (Sun#2 is the
       # 2nd Sunday: the 8th to the 14th), or a date, which alone may carry
@@ -550,6 +564,8 @@ _knob_resolve() {
   for i in ${_KSEL[@]+"${_KSEL[@]}"}; do KNOB_POSTURE=${_KP_VAL[$i]} KNOB_POSTURE_LINE=${_KP_LINE[$i]}; done
   _knob_select cadence keyed
   for i in ${_KSEL[@]+"${_KSEL[@]}"}; do KNOB_CADENCE=${_KP_VAL[$i]} KNOB_CADENCE_LINE=${_KP_LINE[$i]}; done
+  _knob_select bulk-factor keyed
+  for i in ${_KSEL[@]+"${_KSEL[@]}"}; do KNOB_BULK_FACTOR=${_KP_VAL[$i]} KNOB_BULK_FACTOR_LINE=${_KP_LINE[$i]}; done
   _knob_select image-owner keyed
   for i in ${_KSEL[@]+"${_KSEL[@]}"}; do KNOB_IMAGE_OWNER=${_KP_VAL[$i]} KNOB_IMAGE_OWNER_LINE=${_KP_LINE[$i]}; done
   _knob_select records keyed

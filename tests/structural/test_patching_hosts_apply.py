@@ -60,6 +60,11 @@ read (#362). #365 widened the maps to what reboot-and-record.md's step 4
 reboots for: dbus, logind, each user@ and each datastore unit, every
 process in its cgroup.
 
+#556: the factor is the knob's `bulk-factor`, 3 by default, which an owner
+whose bulks run past three times their dry run raises for their host. A
+fraction is rounded up to the second, and a malformed line makes the host
+report-only.
+
 #390, free space: each step is gated on what it writes, read from apt's
 metadata (test_patching_hosts_space.py has the reckoning), against apt's
 cache and / with a 131072 KiB floor, and against the disk GC's headroom line
@@ -393,6 +398,7 @@ def test_without_approve_it_refuses_and_changes_nothing(host):
         (KNOB + "class ephemeral\n", "class ephemeral"),
         (KNOB.replace("posture scheduled\n", ""), "no posture line"),
         (KNOB + "window Tue 25:00-26:00\n", "a malformed line"),
+        (KNOB + "bulk-factor 0.5\n", "a malformed line"),  # #556
         (None, "no knob"),
     ],
 )
@@ -416,6 +422,64 @@ def test_a_span_that_starts_inside_a_window_but_runs_past_its_close_is_refused(h
     assert "2026-09-29T20:50:00Z to 2026-09-29T21:48:00Z" in r
     assert r.startswith("the run's span (the bulk at 3 times its dry run")
     assert out["gate"]["span"]["window"] is None
+    assert _changed(host) == []
+
+
+# --- #556: the bulk's factor ------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "line, factor, bulk, run",
+    [
+        # The default: the bulk at 3 times its 540 s dry run plus 300 s of
+        # health checks, then the postgres step's 840 s and the chain's 720 s.
+        ("", 3, 1920, 3480),
+        ("bulk-factor 4\n", 4, 2460, 4020),
+        ("bulk-factor 2.5\n", 2.5, 1650, 3210),
+        # Rounded up to the second: 540 times 3.33 is 1798.2.
+        ("bulk-factor 3.33\n", 3.33, 2099, 3659),
+        # CR 1941: hundredths with a leading zero are decimal, not octal
+        # (bash reads a bare 09 as a bad octal): 540 times 2.09 is 1128.6.
+        ("bulk-factor 2.09\n", 2.09, 1429, 2989),
+    ],
+    ids=["default", "4", "2.5", "rounded-up", "leading-zero"],
+)
+def test_the_bulks_span_takes_the_knobs_bulk_factor(host, line, factor, bulk, run):
+    host.knob(KNOB + line)
+    host.clock = TUE_1530 - 30 * MIN
+    r = host.run()["gate"]["run_span"]
+    assert r["bulk_factor"] == factor
+    assert r["bulk_seconds"] == bulk
+    assert r["run_seconds"] == run
+
+
+@pytest.mark.parametrize(
+    "line, start, end",
+    [
+        # From 20:00 the default span ends at 20:58, inside a window closing
+        # at 21:00; at 4 times its dry run it ends at 21:07, past it.
+        ("", "20:00", None),
+        ("bulk-factor 4\n", "20:00", "21:07:00"),
+        # From 20:05 the default ends at 21:03; at 2.5 times, 20:58:30.
+        ("", "20:05", "21:03:00"),
+        ("bulk-factor 2.5\n", "20:05", None),
+    ],
+    ids=["default-fits", "4-refused", "default-refused", "2.5-fits"],
+)
+def test_the_window_holds_the_span_the_bulk_factor_sets(host, line, start, end):
+    host.knob(KNOB + line)
+    hh, mm = (int(x) for x in start.split(":"))
+    host.clock = calendar.timegm((2026, 9, 29, hh, mm, 0))
+    out = host.run(rc=0 if end is None else 3)
+    refused = [r for r in out["refused"] if "window" in r]
+    if end is None:
+        assert refused == []
+        assert out["gate"]["span"]["window"]["line"] == 3
+        return
+    [r] = refused
+    factor = line.split()[1] if line else "3"
+    assert r.startswith(f"the run's span (the bulk at {factor} times its dry run")
+    assert f"2026-09-29T{start}:00Z to 2026-09-29T{end}Z" in r
     assert _changed(host) == []
 
 

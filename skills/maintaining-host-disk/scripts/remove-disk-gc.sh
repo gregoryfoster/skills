@@ -25,8 +25,11 @@ Removes the canonical disk GC the installed MANIFEST describes. Without
 
 It keeps the host's /etc/cannobserv/disk-gc/ (disk-gc.conf, checkin.key),
 the GC's state in /var/lib/cannobserv-disk-gc/, and any file MANIFEST
-doesn't list. Ask for the co-status monitor to be disabled too: with the
-sensor gone, it pages "has stopped reporting".
+doesn't list. So a host's own
+/etc/systemd/journald.conf.d/zz-cannobserv-journal.conf, which masks the
+layer's, stays and keeps capping the journal. Ask for the co-status
+monitor to be disabled too: with the sensor gone, it pages "has stopped
+reporting".
 
 After an install that stopped before writing MANIFEST there is nothing
 for it to read: it reports absent, with a note to finish the install by

@@ -68,6 +68,7 @@ Options:
                            probe.sh --dry-run-into wrote, within 24 hours,
                            for the same lane. Its wall time is a held step's
                            expected duration; the bulk's is three times it,
+                           or the knob's bulk-factor times it, rounded up,
                            and its span is the rest of the run (below). Its
                            dry-run.log names what the bulk selects
   --offnode-sha256 HEX     the bulk only: a dump's sha256, typed after the
@@ -115,7 +116,8 @@ isn't wholly inside one window or overlaps a quiet range (a held step's
 span is the dry run's wall time, plus --health-within where the knob has
 health lines, --health-within more where a datastore line names a Qdrant or
 a Redis, and 60 s for each recovery line; the bulk's span is the rest of
-the run: itself, at three times the dry run plus --health-within where the
+the run: itself, at three times the dry run (or the knob's bulk-factor
+times it) plus --health-within where the
 knob has health lines, each held step its selection reaches, and the
 reboot chain's 720 s wherever a kernel, or a package owning a file mapped
 by PID 1, dbus, logind, a user@ or a datastore unit's processes, makes a
@@ -674,11 +676,22 @@ gate_dry() {
   fi
 }
 
-# The bulk is budgeted at three times its dry run: the typical figure, not a
-# ceiling, from the measured spread run.md's gate section records (2.2 to
-# 4.0 across the cohort's runs). A held step takes a group's few packages, and keeps the whole dry
-# run's wall time as its own.
-BULK_FACTOR=3
+# The bulk is budgeted at BULK_FACTOR times its dry run: the knob's
+# bulk-factor line (#556), or 3. Three is the typical figure, not a ceiling,
+# from the measured spread run.md's gate section records (2.0 to 4.0 across
+# the cohort's runs), so an owner whose bulks run past it sets their host's
+# own. The library takes a number from 1 to 99.99, at most two decimals. A
+# held step takes a group's few packages, and keeps the whole dry run's wall
+# time as its own.
+BULK_FACTOR=$KNOB_BULK_FACTOR
+# SECONDS times the factor, rounded up to the second: bash's arithmetic is
+# integer, so the factor is read in hundredths.
+bulk_budget() {  # <var> <seconds>
+  local i=${BULK_FACTOR%%.*} d=""
+  case $BULK_FACTOR in *.*) d=${BULK_FACTOR#*.} ;; esac
+  d=${d}00
+  printf -v "$1" '%s' $((($2 * (10#$i * 100 + 10#${d:0:2}) + 99) / 100))
+}
 # What the dry run selected: the bulk sizes it, less what its holds take.
 DRY_SEL=""
 # reboot-chain.sh's default span: its 120 s delay and 600 s for the boot and
@@ -889,7 +902,9 @@ gate_step_span() {
     case $line in *"Packages that will be upgraded:"*) sel=${line#*Packages that will be upgraded:} ;; esac
   done <"$dryrun/dry-run.log"
   DRY_SEL=$sel
-  x=$((EXPECT * BULK_FACTOR + h))
+  bulk_budget x "$EXPECT"
+  x=$((x + h))
+  jadd o bulk_factor "$BULK_FACTOR"
   jaddn o bulk_seconds "$x"
   for p in $sel; do
     for r in ${KNOB_HOLD[@]+"${KNOB_HOLD[@]}"}; do

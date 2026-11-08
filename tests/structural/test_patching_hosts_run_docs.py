@@ -11,6 +11,17 @@
 - #529: `scheduled` runs at the host's cadence, `cadence weekly|monthly`,
   weekly by default, and the docs say so rather than "monthly"; run.md
   states what a run with nothing pending does, a reboot still due included.
+- #464, ask 2: policy.md's procedure for a pre-announced security release,
+  linked from run.md's one-origin lane. Each step is checked against what
+  the scripts do: the early refresh takes no `--lane`, the recovery point
+  holds for 24 hours, the poll reads the lists the probe fetched, and the
+  count waits for the fix.
+- CR 1948: the conffile restore's general recipe lives in policy.md, which
+  the finding points at; the exeuntu profile keeps fwupd as its worked
+  example. A --force-confmiss reinstall names the installed build (CR 1955).
+- CR 1949: section 7's rule for a public record covers the language
+  advisories #594 lists: counts and whether a fix exists, and their ids and
+  fixed-in versions only once the fix has shipped.
 """
 
 import re
@@ -204,3 +215,103 @@ def test_the_refresh_row_says_what_to_do_with_a_source_down_for_good():
     row = _refresh_row()
     assert "one-origin lane" in row
     assert "removed" in row and "owner" in row
+
+
+# --- #464, ask 2: a pre-announced security release ---------------------------------
+
+PRE = "### A pre-announced security release"
+APPLY_SH = (SKILL / "scripts" / "apply.sh").read_text()
+PROBE_SH = (SKILL / "scripts" / "probe.sh").read_text()
+
+
+def _pre() -> str:
+    assert PRE in POLICY, "policy.md has no pre-announced release procedure"
+    start = POLICY.index(PRE)
+    end = POLICY.find("\n## ", start)
+    return POLICY[start:end]
+
+
+def test_run_md_links_the_procedure_from_the_one_origin_lane():
+    [para] = [
+        p
+        for p in RUN.split("\n\n")
+        if p.startswith("**An expedited run of one origin**")
+    ]
+    assert "policy.md#a-pre-announced-security-release" in para
+
+
+def test_the_procedure_rides_a_dated_window_and_the_origin_lane():
+    s = _pre()
+    assert "dated `window` line" in s and "#421" in s
+    assert "`apply.sh --step bulk --lane origin:<origin>" in s
+    assert "owner's approval" in s
+    # The decision on #464: the dated window and the origin lane are the
+    # expedite path, and no knob line names one.
+    assert "expedite" not in KNOB_MD
+
+
+def test_before_t_records_versions_refreshes_and_bounds_the_recovery_point():
+    before = _pre().split("**After T**")[0]
+    assert "before-versions" in before
+    # Without --dry-run-into the probe ignores --lane, with a warning (#593):
+    # a refresh reads every class anyway, so the early refresh names none,
+    # and the procedure says a lane passed there would be ignored.
+    assert "without --dry-run-into it's ignored" in PROBE_SH
+    assert "`probe.sh --refresh-into DIR`" in before
+    step = before.split("**Before T:**")[1]
+    assert "--lane" not in step.replace("`--lane` would be ignored", "")
+    assert "`--lane` would be ignored, with a warning" in step
+    assert "`lists:refresh`" in before
+    # The bulk refuses a recovery point that began more than a day before it.
+    assert "\nRP_MAX_AGE=86400\n" in APPLY_SH
+    assert "recovery point" in before and "24 hours" in before
+
+
+def test_after_t_polls_the_lists_the_probe_fetched_and_states_the_lag():
+    after = _pre().split("**After T**")[1].split("**Then**")[0]
+    # Plain apt-cache policy reads the host's own lists, which the probe
+    # never refreshes.
+    assert "`apt-cache -o Dir::State::Lists=DIR/lists/ policy <pkg>`" in after
+    assert "never assume" in after
+
+
+def test_then_counts_after_the_fix_verifies_the_runtime_and_records_the_cves():
+    then = _pre().split("**Then**")[1]
+    assert (
+        "`probe.sh --lane origin:<origin> --refresh-into DIR --dry-run-into DIR`"
+        in then
+    )
+    # A one-origin dry run that counted nothing is refused.
+    assert "counted nothing from the" in APPLY_SH
+    assert "counted nothing" in then
+    assert "`impact.reboot.needrestart_services`" in then
+    assert "reload" in then and "config test" in then
+    assert "a real request" in then
+    assert "CVE IDs" in then
+
+
+def test_the_conffile_restore_recipe_is_general_and_in_policy_md():
+    exc = _section(POLICY, "## Exceptions")
+    bullet = exc[
+        exc.index("**A package the dry run passes over at a conffile prompt**") :
+    ]
+    bullet = bullet.split("\n- **")[0].split("\n\n**What")[0]
+    # Any package on any host: the origin's own pool, or snapshot.ubuntu.com
+    # for an Ubuntu build; only the conffile; dpkg's md5; then install.
+    assert "origin's pool" in bullet and "snapshot.ubuntu.com" in bullet
+    assert "dpkg-deb --fsys-tarfile <deb> | tar -x ./<path>" in bullet
+    assert "dpkg-query -W -f='${Conffiles}' <pkg>" in bullet
+    assert "`install`" in bullet
+    # CR 1955: a reinstall names the build, or apt takes the candidate.
+    assert "'<pkg>=<version>'" in bullet
+    assert "environments/exe-dev-exeuntu.md" in bullet
+    profile = (SKILL / "references" / "environments" / "exe-dev-exeuntu.md").read_text()
+    assert "../policy.md#exceptions" in profile
+    assert "ded254e0" in profile
+
+
+def test_a_public_record_gives_language_advisories_as_counts_and_fix_or_none():
+    s7 = _section(AFTER, "## 7. The record")
+    assert "`ids` and `fixed_in`" in s7
+    assert '"fix available"' in s7 and '"no fix"' in s7
+    assert "once the fix has shipped on the host" in s7

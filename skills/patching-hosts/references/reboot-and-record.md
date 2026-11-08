@@ -59,14 +59,14 @@ If the reboot slips out of the window, say so, and redo the gate and the quiet-h
 - **Each `restarter`** is active.
 - **The timers** are scheduled. Record any `Persistent=` catch-up, and whether any run was cut off: `Persistent=` catches up a run *missed* while down, not one *killed* part-way.
 - **needrestart is clean**, `sudo grep -c '(deleted)' /proc/1/maps` reads 0, and `reboot-required` is gone.
-- **The session adj, read directly** up the chain to PID 1. Never trust a test that can skip.
+- **The session adj, read directly** up the chain to PID 1. Never trust a test that can skip. The knob's `exception session:adj` covers `post-boot:session-adj` too (#581).
 - **Containers are back.** On power-map, qdrant waited for first use despite `unless-stopped`. On wslcb, with `docker.service` enabled, both came back at boot. The difference is `docker.service`: disabled, nothing starts dockerd at boot, so no restart policy runs until something asks Docker through `docker.socket` (measured in the exeuntu image, 2026-10-01). Check before the reboot whether it's enabled, and after it, start by hand what should be back. The probe reads the containers from disk while dockerd is down, and fails the check for each one a restart policy should have brought back.
 - **The downtime**, from the stop line or the last request to the first good response.
 - **Every `health` check passes**, so does each `recovery` line (#423), and `systemctl --failed` is empty.
 
 ## 7. The record
 
-**Take the after reading last, in every run, whether it rebooted or not:** `probe.sh --refresh-into <dir>`. It's the only probe that reads the language class: `--post-boot`, `--dry-run-into` alone and `apply.sh`'s probe after each step leave it in `not_read`. A class in `not_read`, or a tree not audited (`audited: false`, `lockfile: null` among them), is recorded as *no read*, never as 0.
+**Take the after reading last, in every run, whether it rebooted or not:** `probe.sh --refresh-into <dir>`. It's the only probe that reads the language class: `--post-boot`, `--dry-run-into` alone and `apply.sh`'s probe after each step leave it in `not_read`. It takes no `--lane`, which scopes only a dry run: one passed is ignored with a warning (#593). A class in `not_read`, or a tree not audited (`audited: false`, `lockfile: null` among them), is recorded as *no read*, never as 0. A run that found nothing pending writes the marker the next probe dates it by, or reads as a missed window ([run.md](run.md#a-run-with-nothing-pending), #592).
 
 Post the before and after readings where the knob's `records` says:
 - counts;
@@ -77,4 +77,4 @@ Post the before and after readings where the knob's `records` says:
 - what's left pending, by class ([policy.md](policy.md)), language dependencies included;
 - for each tree with a repo as its owner, that repo's own update mechanism: an audit gate in CI, and whether its bot is working, not just configured. A config alone reads "on" while the bot is silent behind a full PR limit, as notifier's was for five weeks (#366), or while the dependency graph is off and no advisory opens a PR (CannObserv/notifier#140). `adopting-dependabot`'s `check-dependabot.sh --repo <owner/name>` reads both; read a Renovate config by hand.
 
-A record that lists pending security updates is published only after they're applied, and gives counts and families, not versions.
+A record that lists pending security updates is published only after they're applied, and gives counts and families, not versions. The language advisories' `ids` and `fixed_in` follow the same rule: a public record gives each tree's counts and "fix available" or "no fix", and names the IDs and versions only once the fix has shipped on the host, or in the repo's own private tracking (#594).

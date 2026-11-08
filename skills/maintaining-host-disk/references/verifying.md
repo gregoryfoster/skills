@@ -5,6 +5,7 @@ What to read after an install, an update, turning it on, and a retirement. Read 
 ## After an install or update
 
 - The installer's JSON: `action`, `staged_version`, `removed`, and `journald_restart`. An update with an unchanged journald drop-in doesn't restart journald.
+- `journald_overrides`, then `systemd-analyze cat-config systemd/journald.conf`. Its last `SystemMaxUse=` is the cap in effect only if journald reads it: on systemd 255 and older journald reads its main file only from `/etc/systemd/journald.conf`, though `cat-config` lists one in `/run` or `/usr/lib` too (256 and newer read the first, as `cat-config` does), and it ignores a value it can't parse (`300m`, `10%`, an empty one), keeping the one before. journald merges drop-ins by file name across `/etc`, `/run`, `/usr/local/lib` and `/usr/lib`, so the layer's `zz-` file outranks a host's lower cap under an earlier name or in the main file (CannObserv/usa-wa#508). To keep it, put it in `/etc/systemd/journald.conf.d/zz-cannobserv-journal.conf`, which masks the whole layer file, then `sudo systemctl restart systemd-journald`.
 - `cd / && sha256sum --strict -c usr/local/lib/cannobserv/disk-gc/MANIFEST` passes every line. The installer runs it; run it again whenever a file under `/usr/local/lib/cannobserv/disk-gc/` is in doubt.
 - `cat /usr/local/lib/cannobserv/disk-gc/VERSION` is the pin's.
 - `systemctl is-enabled cannobserv-disk-gc.timer cannobserv-disk-headroom.timer` is what it was before the update: an update never changes it.

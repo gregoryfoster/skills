@@ -76,6 +76,8 @@ Enable them in the same change that retires the host's own disk tooling, once it
   OnFailure=<host-notifier>@%n.service
   ```
 
+  A host repo can test it: CannObserv/usa-wa's `scripts/tests/test_canonical_disk_gc.py` runs `systemd-analyze verify` on the installed unit with the drop-in merged, and checks that a misspelt drop-in fails (usa-wa#508 part 2).
+
 - **(b) The host's probe reads `/var/lib/cannobserv-disk-gc/state.json`**, which the GC writes after every `--prune` run: alert on a non-zero `exit`, and on a `finished_at` more than about 25 hours old, since a run killed at its timeout may write nothing. A host down at 05:15 misses that day's run (there's no catch-up), so a stale `finished_at` after a reboot is expected once.
 - **(c) Take both timers after all,** with steps 3, 4 and 6, and set `gc_stale_hours` back to non-zero: at 0 it turns off both GC faults. The sensor's `gc-failed` and `gc-stale` then cover it.
 

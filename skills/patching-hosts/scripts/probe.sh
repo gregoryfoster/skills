@@ -39,7 +39,9 @@ Options:
                       /var/lib/apt/lists, and count against them (the ESM
                       count, from pro, still reads the host's own lists).
                       It also audits each service's uv.lock against OSV
-                      (pending.language), which nothing else asks for
+                      (pending.language), which nothing else asks for: per
+                      package, its advisories' ids, and in the same order
+                      the versions that fix each ([] none, null unread)
   --dry-run-into DIR  count the selection with unattended-upgrade --dry-run,
                       as root, with apt's cache in DIR/archives. It downloads
                       the whole set (290 MB and 9 minutes on one host) and
@@ -77,7 +79,8 @@ Options:
                       follows; or origin:<origin>, one followed origin and
                       nothing else, which counts only against lists this
                       run fetched, so it takes --refresh-into too. With
-                      --dry-run-into only
+                      --dry-run-into only: without it, a lane is ignored
+                      with a warning, so the after reading takes none
   --post-boot         the checks after a reboot (reboot-and-record.md
                       section 6), not the readings before a run. Takes
                       neither --refresh-into nor --dry-run-into
@@ -201,9 +204,11 @@ case $lane in
   "" | security | maintenance | origin:?*) ;;
   *) echo "ERROR --lane takes security, maintenance or origin:<an origin the knob follows>" >&2; exit 2 ;;
 esac
+# Only read_dry_run reads the lane, so without a dry run it scopes nothing:
+# the after reading, a refresh, is often passed the run's lane (#593).
 if [ -n "$lane" ] && [ -z "$dryrun" ]; then
-  echo "ERROR --lane names the dry run's selection: it goes with --dry-run-into" >&2
-  exit 2
+  echo "WARNING --lane scopes only the dry run, and without --dry-run-into it's ignored: a refresh reads every class anyway" >&2
+  lane=""
 fi
 lane=${lane:-security}
 if [ -n "$refresh$dryrun" ] && [ "$postboot" -eq 1 ]; then
@@ -1244,6 +1249,9 @@ read_sources() {
 # in arrays: split unquoted, a '*' in one would expand against the current
 # directory.
 THIRD_PARTY=()
+# The origins that are Ubuntu's or Canonical's own: they need no knob
+# policy, and carry no exposure (CR 1959).
+FIRST_PARTY_ORIGINS="Ubuntu UbuntuESM UbuntuESMApps Canonical"
 read_origins() {
   local out line v os="" oa="" osite third po seen="" third_seen=""
   local -a kv=()
@@ -1267,7 +1275,7 @@ read_origins() {
         if [ -n "$os$oa" ] && [ "$oa" != now ] && ! in_words "${os// /_}|$oa|$osite" "$seen"; then
           seen="$seen ${os// /_}|$oa|$osite"
           third=1
-          case $os in Ubuntu | UbuntuESM | UbuntuESMApps | Canonical) third=0 ;; esac
+          if in_words "$os" "$FIRST_PARTY_ORIGINS"; then third=0; fi
           po=""
           jaddsn po origin "$os"
           jaddsn po archive "$oa"
@@ -1577,6 +1585,175 @@ read_tailscale() {
   R_TAILSCALE="{$R_TAILSCALE}"
 }
 
+# The last run, from local facts only (#592): never the knob's records, so
+# a probe needs no gh and no network. Every run directory,
+# /var/backups/patching-hosts-<UTC>, is a run (CR 1979-1983). Its name says
+# when it was made, which on a datastore host is the recovery point's start,
+# before the window, so it's dated by the bulk's line in its steps, which
+# apply.sh writes when the bulk step ends, with its start; else by the fire
+# time reboot-chain.sh records in reboot-chain.unit; else, emptied by its
+# retention, unreadable or abandoned, by its name. The period floor below
+# absorbs a recovery point taken before its window. A directory is an
+# attempt, so this reads the last attempt, not the last success: a failed or
+# abandoned one resets the count, only windows after it count, and its own
+# record is where the failure shows (CR 1984). A run that left no bulk
+# record, one with nothing pending or one done by hand, writes the marker
+# (run.md). The newest is the last run.
+RUN_MARKER=/var/backups/patching-hosts-last-reading
+# A stamp further past the probe's clock than this is a clock or a typo,
+# never the last run (CR 1960); one within it is taken as now.
+RUN_CLOCK_SLACK_S=3600
+stamp_epoch() {  # <var> <YYYYMMDDTHHMMSSZ>: VAR := its seconds since 1970, or empty when it isn't one
+  local _se_v=$1 _se_y _se_mo _se_d _se_h _se_mi _se_s _se_day
+  local re='^([0-9]{4})([0-9]{2})([0-9]{2})T([0-9]{2})([0-9]{2})([0-9]{2})Z$'
+  printf -v "$_se_v" '%s' ""
+  [[ $2 =~ $re ]] || return 0
+  _se_y=${BASH_REMATCH[1]} _se_mo=${BASH_REMATCH[2]} _se_d=${BASH_REMATCH[3]}
+  _se_h=$((10#${BASH_REMATCH[4]})) _se_mi=$((10#${BASH_REMATCH[5]})) _se_s=$((10#${BASH_REMATCH[6]}))
+  _knob_is_day "$_se_y-$_se_mo-$_se_d" || return 0
+  if [ "$_se_h" -gt 23 ] || [ "$_se_mi" -gt 59 ] || [ "$_se_s" -gt 59 ]; then return 0; fi
+  knob_epoch_day _se_day "$_se_y-$_se_mo-$_se_d"
+  printf -v "$_se_v" '%s' "$((_se_day * 86400 + _se_h * 3600 + _se_mi * 60 + _se_s))"
+}
+
+# When the run in one directory took place: RUN_AT.
+run_at() {  # <directory> <the epoch its name says>
+  local _ra_o _ra_s _ra_r _ra_at _ra_rest _ra_u
+  RUN_AT=""
+  capture _ra_o as_reader cat -- "$1/steps"
+  if [ "$CAP_RC" -eq 0 ]; then
+    while read -r _ra_s _ra_r _ra_at _ra_rest; do
+      if [ "$_ra_s" = bulk ] && [[ $_ra_at =~ ^[0-9]+$ ]]; then RUN_AT=$_ra_at; fi
+    done <<<"$_ra_o"
+  fi
+  if [ -z "$RUN_AT" ]; then
+    capture _ra_o as_reader cat -- "$1/reboot-chain.unit"
+    if [ "$CAP_RC" -eq 0 ]; then
+      read -r _ra_u _ra_at <<<"$_ra_o" || true
+      stamp_epoch RUN_AT "${_ra_at//[-:]/}"
+    fi
+  fi
+  RUN_AT=${RUN_AT:-$2}
+}
+
+# A scheduled host's weekday and #N windows that closed since its last run.
+# A dated window is a one-off, and missing it isn't overdue. A host's window
+# lines are alternatives, when a run may happen, so a window counts only
+# once it opens most of a period after the last run (CR 1957): under weekly,
+# more than 6 days after; under monthly, a #N window more than 21 days
+# after, and a plain weekday window, one of a month's several, more than 31.
+# automatic has no window to miss.
+CADENCE_WEEK_S=$((6 * 86400)) CADENCE_MONTH_WEEK_S=$((21 * 86400)) CADENCE_MONTH_S=$((31 * 86400))
+R_CADENCE=""
+read_cadence() {
+  local t e last="" from="" m="" r ws we len wd d os oe md missed="" first="" why="" recurring=0 iso floor
+  local periods="" prev pfloor unit
+  local -a f=() opens=()
+  for t in "$P_ROOT"/var/backups/patching-hosts-2*; do
+    [ -d "$t" ] || continue
+    stamp_epoch e "${t##*/patching-hosts-}"
+    [ -n "$e" ] || continue
+    run_at "$t" "$e"
+    if [ "$RUN_AT" -gt $((P_NOW + RUN_CLOCK_SLACK_S)) ]; then
+      iso_utc iso "$RUN_AT"
+      not_read "the run in ${t#"$P_ROOT"}: it's dated $iso, past the probe's clock, so it isn't counted"
+      continue
+    fi
+    [ "$RUN_AT" -le "$P_NOW" ] || RUN_AT=$P_NOW
+    if [ -z "$last" ] || [ "$RUN_AT" -gt "$last" ]; then last=$RUN_AT from=${t#"$P_ROOT"}; fi
+  done
+  if [ -e "$P_ROOT$RUN_MARKER" ]; then
+    capture m as_reader head -n 1 -- "$P_ROOT$RUN_MARKER"
+    trim m "$m"
+    stamp_epoch e "$m"
+    if [ "$CAP_RC" -ne 0 ]; then
+      not_read "the run marker $RUN_MARKER: it couldn't be read, so it isn't counted"
+    elif [ -z "$e" ]; then
+      not_read "the run marker $RUN_MARKER: its first line isn't a UTC stamp, YYYYMMDDTHHMMSSZ, so it isn't counted"
+    elif [ "$e" -gt $((P_NOW + RUN_CLOCK_SLACK_S)) ]; then
+      not_read "the run marker $RUN_MARKER: it's dated $m, past the probe's clock, so it isn't counted"
+    else
+      [ "$e" -le "$P_NOW" ] || e=$P_NOW
+      if [ -z "$last" ] || [ "$e" -gt "$last" ]; then last=$e from=$RUN_MARKER; fi
+    fi
+  fi
+  for r in ${KNOB_WINDOW[@]+"${KNOB_WINDOW[@]}"}; do
+    IFS=$KNOB_US read -r -a f <<<"$r"
+    if [ -z "${f[6]}" ]; then recurring=1; fi
+  done
+  if [ "$KNOB_POSTURE" != scheduled ]; then
+    why="posture $KNOB_POSTURE: the apt timers patch daily, and there's no window to miss"
+  elif [ "$recurring" -eq 0 ]; then
+    why="no weekday or #N window says when a run is due, and a dated window is a one-off"
+  elif [ -z "$last" ]; then
+    why="no run on record"
+    finding unknown cadence:no-run "" "No run is on record: no /var/backups/patching-hosts-<UTC> directory and no $RUN_MARKER marker, so whether a $KNOB_CADENCE window was missed can't be read. A retention sweep that removed every run directory reads the same. Read the last run in the host's records; the next run records one again, and so does one with nothing pending, which writes the marker (run.md)."
+  else
+    missed=0
+    for r in ${KNOB_WINDOW[@]+"${KNOB_WINDOW[@]}"}; do
+      IFS=$KNOB_US read -r -a f <<<"$r"
+      [ -z "${f[6]}" ] || continue
+      floor=$CADENCE_WEEK_S
+      if [ "$KNOB_CADENCE" = monthly ]; then
+        floor=$CADENCE_MONTH_S
+        [ -z "${f[5]}" ] || floor=$CADENCE_MONTH_WEEK_S
+      fi
+      ws=$((10#${f[1]%%:*} * 3600 + 10#${f[1]##*:} * 60))
+      we=$((10#${f[2]%%:*} * 3600 + 10#${f[2]##*:} * 60))
+      len=$((we - ws))
+      [ "${f[3]}" -eq 0 ] || len=$((len + 86400))
+      case ${f[0]} in Mon) wd=0 ;; Tue) wd=1 ;; Wed) wd=2 ;; Thu) wd=3 ;; Fri) wd=4 ;; Sat) wd=5 ;; *) wd=6 ;; esac
+      # The first such weekday on or after the floor's day: 1970-01-01 was
+      # a Thursday, so (day + 3) % 7 is 0 on a Monday.
+      d=$(((last + floor) / 86400))
+      d=$((d + (wd - (d + 3) % 7 + 7) % 7))
+      while os=$((d * 86400 + ws)) && [ "$os" -le "$P_NOW" ]; do
+        oe=$((os + len))
+        d=$((d + 7))
+        if [ "$os" -le $((last + floor)) ] || [ "$oe" -gt "$P_NOW" ]; then continue; fi
+        if [ -n "${f[5]}" ]; then
+          knob_mday md "$((os / 86400))"
+          [ $(((md - 1) / 7 + 1)) -eq "${f[5]}" ] || continue
+        fi
+        missed=$((missed + 1))
+        opens+=("$os")
+        if [ -z "$first" ] || [ "$os" -lt "$first" ]; then first=$os; fi
+      done
+    done
+    # The periods missed (CR 1973): windows are alternatives, so seven daily
+    # windows in a week are one week. A window opening more than a period's
+    # floor after the last one counted starts the next period.
+    periods=0 prev=""
+    pfloor=$CADENCE_WEEK_S
+    [ "$KNOB_CADENCE" != monthly ] || pfloor=$CADENCE_MONTH_WEEK_S
+    if [ "${#opens[@]}" -gt 0 ]; then
+      while read -r os; do
+        if [ -z "$prev" ] || [ "$os" -gt $((prev + pfloor)) ]; then periods=$((periods + 1)) prev=$os; fi
+      done < <(printf '%s\n' "${opens[@]}" | sort -n)
+    fi
+  fi
+  R_CADENCE=""
+  jadds R_CADENCE cadence "$KNOB_CADENCE"
+  iso_utc iso "$last"
+  jaddsn R_CADENCE last_run "$iso"
+  jaddsn R_CADENCE last_run_from "$from"
+  jaddn R_CADENCE periods_missed "$periods"
+  jaddn R_CADENCE windows_missed "$missed"
+  iso_utc iso "$first"
+  jaddsn R_CADENCE first_missed "$iso"
+  jaddsn R_CADENCE unchecked_why "$why"
+  if is_int "$periods" && [ "$periods" -gt 0 ]; then
+    local s=s ws_=s lr fm
+    unit=week
+    [ "$KNOB_CADENCE" != monthly ] || unit=month
+    [ "$periods" -ne 1 ] || s=""
+    [ "$missed" -ne 1 ] || ws_=""
+    iso_utc lr "$last"
+    iso_utc fm "$first"
+    finding deviation cadence:overdue cadence:overdue "No run or attempt since $lr ($from): $periods $unit$s of this $KNOB_CADENCE host went by with none, $missed window$ws_ closed since, the first $fm (knob.md). A scheduled host is patched only when someone starts its run: run it in the next window, or declare a freeze the owner chose as exception cadence:overdue <review-by> <reason>. A run that left no bulk record, one that found nothing pending or one done by hand, counts only once it writes the marker $RUN_MARKER (run.md, A run with nothing pending)."
+  fi
+}
+
 read_updates() {
   local o=""
   read_units
@@ -1587,6 +1764,7 @@ read_updates() {
   read_scope
   read_outside_apt
   read_tailscale
+  read_cadence
   jadd o units "[$R_UNITS]"
   jadd o periodic "{$R_PERIODIC}"
   jaddb o apt_config_read "$APT_CONFIG_OK"
@@ -1604,6 +1782,7 @@ read_updates() {
   jadd o origin_scope "[$R_SCOPE]"
   jadd o outside_apt "{$R_OUTSIDE}"
   jadd o tailscale "$R_TAILSCALE"
+  jadd o cadence "{$R_CADENCE}"
   R_UPD=$o
 }
 
@@ -2076,10 +2255,34 @@ root_only() {  # <path>
 # its user can rewrite. A root-owned lock, such as a release tree a deploy
 # builds as root, is audited as nobody, with a uv only root can change
 # (#456). uv 0.11.8 exits 0 clean, 1 with advisories and 2 on an error; its
-# output is text only. It never fetches a newer uv for one without `audit`
-# (#422). Sets LA_AUDITED, LA_N, LA_PKGS (a JSON array body) and LA_WHY.
+# output is text only (0.13.5 adds --output-format json, which the minimum
+# lacks). It never fetches a newer uv for one without `audit` (#422). Sets
+# LA_AUDITED, LA_N, LA_PKGS (a JSON array body) and LA_WHY.
+#
+# Each package's advisories come from the lines beneath its header (#594):
+# "- <id>: <title>", then "  Fixed in: <v>, <v>" or "  No fix versions
+# available" (uv 0.11.8 and 0.13.5, read 2026-11-07). ids keeps uv's order,
+# and fixed_in follows it, one list per advisory: its versions, [] where uv
+# says no fix exists, or null where it said neither. A fix can span release
+# lines (urllib3's "2.0.7, 1.26.18"), and a union per package would lose
+# which advisory has none.
+LA_P="" LA_IDS="" LA_FIXES="" LA_FIX="" LA_IN_ADV=0
+la_adv_end() {
+  [ "$LA_IN_ADV" -eq 1 ] || return 0
+  jpush LA_FIXES "$LA_FIX"
+  LA_IN_ADV=0
+}
+la_pkg_end() {
+  la_adv_end
+  [ -n "$LA_P" ] || return 0
+  jadd LA_P ids "[$LA_IDS]"
+  jadd LA_P fixed_in "[$LA_FIXES]"
+  jpush LA_PKGS "{$LA_P}"
+  LA_P="" LA_IDS="" LA_FIXES=""
+}
 lang_audit() {  # <dir> <user> <home>
-  local d=$1 u=$2 home=$3 uvb="" out err="" line re rc n=0 sum="" p v
+  local d=$1 u=$2 home=$3 uvb="" out err="" line re ra rf rc n=0 sum="" p v
+  local -a fv=()
   LA_AUDITED=0 LA_N="" LA_PKGS="" LA_WHY=""
   if [ ! -e "$P_ROOT$d/pyproject.toml" ] && ! as_root test -e "$P_ROOT$d/pyproject.toml" 2>/dev/null; then
     LA_WHY="no pyproject.toml beside its uv.lock, which uv audit needs"
@@ -2145,16 +2348,30 @@ lang_audit() {  # <dir> <user> <home>
       ;;
   esac
   re='^([^ ]+) ([^ ]+) has ([0-9]+) known vulnerabilit(y|ies):$'
+  ra='^- ([^ :]+): '
+  rf='^  Fixed in: (.+)$'
+  LA_P="" LA_IDS="" LA_FIXES="" LA_IN_ADV=0
   while IFS= read -r line; do
     if [[ $line =~ $re ]]; then
-      p=""
-      jadds p name "${BASH_REMATCH[1]}"
-      jadds p version "${BASH_REMATCH[2]}"
-      jaddn p advisories "${BASH_REMATCH[3]}"
-      jpush LA_PKGS "{$p}"
+      la_pkg_end
+      jadds LA_P name "${BASH_REMATCH[1]}"
+      jadds LA_P version "${BASH_REMATCH[2]}"
+      jaddn LA_P advisories "${BASH_REMATCH[3]}"
       n=$((n + BASH_REMATCH[3]))
+    elif [ -n "$LA_P" ] && [[ $line =~ $ra ]]; then
+      la_adv_end
+      jpushs LA_IDS "${BASH_REMATCH[1]}"
+      LA_FIX=null LA_IN_ADV=1
+    elif [ "$LA_IN_ADV" -eq 1 ] && [[ $line =~ $rf ]]; then
+      p=""
+      read -r -a fv <<<"${BASH_REMATCH[1]//,/ }" || true
+      for v in ${fv[@]+"${fv[@]}"}; do jpushs p "$v"; done
+      LA_FIX="[$p]"
+    elif [ "$LA_IN_ADV" -eq 1 ] && [ "$line" = "  No fix versions available" ]; then
+      LA_FIX="[]"
     fi
   done <<<"$out"
+  la_pkg_end
   re='Found ([0-9]+) known vulnerabilit'
   if [[ $err =~ $re ]]; then sum=${BASH_REMATCH[1]}; fi
   if [ "$rc" -eq 0 ]; then
@@ -2774,7 +2991,26 @@ read_dry_run() {
     else
       cfs="unknown: dpkg-query couldn't list them"
     fi
-    finding risk "dry-run:conffile:$p" "" "unattended-upgrade passes over $p at a conffile prompt, so the lane won't install it${k:+, though by_class.$k counts it (by_class.passed_over marks it)} (the dry run exited $rc). Its conffiles on disk: $cfs. Choose a remedy: hold it, declared as exception held:$p <review-by> <reason>; reinstall it with -o Dpkg::Options::=--force-confmiss (a deleted conffile) or settle the change by hand; or prune it (policy.md)."
+    # --force-confmiss reinstalls only a build apt can still fetch, and a
+    # deleted conffile can be restored alone from that build's .deb (#582).
+    # The command names the build: a newer candidate is always pending here,
+    # and an unversioned --reinstall takes it (noble's apt, CR 1955). Quoted,
+    # and only for a name and version in Debian's own characters.
+    installed_fetchable "$p"
+    if [ "$IF_STATE" = yes ] && [[ $p =~ $DEB_NAME_RE ]] && [[ $IF_VERSION =~ $DEB_VERSION_RE ]]; then
+      w="reinstall that build, named: apt-get install --reinstall -o Dpkg::Options::=--force-confmiss '$p=$IF_VERSION' (a deleted conffile; unnamed, apt takes the candidate)"
+    elif [ "$IF_STATE" = yes ]; then
+      # Read, and fetchable, but not safe to paste (CR 1967).
+      w="apt can fetch its installed build, but the name or version apt printed has a character outside Debian's own characters, so no command is given: a reinstall with --force-confmiss must name that build, or it upgrades"
+    elif [ "$IF_STATE" = no ]; then
+      w="no reinstall: apt lists its installed $IF_VERSION from no archive, only dpkg's status file, so naming that version fails, and a reinstall with --force-confmiss would upgrade it to ${IF_CANDIDATE:-its candidate}"
+    else
+      w="whether apt can fetch its installed build couldn't be read, and a reinstall with --force-confmiss must name that build or it upgrades"
+    fi
+    case ${cf_states[$((i - 1))]} in
+      *'"state": "missing"'*) w="$w; restore the deleted conffile alone from the ${IF_VERSION:-installed} .deb, checked against dpkg's md5 (policy.md, the conffile restore)" ;;
+    esac
+    finding risk "dry-run:conffile:$p" "" "unattended-upgrade passes over $p at a conffile prompt, so the lane won't install it${k:+, though by_class.$k counts it (by_class.passed_over marks it)} (the dry run exited $rc). Its conffiles on disk: $cfs. Choose a remedy: hold it, declared as exception held:$p <review-by> <reason>; $w; settle the change by hand (a modified conffile); or prune it (policy.md)."
   done
   if [ -n "$unlisted" ]; then
     finding risk dry-run:unlisted "" "The dry run selects${unlisted}, which the pending set's class lists don't name: the proposal's counts leave them out, and the apply would take them. Read each in apt-cache policy before proposing."
@@ -2842,6 +3078,40 @@ read_holds() {
   R_OWNERHOLDS="[$R_OWNERHOLDS]"
 }
 
+# Whether apt can fetch the installed build again (#582): apt-cache policy
+# lists it from a source other than dpkg's status file. A build superseded
+# in -updates is listed from the status file alone, and a reinstall then
+# resolves to the candidate: an upgrade, outside every gate.
+# A version line starts " *** " or five spaces and the version. A source
+# line is seven spaces and its priority right-aligned in four columns, so
+# one four or more characters wide (1000 and up, -100 and down) has seven
+# leading spaces, and only -1 to -99 keep eight like 100 to 999 (noble's
+# apt, Pin-Priority 1001, 32767, -10 and -1000; CR 1946, CR 1968).
+# A package name and a version in Debian policy's characters, which a
+# command quoted in single quotes can print as they are (CR 1955).
+DEB_NAME_RE='^[a-z0-9][a-z0-9.+-]*$'
+DEB_VERSION_RE='^[A-Za-z0-9][A-Za-z0-9.+~:-]*$'
+installed_fetchable() {  # <package>: IF_STATE := yes, no, or empty when unread; IF_VERSION and IF_CANDIDATE
+  local out line mine=0 src='^       +-?[0-9]+ '
+  IF_STATE="" IF_VERSION="" IF_CANDIDATE=""
+  have apt-cache || return 0
+  capture out apt_env apt-cache "${APT_OPTS[@]}" ${LISTS_OPT[@]+"${LISTS_OPT[@]}"} policy "$1"
+  [ "$CAP_RC" -eq 0 ] || return 0
+  while IFS= read -r line; do
+    case $line in
+      "  Candidate: "*) IF_CANDIDATE=${line#"  Candidate: "} ;;
+      " *** "*)
+        mine=1 IF_STATE=no
+        read -r _ IF_VERSION _ <<<"$line" ;;
+      "     "[!\ ]*) mine=0 ;;
+      *)
+        if [ "$mine" -eq 1 ] && [[ $line =~ $src ]]; then
+          case $line in */var/lib/dpkg/status) ;; *) IF_STATE=yes ;; esac
+        fi ;;
+    esac
+  done <<<"$out"
+}
+
 held_versions() {  # <package>: HV_INSTALLED, HV_CANDIDATE, and HV_SECURITY 1 when a newer version is in a -security suite
   local out line newer=1
   HV_INSTALLED="" HV_CANDIDATE="" HV_SECURITY=0
@@ -2901,7 +3171,8 @@ unit_of_pid() {  # <var> <pid>: the systemd unit its cgroup names, or empty
 
 # Which processes map a shared object from a pending package: Postgres needs
 # a restart when its backends map libc6 or libxml2, even with its own
-# package out of the set.
+# package out of the set. MAPS_PAIRS keeps each "<unit>|<package>|<pid>".
+MAPS_PAIRS=""
 read_maps() {
   local p f out line pid pkg u e w pairs="" ulist="" pk pids np
   local -a maps=()
@@ -2957,6 +3228,7 @@ read_maps() {
     pairs="$pairs ${u:-unknown}|$pkg|$pid"
     in_words "${u:-unknown}" "$ulist" || ulist="$ulist ${u:-unknown}"
   done <<<"$out"
+  MAPS_PAIRS=$pairs
   local byunit=""
   for u in $ulist; do
     pk="" pids="" np=0
@@ -2981,6 +3253,78 @@ read_maps() {
     jpush byunit "{$e}"
   done
   R_MAPS="{\"units\": [$byunit], \"source\": \"/proc/*/maps, read as root, against each pending package's shared objects\"}"
+}
+
+# A third-party origin carrying a serving runtime (#464): a pending package
+# from a non-Ubuntu origin whose shared object a running service maps puts
+# that origin's whole pending set at security, not maintenance. It reads
+# read_maps' pairs, never a second process scan. Whether a process listens
+# isn't there (ss -Hltn names no pid), so a process in a .service unit, a
+# daemon or a worker, stands in; a session's .scope, or a process whose unit
+# can't be read, doesn't. The map matches shared objects only, so a runtime
+# that's one executable with none of its own (NodeSource's node) isn't seen.
+check_exposure() {
+  local e u p c i j n key pol val s tpm=" " seen=" "
+  local -a eo=() eu=() ep=() f=()
+  # Each third-party package's origin, built once: a lookup per pair over
+  # every pending package cost seconds on bash 3.2 at a few thousand pairs
+  # (CR 1962). An origin the knob can't name, a first party one, is left out
+  # (CR 1959). Neither a package name nor a class holds a space.
+  for i in ${PK_NAME[@]+"${!PK_NAME[@]}"}; do
+    c=${PK_CLASS[$i]}
+    case $c in third-party:?*) c=${c#third-party:} ;; *) continue ;; esac
+    if in_words "${c//_/ }" "$FIRST_PARTY_ORIGINS"; then continue; fi
+    tpm="$tpm${PK_NAME[$i]}|$c "
+  done
+  [ -n "${tpm// /}" ] || return 0
+  for e in $MAPS_PAIRS; do
+    u=${e%%|*} p=${e#*|}
+    p=${p%%|*}
+    case $u in *.service) ;; *) continue ;; esac
+    case $seen in *" $u|$p "*) continue ;; esac
+    seen="$seen$u|$p "
+    case $tpm in *" $p|"*) ;; *) continue ;; esac
+    c=${tpm#*" $p|"}
+    c=${c%% *}
+    j=""
+    for i in ${eo[@]+"${!eo[@]}"}; do
+      if [ "${eo[$i]}" = "$c" ]; then j=$i; fi
+    done
+    if [ -z "$j" ]; then
+      j=${#eo[@]}
+      eo+=("$c") eu+=(" ") ep+=(" ")
+    fi
+    in_words "$u" "${eu[$j]}" || eu[j]="${eu[$j]}$u "
+    in_words "$p" "${ep[$j]}" || ep[j]="${ep[$j]}$p "
+  done
+  for j in ${eo[@]+"${!eo[@]}"}; do
+    c=${eo[$j]}
+    n=0
+    for i in ${PK_CLASS[@]+"${!PK_CLASS[@]}"}; do
+      if [ "${PK_CLASS[$i]}" = "third-party:$c" ]; then n=$((n + 1)); fi
+    done
+    # As the knob names it: its o= field, or a site apt lists it at.
+    key="" pol="" val=""
+    for e in ${KNOB_ORIGIN[@]+"${KNOB_ORIGIN[@]}"}; do
+      IFS=$KNOB_US read -r -a f <<<"$e"
+      if [ "${f[0]}" = "$c" ]; then key=${f[0]} pol=${f[1]} val=${f[2]-}; break; fi
+      case ${f[0]} in *.*) ;; *) continue ;; esac
+      for i in ${THIRD_PARTY[@]+"${THIRD_PARTY[@]}"}; do
+        if [ "$i" = "$c|${f[0]}" ] && [ -z "$key" ]; then key=${f[0]} pol=${f[1]} val=${f[2]-}; fi
+      done
+    done
+    s=s
+    [ "$n" -ne 1 ] || s=""
+    u=${eu[$j]# } p=${ep[$j]# }
+    e="$n package$s pending from the third-party origin ${c//_/ }, and running services map its ${p% }: ${u% }. So its pending set is a security exposure, not maintenance (readings.md)."
+    case $pol in
+      follow) e="$e The knob follows it, which takes it only in the maintenance lane, at the host's cadence. Expedite it: a dated window line from date -u (#421), then apply.sh --lane origin:$key with the owner's approval (policy.md, a pre-announced security release)." ;;
+      pin) e="$e The knob pins it at $val, so no lane takes the set: the exposure stays until the owner moves the pin (policy.md)." ;;
+      hold) e="$e The knob holds it ($val), so no lane takes the set: the exposure stays until the owner lifts the hold (policy.md)." ;;
+      *) e="$e No knob line names it (the origin:${c//_/ } finding), so no lane takes the set: follow it to have an expedite path (knob.md)." ;;
+    esac
+    finding risk "exposure:${key:-$c}" "exposure:${key:-$c}" "$e"
+  done
 }
 
 PG_CLUSTERS=""  # " ver/name/port/status/logfile ..."
@@ -4706,8 +5050,10 @@ read_post_boot() {
     check pid1-deleted-maps "" "/proc/1/maps couldn't be read as root"
   fi
   if [ "$REBOOT_REQ" -eq 1 ]; then check reboot-required 0 "/run/reboot-required is still there"; else check reboot-required 1 absent; fi
+  # The same reading as session:adj's before a run, so its exception holds
+  # here too (#581).
   if [ -n "$R_SESSION_MIN" ] && [ "$R_SESSION_MIN" -le -1000 ]; then
-    check session-adj 0 "the session's chain still runs at $R_SESSION_MIN"
+    check session-adj 0 "the session's chain still runs at $R_SESSION_MIN" session:adj
   elif [ -n "$R_SESSION_MIN" ]; then
     check session-adj 1 "lowest adj in the session's chain, below the platform's agent: $R_SESSION_MIN"
   fi
@@ -4793,6 +5139,7 @@ else
   evaluate_posture
   read_pending
   read_impact
+  check_exposure
   read_dormant
   owner_lines
 fi
