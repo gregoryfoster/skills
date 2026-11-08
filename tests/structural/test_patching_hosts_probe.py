@@ -1347,9 +1347,11 @@ def test_a_uv_lock_with_advisories_counts_them_by_package(host):
     )
     [t] = _lang(_audit(host))
     assert (t["audited"], t["advisories"]) == (True, 35)
-    assert t["packages"] == [
-        {"name": "cryptography", "version": "42.0.0", "advisories": 15},
-        {"name": "urllib3", "version": "2.0.0", "advisories": 20},
+    # The count is the header's. Each advisory's id and fix: #594, in
+    # test_patching_hosts_language.py.
+    assert [(p["name"], p["version"], p["advisories"]) for p in t["packages"]] == [
+        ("cryptography", "42.0.0", 15),
+        ("urllib3", "2.0.0", 20),
     ]
 
 
