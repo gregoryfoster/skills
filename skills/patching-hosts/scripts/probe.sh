@@ -1593,10 +1593,12 @@ read_tailscale() {
 # apply.sh writes when the bulk step ends, with its start; else by the fire
 # time reboot-chain.sh records in reboot-chain.unit; else, emptied by its
 # retention, unreadable or abandoned, by its name. The period floor below
-# absorbs a recovery point taken before its window; an abandoned attempt can
-# hide at most one period. A run that left no bulk record, one with nothing
-# pending or one done by hand, writes the marker (run.md). The newest is the
-# last run.
+# absorbs a recovery point taken before its window. A directory is an
+# attempt, so this reads the last attempt, not the last success: a failed or
+# abandoned one resets the count, only windows after it count, and its own
+# record is where the failure shows (CR 1984). A run that left no bulk
+# record, one with nothing pending or one done by hand, writes the marker
+# (run.md). The newest is the last run.
 RUN_MARKER=/var/backups/patching-hosts-last-reading
 # A stamp further past the probe's clock than this is a clock or a typo,
 # never the last run (CR 1960); one within it is taken as now.
@@ -1748,7 +1750,7 @@ read_cadence() {
     [ "$missed" -ne 1 ] || ws_=""
     iso_utc lr "$last"
     iso_utc fm "$first"
-    finding deviation cadence:overdue cadence:overdue "No run since $lr ($from): $periods $unit$s of this $KNOB_CADENCE host went by with none, $missed window$ws_ closed since, the first $fm (knob.md). A scheduled host is patched only when someone starts its run: run it in the next window, or declare a freeze the owner chose as exception cadence:overdue <review-by> <reason>. A run that left no bulk record, one that found nothing pending or one done by hand, counts only once it writes the marker $RUN_MARKER (run.md, A run with nothing pending)."
+    finding deviation cadence:overdue cadence:overdue "No run or attempt since $lr ($from): $periods $unit$s of this $KNOB_CADENCE host went by with none, $missed window$ws_ closed since, the first $fm (knob.md). A scheduled host is patched only when someone starts its run: run it in the next window, or declare a freeze the owner chose as exception cadence:overdue <review-by> <reason>. A run that left no bulk record, one that found nothing pending or one done by hand, counts only once it writes the marker $RUN_MARKER (run.md, A run with nothing pending)."
   fi
 }
 
