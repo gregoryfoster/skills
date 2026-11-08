@@ -23,6 +23,8 @@ explicitly (docs/STYLE.md, #189).
 
 from __future__ import annotations
 
+import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -126,6 +128,26 @@ class TestDestroyFromASeparateGitDirPrimary:
         assert "dubious ownership" in r.stderr, r.stderr
         assert layouts.SEPARATE_GIT_DIR_HINT not in r.stderr, r.stderr
 
+    def test_a_registered_worktree_needs_no_root(self, tmp_path: Path):
+        """CR 1989: the root feeds only the constructed path, for a branch
+        with no registered worktree. Resolved up front, the resolver's exit 2
+        from this linked worktree refused a `--descoped` destroy that worked
+        before #585."""
+        primary, linked = layouts.separate_git_dir(tmp_path / "l", None)
+        layouts.git(primary, "worktree", "add", "-q", "-b", "l2", str(tmp_path / "l2"))
+        r = _run(DESTROY, "l2", "--descoped", "x", "--dry-run", cwd=linked)
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert (tmp_path / "l2").is_dir(), "a dry run removes nothing"
+
+    def test_an_unregistered_branch_still_needs_the_root(self, tmp_path: Path):
+        """The constructed path does need it: the resolver's exit 2 shows."""
+        primary, linked = layouts.separate_git_dir(tmp_path / "l", None)
+        layouts.git(primary, "branch", "l3")
+        r = _run(DESTROY, "l3", "--descoped", "x", "--dry-run", cwd=linked)
+        assert r.returncode == 2, r.stdout + r.stderr
+        assert "no registered worktree" in r.stderr, r.stderr
+        assert "run this from the primary checkout" in r.stderr, r.stderr
+
 
 # Where each layout keeps its primary, and so the knob.
 PRIMARY_OF = {
@@ -186,6 +208,42 @@ class TestCreateFromASeparateGitDirPrimary:
         assert r.stdout == ""
         assert _worktrees(primary) == before
 
+    def test_below_git_2_31_it_says_git_is_too_old(self, tmp_path: Path):
+        """CR 1990's case in create: git before 2.31 echoes
+        `--path-format=absolute` back at exit 0, so from the primary itself
+        "run this from the primary checkout" would be false. A `git` shim
+        plays 2.30 over the real one."""
+        real = shutil.which("git")
+        assert real, "git is on PATH"
+        shims = tmp_path / "shims"
+        shims.mkdir()
+        shim = shims / "git"
+        shim.write_text(
+            "#!/usr/bin/env bash\n"
+            'if [ "$1" = --version ]; then echo "git version 2.30.6"; exit 0; fi\n'
+            "args=()\n"
+            "for a; do\n"
+            '  if [ "$a" = --path-format=absolute ]; then echo "$a"; '
+            'else args+=("$a"); fi\n'
+            "done\n"
+            f'exec {real} "${{args[@]}}"\n'
+        )
+        shim.chmod(0o755)
+        primary, _ = layouts.separate_git_dir(tmp_path / "l", None)
+        before = _worktrees(primary)
+        r = _run(
+            CREATE,
+            "--new",
+            "feature/y",
+            cwd=primary,
+            WORKTREE_ROOT=str(tmp_path / "out"),
+            PATH=f"{shims}{os.pathsep}{os.environ['PATH']}",
+        )
+        assert r.returncode == 2, r.stdout + r.stderr
+        assert "git 2.30.6 predates 2.31, which this layout needs" in r.stderr, r.stderr
+        assert "run this from the primary checkout" not in r.stderr, r.stderr
+        assert _worktrees(primary) == before
+
 
 class TestCreateUnderAnInheritedGitEnvironment:
     @pytest.mark.parametrize("kind", INHERITED)
@@ -219,3 +277,64 @@ class TestCreateUnderAnInheritedGitEnvironment:
         assert ".gitignore" in r.stderr, r.stderr
         assert _worktrees(wt) == before, "no worktree may be created"
         assert not (root / "feature-y").exists()
+
+
+class TestCreatesVenvKnobFromThePrimary:
+    """CR 1992a: worktree_venv_mode had its own copy of the old lookup, with
+    `2>/dev/null` fallbacks and no GIT_DIR scrub. It now reads
+    primary_checkout's answer, so `.skills/worktree_venv` is found where the
+    ignore check found the primary."""
+
+    @staticmethod
+    def _venv(checkout: Path) -> None:
+        (checkout / ".venv" / "bin").mkdir(parents=True)
+        (checkout / ".venv" / "bin" / "activate").write_text("")
+
+    def _create(self, cwd: Path, tmp_path: Path, **extra: str):
+        out = tmp_path / "out"
+        r = _run(CREATE, "--new", "feature/y", cwd=cwd, WORKTREE_ROOT=str(out), **extra)
+        assert r.returncode == 0, r.stdout + r.stderr
+        return r, Path(r.stdout.strip())
+
+    @pytest.mark.parametrize("kind", INHERITED)
+    def test_a_submodules_own_checkout_under_an_inherited_variable(
+        self, tmp_path: Path, kind: str
+    ):
+        """The reviewer's case: the knob says none, and the hook's GIT_DIR
+        made the lookup miss it, so `.venv` was linked anyway."""
+        layouts.submodule_linked(tmp_path / "l", "direct\n")
+        sub = tmp_path / "l" / "super" / "sub"
+        layouts.knob(sub, "none\n", name="worktree_venv")
+        self._venv(sub)
+        r, wt = self._create(sub, tmp_path, **_inherited(kind, sub))
+        assert not (wt / ".venv").exists() and not (wt / ".venv").is_symlink()
+        assert "worktree_venv=none" in r.stderr, r.stderr
+
+    def test_a_submodules_linked_worktree_reads_its_primarys_knob(self, tmp_path: Path):
+        """Before, #203's gap was inherited here: the knob, untracked in the
+        submodule's primary, was looked for in this linked worktree."""
+        wt = layouts.submodule_linked(tmp_path / "l", "direct\n")
+        sub = tmp_path / "l" / "super" / "sub"
+        layouts.knob(sub, "none\n", name="worktree_venv")
+        self._venv(wt)
+        r, new = self._create(wt, tmp_path)
+        assert not (new / ".venv").exists() and not (new / ".venv").is_symlink()
+        assert "worktree_venv=none" in r.stderr, r.stderr
+
+    def test_a_bare_primary_reads_the_current_checkouts_knob(self, tmp_path: Path):
+        home = layouts.bare_home(tmp_path / "l", "none\n", name="worktree_venv")
+        self._venv(home)
+        r, new = self._create(home, tmp_path)
+        assert not (new / ".venv").is_symlink()
+        assert "worktree_venv=none" in r.stderr, r.stderr
+
+
+def test_pr_modes_exit_2_is_not_only_an_unusable_file():
+    """CR 1905's note on #605: from a linked worktree of a --separate-git-dir
+    primary, merge-mode.sh's exit 2 means "run from the primary", not "the
+    file is unusable". shipping-work's pr-mode.md says the same."""
+    doc = SCRIPTS.parent / "references" / "pr-mode.md"
+    text = " ".join(doc.read_text().split())
+    assert "One exit 2 is not about the file." in text
+    assert "`git init --separate-git-dir`" in text
+    assert "run from the primary checkout" in text
