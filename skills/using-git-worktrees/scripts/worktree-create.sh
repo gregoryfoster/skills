@@ -19,7 +19,10 @@ usage() {
   echo "checkout; 'link' is the default) to skip that — the right setting when"
   echo "the main checkout is also a running service's WorkingDirectory=, where"
   echo "the service's own 'uv run' / 'uv sync' rewrite the shared venv under a"
-  echo "worktree's test run."
+  echo "worktree's test run. A bare primary's knob is read where"
+  echo "'resolve-worktree-root.sh --project-root' says (<dir> for a <dir>/.bare"
+  echo "store); where that cannot be resolved, nothing is linked (a WARN on"
+  echo "stderr, exit 0)."
   echo ""
   echo "Options:"
   echo "  --new   Create the branch (passes -b to git worktree add). Default: branch must already exist."
@@ -44,9 +47,11 @@ usage() {
   echo "  0  Worktree created; absolute path printed on stdout"
   echo "  1  Iron Law violation (branch already checked out elsewhere)"
   echo "  2  Tooling/infra failure (not a git repo, missing arg, the root could"
-  echo "     not be created, git worktree add failed), or the root is inside a"
-  echo "     work tree that does not ignore it (git check-ignore) or in a"
-  echo "     submodule that is not checked out, which creates nothing"
+  echo "     not be created, git worktree add failed), the primary checkout"
+  echo "     could not be resolved (git refused it, a linked worktree of a"
+  echo "     --separate-git-dir primary, git < 2.31 there), or the root is"
+  echo "     inside a work tree that does not ignore it (git check-ignore) or"
+  echo "     in a submodule that is not checked out, which creates nothing"
 }
 
 # One line, not the whole block. An argument error used to print the full usage
@@ -117,6 +122,16 @@ PROJECT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || {
 }
 cd "$PROJECT_ROOT"
 
+# here_git <args>: git for asking about another checkout, the primary above
+# all, without an inherited GIT_DIR or GIT_WORK_TREE (#605, set R's CR 1895,
+# 1903). Git exports GIT_DIR to every hook, and it beats -C: asked about a
+# submodule's primary, git answered for this checkout or for the entry
+# itself, so the primary's ignore check was skipped. merge-mode.sh holds the
+# same rule. Each call answers for the checkout it names (docs/STYLE.md, #189).
+here_git() {
+  env -u GIT_DIR -u GIT_WORK_TREE git "$@"
+}
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT=$(bash "$SCRIPT_DIR/resolve-worktree-root.sh") || {
   echo "ERROR: failed to resolve worktree root" >&2
@@ -145,9 +160,14 @@ physical_pwd() {
 canonical_path() {
   local p=$1 rest="" head comp
   case $p in /*) ;; *) p="$PWD/$p" ;; esac
+  # Every step is checked (#586). Past PATH_MAX, macOS's dirname fails ("File
+  # name too long"): unchecked, `p` emptied, the walk ended at `.`, and the
+  # root became `$PWD/<last component>`, so a root outside the repo was
+  # refused as inside it. A failure here is the caller's exit 2.
   while [[ ! -d "$p" ]]; do
-    rest="$(basename -- "$p")${rest:+/$rest}"
-    p=$(dirname -- "$p")
+    if ! comp=$(basename -- "$p") || [[ -z "$comp" ]]; then return 1; fi
+    rest="$comp${rest:+/$rest}"
+    if ! p=$(dirname -- "$p") || [[ -z "$p" ]]; then return 1; fi
   done
   head=$(cd -P -- "$p" && physical_pwd) || return 1
   while [[ -n "$rest" ]]; do
@@ -155,7 +175,7 @@ canonical_path() {
     if [[ "$rest" == */* ]]; then rest=${rest#*/}; else rest=""; fi
     case $comp in
       "" | .) ;;
-      ..) head=$(dirname -- "$head") ;;
+      ..) head=$(dirname -- "$head") || return 1 ;;
       *) head="${head%/}/$comp" ;;
     esac
   done
@@ -200,7 +220,7 @@ WORKTREE_PATH="$ROOT/$SLUG"
 # check-ignore failing (exit 128) is a refusal too: an unanswered question is
 # not "ignored". A root that IS the work tree is refused without asking.
 ROOT_CANON=$(canonical_path "$ROOT") || {
-  echo "ERROR: could not resolve the worktree root '$ROOT'" >&2
+  echo "ERROR: could not resolve the worktree root '$ROOT' (the reason is above)" >&2
   exit 2
 }
 
@@ -234,7 +254,7 @@ gitlink_prefix() {
     comp=${rest%%/*}
     if [[ "$rest" == */* ]]; then rest=${rest#*/}; else rest=""; fi
     p=${p:+$p/}$comp
-    if git -C "$1" -c core.quotePath=false ls-files --stage -- ":(literal)$p" |
+    if here_git -C "$1" -c core.quotePath=false ls-files --stage -- ":(literal)$p" |
       awk -F '\t' -v p="$p" '$2 == p && $1 ~ /^160000 / { f = 1 } END { exit !f }'; then
       printf '%s\n' "$p"
       return 0
@@ -244,26 +264,71 @@ gitlink_prefix() {
 }
 
 tree_unknown() {
-  echo "ERROR: could not resolve the work tree of '$1' (the reason is above), so whether it ignores the worktree root '$ROOT' is unknown" >&2
+  echo "ERROR: could not resolve the work tree of '$1' (the reason is above), so whether it ignores the worktree root '$ROOT' is unknown${2:-}" >&2
   exit 2
 }
 
-WT_LIST=$(git worktree list --porcelain) || {
-  echo "ERROR: failed to enumerate worktrees (git worktree list --porcelain)" >&2
-  exit 2
-}
+# primary_checkout: sets PRIMARY_TREE to the primary checkout's work tree,
+# or to "" for a bare primary, which has none. Shared by the ignore check
+# below and worktree_venv_mode (CR 1992a), in the shape merge-mode.sh and
+# shipping-work's _command-knob.sh share.
+#
 # The primary is the first porcelain block, up to the first blank line. A
 # block with a `bare` line is `repo.git`, which has no work tree and so
-# cannot commit anything: it is not queued (CR 1840).
-PRIMARY_BLOCK=${WT_LIST%%$'\n\n'*}
-PRIMARY=${PRIMARY_BLOCK%%$'\n'*}
-PRIMARY=${PRIMARY#worktree }
+# cannot commit anything (CR 1840). Any other entry is asked for its work
+# tree: in a submodule (git 2.54) it is `<super>/.git/modules/<name>`, whose
+# work tree git names via core.worktree. That ask failing is exit 2 with
+# git's reason, never a fallback (CR 1858), with one exception, which is no
+# other checkout (#605, set R's CR 1892): a primary whose .git is a pointer
+# file (`git init --separate-git-dir`) lists its store, which names no work
+# tree. From that primary itself the work tree is this one, whose git dir is
+# the common dir. From a linked worktree git knows no path to it: exit 2,
+# saying so.
+primary_checkout() {
+  local wt_list block entry dirs hint
+  wt_list=$(here_git worktree list --porcelain) || {
+    echo "ERROR: failed to enumerate worktrees (git worktree list --porcelain)" >&2
+    exit 2
+  }
+  block=${wt_list%%$'\n\n'*}
+  entry=${block%%$'\n'*}
+  entry=${entry#worktree }
+  case $'\n'"$block"$'\n' in
+    *$'\n'bare$'\n'*)
+      PRIMARY_TREE=""
+      return 0
+      ;;
+  esac
+  if PRIMARY_TREE=$(here_git -C "$entry" rev-parse --show-toplevel 2>/dev/null); then
+    return 0
+  fi
+  dirs=$(here_git rev-parse --path-format=absolute --git-dir --git-common-dir 2>/dev/null) || dirs=""
+  if [[ -n "$dirs" && "${dirs%%$'\n'*}" == "${dirs#*$'\n'}" ]] &&
+    PRIMARY_TREE=$(here_git rev-parse --show-toplevel 2>/dev/null); then
+    return 0
+  fi
+  # Asked again for git's reason, which goes to stderr.
+  here_git -C "$entry" rev-parse --show-toplevel >/dev/null || true
+  hint=""
+  if [[ "${dirs%%$'\n'*}" == --path-format=absolute ]]; then
+    # Below 2.31 rev-parse echoes the option back (CR 1990's case): "run
+    # this from the primary checkout" would be false from the primary.
+    hint=$(here_git --version 2>/dev/null) || hint="git version (unknown)"
+    hint="; git ${hint#git version } predates 2.31, which this layout needs to tell its primary from a linked worktree: upgrade git (from a linked worktree, then run from the primary checkout)"
+  elif [[ "$(here_git -C "$entry" rev-parse --is-inside-git-dir 2>/dev/null)" == true ]]; then
+    hint="; it is a git dir with no work tree, as a primary whose .git is a file makes it (git init --separate-git-dir), and only that primary knows its work tree, so run this from the primary checkout"
+  fi
+  tree_unknown "$entry" "$hint"
+}
+
+primary_checkout
 # A queue, not a fixed pair: a root inside a submodule adds that submodule's
-# checkout (CR 1849).
-case $'\n'"$PRIMARY_BLOCK"$'\n' in
-  *$'\n'bare$'\n'*) TREES=("$PROJECT_ROOT") ;;
-  *) TREES=("$PRIMARY" "$PROJECT_ROOT") ;;
-esac
+# checkout (CR 1849). A bare primary is not queued.
+if [[ -n "$PRIMARY_TREE" ]]; then
+  TREES=("$PRIMARY_TREE" "$PROJECT_ROOT")
+else
+  TREES=("$PROJECT_ROOT")
+fi
 CHECKED=()
 i=0
 while [[ $i -lt ${#TREES[@]} ]]; do
@@ -274,7 +339,7 @@ while [[ $i -lt ${#TREES[@]} ]]; do
   # tree git names via core.worktree. A tree git cannot answer for is exit
   # 2 with git's reason (CR 1858): skipping it skipped the one check that
   # could refuse the root, so "dubious ownership" let any root through.
-  TOP=$(git -C "$TREE" rev-parse --show-toplevel) || tree_unknown "$TREE"
+  TOP=$(here_git -C "$TREE" rev-parse --show-toplevel) || tree_unknown "$TREE"
   TREE=$(cd -P -- "$TOP" && pwd -P) || tree_unknown "$TREE"
   SEEN=0
   for C in ${CHECKED[@]+"${CHECKED[@]}"}; do
@@ -287,7 +352,7 @@ while [[ $i -lt ${#TREES[@]} ]]; do
   IGNORE_ERR=""
   if [[ -n "$REL" ]]; then
     IGNORE_RC=0
-    IGNORE_ERR=$(git -C "$TREE" check-ignore -q -- "$REL/$SLUG/" 2>&1) || IGNORE_RC=$?
+    IGNORE_ERR=$(here_git -C "$TREE" check-ignore -q -- "$REL/$SLUG/" 2>&1) || IGNORE_RC=$?
   fi
   [[ $IGNORE_RC -ne 0 ]] || continue
   # A root inside a submodule of this tree (CR 1849): git cannot answer for
@@ -406,28 +471,25 @@ fi
 # not exist in a linked worktree at all — so a knob read from the current
 # checkout would be invisible whenever this script runs from inside a worktree,
 # silently restoring the link in the one deployment the knob exists to protect.
-# This is the derivation `resolve-worktree-root.sh` uses for the same reason,
-# including its submodule guard: the parent of `<super>/.git/modules/<name>` is
-# not a work tree, so the candidate is accepted only if it is a checkout
-# sharing this common dir. The #203 gap is inherited with it — in a linked
-# worktree OF a submodule the candidate is rejected and the knob is read from
-# the current checkout, where an untracked file is absent.
+# The primary is primary_checkout's, which the ignore check above already
+# resolved (CR 1992a): a submodule's linked worktree reads its submodule's
+# primary, which the old copy of resolve-worktree-root.sh's lookup here could
+# not (#203). That copy also fell back to this checkout on any git failure,
+# and asked under an inherited GIT_DIR, where a submodule's knob read as
+# absent. A bare primary has no work tree, so its knob's home is the
+# resolver's (CR 2028): `<dir>` for a `<dir>/.bare` store with a `<dir>/.git`
+# gitfile, where every checkout is a linked worktree, and otherwise this
+# checkout. A home the resolver cannot name links nothing: `unresolved`.
 worktree_venv_mode() {
-  local common_dir candidate candidate_common knob_root knob configured
-  knob_root="$PROJECT_ROOT"
-  common_dir=$(git rev-parse --git-common-dir 2>/dev/null || true)
-  if [[ -n "$common_dir" ]] && common_dir=$(cd "$common_dir" 2>/dev/null && pwd -P); then
-    candidate=$(dirname "$common_dir")
-    # `git -C "$candidate"` answers relative to candidate, not to our $PWD.
-    candidate_common=$(git -C "$candidate" rev-parse --git-common-dir 2>/dev/null || true)
-    if [[ -n "$candidate_common" ]] &&
-       candidate_common=$(cd "$candidate" && cd "$candidate_common" 2>/dev/null && pwd -P) &&
-       [[ "$candidate_common" == "$common_dir" ]]; then
-      knob_root="$candidate"
-    fi
+  local home knob configured
+  home=$PRIMARY_TREE
+  if [[ -z "$home" ]] &&
+    ! home=$(bash "$SCRIPT_DIR/resolve-worktree-root.sh" --project-root); then
+    echo "WARN: could not resolve where .skills/worktree_venv lives (the resolver's reason is above) — no .venv linked into $WORKTREE_PATH" >&2
+    echo unresolved
+    return 0
   fi
-
-  knob="$knob_root/.skills/worktree_venv"
+  knob="$home/.skills/worktree_venv"
   [[ -f "$knob" ]] || { echo link; return 0; }
 
   # First non-blank, non-comment line, trimmed — the same read
@@ -474,11 +536,14 @@ worktree_venv_mode() {
 if [[ -e "$PROJECT_ROOT/.venv/bin/activate" && ! -e "$WORKTREE_PATH/.venv" && ! -L "$WORKTREE_PATH/.venv" ]]; then
   # Resolved here rather than up front so a repo with no venv pays none of it,
   # and so a malformed knob warns only where it would have changed something.
-  if [[ "$(worktree_venv_mode)" == "none" ]]; then
+  VENV_MODE=$(worktree_venv_mode) || VENV_MODE=unresolved
+  if [[ "$VENV_MODE" == "none" ]]; then
     # Announced, never silent. An absent .venv is also the signature of the
     # #156 bug this linker fixes, so the operator standing in a fresh worktree
     # has to be told which of the two they are looking at.
     echo "NOTE: .skills/worktree_venv=none — no .venv linked into $WORKTREE_PATH; provision one there" >&2
+  elif [[ "$VENV_MODE" == "unresolved" ]]; then
+    : # worktree_venv_mode said why
   else
     # `pwd -P` resolves through a .venv that is itself a symlink (a worktree
     # provisioning a worktree), so we never build a link to a link.

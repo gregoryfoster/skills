@@ -57,7 +57,7 @@ A project-local `scripts/resolve-plans-dir.sh` wins if one exists. `<resolve-pla
 Every plan write resolves the target directory in this order (first match wins):
 
 1. **`PLANS_DIR` env var** (highest priority) — explicit override for one-off invocations
-2. **`.skills/plans_dir` file** — single-line file under the repo root; project's persistent default
+2. **`.skills/plans_dir` file** — single-line path in the primary checkout (relative to it); the project's persistent default
 3. **`<repo-root>/docs/plans/`** — fallback when neither of the above is set
 
 Invoke `bash "<resolve-plans-dir.sh>"` to print the resolved directory. The plan filename is `YYYY-MM-DD-<topic-slug>.md`, where `<topic-slug>` is the topic lowercased with non-alphanumerics replaced by `-`.

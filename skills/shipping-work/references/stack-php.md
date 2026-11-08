@@ -1,19 +1,32 @@
 # Stack: PHP / WordPress
 
 Applies when `pre-ship.sh` reports `framework php`: a `composer.json` at the
-root, or one level under `themes/` or `plugins/`. The checks are the composer
-toolchain's (see [gate-topology.md](gate-topology.md)): `composer validate`
-at each `composer.json`, `php -l` on every tracked PHP file, and
-`composer test` when the project defines it. A repo that also has a
-`package.json` at the root, or a tracked one one level under `themes/` or
-`plugins/`, gets its npm scripts too. A theme vendored as a git submodule
-counts once it is checked out; a theme directory that is a symlink does
-not, though composer follows the link.
+root, or a tracked one one level under `themes/` or `plugins/`. The checks
+are the composer toolchain's (see [gate-topology.md](gate-topology.md)):
+`composer validate` at each of those `composer.json` files, `php -l` on
+every tracked PHP file, and `composer test` when the project defines it. A
+repo that also has a `package.json` at the root, or a tracked one one level
+under `themes/` or `plugins/`, gets its npm scripts too. A nested manifest
+counts only when git tracks it, so a gitignored plugin that composer
+installs is neither validated nor run
+([#588](https://github.com/gregoryfoster/skills/issues/588)). A theme
+vendored as a git submodule is its own repo, and neither of its manifests
+counts: a submodule's code is its own repo's to gate. A theme directory
+that is a symlink is one link to git, so nothing under it is listed
+either. Its files are checked where git tracks them: its PHP is linted
+there, but a `composer.json` under `web/app/` is not validated, since
+neither reach searches there (the Bedrock question below, and
+[gate-topology.md](gate-topology.md) row 18).
 
 ## Lint workers
 
 `php -l` runs in parallel on the gate's worker count (one job on a 2-vCPU
 machine). `PRE_SHIP_PHP_LINT_JOBS=N` overrides it for a very large monorepo.
+
+`php -l` lints the PHP files this repo tracks. `php -l` stops at a
+submodule: a theme or plugin vendored as one is its own repo, and a
+submodule's PHP is linted by its own repo's gate
+([#591](https://github.com/gregoryfoster/skills/issues/591)).
 
 ## Bedrock layouts
 

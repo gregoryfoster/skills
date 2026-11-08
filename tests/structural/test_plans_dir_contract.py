@@ -35,17 +35,27 @@ so the two are peers rather than an original and a copy. The scripts they pin
 are line-for-line the same resolution block; an edit to either half should be
 checked against the other.
 
+The relative knob (#590) and the primary lookup's failure layouts (#585,
+#605) are held to that script by running both resolvers on the same layouts,
+rather than by a copied expectation.
+
 No API calls. Self-contained: each test builds a throwaway repo under tmp_path.
 """
 
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
 import pytest
 
+from tests.structural import merge_mode_layouts as layouts
+
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 RESOLVE = REPO_ROOT / "skills" / "writing-plans" / "scripts" / "resolve-plans-dir.sh"
+# The twin whose rule the relative knob is held to (#590).
+WORKTREES = REPO_ROOT / "skills" / "using-git-worktrees" / "scripts"
+WORKTREE_RESOLVE = WORKTREES / "resolve-worktree-root.sh"
 
 
 def _clean_env() -> dict:
@@ -62,6 +72,7 @@ def _clean_env() -> dict:
     # PLANS_DIR wins over everything in the resolution order; these tests
     # exercise the config file and the fallback, so it must not leak in.
     env.pop("PLANS_DIR", None)
+    env.pop("WORKTREE_ROOT", None)
     return env
 
 
@@ -252,6 +263,93 @@ class TestPlansDirDoesNotNest:
         assert "not inside a git repository" in r.stderr
 
 
+class TestRelativeConfiguredDir:
+    """#590: a relative `.skills/plans_dir` is the primary checkout's.
+
+    Echoed verbatim, it resolved against the caller's directory: from a
+    subdirectory it named a directory under that subdirectory, and from a
+    linked worktree one inside that worktree. #562 and #567 fixed the same
+    defect in `resolve-worktree-root.sh`; this is its twin.
+    """
+
+    @pytest.fixture
+    def knob(self, primary: Path) -> Path:
+        (primary / ".skills").mkdir()
+        (primary / ".skills" / "plans_dir").write_text("# configured\nnotes/plans\n")
+        return primary
+
+    def test_resolve_from_a_subdirectory_names_the_primary(self, knob: Path):
+        deep = knob / "src" / "pkg"
+        deep.mkdir(parents=True)
+        r = _run(RESOLVE, cwd=deep)
+        assert r.returncode == 0, r.stderr
+        assert r.stdout.strip() == str(knob / "notes" / "plans"), (
+            "a relative knob echoed verbatim resolves against the caller's "
+            f"directory, here src/pkg/notes/plans; got {r.stdout.strip()!r}"
+        )
+
+    def test_resolve_from_a_linked_worktree_names_the_primary(
+        self, knob: Path, linked: Path
+    ):
+        r = _run(RESOLVE, cwd=linked)
+        assert r.returncode == 0, r.stderr
+        assert r.stdout.strip() == str(knob / "notes" / "plans"), (
+            "a relative knob echoed verbatim files the plan inside the linked "
+            f"worktree; got {r.stdout.strip()!r}"
+        )
+
+    def test_a_relative_env_var_is_printed_as_given(self, knob: Path):
+        """PLANS_DIR keeps its meaning: the reader's directory, as before."""
+        env = _clean_env()
+        env["PLANS_DIR"] = "elsewhere"
+        r = subprocess.run(
+            ["bash", str(RESOLVE)],
+            capture_output=True,
+            text=True,
+            cwd=str(knob),
+            env=env,
+        )
+        assert r.returncode == 0, r.stderr
+        assert r.stdout.strip() == "elsewhere"
+
+    @pytest.mark.parametrize(
+        "value",
+        ["notes", "./notes", "notes/", "../shared-plans", "~/plans", "/abs/plans"],
+        ids=["bare", "dot-slash", "trailing-slash", "dotdot", "tilde", "absolute"],
+    )
+    @pytest.mark.parametrize("vantage", ["subdirectory", "linked"])
+    def test_the_rule_is_the_worktree_root_rule(
+        self, primary: Path, linked: Path, value: str, vantage: str
+    ):
+        """One rule for both knobs, held by running both resolvers.
+
+        An absolute value is kept; anything else, `~` and `..` included, is
+        joined to the primary checkout with a leading `./` dropped. Neither
+        script expands `~` or folds `..`: the knob file is not shell input.
+        Compared by output, not by a restated expectation, so a change to
+        either script's rule fails here until the other matches.
+        """
+        (primary / ".skills").mkdir()
+        (primary / ".skills" / "plans_dir").write_text(value + "\n")
+        (primary / ".skills" / "worktree_root").write_text(value + "\n")
+        if vantage == "subdirectory":
+            cwd = primary / "src"
+            cwd.mkdir()
+        else:
+            cwd = linked
+        plans = _run(RESOLVE, cwd=cwd)
+        root = _run(WORKTREE_RESOLVE, cwd=cwd)
+        assert plans.returncode == 0 and root.returncode == 0, (
+            f"{plans.stderr!r} / {root.stderr!r}"
+        )
+        assert plans.stdout == root.stdout, (
+            f"knob {value!r} from the {vantage}: plans_dir printed "
+            f"{plans.stdout.strip()!r}, worktree_root {root.stdout.strip()!r}"
+        )
+        if not value.startswith("/"):
+            assert plans.stdout.strip().startswith(str(primary) + "/")
+
+
 class TestSubmoduleWorktreeBoundary:
     """#203's boundary, carried with the implementation it belongs to.
 
@@ -303,3 +401,325 @@ class TestSubmoduleWorktreeBoundary:
             "cite #203 beside the boundary so the reader can find the decision "
             "not to implement the gitdir walk, rather than re-deriving it"
         )
+
+
+def _run_env(script: Path, cwd: Path, env: dict) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["bash", str(script)],
+        capture_output=True,
+        text=True,
+        cwd=str(cwd),
+        env=env,
+    )
+
+
+class TestAGitFailureOnThePrimaryIsExit2:
+    """#585, ported: git refusing the primary is exit 2, never this checkout.
+
+    `2>/dev/null` on the candidate probe read "dubious ownership" as "the
+    candidate is not a checkout", and resolution fell back to the linked
+    worktree: plans were filed inside it and the primary's
+    `.skills/plans_dir` went unread, in silence. Why each layout answers as
+    it does is written once, beside the twin in
+    test_worktree_root_contract.py.
+    """
+
+    def test_dubious_ownership_of_the_primary_is_exit_2(
+        self, primary: Path, linked: Path
+    ):
+        """The issue's own reproduction: only the linked worktree is safe."""
+        (primary / ".skills").mkdir()
+        (primary / ".skills" / "plans_dir").write_text(
+            str(primary / "configured") + "\n"
+        )
+        r = _run_env(RESOLVE, linked, layouts.different_owner(_clean_env(), linked))
+        assert r.returncode == 2, (
+            f"expected exit 2, got {r.returncode}\n"
+            f"stdout: {r.stdout}\nstderr: {r.stderr}"
+        )
+        assert "dubious ownership" in r.stderr, (
+            f"git's reason is let through: {r.stderr}"
+        )
+        assert f"'{primary}'" in r.stderr, f"the error names the primary: {r.stderr}"
+        assert r.stdout == "", f"a refusal prints no plans dir: {r.stdout!r}"
+
+    def test_the_primary_itself_still_resolves_when_it_is_safe(self, primary: Path):
+        r = _run_env(RESOLVE, primary, layouts.different_owner(_clean_env(), primary))
+        assert r.returncode == 0, r.stderr
+        assert Path(r.stdout.strip()) == primary / "docs" / "plans"
+
+
+class TestTheSeparateGitDirPrimary:
+    """#605, case 1, ported: a primary whose `.git` is a pointer file."""
+
+    def test_from_the_primary_it_names_the_primary(self, tmp_path: Path):
+        primary, _ = layouts.separate_git_dir(
+            tmp_path.resolve(), "notes\n", "plans_dir"
+        )
+        primary = primary.resolve()
+        r = _run(RESOLVE, cwd=primary)
+        assert r.returncode == 0, r.stderr
+        assert Path(r.stdout.strip()) == primary / "notes"
+
+    def test_from_a_linked_worktree_it_is_exit_2_and_says_why(self, tmp_path: Path):
+        _, linked = layouts.separate_git_dir(tmp_path.resolve(), "notes\n", "plans_dir")
+        r = _run(RESOLVE, cwd=linked)
+        assert r.returncode == 2, (
+            f"expected exit 2, got {r.returncode}\n"
+            f"stdout: {r.stdout}\nstderr: {r.stderr}"
+        )
+        assert layouts.SEPARATE_GIT_DIR_HINT in r.stderr, r.stderr
+        assert "run this from the primary checkout" in r.stderr, r.stderr
+        assert r.stdout == "", f"a refusal prints no plans dir: {r.stdout!r}"
+
+
+class TestAnInheritedGitDir:
+    """#605, case 2, ported: git exports GIT_DIR to every hook.
+
+    It beats cwd and `-C`, so `git -C <candidate>` answered for the current
+    checkout. In a submodule that matched the common dir, and the plans dir
+    became `<super>/.git/modules/docs/plans`.
+    """
+
+    @staticmethod
+    def _with_git_dir(checkout: Path) -> dict:
+        env = _clean_env()
+        env["GIT_DIR"] = _git(
+            checkout, "rev-parse", "--absolute-git-dir"
+        ).stdout.strip()
+        return env
+
+    def _assert_same_answer(self, checkout: Path) -> str:
+        plain = _run(RESOLVE, cwd=checkout)
+        hooked = _run_env(RESOLVE, checkout, self._with_git_dir(checkout))
+        assert plain.returncode == 0, plain.stderr
+        assert hooked.returncode == 0, hooked.stderr
+        assert "/.git/" not in hooked.stdout, (
+            f"an inherited GIT_DIR put the plans dir inside .git: {hooked.stdout!r}"
+        )
+        assert hooked.stdout == plain.stdout, (hooked.stdout, plain.stdout)
+        return plain.stdout.strip()
+
+    def test_in_a_submodules_own_checkout(self, primary: Path, tmp_path: Path):
+        """The reproduction: `<super>/.git/modules/docs/plans` before the port."""
+        vendor = _add_submodule(primary, tmp_path)
+        assert Path(self._assert_same_answer(vendor)) == vendor / "docs" / "plans"
+
+    def test_in_a_submodules_linked_worktree(self, tmp_path: Path):
+        wt = layouts.submodule_linked(tmp_path.resolve(), "direct\n").resolve()
+        assert Path(self._assert_same_answer(wt)) == wt / "docs" / "plans"
+
+    def test_in_a_linked_worktree(self, primary: Path, linked: Path):
+        assert Path(self._assert_same_answer(linked)) == primary / "docs" / "plans"
+
+
+GITFILES = {
+    "-no-space": "gitdir:./.bare\n",
+    "-empty": "",
+    "-missing-target": "gitdir: ./.bar\n",
+}
+
+
+def _layout(name: str, tmp_path: Path) -> tuple[Path, dict]:
+    """Build one layout; return the checkout to run from and its env."""
+    tmp = tmp_path.resolve()
+    env = _clean_env()
+    if name == "outside-a-repo":
+        cwd = tmp / "plain"
+        cwd.mkdir()
+        return cwd, env
+    if name == "bare-home":
+        cwd = layouts.bare_home(tmp, "direct\n").resolve()
+    elif name == "bare-beside-empty-git":
+        # An empty `.git/` beside repo.git is no repository's (R4-1): bare.
+        base = tmp / "b"
+        base.mkdir()
+        (base / ".git").mkdir()
+        cwd = layouts.bare_home(base, "direct\n").resolve()
+    elif name.startswith("bare-in-checkout"):
+        # A bare repo.git whose parent is another repository's checkout:
+        # git answers there with another common dir, so still bare (CR 2033).
+        outer = tmp / "outer"
+        layouts.git(tmp, "init", "-q", "-b", "main", str(outer))
+        cwd = layouts.bare_home(outer, "direct\n").resolve()
+    elif name.startswith("submodule-linked"):
+        cwd = layouts.submodule_linked(tmp, "direct\n").resolve()
+    elif name.startswith("separate-"):
+        primary, linked = layouts.separate_git_dir(tmp, None)
+        cwd = (primary if name.startswith("separate-primary") else linked).resolve()
+    elif name.startswith("bare-in-git"):
+        # A bare store kept as `<dir>/.git`: <dir> is the candidate, and its
+        # .git is the common dir, so the refusal check runs before the bare
+        # case (CR 1988, 1997).
+        src = layouts.seed(tmp / "seed", "direct\n")
+        top = tmp / "bx"
+        top.mkdir()
+        layouts.git(tmp, "clone", "-q", "--bare", str(src), str(top / ".git"))
+        layouts.git(top / ".git", "worktree", "add", "-q", str(top / "main"), "main")
+        cwd = top / "main"
+    elif name.startswith("dot-bare"):
+        src = layouts.seed(tmp / "seed", "direct\n")
+        top = tmp / "dx"
+        top.mkdir()
+        layouts.git(tmp, "clone", "-q", "--bare", str(src), str(top / ".bare"))
+        (top / ".git").write_text("gitdir: ./.bare\n")
+        layouts.git(top, "worktree", "add", "-q", str(top / "main"), "main")
+        cwd = top / "main"
+        if "-crlf" in name:
+            # Git strips a CRLF gitfile's `\r` (CR 1993a).
+            (top / ".git").write_bytes(b"gitdir: ./.bare\r\n")
+        # Gitfiles git rejects, each once its own special case (CR 2033).
+        for suffix, text in GITFILES.items():
+            if name.endswith(suffix):
+                (top / ".git").write_text(text)
+        if name.endswith("-dangling"):
+            # A dangling `<dir>/.git` link: git gives no reason (R4-4a, R4-5).
+            (top / ".git").unlink()
+            (top / ".git").symlink_to(top / "missing-store")
+        if name.endswith("-unreadable"):
+            # git fails "Permission denied" (CR 1993b); root reads it anyway.
+            (top / ".git").chmod(0)
+    elif name.startswith("symlinked-git"):
+        # A primary whose .git is a symlink to a store outside it (CR 1991).
+        repo = layouts.seed(tmp / "repo", "direct\n")
+        (repo / ".git").rename(tmp / "store.git")
+        (repo / ".git").symlink_to(tmp / "store.git")
+        if name == "symlinked-git-primary":
+            cwd = repo
+        else:
+            cwd = tmp / "wt"
+            layouts.git(repo, "worktree", "add", "-q", "-b", "wt/one", str(cwd))
+    else:
+        repo = layouts.seed(tmp / "repo", "direct\n")
+        if name == "subdirectory":
+            cwd = repo / "a" / "b"
+            cwd.mkdir(parents=True)
+        elif name.startswith("linked"):
+            cwd = tmp / "wt"
+            layouts.git(repo, "worktree", "add", "-q", "-b", "wt/one", str(cwd))
+        elif name.startswith("submodule"):
+            cwd = _add_submodule(repo, tmp)
+        else:
+            cwd = repo
+    if name.endswith("dubious"):
+        env = layouts.different_owner(env, cwd)
+    if name.endswith("-git-dir"):
+        env["GIT_DIR"] = layouts.git(cwd, "rev-parse", "--absolute-git-dir")
+    if name.endswith("-de"):
+        # A translated git (CR 2034): the filter runs under LC_ALL=C. Where
+        # no de_DE locale exists git speaks English, and parity still holds.
+        env.update(LC_ALL="de_DE.UTF-8", LANG="de_DE.UTF-8")
+    if "-git230" in name:
+        env["PATH"] = f"{_git_2_30_shim(tmp)}{os.pathsep}{env['PATH']}"
+    return cwd, env
+
+
+def _git_2_30_shim(tmp: Path) -> Path:
+    """A `git` that plays 2.30 over the real one: it echoes
+    `--path-format=absolute` back, as git before 2.31 does (CR 1990). The
+    twin's test_below_git_2_31_it_says_git_is_too_old uses the same shim."""
+    real = shutil.which("git")
+    assert real, "git is on PATH"
+    shims = tmp / "shims"
+    shims.mkdir()
+    shim = shims / "git"
+    shim.write_text(
+        "#!/usr/bin/env bash\n"
+        'if [ "$1" = --version ]; then echo "git version 2.30.6"; exit 0; fi\n'
+        "args=()\n"
+        "for a; do\n"
+        '  if [ "$a" = --path-format=absolute ]; then echo "$a"; else args+=("$a"); fi\n'
+        "done\n"
+        f'exec {real} "${{args[@]}}"\n'
+    )
+    shim.chmod(0o755)
+    return shims
+
+
+@pytest.mark.parametrize("where", ["primary", "linked"])
+def test_below_git_2_31_the_escape_is_plans_dir(where: str, tmp_path: Path):
+    """CR 1990, ported: git too old is said, and the escape is PLANS_DIR."""
+    cwd, env = _layout(f"separate-{where}-git230", tmp_path)
+    r = _run_env(RESOLVE, cwd, env)
+    assert r.returncode == 2, r.stdout + r.stderr
+    assert (
+        "git 2.30.6 predates 2.31, which this layout needs to tell its "
+        "primary from a linked worktree: upgrade git (from a linked "
+        "worktree, then run from the primary checkout), or set PLANS_DIR"
+    ) in r.stderr, r.stderr
+    assert layouts.OLD_GIT_HINT in r.stderr, r.stderr
+    assert "not a git repository" not in r.stderr, (
+        f"CR 1996: the store's parent is no failure: {r.stderr}"
+    )
+
+
+PARITY_LAYOUTS = [
+    "primary",
+    "subdirectory",
+    "linked",
+    "submodule",
+    "submodule-linked",
+    "bare-home",
+    "bare-in-git",
+    "bare-in-git-dubious",
+    "dot-bare",
+    "dot-bare-dubious",
+    "dot-bare-crlf-dubious",
+    "dot-bare-unreadable",
+    "dot-bare-no-space",
+    "dot-bare-empty",
+    "dot-bare-missing-target",
+    "bare-in-checkout",
+    "bare-in-checkout-dubious",
+    "bare-beside-empty-git",
+    "dot-bare-dangling",
+    "separate-primary",
+    "separate-linked",
+    "separate-linked-de",
+    "separate-primary-git230",
+    "separate-linked-git230",
+    "symlinked-git-primary",
+    "symlinked-git-linked",
+    "linked-dubious",
+    "submodule-dubious",
+    "submodule-linked-dubious",
+    "submodule-linked-git230-dubious",
+    "linked-git-dir",
+    "submodule-git-dir",
+    "submodule-linked-git-dir",
+    "outside-a-repo",
+]
+
+
+@pytest.mark.parametrize("name", PARITY_LAYOUTS)
+def test_the_lookup_is_the_worktree_root_lookup(name: str, tmp_path: Path):
+    """#585's port, held by output: both resolvers, one layout, one answer.
+
+    The same exit code, the same stderr apart from the env var each names as
+    the escape, and the same project root under `/docs/plans` where the
+    worktree root has `/.worktrees`. A change to either script's lookup fails
+    here until the other matches.
+    """
+    if name.endswith("-unreadable") and os.geteuid() == 0:
+        pytest.skip("root reads a mode-000 file")
+    cwd, env = _layout(name, tmp_path)
+    plans = _run_env(RESOLVE, cwd, env)
+    root = _run_env(WORKTREE_RESOLVE, cwd, env)
+    plans_err = plans.stderr.replace("set PLANS_DIR", "set WORKTREE_ROOT")
+    assert (plans.returncode, plans_err) == (root.returncode, root.stderr), (
+        f"{name}: plans_dir exit {plans.returncode} {plans.stderr!r}; "
+        f"worktree_root exit {root.returncode} {root.stderr!r}"
+    )
+    if root.returncode == 0:
+        plans_root = plans.stdout.removesuffix("/docs/plans\n")
+        tree_root = root.stdout.removesuffix("/.worktrees\n")
+        assert plans_root != plans.stdout and tree_root != root.stdout, (
+            plans.stdout,
+            root.stdout,
+        )
+        assert plans_root == tree_root, (
+            f"{name}: plans_dir {plans.stdout.strip()!r}, worktree_root "
+            f"{root.stdout.strip()!r}"
+        )
+    else:
+        assert plans.stdout == root.stdout == ""

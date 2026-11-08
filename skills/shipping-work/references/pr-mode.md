@@ -4,8 +4,11 @@
 through a pull request merged on GitHub, never through a local merge
 ([#342](https://github.com/gregoryfoster/skills/issues/342)). Absent, or
 `direct`, SKILL.md applies as written. The knob is one word, read from the
-primary checkout; `bash "<merge-mode.sh>"` prints it, and its exit 2 means the
-file is unusable. Fix it, and never read it as `direct`.
+primary checkout; `bash "<merge-mode.sh>"` prints it. Its exit 2 means the
+file is unusable: fix it, and never read it as `direct`. One exit 2 is not
+about the file. From a linked worktree of a primary made with `git init
+--separate-git-dir`, git knows no path to the primary's work tree, so the
+message says to run from the primary checkout: do that.
 
 A PR-mode ship is two passes, both started by "ship it":
 
@@ -102,10 +105,35 @@ refusal.
 
 Started by "ship it" once `gh pr view` shows `MERGED`:
 
-1. **Move to the main checkout,** the first row of `git worktree list`. Run
-   `git switch <default>`, then `git pull --ff-only`. If the pull refuses,
-   the local default branch has commits of its own: stop and report. Don't
-   merge or rebase them.
+1. **Move to the main checkout,** which `git -C <row> rev-parse
+   --show-toplevel` names, `<row>` being the path on the first row of `git
+   worktree list`. That holds for a plain primary and for a submodule, whose
+   first row is its git dir. When it fails with "must be run in a work
+   tree", the row has no work tree. Any other error from git, such as
+   "dubious ownership", is a refusal, not a layout: stop and report it.
+   With no work tree:
+   - **Marked `(bare)`:** a bare repository
+     ([#587](https://github.com/gregoryfoster/skills/issues/587)). The main
+     checkout is the linked worktree that holds the default branch, the row
+     ending `[<default>]`. If no worktree holds it, stop and ask which
+     checkout is deployed. Don't add one, since no unit runs from it.
+   - **Unmarked:** the store of a primary made with `git init
+     --separate-git-dir`, which names no work tree
+     ([#605](https://github.com/gregoryfoster/skills/issues/605)). Ask where
+     the primary checkout is.
+
+   There, run `git switch <default>`, then `git pull --ff-only`. Only a pull
+   that refuses to fast-forward means the local default branch has commits
+   of its own: stop and report. Don't merge or rebase them. A bare clone
+   sets no upstream. With a fetch refspec, its pull says "There is no
+   tracking information". A plain `git clone --bare` has no refspec either,
+   so its pull fetches origin's HEAD and fast-forwards, and only step 2
+   notices, saying the branch has no upstream. Either way, set it, in this
+   order: when `git
+   config --get-all remote.origin.fetch` prints nothing, `git config
+   remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*'`; then `git
+   fetch origin`; then `git branch --set-upstream-to=origin/<default>`. Pull
+   again, and report it.
 2. **Step 8 runs there.** Without `.skills/deploy_command`, a checkout that is
    a unit's `WorkingDirectory=` became production at the pull, so the next
    steps table follows it, and a restart row waits on `.skills/pre_restart`

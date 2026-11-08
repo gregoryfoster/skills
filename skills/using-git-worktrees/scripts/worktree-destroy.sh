@@ -96,7 +96,9 @@ usage() {
   echo "  2  Tooling/infra failure (not a git repo, missing arg, worktree not"
   echo "     found, worktree locked without --unlock, target is the worktree this"
   echo "     command runs from, git list/unlock/remove failed, merge_mode"
-  echo "     unusable; in pr mode, gh missing or failing when it is needed)"
+  echo "     unusable, the primary checkout unresolved for .skills/default_branch,"
+  echo "     the worktree root unresolved for a branch with no registered"
+  echo "     worktree; in pr mode, gh missing or failing when it is needed)"
 }
 
 # One line, not the whole block. The full usage dump is 69 lines here, and it
@@ -203,14 +205,17 @@ PROJECT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || {
 }
 cd "$PROJECT_ROOT"
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT=$(bash "$SCRIPT_DIR/resolve-worktree-root.sh") || {
-  echo "ERROR: failed to resolve worktree root" >&2
-  exit 2
+# here_git <args>: git for resolving the primary, without an inherited
+# GIT_DIR or GIT_WORK_TREE (#605, set R's CR 1895, 1903). Git exports GIT_DIR
+# to every hook, and it beats -C: asked for a submodule's work tree, git
+# named the entry itself, and the primary's knob read as absent. merge-mode.sh
+# holds the same rule. Each call answers for the checkout this runs in
+# (docs/STYLE.md, #189).
+here_git() {
+  env -u GIT_DIR -u GIT_WORK_TREE git "$@"
 }
 
-SLUG="${BRANCH//\//-}"
-FALLBACK_PATH="$ROOT/$SLUG"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Locate the worktree by BRANCH, via git's own registry, rather than by
 # reconstructing worktree-create.sh's '<root>/<slug>' path. That scheme only
@@ -264,7 +269,15 @@ REGISTERED=1
 if [[ -z "$WORKTREE_PATH" ]]; then
   REGISTERED=0
   LOCK_REASON=""
-  WORKTREE_PATH="$FALLBACK_PATH"
+  # The root is resolved only here, for the constructed path (CR 1989). A
+  # registered worktree needs no root, and the resolver refuses some
+  # layouts (#585, #605: a primary git refuses, or a linked worktree of a
+  # --separate-git-dir primary), which refused every destroy there.
+  ROOT=$(bash "$SCRIPT_DIR/resolve-worktree-root.sh") || {
+    echo "ERROR: '$BRANCH' has no registered worktree, and the worktree root its constructed path needs could not be resolved (the resolver's reason is above)" >&2
+    exit 2
+  }
+  WORKTREE_PATH="$ROOT/${BRANCH//\//-}"
 fi
 
 if [[ ! -d "$WORKTREE_PATH" ]]; then
@@ -413,7 +426,7 @@ if [[ $DESCOPED -eq 0 ]]; then
     # destroying from its own orchestrate/<topic> worktree read nothing here
     # and checked the merge against origin/HEAD or main instead. PROJECT_ROOT
     # stays the current checkout, which the self-destruction guard needs.
-    WT_LIST=$(git worktree list --porcelain) || {
+    WT_LIST=$(here_git worktree list --porcelain) || {
       echo "ERROR: failed to enumerate worktrees (git worktree list --porcelain)" >&2
       exit 2
     }
@@ -425,16 +438,30 @@ if [[ $DESCOPED -eq 0 ]]; then
     # asked for its work tree (a submodule's via core.worktree). That ask
     # failing is exit 2, never a fallback (CR 1858): "dubious ownership"
     # silently read the current linked worktree's knob instead.
+    # One exception, which is no other checkout (#605, set R's CR 1892): a
+    # primary whose .git is a pointer file (`git init --separate-git-dir`)
+    # lists its store, which names no work tree. From that primary itself,
+    # the work tree is this one: its git dir is the common dir. From a linked
+    # worktree git knows no path to it, so that stays exit 2.
+    #
+    # The refusal itself is merge-mode.sh's (CR 2029). It runs first, on this
+    # same rule, and refuses every layout this would, with git's reason and
+    # the hint; here the ask failing is exit 2 without more, for a merge-mode.sh
+    # that answered anyway (a project's own scripts/ copy, say).
     PRIMARY_BLOCK=${WT_LIST%%$'\n\n'*}
     PRIMARY_ENTRY=${PRIMARY_BLOCK%%$'\n'*}
     PRIMARY_ENTRY=${PRIMARY_ENTRY#worktree }
     case $'\n'"$PRIMARY_BLOCK"$'\n' in
       *$'\n'bare$'\n'*) PRIMARY=$PROJECT_ROOT ;;
       *)
-        PRIMARY=$(git -C "$PRIMARY_ENTRY" rev-parse --show-toplevel) || {
-          echo "ERROR: could not resolve the primary checkout '$PRIMARY_ENTRY' (git's reason is above), so its .skills/default_branch cannot be read" >&2
-          exit 2
-        }
+        if ! PRIMARY=$(here_git -C "$PRIMARY_ENTRY" rev-parse --show-toplevel 2>/dev/null); then
+          DIRS=$(here_git rev-parse --path-format=absolute --git-dir --git-common-dir 2>/dev/null) || DIRS=""
+          if [[ -z "$DIRS" || "${DIRS%%$'\n'*}" != "${DIRS#*$'\n'}" ]] ||
+            ! PRIMARY=$(here_git rev-parse --show-toplevel 2>/dev/null); then
+            echo "ERROR: could not resolve the primary checkout '$PRIMARY_ENTRY', so its .skills/default_branch cannot be read" >&2
+            exit 2
+          fi
+        fi
         ;;
     esac
     BASE=""

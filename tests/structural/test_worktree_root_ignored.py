@@ -29,6 +29,7 @@ GIT_* variable scrubbed (docs/STYLE.md).
 """
 
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -598,3 +599,133 @@ def test_conventions_say_where_the_knob_is_read():
     assert "primary checkout" in step, step
     assert "relative" in step, step
     assert "#567" in step or "/issues/567" in step, step
+
+
+def _long_root(base: Path, length: int = 1548) -> str:
+    """#586's root: `<base>/out/d1/d2/...`, exactly `length` characters."""
+    root = str(base / "out")
+    i = 0
+    while len(root) < length - 6:
+        i += 1
+        root += f"/d{i}"
+    return root + "/" + "x" * (length - len(root) - 1)
+
+
+class TestARootCanonicalPathCannotWalk:
+    """#586: canonical_path walks up to the deepest existing ancestor with
+    `dirname`. Where `dirname` fails, as macOS's does past PATH_MAX (1,024),
+    `p` emptied, the walk ended at `.`, and the root became `$PWD/<last
+    component>`: a root outside the repo was refused as inside it. A failing
+    step is exit 2 naming the root, never a fallback to `$PWD`.
+    """
+
+    def test_the_issues_root_is_never_refused_as_inside_the_repo(
+        self, repo: Path, tmp_path: Path
+    ):
+        """The issue's reproduction, with the platform's own dirname: where
+        it fails (macOS) the run is exit 2 naming the root; where it does not
+        (GNU), the root is outside the repo and passes."""
+        root = _long_root(tmp_path.resolve())
+        assert len(root) == 1548
+        r = _run(CREATE, "--new", "feature/x", cwd=repo, WORKTREE_ROOT=root)
+        assert ".gitignore" not in r.stderr, (
+            f"a root outside the repo was refused as inside it: {r.stderr[-400:]}"
+        )
+        if r.returncode == 2:
+            assert f"'{root}'" in r.stderr, f"the error names the root: {r.stderr}"
+            assert r.stdout == ""
+            assert len(_worktrees(repo)) == 1, "no worktree may be created"
+        else:
+            assert r.returncode == 0, r.stderr
+            assert r.stdout.strip() == f"{root}/feature-x"
+
+    def test_a_dirname_that_fails_is_exit_2_naming_the_root(
+        self, repo: Path, tmp_path: Path
+    ):
+        """macOS's failure, on every platform: a `dirname` that refuses any
+        argument over 1,024 characters, as dirname(3) does there."""
+        real = shutil.which("dirname")
+        assert real, "dirname is on PATH"
+        shims = tmp_path.resolve() / "shims"
+        shims.mkdir()
+        shim = shims / "dirname"
+        shim.write_text(
+            "#!/bin/sh\n"
+            'for a in "$@"; do\n'
+            '  if [ "${#a}" -gt 1024 ]; then\n'
+            '    echo "dirname: $a: File name too long" >&2\n'
+            "    exit 1\n"
+            "  fi\n"
+            "done\n"
+            f'exec {real} "$@"\n'
+        )
+        shim.chmod(0o755)
+        root = _long_root(tmp_path.resolve())
+        r = _run(
+            CREATE,
+            "--new",
+            "feature/x",
+            cwd=repo,
+            WORKTREE_ROOT=root,
+            PATH=f"{shims}{os.pathsep}{os.environ['PATH']}",
+        )
+        assert r.returncode == 2, (
+            f"expected exit 2, got {r.returncode}\nstderr: {r.stderr[-600:]}"
+        )
+        assert ".gitignore" not in r.stderr, (
+            f"refused as inside the repo, from $PWD: {r.stderr[-400:]}"
+        )
+        assert f"could not resolve the worktree root '{root}'" in r.stderr, r.stderr[
+            -600:
+        ]
+        assert r.stdout == ""
+        assert len(_worktrees(repo)) == 1, "no worktree may be created"
+        assert not (repo / "feature-x").exists()
+
+    def test_a_dirname_that_fails_on_the_dotdot_step_is_exit_2(
+        self, repo: Path, tmp_path: Path
+    ):
+        """CR 1992c: the lexical `..` step's dirname is checked too.
+
+        The root `<alias>/missing/../wt` walks up through `<alias>/missing`
+        (the alias's spelling), then applies `missing/..` to the canonical
+        head, `<real>/missing`. A dirname that fails only on that spelling
+        fails only the `..` step. Unchecked, the head emptied, the root became
+        `/wt`, and the run went on to create a worktree.
+        """
+        real_dirname = shutil.which("dirname")
+        assert real_dirname, "dirname is on PATH"
+        real = tmp_path.resolve() / "real"
+        real.mkdir()
+        alias = tmp_path.resolve() / "alias"
+        alias.symlink_to(real)
+        shims = tmp_path.resolve() / "shims"
+        shims.mkdir()
+        shim = shims / "dirname"
+        shim.write_text(
+            "#!/bin/sh\n"
+            'for a in "$@"; do\n'
+            f'  if [ "$a" = "{real}/missing" ]; then\n'
+            '    echo "dirname: $a: refused by the test" >&2\n'
+            "    exit 1\n"
+            "  fi\n"
+            "done\n"
+            f'exec {real_dirname} "$@"\n'
+        )
+        shim.chmod(0o755)
+        root = f"{alias}/missing/../wt"
+        r = _run(
+            CREATE,
+            "--new",
+            "feature/x",
+            cwd=repo,
+            WORKTREE_ROOT=root,
+            PATH=f"{shims}{os.pathsep}{os.environ['PATH']}",
+        )
+        assert r.returncode == 2, (
+            f"expected exit 2, got {r.returncode}\nstderr: {r.stderr[-600:]}"
+        )
+        assert f"could not resolve the worktree root '{root}'" in r.stderr, r.stderr
+        assert "refused by the test" in r.stderr, "the failing step's reason shows"
+        assert r.stdout == ""
+        assert len(_worktrees(repo)) == 1, "no worktree may be created"

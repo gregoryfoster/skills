@@ -14,7 +14,9 @@
 # resolve to the project's own script and skip the knob.
 #
 # THE KNOB is read from the primary checkout (the first `git worktree list`
-# entry), like worktree_root, and the command runs from that checkout's root.
+# entry's work tree), and the command runs from that checkout's root. A
+# primary made with --separate-git-dir names no work tree to its linked
+# worktrees, so only the primary itself can read it (#605).
 # Grammar: exactly one command line of whitespace-separated words; blank lines
 # and whole-line `#` comments are ignored. No shell evaluation: a pipe or a
 # redirect belongs in the project's script. _command-knob.sh holds the
@@ -66,7 +68,9 @@ Exit codes:
   2  Nothing ran: the knob is present but unusable (no command line, more than
      one, a command not found or not executable, not a readable file), HEAD
      is not what was pushed, in pr mode HEAD is not the default branch,
-     .skills/merge_mode is unusable, git failed, or a bad argument
+     .skills/merge_mode is unusable, git failed, or a bad argument. From a
+     linked worktree of a --separate-git-dir primary: run from the primary
+     checkout
   3  No .skills/deploy_command: nothing to deploy; Step 8 is the next-steps
      table, as before the knob existed
 EOF
@@ -151,8 +155,21 @@ if [ "$MODE" = pr ]; then
     die "HEAD is on $CURRENT; merge_mode is pr, so only the default branch ($DEFAULT) is deployed, at the merge, never a branch's tip: $REMEDY"
 fi
 
-UPSTREAM=$(git rev-parse --verify '@{u}') ||
-  die "HEAD has no upstream to compare with: push it first (Step 4)"
+# No upstream is either a branch nobody pushed or pushed code whose tracking
+# was never set, as `git clone --bare` leaves every branch (CR 2009, #587).
+# Which one is not decided here (CR 2011: a plain bare clone has no
+# origin/HEAD, so a default-branch test read `trunk` as `main`): the message
+# gives both remedies, right on any branch. Its first step comes first, and
+# only when it applies (CR 2012): with no remote.origin.fetch, as a plain
+# bare clone has, origin/<branch> doesn't exist until it is set and fetched.
+if ! UPSTREAM=$(git rev-parse --verify '@{u}'); then
+  BRANCH=$(git symbolic-ref --quiet --short HEAD) ||
+    die "HEAD is detached and has no upstream to compare with: push it first (Step 4)"
+  SET_FETCH=""
+  [ -n "$(git config --get-all remote.origin.fetch)" ] ||
+    SET_FETCH="git config remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*' && "
+  die "HEAD ($BRANCH) has no upstream. If $BRANCH is already on origin, set it: ${SET_FETCH}git fetch origin && git branch --set-upstream-to=origin/$BRANCH, then re-run; otherwise push it first (Step 4)"
+fi
 [ "$SHA" = "$UPSTREAM" ] ||
   die "HEAD ($SHA) is not what was pushed (upstream is $UPSTREAM): push first (Step 4). Only pushed code is deployed"
 
