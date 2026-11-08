@@ -101,7 +101,7 @@ case $'\n'"$WT_BLOCK"$'\n' in
           if [ "${DIRS%%$'\n'*}" = --path-format=absolute ]; then
             VER=$(here_git --version 2>/dev/null) || VER=""
             VER=${VER#git version }
-            HINT="; it is a git dir with no work tree, as a primary whose .git is a file makes it (git init --separate-git-dir), and git ${VER:-(unknown version)} predates 2.31, which this layout needs to tell its primary from a linked worktree: upgrade git"
+            HINT="; it is a git dir with no work tree, as a primary whose .git is a file makes it (git init --separate-git-dir), and git ${VER:-(unknown version)} predates 2.31, which this layout needs to tell its primary from a linked worktree: upgrade git (from a linked worktree, then run from the primary checkout)"
           else
             HINT="; it is a git dir with no work tree, as a primary whose .git is a file makes it (git init --separate-git-dir), and only that primary knows its work tree, so run this from the primary checkout"
           fi

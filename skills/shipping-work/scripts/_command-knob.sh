@@ -83,7 +83,7 @@ primary_checkout() {
             if [ "${dirs%%$'\n'*}" = --path-format=absolute ]; then
               ver=$(here_git --version 2>/dev/null) || ver=""
               ver=${ver#git version }
-              hint="; it is a git dir with no work tree, as a primary whose .git is a file makes it (git init --separate-git-dir), and git ${ver:-(unknown version)} predates 2.31, which this layout needs to tell its primary from a linked worktree: upgrade git"
+              hint="; it is a git dir with no work tree, as a primary whose .git is a file makes it (git init --separate-git-dir), and git ${ver:-(unknown version)} predates 2.31, which this layout needs to tell its primary from a linked worktree: upgrade git (from a linked worktree, then run from the primary checkout)"
             else
               hint="; it is a git dir with no work tree, as a primary whose .git is a file makes it (git init --separate-git-dir), and only that primary knows its work tree, so run this from the primary checkout"
             fi

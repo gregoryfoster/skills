@@ -467,10 +467,13 @@ def test_git_older_than_2_31_says_so_rather_than_run_from_the_primary(
     record = tmp_path / "record"
     result = _run_with(script, checkout, record, env=_old_git_env(tmp_path))
     _assert_nothing_read(script, result, record)
-    # The core phrase is shared with chain W's resolve-worktree-root.sh.
+    # The core phrase and its tail are shared with chain W's
+    # resolve-worktree-root.sh and chain P's resolve-plans-dir.sh (CR 2010d):
+    # from a linked worktree, upgrading git alone still leaves exit 2.
     assert (
         "git 2.30.2 predates 2.31, which this layout needs to tell its primary"
-        " from a linked worktree: upgrade git"
+        " from a linked worktree: upgrade git (from a linked worktree, then run"
+        " from the primary checkout)"
     ) in result.stderr, result.stderr
     assert "run this from the primary checkout" not in result.stderr, result.stderr
 
