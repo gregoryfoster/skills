@@ -30,11 +30,13 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = REPO_ROOT / "skills" / "shipping-work" / "scripts" / "detect-stack.sh"
 # The global pathspec settings git exports to the hooks it runs, from
-# `git --literal-pathspecs`, `--glob-pathspecs` and `--noglob-pathspecs`.
+# `git --literal-pathspecs`, `--glob-pathspecs`, `--noglob-pathspecs` and
+# `--icase-pathspecs` (CR 2005).
 PATHSPEC_SETTINGS = [
     "GIT_LITERAL_PATHSPECS",
     "GIT_GLOB_PATHSPECS",
     "GIT_NOGLOB_PATHSPECS",
+    "GIT_ICASE_PATHSPECS",
 ]
 
 
@@ -316,6 +318,23 @@ class TestToolchains:
         )
         assert result.returncode == 0, result.stderr
         assert result.stdout == "toolchain\tcomposer\nframework\tphp\n"
+
+    def test_an_icase_pathspec_setting_does_not_widen_the_reach(self, repo):
+        """CR 2005: `git --icase-pathspecs` exports GIT_ICASE_PATHSPECS=1 to
+        the hooks it runs, and `:(glob)` doesn't override it, so a tracked
+        Plugins/Up/ manifest matched plugins/*/. The bash glob composer used
+        was case-sensitive; the listing is held to that."""
+        (repo / "Plugins" / "Up").mkdir(parents=True)
+        (repo / "Plugins" / "Up" / "composer.json").write_text("{}\n")
+        (repo / "Plugins" / "Up" / "package.json").write_text("{}\n")
+        _add(repo)
+        env = _clean_env()
+        env["GIT_ICASE_PATHSPECS"] = "1"
+        result = subprocess.run(
+            ["bash", str(SCRIPT)], cwd=repo, capture_output=True, text=True, env=env
+        )
+        assert result.returncode == 0, result.stderr
+        assert result.stdout == "", result.stdout
 
     def test_a_failing_ls_files_is_exit_2_not_none(self, repo, tmp_path):
         """git's own exit decides: a failure listing the nested manifests is

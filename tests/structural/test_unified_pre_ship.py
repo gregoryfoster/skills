@@ -25,11 +25,13 @@ from tests.structural.gate_fakes import ALL_TOOLS, BASE_PATH, fake_env
 REPO_ROOT = Path(__file__).resolve().parents[2]
 GATE = REPO_ROOT / "skills" / "shipping-work" / "scripts" / "pre-ship.sh"
 # The global pathspec settings git exports to the hooks it runs, from
-# `git --literal-pathspecs`, `--glob-pathspecs` and `--noglob-pathspecs`.
+# `git --literal-pathspecs`, `--glob-pathspecs`, `--noglob-pathspecs` and
+# `--icase-pathspecs` (CR 2005).
 PATHSPEC_SETTINGS = [
     "GIT_LITERAL_PATHSPECS",
     "GIT_GLOB_PATHSPECS",
     "GIT_NOGLOB_PATHSPECS",
+    "GIT_ICASE_PATHSPECS",
 ]
 
 
@@ -450,6 +452,27 @@ class TestPhp:
         assert _gate(repo, **{setting: "1"}).returncode == 0
         linted = sorted(c[2] for c in _calls(repo, "php") if c[1] == "-l")
         assert linted == ["index.php", "themes/site/functions.php"]
+
+    def test_an_icase_pathspec_setting_widens_no_listing(self, repo):
+        """CR 2005: `git --icase-pathspecs` exports GIT_ICASE_PATHSPECS=1 to
+        the hooks it runs, and `:(glob)` doesn't override it. Under it a
+        tracked Plugins/Up/composer.json was validated, its package.json's
+        scripts ran, and a `.PHP` file was linted, where the case-sensitive
+        globs these listings replaced never matched them."""
+        (repo / "Plugins" / "Up").mkdir(parents=True)
+        (repo / "Plugins" / "Up" / "composer.json").write_text("{}\n")
+        (repo / "Plugins" / "Up" / "package.json").write_text(
+            json.dumps({"scripts": {"lint:js": "eslint ."}})
+        )
+        (repo / "legacy.PHP").write_text("<?php\n")
+        _composer_repo(repo)
+        result = _gate(repo, GIT_ICASE_PATHSPECS="1")
+        assert result.returncode == 0, result.stdout + result.stderr
+        validated = sorted(c[1] for c in _calls(repo, "composer") if "validate" in c)
+        assert validated == ["--working-dir=.", "--working-dir=themes/site"]
+        linted = sorted(c[2] for c in _calls(repo, "php") if c[1] == "-l")
+        assert linted == ["index.php", "themes/site/functions.php"]
+        assert "Plugins/Up" not in result.stdout
 
     def test_composer_test_only_when_defined(self, repo):
         """Row 20."""
