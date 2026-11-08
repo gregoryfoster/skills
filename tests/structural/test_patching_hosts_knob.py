@@ -17,7 +17,7 @@ What this file pins, against references/knob.md:
   directives accumulate per key;
 - an exception expires the day after its review-by date;
 - `cadence weekly|monthly` is one value, weekly by default (#529);
-- `bulk-factor <n>` is one value, 3 by default: a number from 1 to 99 with
+- `bulk-factor <n>` is one value, 3 by default: a number from 1 to 99.99 with
   at most two decimals, and anything else is malformed (#556);
 - a window may name a week of the month (`Sun#2`) or a date, with a reason; a
   dated line is never replaced by a more specific scope's windows, and one
@@ -174,7 +174,7 @@ def test_a_last_line_without_a_newline_is_read(tmp_path):
         "cadence",
         "cadence daily",
         "cadence weekly monthly",
-        # #556: a number from 1 to 99, at most two decimals.
+        # #556: a number from 1 to 99.99, at most two decimals.
         "bulk-factor",
         "bulk-factor 0",
         "bulk-factor 0.9",  # below the dry run itself
@@ -672,11 +672,20 @@ def test_bulk_factor_defaults_to_3(tmp_path):
 
 
 @pytest.mark.parametrize("value", ["1", "4", "3.5", "2.25", "99.99", "10"])
-def test_a_bulk_factor_line_is_a_number_from_1_to_99(tmp_path, value):
+def test_a_bulk_factor_line_is_a_number_from_1_to_99_99(tmp_path, value):
     out = _read(tmp_path, f"posture scheduled\nbulk-factor {value}\n")
     assert out["bulk_factor"] == {"value": float(value), "line": 2}
     assert out["findings"] == []
     assert out["report_only"] is False
+
+
+def test_a_bad_bulk_factor_and_knob_md_name_the_range_the_parser_takes(tmp_path):
+    # CR 1944: the parser takes 99.99, so "1 to 99" understated the range.
+    [f] = _read(tmp_path, "posture scheduled\nbulk-factor 100\n")["findings"]
+    assert "from 1 to 99.99" in f["message"], f
+    table = KNOB_MD.read_text().split("## Directives", 1)[1]
+    [row] = [r for r in table.splitlines() if r.startswith("| `bulk-factor")]
+    assert "from 1 to 99.99" in row
 
 
 def test_a_bulk_factor_line_is_one_value_the_most_specific_scope_sets(tmp_path):
