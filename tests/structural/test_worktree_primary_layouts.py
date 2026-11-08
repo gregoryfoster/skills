@@ -240,7 +240,11 @@ class TestCreateFromASeparateGitDirPrimary:
             PATH=f"{shims}{os.pathsep}{os.environ['PATH']}",
         )
         assert r.returncode == 2, r.stdout + r.stderr
-        assert "git 2.30.6 predates 2.31, which this layout needs" in r.stderr, r.stderr
+        assert (
+            "git 2.30.6 predates 2.31, which this layout needs to tell its "
+            "primary from a linked worktree: upgrade git (from a linked "
+            "worktree, then run from the primary checkout)"
+        ) in r.stderr, r.stderr
         assert "run this from the primary checkout" not in r.stderr, r.stderr
         assert _worktrees(primary) == before
 
