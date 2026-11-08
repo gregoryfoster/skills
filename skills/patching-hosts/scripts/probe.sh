@@ -2900,8 +2900,12 @@ read_holds() {
 # lists it from a source other than dpkg's status file. A build superseded
 # in -updates is listed from the status file alone, and a reinstall then
 # resolves to the candidate: an upgrade, outside every gate.
+# A version line starts " *** " or five spaces and the version. A source
+# line is seven spaces and its priority right-aligned in four columns, so
+# one of 1000 or more has seven leading spaces, not eight (noble's apt,
+# Pin-Priority 1001, CR 1946).
 installed_fetchable() {  # <package>: IF_STATE := yes, no, or empty when unread; IF_VERSION and IF_CANDIDATE
-  local out line mine=0
+  local out line mine=0 src='^       +-?[0-9]+ '
   IF_STATE="" IF_VERSION="" IF_CANDIDATE=""
   have apt-cache || return 0
   capture out apt_env apt-cache "${APT_OPTS[@]}" ${LISTS_OPT[@]+"${LISTS_OPT[@]}"} policy "$1"
@@ -2913,8 +2917,8 @@ installed_fetchable() {  # <package>: IF_STATE := yes, no, or empty when unread;
         mine=1 IF_STATE=no
         read -r _ IF_VERSION _ <<<"$line" ;;
       "     "[!\ ]*) mine=0 ;;
-      "        "*)
-        if [ "$mine" -eq 1 ]; then
+      *)
+        if [ "$mine" -eq 1 ] && [[ $line =~ $src ]]; then
           case $line in */var/lib/dpkg/status) ;; *) IF_STATE=yes ;; esac
         fi ;;
     esac
