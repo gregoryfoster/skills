@@ -68,6 +68,26 @@ The needrestart drop-in is part of both postures: every run relies on the hook r
 - **A deploy that restarts a declared `service` takes a window**, as any restart does, though the skill runs no deploy. That includes a deploy of the repo's own dependency bumps: on notifier, merging them changed nothing until `systemctl restart`. A bump that fixes an advisory may take an out-of-cycle window, as a Tailscale bulletin does, and the run records it (decided 2026-10-09, #366).
 - **Tailscale** belongs in the maintenance lane, because upgrading tailscaled drops the host's tailnet path and needs a planned window. A Tailscale security bulletin expedites it into an out-of-cycle window: `apply.sh --lane origin:<its origin>` takes that one origin and nothing else. Its own auto-update takes it out of any window, so the probe reports it under either posture.
 
+### A pre-announced security release
+
+A project may announce a security release ahead of time: a fixed date and time, T, with the affected versions published only at release. Where the fix comes from a third-party origin the knob follows, the route is the bulletin's: a dated `window` line ([knob.md](knob.md), #421) and `apply.sh --lane origin:<origin>`, with the owner's approval. No knob line expedites an origin; the window does (#464). What the advance notice adds is the work that can be done before T, so none of it is done under time pressure.
+
+**Before T:**
+
+1. **Record the before-versions**, the rollback path: `dpkg-query -W` of each package the origin serves on the host. An origin whose index lists only its newest version drops the old one at T, so where the rollback needs it, keep its `.deb` (`apt-get download <pkg>=<version>`). The bulk records the before-versions again in its run directory.
+2. **Refresh the lists and confirm the origin is reachable**: `probe.sh --refresh-into DIR`. A source that fails to fetch fails the whole refresh, `pending.lists.refreshed` false and a `lists:refresh` finding ([readings.md](readings.md)), and stops the lane until it fetches again.
+3. **Take the recovery point early** where the host declares a `datastore` ([run.md](run.md#2-the-recovery-point)). The bulk refuses one that began more than 24 hours before it, so take it within the day before the run, and again if the release slips past that.
+
+**After T**, poll until the fixed version is in the origin's lists: refresh with `probe.sh --refresh-into DIR` again, then read `apt-cache -o Dir::State::Lists=DIR/lists/ policy <pkg>`. Plain `apt-cache policy` reads the host's own lists, which the probe never refreshes. A PPA can lag the upstream tag by hours: record the lag measured, from T to the version's first appearance, and never assume one.
+
+**Then**, with the owner's approval:
+
+1. add a dated `window` line from `date -u`, as for any owner-attended run ([run.md](run.md#before-each-step-the-gate));
+2. count with `probe.sh --lane origin:<origin> --refresh-into DIR --dry-run-into DIR`, only now: a dry run from before the fix counted nothing from the origin, and the gate refuses it;
+3. run `apply.sh --step bulk --lane origin:<origin> --dry-run DIR --approve`, with the recovery point's directory as `--run` where there is one, then each held step its selection reaches;
+4. **verify the runtime itself, not the package**: its version (`php -v`, `php-fpm<ver> -v`) and a real request through the service. One the step's reprobe lists under `impact.reboot.needrestart_services` still runs the replaced binary. Where a reload replaces the binary, as php-fpm's does, run its config test first (`php-fpm<ver> -t`) and reload rather than restart it; otherwise restart it, inside the window either way;
+5. record the CVE IDs in the run's record when upstream publishes them, which may be after the run.
+
 ## What a run leaves pending, by class
 
 Every run records what it didn't take, in six classes:

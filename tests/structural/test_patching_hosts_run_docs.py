@@ -251,7 +251,7 @@ def test_before_t_records_versions_refreshes_and_bounds_the_recovery_point():
     # names no lane.
     assert "it goes with --dry-run-into" in PROBE_SH
     assert "`probe.sh --refresh-into DIR`" in before
-    assert "--lane" not in before.split("**Before T**")[1]
+    assert "--lane" not in before.split("**Before T:**")[1]
     assert "`lists:refresh`" in before
     # The bulk refuses a recovery point that began more than a day before it.
     assert "\nRP_MAX_AGE=86400\n" in APPLY_SH
