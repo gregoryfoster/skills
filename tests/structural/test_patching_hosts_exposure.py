@@ -63,11 +63,14 @@ OPCACHE = "/usr/lib/php/20230831/opcache.so"
 LIBC = "/usr/lib/x86_64-linux-gnu/libc.so.6"
 
 
-def _php_host(tmp_path, knob: str, maps: list[str], cgroup: str) -> Host:
+def _php_host(
+    tmp_path, knob: str, maps: list[str], cgroup: str, more: str = ""
+) -> Host:
     """A host whose pending set holds the PPA's php8.3-fpm and opcache, and
-    Ubuntu's libc6, with pid 700 mapping MAPS, in CGROUP's unit."""
+    Ubuntu's libc6, and MORE simulation lines, with pid 700 mapping MAPS, in
+    CGROUP's unit."""
     h = Host(tmp_path).knob(knob)
-    h.on("apt-get", "-s *dist-upgrade", SIMULATION)
+    h.on("apt-get", "-s *dist-upgrade", SIMULATION + more)
     h.on("apt-cache", "*policy", POLICY)
     h.on("dpkg-query", "*-L php8.3-fpm", "/usr/sbin\n/usr/sbin/php-fpm8.3\n")
     h.on("dpkg-query", "*-L php8.3-opcache", f"/usr/lib/php/20230831\n{OPCACHE}\n")
@@ -170,3 +173,23 @@ def test_an_exception_covers_the_exposure(tmp_path):
     out = h.run()
     assert f"exposure:{PPA}" not in _ids(out)
     assert f"exposure:{PPA}" in _ids(out, "excepted")
+
+
+def test_canonicals_origin_is_first_party_here_too(tmp_path):
+    # CR 1959: read_origins counts o=Canonical as first party, so no knob
+    # line names it and no origin: finding asks for one; an exposure citing
+    # that finding would point at nothing.
+    h = _php_host(
+        tmp_path,
+        FOLLOW,
+        [OPCACHE],
+        "php8.3-fpm.service",
+        more="Inst libpartner1 [1.0] (1.1 Canonical:24.04/noble [amd64])\n",
+    )
+    h.on("dpkg-query", "*-L libpartner1", "/usr/lib/libpartner.so.1\n")
+    h.write("proc/701/maps", "7f00-7f01 r-xp 0 fd:01 1 /usr/lib/libpartner.so.1\n")
+    h.write("proc/701/cgroup", "0::/system.slice/partner.service\n")
+    out = h.run()
+    assert "exposure:Canonical" not in _ids(out)
+    assert "origin:Canonical" not in _ids(out)
+    assert f"exposure:{PPA}" in _ids(out)
