@@ -14,6 +14,18 @@ The harness kills the hook at its `timeout`: 120 s, from `skills-submodule-updat
 
 The hook never passes `--no-verify`, so a consumer whose hooks run a full test suite spends the budget there. CannObserv/power-map's suite took about 550 s on a pointer-only commit and CannObserv/cli's took 112 s. A killed run leaves nothing on stderr, and its log ends mid-`pytest`. Since [#555](https://github.com/gregoryfoster/skills/issues/555) the next session tries again. The second run in a row killed inside its commit spends the day instead, and the session that finds it says on stderr that the commit did not fit and names this knob ([#575](https://github.com/gregoryfoster/skills/issues/575)). So a suite that never fits is tried twice on the first day and once a day after, until a commit finishes. A commit the hooks refuse counts as finished: the suite fit, and the refusal spends the day anyway (CR 1900).
 
+### A push that does not fit ([#603](https://github.com/gregoryfoster/skills/issues/603))
+
+A kill inside the push counts toward the same total as a kill inside the commit. Before each push, the hook writes a second line to `.git/skills-update.commit-kills`: `push pid <PID> <epoch>`. When a push returns, accepted or refused, the hook deletes the file, which resets the count. If the next session finds that line and the run that wrote it has exited, it counts a kill inside the push, once, keyed on that line. The second kill in a row, whether it was inside the commit or the push, stamps the day's lock. The session that counts it says once on stderr that the push did not fit, and names this knob.
+
+- **`direct`:** the hook pushes from its reconcile at every session start. The reconcile runs ahead of the day's lock, so a stamped lock alone would not stop the push. So the reconcile makes no push while the count is 2 or more and the lock reads today. The hook's commit stays unpushed on `main` until the next UTC day's session pushes it, unless you push it by hand first. A refused push is rolled back, but a held one is not.
+- **`pr` mode:** the push to `skills/submodule-refresh` runs inside the refresh, which is already behind the day's lock.
+
+**Known limits:**
+- When two sessions push at once they share the line. A push that returns can clear a slower session's record, so that session's kill goes uncounted, and the next kill is counted.
+- The extension's ~2 s kill (#555) can land inside a reconcile push and be counted. It cannot back the push off alone, because the real session a second later pushes and resets the count.
+- Because the count is shared, a back-off that began with a commit also holds the reconcile's push that day.
+
 ## `.skills/refresh-skip-hooks`
 
 The fix is a list of the pre-commit hook ids that the hook's own commit and pushes skip. The ids go in the file one or more per line, separated by spaces, and a line that starts with `#` is a comment. The hook adds them to pre-commit's `SKIP` for its `git commit` and its `git push` only. An existing `SKIP` is kept and the ids are appended to it. A commit someone makes by hand still runs every hook.

@@ -34,8 +34,11 @@ Coverage:
                                         → pushed: a refused push returned too
 - a second session while the first is still inside its push
                                         → the live push is not counted
+- a commit-stage kill, then a dead push line in the count file
+                                        → both count: one count for the two
 """
 
+import subprocess
 import time
 
 import pytest
@@ -48,8 +51,10 @@ from tests.structural.test_refresh_hook_pr_mode import (
     _new_day,
 )
 from tests.utils.refresh_hook_consumer import (
+    VENDOR,
     _vendor_commit,
     ahead,
+    arm_pre_commit_kill,
     build,
     content,
     finish_hook,
@@ -59,6 +64,7 @@ from tests.utils.refresh_hook_consumer import (
     log_text,
     origin_gitlink,
     run_hook,
+    staged,
     start_hook,
     today,
 )
@@ -298,3 +304,31 @@ class TestPrMode:
         )
         r = git(c.origin, "rev-parse", "--verify", "-q", PR_BRANCH, check=False)
         assert r.returncode != 0, "fixture: the killed pushes never landed"
+
+
+class TestOneCount:
+    def test_a_commit_stage_count_keeps_a_dead_push_line(self, consumer):
+        """The commit and the push share one count. The commit heal runs
+        first and rewrites the count file. A push line already there belongs
+        to another run's push, so the heal keeps it for _heal_push, and both
+        kills count: a commit-stage kill and a push-stage kill in a row back
+        off."""
+        c = consumer
+        arm_pre_commit_kill(c, "TERM")
+        killed = run_hook(c)
+        assert killed.returncode < 0 and VENDOR in staged(c), (
+            "fixture: the run was meant to be killed inside `git commit`"
+        )
+        gone = subprocess.Popen(["true"])
+        gone.wait()
+        (c.path / COUNTER).write_text(f"0 \npush pid {gone.pid} {int(time.time())}\n")
+
+        healed = run_hook(c)
+
+        _assert_backoff_said(healed)
+        assert gitlink(c) == c.before, "the refresh was retried the same day"
+        assert staged(c) == [] and content(c) == c.before
+        assert _stamp(c) == today()
+        assert (c.path / COUNTER).read_text().startswith("2 pid "), (
+            c.path / COUNTER
+        ).read_text()
