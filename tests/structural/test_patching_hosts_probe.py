@@ -1176,9 +1176,11 @@ def _fwupd_policy(
     return "\n".join(lines) + "\n"
 
 
-def _conffile_prompt(host: Host, policy: str | None, missing: bool = True) -> dict:
-    said = "Package fwupd has conffile prompt and needs to be upgraded manually\n"
-    fwupd = f"Inst fwupd [{FWUPD_INSTALLED}] ({FWUPD_CANDIDATE} Ubuntu:24.04/noble-updates [amd64])\n"
+def _conffile_prompt(
+    host: Host, policy: str | None, missing: bool = True, name: str = "fwupd"
+) -> dict:
+    said = f"Package {name} has conffile prompt and needs to be upgraded manually\n"
+    fwupd = f"Inst {name} [{FWUPD_INSTALLED}] ({FWUPD_CANDIDATE} Ubuntu:24.04/noble-updates [amd64])\n"
     host.cases["apt-get"].insert(
         0, ("-s *dist-upgrade", SIMULATION + fwupd, 0, "", None)
     )
@@ -1190,7 +1192,7 @@ def _conffile_prompt(host: Host, policy: str | None, missing: bool = True) -> di
     )
     host.on(
         "dpkg-query",
-        "*-W -f ${Conffiles}\\n fwupd",
+        f"*-W -f ${{Conffiles}}\\n {name}",
         " /etc/update-motd.d/85-fwupd 0123abcd\n /etc/fwupd/fwupd.conf 4567cdef\n",
     )
     host.write("etc/fwupd/fwupd.conf", "changed\n")
@@ -1200,11 +1202,11 @@ def _conffile_prompt(host: Host, policy: str | None, missing: bool = True) -> di
         host.write("etc/update-motd.d/85-fwupd", "unchanged\n")
         host.cases["md5sum"].insert(0, ("*85-fwupd", "0123abcd  x\n", 0, "", None))
     if policy is None:
-        host.on("apt-cache", "*policy fwupd", "", rc=100, stderr="E: broken\n")
+        host.on("apt-cache", f"*policy {name}", "", rc=100, stderr="E: broken\n")
     else:
-        host.on("apt-cache", "*policy fwupd", policy)
+        host.on("apt-cache", f"*policy {name}", policy)
     out = host.run("--dry-run-into", str(host.tmp / "dry"))
-    return _finding(out, "dry-run:conffile:fwupd")
+    return _finding(out, f"dry-run:conffile:{name}")
 
 
 CONFMISS = "Dpkg::Options::=--force-confmiss"
@@ -1262,22 +1264,52 @@ def test_a_reinstall_names_a_version_with_an_epoch_as_apt_prints_it(host):
     assert _reinstall_offered(f["message"], epoch)
 
 
-# CR 1946: apt right-aligns the priority in four columns after seven spaces,
-# so a priority of 1000 or more prints one space short of the usual eight,
-# and a negative one keeps eight (noble's apt, Pin-Priority 1001 and -10,
-# measured 2026-11-07). Each is still a source line.
+# CR 1946, CR 1968: apt right-aligns the priority in four columns after
+# seven spaces, so one four or more characters wide (1000 and up, -100 and
+# down) prints with seven leading spaces, and only -1 to -99 keep eight
+# like a positive three-digit one (noble's apt, Pin-Priority 1001, 32767,
+# -10 and -1000, measured 2026-11-07). Each is still a source line.
 @pytest.mark.parametrize(
     "source",
     [
         "       1001 http://archive.ubuntu.com/ubuntu noble-updates/main amd64 Packages",
         "        -10 http://archive.ubuntu.com/ubuntu noble-updates/main amd64 Packages",
+        "       -1000 http://archive.ubuntu.com/ubuntu noble-updates/main amd64 Packages",
     ],
-    ids=["1001", "-10"],
+    ids=["1001", "-10", "-1000"],
 )
 def test_a_source_of_any_priority_under_the_installed_version_counts(host, source):
     f = _conffile_prompt(host, _fwupd_policy([source]))
     assert _reinstall_offered(f["message"])
     assert "would upgrade" not in f["message"]
+
+
+# CR 1967: a name or version outside Debian's own characters is never
+# pasted into a command, and the finding says why rather than claiming the
+# build's source couldn't be read.
+QUOTE = "outside Debian's own characters, so no command is given"
+
+
+def test_a_version_that_cant_be_quoted_gets_no_command(host):
+    archive = (
+        "        500 http://archive.ubuntu.com/ubuntu noble-updates/main amd64 Packages"
+    )
+    bad = "1.9.33'$(id)"
+    policy = _fwupd_policy([archive]).replace(FWUPD_INSTALLED, bad)
+    f = _conffile_prompt(host, policy)
+    assert CONFMISS not in f["message"]
+    assert QUOTE in f["message"]
+    assert "couldn't be read" not in f["message"]
+
+
+def test_a_package_name_that_cant_be_quoted_gets_no_command(host):
+    archive = (
+        "        500 http://archive.ubuntu.com/ubuntu noble-updates/main amd64 Packages"
+    )
+    policy = _fwupd_policy([archive]).replace("fwupd:", "Fwupd:")
+    f = _conffile_prompt(host, policy, name="Fwupd")
+    assert CONFMISS not in f["message"]
+    assert QUOTE in f["message"]
 
 
 def test_a_status_line_of_four_digits_is_still_the_status_file(host):
