@@ -19,7 +19,7 @@ It suits a host with **no local data store**. On a host with one it means unsche
 
 ### `scheduled`: an owner-approved run at the host's cadence
 
-The host is patched in a scheduled, gated run at the host's cadence, and the apt timers stay masked. The knob's `cadence` says which: `weekly`, the default, or `monthly` (#529). Nothing checks a run against it yet: a host that runs monthly and doesn't say so fails nothing, and its knob just under-states it. A run is:
+The host is patched in a scheduled, gated run at the host's cadence, and the apt timers stay masked. The knob's `cadence` says which: `weekly`, the default, or `monthly` (#529). The probe checks the last run against it: a weekday or `#N` window that closed since is `cadence:overdue`, wherever the probe runs ([readings.md](readings.md#what-updates-this-host), #592). It makes a miss visible; it doesn't ask anyone to start the run. A run is:
 
 - a chosen window, clear of whatever the knob says constrains it;
 - a fresh recovery point, copied off the node, for each declared data store. A host with no data store records its before-versions;
@@ -124,6 +124,7 @@ exception <what> <review-by YYYY-MM-DD> <reason>
 | `needrestart:restart` | no file sets `$nrconf{restart}` to `l`, or the file doesn't load (both postures) |
 | `unscoped:<origin>` | a followed origin at apt priority 500 or more: no `Package: *` pin below 500 for its site (both postures) |
 | `unpinned:<package>` | an installed package whose candidate comes from a followed origin, and that no package pin names (both postures) |
+| `cadence:overdue` | under `scheduled`, a weekday or `#N` window closed since the last run with no run (#592): a freeze the owner chose |
 | `tailscale:auto-update` | Tailscale updates itself (`tailscale set --auto-update`), or nothing ever set it on the node, so nothing on record says whether it does (both postures). The node's own setting isn't enough: on co-replicator, tailscaled re-applied the tailnet's default, on, over `--auto-update=false` at a later boot (2026-10-06, #357). Turn it off for the tailnet too, in the admin console's auto-updates. `--post-boot` reads it again |
 | `held:<package>` | an owner's hold on a pending package |
 | `database:<name>` | a cluster database no `datastore` line names. `<name>` may be a glob, `*` and `?`, so `database:app_test*` covers a test suite's per-worker databases; an exact name wins over a glob, and the more specific glob over another (#455). No other `<what>` takes one |
@@ -140,7 +141,8 @@ The rest take no exception, because each is fixed where it is:
 - a provisioning leftover the host can fix, such as a setup script on disk that isn't contained;
 - a knob gap: an undeclared restarter (unless found only through what the scan couldn't read or a script line it matched, above), backup regime or third-party origin, or a `datastore redis` line with no user where the Redis's config sets the users, which the recovery point or the chain would refuse (`redis-login:<unit>`, #458);
 - a failing health check;
-- a pending reboot.
+- a pending reboot;
+- no run on record (`cadence:no-run`), which the next run records.
 
 ## Dormant components
 

@@ -88,8 +88,8 @@ knob_reset() {
   KNOB_PATH="" KNOB_HOST="" KNOB_TODAY="" KNOB_PRESENT=0
   KNOB_CLASS="production" KNOB_CLASS_LINE=""
   KNOB_POSTURE="automatic" KNOB_POSTURE_LINE=""
-  # #529: how often the scheduled run comes round. Read and printed only:
-  # no script checks a run against it.
+  # #529: how often the scheduled run comes round. probe.sh's read_cadence
+  # checks the last run against it (#592).
   KNOB_CADENCE="weekly" KNOB_CADENCE_LINE=""
   # #556: the bulk's span is this many times its dry run (apply.sh).
   KNOB_BULK_FACTOR="3" KNOB_BULK_FACTOR_LINE=""
