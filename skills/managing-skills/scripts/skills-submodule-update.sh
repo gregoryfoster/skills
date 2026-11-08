@@ -1260,11 +1260,12 @@ _restore_content() {
 
 # The day's lock, written by every run that ENDS — success or failure — and by
 # no run that is killed part way (#555) — except that the second in a row
-# killed inside its commit has it written by the next heal (#575). Checked,
-# not `|| true` (#193): this one write IS the once-per-day contract, and the
-# guard reads nothing else. A read-only or root-owned .git, or a full disk, and
-# the stamp never lands, the guard falls through next session, and the whole
-# refresh runs again — every session, forever, with nothing said. That is the
+# killed inside its commit or push has it written by the next heal (#575,
+# #603). Checked, not `|| true` (#193): this one write IS the once-per-day
+# contract, and the guard reads nothing else. A read-only or root-owned .git,
+# or a full disk, and the stamp never lands, the guard falls through next
+# session, and the whole refresh runs again — every session, forever, with
+# nothing said. That is the
 # defect #187 fixed in socraticode-health.sh, the script this file's pin
 # comment names as its twin; the shape is copied from it. Reported, never
 # fatal: a SessionStart hook must not block, so a failed stamp degrades to
@@ -1430,8 +1431,8 @@ _push_backed_off() {
 # kill is usually the real one, a second later. Unstaged rather than
 # committed: the lock is now spent only when a run ends, so this same session
 # redoes the bump, and nothing is committed that this run has not verified —
-# unless it is the second kill in a row inside the commit, which spends the
-# day (_count_kill, #575).
+# unless it is the second kill in a row inside the commit or push, which
+# spends the day (_count_kill, #575, #603).
 #
 # Only what the hook staged is touched, and the marker is how it knows. A
 # human's own `git add skills-vendor/<v>` — a manual bump — stages exactly the
