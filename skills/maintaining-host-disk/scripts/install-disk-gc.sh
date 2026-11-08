@@ -373,7 +373,8 @@ fi
 # the drop-ins are every *.conf across them by file name, a name in a higher
 # directory masking the same name lower down (a link to /dev/null masks with
 # nothing), all applied in C sort order, the last assignment of a key
-# winning. patching-hosts' read_journal reads it the same way (#515).
+# winning. patching-hosts' read_journal reads the drop-ins the same way
+# (#515), though its main file only from /etc.
 JOURNALD_DIRS="etc run usr/local/lib usr/lib"
 
 layer_dropin() {  # <rel>: whether it's one of the staged layer's journald drop-ins
