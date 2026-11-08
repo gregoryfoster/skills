@@ -2391,6 +2391,25 @@ _pr_refused() {
   fi
 }
 
+# _pr_nothing_left <why> — a pr refresh ends with nothing of its bump left
+# for the hook to push (CR 2018): logged, and the kill count reset. pr mode
+# makes no commit, which in direct mode resets the count for every new bump,
+# so this rule is what keeps pr mode's count per bump. Without it, a kill
+# counted against one bump stayed through a refresh that pushed nothing, and
+# the next bump's first kill backed off the day as the second in a row.
+#
+# Every refresh that concludes so ends here: main already records the bump;
+# its upstream does; main and the upstream disagree, so no bump is proposed
+# until main is pulled, and the bump after the pull is another one; a PR
+# closed unmerged declined this bump; the branch already proposes it, whoever
+# pushed it. The ways out that leave the bump pending do not reset: a refused
+# `gh`, ls-remote or fetch, a branch holding a foreign commit, and a local
+# failure building the bump. A push that returns resets the count itself.
+_pr_nothing_left() {
+  _log "pr: $1"
+  _push_returned
+}
+
 # _pr_publish <commit> <subject> — the commit onto $PR_BRANCH, and ONE pull
 # request for it.
 _pr_publish() {
@@ -2477,21 +2496,12 @@ PRS_EOF
   # Closed unmerged, the same change: a human's no. The next upstream change
   # is proposed again; .skills/skills-pin is how to hold one for good.
   if [ -z "$open" ] && [ -n "$declined" ]; then
-    _log "pr: PR #$declined proposed this same bump and was closed unmerged — not proposing it again"
+    _pr_nothing_left "PR #$declined proposed this same bump and was closed unmerged — not proposing it again"
     return 0
   fi
 
   if [ -n "$tip" ] && _pr_same_bump "$tip" "$c"; then
-    _log "pr: $PR_BRANCH already proposes this bump — nothing to push"
-    # The branch holds what the push would send, so the last push of it
-    # landed: a kill counted since fell after it returned (CR 2014). Reset,
-    # as a returned push does. pr mode has no commit to reset it, so a count
-    # left here turned one later kill into a back-off. No other way out of
-    # the pr path without a push resets: a declined PR, a refused `gh` or
-    # fetch, a branch holding a foreign commit, and a base that already
-    # records the bump (a bump by hand gets there too) say nothing of
-    # whether the hook's push landed.
-    _push_returned
+    _pr_nothing_left "$PR_BRANCH already proposes this bump — nothing to push"
   else
     # The lease is the tip just read; empty means "must not exist". Never a
     # plain --force: a push landing between the read and here is refused.
@@ -2544,7 +2554,7 @@ _pr_refresh() {
   fi
   head_tree="$(git rev-parse --verify -q 'HEAD^{tree}' 2>/dev/null || true)"
   if [ "$bumped" = "$head_tree" ]; then
-    _log "pr: nothing to propose — $BRANCH already records the refreshed pointers and doctor"
+    _pr_nothing_left "nothing to propose — $BRANCH already records the refreshed pointers and doctor"
     return 0
   fi
   # 3. The base: the default branch as the remote has it now. A fetch, never
@@ -2563,7 +2573,7 @@ _pr_refresh() {
   rc=0
   git diff --quiet --ignore-submodules=none "$base" HEAD -- "${PR_HOOK_PATHS[@]}" .skills/skills-pin 2>>"$LOG" || rc=$?
   if [ "$rc" -eq 1 ]; then
-    _log "pr: $BRANCH and $PR_UPSTREAM record different skills-vendor/ pointers, doctor or pin — no bump until $BRANCH is pulled"
+    _pr_nothing_left "$BRANCH and $PR_UPSTREAM record different skills-vendor/ pointers, doctor or pin — no bump until $BRANCH is pulled"
     echo "skills update: $BRANCH and $PR_UPSTREAM record different skills-vendor/ pointers, doctor or pin, so no bump is proposed — pull $BRANCH (or drop an unpushed bump on it), and a later session proposes any newer one (see $LOG)" >&2
     return 0
   elif [ "$rc" -ne 0 ]; then
@@ -2578,7 +2588,7 @@ _pr_refresh() {
   }
   base_tree="$(git rev-parse --verify -q "$base^{tree}" 2>/dev/null || true)"
   if [ "$tree" = "$base_tree" ]; then
-    _log "pr: nothing to propose — $PR_UPSTREAM already records this refresh"
+    _pr_nothing_left "nothing to propose — $PR_UPSTREAM already records this refresh"
     return 0
   fi
   if ! git diff --quiet --ignore-submodules=none "$base" "$tree" -- skills-vendor/ 2>/dev/null; then
