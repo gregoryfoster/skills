@@ -83,8 +83,9 @@ Behaviour:
     holds the push, which runs the repo's pre-push hooks, for the rest of
     the UTC day; a push that returns resets it. In direct mode the commit
     stays unpushed until a push fits: each UTC day's first session tries
-    once, and a suite that never fits is held again. A push by hand, or
-    .skills/refresh-skip-hooks, shares it.
+    once, and a suite that never fits is held again. A push by hand
+    shares it; .skills/refresh-skip-hooks makes the next day's try fit,
+    but once committed the knob needs that push by hand anyway.
   - Runs only on the main branch.
   - Scopes the submodule update to skills-vendor/ — never touches other
     submodules.
@@ -1343,7 +1344,7 @@ _count_kill() {
     return 0
   fi
   if [ "$MERGE_MODE" = "direct" ]; then
-    held=". This hook's commit stays unpushed on $BRANCH until a push fits: each UTC day's first session tries once, and a suite that never fits is held again. A push by hand, or that knob, shares it"
+    held=". This hook's commit stays unpushed on $BRANCH until a push fits: each UTC day's first session tries once, and a suite that never fits is held again. A push by hand shares it; that knob makes later tries fit, but once committed it needs that push by hand anyway"
   fi
   echo "skills update: $kills refreshes in a row were killed inside their commit or push, the last inside its push, so the push waits for the next UTC day rather than the next session. The push runs this repo's pre-push hooks and did not fit in the hook's 120 s default timeout: list the slow hook ids in .skills/refresh-skip-hooks to skip them on this hook's own push$held (see $LOG)" >&2 || true
   return 0
