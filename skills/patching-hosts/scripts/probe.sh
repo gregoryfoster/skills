@@ -1249,6 +1249,9 @@ read_sources() {
 # in arrays: split unquoted, a '*' in one would expand against the current
 # directory.
 THIRD_PARTY=()
+# The origins that are Ubuntu's or Canonical's own: they need no knob
+# policy, and carry no exposure (CR 1959).
+FIRST_PARTY_ORIGINS="Ubuntu UbuntuESM UbuntuESMApps Canonical"
 read_origins() {
   local out line v os="" oa="" osite third po seen="" third_seen=""
   local -a kv=()
@@ -1272,7 +1275,7 @@ read_origins() {
         if [ -n "$os$oa" ] && [ "$oa" != now ] && ! in_words "${os// /_}|$oa|$osite" "$seen"; then
           seen="$seen ${os// /_}|$oa|$osite"
           third=1
-          case $os in Ubuntu | UbuntuESM | UbuntuESMApps | Canonical) third=0 ;; esac
+          if in_words "$os" "$FIRST_PARTY_ORIGINS"; then third=0; fi
           po=""
           jaddsn po origin "$os"
           jaddsn po archive "$oa"
@@ -1582,11 +1585,21 @@ read_tailscale() {
   R_TAILSCALE="{$R_TAILSCALE}"
 }
 
-# The last run, from local facts only (#592): the newest run directory,
-# /var/backups/patching-hosts-<UTC> as apply.sh and recovery-point.sh name
-# it, and the marker a run with nothing pending writes (run.md), whichever
-# is newer. Never the knob's records: a probe needs no gh and no network.
+# The last run, from local facts only (#592): never the knob's records, so
+# a probe needs no gh and no network. A run directory,
+# /var/backups/patching-hosts-<UTC>, is named for when it was made, which on
+# a datastore host is the recovery point's start, before the window (CR
+# 1956). So a directory dates a run by the bulk's own line in its steps,
+# which apply.sh appends once the bulk has started, with that start; or, for
+# a reboot-only run, whose directory is made by hand, by the fire time
+# reboot-chain.sh records in reboot-chain.unit. A directory with neither is
+# a recovery point whose bulk never started: no run. A run with nothing
+# pending writes the marker instead (run.md). The newest of them all is the
+# last run.
 RUN_MARKER=/var/backups/patching-hosts-last-reading
+# A stamp further past the probe's clock than this is a clock or a typo,
+# never the last run (CR 1960); one within it is taken as now.
+RUN_CLOCK_SLACK_S=3600
 stamp_epoch() {  # <var> <YYYYMMDDTHHMMSSZ>: VAR := its seconds since 1970, or empty when it isn't one
   local _se_v=$1 _se_y _se_mo _se_d _se_h _se_mi _se_s _se_day
   local re='^([0-9]{4})([0-9]{2})([0-9]{2})T([0-9]{2})([0-9]{2})([0-9]{2})Z$'
@@ -1600,36 +1613,73 @@ stamp_epoch() {  # <var> <YYYYMMDDTHHMMSSZ>: VAR := its seconds since 1970, or e
   printf -v "$_se_v" '%s' "$((_se_day * 86400 + _se_h * 3600 + _se_mi * 60 + _se_s))"
 }
 
+# When the run in one directory took place: RUN_AT, or empty when it holds
+# no bulk line and no chain. RUN_UNREAD=1 when neither file could be looked
+# for: no root, and a directory the user can't enter.
+run_at() {  # <directory>
+  local _ra_o _ra_s _ra_r _ra_at _ra_rest _ra_u
+  RUN_AT="" RUN_UNREAD=0
+  capture _ra_o as_reader cat -- "$1/steps"
+  if [ "$CAP_RC" -eq 0 ]; then
+    while read -r _ra_s _ra_r _ra_at _ra_rest; do
+      if [ "$_ra_s" = bulk ] && [[ $_ra_at =~ ^[0-9]+$ ]]; then RUN_AT=$_ra_at; fi
+    done <<<"$_ra_o"
+  fi
+  [ -z "$RUN_AT" ] || return 0
+  capture _ra_o as_reader cat -- "$1/reboot-chain.unit"
+  if [ "$CAP_RC" -eq 0 ]; then
+    read -r _ra_u _ra_at <<<"$_ra_o" || true
+    _ra_at=${_ra_at//[-:]/}
+    stamp_epoch RUN_AT "$_ra_at"
+  fi
+  if [ -z "$RUN_AT" ] && [ "$P_PRIV" = none ] && [ ! -x "$1" ]; then RUN_UNREAD=1; fi
+  return 0
+}
+
 # A scheduled host's weekday and #N windows that closed since its last run.
-# A dated window is a one-off, and missing it isn't overdue. Under monthly,
-# a plain weekday window is one of a month's several, so it counts only once
-# it opens more than 31 days after the last run: with windows a week apart,
-# the first past a month. automatic has no window to miss.
-CADENCE_MONTH_S=$((31 * 86400))
+# A dated window is a one-off, and missing it isn't overdue. A host's window
+# lines are alternatives, when a run may happen, so a window counts only
+# once it opens most of a period after the last run (CR 1957): under weekly,
+# more than 6 days after; under monthly, a #N window more than 21 days
+# after, and a plain weekday window, one of a month's several, more than 31.
+# automatic has no window to miss.
+CADENCE_WEEK_S=$((6 * 86400)) CADENCE_MONTH_WEEK_S=$((21 * 86400)) CADENCE_MONTH_S=$((31 * 86400))
 R_CADENCE=""
 read_cadence() {
-  local t e last="" from="" m="" r ws we len wd d os oe md missed="" first="" why="" recurring=0 iso
+  local t e last="" from="" m="" r ws we len wd d os oe md missed="" first="" why="" recurring=0 iso floor unread=""
   local -a f=()
   for t in "$P_ROOT"/var/backups/patching-hosts-2*; do
     [ -d "$t" ] || continue
     stamp_epoch e "${t##*/patching-hosts-}"
-    if [ -n "$e" ] && { [ -z "$last" ] || [ "$e" -gt "$last" ]; }; then last=$e from=${t#"$P_ROOT"}; fi
+    [ -n "$e" ] || continue
+    run_at "$t"
+    if [ "$RUN_UNREAD" -eq 1 ]; then
+      not_read "the run directory ${t#"$P_ROOT"}: its steps and reboot-chain.unit can't be read without root, so whether it holds a run, and when, is unknown"
+      unread="$unread ${t#"$P_ROOT"}"
+      continue
+    fi
+    [ -n "$RUN_AT" ] || continue
+    if [ "$RUN_AT" -gt $((P_NOW + RUN_CLOCK_SLACK_S)) ]; then
+      iso_utc iso "$RUN_AT"
+      not_read "the run in ${t#"$P_ROOT"}: it's dated $iso, past the probe's clock, so it isn't counted"
+      continue
+    fi
+    [ "$RUN_AT" -le "$P_NOW" ] || RUN_AT=$P_NOW
+    if [ -z "$last" ] || [ "$RUN_AT" -gt "$last" ]; then last=$RUN_AT from=${t#"$P_ROOT"}; fi
   done
   if [ -e "$P_ROOT$RUN_MARKER" ]; then
-    if [ -r "$P_ROOT$RUN_MARKER" ]; then
-      IFS= read -r m <"$P_ROOT$RUN_MARKER" || true
-      CAP_RC=0
-    else
-      capture m as_root head -n 1 -- "$P_ROOT$RUN_MARKER"
-    fi
+    capture m as_reader head -n 1 -- "$P_ROOT$RUN_MARKER"
     trim m "$m"
     stamp_epoch e "$m"
     if [ "$CAP_RC" -ne 0 ]; then
       not_read "the run marker $RUN_MARKER: it couldn't be read, so it isn't counted"
     elif [ -z "$e" ]; then
       not_read "the run marker $RUN_MARKER: its first line isn't a UTC stamp, YYYYMMDDTHHMMSSZ, so it isn't counted"
-    elif [ -z "$last" ] || [ "$e" -gt "$last" ]; then
-      last=$e from=$RUN_MARKER
+    elif [ "$e" -gt $((P_NOW + RUN_CLOCK_SLACK_S)) ]; then
+      not_read "the run marker $RUN_MARKER: it's dated $m, past the probe's clock, so it isn't counted"
+    else
+      [ "$e" -le "$P_NOW" ] || e=$P_NOW
+      if [ -z "$last" ] || [ "$e" -gt "$last" ]; then last=$e from=$RUN_MARKER; fi
     fi
   fi
   for r in ${KNOB_WINDOW[@]+"${KNOB_WINDOW[@]}"}; do
@@ -1640,32 +1690,37 @@ read_cadence() {
     why="posture $KNOB_POSTURE: the apt timers patch daily, and there's no window to miss"
   elif [ "$recurring" -eq 0 ]; then
     why="no weekday or #N window says when a run is due, and a dated window is a one-off"
+  elif [ -n "$unread" ]; then
+    why="a run directory's records couldn't be read without root:$unread"
   elif [ -z "$last" ]; then
     why="no run on record"
-    finding unknown cadence:no-run "" "No run is on record: no /var/backups/patching-hosts-<UTC> directory and no $RUN_MARKER marker, so whether a $KNOB_CADENCE window was missed can't be read. A retention sweep that removed every run directory reads the same. Read the last run in the host's records; the next run records one again, and so does one with nothing pending (run.md)."
+    finding unknown cadence:no-run "" "No run is on record: no /var/backups/patching-hosts-<UTC> directory holds a bulk that started or a reboot chain, and there's no $RUN_MARKER marker, so whether a $KNOB_CADENCE window was missed can't be read. A retention sweep that removed every run directory reads the same. Read the last run in the host's records; the next run records one again, and so does one with nothing pending, which writes the marker (run.md)."
   else
     missed=0
     for r in ${KNOB_WINDOW[@]+"${KNOB_WINDOW[@]}"}; do
       IFS=$KNOB_US read -r -a f <<<"$r"
       [ -z "${f[6]}" ] || continue
+      floor=$CADENCE_WEEK_S
+      if [ "$KNOB_CADENCE" = monthly ]; then
+        floor=$CADENCE_MONTH_S
+        [ -z "${f[5]}" ] || floor=$CADENCE_MONTH_WEEK_S
+      fi
       ws=$((10#${f[1]%%:*} * 3600 + 10#${f[1]##*:} * 60))
       we=$((10#${f[2]%%:*} * 3600 + 10#${f[2]##*:} * 60))
       len=$((we - ws))
       [ "${f[3]}" -eq 0 ] || len=$((len + 86400))
       case ${f[0]} in Mon) wd=0 ;; Tue) wd=1 ;; Wed) wd=2 ;; Thu) wd=3 ;; Fri) wd=4 ;; Sat) wd=5 ;; *) wd=6 ;; esac
-      # The first such weekday on or after the last run's day: 1970-01-01
-      # was a Thursday, so (day + 3) % 7 is 0 on a Monday.
-      d=$((last / 86400))
+      # The first such weekday on or after the floor's day: 1970-01-01 was
+      # a Thursday, so (day + 3) % 7 is 0 on a Monday.
+      d=$(((last + floor) / 86400))
       d=$((d + (wd - (d + 3) % 7 + 7) % 7))
       while os=$((d * 86400 + ws)) && [ "$os" -le "$P_NOW" ]; do
         oe=$((os + len))
         d=$((d + 7))
-        if [ "$os" -le "$last" ] || [ "$oe" -gt "$P_NOW" ]; then continue; fi
+        if [ "$os" -le $((last + floor)) ] || [ "$oe" -gt "$P_NOW" ]; then continue; fi
         if [ -n "${f[5]}" ]; then
           knob_mday md "$((os / 86400))"
           [ $(((md - 1) / 7 + 1)) -eq "${f[5]}" ] || continue
-        elif [ "$KNOB_CADENCE" = monthly ] && [ "$os" -le $((last + CADENCE_MONTH_S)) ]; then
-          continue
         fi
         missed=$((missed + 1))
         if [ -z "$first" ] || [ "$os" -lt "$first" ]; then first=$os; fi
@@ -1686,7 +1741,7 @@ read_cadence() {
     [ "$missed" -ne 1 ] || s=""
     iso_utc lr "$last"
     iso_utc fm "$first"
-    finding deviation cadence:overdue cadence:overdue "No run since $lr ($from): $missed window$s of this $KNOB_CADENCE host closed since with none, the first $fm (knob.md). A scheduled host is patched only when someone starts its run: run it in the next window, or declare a freeze the owner chose as exception cadence:overdue <review-by> <reason>."
+    finding deviation cadence:overdue cadence:overdue "No run since $lr ($from): $missed window$s of this $KNOB_CADENCE host closed since with none, the first $fm (knob.md). A scheduled host is patched only when someone starts its run: run it in the next window, or declare a freeze the owner chose as exception cadence:overdue <review-by> <reason>. A run that found nothing pending counts only once it writes the marker $RUN_MARKER (run.md, A run with nothing pending)."
   fi
 }
 
@@ -3196,17 +3251,28 @@ read_maps() {
 # can't be read, doesn't. The map matches shared objects only, so a runtime
 # that's one executable with none of its own (NodeSource's node) isn't seen.
 check_exposure() {
-  local e u p c i j n key pol val s
+  local e u p c i j n key pol val s tpm=" " seen=" "
   local -a eo=() eu=() ep=() f=()
+  # Each third-party package's origin, built once: a lookup per pair over
+  # every pending package cost seconds on bash 3.2 at a few thousand pairs
+  # (CR 1962). An origin the knob can't name, a first party one, is left out
+  # (CR 1959). Neither a package name nor a class holds a space.
+  for i in ${PK_NAME[@]+"${!PK_NAME[@]}"}; do
+    c=${PK_CLASS[$i]}
+    case $c in third-party:?*) c=${c#third-party:} ;; *) continue ;; esac
+    if in_words "${c//_/ }" "$FIRST_PARTY_ORIGINS"; then continue; fi
+    tpm="$tpm${PK_NAME[$i]}|$c "
+  done
+  [ -n "${tpm// /}" ] || return 0
   for e in $MAPS_PAIRS; do
     u=${e%%|*} p=${e#*|}
     p=${p%%|*}
     case $u in *.service) ;; *) continue ;; esac
-    c=""
-    for i in ${PK_NAME[@]+"${!PK_NAME[@]}"}; do
-      if [ "${PK_NAME[$i]}" = "$p" ]; then c=${PK_CLASS[$i]}; break; fi
-    done
-    case $c in third-party:?*) c=${c#third-party:} ;; *) continue ;; esac
+    case $seen in *" $u|$p "*) continue ;; esac
+    seen="$seen$u|$p "
+    case $tpm in *" $p|"*) ;; *) continue ;; esac
+    c=${tpm#*" $p|"}
+    c=${c%% *}
     j=""
     for i in ${eo[@]+"${!eo[@]}"}; do
       if [ "${eo[$i]}" = "$c" ]; then j=$i; fi
