@@ -50,6 +50,19 @@ The install, as root:
 A run that fails before step 5 leaves the old MANIFEST (or none) in place,
 so a re-run sees the same plan and finishes it.
 
+It reports, and never refuses, a host's own journald setting the layer's
+drop-in meets (journald_overrides). journald reads its main file (the first
+of /etc, /run, /usr/local/lib and /usr/lib's systemd/journald.conf), then
+every journald.conf.d/*.conf in those directories by file name: a name in a
+higher directory masks the same name lower down, and among different names
+the later one wins each key. So the layer's zz- drop-in outranks a host's
+lower cap in its main file or under a name sorting before it, and a file of
+the layer's own name in /etc masks the layer's. Each entry is a host file
+that sets a key the layer's drop-in sets: file, key, host (its value), layer
+(the layer's), before and after (the value in effect now, and once this run
+lands; null when nothing sets it). The layer's file names and keys are read
+from the staged copy; null on a refusal.
+
 It never touches /etc/cannobserv/disk-gc/ (the host's disk-gc.conf and
 checkin.key), the GC's state under /var/lib, or a timer it keeps: an
 enabled timer stays enabled, and a new install leaves both off. Only a unit
@@ -83,8 +96,8 @@ Paths may hold only [A-Za-z0-9._+@/-].
 
 Output (stdout, JSON): ok, action, applied, root, staging,
 installed_version, staged_version, interrupted, files, removed,
-journald_restart, systemctl (the calls, made or planned), systemctl_ran,
-refused, failed.
+journald_restart, journald_overrides, systemctl (the calls, made or
+planned), systemctl_ran, refused, failed.
 
 Exit codes:
   0  planned, done, or already current
@@ -150,7 +163,7 @@ contains() {
 # Everything emit reads, set before anything can fail.
 S_PATHS=() S_HASHES=() S_VER="" I_PATHS=() I_HASHES=() I_VER=""
 ACTION=install INTERRUPTED=false REMOVED=() JRESTART=0
-APPLIED=false FAILED_WHY=""
+APPLIED=false FAILED_WHY="" J_OVERRIDES=null
 emit() {
   local ok=true iv=null sv=null ran=false
   [ ${#REFUSED[@]} -eq 0 ] && [ -z "$FAILED_WHY" ] || ok=false
@@ -164,6 +177,7 @@ emit() {
   printf '  "files": %s,\n' "$(json_list ${S_PATHS[@]+"${S_PATHS[@]}"})"
   printf '  "removed": %s,\n' "$(json_list ${REMOVED[@]+"${REMOVED[@]}"})"
   printf '  "journald_restart": %s,\n' "$([ "$JRESTART" = 1 ] && echo true || echo false)"
+  printf '  "journald_overrides": %s,\n' "$J_OVERRIDES"
   printf '  "systemctl": %s,\n  "systemctl_ran": %s,\n' "$(json_list ${SYSTEMCTL_CALLS[@]+"${SYSTEMCTL_CALLS[@]}"})" "$ran"
   printf '  "refused": %s,\n' "$(json_list ${REFUSED[@]+"${REFUSED[@]}"})"
   if [ -n "$FAILED_WHY" ]; then printf '  "failed": %s\n}\n' "$(json_str "$FAILED_WHY")"; else printf '  "failed": null\n}\n'; fi
@@ -352,6 +366,194 @@ if [ "$ACTION" = reinstall ] || [ "$INTERRUPTED" = true ]; then
   done
 fi
 
+# --- what a host's own journald settings become (#604) ------------------------
+
+# journald's rule, as systemd-analyze cat-config reads it on systemd 249 and
+# 255: the main file is the first of the four directories that has one, and
+# the drop-ins are every *.conf across them by file name, a name in a higher
+# directory masking the same name lower down (a link to /dev/null masks with
+# nothing), all applied in C sort order, the last assignment of a key
+# winning. patching-hosts' read_journal reads the drop-ins the same way
+# (#515), though its main file only from /etc.
+JOURNALD_DIRS="etc run usr/local/lib usr/lib"
+
+layer_dropin() {  # <rel>: whether it's one of the staged layer's journald drop-ins
+  case "$1" in
+    "$JOURNALD_DIR"*/*) return 1 ;;
+    "$JOURNALD_DIR"*.conf) contains "$1" ${S_PATHS[@]+"${S_PATHS[@]}"} ;;
+    *) return 1 ;;
+  esac
+}
+
+# journald_files <after>: J_SRC, J_SHOW and J_HOST := the files journald
+# reads, in its order: the file to read, its path on the host, and 1 for the
+# host's own, 0 for one the layer installs or did. With <after> 1, as they
+# will be once this run lands: the layer's drop-ins read from the staged
+# copy, and any it drops gone. A name holding a tab or a newline is passed
+# over: no host names a drop-in so, and the report couldn't carry it.
+journald_files() {
+  local after=$1 d dir rel f n i seen=$'\n' order
+  local -a here=() names=() srcs=() shows=() hosts=()
+  J_SRC=() J_SHOW=() J_HOST=()
+  for d in $JOURNALD_DIRS; do
+    rel=$d/systemd/journald.conf
+    if [ -e "$R/$rel" ] || [ -L "$R/$rel" ]; then
+      if [ -f "$R/$rel" ]; then J_SRC+=("$R/$rel") J_SHOW+=("/$rel") J_HOST+=(1); fi
+      break
+    fi
+  done
+  for d in $JOURNALD_DIRS; do
+    dir=$d/systemd/journald.conf.d
+    here=()
+    for f in "$R/$dir"/*.conf; do
+      if [ -e "$f" ] || [ -L "$f" ]; then here+=("${f##*/}"); fi
+    done
+    if [ "$after" = 1 ]; then
+      for rel in ${S_PATHS[@]+"${S_PATHS[@]}"}; do
+        if layer_dropin "$rel" && [ "${rel%/*}" = "$dir" ]; then here+=("${rel##*/}"); fi
+      done
+    fi
+    for n in ${here[@]+"${here[@]}"}; do
+      case $n in *$'\t'* | *$'\n'*) continue ;; esac
+      case $seen in *$'\n'"$n"$'\n'*) continue ;; esac
+      rel=$dir/$n
+      # One this run removes masks nothing once it's gone.
+      if [ "$after" = 1 ] && contains "$rel" ${REMOVED[@]+"${REMOVED[@]}"}; then continue; fi
+      seen="$seen$n"$'\n'
+      f=$R/$rel
+      if [ "$after" = 1 ] && layer_dropin "$rel"; then f=$STAGED/$rel; fi
+      [ -f "$f" ] || continue
+      names+=("$n") srcs+=("$f") shows+=("/$rel")
+      if contains "$rel" ${S_PATHS[@]+"${S_PATHS[@]}"} ${I_PATHS[@]+"${I_PATHS[@]}"}; then
+        hosts+=(0)
+      else
+        hosts+=(1)
+      fi
+    done
+  done
+  [ ${#names[@]} -gt 0 ] || return 0
+  order=$(for i in "${!names[@]}"; do printf '%s\t%s\n' "${names[$i]}" "$i"; done |
+    LC_ALL=C sort -t $'\t' -k1,1 | cut -f2)
+  for i in $order; do
+    J_SRC+=("${srcs[$i]}") J_SHOW+=("${shows[$i]}") J_HOST+=("${hosts[$i]}")
+  done
+}
+
+trim() {  # <var> <text>: VAR := text without its leading and trailing whitespace
+  local _t=$2
+  _t=${_t#"${_t%%[![:space:]]*}"}
+  _t=${_t%"${_t##*[![:space:]]}"}
+  printf -v "$1" '%s' "$_t"
+}
+
+# journald_keys <file>: J_KEYS := each key the file's [Journal] section
+# assigns, once each, in order; J_VALS := each one's last value. Comments
+# start with # or ;, and whitespace around the key and the value goes, as
+# systemd's parser has it.
+journald_keys() {
+  local line k v sect="" i found
+  J_KEYS=() J_VALS=()
+  while IFS= read -r line || [ -n "$line" ]; do
+    trim line "$line"
+    case $line in
+      '' | '#'* | ';'*) continue ;;
+      '['*']') sect=$line; continue ;;
+      *=*) ;;
+      *) continue ;;
+    esac
+    [ "$sect" = '[Journal]' ] || continue
+    trim k "${line%%=*}"
+    trim v "${line#*=}"
+    # The report carries both as JSON strings, which json_str doesn't
+    # escape control characters for.
+    k=${k//[[:cntrl:]]/?} v=${v//[[:cntrl:]]/?}
+    found=""
+    for i in ${J_KEYS[@]+"${!J_KEYS[@]}"}; do
+      if [ "${J_KEYS[$i]}" = "$k" ]; then J_VALS[i]=$v found=1; fi
+    done
+    if [ -z "$found" ]; then J_KEYS+=("$k") J_VALS+=("$v"); fi
+  done <"$1"
+}
+
+key_value() {  # <var> <key>: VAR := KEY's value in what journald_keys read; 1 when it has none
+  local i
+  for i in ${J_KEYS[@]+"${!J_KEYS[@]}"}; do
+    if [ "${J_KEYS[$i]}" = "$2" ]; then
+      printf -v "$1" '%s' "${J_VALS[$i]}"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# effective <key> <file>...: KEY's value in effect, as JSON: its last
+# assignment across the files, read in order; null when none sets it.
+effective() {
+  local key=$1 f v out=null
+  shift
+  for f in "$@"; do
+    journald_keys "$f"
+    if key_value v "$key"; then out=$(json_str "$v"); fi
+  done
+  printf '%s\n' "$out"
+}
+
+# J_OVERRIDES := each host file journald reads, now or once this run lands,
+# that sets a key the layer's drop-ins set, with that key's value in effect
+# before and after. It reports; a lower cap is the host's decision.
+journald_overrides() {
+  local rel i j k v before after
+  local -a layers=() lk=() lv=() hf=() hs=() bsrc=() asrc=() entries=()
+  for rel in ${S_PATHS[@]+"${S_PATHS[@]}"}; do
+    if layer_dropin "$rel"; then layers+=("$rel"); fi
+  done
+  # The layer's keys, and its value for each, from its drop-ins in name order.
+  if [ ${#layers[@]} -gt 0 ]; then
+    while IFS= read -r rel; do
+      journald_keys "$STAGED/$rel"
+      for i in ${J_KEYS[@]+"${!J_KEYS[@]}"}; do
+        j=""
+        for k in ${lk[@]+"${!lk[@]}"}; do
+          if [ "${lk[$k]}" = "${J_KEYS[$i]}" ]; then j=$k; fi
+        done
+        if [ -n "$j" ]; then lv[j]=${J_VALS[$i]}; else lk+=("${J_KEYS[$i]}") lv+=("${J_VALS[$i]}"); fi
+      done
+    done < <(printf '%s\n' "${layers[@]}" | LC_ALL=C sort)
+  fi
+  # The host's files: those read once this run lands, then any read only
+  # now (one in /usr/lib under the layer's own name, which it will mask).
+  journald_files 1
+  asrc=(${J_SRC[@]+"${J_SRC[@]}"})
+  for i in ${J_SRC[@]+"${!J_SRC[@]}"}; do
+    if [ "${J_HOST[$i]}" = 1 ]; then hf+=("${J_SRC[$i]}") hs+=("${J_SHOW[$i]}"); fi
+  done
+  journald_files 0
+  bsrc=(${J_SRC[@]+"${J_SRC[@]}"})
+  for i in ${J_SRC[@]+"${!J_SRC[@]}"}; do
+    if [ "${J_HOST[$i]}" = 1 ] && ! contains "${J_SHOW[$i]}" ${hs[@]+"${hs[@]}"}; then
+      hf+=("${J_SRC[$i]}") hs+=("${J_SHOW[$i]}")
+    fi
+  done
+  for k in ${lk[@]+"${!lk[@]}"}; do
+    before=$(effective "${lk[$k]}" ${bsrc[@]+"${bsrc[@]}"})
+    after=$(effective "${lk[$k]}" ${asrc[@]+"${asrc[@]}"})
+    for i in ${hf[@]+"${!hf[@]}"}; do
+      journald_keys "${hf[$i]}"
+      key_value v "${lk[$k]}" || continue
+      entries+=("{\"file\": $(json_str "${hs[$i]}"), \"key\": $(json_str "${lk[$k]}"), \"host\": $(json_str "$v"), \"layer\": $(json_str "${lv[$k]}"), \"before\": $before, \"after\": $after}")
+      if [ "$after" != "$(json_str "$v")" ]; then
+        echo "install-disk-gc: note: ${hs[$i]} sets ${lk[$k]}=$v, and once this run lands $after is in effect (journald_overrides)" >&2
+      fi
+    done
+  done
+  J_OVERRIDES="["
+  for i in ${entries[@]+"${!entries[@]}"}; do
+    [ "$i" = 0 ] || J_OVERRIDES="$J_OVERRIDES, "
+    J_OVERRIDES="$J_OVERRIDES${entries[$i]}"
+  done
+  J_OVERRIDES="$J_OVERRIDES]"
+}
+
 # --- report, and act ------------------------------------------------------------
 
 
@@ -360,6 +562,7 @@ if [ ${#REFUSED[@]} -gt 0 ]; then
   emit
   exit 3
 fi
+journald_overrides
 if [ "$APPROVE" = 0 ]; then
   if [ "$ACTION" != current ]; then
     for u in ${DROPPED_UNITS[@]+"${DROPPED_UNITS[@]}"}; do SYSTEMCTL_CALLS+=("disable --now $u"); done

@@ -29,12 +29,18 @@ RETIRE_LIST = (
     ("power-map", "check_disk_headroom.py", ("check_disk_headroom.py",)),
     ("broker", "prune_editor_builds.sh", ("prune_editor_builds.sh",)),
 )
-BY_HAND = (
+# Entries with no fixed name to match, left to the operator: none today.
+BY_HAND = ()
+# Entries whose repo has retired its tool already, as (repo, implementation,
+# note naming the issue that did). Nothing matches them: a host restored from
+# an older image shows the old units only among the candidates, if their
+# names look like disk tooling. observo's units had fixed names; it's a
+# private repo, so they aren't named here (#558).
+RETIRED = (
     (
         "observo",
         "cache timers",
-        "no fixed unit or script name to match: list observo's timers and read "
-        "each one's ExecStart by hand",
+        "retired 2026-10-28 in CannObserv/observo#705, which adopted the canonical GC",
     ),
 )
 # Units LOOKALIKE would offer that are known not to be disk tooling, as

@@ -10,8 +10,8 @@ Six hosts built their own GC before the canonical one existed (inventoried in Ca
 | address-validator | `disk-hygiene.sh` | `disk-hygiene.sh` | tracked in CannObserv/address-validator#326 |
 | address-validator | `docker-prune` | `docker-prune`, `docker-prune.sh` | once the `docker` tier covers it ([below](#docker)) |
 | watcher | `cleanup.sh` | `cleanup.sh` | |
-| observo | its cache timers | by hand | no fixed name to match |
-| usa-wa | `disk-gc.sh` | `disk-gc.sh` | not the canonical `disk-gc`, which has no `.sh` |
+| observo | its cache timers | retired | retired 2026-10-28 in CannObserv/observo#705 (a private repo), which adopted the canonical GC |
+| usa-wa | `disk-gc.sh` | `disk-gc.sh` | not the canonical `disk-gc`, which has no `.sh`; retired 2026-11-05 (CannObserv/usa-wa#508, [the worked example](#what-stays-by-hand)), and still matched, for a host restored from an older image |
 | power-map | `prune_disk.py` | `prune_disk.py` | |
 | power-map | `check_disk_headroom.py` | `check_disk_headroom.py` | its lines were 85/80 (observed 2026-10-24, not re-verified: `systemctl cat` its headroom unit): `alert_at_percent = 85` with the default clear line |
 | broker | `scripts/prune_editor_builds.sh` | `prune_editor_builds.sh` | from #482; [editor-builds.md](editor-builds.md) |
@@ -41,6 +41,8 @@ The check finds where an old tool runs. It can't read an arbitrary script and sa
 5. **Is its cadence faster than daily?** Then the canonical timer needs a drop-in, timer first and monitor second ([turning-on.md](turning-on.md#the-cadence)).
 
 Answer each in the host's adoption issue, then disable and remove the old units in the same change that enables the canonical timers.
+
+**The worked example** is CannObserv/usa-wa#508. [Part 1](https://github.com/CannObserv/usa-wa/issues/508#issuecomment-6669857450) ran the check beside the GC's report. It found the old timer and its service, and the report was a superset of the old tool's. [Part 2](https://github.com/CannObserv/usa-wa/issues/508#issuecomment-6672116232) was one change: the old units removed, close (a)'s drop-in, a journald mask, both timers enabled, and the check run again, finding nothing.
 
 ### The nine rules
 
