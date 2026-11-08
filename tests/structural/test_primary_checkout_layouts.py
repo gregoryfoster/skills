@@ -405,6 +405,10 @@ def test_the_deploy_reference_says_where_a_separate_git_dir_primary_is_read():
     assert "exits 2 and says to run from the primary itself" in text
     # CR 1999 and CR 1998: the git it needs, and the store it doesn't cover.
     assert "needs git 2.31 or later" in text
+    # CR 2008: below about 2.25 the store is listed as bare, which is no
+    # exit 2: the old claim that older git always "says so" was false.
+    assert "below about 2.25 git lists such a store as bare" in text
+    assert "and says so" not in text
     assert "A store whose path ends in `/.git` isn't covered." in text
 
 
