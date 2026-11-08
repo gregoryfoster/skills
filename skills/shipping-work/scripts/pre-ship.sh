@@ -254,13 +254,16 @@ fi
 # runs with GIT_LITERAL_PATHSPECS=0 and explicit glob magic (CR 1861): `git
 # --literal-pathspecs` exports the literal setting to hooks, and `--glob-` or
 # `--noglob-pathspecs` the others, and under any of them a bare pattern lists
-# less, or nothing, with exit 0.
+# less, or nothing, with exit 0. And with GIT_ICASE_PATHSPECS=0 (CR 2005):
+# `--icase-pathspecs` exports it as 1, glob magic doesn't override it, and a
+# Plugins/X/ or a .PHP file then matched, where the old case-sensitive globs
+# never did.
 nested_dirs() {
   local manifest=$1 parent f
   NESTED_DIRS=()
   for parent in themes plugins; do
     LS_RC=0
-    GIT_LITERAL_PATHSPECS=0 git ls-files -z -- ":(glob)$parent/*/$manifest" >"$TMP/nested" 2>"$TMP/nested.err" || LS_RC=$?
+    GIT_LITERAL_PATHSPECS=0 GIT_ICASE_PATHSPECS=0 git ls-files -z -- ":(glob)$parent/*/$manifest" >"$TMP/nested" 2>"$TMP/nested.err" || LS_RC=$?
     if [[ $LS_RC -ne 0 ]]; then
       echo "ERROR: git ls-files failed (exit $LS_RC) listing $parent/*/$manifest:" >&2
       cat "$TMP/nested.err" >&2
@@ -348,7 +351,7 @@ if [[ ${#NPM_RUN_SCRIPTS[@]} -gt 0 ]]; then need npm "declares npm scripts"; fi
 TRACKED_PHP=()
 if [[ $COMPOSER -eq 1 ]]; then
   LS_RC=0
-  GIT_LITERAL_PATHSPECS=0 git ls-files -z -- ':(glob)**/*.php' >"$TMP/php" 2>"$TMP/php.err" || LS_RC=$?
+  GIT_LITERAL_PATHSPECS=0 GIT_ICASE_PATHSPECS=0 git ls-files -z -- ':(glob)**/*.php' >"$TMP/php" 2>"$TMP/php.err" || LS_RC=$?
   if [[ $LS_RC -ne 0 ]]; then
     echo "ERROR: git ls-files failed (exit $LS_RC):" >&2
     cat "$TMP/php.err" >&2
