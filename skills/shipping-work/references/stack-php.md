@@ -19,6 +19,11 @@ code is its own repo's to gate.
 `php -l` runs in parallel on the gate's worker count (one job on a 2-vCPU
 machine). `PRE_SHIP_PHP_LINT_JOBS=N` overrides it for a very large monorepo.
 
+`php -l` lints the PHP files this repo tracks. `php -l` stops at a
+submodule: a theme or plugin vendored as one is its own repo, and a
+submodule's PHP is linted by its own repo's gate
+([#591](https://github.com/gregoryfoster/skills/issues/591)).
+
 ## Bedrock layouts
 
 `composer validate` looks for theme and plugin `composer.json` files under

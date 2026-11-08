@@ -342,7 +342,9 @@ if [[ ${#NPM_RUN_SCRIPTS[@]} -gt 0 ]]; then need npm "declares npm scripts"; fi
 
 # Tracked PHP files, captured with git's own status so a failing ls-files can
 # never read as "no PHP to lint". `**/` matches the root too, as the bare
-# `*.php` it replaces did (CR 1861).
+# `*.php` it replaces did (CR 1861). No --recurse-submodules, on purpose
+# (#591, the operator's decision): a submodule's PHP is linted by its own
+# repo's gate, as the nested manifests above stop at a submodule too.
 TRACKED_PHP=()
 if [[ $COMPOSER -eq 1 ]]; then
   LS_RC=0
