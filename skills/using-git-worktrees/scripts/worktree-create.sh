@@ -536,7 +536,7 @@ worktree_venv_mode() {
 if [[ -e "$PROJECT_ROOT/.venv/bin/activate" && ! -e "$WORKTREE_PATH/.venv" && ! -L "$WORKTREE_PATH/.venv" ]]; then
   # Resolved here rather than up front so a repo with no venv pays none of it,
   # and so a malformed knob warns only where it would have changed something.
-  VENV_MODE=$(worktree_venv_mode)
+  VENV_MODE=$(worktree_venv_mode) || VENV_MODE=unresolved
   if [[ "$VENV_MODE" == "none" ]]; then
     # Announced, never silent. An absent .venv is also the signature of the
     # #156 bug this linker fixes, so the operator standing in a fresh worktree
