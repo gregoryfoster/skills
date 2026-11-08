@@ -83,8 +83,9 @@ Behaviour:
     holds the push, which runs the repo's pre-push hooks, for the rest of
     the UTC day; a push that returns resets it. In direct mode the commit
     stays unpushed until a push fits: each UTC day's first session tries
-    once, and a suite that never fits is held again. A push by hand, or
-    .skills/refresh-skip-hooks, shares it.
+    once, and a suite that never fits is held again. A push by hand
+    shares it; .skills/refresh-skip-hooks makes the next day's try fit,
+    but once committed the knob needs that push by hand anyway.
   - Runs only on the main branch.
   - Scopes the submodule update to skills-vendor/ — never touches other
     submodules.
@@ -184,8 +185,9 @@ LOG="$gitdir/skills-update.log"
 STAGING="$gitdir/skills-update.staging"
 # Runs killed inside their commit or their push, in a row (#575, #603): one
 # line, `<count> <the last one's owner line>`. Written by the heal, removed by
-# a run whose commit or push returns, landed or refused (CR 1900). While a
-# push is in flight, a second line names it, `push <its owner line>`
+# a run whose commit or push returns, landed or refused (CR 1900), and by a
+# pr refresh with nothing of its bump left to push (_pr_nothing_left). While
+# a push is in flight, a second line names it, `push <its owner line>`
 # (_push_begin). See _count_kill and _heal_push.
 COMMIT_KILLS="$gitdir/skills-update.commit-kills"
 # How long a marker's owner can be believed alive (CR 1789): the hook's 120 s
@@ -860,9 +862,10 @@ _reconcile_unpushed() {
   # Backed off (#603): two or more runs in a row were killed inside their
   # commit or push, and _count_kill has spent today's lock. That lock gates
   # the refresh, and this push runs ahead of it, so it reads the back-off
-  # here. Not rolled back: the commit stays, unpushed, for the next UTC day's
-  # session (or a push by hand) to share, as it did while every session
-  # pushed it and was killed. Blocked, as every refusal here is.
+  # here. Not rolled back: the commit stays unpushed until a push fits
+  # (each UTC day's first session tries once) or a push by hand shares it,
+  # as it stayed while every session pushed it and was killed. Blocked, as
+  # every refusal here is.
   if _push_backed_off; then
     PUSH_BLOCKED=1
     _log "unpushed: $BRANCH is $ahead commit(s) ahead of $upstream_name — not pushing: runs in a row were killed inside their commit or push, so the push waits for the next UTC day"
@@ -1301,9 +1304,10 @@ _stamp_lock() {
 # many sessions heal it. A kill before `git add` never gets here, and does not
 # reset the count either: the extension's kill nearly always lands there, and
 # resetting on it would let a slow suite interleaved with it retry forever.
-# Only a commit or push that returns resets it, landed or refused (CR 1900). A
-# count past 2 backs off at once: a suite that has not fitted twice is not
-# retried a second time in a day.
+# Only a commit or push that returns resets it, landed or refused (CR 1900),
+# or a pr refresh with nothing of its bump left to push (_pr_nothing_left,
+# CR 2018). A count past 2 backs off at once: a suite that has not fitted
+# twice is not retried a second time in a day.
 #
 # Called as soon as the heal knows the killed run left the hook's paths
 # staged, before it undoes anything (CR 1899): counted last, a heal killed at
@@ -1343,7 +1347,7 @@ _count_kill() {
     return 0
   fi
   if [ "$MERGE_MODE" = "direct" ]; then
-    held=". This hook's commit stays unpushed on $BRANCH until a push fits: each UTC day's first session tries once, and a suite that never fits is held again. A push by hand, or that knob, shares it"
+    held=". This hook's commit stays unpushed on $BRANCH until a push fits: each UTC day's first session tries once, and a suite that never fits is held again. A push by hand shares it; that knob makes later tries fit, but once committed it needs that push by hand anyway"
   fi
   echo "skills update: $kills refreshes in a row were killed inside their commit or push, the last inside its push, so the push waits for the next UTC day rather than the next session. The push runs this repo's pre-push hooks and did not fit in the hook's 120 s default timeout: list the slow hook ids in .skills/refresh-skip-hooks to skip them on this hook's own push$held (see $LOG)" >&2 || true
   return 0
@@ -1396,9 +1400,11 @@ _push_begin() {
   return 0
 }
 
-# _push_returned — the push returned, accepted or refused: the pre-push hooks
-# finished inside the budget. Resets the count and clears the record (#603),
-# as a commit that returns does (CR 1900).
+# _push_returned — the count reset: the file goes, count and in-flight record
+# alike (#603). Its callers give their reasons: a push that returned,
+# accepted or refused, finished its pre-push hooks inside the budget, as a
+# commit that returns does (CR 1900); _pr_nothing_left has nothing of its
+# bump left to push (CR 2018).
 _push_returned() {
   rm -f "$COMMIT_KILLS" 2>/dev/null || true
 }
@@ -2391,6 +2397,25 @@ _pr_refused() {
   fi
 }
 
+# _pr_nothing_left <why> — a pr refresh ends with nothing of its bump left
+# for the hook to push (CR 2018): logged, and the kill count reset. pr mode
+# makes no commit, which in direct mode resets the count for every new bump,
+# so this rule is what keeps pr mode's count per bump. Without it, a kill
+# counted against one bump stayed through a refresh that pushed nothing, and
+# the next bump's first kill backed off the day as the second in a row.
+#
+# Every refresh that concludes so ends here: main already records the bump;
+# its upstream does; main and the upstream disagree, so no bump is proposed
+# until main is pulled, and the bump after the pull is another one; a PR
+# closed unmerged declined this bump; the branch already proposes it, whoever
+# pushed it. The ways out that leave the bump pending do not reset: a refused
+# `gh`, ls-remote or fetch, a branch holding a foreign commit, and a local
+# failure building the bump. A push that returns resets the count itself.
+_pr_nothing_left() {
+  _log "pr: $1"
+  _push_returned
+}
+
 # _pr_publish <commit> <subject> — the commit onto $PR_BRANCH, and ONE pull
 # request for it.
 _pr_publish() {
@@ -2477,21 +2502,12 @@ PRS_EOF
   # Closed unmerged, the same change: a human's no. The next upstream change
   # is proposed again; .skills/skills-pin is how to hold one for good.
   if [ -z "$open" ] && [ -n "$declined" ]; then
-    _log "pr: PR #$declined proposed this same bump and was closed unmerged — not proposing it again"
+    _pr_nothing_left "PR #$declined proposed this same bump and was closed unmerged — not proposing it again"
     return 0
   fi
 
   if [ -n "$tip" ] && _pr_same_bump "$tip" "$c"; then
-    _log "pr: $PR_BRANCH already proposes this bump — nothing to push"
-    # The branch holds what the push would send, so the last push of it
-    # landed: a kill counted since fell after it returned (CR 2014). Reset,
-    # as a returned push does. pr mode has no commit to reset it, so a count
-    # left here turned one later kill into a back-off. No other way out of
-    # the pr path without a push resets: a declined PR, a refused `gh` or
-    # fetch, a branch holding a foreign commit, and a base that already
-    # records the bump (a bump by hand gets there too) say nothing of
-    # whether the hook's push landed.
-    _push_returned
+    _pr_nothing_left "$PR_BRANCH already proposes this bump — nothing to push"
   else
     # The lease is the tip just read; empty means "must not exist". Never a
     # plain --force: a push landing between the read and here is refused.
@@ -2544,7 +2560,7 @@ _pr_refresh() {
   fi
   head_tree="$(git rev-parse --verify -q 'HEAD^{tree}' 2>/dev/null || true)"
   if [ "$bumped" = "$head_tree" ]; then
-    _log "pr: nothing to propose — $BRANCH already records the refreshed pointers and doctor"
+    _pr_nothing_left "nothing to propose — $BRANCH already records the refreshed pointers and doctor"
     return 0
   fi
   # 3. The base: the default branch as the remote has it now. A fetch, never
@@ -2563,7 +2579,7 @@ _pr_refresh() {
   rc=0
   git diff --quiet --ignore-submodules=none "$base" HEAD -- "${PR_HOOK_PATHS[@]}" .skills/skills-pin 2>>"$LOG" || rc=$?
   if [ "$rc" -eq 1 ]; then
-    _log "pr: $BRANCH and $PR_UPSTREAM record different skills-vendor/ pointers, doctor or pin — no bump until $BRANCH is pulled"
+    _pr_nothing_left "$BRANCH and $PR_UPSTREAM record different skills-vendor/ pointers, doctor or pin — no bump until $BRANCH is pulled"
     echo "skills update: $BRANCH and $PR_UPSTREAM record different skills-vendor/ pointers, doctor or pin, so no bump is proposed — pull $BRANCH (or drop an unpushed bump on it), and a later session proposes any newer one (see $LOG)" >&2
     return 0
   elif [ "$rc" -ne 0 ]; then
@@ -2578,7 +2594,7 @@ _pr_refresh() {
   }
   base_tree="$(git rev-parse --verify -q "$base^{tree}" 2>/dev/null || true)"
   if [ "$tree" = "$base_tree" ]; then
-    _log "pr: nothing to propose — $PR_UPSTREAM already records this refresh"
+    _pr_nothing_left "nothing to propose — $PR_UPSTREAM already records this refresh"
     return 0
   fi
   if ! git diff --quiet --ignore-submodules=none "$base" "$tree" -- skills-vendor/ 2>/dev/null; then
