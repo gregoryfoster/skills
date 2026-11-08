@@ -81,7 +81,8 @@ Behaviour:
     counts them; a commit that returns, landed or refused, resets it). A
     kill inside the push counts the same way (#603): the second in a row
     holds the push, which runs the repo's pre-push hooks, until the next
-    UTC day, leaving the commit unpushed; a push that returns resets it.
+    UTC day (direct mode leaves its commit unpushed meanwhile); a push
+    that returns resets it.
   - Runs only on the main branch.
   - Scopes the submodule update to skills-vendor/ — never touches other
     submodules.
