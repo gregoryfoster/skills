@@ -637,6 +637,7 @@ class TestTheSeparateGitDirPrimary:
             "primary from a linked worktree: upgrade git (from a linked "
             "worktree, then run from the primary checkout), or set WORKTREE_ROOT"
         ) in r.stderr, r.stderr
+        assert layouts.OLD_GIT_HINT in r.stderr, r.stderr
         assert "run this from the primary checkout" not in r.stderr, r.stderr
         assert "not a git repository" not in r.stderr, (
             f"CR 1996: the store's parent is no failure: {r.stderr}"

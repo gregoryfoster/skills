@@ -468,6 +468,7 @@ def test_git_older_than_2_31_says_so_rather_than_run_from_the_primary(
         "git 2.30.2 predates 2.31, which this layout needs to tell its primary"
         " from a linked worktree: upgrade git"
     ) in result.stderr, result.stderr
+    assert layouts.OLD_GIT_HINT in result.stderr, result.stderr
     assert "run this from the primary checkout" not in result.stderr, result.stderr
 
 

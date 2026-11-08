@@ -112,6 +112,18 @@ fi
 if [[ "$CANDIDATE_COMMON" == "$COMMON_DIR" ]]; then
   PROJECT_ROOT="$CANDIDATE"
 else
+  # candidate_reason: git's reason for the silent ask about the candidate,
+  # on stderr. "Not a git repository" is dropped (CR 1996): it says only
+  # that the candidate is no checkout, which for a --separate-git-dir
+  # store's parent is the layout, not a failure.
+  candidate_reason() {
+    local err
+    err=$(here_git -C "$CANDIDATE" rev-parse --git-common-dir 2>&1 >/dev/null) || true
+    case $err in
+      "fatal: not a git repository"*) ;;
+      ?*) printf '%s\n' "$err" >&2 ;;
+    esac
+  }
   DIRS=$(here_git rev-parse --path-format=absolute --git-dir --git-common-dir 2>/dev/null) || DIRS=""
   WT_LIST=$(here_git worktree list --porcelain) || {
     echo "ERROR: failed to enumerate worktrees (git worktree list --porcelain)" >&2
@@ -120,10 +132,18 @@ else
   PRIMARY_BLOCK=${WT_LIST%%$'\n\n'*}
   # The candidate's .git: a directory, or a gitfile's `gitdir:` read against
   # the candidate, as `<dir>/.git` naming `./.bare` is (CR 1988).
+  # Never failing open (CR 1993): a gitfile this cannot read is exit 2 with
+  # git's reason, and a CRLF one is read as git reads it, without the `\r`.
   CANDIDATE_GIT="$CANDIDATE/.git"
+  if [[ -f "$CANDIDATE_GIT" && ! -r "$CANDIDATE_GIT" ]]; then
+    here_git -C "$CANDIDATE" rev-parse --git-common-dir >/dev/null || true
+    echo "ERROR: could not resolve the primary checkout '$CANDIDATE': its gitfile '$CANDIDATE_GIT' cannot be read (git's reason, if any, is above)" >&2
+    exit 2
+  fi
   if [[ -f "$CANDIDATE_GIT" ]]; then
     GITFILE=""
     { IFS= read -r GITFILE <"$CANDIDATE_GIT"; } 2>/dev/null || true
+    GITFILE=${GITFILE%$'\r'}
     GITFILE=${GITFILE#gitdir: }
     case $GITFILE in
       /*) CANDIDATE_GIT=$GITFILE ;;
@@ -149,13 +169,16 @@ else
   elif [[ "${DIRS%%$'\n'*}" == --path-format=absolute ]]; then
     # Below 2.31 rev-parse echoes the option back at exit 0 (CR 1990), so
     # case 1 cannot be told: run from the primary it is no answer either.
+    # Git's reason first (CR 1994): a superproject git refuses lands here
+    # too, and upgrading git does not help that.
+    candidate_reason
     GIT_VERSION=$(here_git --version 2>/dev/null) || GIT_VERSION="git version (unknown)"
-    echo "ERROR: could not resolve the primary checkout: git ${GIT_VERSION#git version } predates 2.31, which this layout needs to tell its primary from a linked worktree: upgrade git, or set PLANS_DIR" >&2
+    echo "ERROR: could not resolve the primary checkout: git ${GIT_VERSION#git version } predates 2.31, which this layout needs to tell its primary from a linked worktree: upgrade git (from a linked worktree, then run from the primary checkout), or set PLANS_DIR" >&2
     exit 2
   else
     # Git's reason for the silent ask above, when it has one (CR 1991): a
     # superproject git refuses lands here too, as no submodule at all.
-    here_git -C "$CANDIDATE" rev-parse --git-common-dir >/dev/null || true
+    candidate_reason
     echo "ERROR: could not resolve the primary checkout (git's reason, if any, is above): this repository's common dir '$COMMON_DIR' is no checkout's .git (as with \`git init --separate-git-dir\` or a symlinked \`.git\`), and only the primary knows its work tree, so run this from the primary checkout" >&2
     exit 2
   fi
