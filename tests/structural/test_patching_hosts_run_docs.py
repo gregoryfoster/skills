@@ -305,4 +305,3 @@ def test_the_conffile_restore_recipe_is_general_and_in_policy_md():
     profile = (SKILL / "references" / "environments" / "exe-dev-exeuntu.md").read_text()
     assert "../policy.md#exceptions" in profile
     assert "ded254e0" in profile
-

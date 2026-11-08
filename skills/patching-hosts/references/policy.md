@@ -111,7 +111,13 @@ exception <what> <review-by YYYY-MM-DD> <reason>
 - Keeping a dormant component is an exception: `exception keep:<component> <review-by> <reason>`.
 - Each prune stage is declared the same way, as `disabled:<component>`, `removed:<component>` or `purged:<component>`. The review-by date is the prune calendar: when it passes, the probe proposes the next stage for a component it reads, one of the six. An `apt:<package>` component's stage lines prompt nothing, so its next stage is `prune-plan.sh`'s `stage` ([pruning.md](pruning.md#any-other-apt-package)). A `purged:` line stays until the base image stops shipping the component.
 - **A package hold is declared as `held:<package>`.** A hold on a package in the pending set defers its update, and a security package never waits without an exception ([Two lanes](#two-lanes)). So an undeclared hold on a pending package is a finding, whether the owner placed it or an aborted run left it ([run.md](run.md)).
-- **A package the dry run passes over at a conffile prompt** (`dry-run:conffile:<pkg>`) is held this way, pruned, or settled by hand. A deleted conffile can be restored alone from the installed build, touching no package state ([the profile](environments/exe-dev-exeuntu.md#other-facts), #582). A `--force-confmiss` reinstall upgrades the package once that build has left the archive, and the finding says which applies.
+- **A package the dry run passes over at a conffile prompt** (`dry-run:conffile:<pkg>`) is held this way, pruned, or settled by hand. A `--force-confmiss` reinstall must name the installed build, `'<pkg>=<version>'`: unnamed, apt takes the pending candidate, an upgrade; named, it refuses a build no archive lists. The finding gives the command where it applies (#582, CR 1955). **The conffile restore:** a deleted conffile can be restored alone, touching no package state:
+  1. fetch the installed build's `.deb` into an empty scratch directory, from its origin's pool while that still serves it, or for an Ubuntu build from snapshot.ubuntu.com;
+  2. extract only the conffile: `dpkg-deb --fsys-tarfile <deb> | tar -x ./<path>`;
+  3. check its md5 against the one `dpkg-query -W -f='${Conffiles}' <pkg>` records;
+  4. `install` it in place as root, with the owner and mode the `.deb` gives it.
+
+  The next upgrade replaces the unmodified file without asking. fwupd on the exeuntu image is the worked example ([the profile](environments/exe-dev-exeuntu.md#other-facts)).
 
 **What `<what>` names.** Each probe finding an exception can cover carries it as `exception_what`:
 
