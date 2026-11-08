@@ -528,6 +528,16 @@ def _layout(name: str, tmp_path: Path) -> tuple[Path, dict]:
     elif name.startswith("separate-"):
         primary, linked = layouts.separate_git_dir(tmp, None)
         cwd = (primary if name.startswith("separate-primary") else linked).resolve()
+    elif name.startswith("bare-in-git"):
+        # A bare store kept as `<dir>/.git`: <dir> is the candidate, and its
+        # .git is the common dir, so the refusal check runs before the bare
+        # case (CR 1988, 1997).
+        src = layouts.seed(tmp / "seed", "direct\n")
+        top = tmp / "bx"
+        top.mkdir()
+        layouts.git(tmp, "clone", "-q", "--bare", str(src), str(top / ".git"))
+        layouts.git(top / ".git", "worktree", "add", "-q", str(top / "main"), "main")
+        cwd = top / "main"
     elif name.startswith("dot-bare"):
         src = layouts.seed(tmp / "seed", "direct\n")
         top = tmp / "dx"
@@ -607,6 +617,8 @@ PARITY_LAYOUTS = [
     "submodule",
     "submodule-linked",
     "bare-home",
+    "bare-in-git",
+    "bare-in-git-dubious",
     "dot-bare",
     "dot-bare-dubious",
     "separate-primary",
@@ -616,6 +628,7 @@ PARITY_LAYOUTS = [
     "symlinked-git-primary",
     "symlinked-git-linked",
     "linked-dubious",
+    "submodule-dubious",
     "submodule-linked-dubious",
     "linked-git-dir",
     "submodule-git-dir",
