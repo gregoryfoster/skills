@@ -185,8 +185,9 @@ LOG="$gitdir/skills-update.log"
 STAGING="$gitdir/skills-update.staging"
 # Runs killed inside their commit or their push, in a row (#575, #603): one
 # line, `<count> <the last one's owner line>`. Written by the heal, removed by
-# a run whose commit or push returns, landed or refused (CR 1900). While a
-# push is in flight, a second line names it, `push <its owner line>`
+# a run whose commit or push returns, landed or refused (CR 1900), and by a
+# pr refresh with nothing of its bump left to push (_pr_nothing_left). While
+# a push is in flight, a second line names it, `push <its owner line>`
 # (_push_begin). See _count_kill and _heal_push.
 COMMIT_KILLS="$gitdir/skills-update.commit-kills"
 # How long a marker's owner can be believed alive (CR 1789): the hook's 120 s
@@ -861,9 +862,10 @@ _reconcile_unpushed() {
   # Backed off (#603): two or more runs in a row were killed inside their
   # commit or push, and _count_kill has spent today's lock. That lock gates
   # the refresh, and this push runs ahead of it, so it reads the back-off
-  # here. Not rolled back: the commit stays, unpushed, for the next UTC day's
-  # session (or a push by hand) to share, as it did while every session
-  # pushed it and was killed. Blocked, as every refusal here is.
+  # here. Not rolled back: the commit stays unpushed until a push fits
+  # (each UTC day's first session tries once) or a push by hand shares it,
+  # as it stayed while every session pushed it and was killed. Blocked, as
+  # every refusal here is.
   if _push_backed_off; then
     PUSH_BLOCKED=1
     _log "unpushed: $BRANCH is $ahead commit(s) ahead of $upstream_name — not pushing: runs in a row were killed inside their commit or push, so the push waits for the next UTC day"
@@ -1302,9 +1304,10 @@ _stamp_lock() {
 # many sessions heal it. A kill before `git add` never gets here, and does not
 # reset the count either: the extension's kill nearly always lands there, and
 # resetting on it would let a slow suite interleaved with it retry forever.
-# Only a commit or push that returns resets it, landed or refused (CR 1900). A
-# count past 2 backs off at once: a suite that has not fitted twice is not
-# retried a second time in a day.
+# Only a commit or push that returns resets it, landed or refused (CR 1900),
+# or a pr refresh with nothing of its bump left to push (_pr_nothing_left,
+# CR 2018). A count past 2 backs off at once: a suite that has not fitted
+# twice is not retried a second time in a day.
 #
 # Called as soon as the heal knows the killed run left the hook's paths
 # staged, before it undoes anything (CR 1899): counted last, a heal killed at
@@ -1397,9 +1400,11 @@ _push_begin() {
   return 0
 }
 
-# _push_returned — the push returned, accepted or refused: the pre-push hooks
-# finished inside the budget. Resets the count and clears the record (#603),
-# as a commit that returns does (CR 1900).
+# _push_returned — the count reset: the file goes, count and in-flight record
+# alike (#603). Its callers give their reasons: a push that returned,
+# accepted or refused, finished its pre-push hooks inside the budget, as a
+# commit that returns does (CR 1900); _pr_nothing_left has nothing of its
+# bump left to push (CR 2018).
 _push_returned() {
   rm -f "$COMMIT_KILLS" 2>/dev/null || true
 }
