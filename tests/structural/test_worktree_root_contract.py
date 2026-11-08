@@ -592,6 +592,35 @@ class TestTheSeparateGitDirPrimary:
         assert "run this from the primary checkout" not in r.stderr, r.stderr
 
 
+class TestTheRefusalCarriesGitsReason:
+    """CR 1991: the last refusal blamed `--separate-git-dir` and dropped
+    git's reason, which was false for a symlinked `.git`, and for a
+    submodule's linked worktree whose superproject git refuses: that one
+    is exit 2 now (#585's rule: a git failure is exit 2), no longer #203's
+    nest, and git's reason says why."""
+
+    def test_a_superproject_git_refuses(self, tmp_path: Path):
+        wt = layouts.submodule_linked(tmp_path.resolve(), "direct\n").resolve()
+        r = _run_env(RESOLVE, wt, layouts.different_owner(_clean_env(), wt))
+        assert r.returncode == 2, r.stdout + r.stderr
+        assert "dubious ownership" in r.stderr, r.stderr
+        assert r.stdout == ""
+
+    def test_a_symlinked_git_dir_names_that_layout(self, tmp_path: Path, primary: Path):
+        store = tmp_path.resolve() / "store" / "repo.git"
+        store.parent.mkdir()
+        (primary / ".git").rename(store)
+        (primary / ".git").symlink_to(store)
+        linked = tmp_path.resolve() / "linked"
+        _git(primary, "worktree", "add", "-q", "-b", "l", str(linked))
+        r = _run(RESOLVE, cwd=linked)
+        assert r.returncode == 2, r.stdout + r.stderr
+        assert "symlinked `.git`" in r.stderr, r.stderr
+        assert "not a git repository" in r.stderr, f"git's reason: {r.stderr}"
+        assert "run this from the primary checkout" in r.stderr, r.stderr
+        assert r.stdout == ""
+
+
 class TestAnInheritedGitDir:
     """#605, case 2: git exports GIT_DIR to every hook.
 

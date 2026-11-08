@@ -105,7 +105,9 @@ fi
 # target, is the common dir, the primary is there and git refused it: that
 # is asked before 2, since a `.bare` store is bare too, and git is asked
 # again for its reason. Anywhere else this is a linked worktree of a primary
-# git knows no path to, so the message says to run from the primary.
+# git knows no path to (a --separate-git-dir or symlinked .git), or git
+# refused the candidate, which hides a submodule's linked worktree too: the
+# message carries git's reason and says to run from the primary.
 if ! COMMON_DIR=$(here_git rev-parse --git-common-dir) ||
   ! COMMON_DIR=$(cd "$COMMON_DIR" && pwd -P); then
   echo "ERROR: could not resolve this checkout's git common dir (the reason is above)" >&2
@@ -163,7 +165,10 @@ else
     echo "ERROR: could not resolve the primary checkout: git ${GIT_VERSION#git version } predates 2.31, which this layout needs to tell its primary from a linked worktree: upgrade git, or set WORKTREE_ROOT" >&2
     exit 2
   else
-    echo "ERROR: could not resolve the primary checkout: this repository's common dir '$COMMON_DIR' is no checkout's .git, as a primary whose .git is a file makes it (git init --separate-git-dir), and only that primary knows its work tree, so run this from the primary checkout" >&2
+    # Git's reason for the silent ask above, when it has one (CR 1991): a
+    # superproject git refuses lands here too, as no submodule at all.
+    here_git -C "$CANDIDATE" rev-parse --git-common-dir >/dev/null || true
+    echo "ERROR: could not resolve the primary checkout (git's reason, if any, is above): this repository's common dir '$COMMON_DIR' is no checkout's .git (as with \`git init --separate-git-dir\` or a symlinked \`.git\`), and only the primary knows its work tree, so run this from the primary checkout" >&2
     exit 2
   fi
 fi
