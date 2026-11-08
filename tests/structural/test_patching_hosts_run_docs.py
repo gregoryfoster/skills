@@ -16,6 +16,9 @@
   the scripts do: the early refresh takes no `--lane`, the recovery point
   holds for 24 hours, the poll reads the lists the probe fetched, and the
   count waits for the fix.
+- CR 1948: the conffile restore's general recipe lives in policy.md, which
+  the finding points at; the exeuntu profile keeps fwupd as its worked
+  example. A --force-confmiss reinstall names the installed build (CR 1955).
 """
 
 import re
@@ -282,3 +285,24 @@ def test_then_counts_after_the_fix_verifies_the_runtime_and_records_the_cves():
     assert "reload" in then and "config test" in then
     assert "a real request" in then
     assert "CVE IDs" in then
+
+
+def test_the_conffile_restore_recipe_is_general_and_in_policy_md():
+    exc = _section(POLICY, "## Exceptions")
+    bullet = exc[
+        exc.index("**A package the dry run passes over at a conffile prompt**") :
+    ]
+    bullet = bullet.split("\n- **")[0].split("\n\n**What")[0]
+    # Any package on any host: the origin's own pool, or snapshot.ubuntu.com
+    # for an Ubuntu build; only the conffile; dpkg's md5; then install.
+    assert "origin's pool" in bullet and "snapshot.ubuntu.com" in bullet
+    assert "dpkg-deb --fsys-tarfile <deb> | tar -x ./<path>" in bullet
+    assert "dpkg-query -W -f='${Conffiles}' <pkg>" in bullet
+    assert "`install`" in bullet
+    # CR 1955: a reinstall names the build, or apt takes the candidate.
+    assert "'<pkg>=<version>'" in bullet
+    assert "environments/exe-dev-exeuntu.md" in bullet
+    profile = (SKILL / "references" / "environments" / "exe-dev-exeuntu.md").read_text()
+    assert "../policy.md#exceptions" in profile
+    assert "ded254e0" in profile
+
