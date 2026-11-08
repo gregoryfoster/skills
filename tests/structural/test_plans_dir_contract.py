@@ -530,7 +530,13 @@ def _layout(name: str, tmp_path: Path) -> tuple[Path, dict]:
         return cwd, env
     if name == "bare-home":
         cwd = layouts.bare_home(tmp, "direct\n").resolve()
-    elif name == "bare-in-checkout":
+    elif name == "bare-beside-empty-git":
+        # An empty `.git/` beside repo.git is no repository's (R4-1): bare.
+        base = tmp / "b"
+        base.mkdir()
+        (base / ".git").mkdir()
+        cwd = layouts.bare_home(base, "direct\n").resolve()
+    elif name.startswith("bare-in-checkout"):
         # A bare repo.git whose parent is another repository's checkout:
         # git answers there with another common dir, so still bare (CR 2033).
         outer = tmp / "outer"
@@ -566,6 +572,10 @@ def _layout(name: str, tmp_path: Path) -> tuple[Path, dict]:
         for suffix, text in GITFILES.items():
             if name.endswith(suffix):
                 (top / ".git").write_text(text)
+        if name.endswith("-dangling"):
+            # A dangling `<dir>/.git` link: git gives no reason (R4-4a, R4-5).
+            (top / ".git").unlink()
+            (top / ".git").symlink_to(top / "missing-store")
         if name.endswith("-unreadable"):
             # git fails "Permission denied" (CR 1993b); root reads it anyway.
             (top / ".git").chmod(0)
@@ -660,6 +670,9 @@ PARITY_LAYOUTS = [
     "dot-bare-empty",
     "dot-bare-missing-target",
     "bare-in-checkout",
+    "bare-in-checkout-dubious",
+    "bare-beside-empty-git",
+    "dot-bare-dangling",
     "separate-primary",
     "separate-linked",
     "separate-linked-de",
