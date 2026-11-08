@@ -132,14 +132,17 @@ if [[ "$CANDIDATE_COMMON" == "$COMMON_DIR" ]]; then
   PROJECT_ROOT="$CANDIDATE"
 else
   # candidate_reason: git's reason for the silent ask about the candidate,
-  # on stderr. "Not a git repository" is dropped (CR 1996): it says only
-  # that the candidate is no checkout, which for a --separate-git-dir
-  # store's parent is the layout, not a failure.
+  # on stderr. Discovery finding no repository at all is dropped (CR 1996):
+  # it says only that the candidate is no checkout, which for a
+  # --separate-git-dir store's parent is the layout, not a failure. Asked
+  # under LC_ALL=C so a translated git's line is matched too, and only the
+  # discovery form (CR 2034): `not a git repository: <path>`, a gitfile git
+  # rejects, is a reason.
   candidate_reason() {
     local err
-    err=$(here_git -C "$CANDIDATE" rev-parse --git-common-dir 2>&1 >/dev/null) || true
+    err=$(LC_ALL=C here_git -C "$CANDIDATE" rev-parse --git-common-dir 2>&1 >/dev/null) || true
     case $err in
-      "fatal: not a git repository"*) ;;
+      "fatal: not a git repository (or any of the parent directories)"*) ;;
       ?*) printf '%s\n' "$err" >&2 ;;
     esac
   }
