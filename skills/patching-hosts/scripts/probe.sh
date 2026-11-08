@@ -3020,8 +3020,9 @@ read_holds() {
 # resolves to the candidate: an upgrade, outside every gate.
 # A version line starts " *** " or five spaces and the version. A source
 # line is seven spaces and its priority right-aligned in four columns, so
-# one of 1000 or more has seven leading spaces, not eight (noble's apt,
-# Pin-Priority 1001, CR 1946).
+# one four or more characters wide (1000 and up, -100 and down) has seven
+# leading spaces, and only -1 to -99 keep eight like 100 to 999 (noble's
+# apt, Pin-Priority 1001, 32767, -10 and -1000; CR 1946, CR 1968).
 # A package name and a version in Debian policy's characters, which a
 # command quoted in single quotes can print as they are (CR 1955).
 DEB_NAME_RE='^[a-z0-9][a-z0-9.+-]*$'
