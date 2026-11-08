@@ -13,12 +13,16 @@ if [[ "${1:-}" == "--help" ]]; then
   echo ""
   echo "Resolution order (first match wins):"
   echo "  1. PLANS_DIR env var"
-  echo "  2. .skills/plans_dir file under the repo root (single-line path)"
+  echo "  2. .skills/plans_dir file under the repo root (single-line path;"
+  echo "     a relative one resolves against <repo-root>)"
   echo "  3. <repo-root>/docs/plans/ (fallback)"
   echo ""
   echo "<repo-root> is the PRIMARY checkout, not whichever worktree you are"
   echo "standing in — so a project's configured plans directory is found from"
   echo "a linked worktree too, where that untracked knob does not exist."
+  echo ""
+  echo "A relative PLANS_DIR is printed as given: it resolves against the"
+  echo "directory of whoever reads it."
   echo ""
   echo "Exit codes:"
   echo "  0  Resolution succeeded"
@@ -89,6 +93,17 @@ if [[ -f "$CONFIG_FILE" ]]; then
   # comments — that case must fall through to the default, not crash.
   CONFIGURED=$(grep -v '^[[:space:]]*#' "$CONFIG_FILE" | grep -v '^[[:space:]]*$' | head -n1 | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' || true)
   if [[ -n "$CONFIGURED" ]]; then
+    # A relative path is the PRIMARY checkout's (#590), by the rule
+    # resolve-worktree-root.sh applies to .skills/worktree_root (#562, #567).
+    # Echoed as given, it resolved against the caller's directory: from a
+    # subdirectory it named a directory under that subdirectory, and from a
+    # linked worktree one inside that worktree. The knob lives in the primary
+    # checkout, so that is the only directory it can mean. As there, `~` is
+    # not expanded and `..` is not folded: the file is not shell input.
+    case $CONFIGURED in
+      /*) ;;
+      *) CONFIGURED="$PROJECT_ROOT/${CONFIGURED#./}" ;;
+    esac
     echo "$CONFIGURED"
     exit 0
   fi
