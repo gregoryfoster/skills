@@ -498,33 +498,49 @@ def test_each_help_names_the_run_from_the_primary_exit_2(script):
     ) in text, text
 
 
-# CR 2009 (#587): `git clone --bare` sets no upstream, and no fetch refspec,
-# so after the post-merge pass's pull the default branch in a bare layout has
-# no @{u}. run-deploy-command.sh then said "push it first (Step 4)", which is
-# the wrong remedy: the code is pushed, and only the tracking is missing.
-# These fixtures skip _pushed on purpose: it sets the tracking by hand, which
-# hides the case.
+# CR 2009, CR 2011 and CR 2012 (#587): `git clone --bare` sets no upstream,
+# and a plain one no fetch refspec, so after the post-merge pass's pull the
+# deployed branch has no @{u}. "push it first (Step 4)" alone is the wrong
+# remedy when the code is pushed and only the tracking is missing. Deciding
+# by branch name failed too: a plain bare clone has no origin/HEAD, so a
+# `trunk` default read as `main` (CR 2011). The message is now one that is
+# right on any branch, with the refspec step first and only when it's unset
+# (CR 2012). These fixtures skip _pushed on purpose: it sets the tracking by
+# hand, which hides the case.
 
-UPSTREAM_REMEDY = "git branch --set-upstream-to=origin/main"
+REFSPEC_STEP = "git config remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*'"
 
 
-def _bare_home_unpushed(tmp_path: Path, mode: str | None) -> Path:
+def _bare_clone_home(
+    tmp_path: Path, branch: str, *, refspec: bool = False, mode: str | None = None
+) -> Path:
+    """A plain `git clone --bare` of a repo whose one branch is `branch`, and
+    a worktree on it that has never been given an upstream."""
     text = _knob_text("run-deploy-command.sh", tmp_path)
-    home = layouts.bare_home(tmp_path / "l", text, name="deploy_command")
+    src = tmp_path / "src"
+    src.mkdir()
+    layouts.git(src, "init", "-q", "-b", branch)
+    layouts.git(src, "config", "user.email", "test@example.com")
+    layouts.git(src, "config", "user.name", "test")
+    layouts.knob(src, text, "deploy_command")
+    layouts.git(src, "add", "-A")
+    layouts.git(src, "-c", "commit.gpgsign=false", "commit", "-q", "-m", "knob")
+    bare = tmp_path / "repo.git"
+    layouts.git(tmp_path, "clone", "-q", "--bare", str(src), str(bare))
+    if refspec:
+        layouts.git(
+            bare, "config", "remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*"
+        )
+    home = tmp_path / "home"
+    layouts.git(bare, "worktree", "add", "-q", str(home), branch)
     if mode is not None:
         layouts.knob(home, f"{mode}\n")
+        layouts.knob(home, f"{branch}\n", "default_branch")
     return home
 
 
-@pytest.mark.parametrize("mode", [None, "pr"], ids=["direct", "pr"])
-@pytest.mark.parametrize("check", [False, True], ids=["run", "check"])
-def test_a_bare_clones_default_branch_gets_the_set_upstream_remedy(
-    tmp_path, mode, check
-):
-    home = _bare_home_unpushed(tmp_path, mode)
-    record = tmp_path / "record"
-    args = ["--check"] if check else []
-    result = subprocess.run(
+def _deploy(home: Path, record: Path, *args: str) -> subprocess.CompletedProcess:
+    return subprocess.run(
         ["bash", str(SCRIPTS / "run-deploy-command.sh"), *args],
         cwd=home,
         capture_output=True,
@@ -532,35 +548,59 @@ def test_a_bare_clones_default_branch_gets_the_set_upstream_remedy(
         env={**_env(), "STUB_RECORD": str(record)},
         timeout=60,
     )
-    _assert_nothing_read("run-deploy-command.sh", result, record)
-    assert UPSTREAM_REMEDY in result.stderr, result.stderr
-    assert "push it first" not in result.stderr, result.stderr
 
 
-def test_the_set_upstream_remedy_works_as_written(tmp_path):
-    """The remedy, run as the message words it, leaves a checkout the
-    deploy accepts: a plain bare clone needs the fetch refspec first."""
-    home = _bare_home_unpushed(tmp_path, None)
-    assert layouts.git(home, "config", "--default", "", "remote.origin.fetch") == ""
-    layouts.git(
-        home, "config", "remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*"
-    )
-    layouts.git(home, "fetch", "-q", "origin")
-    layouts.git(home, "branch", "--set-upstream-to=origin/main")
+def _printed_remedy(stderr: str) -> str:
+    """The command line the message prints, between "set it: " and ", then
+    re-run"."""
+    assert "set it: " in stderr, stderr
+    return stderr.split("set it: ", 1)[1].split(", then re-run", 1)[0]
+
+
+@pytest.mark.parametrize("branch", ["main", "trunk"])
+@pytest.mark.parametrize("mode", [None, "pr"], ids=["direct", "pr"])
+@pytest.mark.parametrize("check", [False, True], ids=["run", "check"])
+def test_a_bare_clones_branch_gets_the_set_upstream_remedy_first_step_first(
+    tmp_path, branch, mode, check
+):
+    home = _bare_clone_home(tmp_path, branch, mode=mode)
     record = tmp_path / "record"
+    result = _deploy(home, record, *(["--check"] if check else []))
+    _assert_nothing_read("run-deploy-command.sh", result, record)
+    assert _printed_remedy(result.stderr) == (
+        f"{REFSPEC_STEP} && git fetch origin"
+        f" && git branch --set-upstream-to=origin/{branch}"
+    ), result.stderr
+    assert "otherwise push it first (Step 4)" in result.stderr, result.stderr
+    assert "bare clone never" not in result.stderr, result.stderr
+
+
+@pytest.mark.parametrize("refspec", [False, True], ids=["plain", "refspec-set"])
+def test_the_remedy_runs_exactly_as_printed(tmp_path, refspec):
+    """CR 2012: run the printed command line as it stands, on a `trunk`
+    default, and the deploy accepts the checkout. With the refspec already
+    set, the message leaves its step out."""
+    home = _bare_clone_home(tmp_path, "trunk", refspec=refspec)
+    record = tmp_path / "record"
+    remedy = _printed_remedy(_deploy(home, record, "--check").stderr)
+    assert (REFSPEC_STEP in remedy) is not refspec, remedy
+    ran = subprocess.run(
+        ["bash", "-c", remedy], cwd=home, capture_output=True, text=True, env=_env()
+    )
+    assert ran.returncode == 0, ran.stderr
     result = _run_with("run-deploy-command.sh", home, record)
     _assert_read_from("run-deploy-command.sh", result, record, home)
 
 
-def test_a_feature_branch_with_no_upstream_is_still_told_to_push(tmp_path):
-    """Off the default branch, a missing upstream is an unpushed branch."""
-    home = _bare_home_unpushed(tmp_path, None)
+def test_a_branch_not_on_origin_is_still_told_to_push(tmp_path):
+    """The same message on a branch nobody pushed: its last clause."""
+    home = _bare_clone_home(tmp_path, "main")
     layouts.git(home, "switch", "-q", "-c", "feature/y")
     record = tmp_path / "record"
     result = _run_with("run-deploy-command.sh", home, record)
     _assert_nothing_read("run-deploy-command.sh", result, record)
-    assert "push it first (Step 4)" in result.stderr, result.stderr
-    assert UPSTREAM_REMEDY not in result.stderr, result.stderr
+    assert "HEAD (feature/y) has no upstream" in result.stderr, result.stderr
+    assert "otherwise push it first (Step 4)" in result.stderr, result.stderr
 
 
 # CR 2010a: pr-mode.md's post-merge step 1 finds the main checkout with
