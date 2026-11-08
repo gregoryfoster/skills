@@ -10,7 +10,7 @@ Six hosts built their own GC before the canonical one existed (inventoried in Ca
 | address-validator | `disk-hygiene.sh` | `disk-hygiene.sh` | tracked in CannObserv/address-validator#326 |
 | address-validator | `docker-prune` | `docker-prune`, `docker-prune.sh` | once the `docker` tier covers it ([below](#docker)) |
 | watcher | `cleanup.sh` | `cleanup.sh` | |
-| observo | its cache timers | by hand | no fixed name to match |
+| observo | its cache timers | retired | retired 2026-10-28 in CannObserv/observo#705 (a private repo), which adopted the canonical GC |
 | usa-wa | `disk-gc.sh` | `disk-gc.sh` | not the canonical `disk-gc`, which has no `.sh` |
 | power-map | `prune_disk.py` | `prune_disk.py` | |
 | power-map | `check_disk_headroom.py` | `check_disk_headroom.py` | its lines were 85/80 (observed 2026-10-24, not re-verified: `systemctl cat` its headroom unit): `alert_at_percent = 85` with the default clear line |
