@@ -283,7 +283,8 @@ class TestToolchains:
     def test_a_dot_directory_is_not_one(self, repo):
         """CR 1866: git's `:(glob)` `*` matches a leading dot and bash's
         `themes/*` does not, so a tracked themes/.old/package.json counted
-        while composer's reach skipped the same directory."""
+        while the bash glob composer's reach used before #588 skipped the
+        same directory. Both listers skip it now."""
         (repo / "themes" / ".old").mkdir(parents=True)
         (repo / "themes" / ".old" / "package.json").write_text("{}\n")
         (repo / "themes" / ".old" / "composer.json").write_text("{}\n")

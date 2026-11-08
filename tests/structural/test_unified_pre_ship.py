@@ -439,6 +439,10 @@ class TestPhp:
         text = " ".join(php.split())
         assert "`php -l` stops at a submodule" in text, text
         assert "a submodule's PHP is linted by its own repo's gate" in text, text
+        # CR 2006: and in the gate's own table, row 19.
+        topology = (GATE.parents[1] / "references" / "gate-topology.md").read_text()
+        row_19 = next(r for r in topology.splitlines() if r.startswith("| 19 |"))
+        assert "Tracked files only; stops at a submodule (#591)." in row_19, row_19
 
     @pytest.mark.parametrize("setting", PATHSPEC_SETTINGS)
     def test_a_global_pathspec_setting_lints_every_tracked_php_file(
@@ -665,7 +669,7 @@ class TestNpmManifests:
 
     def test_a_dot_directorys_manifest_is_not_run(self, repo):
         """CR 1866: git's `:(glob)` `*` matches a leading dot, bash's
-        `themes/*` (composer's reach) does not, so a tracked
+        `themes/*` (the glob composer's reach used before #588) does not, so a tracked
         themes/.old/package.json ran its scripts."""
         _manifest(repo, "package.json", {"test:js": "jest"})
         _manifest(repo, "themes/.old/package.json", {"lint:js": "eslint ."})
