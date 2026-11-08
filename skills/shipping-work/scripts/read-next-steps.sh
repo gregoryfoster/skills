@@ -17,7 +17,8 @@
 # Its rows REPLACE the stack file's table rather than extending it. It is
 # read from the primary checkout (the first `git worktree list` entry's work
 # tree), where Step 8 runs, like deploy_command and pre_restart. A primary
-# made with --separate-git-dir names no work tree, so only it can read this. Deploying stays with
+# made with --separate-git-dir names no work tree to its linked worktrees, so
+# only the primary itself can read this. Deploying stays with
 # .skills/deploy_command; this is only the notification table.
 #
 # PRESENT BUT UNUSABLE IS EXIT 2, never a silent fallback to the stack file's
