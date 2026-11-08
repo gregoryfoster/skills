@@ -132,10 +132,18 @@ else
   PRIMARY_BLOCK=${WT_LIST%%$'\n\n'*}
   # The candidate's .git: a directory, or a gitfile's `gitdir:` read against
   # the candidate, as `<dir>/.git` naming `./.bare` is (CR 1988).
+  # Never failing open (CR 1993): a gitfile this cannot read is exit 2 with
+  # git's reason, and a CRLF one is read as git reads it, without the `\r`.
   CANDIDATE_GIT="$CANDIDATE/.git"
+  if [[ -f "$CANDIDATE_GIT" && ! -r "$CANDIDATE_GIT" ]]; then
+    here_git -C "$CANDIDATE" rev-parse --git-common-dir >/dev/null || true
+    echo "ERROR: could not resolve the primary checkout '$CANDIDATE': its gitfile '$CANDIDATE_GIT' cannot be read (git's reason, if any, is above)" >&2
+    exit 2
+  fi
   if [[ -f "$CANDIDATE_GIT" ]]; then
     GITFILE=""
     { IFS= read -r GITFILE <"$CANDIDATE_GIT"; } 2>/dev/null || true
+    GITFILE=${GITFILE%$'\r'}
     GITFILE=${GITFILE#gitdir: }
     case $GITFILE in
       /*) CANDIDATE_GIT=$GITFILE ;;
