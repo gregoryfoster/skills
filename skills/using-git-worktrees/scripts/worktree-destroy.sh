@@ -214,13 +214,6 @@ here_git() {
 }
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT=$(bash "$SCRIPT_DIR/resolve-worktree-root.sh") || {
-  echo "ERROR: failed to resolve worktree root" >&2
-  exit 2
-}
-
-SLUG="${BRANCH//\//-}"
-FALLBACK_PATH="$ROOT/$SLUG"
 
 # Locate the worktree by BRANCH, via git's own registry, rather than by
 # reconstructing worktree-create.sh's '<root>/<slug>' path. That scheme only
@@ -274,7 +267,15 @@ REGISTERED=1
 if [[ -z "$WORKTREE_PATH" ]]; then
   REGISTERED=0
   LOCK_REASON=""
-  WORKTREE_PATH="$FALLBACK_PATH"
+  # The root is resolved only here, for the constructed path (CR 1989). A
+  # registered worktree needs no root, and the resolver refuses some
+  # layouts (#585, #605: a primary git refuses, or a linked worktree of a
+  # --separate-git-dir primary), which refused every destroy there.
+  ROOT=$(bash "$SCRIPT_DIR/resolve-worktree-root.sh") || {
+    echo "ERROR: '$BRANCH' has no registered worktree, and the worktree root its constructed path needs could not be resolved (the resolver's reason is above)" >&2
+    exit 2
+  }
+  WORKTREE_PATH="$ROOT/${BRANCH//\//-}"
 fi
 
 if [[ ! -d "$WORKTREE_PATH" ]]; then

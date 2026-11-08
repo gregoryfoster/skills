@@ -126,6 +126,26 @@ class TestDestroyFromASeparateGitDirPrimary:
         assert "dubious ownership" in r.stderr, r.stderr
         assert layouts.SEPARATE_GIT_DIR_HINT not in r.stderr, r.stderr
 
+    def test_a_registered_worktree_needs_no_root(self, tmp_path: Path):
+        """CR 1989: the root feeds only the constructed path, for a branch
+        with no registered worktree. Resolved up front, the resolver's exit 2
+        from this linked worktree refused a `--descoped` destroy that worked
+        before #585."""
+        primary, linked = layouts.separate_git_dir(tmp_path / "l", None)
+        layouts.git(primary, "worktree", "add", "-q", "-b", "l2", str(tmp_path / "l2"))
+        r = _run(DESTROY, "l2", "--descoped", "x", "--dry-run", cwd=linked)
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert (tmp_path / "l2").is_dir(), "a dry run removes nothing"
+
+    def test_an_unregistered_branch_still_needs_the_root(self, tmp_path: Path):
+        """The constructed path does need it: the resolver's exit 2 shows."""
+        primary, linked = layouts.separate_git_dir(tmp_path / "l", None)
+        layouts.git(primary, "branch", "l3")
+        r = _run(DESTROY, "l3", "--descoped", "x", "--dry-run", cwd=linked)
+        assert r.returncode == 2, r.stdout + r.stderr
+        assert "no registered worktree" in r.stderr, r.stderr
+        assert "run this from the primary checkout" in r.stderr, r.stderr
+
 
 # Where each layout keeps its primary, and so the knob.
 PRIMARY_OF = {
