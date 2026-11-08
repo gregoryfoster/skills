@@ -128,9 +128,8 @@ read_command_knob "$KNOB"
 
 SHA=$(git rev-parse --verify HEAD) || die "git rev-parse HEAD failed"
 
-# DEFAULT := the default branch: .skills/default_branch (from the primary
-# checkout), then origin's HEAD, then main, as worktree-destroy.sh resolves it.
-resolve_default() {
+MODE=$(bash "$SCRIPT_DIR/merge-mode.sh") || die "could not read .skills/merge_mode (merge-mode.sh's reason is above); nothing ran"
+if [ "$MODE" = pr ]; then
   DEFAULT=""
   DB_KNOB="$PRIMARY/.skills/default_branch"
   if [ -e "$DB_KNOB" ] || [ -L "$DB_KNOB" ]; then
@@ -149,11 +148,6 @@ resolve_default() {
     esac
   fi
   [ -n "$DEFAULT" ] || DEFAULT=main
-}
-
-MODE=$(bash "$SCRIPT_DIR/merge-mode.sh") || die "could not read .skills/merge_mode (merge-mode.sh's reason is above); nothing ran"
-if [ "$MODE" = pr ]; then
-  resolve_default
   REMEDY="in the main checkout, git switch $DEFAULT && git pull --ff-only, then re-run"
   CURRENT=$(git symbolic-ref --quiet --short HEAD) ||
     die "HEAD is detached; merge_mode is pr, so only the default branch ($DEFAULT) is deployed, at the merge: $REMEDY"
@@ -161,17 +155,20 @@ if [ "$MODE" = pr ]; then
     die "HEAD is on $CURRENT; merge_mode is pr, so only the default branch ($DEFAULT) is deployed, at the merge, never a branch's tip: $REMEDY"
 fi
 
-# No upstream on the default branch is a tracking gap, not unpushed code
-# (CR 2009, #587): `git clone --bare` sets no upstream and no fetch refspec,
-# so a bare layout's default branch has no @{u} even after the post-merge
-# pull. Off the default branch it is a branch nobody pushed.
+# No upstream is either a branch nobody pushed or pushed code whose tracking
+# was never set, as `git clone --bare` leaves every branch (CR 2009, #587).
+# Which one is not decided here (CR 2011: a plain bare clone has no
+# origin/HEAD, so a default-branch test read `trunk` as `main`): the message
+# gives both remedies, right on any branch. Its first step comes first, and
+# only when it applies (CR 2012): with no remote.origin.fetch, as a plain
+# bare clone has, origin/<branch> doesn't exist until it is set and fetched.
 if ! UPSTREAM=$(git rev-parse --verify '@{u}'); then
-  CURRENT=$(git symbolic-ref --quiet --short HEAD) || CURRENT=""
-  resolve_default
-  if [ -n "$CURRENT" ] && [ "$CURRENT" = "$DEFAULT" ]; then
-    die "HEAD ($DEFAULT, the default branch) has no upstream, which a bare clone never sets: git fetch origin && git branch --set-upstream-to=origin/$DEFAULT, then re-run (with no remote.origin.fetch, first: git config remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*')"
-  fi
-  die "HEAD has no upstream to compare with: push it first (Step 4)"
+  BRANCH=$(git symbolic-ref --quiet --short HEAD) ||
+    die "HEAD is detached and has no upstream to compare with: push it first (Step 4)"
+  SET_FETCH=""
+  [ -n "$(git config --get-all remote.origin.fetch)" ] ||
+    SET_FETCH="git config remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*' && "
+  die "HEAD ($BRANCH) has no upstream. If $BRANCH is already on origin, set it: ${SET_FETCH}git fetch origin && git branch --set-upstream-to=origin/$BRANCH, then re-run; otherwise push it first (Step 4)"
 fi
 [ "$SHA" = "$UPSTREAM" ] ||
   die "HEAD ($SHA) is not what was pushed (upstream is $UPSTREAM): push first (Step 4). Only pushed code is deployed"

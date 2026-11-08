@@ -169,6 +169,11 @@ def test_a_bare_clones_missing_upstream_is_set_not_read_as_local_commits():
     assert "There is no tracking information" in step, step
     assert "git branch --set-upstream-to=origin/<default>" in step, step
     assert "'+refs/heads/*:refs/remotes/origin/*'" in step, step
+    # CR 2012: the steps in the order they work, the refspec first.
+    refspec = step.index("remote.origin.fetch '+refs/heads/*")
+    fetch = step.index("`git fetch origin`")
+    upstream = step.index("--set-upstream-to=origin/<default>")
+    assert refspec < fetch < upstream, step
 
 
 def test_step_1_finds_the_main_checkout_by_asking_git():

@@ -123,11 +123,11 @@ Started by "ship it" once `gh pr view` shows `MERGED`:
    that refuses to fast-forward means the local default branch has commits
    of its own: stop and report. Don't merge or rebase them. A bare clone
    sets no upstream. If the pull says "There is no tracking information", or
-   step 2 says the default branch has no upstream, run `git fetch origin`
-   and `git branch --set-upstream-to=origin/<default>`, pull again, and
-   report it. When `git config --get remote.origin.fetch` prints nothing,
-   first run `git config remote.origin.fetch
-   '+refs/heads/*:refs/remotes/origin/*'`.
+   step 2 says the branch has no upstream, set it, in this order: when `git
+   config --get-all remote.origin.fetch` prints nothing, `git config
+   remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*'`; then `git
+   fetch origin`; then `git branch --set-upstream-to=origin/<default>`. Pull
+   again, and report it.
 2. **Step 8 runs there.** Without `.skills/deploy_command`, a checkout that is
    a unit's `WorkingDirectory=` became production at the pull, so the next
    steps table follows it, and a restart row waits on `.skills/pre_restart`
