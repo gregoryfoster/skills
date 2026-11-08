@@ -51,17 +51,20 @@ A run that fails before step 5 leaves the old MANIFEST (or none) in place,
 so a re-run sees the same plan and finishes it.
 
 It reports, and never refuses, a host's own journald setting the layer's
-drop-in meets (journald_overrides). journald reads its main file (the first
-of /etc, /run, /usr/local/lib and /usr/lib's systemd/journald.conf), then
-every journald.conf.d/*.conf in those directories by file name: a name in a
-higher directory masks the same name lower down, and among different names
-the later one wins each key. So the layer's zz- drop-in outranks a host's
-lower cap in its main file or under a name sorting before it, and a file of
-the layer's own name in /etc masks the layer's. Each entry is a host file
-that sets a key the layer's drop-in sets: file, key, host (its value), layer
-(the layer's), before and after (the value in effect now, and once this run
-lands; null when nothing sets it). The layer's file names and keys are read
-from the staged copy; null on a refusal.
+drop-in meets (journald_overrides). journald reads its main file from
+only /etc/systemd/journald.conf (systemd-analyze cat-config also lists one
+in /run or /usr/lib, which journald never reads), then every
+journald.conf.d/*.conf in /etc, /run, /usr/local/lib and /usr/lib by file
+name: a name in a higher directory masks the same name lower down, and
+among different names the later one wins each key. A value it can't parse,
+an empty one included, it ignores, keeping the one before. So the layer's
+zz- drop-in outranks a host's lower cap in its main file or under a name
+sorting before it, and a file of the layer's own name in /etc masks the
+layer's. Each entry is a host file that sets a key the layer's drop-in
+sets: file, key, host (its value, as written when journald ignores it),
+layer (the layer's), before and after (the value in effect now, and once
+this run lands; null when nothing sets it). The layer's file names and keys
+are read from the staged copy; null on a refusal.
 
 It never touches /etc/cannobserv/disk-gc/ (the host's disk-gc.conf and
 checkin.key), the GC's state under /var/lib, or a timer it keeps: an
@@ -368,14 +371,17 @@ fi
 
 # --- what a host's own journald settings become (#604) ------------------------
 
-# journald's rule, as systemd-analyze cat-config reads it on systemd 249 and
-# 255: the main file is the first of the four directories that has one, and
-# the drop-ins are every *.conf across them by file name, a name in a higher
-# directory masking the same name lower down (a link to /dev/null masks with
-# nothing), all applied in C sort order, the last assignment of a key
-# winning. patching-hosts' read_journal reads the drop-ins the same way
-# (#515), though its main file only from /etc.
+# journald's rule, measured by running systemd-journald itself on systemd
+# 249 and 255 (CR 1950, CR 1951): the main file is /etc's only, and the
+# drop-ins are every *.conf across the four directories by file name, a name
+# in a higher directory masking the same name lower down (a link to
+# /dev/null masks with nothing), all applied in C sort order, the last value
+# journald can parse winning. systemd-analyze cat-config also lists a main
+# file in /run or /usr/lib, which journald never reads, and prints values it
+# ignores. patching-hosts' read_journal reads files the same way (#515).
 JOURNALD_DIRS="etc run usr/local/lib usr/lib"
+# The keys journald parses as sizes (parse_size, base 1024).
+SIZE_KEYS=" SystemMaxUse SystemKeepFree SystemMaxFileSize RuntimeMaxUse RuntimeKeepFree RuntimeMaxFileSize "
 
 layer_dropin() {  # <rel>: whether it's one of the staged layer's journald drop-ins
   case "$1" in
@@ -389,19 +395,15 @@ layer_dropin() {  # <rel>: whether it's one of the staged layer's journald drop-
 # reads, in its order: the file to read, its path on the host, and 1 for the
 # host's own, 0 for one the layer installs or did. With <after> 1, as they
 # will be once this run lands: the layer's drop-ins read from the staged
-# copy, and any it drops gone. A name holding a tab or a newline is passed
-# over: no host names a drop-in so, and the report couldn't carry it.
+# copy, and any it drops gone. A name's control characters show as ?, and
+# one holding a tab or a newline, which the sort below can't carry, is
+# passed over with a note.
 journald_files() {
   local after=$1 d dir rel f n i seen=$'\n' order
   local -a here=() names=() srcs=() shows=() hosts=()
   J_SRC=() J_SHOW=() J_HOST=()
-  for d in $JOURNALD_DIRS; do
-    rel=$d/systemd/journald.conf
-    if [ -e "$R/$rel" ] || [ -L "$R/$rel" ]; then
-      if [ -f "$R/$rel" ]; then J_SRC+=("$R/$rel") J_SHOW+=("/$rel") J_HOST+=(1); fi
-      break
-    fi
-  done
+  rel=etc/systemd/journald.conf
+  if [ -f "$R/$rel" ]; then J_SRC+=("$R/$rel") J_SHOW+=("/$rel") J_HOST+=(1); fi
   for d in $JOURNALD_DIRS; do
     dir=$d/systemd/journald.conf.d
     here=()
@@ -414,7 +416,14 @@ journald_files() {
       done
     fi
     for n in ${here[@]+"${here[@]}"}; do
-      case $n in *$'\t'* | *$'\n'*) continue ;; esac
+      case $n in
+        *$'\t'* | *$'\n'*)
+          if [ "$after" = 0 ]; then
+            echo "install-disk-gc: note: passed over a journald drop-in in /$dir whose name holds a tab or a newline" >&2
+          fi
+          continue
+          ;;
+      esac
       case $seen in *$'\n'"$n"$'\n'*) continue ;; esac
       rel=$dir/$n
       # One this run removes masks nothing once it's gone.
@@ -423,7 +432,7 @@ journald_files() {
       f=$R/$rel
       if [ "$after" = 1 ] && layer_dropin "$rel"; then f=$STAGED/$rel; fi
       [ -f "$f" ] || continue
-      names+=("$n") srcs+=("$f") shows+=("/$rel")
+      names+=("$n") srcs+=("$f") shows+=("/$dir/${n//[[:cntrl:]]/?}")
       if contains "$rel" ${S_PATHS[@]+"${S_PATHS[@]}"} ${I_PATHS[@]+"${I_PATHS[@]}"}; then
         hosts+=(0)
       else
@@ -446,13 +455,42 @@ trim() {  # <var> <text>: VAR := text without its leading and trailing whitespac
   printf -v "$1" '%s' "$_t"
 }
 
+# size_ok <value>: whether journald's parse_size reads it: components of
+# digits, an optional fraction, optional whitespace and a unit, E P T G M K
+# or B, falling in order; a bare number only last. "200 M", "1G 512M" and
+# "1.5" are sizes; "", "300m", "300MiB", "10%" and "512M1G" aren't.
+size_ok() {
+  local p=$1 re='^\+?[0-9]+(\.[0-9]*)?[[:space:]]*' units=EPTGMKB rank=-1 r u
+  [ -n "$p" ] || return 1
+  while [ -n "$p" ]; do
+    p=${p#"${p%%[![:space:]]*}"}
+    [[ $p =~ $re ]] || return 1
+    p=${p:${#BASH_REMATCH[0]}}
+    u=${p:0:1}
+    case $u in
+      [EPTGMKB]) r=${units%%"$u"*} r=${#r} p=${p:1} ;;
+      *) r=7 ;;
+    esac
+    [ "$r" -gt "$rank" ] || return 1
+    rank=$r
+  done
+}
+
+# value_ok <key> <value>: whether journald takes it: never an empty one, and
+# for a size key only one size_ok reads. Others are taken as written.
+value_ok() {
+  [ -n "$2" ] || return 1
+  case $SIZE_KEYS in *" $1 "*) size_ok "$2" ;; *) return 0 ;; esac
+}
+
 # journald_keys <file>: J_KEYS := each key the file's [Journal] section
-# assigns, once each, in order; J_VALS := each one's last value. Comments
-# start with # or ;, and whitespace around the key and the value goes, as
-# systemd's parser has it.
+# assigns, once each, in order; J_VALS := each one's last value journald
+# takes (J_OK 1), else its last as written (J_OK 0). Comments start with #
+# or ;, and whitespace around the key and the value goes, as systemd's
+# parser has it.
 journald_keys() {
-  local line k v sect="" i found
-  J_KEYS=() J_VALS=()
+  local line k v ok sect="" i found
+  J_KEYS=() J_VALS=() J_OK=()
   while IFS= read -r line || [ -n "$line" ]; do
     trim line "$line"
     case $line in
@@ -464,21 +502,29 @@ journald_keys() {
     [ "$sect" = '[Journal]' ] || continue
     trim k "${line%%=*}"
     trim v "${line#*=}"
+    ok=0
+    if value_ok "$k" "$v"; then ok=1; fi
     # The report carries both as JSON strings, which json_str doesn't
     # escape control characters for.
     k=${k//[[:cntrl:]]/?} v=${v//[[:cntrl:]]/?}
     found=""
     for i in ${J_KEYS[@]+"${!J_KEYS[@]}"}; do
-      if [ "${J_KEYS[$i]}" = "$k" ]; then J_VALS[i]=$v found=1; fi
+      [ "${J_KEYS[$i]}" = "$k" ] || continue
+      found=1
+      # One journald ignores keeps the value before it.
+      if [ "$ok" = 1 ] || [ "${J_OK[$i]}" = 0 ]; then J_VALS[i]=$v J_OK[i]=$ok; fi
     done
-    if [ -z "$found" ]; then J_KEYS+=("$k") J_VALS+=("$v"); fi
+    if [ -z "$found" ]; then J_KEYS+=("$k") J_VALS+=("$v") J_OK+=("$ok"); fi
   done <"$1"
 }
 
-key_value() {  # <var> <key>: VAR := KEY's value in what journald_keys read; 1 when it has none
+# key_value <var> <key> [any]: VAR := KEY's value journald takes from what
+# journald_keys read; 1 when there's none. With "any", its value as written
+# when journald takes none, and 1 only when the key isn't assigned at all.
+key_value() {
   local i
   for i in ${J_KEYS[@]+"${!J_KEYS[@]}"}; do
-    if [ "${J_KEYS[$i]}" = "$2" ]; then
+    if [ "${J_KEYS[$i]}" = "$2" ] && { [ "${J_OK[$i]}" = 1 ] || [ "${3:-}" = any ]; }; then
       printf -v "$1" '%s' "${J_VALS[$i]}"
       return 0
     fi
@@ -486,8 +532,8 @@ key_value() {  # <var> <key>: VAR := KEY's value in what journald_keys read; 1 w
   return 1
 }
 
-# effective <key> <file>...: KEY's value in effect, as JSON: its last
-# assignment across the files, read in order; null when none sets it.
+# effective <key> <file>...: KEY's value in effect, as JSON: the last one
+# journald takes across the files, read in order; null when none sets it.
 effective() {
   local key=$1 f v out=null
   shift
@@ -512,6 +558,7 @@ journald_overrides() {
     while IFS= read -r rel; do
       journald_keys "$STAGED/$rel"
       for i in ${J_KEYS[@]+"${!J_KEYS[@]}"}; do
+        [ "${J_OK[$i]}" = 1 ] || continue
         j=""
         for k in ${lk[@]+"${!lk[@]}"}; do
           if [ "${lk[$k]}" = "${J_KEYS[$i]}" ]; then j=$k; fi
@@ -539,9 +586,11 @@ journald_overrides() {
     after=$(effective "${lk[$k]}" ${asrc[@]+"${asrc[@]}"})
     for i in ${hf[@]+"${!hf[@]}"}; do
       journald_keys "${hf[$i]}"
-      key_value v "${lk[$k]}" || continue
+      key_value v "${lk[$k]}" any || continue
       entries+=("{\"file\": $(json_str "${hs[$i]}"), \"key\": $(json_str "${lk[$k]}"), \"host\": $(json_str "$v"), \"layer\": $(json_str "${lv[$k]}"), \"before\": $before, \"after\": $after}")
-      if [ "$after" != "$(json_str "$v")" ]; then
+      if ! key_value v "${lk[$k]}"; then
+        echo "install-disk-gc: note: ${hs[$i]} sets ${lk[$k]}=$v, which journald can't parse and ignores; once this run lands $after is in effect (journald_overrides)" >&2
+      elif [ "$after" != "$(json_str "$v")" ]; then
         echo "install-disk-gc: note: ${hs[$i]} sets ${lk[$k]}=$v, and once this run lands $after is in effect (journald_overrides)" >&2
       fi
     done

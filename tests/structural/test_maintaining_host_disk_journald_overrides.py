@@ -148,6 +148,28 @@ CASES = [
     ),
     # Nothing of the host's: nothing to list.
     ({}, []),
+    # CR 1950: journald reads its main file only from /etc (measured by
+    # running systemd-journald on 249 and 255: one only in /usr/lib or /run
+    # left it at the 4.0G default). cat-config lists it, journald doesn't.
+    ({"usr/lib/systemd/journald.conf": cap("200M")}, []),
+    ({"run/systemd/journald.conf": cap("200M")}, []),
+    # CR 1953 (M1): a host file in /usr/lib under the layer's own name is
+    # read now, and masked once the layer lands: read only before.
+    (
+        {f"usr/lib/{JD}/{LAYER}": cap("200M")},
+        [entry(f"/usr/lib/{JD}/{LAYER}", "200M", "200M", "512M")],
+    ),
+    # CR 1953 (M2): a control character in a value is shown as ?, so the
+    # report stays JSON; journald can't parse "200M\x01", so it's ignored.
+    (
+        {f"etc/{JD}/zzz-x.conf": "[Journal]\nSystemMaxUse=200M\x01\n"},
+        [entry(f"/etc/{JD}/zzz-x.conf", "200M?", None, "512M")],
+    ),
+    # CR 1952: so is one in a file name, which is reported, not dropped.
+    (
+        {f"etc/{JD}/10-\x01x.conf": cap("200M")},
+        [entry(f"/etc/{JD}/10-?x.conf", "200M", "200M", "512M")],
+    ),
 ]
 IDS = [
     "lower-name",
@@ -160,6 +182,11 @@ IDS = [
     "other-key",
     "parsing",
     "none",
+    "main-only-in-usr-lib",
+    "main-only-in-run",
+    "usr-lib-layer-name",
+    "control-char-value",
+    "control-char-name",
 ]
 
 
@@ -243,6 +270,81 @@ def test_a_refusal_reads_no_journald_settings(tmp_path, host):
     assert out["journald_overrides"] is None
 
 
+# --- what journald ignores (CR 1951) -------------------------------------------
+# journald drops a size it can't parse ("Failed to parse size value,
+# ignoring") and keeps the value before it, on 249 and 255 alike: measured by
+# running systemd-journald with each value in a zzz- file after the layer's
+# 512M, and reading the max it took. parse_size, base 1024: digits, an
+# optional fraction, optional whitespace, then E, P, T, G, M, K or B, in
+# components whose units fall, a bare number only last.
+
+ACCEPTED = ["200 M", "1.5G", "300", "0", "+300M", "1G 512M", "1G512M", "5.G"]
+ACCEPTED += ["1.5", "300B", "300K", "1G 300"]
+REJECTED = ["", "200 MB please", "10%", "300m", "300MiB", "infinity", "-300M"]
+REJECTED += [".5G", "300M#x", "512M1G", "300 300", "1G 1G", "300 1G", "+ 300M"]
+
+
+@pytest.mark.usefixtures("linux_tools")
+@pytest.mark.parametrize("value", ACCEPTED)
+def test_a_size_journald_parses_wins(tmp_path, host, value):
+    put(host, f"etc/{JD}/zzz-x.conf", cap(value))
+    out = out_of(install(tmp_path, host))
+    assert out["journald_overrides"] == [
+        entry(f"/etc/{JD}/zzz-x.conf", value, value, value)
+    ]
+
+
+@pytest.mark.usefixtures("linux_tools")
+@pytest.mark.parametrize("value", REJECTED)
+def test_a_size_journald_ignores_leaves_the_layers(tmp_path, host, value):
+    # Listed with what it says, and the layer's 512M after: the raise this
+    # issue is about, said on stderr too.
+    put(host, f"etc/{JD}/zzz-x.conf", cap(value))
+    result = install(tmp_path, host)
+    out = out_of(result)
+    assert out["journald_overrides"] == [
+        entry(f"/etc/{JD}/zzz-x.conf", value, None, "512M")
+    ]
+    assert f"/etc/{JD}/zzz-x.conf" in result.stderr
+
+
+@pytest.mark.usefixtures("linux_tools")
+def test_an_ignored_value_keeps_the_one_before_it_in_the_same_file(tmp_path, host):
+    put(host, f"etc/{JD}/zzz-x.conf", "[Journal]\nSystemMaxUse=200M\nSystemMaxUse=\n")
+    out = out_of(install(tmp_path, host))
+    assert out["journald_overrides"] == [
+        entry(f"/etc/{JD}/zzz-x.conf", "200M", "200M", "200M")
+    ]
+
+
+# --- names and renames (CR 1952, CR 1953) ----------------------------------------
+
+
+@pytest.mark.usefixtures("linux_tools")
+def test_a_name_holding_a_newline_is_passed_over_aloud(tmp_path, host):
+    put(host, f"etc/{JD}/10-a\nb.conf", cap("200M"))
+    result = install(tmp_path, host)
+    out = out_of(result)
+    assert out["journald_overrides"] == []
+    assert "passed over" in result.stderr
+
+
+@pytest.mark.usefixtures("linux_tools")
+def test_a_drop_in_the_update_renames_masks_nothing_once_gone(tmp_path, host):
+    """CR 1953 (M3): the new MANIFEST renames the layer's drop-in. The old
+    name's file goes with the run, so it no longer masks the host's
+    /usr/lib file of that name, which then sorts after the new one."""
+    out_of(install(tmp_path, host, "--approve"))
+    put(host, f"usr/lib/{JD}/{LAYER}", cap("200M"))
+    files = rig.gc_files(version=3)
+    files[f"usr/local/lib/{JD}/yy-cannobserv-journal.conf"] = files.pop(rig.JOURNALD)
+    out = out_of(install(tmp_path, host, files=files))
+    assert out["action"] == "update" and out["removed"] == [rig.JOURNALD]
+    assert out["journald_overrides"] == [
+        entry(f"/usr/lib/{JD}/{LAYER}", "200M", "512M", "200M")
+    ]
+
+
 # --- systemd's own reading, where it's there ----------------------------------
 
 
@@ -250,7 +352,11 @@ def test_a_refusal_reads_no_journald_settings(tmp_path, host):
 @pytest.mark.parametrize("files, want", CASES[:7], ids=IDS[:7])
 def test_after_is_what_systemd_analyze_reads(tmp_path, host, files, want):
     """The oracle: `systemd-analyze cat-config` on the installed root ends at
-    the value `after` says. Skips where there is no systemd-analyze (macOS)."""
+    the value `after` says. Skips where there is no systemd-analyze (macOS).
+
+    Only for these cases: cat-config lists a main file outside /etc that
+    journald never reads, and prints a value journald ignores as written
+    (CR 1950, CR 1951), so it can't check either; the cases above can."""
     if shutil.which("systemd-analyze") is None:
         pytest.skip("needs systemd-analyze (a Linux host with systemd)")
     for rel, text in files.items():
@@ -313,3 +419,27 @@ def test_removing_says_a_hosts_mask_survives():
         text=True,
     ).stdout
     assert LAYER in usage
+
+
+def _help(script):
+    return subprocess.run(
+        ["bash", str(rig.SCRIPTS / script), "--help"], capture_output=True, text=True
+    ).stdout
+
+
+def test_cr_1950_the_docs_say_journald_reads_its_main_file_from_etc_only():
+    # cat-config's rule (the first of four directories) isn't journald's.
+    usage = " ".join(_help(INSTALL.name).split())
+    assert "first of /etc, /run" not in usage, usage
+    assert "only /etc/systemd/journald.conf" in usage, usage
+    text = VERIFYING.read_text()
+    section = text.split("## After an install or update", 1)[1].split("\n## ", 1)[0]
+    flat = " ".join(section.split())
+    assert "the last `SystemMaxUse=` is the cap in effect" not in flat, flat
+    assert "only from `/etc/systemd/journald.conf`" in flat, flat
+    assert "can't parse" in flat, flat
+
+
+def test_cr_1954_the_remove_usage_keeps_the_files_wrap():
+    wide = [line for line in _help("remove-disk-gc.sh").splitlines() if len(line) > 77]
+    assert not wide, wide
