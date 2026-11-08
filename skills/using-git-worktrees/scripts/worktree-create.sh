@@ -467,14 +467,24 @@ fi
 # checkout would be invisible whenever this script runs from inside a worktree,
 # silently restoring the link in the one deployment the knob exists to protect.
 # The primary is primary_checkout's, which the ignore check above already
-# resolved (CR 1992a): a bare primary's knob is the current checkout's, and a
-# submodule's linked worktree reads its submodule's primary, which the old
-# copy of resolve-worktree-root.sh's lookup here could not (#203). That copy
-# also fell back to this checkout on any git failure, and asked under an
-# inherited GIT_DIR, where a submodule's knob read as absent.
+# resolved (CR 1992a): a submodule's linked worktree reads its submodule's
+# primary, which the old copy of resolve-worktree-root.sh's lookup here could
+# not (#203). That copy also fell back to this checkout on any git failure,
+# and asked under an inherited GIT_DIR, where a submodule's knob read as
+# absent. A bare primary has no work tree, so its knob's home is the
+# resolver's (CR 2028): `<dir>` for a `<dir>/.bare` store with a `<dir>/.git`
+# gitfile, where every checkout is a linked worktree, and otherwise this
+# checkout. A home the resolver cannot name links nothing: `unresolved`.
 worktree_venv_mode() {
-  local knob configured
-  knob="${PRIMARY_TREE:-$PROJECT_ROOT}/.skills/worktree_venv"
+  local home knob configured
+  home=$PRIMARY_TREE
+  if [[ -z "$home" ]] &&
+    ! home=$(bash "$SCRIPT_DIR/resolve-worktree-root.sh" --project-root); then
+    echo "WARN: could not resolve where .skills/worktree_venv lives (the resolver's reason is above) — no .venv linked into $WORKTREE_PATH" >&2
+    echo unresolved
+    return 0
+  fi
+  knob="$home/.skills/worktree_venv"
   [[ -f "$knob" ]] || { echo link; return 0; }
 
   # First non-blank, non-comment line, trimmed — the same read
@@ -521,11 +531,14 @@ worktree_venv_mode() {
 if [[ -e "$PROJECT_ROOT/.venv/bin/activate" && ! -e "$WORKTREE_PATH/.venv" && ! -L "$WORKTREE_PATH/.venv" ]]; then
   # Resolved here rather than up front so a repo with no venv pays none of it,
   # and so a malformed knob warns only where it would have changed something.
-  if [[ "$(worktree_venv_mode)" == "none" ]]; then
+  VENV_MODE=$(worktree_venv_mode)
+  if [[ "$VENV_MODE" == "none" ]]; then
     # Announced, never silent. An absent .venv is also the signature of the
     # #156 bug this linker fixes, so the operator standing in a fresh worktree
     # has to be told which of the two they are looking at.
     echo "NOTE: .skills/worktree_venv=none — no .venv linked into $WORKTREE_PATH; provision one there" >&2
+  elif [[ "$VENV_MODE" == "unresolved" ]]; then
+    : # worktree_venv_mode said why
   else
     # `pwd -P` resolves through a .venv that is itself a symlink (a worktree
     # provisioning a worktree), so we never build a link to a link.
