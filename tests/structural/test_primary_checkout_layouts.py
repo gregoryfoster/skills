@@ -469,3 +469,22 @@ def test_git_older_than_2_31_says_so_rather_than_run_from_the_primary(
         " from a linked worktree: upgrade git"
     ) in result.stderr, result.stderr
     assert "run this from the primary checkout" not in result.stderr, result.stderr
+
+
+@pytest.mark.parametrize("script", SCRIPT_NAMES)
+def test_each_help_names_the_run_from_the_primary_exit_2(script):
+    """CR 2000: every script on this reader says, under exit 2, what a
+    linked worktree of a --separate-git-dir primary should do."""
+    result = subprocess.run(
+        ["bash", str(SCRIPTS / script), "--help"],
+        capture_output=True,
+        text=True,
+        env=_env(),
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+    text = " ".join(result.stdout.split())
+    assert (
+        "From a linked worktree of a --separate-git-dir primary: run from the"
+        " primary checkout"
+    ) in text, text

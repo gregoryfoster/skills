@@ -13,7 +13,9 @@
 #
 # THE KNOB has deploy_command's grammar and reader (_command-knob.sh): one
 # command line read from the primary checkout (the first `git worktree list`
-# entry), no shell evaluation, a repo script given by its path. It runs from
+# entry's work tree; a primary made with --separate-git-dir names none to its
+# linked worktrees, so only the primary itself can read it, #605), no shell
+# evaluation, a repo script given by its path. It runs from
 # that checkout's root with stdin from /dev/null, and its stdout and stderr
 # reach the caller unfiltered. Unlike deploy_command, nothing is appended: the
 # check is about the host, not the commit.
@@ -44,7 +46,9 @@ Exit codes:
      whose "Done when" is about production
   2  Nothing ran: the knob is present but unusable (no command line, more than
      one, a command not found or not executable, not a readable file), git
-     failed, or a bad argument. Fix it; it never reads as absent
+     failed, or a bad argument. Fix it; it never reads as absent. From a
+     linked worktree of a --separate-git-dir primary: run from the primary
+     checkout
   3  No .skills/pre_restart: Step 8's table, as before the knob existed
 EOF
 }
