@@ -39,7 +39,9 @@ Options:
                       /var/lib/apt/lists, and count against them (the ESM
                       count, from pro, still reads the host's own lists).
                       It also audits each service's uv.lock against OSV
-                      (pending.language), which nothing else asks for
+                      (pending.language), which nothing else asks for: per
+                      package, its advisories' ids, and in the same order
+                      the versions that fix each ([] none, null unread)
   --dry-run-into DIR  count the selection with unattended-upgrade --dry-run,
                       as root, with apt's cache in DIR/archives. It downloads
                       the whole set (290 MB and 9 minutes on one host) and
@@ -77,7 +79,8 @@ Options:
                       follows; or origin:<origin>, one followed origin and
                       nothing else, which counts only against lists this
                       run fetched, so it takes --refresh-into too. With
-                      --dry-run-into only
+                      --dry-run-into only: without it, a lane is ignored
+                      with a warning, so the after reading takes none
   --post-boot         the checks after a reboot (reboot-and-record.md
                       section 6), not the readings before a run. Takes
                       neither --refresh-into nor --dry-run-into
@@ -201,9 +204,11 @@ case $lane in
   "" | security | maintenance | origin:?*) ;;
   *) echo "ERROR --lane takes security, maintenance or origin:<an origin the knob follows>" >&2; exit 2 ;;
 esac
+# Only read_dry_run reads the lane, so without a dry run it scopes nothing:
+# the after reading, a refresh, is often passed the run's lane (#593).
 if [ -n "$lane" ] && [ -z "$dryrun" ]; then
-  echo "ERROR --lane names the dry run's selection: it goes with --dry-run-into" >&2
-  exit 2
+  echo "WARNING --lane scopes only the dry run, and without --dry-run-into it's ignored: a refresh reads every class anyway" >&2
+  lane=""
 fi
 lane=${lane:-security}
 if [ -n "$refresh$dryrun" ] && [ "$postboot" -eq 1 ]; then
@@ -2076,10 +2081,34 @@ root_only() {  # <path>
 # its user can rewrite. A root-owned lock, such as a release tree a deploy
 # builds as root, is audited as nobody, with a uv only root can change
 # (#456). uv 0.11.8 exits 0 clean, 1 with advisories and 2 on an error; its
-# output is text only. It never fetches a newer uv for one without `audit`
-# (#422). Sets LA_AUDITED, LA_N, LA_PKGS (a JSON array body) and LA_WHY.
+# output is text only (0.13.5 adds --output-format json, which the minimum
+# lacks). It never fetches a newer uv for one without `audit` (#422). Sets
+# LA_AUDITED, LA_N, LA_PKGS (a JSON array body) and LA_WHY.
+#
+# Each package's advisories come from the lines beneath its header (#594):
+# "- <id>: <title>", then "  Fixed in: <v>, <v>" or "  No fix versions
+# available" (uv 0.11.8 and 0.13.5, read 2026-11-07). ids keeps uv's order,
+# and fixed_in follows it, one list per advisory: its versions, [] where uv
+# says no fix exists, or null where it said neither. A fix can span release
+# lines (urllib3's "2.0.7, 1.26.18"), and a union per package would lose
+# which advisory has none.
+LA_P="" LA_IDS="" LA_FIXES="" LA_FIX="" LA_IN_ADV=0
+la_adv_end() {
+  [ "$LA_IN_ADV" -eq 1 ] || return 0
+  jpush LA_FIXES "$LA_FIX"
+  LA_IN_ADV=0
+}
+la_pkg_end() {
+  la_adv_end
+  [ -n "$LA_P" ] || return 0
+  jadd LA_P ids "[$LA_IDS]"
+  jadd LA_P fixed_in "[$LA_FIXES]"
+  jpush LA_PKGS "{$LA_P}"
+  LA_P="" LA_IDS="" LA_FIXES=""
+}
 lang_audit() {  # <dir> <user> <home>
-  local d=$1 u=$2 home=$3 uvb="" out err="" line re rc n=0 sum="" p v
+  local d=$1 u=$2 home=$3 uvb="" out err="" line re ra rf rc n=0 sum="" p v
+  local -a fv=()
   LA_AUDITED=0 LA_N="" LA_PKGS="" LA_WHY=""
   if [ ! -e "$P_ROOT$d/pyproject.toml" ] && ! as_root test -e "$P_ROOT$d/pyproject.toml" 2>/dev/null; then
     LA_WHY="no pyproject.toml beside its uv.lock, which uv audit needs"
@@ -2145,16 +2174,30 @@ lang_audit() {  # <dir> <user> <home>
       ;;
   esac
   re='^([^ ]+) ([^ ]+) has ([0-9]+) known vulnerabilit(y|ies):$'
+  ra='^- ([^ :]+): '
+  rf='^  Fixed in: (.+)$'
+  LA_P="" LA_IDS="" LA_FIXES="" LA_IN_ADV=0
   while IFS= read -r line; do
     if [[ $line =~ $re ]]; then
-      p=""
-      jadds p name "${BASH_REMATCH[1]}"
-      jadds p version "${BASH_REMATCH[2]}"
-      jaddn p advisories "${BASH_REMATCH[3]}"
-      jpush LA_PKGS "{$p}"
+      la_pkg_end
+      jadds LA_P name "${BASH_REMATCH[1]}"
+      jadds LA_P version "${BASH_REMATCH[2]}"
+      jaddn LA_P advisories "${BASH_REMATCH[3]}"
       n=$((n + BASH_REMATCH[3]))
+    elif [ -n "$LA_P" ] && [[ $line =~ $ra ]]; then
+      la_adv_end
+      jpushs LA_IDS "${BASH_REMATCH[1]}"
+      LA_FIX=null LA_IN_ADV=1
+    elif [ "$LA_IN_ADV" -eq 1 ] && [[ $line =~ $rf ]]; then
+      p=""
+      read -r -a fv <<<"${BASH_REMATCH[1]//,/ }" || true
+      for v in ${fv[@]+"${fv[@]}"}; do jpushs p "$v"; done
+      LA_FIX="[$p]"
+    elif [ "$LA_IN_ADV" -eq 1 ] && [ "$line" = "  No fix versions available" ]; then
+      LA_FIX="[]"
     fi
   done <<<"$out"
+  la_pkg_end
   re='Found ([0-9]+) known vulnerabilit'
   if [[ $err =~ $re ]]; then sum=${BASH_REMATCH[1]}; fi
   if [ "$rc" -eq 0 ]; then
@@ -2774,7 +2817,18 @@ read_dry_run() {
     else
       cfs="unknown: dpkg-query couldn't list them"
     fi
-    finding risk "dry-run:conffile:$p" "" "unattended-upgrade passes over $p at a conffile prompt, so the lane won't install it${k:+, though by_class.$k counts it (by_class.passed_over marks it)} (the dry run exited $rc). Its conffiles on disk: $cfs. Choose a remedy: hold it, declared as exception held:$p <review-by> <reason>; reinstall it with -o Dpkg::Options::=--force-confmiss (a deleted conffile) or settle the change by hand; or prune it (policy.md)."
+    # --force-confmiss reinstalls only a build apt can still fetch, and a
+    # deleted conffile can be restored alone from that build's .deb (#582).
+    installed_fetchable "$p"
+    case $IF_STATE in
+      yes) w="reinstall it with -o Dpkg::Options::=--force-confmiss (a deleted conffile)" ;;
+      no) w="a reinstall with --force-confmiss would upgrade it to ${IF_CANDIDATE:-its candidate}, since apt lists its installed $IF_VERSION from no archive, only dpkg's status file" ;;
+      *) w="whether apt can fetch its installed build couldn't be read, and a reinstall with --force-confmiss of one it can't upgrades it instead" ;;
+    esac
+    case ${cf_states[$((i - 1))]} in
+      *'"state": "missing"'*) w="$w; restore the deleted conffile alone from the ${IF_VERSION:-installed} .deb, checked against dpkg's md5 (references/environments/exe-dev-exeuntu.md)" ;;
+    esac
+    finding risk "dry-run:conffile:$p" "" "unattended-upgrade passes over $p at a conffile prompt, so the lane won't install it${k:+, though by_class.$k counts it (by_class.passed_over marks it)} (the dry run exited $rc). Its conffiles on disk: $cfs. Choose a remedy: hold it, declared as exception held:$p <review-by> <reason>; $w; settle the change by hand (a modified conffile); or prune it (policy.md)."
   done
   if [ -n "$unlisted" ]; then
     finding risk dry-run:unlisted "" "The dry run selects${unlisted}, which the pending set's class lists don't name: the proposal's counts leave them out, and the apply would take them. Read each in apt-cache policy before proposing."
@@ -2840,6 +2894,31 @@ read_holds() {
     jpush R_OWNERHOLDS "{$e}"
   done <<<"$hl"
   R_OWNERHOLDS="[$R_OWNERHOLDS]"
+}
+
+# Whether apt can fetch the installed build again (#582): apt-cache policy
+# lists it from a source other than dpkg's status file. A build superseded
+# in -updates is listed from the status file alone, and a reinstall then
+# resolves to the candidate: an upgrade, outside every gate.
+installed_fetchable() {  # <package>: IF_STATE := yes, no, or empty when unread; IF_VERSION and IF_CANDIDATE
+  local out line mine=0
+  IF_STATE="" IF_VERSION="" IF_CANDIDATE=""
+  have apt-cache || return 0
+  capture out apt_env apt-cache "${APT_OPTS[@]}" ${LISTS_OPT[@]+"${LISTS_OPT[@]}"} policy "$1"
+  [ "$CAP_RC" -eq 0 ] || return 0
+  while IFS= read -r line; do
+    case $line in
+      "  Candidate: "*) IF_CANDIDATE=${line#"  Candidate: "} ;;
+      " *** "*)
+        mine=1 IF_STATE=no
+        read -r _ IF_VERSION _ <<<"$line" ;;
+      "     "[!\ ]*) mine=0 ;;
+      "        "*)
+        if [ "$mine" -eq 1 ]; then
+          case $line in */var/lib/dpkg/status) ;; *) IF_STATE=yes ;; esac
+        fi ;;
+    esac
+  done <<<"$out"
 }
 
 held_versions() {  # <package>: HV_INSTALLED, HV_CANDIDATE, and HV_SECURITY 1 when a newer version is in a -security suite
@@ -4706,8 +4785,10 @@ read_post_boot() {
     check pid1-deleted-maps "" "/proc/1/maps couldn't be read as root"
   fi
   if [ "$REBOOT_REQ" -eq 1 ]; then check reboot-required 0 "/run/reboot-required is still there"; else check reboot-required 1 absent; fi
+  # The same reading as session:adj's before a run, so its exception holds
+  # here too (#581).
   if [ -n "$R_SESSION_MIN" ] && [ "$R_SESSION_MIN" -le -1000 ]; then
-    check session-adj 0 "the session's chain still runs at $R_SESSION_MIN"
+    check session-adj 0 "the session's chain still runs at $R_SESSION_MIN" session:adj
   elif [ -n "$R_SESSION_MIN" ]; then
     check session-adj 1 "lowest adj in the session's chain, below the platform's agent: $R_SESSION_MIN"
   fi
