@@ -1235,7 +1235,9 @@ def test_a_reinstall_that_would_upgrade_isnt_offered_as_a_reinstall(host):
         f"restore the deleted conffile alone from the {FWUPD_INSTALLED} .deb"
         in f["message"]
     )
-    assert "exe-dev-exeuntu.md" in f["message"]
+    # CR 1948: the general recipe, not one host's worked example.
+    assert "(policy.md, the conffile restore)" in f["message"]
+    assert "exe-dev-exeuntu.md" not in f["message"]
 
 
 def test_a_reinstall_of_a_build_still_in_an_archive_is_offered(host):

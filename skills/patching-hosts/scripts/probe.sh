@@ -2941,7 +2941,7 @@ read_dry_run() {
       w="whether apt can fetch its installed build couldn't be read, and a reinstall with --force-confmiss must name that build or it upgrades"
     fi
     case ${cf_states[$((i - 1))]} in
-      *'"state": "missing"'*) w="$w; restore the deleted conffile alone from the ${IF_VERSION:-installed} .deb, checked against dpkg's md5 (references/environments/exe-dev-exeuntu.md)" ;;
+      *'"state": "missing"'*) w="$w; restore the deleted conffile alone from the ${IF_VERSION:-installed} .deb, checked against dpkg's md5 (policy.md, the conffile restore)" ;;
     esac
     finding risk "dry-run:conffile:$p" "" "unattended-upgrade passes over $p at a conffile prompt, so the lane won't install it${k:+, though by_class.$k counts it (by_class.passed_over marks it)} (the dry run exited $rc). Its conffiles on disk: $cfs. Choose a remedy: hold it, declared as exception held:$p <review-by> <reason>; $w; settle the change by hand (a modified conffile); or prune it (policy.md)."
   done
