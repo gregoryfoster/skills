@@ -80,9 +80,11 @@ Behaviour:
     pre-commit hooks did not fit the timeout (.git/skills-update.commit-kills
     counts them; a commit that returns, landed or refused, resets it). A
     kill inside the push counts the same way (#603): the second in a row
-    holds the push, which runs the repo's pre-push hooks, until the next
-    UTC day (direct mode leaves its commit unpushed meanwhile); a push
-    that returns resets it.
+    holds the push, which runs the repo's pre-push hooks, for the rest of
+    the UTC day; a push that returns resets it. In direct mode the commit
+    stays unpushed until a push fits: each UTC day's first session tries
+    once, and a suite that never fits is held again. A push by hand, or
+    .skills/refresh-skip-hooks, shares it.
   - Runs only on the main branch.
   - Scopes the submodule update to skills-vendor/ — never touches other
     submodules.
@@ -1258,11 +1260,12 @@ _restore_content() {
 
 # The day's lock, written by every run that ENDS — success or failure — and by
 # no run that is killed part way (#555) — except that the second in a row
-# killed inside its commit has it written by the next heal (#575). Checked,
-# not `|| true` (#193): this one write IS the once-per-day contract, and the
-# guard reads nothing else. A read-only or root-owned .git, or a full disk, and
-# the stamp never lands, the guard falls through next session, and the whole
-# refresh runs again — every session, forever, with nothing said. That is the
+# killed inside its commit or push has it written by the next heal (#575,
+# #603). Checked, not `|| true` (#193): this one write IS the once-per-day
+# contract, and the guard reads nothing else. A read-only or root-owned .git,
+# or a full disk, and the stamp never lands, the guard falls through next
+# session, and the whole refresh runs again — every session, forever, with
+# nothing said. That is the
 # defect #187 fixed in socraticode-health.sh, the script this file's pin
 # comment names as its twin; the shape is copied from it. Reported, never
 # fatal: a SessionStart hook must not block, so a failed stamp degrades to
@@ -1340,7 +1343,7 @@ _count_kill() {
     return 0
   fi
   if [ "$MERGE_MODE" = "direct" ]; then
-    held=". Until then this hook's commit stays unpushed on $BRANCH; a push by hand shares it"
+    held=". This hook's commit stays unpushed on $BRANCH until a push fits: each UTC day's first session tries once, and a suite that never fits is held again. A push by hand, or that knob, shares it"
   fi
   echo "skills update: $kills refreshes in a row were killed inside their commit or push, the last inside its push, so the push waits for the next UTC day rather than the next session. The push runs this repo's pre-push hooks and did not fit in the hook's 120 s default timeout: list the slow hook ids in .skills/refresh-skip-hooks to skip them on this hook's own push$held (see $LOG)" >&2 || true
   return 0
@@ -1428,8 +1431,8 @@ _push_backed_off() {
 # kill is usually the real one, a second later. Unstaged rather than
 # committed: the lock is now spent only when a run ends, so this same session
 # redoes the bump, and nothing is committed that this run has not verified —
-# unless it is the second kill in a row inside the commit, which spends the
-# day (_count_kill, #575).
+# unless it is the second kill in a row inside the commit or push, which
+# spends the day (_count_kill, #575, #603).
 #
 # Only what the hook staged is touched, and the marker is how it knows. A
 # human's own `git add skills-vendor/<v>` — a manual bump — stages exactly the
@@ -2480,6 +2483,15 @@ PRS_EOF
 
   if [ -n "$tip" ] && _pr_same_bump "$tip" "$c"; then
     _log "pr: $PR_BRANCH already proposes this bump — nothing to push"
+    # The branch holds what the push would send, so the last push of it
+    # landed: a kill counted since fell after it returned (CR 2014). Reset,
+    # as a returned push does. pr mode has no commit to reset it, so a count
+    # left here turned one later kill into a back-off. No other way out of
+    # the pr path without a push resets: a declined PR, a refused `gh` or
+    # fetch, a branch holding a foreign commit, and a base that already
+    # records the bump (a bump by hand gets there too) say nothing of
+    # whether the hook's push landed.
+    _push_returned
   else
     # The lease is the tip just read; empty means "must not exist". Never a
     # plain --force: a push landing between the read and here is refused.
