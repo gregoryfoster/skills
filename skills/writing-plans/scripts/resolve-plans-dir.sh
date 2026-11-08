@@ -120,13 +120,14 @@ else
   # --separate-git-dir store's parent is the layout, not a failure. Asked
   # under LC_ALL=C so a translated git's line is matched too, and only the
   # discovery form (CR 2034): `not a git repository: <path>`, a gitfile git
-  # rejects, is a reason.
+  # rejects, is a reason. Succeeds only when it printed one (R4-5), so a
+  # caller can say what failed when git did not.
   candidate_reason() {
     local err
     err=$(LC_ALL=C here_git -C "$CANDIDATE" rev-parse --git-common-dir 2>&1 >/dev/null) || true
     case $err in
-      "fatal: not a git repository (or any of the parent directories)"*) ;;
-      ?*) printf '%s\n' "$err" >&2 ;;
+      "fatal: not a git repository (or any of the parent directories)"* | "") return 1 ;;
+      *) printf '%s\n' "$err" >&2 ;;
     esac
   }
   DIRS=$(here_git rev-parse --path-format=absolute --git-dir --git-common-dir 2>/dev/null) || DIRS=""
@@ -137,16 +138,22 @@ else
   PRIMARY_BLOCK=${WT_LIST%%$'\n\n'*}
   if [[ -n "$DIRS" && "${DIRS%%$'\n'*}" == "${DIRS#*$'\n'}" ]]; then
     : # 1. the main worktree
-  elif [[ $CANDIDATE_FAILED -eq 1 && (-e "$CANDIDATE/.git" || -L "$CANDIDATE/.git") ]]; then
-    # The candidate has a .git of its own, and git would not answer for it:
-    # the primary is there, or meant to be, and git refused it. Asked before
-    # the bare case, since a `.bare` store with a `<dir>/.git` gitfile is
-    # bare too and its knob is <dir>'s (CR 1988). One rule, not one case per
-    # way a .git can break (CR 2033): dubious ownership, a gitfile that is
-    # unreadable, CRLF, mistyped, empty, or names a missing store. Git
-    # says which.
-    candidate_reason
-    echo "ERROR: could not resolve the primary checkout '$CANDIDATE' (git's reason, if any, is above)" >&2
+  elif [[ $CANDIDATE_FAILED -eq 1 &&
+    (-L "$CANDIDATE/.git" || -f "$CANDIDATE/.git" || "$CANDIDATE/.git" -ef "$COMMON_DIR") ]]; then
+    # The candidate has a .git that can be this repository's, and git would
+    # not answer for it: the primary is there, or meant to be, and git
+    # refused it. Asked before the bare case, since a `.bare` store with a
+    # `<dir>/.git` gitfile is bare too and its knob is <dir>'s (CR 1988). One
+    # rule, not one case per way a .git can break (CR 2033): dubious
+    # ownership, a gitfile that is unreadable, CRLF, mistyped, empty, or
+    # names a missing store, or a dangling link. Git says which. A .git
+    # directory that is not the common dir is another repository's (R4-1):
+    # beside a plain repo.git, git refusing it says nothing about this one.
+    if candidate_reason; then
+      echo "ERROR: could not resolve the primary checkout '$CANDIDATE' (git's reason is above)" >&2
+    else
+      echo "ERROR: could not resolve the primary checkout '$CANDIDATE': git will not open '$CANDIDATE/.git' and gives no reason (an empty directory, or a dangling link?)" >&2
+    fi
     exit 2
   elif [[ $'\n'"$PRIMARY_BLOCK"$'\n' == *$'\n'bare$'\n'* ]]; then
     : # 2. a bare primary
@@ -157,14 +164,14 @@ else
     # case 1 cannot be told: run from the primary it is no answer either.
     # Git's reason first (CR 1994): a superproject git refuses lands here
     # too, and upgrading git does not help that.
-    candidate_reason
+    candidate_reason || true
     GIT_VERSION=$(here_git --version 2>/dev/null) || GIT_VERSION="git version (unknown)"
     echo "ERROR: could not resolve the primary checkout: git ${GIT_VERSION#git version } predates 2.31, which this layout needs to tell its primary from a linked worktree: upgrade git (from a linked worktree, then run from the primary checkout), or set PLANS_DIR" >&2
     exit 2
   else
     # Git's reason for the silent ask above, when it has one (CR 1991): a
     # superproject git refuses lands here too, as no submodule at all.
-    candidate_reason
+    candidate_reason || true
     echo "ERROR: could not resolve the primary checkout (git's reason, if any, is above): this repository's common dir '$COMMON_DIR' is no checkout's .git (as with \`git init --separate-git-dir\` or a symlinked \`.git\`), and only the primary knows its work tree, so run this from the primary checkout" >&2
     exit 2
   fi
