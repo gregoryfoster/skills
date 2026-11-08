@@ -11,6 +11,11 @@
 - #529: `scheduled` runs at the host's cadence, `cadence weekly|monthly`,
   weekly by default, and the docs say so rather than "monthly"; run.md
   states what a run with nothing pending does, a reboot still due included.
+- #464, ask 2: policy.md's procedure for a pre-announced security release,
+  linked from run.md's one-origin lane. Each step is checked against what
+  the scripts do: the early refresh takes no `--lane`, the recovery point
+  holds for 24 hours, the poll reads the lists the probe fetched, and the
+  count waits for the fix.
 """
 
 import re
@@ -204,3 +209,73 @@ def test_the_refresh_row_says_what_to_do_with_a_source_down_for_good():
     row = _refresh_row()
     assert "one-origin lane" in row
     assert "removed" in row and "owner" in row
+
+
+# --- #464, ask 2: a pre-announced security release ---------------------------------
+
+PRE = "### A pre-announced security release"
+APPLY_SH = (SKILL / "scripts" / "apply.sh").read_text()
+PROBE_SH = (SKILL / "scripts" / "probe.sh").read_text()
+
+
+def _pre() -> str:
+    assert PRE in POLICY, "policy.md has no pre-announced release procedure"
+    start = POLICY.index(PRE)
+    end = POLICY.find("\n## ", start)
+    return POLICY[start:end]
+
+
+def test_run_md_links_the_procedure_from_the_one_origin_lane():
+    [para] = [
+        p
+        for p in RUN.split("\n\n")
+        if p.startswith("**An expedited run of one origin**")
+    ]
+    assert "policy.md#a-pre-announced-security-release" in para
+
+
+def test_the_procedure_rides_a_dated_window_and_the_origin_lane():
+    s = _pre()
+    assert "dated `window` line" in s and "#421" in s
+    assert "`apply.sh --step bulk --lane origin:<origin>" in s
+    assert "owner's approval" in s
+    # The decision on #464: the dated window and the origin lane are the
+    # expedite path, and no knob line names one.
+    assert "expedite" not in KNOB_MD
+
+
+def test_before_t_records_versions_refreshes_and_bounds_the_recovery_point():
+    before = _pre().split("**After T**")[0]
+    assert "before-versions" in before
+    # The probe refuses --lane without --dry-run-into, so the early refresh
+    # names no lane.
+    assert "it goes with --dry-run-into" in PROBE_SH
+    assert "`probe.sh --refresh-into DIR`" in before
+    assert "--lane" not in before.split("**Before T:**")[1]
+    assert "`lists:refresh`" in before
+    # The bulk refuses a recovery point that began more than a day before it.
+    assert "\nRP_MAX_AGE=86400\n" in APPLY_SH
+    assert "recovery point" in before and "24 hours" in before
+
+
+def test_after_t_polls_the_lists_the_probe_fetched_and_states_the_lag():
+    after = _pre().split("**After T**")[1].split("**Then**")[0]
+    # Plain apt-cache policy reads the host's own lists, which the probe
+    # never refreshes.
+    assert "`apt-cache -o Dir::State::Lists=DIR/lists/ policy <pkg>`" in after
+    assert "never assume" in after
+
+
+def test_then_counts_after_the_fix_verifies_the_runtime_and_records_the_cves():
+    then = _pre().split("**Then**")[1]
+    assert (
+        "`probe.sh --lane origin:<origin> --refresh-into DIR --dry-run-into DIR`"
+        in then
+    )
+    # A one-origin dry run that counted nothing is refused.
+    assert "counted nothing from the" in APPLY_SH
+    assert "counted nothing" in then
+    assert "`impact.reboot.needrestart_services`" in then
+    assert "reload" in then and "config test" in then
+    assert "a real request" in then
+    assert "CVE IDs" in then
