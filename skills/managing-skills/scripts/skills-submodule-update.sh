@@ -78,7 +78,11 @@ Behaviour:
     progress). The second run in a row killed inside its commit spends the
     day instead, and says why on stderr: the commit through the repo's
     pre-commit hooks did not fit the timeout (.git/skills-update.commit-kills
-    counts them; a commit that returns, landed or refused, resets it).
+    counts them; a commit that returns, landed or refused, resets it). A
+    kill inside the push counts the same way (#603): the second in a row
+    holds the push, which runs the repo's pre-push hooks, until the next
+    UTC day (direct mode leaves its commit unpushed meanwhile); a push
+    that returns resets it.
   - Runs only on the main branch.
   - Scopes the submodule update to skills-vendor/ — never touches other
     submodules.
@@ -176,9 +180,11 @@ LOG="$gitdir/skills-update.log"
 # the marker is `$STAGING.heal.<pid>.<epoch>`. See _heal_staged, _take_marker
 # and _marker_owner_live.
 STAGING="$gitdir/skills-update.staging"
-# Refreshes killed inside their commit, in a row (#575): one line, `<count>
-# <the last one's marker owner line>`. Written by the heal, removed by a run
-# whose commit returns, landed or refused (CR 1900). See _count_commit_kill.
+# Runs killed inside their commit or their push, in a row (#575, #603): one
+# line, `<count> <the last one's owner line>`. Written by the heal, removed by
+# a run whose commit or push returns, landed or refused (CR 1900). While a
+# push is in flight, a second line names it, `push <its owner line>`
+# (_push_begin). See _count_kill and _heal_push.
 COMMIT_KILLS="$gitdir/skills-update.commit-kills"
 # How long a marker's owner can be believed alive (CR 1789): the hook's 120 s
 # ceiling plus margin. Past it, a live PID is a reused one — an unrelated
@@ -247,6 +253,20 @@ _phase() {
 # Both read $STAGING, or the marker file named as their argument: the heal
 # checks again the one it has just taken (_take_marker).
 MARKER_OWNER=""
+# _owner_live <owner line> — true when `pid <PID> <epoch seconds>` names a run
+# still going: not this run's PID, under MARKER_MAX_AGE, and `kill -0` reaches
+# it. The marker's first line, and a push in flight's (#603).
+_owner_live() {
+  local tag pid started now
+  read -r tag pid started <<<"$1" || true
+  [ "$tag" = "pid" ] || return 1
+  case "$pid" in '' | *[!0-9]*) return 1 ;; esac
+  case "$started" in '' | *[!0-9]*) return 1 ;; esac
+  [ "$pid" != "$$" ] || return 1
+  now="$(date +%s 2>/dev/null)" || return 1
+  [ $((now - started)) -le "$MARKER_MAX_AGE" ] || return 1
+  kill -0 "$pid" 2>/dev/null
+}
 _marker_being_written() {
   local file="${1:-$STAGING}" now mtime
   now="$(date +%s 2>/dev/null)" || return 1
@@ -256,7 +276,7 @@ _marker_being_written() {
   [ $((now - mtime)) -le 2 ] && [ $((mtime - now)) -le 2 ]
 }
 _marker_owner_live() {
-  local file="${1:-$STAGING}" head tag pid started now
+  local file="${1:-$STAGING}" head tag pid started
   MARKER_OWNER=""
   [ -f "$file" ] || return 1
   head="$(head -n 1 "$file" 2>/dev/null)" || return 1
@@ -268,10 +288,7 @@ _marker_owner_live() {
     MARKER_OWNER="unknown: its marker is still being written"
     return 0
   fi
-  [ "$pid" != "$$" ] || return 1
-  now="$(date +%s 2>/dev/null)" || return 1
-  [ $((now - started)) -le "$MARKER_MAX_AGE" ] || return 1
-  kill -0 "$pid" 2>/dev/null || return 1
+  _owner_live "$head" || return 1
   MARKER_OWNER="$pid"
   return 0
 }
@@ -838,6 +855,18 @@ _reconcile_unpushed() {
     return 0
   fi
 
+  # Backed off (#603): two or more runs in a row were killed inside their
+  # commit or push, and _count_kill has spent today's lock. That lock gates
+  # the refresh, and this push runs ahead of it, so it reads the back-off
+  # here. Not rolled back: the commit stays, unpushed, for the next UTC day's
+  # session (or a push by hand) to share, as it did while every session
+  # pushed it and was killed. Blocked, as every refusal here is.
+  if _push_backed_off; then
+    PUSH_BLOCKED=1
+    _log "unpushed: $BRANCH is $ahead commit(s) ahead of $upstream_name — not pushing: runs in a row were killed inside their commit or push, so the push waits for the next UTC day"
+    return 0
+  fi
+
   local paths log_before=0
   # Where this push's output starts in $LOG, so a refusal can be read back
   # from it (#560). A read only: what is written, and when, is unchanged.
@@ -846,6 +875,8 @@ _reconcile_unpushed() {
   fi
   case "$log_before" in '' | *[!0-9]*) log_before=0 ;; esac
   _skip_hooks_note
+  # In flight until it returns (#603): a kill inside it is the next heal's.
+  _push_begin
   if {
     echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] push $ahead unpushed commit(s) to $upstream_name:"
     # Explicit refspec, never a bare `git push`: under push.default=matching
@@ -856,10 +887,12 @@ _reconcile_unpushed() {
     # commit would publish work the authorship guard never saw.
     _hook_git push "$remote" "$head:$merge" 2>&1
   } >>"$LOG"; then
+    _push_returned
     _phase "push"
     _log "unpushed: pushed $ahead commit(s) to $upstream_name"
     return 0
   fi
+  _push_returned
   _phase "push"
 
   # Refused because the remote already has it (CR 1896): two sessions pushing
@@ -1242,51 +1275,142 @@ _stamp_lock() {
   return 0
 }
 
-# _count_commit_kill <marker owner line> — the heal found a killed run that
-# left the hook's own paths staged, so the kill fell between `git add` and the
-# end of `git commit` (#575). Since #555 such a run is retried at the next
-# session, which is right for the extension's 2-3 s kill and wrong for a
-# consumer whose pre-commit suite does not fit the 120 s timeout: that commit
-# is killed at every session start, and the operator sees a log ending
-# mid-`pytest`. So the second in a row stamps the day's lock, and says why on
-# stderr — once a back-off, since only a new kill gets here.
+# _count_kill <commit|push> <owner line> — a run was killed inside its
+# `git commit` or its `git push`, and both run the consumer's own hooks.
+#
+# commit (#575): the heal found a killed run that left the hook's own paths
+# staged, so the kill fell between `git add` and the end of `git commit`.
+# Since #555 such a run is retried at the next session, which is right for
+# the extension's 2-3 s kill and wrong for a consumer whose pre-commit suite
+# does not fit the 120 s timeout: that commit is killed at every session
+# start, and the operator sees a log ending mid-`pytest`. push (#603): a push
+# whose in-flight line outlived its owner (_heal_push), the same defect behind
+# pre-push hooks. So the second in a row stamps the day's lock, and says why on
+# stderr — once a back-off, since only a new kill gets here. The lock alone
+# stops the refresh and `pr` mode's branch push; the reconcile's push runs
+# ahead of the lock, so it reads the back-off itself (_push_backed_off).
+#
+# One count for both, since either kill retries the same pointer bump: a
+# commit-stage kill and a push-stage kill in a row are two in a row.
 #
 # Keyed on the killed run's owner line, so a marker the heal keeps (the hook's
 # staging beside a human's, or an unstage that failed) is counted once however
 # many sessions heal it. A kill before `git add` never gets here, and does not
 # reset the count either: the extension's kill nearly always lands there, and
 # resetting on it would let a slow suite interleaved with it retry forever.
-# Only a commit that returns resets it, landed or refused (CR 1900). A count
-# past 2 backs off at once: a suite that has not fitted twice is not retried a
-# second time in a day.
+# Only a commit or push that returns resets it, landed or refused (CR 1900). A
+# count past 2 backs off at once: a suite that has not fitted twice is not
+# retried a second time in a day.
 #
 # Called as soon as the heal knows the killed run left the hook's paths
 # staged, before it undoes anything (CR 1899): counted last, a heal killed at
 # its restore lost the count, and the next heal found nothing staged to count.
 # The owner-line key makes a second call for one kill a no-op. Written through
 # a temp file and a rename, so a kill mid-write cannot leave it empty — which
-# reads as 0.
-_count_commit_kill() {
-  local owner="$1" kills=0 last=""
+# reads as 0. A push-stage count drops the in-flight line it counted; a
+# commit-stage count keeps one, which is another run's push.
+_count_kill() {
+  local stage="$1" owner="$2" kills=0 last="" inflight="" held="" body
   case "$owner" in "pid "*) : ;; *) return 0 ;; esac
   if [ -f "$COMMIT_KILLS" ]; then
-    read -r kills last 2>/dev/null <"$COMMIT_KILLS" || true
+    # Gone since the `[ -f ]`: under `set -e`, bash 5 exits on a compound
+    # command's failed redirect unless it is checked (CR 1914).
+    {
+      read -r kills last || true
+      read -r inflight || true
+    } 2>/dev/null <"$COMMIT_KILLS" || true
     case "$kills" in '' | *[!0-9]*) kills=0 ;; esac
   fi
   [ "$last" != "$owner" ] || return 0
   kills=$((kills + 1))
-  if ! printf '%s %s\n' "$kills" "$owner" >"$COMMIT_KILLS.tmp" 2>/dev/null ||
+  body="$kills $owner"
+  case "$stage:$inflight" in commit:'push '*) body="$body"$'\n'"$inflight" ;; esac
+  if ! printf '%s\n' "$body" >"$COMMIT_KILLS.tmp" 2>/dev/null ||
     ! mv -f "$COMMIT_KILLS.tmp" "$COMMIT_KILLS" 2>/dev/null; then
     rm -f "$COMMIT_KILLS.tmp" 2>/dev/null || true
-    _log "heal: could not write $COMMIT_KILLS — a refresh killed inside its commit is not counted, and the next session retries"
+    _log "heal: could not write $COMMIT_KILLS — a refresh killed inside its $stage is not counted, and the next session retries"
     return 0
   fi
-  _log "heal: a refresh was killed inside its commit ($kills in a row)"
+  _log "heal: a refresh was killed inside its $stage ($kills in a row)"
   [ "$kills" -ge 2 ] || return 0
   _log "heal: backing off — the next refresh waits for the next UTC day"
   _stamp_lock
-  echo "skills update: $kills refreshes in a row were killed inside their commit, so the next waits for the next UTC day rather than the next session. The commit runs this repo's pre-commit hooks and did not fit in the hook's 120 s default timeout: list the slow hook ids in .skills/refresh-skip-hooks to skip them on this hook's own commit (see $LOG)" >&2 || true
+  if [ "$stage" = "commit" ]; then
+    echo "skills update: $kills refreshes in a row were killed inside their commit, so the next waits for the next UTC day rather than the next session. The commit runs this repo's pre-commit hooks and did not fit in the hook's 120 s default timeout: list the slow hook ids in .skills/refresh-skip-hooks to skip them on this hook's own commit (see $LOG)" >&2 || true
+    return 0
+  fi
+  if [ "$MERGE_MODE" = "direct" ]; then
+    held=". Until then this hook's commit stays unpushed on $BRANCH; a push by hand shares it"
+  fi
+  echo "skills update: $kills refreshes in a row were killed inside their commit or push, the last inside its push, so the push waits for the next UTC day rather than the next session. The push runs this repo's pre-push hooks and did not fit in the hook's 120 s default timeout: list the slow hook ids in .skills/refresh-skip-hooks to skip them on this hook's own push$held (see $LOG)" >&2 || true
   return 0
+}
+
+# _heal_push — a push killed in flight (#603). The hook records each push it
+# makes as the second line of $COMMIT_KILLS (_push_begin), and a push that
+# returns removes the file (_push_returned). A line still there with its owner
+# gone was killed inside the push: inside the consumer's pre-push hooks, when
+# the kill is the harness's timeout. Counted as a commit-stage kill is. A live
+# owner's push is another session's, still going, and is left to it.
+#
+# Not the in-progress marker: the reconcile pushes at every session, ahead of
+# any claim, and a run's own push comes after _finish_refresh has dropped it.
+# On main only, as every push is.
+_heal_push() {
+  local first="" line=""
+  [ "$BRANCH" = "main" ] || return 0
+  [ -f "$COMMIT_KILLS" ] || return 0
+  {
+    read -r first || true
+    read -r line || true
+  } 2>/dev/null <"$COMMIT_KILLS" || true
+  case "$line" in "push pid "*) : ;; *) return 0 ;; esac
+  if _owner_live "${line#push }"; then
+    _log "heal: a push is in flight (${line#push }) — leaving it to its run"
+    return 0
+  fi
+  _count_kill push "${line#push }"
+}
+
+# _push_begin — before a push, record it as in flight: $COMMIT_KILLS's count
+# line, kept, and `push pid <PID> <epoch>` (#603). Through a temp file and a
+# rename, checked: a record that never lands costs only the count of a kill
+# inside this push, so it is logged, not fatal. Two sessions pushing together
+# share the one line, so a push that returns can clear a slower one's record;
+# that kill goes uncounted, and the next is counted.
+_push_begin() {
+  local kills=0 last="" started
+  if [ -f "$COMMIT_KILLS" ]; then
+    read -r kills last 2>/dev/null <"$COMMIT_KILLS" || true
+    case "$kills" in '' | *[!0-9]*) kills=0 ;; esac
+  fi
+  started="$(date +%s 2>/dev/null)" || started=0
+  if ! printf '%s %s\npush pid %s %s\n' "$kills" "$last" "$$" "$started" >"$COMMIT_KILLS.tmp" 2>/dev/null ||
+    ! mv -f "$COMMIT_KILLS.tmp" "$COMMIT_KILLS" 2>/dev/null; then
+    rm -f "$COMMIT_KILLS.tmp" 2>/dev/null || true
+    _log "could not write $COMMIT_KILLS — a kill inside this push is not counted"
+  fi
+  return 0
+}
+
+# _push_returned — the push returned, accepted or refused: the pre-push hooks
+# finished inside the budget. Resets the count and clears the record (#603),
+# as a commit that returns does (CR 1900).
+_push_returned() {
+  rm -f "$COMMIT_KILLS" 2>/dev/null || true
+}
+
+# _push_backed_off — true while the reconcile's push waits for the next UTC
+# day (#603): the count is 2 or more and today's lock is stamped, which is
+# what _count_kill's back-off writes. Read by the reconcile because it runs
+# ahead of the lock. A back-off that began at the commit holds the push too.
+_push_backed_off() {
+  local kills=0 rest=""
+  [ -f "$COMMIT_KILLS" ] && [ -f "$LOCK" ] || return 1
+  [ "$(cat "$LOCK" 2>/dev/null || true)" = "$(date -u +%Y%m%d)" ] || return 1
+  read -r kills rest 2>/dev/null <"$COMMIT_KILLS" || true
+  case "$kills" in '' | *[!0-9]*) return 1 ;; esac
+  [ "$kills" -ge 2 ]
 }
 
 # ------------------------------------------- a killed refresh's staging (#555)
@@ -1305,7 +1429,7 @@ _count_commit_kill() {
 # committed: the lock is now spent only when a run ends, so this same session
 # redoes the bump, and nothing is committed that this run has not verified —
 # unless it is the second kill in a row inside the commit, which spends the
-# day (_count_commit_kill, #575).
+# day (_count_kill, #575).
 #
 # Only what the hook staged is touched, and the marker is how it knows. A
 # human's own `git add skills-vendor/<v>` — a manual bump — stages exactly the
@@ -1339,7 +1463,7 @@ _heal_staged() {
     # 1897): a session starting meanwhile finds a live owner and leaves, and
     # a heal killed part way leaves a marker, naming the same paths, that the
     # next session heals. `heals` keeps the killed run's owner line, which is
-    # what a kill is counted by (_count_commit_kill). The claim fails when a
+    # what a kill is counted by (_count_kill). The claim fails when a
     # run claimed $STAGING in the instant it was gone: that run owns the
     # checkout, and what was taken stays, for _drop_taken or _adopt_taken
     # (CR 1911).
@@ -1425,7 +1549,7 @@ STAGED_EOF
   # commit returned (`done`, CR 1900): its paths are still staged because its
   # unstage failed, not because a kill cut its commit short.
   if [ "${#own[@]}" -gt 0 ] && [ "$returned" = "0" ]; then
-    _count_commit_kill "$owner"
+    _count_kill commit "$owner"
   fi
 
   # The whole bump goes back, not only its staging (#550): a kill after the
@@ -1519,8 +1643,10 @@ LISTED_EOF
 # Ahead of _reconcile_unpushed: a failed push's rollback re-stages its range
 # (a swap with `reset --soft`'s semantics), and the paths it then unstages are
 # derived from that range alone. Healed first, the index it starts from holds
-# nothing a killed run left there.
+# nothing a killed run left there. Then a push killed in flight is counted
+# (#603), before the reconcile that may push again reads the count.
 _heal_staged
+_heal_push
 
 # Call site 1 of 2: every session, ahead of both gates. This is the pass that
 # heals a checkout some earlier run left stranded — a push killed by the
@@ -2359,7 +2485,11 @@ PRS_EOF
     # plain --force: a push landing between the read and here is refused.
     rc=0
     _skip_hooks_note
+    # In flight until it returns (#603). Two kills in a row here spend the
+    # day's lock, which this push sits behind.
+    _push_begin
     out="$(_pr_net _hook_git push --force-with-lease="refs/heads/$PR_BRANCH:$tip" "$PR_REMOTE" "$c:refs/heads/$PR_BRANCH" 2>&1)" || rc=$?
+    _push_returned
     { echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] push the bump to $PR_BRANCH:"; [ -z "$out" ] || printf '%s\n' "$out"; } >>"$LOG" 2>/dev/null || true
     if [ "$rc" -ne 0 ]; then
       _pr_refused "the push to $PR_BRANCH" "$out"
