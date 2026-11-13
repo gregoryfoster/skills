@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # deploying-releases-core: version 1
-# deploying-releases-core-sha256: f805791209c3484aa2680acacf8be4fdb27a48eee5c87c5fe2f9d54cc18efc88
+# deploying-releases-core-sha256: 68fa5419fce11ca33c23506b7f5837b986a9c7e1469a8e37798fb3f7c2fb8de1
 #
 # The cohort's one release-deploy core (gregoryfoster/skills#372), installed by
 # deploying-releases' install.sh. Do not edit it here: configure it in
@@ -1172,12 +1172,13 @@ for t in "${targets[@]}"; do
     die "$t failed on $build; $back. Nothing was restarted (--no-restart)"
   fi
   stage="after switching back, verifying the old build"
+  # Always proved, a first deploy too: the restored units may run the checkout
+  # and answer (a retrofit's cutover), and one still on the removed link fails
+  # to start, so "not answering" is found, never assumed.
   VERIFY_OK=0
-  if [[ -n "${previous_link[$t]}" ]]; then
-    restart_target "$t" 1
-    if ((RESTART_OK)); then
-      verify_target "$t" 1
-    fi
+  restart_target "$t" 1
+  if ((RESTART_OK)); then
+    verify_target "$t" 1
   fi
   if ((VERIFY_OK)); then
     journal "$t rolled back after $build failed: $back"

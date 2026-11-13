@@ -386,10 +386,25 @@ class TestVerifyAndSwitchBack:
         assert result.returncode == 4 and "NOT answering" in result.stderr
 
     def test_a_first_deploy_that_fails_removes_the_link(self, world):
+        # The units ran live before any release existed: with the link gone,
+        # the API cannot start, so nothing answers and that is found, not assumed.
         world.go_live()
         result = world.run(FAKE_BACKUP_FAIL_BUILD=world.build(world.main[-1]))
-        assert result.returncode in (1, 4)
+        assert result.returncode == 4, result.stderr
         assert world.target() is None
+        assert restarts(world.calls()).count(API) == 2
+
+    def test_a_failed_cutover_proves_the_checkout_units_it_put_back(self, world):
+        # A retrofit's first deploy: the installed units run the checkout. The
+        # release's units are installed, the deploy fails, and the checkout's
+        # units go back, restarted and verified: exit 1, answering.
+        sha = world.push(world.live_units)
+        result = world.run(FAKE_BACKUP_FAIL_BUILD=world.build(sha))
+        assert result.returncode == 1, result.stderr
+        assert "which is answering" in result.stderr
+        assert world.target() is None
+        assert world.installed(API) == world.dev_units[API]
+        assert restarts(world.calls()).count(API) == 2
 
     def test_a_changed_unit_goes_back_on_failure(self, world):
         world.go_live()

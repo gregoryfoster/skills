@@ -234,6 +234,8 @@ case "$1" in
   restart)
     unit="$2"
     listed "$unit" "${FAKE_RESTART_FAIL:-}" && exit 1
+    # systemd's 200/CHDIR: a WorkingDirectory= that does not resolve never starts.
+    cwd="$(cd -P "$(wd_of "$unit")" 2>/dev/null && pwd)" || { echo failed > "$state/$unit.active"; exit 1; }
     n=$(( $(cat "$state/next-pid") + 1 )); echo "$n" > "$state/next-pid"
     echo "$n" > "$state/$unit.pid"
     if [[ "$(served "$unit")" == "${FAKE_DIES_ON:-none}" ]]; then
@@ -242,7 +244,7 @@ case "$1" in
       echo active > "$state/$unit.active"
     fi
     mkdir -p "$FAKE_PROC/$n"
-    ln -sfn "$(cd -P "$(wd_of "$unit")" && pwd)" "$FAKE_PROC/$n/cwd" ;;
+    ln -sfn "$cwd" "$FAKE_PROC/$n/cwd" ;;
   start)
     [[ "$2" == acme-backup.service ]] || exit 0
     build="$(served acme-backup.service)"
