@@ -65,6 +65,11 @@ The core's steps, its variables and env knobs, each hook's arguments and exit co
 
 ## Procedure
 
+### Choose the mode
+
+- **Fresh:** a new repo, from `init-project-fastapi` (`DEPLOY_TARGET=releases`) or by hand. Install, fill in the hooks, render the units and copy the tests, as [references/fresh.md](references/fresh.md) lays out.
+- **Update:** a repo already on the core. Install or update below, and review the diff.
+
 ### Install or update the core
 
 1. `bash "<install.sh>" --check` from the consumer's root. It prints `<state> <installed> <vendored>`: `missing`, `foreign` (the repo's own deploy), `edited`, `drift`, or `current`.

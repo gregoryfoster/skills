@@ -134,6 +134,8 @@ The hook signatures, defaults and exit codes are listed in the skill's `referenc
   - the unit invariants: no `/home/`, no unit syncs, `WorkingDirectory=` under the root, a `-dev` name ↔ the dev target, every `deploy/` file a unit or a listed host config, no key-shaped value in an `EnvironmentFile=`;
   - an installed-unit parity check against the **live release**, never the working tree.
 
+  *Revised in step 3 (2026-11-13):* broker's stub harness stays in this repo, where it tests the one core for every consumer (`tests/structural/test_deploying_releases_core.py`). A consumer gets the contract, unit-invariant and parity tests. A harness for testing a consumer's own hooks is a follow-up issue, to be filed when Part A ships.
+
   The harness needs GNU coreutils (`mv -T`, `flock`, `stat -c`), so on a Mac it uses Homebrew's `gnubin`. In a consumer it **fails** without them (provisioner #8).
 - `DEPLOYMENT.md`, with the operator's one-time steps: the root, `/etc/<p>/`, the user, the sudo grant and the co-pypi reader key.
 

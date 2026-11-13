@@ -1,0 +1,26 @@
+# deploy/<PROJECT>-<NAME>.service — a oneshot on the release, run by its timer (deploying-releases).
+# The deploy never forces a tick; verify it by its next one, or by one forced run.
+[Unit]
+Description=<PROJECT> <NAME>
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=<PROJECT>
+Group=<PROJECT>
+WorkingDirectory=/srv/<PROJECT>/live
+EnvironmentFile=/etc/<PROJECT>/<PROJECT>.env
+ExecStart=/srv/<PROJECT>/live/.venv/bin/python -m <MODULE>
+Environment=PYTHONDONTWRITEBYTECODE=1
+TimeoutStartSec=300
+SyslogIdentifier=<PROJECT>-<NAME>
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes

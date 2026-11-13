@@ -1,0 +1,42 @@
+# deploy/<PROJECT>-<NAME>.service — a long-running unit on the release (deploying-releases).
+# Rendered once; the repo owns it after. The deploy restarts it when live moves
+# and verifies it through the verify hook (or its new process's release).
+[Unit]
+Description=<PROJECT> <NAME>
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=<PROJECT>
+Group=<PROJECT>
+# The unit's target is this directory: /srv/<PROJECT>/live, or /srv/<PROJECT>/dev.
+WorkingDirectory=/srv/<PROJECT>/live
+# Settings only; secrets come through LoadCredential= (/etc/<PROJECT>/credentials/).
+EnvironmentFile=/etc/<PROJECT>/<PROJECT>.env
+# The release's own venv: no unit runs uv, so no start syncs anything.
+ExecStart=/srv/<PROJECT>/live/.venv/bin/<EXEC_START>
+# The build id where an OnFailure= handler can read it.
+RuntimeDirectory=<PROJECT>
+RuntimeDirectoryPreserve=yes
+ExecStartPre=/bin/cp REVISION /run/<PROJECT>/build-id
+Environment=PYTHONDONTWRITEBYTECODE=1
+Restart=on-failure
+RestartSec=5
+# The drain the deploy's restart waits for.
+TimeoutStopSec=30
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+# Never ProtectControlGroups= (it drops every capability a per-consumer cgroup
+# needs), MemoryDenyWriteExecute= (W^X pages, ffmpeg's) or PrivateUsers=
+# (observo#696); tests/deploy/test_deploy_units.py pins all three out.
+
+[Install]
+WantedBy=multi-user.target

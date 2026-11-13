@@ -1,0 +1,11 @@
+# deploy/<PROJECT>-<NAME>.timer — installed by the deploy, enabled only by ENABLE_NEW or the operator.
+[Unit]
+Description=<PROJECT> <NAME>, every <INTERVAL>
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=<INTERVAL>
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target

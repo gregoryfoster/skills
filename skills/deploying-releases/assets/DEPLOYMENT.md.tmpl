@@ -1,0 +1,38 @@
+# Deploying <PROJECT>
+
+<PROJECT>'s units run `/srv/<PROJECT>/live`, a link into `releases/<sha12>`: a read-only, root-owned `git archive` of one commit on `origin/main`, with its own venv. Nothing done in a checkout reaches a unit until `scripts/deploy.sh` puts it there. The script is the deploying-releases core (gregoryfoster/skills#372), installed, never edited here; this repo's half is `scripts/deploy_hooks.sh`.
+
+## Deploying
+
+From the checkout, as the deploy user:
+
+```bash
+scripts/deploy.sh                 # origin/main, once its CI passed
+scripts/deploy.sh <sha12>         # an older build: this is how to roll back
+scripts/deploy.sh --skip-ci       # GitHub can't answer: an emergency, journaled
+scripts/deploy.sh --build-only    # build releases/<sha12>, switch nothing
+journalctl -t <PROJECT>-deploy -n 20
+```
+
+Exit 0: deployed and verified. 1: refused, or failed and switched back to a build that answers. 4: a target is left on a build that does not answer; the message says what to run.
+
+## Once, before the first deploy (the operator)
+
+1. The service user, with no home, no shell, no sudo and no group but its own:
+   `sudo useradd --system --no-create-home --shell /usr/sbin/nologin <PROJECT>`
+2. The root, root's alone:
+   `sudo install -d -o root -g root -m 755 /srv/<PROJECT>`
+3. Settings and credentials, outside the repo:
+   `sudo install -d -o root -g root -m 755 /etc/<PROJECT>`, then `/etc/<PROJECT>/<PROJECT>.env` (settings only, `0644`) and `/etc/<PROJECT>/credentials/` (`0700`, read through `LoadCredential=`).
+4. Private dependencies (when `UV_WRAPPER` is set): the co-pypi reader key at `/etc/<PROJECT>/co-pypi-reader.json`, `root:<deploy user> 640`.
+5. The first deploy, units installed and nothing restarted:
+   `scripts/deploy.sh --no-restart`, then `sudo systemctl enable --now <unit>` for each unit, then `scripts/deploy.sh` to verify.
+
+The deploy user needs `sudo -n` (no password prompt) for `install`, `ln`, `mv`, `chmod`, `chown`, `tee`, `touch`, `rm` under `/srv/<PROJECT>` and `/etc/systemd/system`, `readlink` under `/proc`, and `systemctl`.
+
+## What a deploy never does
+
+- Install a host config (`HOST_CONFIGS` in the hooks): it says when one differs, and the operator installs it in a window.
+- Enable a new unit, unless the hooks' `ENABLE_NEW` names it, and then only once the deploy verifies.
+- Remove a unit the release no longer has: it names it, and retiring it is the operator's.
+- Restart anything with `--no-restart`.
