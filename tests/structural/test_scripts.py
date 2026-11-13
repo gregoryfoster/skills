@@ -97,7 +97,14 @@ _REQUIREMENTS_PIN_RE = re.compile(r"^shellcheck-py==(\d+)\.(\d+)\.(\d+)\.(\d+)\s
 # symlink farm pointing back into skills/, so the list is deduplicated by real
 # path — otherwise the guard hook is linted twice and reports the library as
 # missing from a directory that never holds it.
-SHELL_SCRIPT_GLOBS = ("skills/*/scripts/*.sh", "scripts/*.sh", ".claude/hooks/*.sh")
+SHELL_SCRIPT_GLOBS = (
+    "skills/*/scripts/*.sh",
+    # An asset a skill installs into a consumer (deploying-releases' core, #372)
+    # ships as shell too, and is held to the same lint.
+    "skills/*/assets/*.sh",
+    "scripts/*.sh",
+    ".claude/hooks/*.sh",
+)
 
 
 def _find_shellcheck() -> str | None:

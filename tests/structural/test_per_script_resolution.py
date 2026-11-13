@@ -103,6 +103,7 @@ PUBLISHERS = sorted(
         "auditing-ci-cost",
         "coordinating-epics",
         "curating-context",
+        "deploying-releases",
         "maintaining-host-disk",
         "patching-hosts",
         "using-git-worktrees",

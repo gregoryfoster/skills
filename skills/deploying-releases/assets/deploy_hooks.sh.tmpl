@@ -1,0 +1,108 @@
+# scripts/deploy_hooks.sh — this repo's half of its release deploy.
+#
+# Sourced by scripts/deploy.sh, the deploying-releases core
+# (gregoryfoster/skills#372), which is installed, never edited here. This file is
+# the repo's own: its configuration, and at most six hooks. Every variable has a
+# default in the core and every hook a default that does nothing (verify's:
+# "no check for this unit"). The contract, each hook's arguments and exit codes,
+# and every pilot's hooks filled in: deploying-releases'
+# references/hook-contract.md.
+#
+# A hook runs in a subshell with errexit on, from the directory the core names.
+# Return non-zero to refuse (before the switch) or fail (after it).
+#
+# Every variable below is read by the core, which sources this file.
+# shellcheck shell=bash disable=SC2034
+
+# --- configuration -------------------------------------------------------------
+
+# The unit prefix: <PROJECT>.service, <PROJECT>-*.service|.timer and
+# <PROJECT>@*.service in UNITS_DIR are this repo's units. It also names the
+# journald tag (<PROJECT>-deploy) and the env-var prefix of the core's knobs
+# (<PROJECT_UPPER>_DEPLOY_ROOT, _KEEP, _VERIFY_SECONDS, ...).
+PROJECT="<PROJECT>"
+
+# The repo subtree that is the service (provisioner: service). Read only by
+# `git archive`: the release's root is that subtree's root.
+SERVICE_DIR=.
+# Where the units live, relative to the release root.
+UNITS_DIR=deploy
+
+# github: the newest push run of CI_WORKFLOW for the commit must pass, every
+# job and at least CI_JOBS. none: this repo's gate is local (a standing switch,
+# not --skip-ci on every run).
+CI=github
+# anonymous (a public repo) or gh (a private one: gh's own login, never a
+# repo .env's GH_TOKEN).
+CI_AUTH=anonymous
+CI_WORKFLOW=ci.yml
+GITHUB_REPO="<OWNER>/<REPO>"
+CI_JOBS=("lint + test")
+
+# The interpreter every release's venv runs: the system one, never uv-managed
+# (a unit's ProtectHome= hides /home).
+PYTHON=/usr/bin/python3.12
+# The checkout's wrapper that hands a private index's credential to one uv
+# (co-pypi: scripts/co-pypi.sh). Empty when every dependency is public.
+UV_WRAPPER=
+# Compiled to bytecode in every release (site-packages already is).
+SOURCE_DIRS=(src)
+# Imported by the release's venv, from the release, before and after REVISION.
+IMPORT_MODULES=()
+# Python that prints the build as the app reads it, run from the release root;
+# empty for the core's own read of REVISION.
+REVISION_PROBE=
+# Paths every release must have after build_extra (observo: its frontend bundle).
+REQUIRED_ARTIFACTS=()
+
+# Files under UNITS_DIR that the operator installs by hand, compared after every
+# deploy, never installed: "<file>=<installed path>".
+HOST_CONFIGS=()
+# Installed derived (rendered, minted): compared with the previous release instead.
+DERIVED_CONFIGS=()
+# The new units a verified deploy enables, by name. Empty: a new unit is
+# installed and named, and enabling it is the operator's decision.
+ENABLE_NEW=()
+# Releases kept besides the ones a target links and the ones it replaced.
+KEEP=5
+
+# --- hooks -------------------------------------------------------------------
+#
+# Delete the ones this repo does not need.
+
+# In the release, as the deploy user, before it is made read-only.
+build_extra() {
+  :
+}
+
+# In the release, after REVISION is read back (an Alembic single head, say).
+post_build_check() {
+  :
+}
+
+# Before migrate and the switch, per target (require_active_timer, say).
+pre_switch_check() { # <target>
+  :
+}
+
+# Before the switch, per target: idempotent, expand-only, and skipping a
+# database that is ahead (a rollback).
+migrate() { # <target>
+  :
+}
+
+# After the restart, per unit this deploy changed: 0 verified, 1 failed (the
+# core switches back), 2 no check for this unit. The core's helpers:
+# verify_http_health <url> <want> [<jq>], verify_next_tick <svc> <want>
+# [<message>], verify_forced_run <svc> <want> [<file> <jq>],
+# verify_started_on <svc> <want>.
+verify() { # <unit> <want>
+  case "$1" in
+    *) return 2 ;;
+  esac
+}
+
+# After a verified deploy, per target: a failure is a note, never a rollback.
+post_verify() { # <target>
+  :
+}
