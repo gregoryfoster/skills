@@ -1,0 +1,51 @@
+---
+title: <REPO> runs releases, not its checkout
+date: <DATE>
+status: draft
+---
+
+# <REPO> on releases
+
+Adopting the deploying-releases core (gregoryfoster/skills#372) under <ISSUE>. The core's contract is deploying-releases' `references/hook-contract.md`; this note records the inventory and every decision where <REPO> differs from it.
+
+## Inventory
+
+| What | Found | Becomes |
+|---|---|---|
+| Units and timers | | |
+| `EnvironmentFile=`s, and the secrets each unit reads | | |
+| Paths written under `WorkingDirectory` | | |
+| `ExecStartPre=` lines (integrity or health) | | |
+| `uv` sources by kind | | |
+| Hand-run production steps in the docs | | |
+| Checkout guards in `src/` | | |
+| The oldest deployable commit | | |
+
+## Decisions
+
+The rows answer CannObserv/broker#22's design questions. "As the core" adopts its answer unchanged; otherwise say what <REPO> does, and which pilot it follows.
+
+| # | Question | Decision |
+|---|---|---|
+| D1 | Location and ownership | As the core: `/srv/<REPO>`, releases owned by root. Service user: `exedev` to start, dedicated user as follow-up <FOLLOW_UP> |
+| D2 | Atomicity and rollback | As the core: `releases/<sha12>`, a link switched by `rename(2)`; a rollback is a deploy of the older build. `KEEP`: |
+| D3 | Git source | As the core: `git fetch` in the checkout; only a commit on `origin/main` deploys to live |
+| D4 | Who deploys, and how | As the core: `scripts/deploy.sh` from the checkout, as the deploy user, `sudo -n` where it must; `.skills/deploy_command` names it |
+| D5 | Dependencies and private wheels | `uv sync --locked` per release; private index: |
+| D6 | Env and state | `/etc/<REPO>/` only; written paths moved to: |
+| D7 | Restart semantics | As the core: each enabled long-running unit restarted when live moves, drained by its `TimeoutStopSec=`; timers never forced. Restart window: |
+| D8 | Guards, relocated | The main-checkout guard is deleted; integrity checks move to `post_build_check`: |
+| D9 | Build id and drift | `REVISION`, reported by: ; drift check: a follow-up |
+| D10 | Failure visibility | `OnFailure=` handlers: |
+| D11 | Dev services on the host | `DEV_TARGET`: none / a dev unit for: / named exceptions: |
+| D12 | Tests | The core's consumer tests in `tests/deploy/`, plus: |
+| D13 | Packaging | The core, installed; hooks in `scripts/deploy_hooks.sh` |
+| D14 | Rollout | This repo, under <ISSUE> |
+
+## Hooks
+
+The `scripts/deploy_hooks.sh` this repo needs, hook by hook, and why each differs from the default.
+
+## Cutover
+
+The runbook in deploying-releases' `references/retrofit.md` §5, with this repo's units, credential moves and verify commands filled in.

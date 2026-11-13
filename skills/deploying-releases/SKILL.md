@@ -68,6 +68,7 @@ The core's steps, its variables and env knobs, each hook's arguments and exit co
 ### Choose the mode
 
 - **Fresh:** a new repo, from `init-project-fastapi` (`DEPLOY_TARGET=releases`) or by hand. Install, fill in the hooks, render the units and copy the tests, as [references/fresh.md](references/fresh.md) lays out.
+- **Retrofit:** a repo whose units run its checkout. Inventory, a design note, the cutover in the host's session and the cleanup: [references/retrofit.md](references/retrofit.md). Adopting the core in a repo with its own deploy (`foreign`) is a retrofit of its hooks, not its units.
 - **Update:** a repo already on the core. Install or update below, and review the diff.
 
 ### Install or update the core
