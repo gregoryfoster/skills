@@ -61,7 +61,7 @@ Under `DEPLOY_TARGET=releases`, the hooks set `UV_WRAPPER=scripts/co-pypi.sh`, a
 
 ## (d) CI: Phase 7c
 
-This is a delta on [`github-ci.md`](github-ci.md)'s workflow for **every** job that runs `uv sync`: `lint` and `test`, or `gate` and `test` under `GITHUB_CI=pre-commit`, where `gate`'s step runs `uv sync` without `--frozen` (its `UV_LOCKED` refuses the flag). broker, processor, watcher, observo and replicator all mint this way, as the same identity:
+This is a delta on [`github-ci.md`](github-ci.md)'s workflow for **every** job that runs `uv sync`: `lint` and `test`, or `gate` and `test` under `GITHUB_CI=pre-commit`. broker, processor, watcher, observo and replicator all mint this way, as the same identity:
 
 ```yaml
     # at job level:
@@ -102,7 +102,7 @@ This is a delta on [`github-ci.md`](github-ci.md)'s workflow for **every** job t
         env:
           UV_INDEX_CO_PYPI_USERNAME: oauth2accesstoken
           UV_INDEX_CO_PYPI_PASSWORD: ${{ steps.auth.outputs.access_token }}
-        run: uv sync --frozen
+        run: uv sync
 ```
 
 CI doesn't run the wrapper: the workflow has no key, and WIF mints the same reader's token.

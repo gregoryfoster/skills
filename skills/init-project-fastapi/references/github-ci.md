@@ -16,13 +16,18 @@ on:
     branches: [main]
   pull_request:
 
+env:
+  # Every uv call asserts uv.lock matches pyproject.toml: a stale lock fails
+  # here, never re-resolved by a later `uv run`.
+  UV_LOCKED: "1"
+
 jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
-      - run: uv sync --frozen
+      - run: uv sync
       - run: uv run ruff check .
       - run: uv run ruff format --check .
 
@@ -44,7 +49,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
-      - run: uv sync --frozen
+      - run: uv sync
       # Migration replay + autogenerate-drift tripwire (observo #202): upgrade
       # must apply cleanly from empty, and `alembic check` fails if models
       # changed without a generated migration.
@@ -72,10 +77,6 @@ jobs:
   gate:
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    env:
-      # A stale uv.lock fails instead of re-resolving. On the job, not the
-      # workflow: `test`'s `uv sync --frozen` refuses UV_LOCKED (exit 2).
-      UV_LOCKED: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
@@ -83,12 +84,12 @@ jobs:
       - run: uv run pre-commit run --all-files --show-diff-on-failure
 ```
 
-Phase 7b passes `CI_JOBS=(gate test)` in the same render. Under `PRIVATE_INDEX=co-pypi`, (d) applies to `gate` and `test`, and `gate`'s sync step stays `uv sync`, without `--frozen`.
+Phase 7b passes `CI_JOBS=(gate test)` in the same render. Under `PRIVATE_INDEX=co-pypi`, (d) applies to `gate` and `test`.
 
 **The guard.** Copy [`assets/test-gate-workflow.py`](../assets/test-gate-workflow.py) to `tests/ci/test_gate_workflow.py`, with an empty `tests/ci/__init__.py`. It reads `ci.yml`, `.pre-commit-config.yaml` and `scripts/deploy_hooks.sh`, and fails when:
 - a local `system` hook's first entry word has no setup step in `gate` (`uv` → `astral-sh/setup-uv`, `npm`/`npx` → `actions/setup-node`). A remote hook is pre-commit's to install, so it's not checked;
 - there's a second pre-commit command, a non-install step before it, or a `SKIP=`;
-- `gate` has neither `UV_LOCKED: "1"` nor `uv sync --locked`;
+- a job runs uv with neither `UV_LOCKED: "1"` nor `uv sync --locked`;
 - a job has no `timeout-minutes`, or permissions beyond `contents: read` and co-pypi's `id-token: write`;
 - the job names (`name:`, else the id) differ from `CI_JOBS`. A missing name makes `deploy.sh` refuse every deploy with `<name> (not in the run)`. It's skipped without the hooks file or under `CI=none`.
 
@@ -96,7 +97,7 @@ A hook that needs another tool gets its setup step in `gate` and an entry in the
 
 ## Notes
 
-- **`uv sync --frozen`** — CI installs exactly the committed `uv.lock`, without re-resolving. It doesn't check the lock against `pyproject.toml`, so a stale lock installs without complaint (measured, uv 0.11.8). `--locked` or `UV_LOCKED=1`, as `gate` sets, fails on it instead.
+- **`UV_LOCKED: "1"`, not `--frozen`** — every uv call asserts the committed `uv.lock` matches `pyproject.toml`, so a stale lock fails CI as the release build's `uv sync --locked` would. `uv sync --frozen` installs a stale lock without complaint, and the next `uv run` silently re-locks and tests the re-resolved environment (measured, uv 0.11.8). The check needs no network once the lock is current, so the token-less `uv run`s under co-pypi pass. uv refuses `UV_LOCKED` with `--frozen`.
 - **Coverage gate skew.** `pyproject.toml`'s `fail_under` measures all of `src/`; if CI installs a different extras set than dev machines, the percentages diverge (observo #214 lowered its gate to reconcile a 78.6% CI vs 80.2% local split). Keep the CI install set identical to the local one, or pin the gate to the CI number.
 - **No deploy from CI.** The VM deploys with `scripts/deploy.sh`, which waits for this workflow to pass on the commit (`CI_JOBS`); CI is a gate, not a pipeline. Don't add deploy steps here without revisiting that model.
 - **Submodules.** The checkout above skips `skills-vendor/` submodules deliberately — nothing in lint/test needs them, and cloning them costs time. Add `with: {submodules: recursive}` only if a test reads vendored skill content.

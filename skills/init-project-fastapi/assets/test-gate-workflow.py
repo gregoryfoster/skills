@@ -8,7 +8,7 @@ still shows green. Derived from the repo, so these fail when the two drift:
 
 - a local `system` hook whose tool no step in the gate job provisions;
 - a second gate command, a check run beside it, or a `SKIP=`;
-- a gate job that lets uv re-resolve a stale uv.lock;
+- a job that lets uv re-resolve a stale uv.lock;
 - a job with no timeout, or write permissions beyond co-pypi's `id-token`;
 - job names that differ from scripts/deploy_hooks.sh's CI_JOBS, which makes
   deploy.sh refuse every deploy with "<name> (not in the run)".
@@ -112,13 +112,15 @@ def test_every_local_system_hook_tool_is_provisioned() -> None:
     assert not missing, "; ".join(missing)
 
 
-def test_the_gate_asserts_the_lock() -> None:
-    """UV_LOCKED=1 (or `uv sync --locked`) fails on a stale uv.lock. `--frozen`
-    doesn't: it installs the stale lock, and a later `uv run` re-resolves."""
-    env = {**(_workflow().get("env") or {}), **(_gate().get("env") or {})}
-    syncs = [_run(s) for s in _gate()["steps"] if _run(s).startswith("uv sync")]
-    locked = syncs and all("--locked" in sync.split() for sync in syncs)
-    assert str(env.get("UV_LOCKED")) == "1" or locked, "set UV_LOCKED: '1' on the gate"
+@pytest.mark.parametrize("job_id", sorted(_jobs()))
+def test_every_job_asserts_the_lock(job_id: str) -> None:
+    """UV_LOCKED=1 fails on a stale uv.lock. `uv sync --frozen` doesn't: it
+    installs the stale lock, and the next `uv run` silently re-locks."""
+    job = _jobs()[job_id]
+    if not any(_run(step).startswith("uv ") for step in job.get("steps", [])):
+        return
+    env = {**(_workflow().get("env") or {}), **(job.get("env") or {})}
+    assert str(env.get("UV_LOCKED")) == "1", f"{job_id}: set UV_LOCKED: '1'"
 
 
 def test_jobs_are_bounded_and_read_only() -> None:
