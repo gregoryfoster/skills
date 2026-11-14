@@ -86,7 +86,16 @@ pre_switch_check() { # <target>
 }
 
 # Before the switch, per target: idempotent, expand-only, and skipping a
-# database that is ahead (a rollback).
+# database that is ahead (a rollback). When the deploy user can't read the DSN,
+# through $PROJECT-migrate@.service (deploying-releases' units/migrate@.tmpl),
+# installed from the release first, as units install after this hook.
+# `systemctl start` waits for the oneshot, and fails when it fails.
+#   u="$PROJECT-migrate@.service"
+#   if ! cmp -s "$release/$UNITS_DIR/$u" "$UNIT_DIR/$u"; then
+#     sudo -n install -m 644 "$release/$UNITS_DIR/$u" "$UNIT_DIR/$u"
+#     sudo -n systemctl daemon-reload
+#   fi
+#   sudo -n systemctl start "$PROJECT-migrate@$build.service"
 migrate() { # <target>
   :
 }

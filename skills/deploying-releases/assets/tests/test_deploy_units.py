@@ -7,6 +7,8 @@ PROJECT, UNITS_DIR, SERVICE_DIR and HOST_CONFIGS from scripts/deploy_hooks.sh.
   the development checkout.
 - Every service's WorkingDirectory= is /srv/<project>/live or /dev: that is its
   target, and a -dev name says dev.
+- An @ template runs on a target, or on releases/%i, the release its instance
+  names (<project>-migrate@<sha12>), and then nothing from another tree.
 - Every file under UNITS_DIR is a unit or a listed host config.
 - Every long-running service caps its restarts in [Unit], the only section
   systemd reads the cap from: a crash loop ends failed, not flapping (#644).
@@ -87,6 +89,10 @@ def directive(path: Path, key: str, in_section: str | None = None) -> list[str]:
     return [m.group(1).strip() for m in re.finditer(rf"^{key}=(.*)$", text, flags=re.M)]
 
 
+def templates() -> list[Path]:
+    return [p for p in services() if "@" in p.name]
+
+
 def long_running() -> list[Path]:
     """The services the core restarts: not a template, not Type=oneshot."""
     return [
@@ -129,6 +135,21 @@ def test_working_directory_is_a_target(path):
     assert is_dev == path.stem.endswith("-dev"), (
         f"{path.name}: a -dev name and the dev target go together"
     )
+
+
+@pytest.mark.parametrize("path", templates(), ids=lambda p: p.name)
+def test_a_template_runs_a_target_or_the_release_its_instance_names(path):
+    workdirs = [w.lstrip("-") for w in directive(path, "WorkingDirectory")]
+    assert workdirs, f"{path.name} has no WorkingDirectory="
+    release = f"{ROOT}/releases/%i"
+    assert workdirs[-1] in (f"{ROOT}/live", f"{ROOT}/dev", release), workdirs[-1]
+    if workdirs[-1] != release:
+        return
+    for line in directive(path, "ExecStart") + directive(path, "ExecStartPre"):
+        for used in re.findall(rf"{re.escape(ROOT)}/[^\s';]*", line):
+            assert used.startswith(f"{release}/"), (
+                f"{path.name} runs {used}, not the release its instance names"
+            )
 
 
 def test_every_file_under_units_dir_is_a_unit_or_a_host_config():

@@ -1,0 +1,40 @@
+# deploy/<PROJECT>-migrate@.service — migrates the database from release %i, a sha12 (deploying-releases).
+# The migrate hook runs `sudo -n systemctl start <PROJECT>-migrate@<sha12>.service`
+# before the switch, so the migration runs from the release being deployed, never
+# the one running. Its own unit, so the DSN stays the app's: the deploy user never
+# reads it. Modeled on observo's observo-migrate@.service (observo#698).
+[Unit]
+Description=<PROJECT> database migration from release %i
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# The app's user, settings and DSN, as its long-running unit has them.
+User=<PROJECT>
+Group=<PROJECT>
+WorkingDirectory=/srv/<PROJECT>/releases/%i
+EnvironmentFile=/etc/<PROJECT>/<PROJECT>.env
+LoadCredential=database_url:/etc/<PROJECT>/credentials/database_url
+# A safety guard's production opt-in is the repo's to add here as Environment=,
+# never in the env file (init's *_ALLOW_PRODUCTION_DB=1).
+Environment=PYTHONDONTWRITEBYTECODE=1
+# schema_state exits 0 for a database current or ahead (a rollback: nothing to
+# do), 3 for behind or unmigrated (upgrade), anything else for a failure.
+# systemd expands $ and % itself, so the shell's own are written $$ and %%.
+ExecStart=/bin/sh -c '/srv/<PROJECT>/releases/%i/.venv/bin/python -m src.core.schema_state; rc=$$?; if [ $$rc -eq 3 ]; then exec /srv/<PROJECT>/releases/%i/.venv/bin/alembic upgrade head; fi; exit $$rc'
+# A migration waiting on a lock the running app holds fails the deploy, with
+# nothing switched, instead of hanging it.
+TimeoutStartSec=15min
+SyslogIdentifier=<PROJECT>-migrate
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+
+# Started by the migrate hook only: no [Install].

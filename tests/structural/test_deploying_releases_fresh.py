@@ -9,7 +9,9 @@ Portable: no host tools beyond bash and git.
 
 from __future__ import annotations
 
+import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -65,6 +67,9 @@ def consumer(tmp: Path) -> Path:
     (deploy / "acme-sweep.service").write_text(
         render(UNITS / "oneshot.tmpl", PROJECT="acme", NAME="sweep", MODULE="src.sweep")
     )
+    (deploy / "acme-migrate@.service").write_text(
+        render(UNITS / "migrate@.tmpl", PROJECT="acme")
+    )
     (deploy / "acme-sweep.timer").write_text(
         render(UNITS / "timer.tmpl", PROJECT="acme", NAME="sweep", INTERVAL="10min")
     )
@@ -117,6 +122,49 @@ def test_the_units_render_onto_the_release_not_the_checkout(repo):
     assert "WorkingDirectory=/srv/acme/live" in api
     assert "ExecStart=/srv/acme/live/.venv/bin/uvicorn" in api
     assert "User=acme" in api
+
+
+def systemd_argv(line: str, instance: str) -> list[str]:
+    """An ExecStart= value as systemd execs it: split, then %i, %% and $$ resolved.
+    A bare $ or % is refused: systemd would expand it before the shell saw it."""
+    assert "$" not in line.replace("$$", ""), f"a bare $ systemd expands: {line}"
+    assert not re.search(r"%[^i%]", line.replace("%%", "")), f"a bare %: {line}"
+    specifier = {"i": instance, "%": "%"}
+    return [
+        re.sub(r"%([i%])", lambda m: specifier[m.group(1)], word).replace("$$", "$")
+        for word in shlex.split(line)
+    ]
+
+
+MIGRATE_RUNS = {
+    "current or ahead": (0, 0, False),
+    "behind": (3, 0, True),
+    "a failed upgrade": (3, 1, True),
+    "an error": (2, 2, False),
+}
+
+
+@pytest.mark.parametrize("case", sorted(MIGRATE_RUNS))
+def test_the_migrate_template_upgrades_only_when_behind(tmp_path, case):
+    state_rc, want_rc, upgrades = MIGRATE_RUNS[case]
+    unit = render(UNITS / "migrate@.tmpl", PROJECT="acme")
+    (exec_start,) = re.findall(r"^ExecStart=(.*)$", unit, flags=re.M)
+    sha = "0123456789ab"
+    release = tmp_path / "releases" / sha
+    venv = release / ".venv" / "bin"
+    venv.mkdir(parents=True)
+    log = tmp_path / "calls"
+    for name, rc in (("python", state_rc), ("alembic", 1 if want_rc == 1 else 0)):
+        (venv / name).write_text(f'#!/bin/sh\necho "{name} $*" >>"{log}"\nexit {rc}\n')
+        (venv / name).chmod(0o755)
+    argv = [
+        w.replace("/srv/acme", str(tmp_path)) for w in systemd_argv(exec_start, sha)
+    ]
+    result = subprocess.run(argv, cwd=release, env={"PATH": os.defpath})
+    calls = log.read_text().splitlines()
+    assert result.returncode == want_rc
+    assert calls[0] == "python -m src.core.schema_state"
+    assert calls[1:] == (["alembic upgrade head"] if upgrades else [])
 
 
 def test_a_journal_stdout_still_passes(repo):
@@ -198,6 +246,19 @@ BREAKS = {
         "deploy/acme-api.service",
         lambda t: t.replace("Type=simple", "Type=simple\nStandardOutput=null"),
         "test_stdout_is_the_journal_and_its_prefix_is_stripped",
+    ),
+    "a migration from another release": (
+        "deploy/acme-migrate@.service",
+        lambda t: t.replace(
+            "WorkingDirectory=/srv/acme/releases/%i",
+            "WorkingDirectory=/srv/acme/releases/0123456789ab",
+        ),
+        "test_a_template_runs_a_target_or_the_release_its_instance_names",
+    ),
+    "a migration that runs the live release's code": (
+        "deploy/acme-migrate@.service",
+        lambda t: t.replace("exec /srv/acme/releases/%i/", "exec /srv/acme/live/"),
+        "test_a_template_runs_a_target_or_the_release_its_instance_names",
     ),
     "an edited core": (
         "scripts/deploy.sh",
