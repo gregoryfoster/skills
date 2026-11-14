@@ -49,7 +49,11 @@ CONFIG = _config()
 PROJECT = CONFIG["project"]
 UNITS = REPO / CONFIG["service_dir"] / CONFIG["units_dir"]
 ROOT = f"/srv/{PROJECT}"
-UNIT_NAME = re.compile(rf"^{re.escape(PROJECT)}([-@][\w.@-]*)?\.(service|timer)$")
+# The names the core installs, exactly as its is_unit_name() matches them:
+# <p>.service|.timer, <p>-*.service|.timer, and <p>@*.service templates.
+UNIT_NAME = re.compile(
+    rf"^{re.escape(PROJECT)}(\.(service|timer)|-[^/]*\.(service|timer)|@[^/]*\.service)$"
+)
 
 
 def units() -> list[Path]:

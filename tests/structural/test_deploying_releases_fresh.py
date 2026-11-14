@@ -144,6 +144,11 @@ BREAKS = {
         lambda t: "notes\n",
         "test_every_file_under_units_dir_is_a_unit_or_a_host_config",
     ),
+    "a timer template the core never installs": (
+        "deploy/acme@nightly.timer",
+        lambda t: "[Timer]\n",
+        "test_every_file_under_units_dir_is_a_unit_or_a_host_config",
+    ),
     "an inline secret": (
         "deploy/acme-api.service",
         lambda t: t.replace(
