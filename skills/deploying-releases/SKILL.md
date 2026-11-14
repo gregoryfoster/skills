@@ -60,6 +60,7 @@ done
 | `scripts/deploy_hooks.sh` | the repo's | `PROJECT`, `GITHUB_REPO`, the other variables, and up to six hooks. Written once from the template, never overwritten. |
 | `deploy/<project>-*.{service,timer}` | the repo's | The units, each on `WorkingDirectory=/srv/<project>/live` (or `/dev`): a unit's target **is** its working directory. |
 | `.skills/deploy_command` | the repo's | `scripts/deploy.sh`, so `shipping-work` deploys through it (#345). |
+| `scripts/co-pypi.sh`, `scripts/co_pypi_token.py` | installed, under a private index | Never edited; markers as the core's, `install.sh --co-pypi`. |
 
 The core's steps, its variables and env knobs, each hook's arguments and exit codes, the verify helpers, and every pilot's hooks filled in: [references/hook-contract.md](references/hook-contract.md).
 
@@ -84,7 +85,7 @@ Fill in `scripts/deploy_hooks.sh`: `PROJECT` and `GITHUB_REPO` at least. Delete 
 - **The service user** is dedicated for a new repo and `exedev` for a retrofit, and releases are owned by root in every case (D2, D7). The user is a unit's `User=`; the core refuses a release whose `User=` doesn't exist.
 - **`ENABLE_NEW`** is empty unless a unit should start the moment a deploy verifies (D3).
 - **`CI=none`** for a repo whose gate is local; `CI_AUTH=gh` for a private repo.
-- **`UV_WRAPPER`** names the checkout's co-pypi wrapper when a dependency is private ([#632](https://github.com/gregoryfoster/skills/issues/632)). A lock that resolves from `./.wheelhouse` is refused.
+- **`UV_WRAPPER=scripts/co-pypi.sh`** when a dependency is private ([#632](https://github.com/gregoryfoster/skills/issues/632)). `bash "<install.sh>" --co-pypi` installs the wrapper and its minter under the same markers and `--check`, and `tests/test_co_pypi.py` once. The key is `/etc/<[project].name>/co-pypi-reader.json`, or `CO_PYPI_KEY`; the minter's `google-auth` is `pyproject.toml`'s locked `co-pypi` group. A lock that resolves from `./.wheelhouse` is refused.
 
 ### Deploy
 

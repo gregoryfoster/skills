@@ -25,7 +25,7 @@ Exit 0: deployed and verified. 1: refused, or failed and switched back to a buil
    `sudo install -d -o root -g root -m 755 /srv/<PROJECT>`
 3. Settings and credentials, outside the repo:
    `sudo install -d -o root -g root -m 755 /etc/<PROJECT>`, then `/etc/<PROJECT>/<PROJECT>.env` (settings only, `0644`) and `/etc/<PROJECT>/credentials/` (`0700`, read through `LoadCredential=`).
-4. Private dependencies (when `UV_WRAPPER` is set): the co-pypi reader key at `/etc/<PROJECT>/co-pypi-reader.json`, `root:<deploy user> 640`.
+4. Private dependencies (when `UV_WRAPPER` is set): the co-pypi reader key at `/etc/<PROJECT>/co-pypi-reader.json`, `root:<deploy user> 640`. The wrapper reads it there, named by `pyproject.toml`'s `[project].name`; `CO_PYPI_KEY` in the deploy user's environment overrides the path.
 5. The first deploy, units installed and nothing restarted:
    `scripts/deploy.sh --no-restart`, then `sudo systemctl enable --now <unit>` for each unit, then `scripts/deploy.sh --verify <sha12>`, which restarts and verifies every unit on that build (a plain re-run verifies nothing: the link didn't move).
 

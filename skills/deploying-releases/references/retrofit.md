@@ -13,6 +13,7 @@ Record each in the design note; every one changes what the hooks or the units sa
 - **Written paths:** every path a unit writes under its `WorkingDirectory`. A release is read-only, so each moves to `StateDirectory=`, `/var/lib/<repo>` or `/run/<repo>`.
 - **`ExecStartPre=` lines,** each classed as *deploy-time integrity* (moves into the build or `post_build_check`) or *runtime health* (stays, running from the release). A wheelhouse sync is neither: it is retired with the move to the co-pypi index ([#632](https://github.com/gregoryfoster/skills/issues/632)).
 - **`uv` sources by kind** (registry, git, path, find-links), and how each resolves inside a `git archive`: a path source outside the repo doesn't, and a `.wheelhouse` lock is refused.
+- **A co-pypi wrapper of the repo's own** (`scripts/co-pypi.sh`, `co_pypi_token.py`): replaced by `install.sh --co-pypi --replace`, the one copy every repo runs. Its key variable becomes `CO_PYPI_KEY`, needed only where the key isn't at `/etc/<[project].name>/co-pypi-reader.json`; its own tests go, as `tests/test_co_pypi.py` and this repo's suite cover the pair.
 - **Hand-run production steps** in AGENTS.md or CLAUDE.md, such as `alembic upgrade head` from the checkout.
 - **Checkout guards in `src/`.** Removing the `ExecStartPre=` guard is not enough: grep `src/` for an in-process check of the branch, the checkout path or `.git`, which refuses every write when the code runs from a release (replicator).
 

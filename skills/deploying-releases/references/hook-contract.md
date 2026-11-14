@@ -34,7 +34,7 @@ All optional except `PROJECT`, and `GITHUB_REPO` when `CI=github`.
 | `CI_AUTH` | `anonymous` | `anonymous` (curl, a public repo) or `gh` (gh's own login, `GH_TOKEN`/`GITHUB_TOKEN` unset) |
 | `CI_WORKFLOW`, `GITHUB_REPO`, `CI_JOBS` | `ci.yml`, —, `()` | The workflow, `<owner>/<repo>`, the job names a run must have |
 | `PYTHON` | `/usr/bin/python3.12` | The system interpreter every venv runs |
-| `UV_WRAPPER` | empty | The checkout's credential wrapper (co-pypi: `scripts/co-pypi.sh`) |
+| `UV_WRAPPER` | empty | The checkout's credential wrapper: `scripts/co-pypi.sh`, installed by `install.sh --co-pypi` (#632) |
 | `SOURCE_DIRS` | `(src)` | Compiled to bytecode in the release |
 | `IMPORT_MODULES`, `REVISION_PROBE` | `()`, empty | Imported, then the build printed (the core reads `REVISION` unless a probe prints it as the app does) |
 | `REQUIRED_ARTIFACTS` | `()` | Paths every release must have after `build_extra` |
