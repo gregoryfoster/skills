@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # deploying-releases-core: version 1
-# deploying-releases-core-sha256: 51308da68eaca47e465a3a1a3f2d2f9c10398740beb49fbac045f4a1f7fc3535
+# deploying-releases-core-sha256: a33ea51e71209a5adc4087c377f5d42d67f48c627961db637c69f23a21000e37
 #
 # The cohort's one release-deploy core (gregoryfoster/skills#372), installed by
 # deploying-releases' install.sh. Do not edit it here: configure it in
@@ -269,11 +269,18 @@ trap cleanup EXIT
 # stopped and what the link names, in the journal too.
 stage="before the switch"
 current=""
+# The targets this run already put on the build, for a message that stops later.
+done_targets=""
 interrupted() {
   trap - INT TERM HUP
   local now
   case "$stage" in
-    "before the switch") die "interrupted before the switch; nothing switched" ;;
+    "before the switch")
+      [[ -n "$done_targets" ]] ||
+        die "interrupted before the switch; nothing switched"
+      journal "interrupted before switching $current; already on ${build:-?}:$done_targets"
+      die "interrupted before switching $current, which is unchanged; already on ${build:-?}:$done_targets"
+      ;;
     "while pruning") note "interrupted while pruning; every target is verified" && exit 0 ;;
   esac
   now="$(readlink "$ROOT/$current" 2>/dev/null)" || now="nothing"
@@ -1142,6 +1149,7 @@ for t in "${targets[@]}"; do
     keep_units=""
     if ((units_ok)); then
       say "$t is on $build (--no-restart): nothing restarted or verified. Enable its units, then: scripts/deploy.sh --verify $build"
+      done_targets+=" $t (--no-restart, unverified)"
       continue
     fi
     note "installing $t's units failed (--no-restart); switching back"
@@ -1159,6 +1167,7 @@ for t in "${targets[@]}"; do
   if ((VERIFY_OK)); then
     keep_units=""
     say "$t is on $build"
+    done_targets+=" $t (verified)"
     continue
   fi
 

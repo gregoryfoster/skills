@@ -595,6 +595,19 @@ class TestTargets:
         assert result.stderr.index("dev is on") < result.stderr.index("live is on")
         assert world.target("dev") == world.target("live")
 
+    def test_interrupted_before_live_names_dev_already_switched(self, world):
+        # $$ in a hook's subshell is the deploy's own pid: a SIGTERM, as an
+        # agent's tool timeout sends, arrives between dev's verify and live's switch.
+        world.hooks(
+            hooks_with('pre_switch_check() { [[ "$1" != live ]] || kill -TERM $$; }')
+        )
+        world.go_live(self.dev_and_live(world, api_only_dev=True))
+        result = world.run()
+        assert result.returncode == 1, result.stderr
+        assert "interrupted before switching live, which is unchanged" in result.stderr
+        assert "dev (verified)" in result.stderr
+        assert world.target("dev") and world.target("live") is None
+
     def test_a_target_is_its_units_working_directory_alone(self, world):
         world.go_live(self.dev_and_live(world, api_only_dev=True))
         result = world.run("--target", "dev")
