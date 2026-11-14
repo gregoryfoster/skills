@@ -197,6 +197,11 @@ every() { # <state>: every file is in it
   local s
   for s in "${states[@]}"; do [[ "$s" == "$1" ]] || return 1; done
 }
+named() { # <state>: the repo paths of the files in it, so a message names the right one
+  local i out=()
+  for i in "${!states[@]}"; do [[ "${states[$i]}" != "$1" ]] || out+=("${DESTS[$i]}"); done
+  echo "${out[*]}"
+}
 if any foreign; then
   state=foreign
 elif any edited; then
@@ -214,8 +219,8 @@ if ((CHECK)); then
   report "$state" "$installed"
   case "$state" in
     current) exit 0 ;;
-    edited) echo "install.sh: the $NAME in $REPO/scripts was edited by hand; $EDIT_ADVICE" >&2 ;;
-    foreign) echo "install.sh: $DEST is this repo's own, not the $NAME" >&2 ;;
+    edited) echo "install.sh: $(named edited) in $REPO was edited by hand; $EDIT_ADVICE" >&2 ;;
+    foreign) echo "install.sh: $(named foreign) in $REPO is this repo's own, not the $NAME" >&2 ;;
     missing) echo "install.sh: no $NAME at $DEST" >&2 ;;
     drift) echo "install.sh: the $NAME in $REPO/scripts is version ${installed:-?} or partial; this skill ships $vendored" >&2 ;;
   esac
@@ -229,14 +234,14 @@ case "$state" in
     exit 0
     ;;
   edited)
-    echo "install.sh: the $NAME in $REPO/scripts was edited by hand, so an upgrade would discard that edit." \
+    echo "install.sh: $(named edited) in $REPO was edited by hand, so an upgrade would discard that edit." \
       "$EDIT_ADVICE" >&2
     report edited "$installed"
     exit 2
     ;;
   foreign)
     if ((!REPLACE)); then
-      echo "install.sh: $REPO/scripts holds this repo's own ${DESTS[*]}. Adopting the $NAME replaces it:" \
+      echo "install.sh: $REPO holds this repo's own $(named foreign). Adopting the $NAME replaces it:" \
         "pass --replace once its behaviour is covered" >&2
       report foreign ""
       exit 2

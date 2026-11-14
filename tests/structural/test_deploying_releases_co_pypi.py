@@ -437,12 +437,24 @@ class TestInstall:
         result = install(repo, "--replace")
         assert result.returncode == 0 and own.read_bytes() == WRAPPER.read_bytes()
 
+    @pytest.mark.parametrize("check", [True, False], ids=["check", "install"])
+    def test_a_repos_own_minter_alone_is_the_one_named(self, repo, check):
+        """observo's shape: its own minter, no wrapper."""
+        (repo / "scripts").mkdir()
+        (repo / "scripts" / "co_pypi_token.py").write_text("print(1)\n")
+        result = install(repo, *(["--check"] if check else []))
+        assert result.stdout.startswith("foreign\t")
+        assert "scripts/co_pypi_token.py" in result.stderr
+        assert "co-pypi.sh" not in result.stderr
+
     def test_a_hand_edited_minter_is_refused(self, repo):
         install(repo)
         minter = repo / "scripts" / "co_pypi_token.py"
         minter.write_text(minter.read_text() + "# a local fix\n")
         result = install(repo)
         assert result.returncode == 2 and result.stdout.startswith("edited\t1\t")
+        assert "scripts/co_pypi_token.py in" in result.stderr
+        assert "co-pypi.sh" not in result.stderr
         assert minter.read_text().endswith("# a local fix\n")
 
     def test_half_a_pair_is_drift_and_an_install_completes_it(self, repo):
