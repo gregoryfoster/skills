@@ -12,7 +12,7 @@ metadata:
 
 Moves a repo's systemd units off its checkout and onto releases, through one core shared by the cohort. Built from [#372](https://github.com/gregoryfoster/skills/issues/372) to the plan in [docs/plans/2026-11-13-deploying-releases.md](../../docs/plans/2026-11-13-deploying-releases.md). The core is extracted from CannObserv/broker's `scripts/deploy.sh` at `bbf1c72f`, the newest of the six copies that each pilot ran on its own.
 
-**Status: Part A in development. No repo runs the core yet; CannObserv/replicator (replicator#151) is to adopt it first.**
+**Status: in development. No repo runs the core yet; CannObserv/replicator (replicator#151) is to adopt it first. `init-project-fastapi` delegates its deploy to fresh mode (Part B).**
 
 **Activation triggers:** "deploy from releases", "release deploy", "install the deploy core", "update the deploy core", "deploy hooks", "retrofit the deploy".
 

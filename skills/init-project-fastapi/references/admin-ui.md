@@ -44,7 +44,7 @@ The asset is a pinned, reviewed copy of the htmx **2.x** minified dist (the vers
 
 ## `src/api/admin/router.py`
 
-`src/api/admin/__init__.py` is empty (touch only). The default template assumes `SETTINGS_STYLE=pydantic-settings`; for `os.environ`, import and call `get_build_id()` instead of `get_settings().build_id`.
+`src/api/admin/__init__.py` is empty (touch only). Both `SETTINGS_STYLE`s provide `get_build_id()`.
 
 ```python
 """Server-rendered admin surface — HTMX + Jinja2, same-app router."""
@@ -56,7 +56,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
 from src.api.deps import require_admin
-from src.core.config import get_settings
+from src.core.config import get_build_id
 
 # Anchored to the source tree, not CWD — systemd WorkingDirectory and the
 # pytest rootdir differ, and a relative "src/templates" breaks under one
@@ -89,7 +89,7 @@ async def status_partial(request: Request) -> HTMLResponse:
     Replace with real partials as the admin surface grows.
     """
     return templates.TemplateResponse(
-        request, "admin/partials/status.html", {"build": get_settings().build_id}
+        request, "admin/partials/status.html", {"build": get_build_id()}
     )
 ```
 

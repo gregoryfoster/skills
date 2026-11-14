@@ -65,48 +65,41 @@ alembic/             — Database migrations
 > end include
 tests/          — Mirrors src/ structure; integration tests in `@pytest.mark.integration`
 docs/           — Reference docs (COMMANDS, SKILLS); docs/plans/ holds implementation plans
-> Include when DEPLOY_TARGET=systemd:
-deploy/         — Systemd unit + deployment config
+> Include when DEPLOY_TARGET=releases:
+deploy/         — systemd units; scripts/deploy.sh (installed, never edited) installs them
 > end include
 ​```
 
 ## Infrastructure
 
-**Single-VM setup.** Code committed to main is the deployed code.
+**Single-VM setup.** Units run a read-only release of a CI-green `main` commit; only `scripts/deploy.sh` changes it (`DEPLOYMENT.md`) [DEPLOY_TARGET=releases].
 
 | Service | Framework | Port | Managed by |
 |---|---|---|---|
-| API (live) | FastAPI | <API_PORT> | `systemctl` (`<PROJECT_NAME>.service`) [DEPLOY_TARGET=systemd] |
+| API (live) | FastAPI | <API_PORT> | `<PROJECT_NAME>-api.service` on `/srv/<PROJECT_NAME>/live` [DEPLOY_TARGET=releases] |
 | API (dev) | FastAPI | <API_PORT_DEV> | manual uvicorn |
 
 `<API_PORT_DEV>` = `<API_PORT> + 1`. The exe.dev proxy transparently forwards ports 3000–9999; the dev server is reachable at `https://<PROJECT_NAME>.exe.xyz:<API_PORT_DEV>/`.
 
 ## Server Lifecycle
 
-> Include when DEPLOY_TARGET=systemd:
-**Port <API_PORT> belongs to systemd.** Never start uvicorn manually on port <API_PORT>.
+> Include when DEPLOY_TARGET=releases:
+**Port <API_PORT> belongs to the release.** Never start uvicorn on it.
 
 | Situation | Action |
 |---|---|
-| Code committed to main | `sudo systemctl restart <PROJECT_NAME>` |
+| Merged to main, CI green | `scripts/deploy.sh` (`shipping-work` runs it) |
 | Testing a worktree/branch | `uv run uvicorn ... --port <API_PORT_DEV> --reload --log-config src/core/log_config.json` |
-| Debugging the live service | `sudo journalctl -u <PROJECT_NAME> -f` |
-| After editing `deploy/<PROJECT_NAME>.service` | `sudo systemctl daemon-reload && sudo systemctl restart <PROJECT_NAME>` |
-| After DB model changes [DB_BACKED=yes] | `uv run alembic upgrade head` then restart |
+| Debugging the live service | `journalctl -u <PROJECT_NAME>-api -f`, `journalctl -t <PROJECT_NAME>-deploy` |
+| After DB model changes [DB_BACKED=yes] | Commit the migration; the deploy applies it |
 
 **Dev server workflow.** Run on port `<API_PORT_DEV>` so the live service stays up. Load env in the same command (§ Environment Variables):
 
 ​```bash
 eval "$(sed -n 's/^#   //; /^load_env() [{]/,/^[}]/p' skills/shipping-work/scripts/pre-ship.sh)"
 ENV_FILE=.env; [ -r "$ENV_FILE" ] || ENV_FILE="$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")/.env"
-load_env /etc/<PROJECT_NAME>/.env; load_env "$ENV_FILE"
+load_env /etc/<PROJECT_NAME>/<PROJECT_NAME>.env; load_env "$ENV_FILE"
 uv run uvicorn src.api.main:app --host 0.0.0.0 --port <API_PORT_DEV> --reload --log-config src/core/log_config.json
-​```
-
-**After finishing work.** Always restart the systemd service to pick up changes merged to main:
-
-​```bash
-sudo systemctl restart <PROJECT_NAME>
 ​```
 > end include
 
@@ -120,10 +113,10 @@ uv run uvicorn src.api.main:app --host 0.0.0.0 --port <API_PORT> --reload --log-
 
 ## Environment Variables
 
-> Include when DEPLOY_TARGET=systemd:
+> Include when DEPLOY_TARGET=releases:
 Two env files, loaded in order (later values override):
 
-1. **`/etc/<PROJECT_NAME>/.env`** — production secrets (`DATABASE_URL`, etc.). Survives repo resets and worktree switches. Managed manually on the VM. The only env file the systemd service loads.
+1. **`/etc/<PROJECT_NAME>/<PROJECT_NAME>.env`** — production settings, the only env file a unit loads. Secrets (`DATABASE_URL`, etc.) are files in root-only `/etc/<PROJECT_NAME>/credentials/`, passed by `LoadCredential=` (`DEPLOYMENT.md`).
 2. **`.env`** (repo root, git-ignored) — dev/agent secrets (`GH_TOKEN`, `TEST_DATABASE_URL`). Never commit. Production never reads it.
 
 For shell commands, **parse the files, never source them**: sourcing runs a file as shell code, so anything in it that isn't a plain `KEY=value` executes or expands. `load_env` exports what it loads, so keep secrets a shell doesn't need out of these files. Load them **in the same command as whatever needs them**: an agent's tool starts a fresh shell per call, so a function defined in one call is gone in the next. The first line defines `load_env` in place from the recipe in `skills/shipping-work/scripts/pre-ship.sh`'s header, which stays the only copy; the second picks the checkout's own `.env`, or from a linked worktree the primary checkout's, as the recipe's `ENV_FILE` lines do:
@@ -131,7 +124,7 @@ For shell commands, **parse the files, never source them**: sourcing runs a file
 ​```bash
 eval "$(sed -n 's/^#   //; /^load_env() [{]/,/^[}]/p' skills/shipping-work/scripts/pre-ship.sh)"
 ENV_FILE=.env; [ -r "$ENV_FILE" ] || ENV_FILE="$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")/.env"
-load_env /etc/<PROJECT_NAME>/.env; load_env "$ENV_FILE"
+load_env /etc/<PROJECT_NAME>/<PROJECT_NAME>.env; load_env "$ENV_FILE"
 ​```
 > end include
 
@@ -150,7 +143,7 @@ Currently defined:
 > Include when DB_BACKED=yes:
 - `DATABASE_URL` — PostgreSQL connection string
 - `TEST_DATABASE_URL` — PostgreSQL connection string for the test database (name must end `_test`)
-- `<PROJECT_UNDERSCORE_UPPER>_ALLOW_PRODUCTION_DB` — set to `1` only via `Environment=` in the production systemd unit, **never in an env file** (systemd env files override `Environment=`, which would defeat the guard); the app refuses to boot against a non-`_dev`/`_test` database without it
+- `<PROJECT_UNDERSCORE_UPPER>_ALLOW_PRODUCTION_DB` — set to `1` only via `Environment=` in the production API unit (and the deploy's migration), **never in an env file** (systemd env files override `Environment=`, which would defeat the guard); the app refuses to boot against a non-`_dev`/`_test` database without it
 > end include
 > Include when AUTH_STYLE=header-token:
 - `API_AUTH_TOKEN` — shared secret for `X-API-Key` on `/api/v1/*`; unset = all authed routes return 503 (fail-closed)
@@ -159,17 +152,15 @@ Currently defined:
 - `ADMIN_AUTH_HEADER` — name of the trusted-proxy identity header gating `/admin/*` (exe.dev pattern); unset = admin routes return 503 (fail-closed)
 - `ADMIN_LOGIN_URL` — redirect target for unauthenticated admin requests (303 for browsers, `HX-Redirect` for htmx); unset = plain 401
 > end include
-> Include when DEPLOY_TARGET=systemd:
-- `BUILD_ID` — git SHA stamped by the systemd unit's `ExecStartPre`; defaults to `"dev"` outside systemd
-> end include
+
+The build id is the release's `REVISION` (`/health`'s `revision`; `dev` in a checkout).
 
 ## Common Commands
 
 ​```bash
 # Install dependencies
 uv sync
-# [PRIVATE_INDEX=co-pypi] the first sync, a private bump, and every `uv lock`,
-# through the wrapper that mints the co-pypi reader's token:
+# [PRIVATE_INDEX=co-pypi] when uv must download a private file:
 scripts/co-pypi.sh uv sync --locked
 scripts/co-pypi.sh uv lock
 
@@ -177,7 +168,7 @@ scripts/co-pypi.sh uv lock
 # same command as what needs it (§ Environment Variables)
 eval "$(sed -n 's/^#   //; /^load_env() [{]/,/^[}]/p' skills/shipping-work/scripts/pre-ship.sh)"
 ENV_FILE=.env; [ -r "$ENV_FILE" ] || ENV_FILE="$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")/.env"
-load_env /etc/<PROJECT_NAME>/.env; load_env "$ENV_FILE"   # DEPLOY_TARGET=none: drop the /etc load
+load_env /etc/<PROJECT_NAME>/<PROJECT_NAME>.env; load_env "$ENV_FILE"   # DEPLOY_TARGET=none: drop the /etc load
 
 # Run tests
 uv run pytest
@@ -199,8 +190,11 @@ uv run alembic upgrade head
 uv run alembic revision --autogenerate -m "description"
 
 # FastAPI dev server
-uv run uvicorn src.api.main:app --host 0.0.0.0 --port <API_PORT_DEV> --reload --log-config src/core/log_config.json   # DEPLOY_TARGET=systemd
+uv run uvicorn src.api.main:app --host 0.0.0.0 --port <API_PORT_DEV> --reload --log-config src/core/log_config.json   # DEPLOY_TARGET=releases
 # uv run uvicorn src.api.main:app --host 0.0.0.0 --port <API_PORT> --reload --log-config src/core/log_config.json     # DEPLOY_TARGET=none
+
+# [DEPLOY_TARGET=releases] once CI is green; `scripts/deploy.sh <sha12>` rolls back
+scripts/deploy.sh
 ​```
 
 Full reference: `docs/COMMANDS.md`

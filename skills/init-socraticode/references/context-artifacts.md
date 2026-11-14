@@ -81,7 +81,7 @@ comma never means "combine into one `path`"; there is no multi-path `path`.
 | `architecture` | `./docs/ARCHITECTURE.md` and/or `./README.md` (one entry each) | an architecture doc exists |
 | `schema-migrations` | `./alembic/versions/` (dir) | DB-backed (whichever is the schema source of truth) |
 | `api-contracts` | `./openapi.yaml` or a vendored spec snapshot file | the project consumes/publishes specs |
-| `systemd-unit` | `./deploy/` (dir) or a specific `./deploy/app.service` | DEPLOY_TARGET=systemd |
+| `systemd-unit` | `./deploy/` (dir) or a specific `./deploy/app.service` | DEPLOY_TARGET=releases |
 | `infrastructure` | `./terraform/` or `./k8s/` (dirs) | IaC exists |
 | `project-config` | `./pyproject.toml` and/or `./.env.example` (one entry each; never real secrets) | dep/tool config or env contract documented |
 | `style-guide` | `./docs/STYLE.md` | a style doc exists |

@@ -24,7 +24,10 @@ What `init-project-fastapi` delegates when `DEPLOY_TARGET=releases`, and what a 
 4. **Copy the tests:** `assets/tests/test_deploy_contract.py` and `test_deploy_units.py` into `tests/deploy/`. They read the hooks file, so they need no editing, and they must pass before the first commit.
 5. **Write `DEPLOYMENT.md`** from `assets/DEPLOYMENT.md.tmpl`, substituting `<PROJECT>`, and link it from the README.
 6. **Set `.skills/deploy_command`** to `scripts/deploy.sh`.
-7. **The app side,** which `init-project-fastapi`'s references own: `get_build_id()` reads `REVISION` from the release root and is `dev` without it; `Settings` reads only the env files it can open (a root-only `EnvironmentFile=` is exported by systemd before the user switch, and pydantic-settings raises on one it can't read: observo#695); under `DB`, `alembic/env.py` asserts the database is the one the settings name.
+7. **The app side,** which `init-project-fastapi`'s references own:
+   - `get_build_id()` reads `REVISION` from the release root and is `dev` without it, and `/health` reports it as `revision`, the field `verify_http_health` reads.
+   - `Settings` opens no env file, so a root-only `EnvironmentFile=` (exported by systemd before the user switch) can't raise. A repo whose `Settings` does open one filters to the readable ones first (observo's `readable_env_files()`, observo#695). Secrets also come from `$CREDENTIALS_DIRECTORY`, the unit's `LoadCredential=`.
+   - Under `DB`, `alembic/env.py` runs `assert_database_safety()` before an online migration, and `python -m src.core.schema_state` answers the `migrate` hook: exit 0 for current or ahead (skip), 3 for behind (upgrade), 2 for an error (refuse).
 
 ## What it does not do
 

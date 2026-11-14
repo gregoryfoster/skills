@@ -18,8 +18,8 @@ Then present a completion table. Branch-point rows show the choice made (or "ski
 | Layout | `<LAYOUT>` |
 | CI | `<GITHUB_CI>` — when yes: `.github/workflows/ci.yml` |
 | Tests scaffold | `tests/conftest.py`, `tests/test_health.py`, `tests/core/test_logging.py`, `tests/core/test_config.py`, `tests/api/` |
-| Deploy unit | `<DEPLOY_TARGET>` — when systemd: `deploy/<PROJECT_NAME>.service` (User=`<DEPLOY_USER>`, WorkingDirectory=`<DEPLOY_HOME>`) |
-| Private index | `<PRIVATE_INDEX>` — when co-pypi: `[[tool.uv.index]]` + sources, `scripts/co-pypi.sh` + `co_pypi_token.py` (installed by `deploying-releases`), `tests/test_co_pypi.py`, CI's WIF token step (per `GITHUB_CI`) |
+| Deploy | `<DEPLOY_TARGET>` — when releases: `scripts/deploy.sh` + `deploy_hooks.sh`, `deploy/<PROJECT_NAME>-api.service`, `tests/deploy/`, `DEPLOYMENT.md` |
+| Private index | `<PRIVATE_INDEX>` — when co-pypi: index + sources, `scripts/co-pypi.sh` + `co_pypi_token.py`, `tests/test_co_pypi.py`, CI's WIF step |
 | Vendor submodules | `gregoryfoster/skills`, `obra/superpowers` |
 | Skills | Vendor skills symlinked, no local override (review: `-python-fastapi` only; one `shipping-work`) + `.claude/skills/` discovery symlinks + `.skills/doctor.sh` |
 | GH issue | #1 closed |

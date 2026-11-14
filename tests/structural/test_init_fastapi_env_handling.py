@@ -16,6 +16,11 @@ The replacement is a pointer, not a third copy: the parse-don't-source
 `load_env` recipe in `shipping-work/scripts/pre-ship.sh`'s
 header. `TestThePointerRuns` runs the template's load line against that very
 recipe, so the pointer cannot name a loader that no longer exists.
+
+Since #372 Part B the skill carries no unit at all: `deploying-releases`
+renders it from its own templates, on the release. `TestInitCarriesNoUnit`
+holds that inverse, and `TestTheUnitReadsOnlyEtc` now reads the templates init
+delegates to.
 """
 
 import hashlib
@@ -34,7 +39,9 @@ SKILL = ROOT / "skills" / "init-project-fastapi"
 RECIPE_VARIANT = "shipping-work"
 RECIPE = f"skills/{RECIPE_VARIANT}/scripts/pre-ship.sh"
 TEMPLATE = SKILL / "references" / "agents-md-template.md"
-UNIT_DOC = SKILL / "references" / "systemd-deploy.md"
+UNIT_TEMPLATES = sorted(
+    (ROOT / "skills" / "deploying-releases" / "assets" / "units").glob("*.tmpl")
+)
 
 # Running an env file as shell code: `. file`, `source file`, after a line
 # start or a command separator. `>> ./.env` and `grep … ./.env` do not match.
@@ -42,7 +49,7 @@ _SOURCES_AN_ENV_FILE = re.compile(r"(?:^|[;&|(`\s])(?:\.|source)\s+\S*\.env\b")
 # A path, not the bare `EnvironmentFile=` that prose names.
 _ENVIRONMENT_FILE = re.compile(r"EnvironmentFile=-?([^`\s]+)")
 # The only places a production unit may read env from.
-_UNIT_ENV_PREFIXES = ("/etc/<PROJECT_NAME>/", "/run/<PROJECT_NAME>/")
+_UNIT_ENV_PREFIXES = ("/etc/<PROJECT_NAME>/", "/etc/<PROJECT>/")
 
 
 def _skill_lines():
@@ -94,17 +101,54 @@ class TestNoFileIsSourced:
         assert not _SOURCES_AN_ENV_FILE.search(line), line
 
 
+class TestInitCarriesNoUnit:
+    """#372 Part B: the checkout pattern is gone from the scaffold. No unit, no
+    unit user or home, no build-id `ExecStartPre` and no main-checkout guard:
+    `deploying-releases` renders the units, on `/srv/<project>/live`."""
+
+    @pytest.mark.parametrize(
+        "needle",
+        [
+            "[Service]",
+            "ExecStartPre=",
+            "WorkingDirectory=",
+            "DEPLOY_HOME",
+            "DEPLOY_USER",
+            "symbolic-ref",
+        ],
+    )
+    def test_no_unit_or_checkout_deploy_is_left(self, needle):
+        hits = [f"{p}:{n}" for p, n, ln in _skill_lines() if needle in ln]
+        assert not hits, f"init still carries {needle!r}: {hits}"
+
+    def test_the_unit_template_is_gone(self):
+        assert not (SKILL / "references" / "systemd-deploy.md").exists()
+
+    def test_phase_7b_delegates(self):
+        phase = (
+            (SKILL / "SKILL.md")
+            .read_text()
+            .split("### Phase 7b", 1)[1]
+            .split("### Phase 7c")[0]
+        )
+        assert "deploying-releases" in phase and "fresh" in phase
+
+
 class TestTheUnitReadsOnlyEtc:
-    def test_every_environment_file_is_under_etc_or_run(self):
+    def test_every_environment_file_is_under_etc(self):
         hits = []
-        for p, n, ln in _skill_lines():
+        lines = list(_skill_lines()) + [
+            (t.relative_to(ROOT), n, ln)
+            for t in UNIT_TEMPLATES
+            for n, ln in enumerate(t.read_text().splitlines(), 1)
+        ]
+        for p, n, ln in lines:
             for path in _ENVIRONMENT_FILE.findall(ln + " "):
                 if not path.startswith(_UNIT_ENV_PREFIXES):
                     hits.append(f"{p}:{n}: {path}")
         assert not hits, (
-            "a production unit reads /etc/<PROJECT_NAME>/.env (and its own "
-            "/run build-id) only. The repo .env is the developer's file, with "
-            f"GH_TOKEN and ANTHROPIC_API_KEY in it. Sites: {hits}"
+            "a production unit reads /etc/<project>/ only. The repo .env is the "
+            f"developer's file, with GH_TOKEN and ANTHROPIC_API_KEY in it. Sites: {hits}"
         )
 
     def test_the_detector_sees_the_removed_line(self):
@@ -118,12 +162,13 @@ class TestTheUnitReadsOnlyEtc:
     def test_the_detector_skips_a_bare_mention(self):
         assert _ENVIRONMENT_FILE.findall("from an `EnvironmentFile=` that") == []
 
-    def test_the_unit_template_names_its_two_env_files(self):
-        unit = UNIT_DOC.read_text().split("```ini", 1)[1].split("```", 1)[0]
-        assert re.findall(r"^EnvironmentFile=(\S+)$", unit, re.M) == [
-            "-/run/<PROJECT_NAME>/build-id",
-            "/etc/<PROJECT_NAME>/.env",
-        ]
+    @pytest.mark.parametrize("template", UNIT_TEMPLATES, ids=lambda p: p.name)
+    def test_each_unit_template_names_one_settings_file(self, template):
+        found = re.findall(r"^EnvironmentFile=(\S+)$", template.read_text(), re.M)
+        assert found in ([], ["/etc/<PROJECT>/<PROJECT>.env"]), found
+
+    def test_there_are_unit_templates(self):
+        assert {t.name for t in UNIT_TEMPLATES} >= {"service.tmpl", "oneshot.tmpl"}
 
     @pytest.mark.parametrize(
         "path,stale",
@@ -132,7 +177,6 @@ class TestTheUnitReadsOnlyEtc:
             ("SKILL.md", "repo-`.env` `EnvironmentFile`"),
             ("SKILL.md", "then the repo `.env`"),
             ("references/agents-md-template.md", "loads both"),
-            ("references/systemd-deploy.md", "optional repo-local overrides"),
         ],
     )
     def test_no_prose_says_the_unit_loads_the_repo_env(self, path, stale):

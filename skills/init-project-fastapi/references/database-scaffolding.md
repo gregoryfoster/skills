@@ -143,7 +143,16 @@ Edit `alembic.ini`:
 - Confirm `prepend_sys_path = .` is present (alembic init populates it by default)
 - Set the offline-fallback DSN: `sqlalchemy.url = postgresql+asyncpg://<PROJECT_UNDERSCORE>:<PROJECT_UNDERSCORE>@localhost:5432/<PROJECT_UNDERSCORE>` (only used by `alembic --sql` offline tooling; runtime reads `DATABASE_URL`). `<PROJECT_UNDERSCORE>` is the project name with hyphens converted to underscores (derived in Phase 5c — see SKILL.md). For hyphen-free project names it equals `<PROJECT_NAME>`; for hyphenated names (e.g. `usa-wa` → `usa_wa`) the underscore form keeps SQL identifiers unquoted so the offline DSN and the real Postgres role/database (Phase 5d) agree.
 
-> The asset [`alembic-env.py`](../assets/alembic-env.py) imports `Base` from `src.core.models`. The package re-export in `MODELS_LAYOUT=package` and the monolithic `models.py` both expose `Base` at that path, so no env.py edit is needed for either layout.
+> The asset [`alembic-env.py`](../assets/alembic-env.py) imports `Base` from `src.core.models`. The package re-export in `MODELS_LAYOUT=package` and the monolithic `models.py` both expose `Base` at that path, so no env.py edit is needed for either layout. It reads the URL through `src.core.config` (a `LoadCredential=` DSN works), and an online run calls `assert_database_safety()` first.
+
+### `src/core/schema_state.py` (`DEPLOY_TARGET=releases`)
+
+```bash
+cp "<SKILL_DIR>/assets/schema-state.py" src/core/schema_state.py
+cp "<SKILL_DIR>/assets/test-schema-state.py" tests/core/test_schema_state.py
+```
+
+The deploy's question: the database's Alembic revision against this release's head (status R8, archiver#330). `python -m src.core.schema_state` prints `<state> database=<rev> code=<head>` and exits 0 for `current` or `ahead` (a rollback, safe under expand-only migrations), 3 for `behind` or `unmigrated`, 2 for anything else; never 1, an uncaught exception's. The `migrate` hook upgrades only on 3. The test needs no database.
 
 ### Optional hardening (adopt as the schema grows)
 
@@ -188,7 +197,7 @@ def assert_database_safety() -> None:
         )
 ```
 
-`<PROJECT_UNDERSCORE_UPPER>` = `<PROJECT_UNDERSCORE>` uppercased (e.g. `usa-wa` → `USA_WA`). The production systemd unit sets `Environment=<PROJECT_UNDERSCORE_UPPER>_ALLOW_PRODUCTION_DB=1` **after** its `EnvironmentFile` lines so env files can't override the opt-in (see [`systemd-deploy.md`](systemd-deploy.md)). Skip this module when `DB_BACKED=no`.
+`<PROJECT_UNDERSCORE_UPPER>` = `<PROJECT_UNDERSCORE>` uppercased (e.g. `usa-wa` → `USA_WA`). The production API unit sets `Environment=<PROJECT_UNDERSCORE_UPPER>_ALLOW_PRODUCTION_DB=1` (Phase 7b), and so does whatever runs the deploy's migration. Never in an env file: a developer's shell loads `/etc/<PROJECT_NAME>/<PROJECT_NAME>.env` too, and the opt-in would reach a dev server. Skip this module when `DB_BACKED=no`.
 
 ## `src/api/deps.py`
 

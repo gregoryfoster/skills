@@ -4,7 +4,7 @@ description: Bootstraps a new FastAPI project with the full CannObserv agent too
 compatibility: Designed for Claude. Requires git, gh CLI, ssh-keygen, uv. Must run inside an initialized git repository.
 metadata:
   author: gregoryfoster
-  version: "1.4.0"
+  version: "2.0.0"
   triggers: init project, bootstrap project, new fastapi project, set up foundation
 ---
 
@@ -29,7 +29,7 @@ Ask the user (one at a time if not provided upfront).
 | `PROJECT_NAME` | `watcher` | pyproject.toml, AGENTS.md, README.md, skill headers, GH issue |
 | `PROJECT_DESCRIPTION` | `monitors cannabis industry activity: licenses, regulatory filings...` | pyproject.toml, AGENTS.md, README.md |
 | `GITHUB_ORG` | `CannObserv` | git remote, deploy key host alias, GH issue |
-| `API_PORT` | `8000` | AGENTS.md, README.md, docs/COMMANDS.md, systemd unit |
+| `API_PORT` | `8000` | AGENTS.md, README.md, docs/COMMANDS.md, the API unit |
 | `DEPLOY_KEY_LABEL` | `watcher-deploy-key` | ssh-keygen comment |
 | `GIT_USER_NAME` | `Ada Lovelace` | git local config, commits |
 | `GIT_USER_EMAIL` | `ada@example.com` | git local config, commits |
@@ -62,15 +62,10 @@ Each has a default the user can accept silently. Defaults come from comparing 7 
 | `LINT_PROFILE` | `minimal` | `minimal` \| `strict` | Phase 3 (ruff `select` rules + per-file ignores) |
 | `LAYOUT` | `single` | `single` \| `workspace` | uv workspace monorepo — Phase 3/5 shape per [`references/workspace-layout.md`](references/workspace-layout.md) (`single` is the fully-templated path) |
 | `GITHUB_CI` | `no` | `no` \| `yes` | Phase 7c (`.github/workflows/ci.yml` from [`references/github-ci.md`](references/github-ci.md)) |
-| `DEPLOY_TARGET` | `systemd` | `systemd` \| `none` | Phase 7b (`deploy/<PROJECT_NAME>.service`), Phase 3 `.gitignore`, README "Deploy" section |
+| `DEPLOY_TARGET` | `releases` | `releases` \| `none` | Phase 5c (`schema_state`), Phase 7b (`deploying-releases` fresh mode: the deploy core and hooks, units on `/srv/<PROJECT_NAME>/live`, `tests/deploy/`, `DEPLOYMENT.md`), README "Deploy" section |
 | `PRIVATE_INDEX` | `no` | `no` \| `co-pypi` | Phase 3 (index, sources, the `co-pypi` group, ruff exclude), Phase 3b (the wrapper, installed by `deploying-releases`; the dev recipe), Phase 7b (`UV_WRAPPER`), Phase 7c (the WIF token step), Phase 12 (lock and sync through the wrapper), Phase 15 (grants) — all per [`references/private-index.md`](references/private-index.md) |
 
-**Sub-parameters of `DEPLOY_TARGET=systemd`** (skipped entirely when `DEPLOY_TARGET=none`):
-
-| Sub-parameter | Default | Used in |
-|---|---|---|
-| `DEPLOY_USER` | `exedev` | systemd unit `User=` + `chown` in `ExecStartPre` |
-| `DEPLOY_HOME` | `/home/<DEPLOY_USER>/<PROJECT_NAME>` | systemd unit `WorkingDirectory=` |
+Under `releases` a unit runs a root-owned, read-only release as its own `<PROJECT_NAME>` system user, never the checkout ([#372](https://github.com/gregoryfoster/skills/issues/372); `deploying-releases` D2, D7), so there is no unit user or home to choose.
 
 **Sub-parameter of `PRIVATE_INDEX=co-pypi`:** `PRIVATE_DEPS` (required), the private requirement lines with floors, **transitive cannobserv siblings included**: uv sources direct dependencies only, per [`references/private-index.md`](references/private-index.md).
 
@@ -185,13 +180,13 @@ Create the empty `__init__.py` files (`src/`, `src/api/`, `src/core/`), then cop
 
 - `src/api/main.py` — FastAPI app with lifespan (calls `assert_database_safety()` when `DB_BACKED=yes`), version from package metadata, `/health`, (when `DB_BACKED=yes`) `/ready`, (when `AUTH_STYLE=header-token`) the authed `/api/v1` router + `require_api_key` dep, and (when `ADMIN_UI=htmx`) the `/static` mount + admin router include. The reference's "Adjustments" subsection lists the edits for each non-default branch point.
 - `src/core/logging.py` — verbatim JSON logging utility (`build_json_formatter` + `ColorMessageFilter` + `configure_logging` + `get_logger`).
-- `src/core/log_config.json` — verbatim uvicorn `--log-config` file; routes uvicorn's own `uvicorn`/`uvicorn.access`/`uvicorn.error` loggers through the shared JSON formatter so journald doesn't get mixed plain+JSON lines (skills#81), and attaches `ColorMessageFilter` to all three so uvicorn's ANSI-duplicate `color_message` extra is dropped at the record source rather than in the formatter (skills#82). Wired into the systemd `ExecStart` and the dev-server commands.
+- `src/core/log_config.json` — verbatim uvicorn `--log-config` file; routes uvicorn's own `uvicorn`/`uvicorn.access`/`uvicorn.error` loggers through the shared JSON formatter so journald doesn't get mixed plain+JSON lines (skills#81), and attaches `ColorMessageFilter` to all three so uvicorn's ANSI-duplicate `color_message` extra is dropped at the record source rather than in the formatter (skills#82). Wired into the API unit's `ExecStart` and the dev-server commands.
 
 ### Phase 5b — Settings (`src/core/config.py`)
 
 Single source of env access. `src/core/database.py` (Phase 5c) and any future runtime config imports from here.
 
-Copy the variant for the project's `SETTINGS_STYLE` from [`references/settings-scaffolding.md`](references/settings-scaffolding.md): `pydantic-settings` (default — typed `Settings(BaseSettings)` class with `get_settings()` and a `get_database_url()` shim) or `os.environ` (explicit `get_database_url()` / `get_log_level()` / `get_build_id()` guard functions). When `DB_BACKED=no`, drop the `get_database_url()` block from whichever variant you use.
+Copy the variant for the project's `SETTINGS_STYLE` from [`references/settings-scaffolding.md`](references/settings-scaffolding.md): `pydantic-settings` (default — typed `Settings(BaseSettings)` class with `get_settings()` and a `get_database_url()` shim) or `os.environ` (explicit `get_database_url()` / `get_log_level()` guard functions). Both open no env file, read secrets from systemd's `$CREDENTIALS_DIRECTORY` too (a unit's `LoadCredential=`), and take `get_build_id()` from the release's `REVISION` (`dev` in a checkout). When `DB_BACKED=no`, drop the `get_database_url()` block from whichever variant you use.
 
 ### Phase 5c — Database scaffolding
 
@@ -211,9 +206,10 @@ Then follow [`references/database-scaffolding.md`](references/database-scaffoldi
 
 1. **`src/core/database.py`** — async engine + session factory (`get_engine`, `get_session_factory`, `reset_engine`). Reads via `get_database_url` from `src/core/config.py`.
 2. **Models** — `src/core/models.py` (monolithic, default) or `src/core/models/` package (`__init__.py` re-exports + `base.py`), per `MODELS_LAYOUT`. Ships `UlidPkMixin` (ULID string PKs — 4/4 cohort convergence) + `TimestampMixin`.
-3. **`src/core/db_safety.py`** — boot guard refusing production-looking databases without `<PROJECT_UNDERSCORE_UPPER>_ALLOW_PRODUCTION_DB=1` (incident-driven; called from lifespan).
+3. **`src/core/db_safety.py`** — boot guard refusing production-looking databases without `<PROJECT_UNDERSCORE_UPPER>_ALLOW_PRODUCTION_DB=1` (incident-driven; called from lifespan and from `alembic/env.py`'s online run).
 4. **Alembic** — run `uv run alembic init alembic`, then overwrite `alembic/env.py` with the asset: `cp "<SKILL_DIR>/assets/alembic-env.py" alembic/env.py`. Then edit `alembic.ini` (script_location, prepend_sys_path, offline-fallback DSN — substitute `<PROJECT_UNDERSCORE>` derived above).
 5. **`src/api/deps.py`** — `get_db_session` async generator that yields an `AsyncSession`. This is the FastAPI dependency the conftest overrides for test isolation.
+6. **`src/core/schema_state.py`** (when `DEPLOY_TARGET=releases`) — copied from the asset with its test: the database's revision against the code's head, which the deploy's `migrate` hook asks before upgrading (exit 0 current or ahead, 3 behind, 2 anything else).
 
 ### Phase 5d — Provision PostgreSQL
 
@@ -240,9 +236,9 @@ Follow [`references/admin-ui.md`](references/admin-ui.md), which covers the full
 Create empty `__init__.py` files (`tests/`, `tests/api/`, `tests/core/`), then copy the templates from [`references/tests-scaffolding.md`](references/tests-scaffolding.md):
 
 - `tests/conftest.py` — default (DB_BACKED=yes) includes session-scoped event loop fixture, `_check_test_url_safety` guard (name-based `_test` check + inequality) with `DATABASE_URL` env pinning, `test_engine` (create_all/drop_all; migration-driven alternative documented for later), savepoint-isolated `db_session`, and `client` AsyncClient with `get_db_session` dependency override. The reference also ships a no-DB variant for `DB_BACKED=no`.
-- `tests/test_health.py` — minimal smoke test that asserts `/health` returns 200 with `status` and `build` keys. Always created.
+- `tests/test_health.py` — minimal smoke test that asserts `/health` returns 200 with `status` and `revision` (`dev` in a checkout), the field the deploy's verify reads. Always created.
 - `tests/core/test_logging.py` — pins the JSON log field contract (`timestamp`, `level`, `logger`, `message`); a bare `JsonFormatter()` would drop all but `message` (skills#69). Also pins the uvicorn `--log-config` unification — that `log_config.json` stays valid and single-sources its formatter (skills#81) — and that `ColorMessageFilter` is placed on the three uvicorn loggers and strips the extra from the record itself (skills#82). Always created.
-- `tests/core/test_config.py` — pins the settings contract (defaults + env-override for `log_level`/`build_id`, the branch-point-invariant fields). Always created; the `SETTINGS_STYLE` variant matches Phase 5b. Cheap, and it lifts a fresh scaffold well clear of the coverage floor (see Phase 12).
+- `tests/core/test_config.py` — pins the settings contract (defaults + env-override for `log_level`, and `get_build_id()` read from `REVISION`: the branch-point-invariant fields). Always created; the `SETTINGS_STYLE` variant matches Phase 5b. Cheap, and it lifts a fresh scaffold well clear of the coverage floor (see Phase 12).
 - `tests/api/test_auth.py` — auth-gate test. Only when `AUTH_STYLE=header-token`.
 - `tests/api/test_admin.py` — admin gate + rendering tests (browser 303 vs htmx `HX-Redirect`, fail-closed 503, full page vs fragment). Only when `ADMIN_UI=htmx`; template in [`references/admin-ui.md`](references/admin-ui.md).
 
@@ -258,12 +254,14 @@ Create empty `__init__.py` files (`tests/`, `tests/api/`, `tests/core/`), then c
 
 > Skip this entire phase when `DEPLOY_TARGET=none`.
 
-Copy the templates from [`references/systemd-deploy.md`](references/systemd-deploy.md):
+Delegate to [`deploying-releases`](../deploying-releases/SKILL.md) in **fresh mode**, following `<SKILL_DIR>/../deploying-releases/references/fresh.md` with its installer resolved there. Its inputs:
 
-- `deploy/<PROJECT_NAME>.service` — systemd unit: BUILD_ID stamping via `ExecStartPre`, two-tier `EnvironmentFile` chain (`/run/<PROJECT_NAME>/build-id` → `/etc/<PROJECT_NAME>/.env`; never the repo `.env`), bounded restarts, `--frozen --no-sync` serve, and (when `DB_BACKED=yes`) the `ALLOW_PRODUCTION_DB` opt-in. Substitute `<PROJECT_NAME>`, `<PROJECT_DESCRIPTION>`, `<API_PORT>`, `<DEPLOY_USER>`, `<DEPLOY_HOME>`. The reference notes per-host adjustments and ships the fleet patterns (oneshot+timer pairs, `OnFailure=` notify template, main-checkout guard) to adopt as scheduled jobs appear.
-- README **"Deploy"** section — append the `systemctl` install/restart/journalctl recipe to `README.md`.
+- `PROJECT=<PROJECT_NAME>`, `GITHUB_REPO=<GITHUB_ORG>/<PROJECT_NAME>`, and `CI_JOBS=(lint test)`, or `CI=none` when `GITHUB_CI=no`.
+- One long-running unit, `<PROJECT_NAME>-api`, with `EXEC_START` `uvicorn src.api.main:app --host 127.0.0.1 --port <API_PORT> --log-config src/core/log_config.json`. `IMPORT_MODULES=(src.api.main)`, and its `verify` is `verify_http_health http://127.0.0.1:<API_PORT>/health "$2"`.
+- No dev unit: the dev server stays a manual uvicorn on `<API_PORT_DEV>`.
+- `DB=alembic` when `DB_BACKED=yes`, whose `migrate` hook asks `src.core.schema_state`. `PRIVATE_INDEX` as chosen, which adds `UV_WRAPPER=scripts/co-pypi.sh`.
 
-When `PRIVATE_INDEX=co-pypi`: the deploy's `uv sync` runs through the wrapper, per (c) in [`references/private-index.md`](references/private-index.md).
+That gives the installed core and hooks, `deploy/<PROJECT_NAME>-api.service`, `tests/deploy/`, `DEPLOYMENT.md` and `.skills/deploy_command`. Then edit the rendered API unit. When `DB_BACKED=yes`, add `postgresql.service` to `After=` for a local Postgres, `LoadCredential=database_url:/etc/<PROJECT_NAME>/credentials/database_url`, and `Environment=<PROJECT_UNDERSCORE_UPPER>_ALLOW_PRODUCTION_DB=1`, never in the env file, which a dev shell loads too. Append a README "Deploy" section that links `DEPLOYMENT.md`. `tests/deploy/` must pass in Phase 12. Nothing here touches the host: the operator's one-time steps are in `DEPLOYMENT.md`.
 
 ### Phase 7c — CI workflow
 
@@ -398,7 +396,7 @@ Then present the completion table from [`references/completion-report.md`](refer
 - All symlinks use **relative** paths — absolute paths break after cloning.
 - `src/core/config.py` is the single source of env access. Both `os.environ` reads and `pydantic-settings` instantiation belong there; no other module should call `os.environ.get()` for runtime configuration.
 - `configure_logging()` is called once inside the FastAPI `lifespan` context manager — never at module import time, and never in library modules.
-- When `DEPLOY_TARGET=systemd`: the unit must declare its `ExecStartPre` BUILD_ID write **before** the `EnvironmentFile=-/run/<PROJECT_NAME>/build-id` line (the file must exist when systemd loads it). The `EnvironmentFile` order itself follows systemd convention — later entries override earlier ones — so BUILD_ID (read-only state from `ExecStartPre`) goes first as the lowest-precedence layer, then `/etc/<PROJECT_NAME>/.env`; never the repo `.env`.
+- When `DEPLOY_TARGET=releases`: no unit runs the checkout, `uv` or the repo `.env`; a deploy is `scripts/deploy.sh`, the core `deploying-releases` installs, which is never edited. The build id is the release's `REVISION`.
 - When `DB_BACKED=yes`: `tests/conftest.py` must reject `TEST_DATABASE_URL == DATABASE_URL` (production-URL safety check) — `Base.metadata.drop_all` runs on teardown and would destroy any production table mapped to the project's models.
 - When `ADMIN_UI=htmx`: `require_admin` fails closed (unconfigured `ADMIN_AUTH_HEADER` → 503, never open); the admin router mounts with `include_in_schema=False`; `htmx.min.js` is copied from this skill's assets (provenance = `<SKILL_SHA>`) — never hot-linked from a CDN.
 - `uv.lock` must be committed alongside `pyproject.toml`.

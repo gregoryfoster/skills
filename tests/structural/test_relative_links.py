@@ -31,7 +31,7 @@ a link at all — it lives inside a fenced code block or an inline code span:
   `` `[l](docs/FOO.md#some-heading)` `` as an inline code span while describing a
   bug in an *extractor*.
 - `curating-context/references/cohort-patterns.md`,
-  `init-project-fastapi/references/systemd-deploy.md` and
+  `init-project-fastapi/references/agents-md-template.md` and
   `init-socraticode/references/code-exploration-policy.md` carry fenced blocks of
   template content destined for a *consuming* repo's tree.
 
@@ -868,7 +868,7 @@ class TestGateBehaviour:
     ) -> None:
         """A longer outer fence wrapping a shorter inner one stays closed.
 
-        `systemd-deploy.md` nests a ```bash block inside a ```markdown block;
+        init's former `systemd-deploy.md` nested a ```bash block inside a ```markdown block;
         a naive tracker treats the inner opener as the outer closer and starts
         checking template content as prose.
         """

@@ -125,7 +125,7 @@ async def client(test_engine, db_session) -> AsyncGenerator[AsyncClient]:
 `pyproject.toml` sets `asyncio_mode = "auto"`, so coroutine tests are auto-marked — no `@pytest.mark.asyncio` decorator needed.
 
 ```python
-"""Smoke test: /health responds 200 and includes a build id."""
+"""Smoke test: /health responds 200 and names the build (`dev` in a checkout)."""
 
 
 async def test_health_returns_ok(client):
@@ -133,7 +133,7 @@ async def test_health_returns_ok(client):
     assert response.status_code == 200
     body = response.json()
     assert body["status"] == "ok"
-    assert "build" in body
+    assert body["revision"] == "dev"
 ```
 
 ## `tests/core/test_logging.py` — always created
@@ -277,7 +277,7 @@ def test_color_message_filter_strips_extra_at_the_record_source():
 
 ## `tests/core/test_config.py` — always created
 
-Pins the settings contract: defaults and env-override behaviour for the single source of env access (`src/core/config.py`). A regression that hard-codes a default or stops reading an env var becomes a failure here. Asserts only the fields present in **every** branch-point combination (`log_level`, `build_id`); `DATABASE_URL` / auth / admin fields are exercised by their own gated tests (`test_health.py`, `test_auth.py`, `test_admin.py`). Cheap (~3 tests, no DB or client fixture), and it contributes to a fresh scaffold clearing `fail_under=80` (replicator's full bootstrap — health + logging + config together — landed at 91%).
+Pins the settings contract: defaults and env-override behaviour for the single source of env access (`src/core/config.py`). A regression that hard-codes a default or stops reading an env var becomes a failure here. Asserts only what every branch-point combination has (`log_level`, `get_build_id()` read from `REVISION`); `DATABASE_URL` / auth / admin fields are exercised by their own gated tests (`test_health.py`, `test_auth.py`, `test_admin.py`). Cheap (~3 tests, no DB or client fixture), and it contributes to a fresh scaffold clearing `fail_under=80` (replicator's full bootstrap — health + logging + config together — landed at 91%).
 
 ### `SETTINGS_STYLE=pydantic-settings` (default)
 
@@ -294,23 +294,25 @@ that Phase 5d writes would feed these fields, so test_defaults must then
 monkeypatch that file away (or assert against its values) instead.
 """
 
-from src.core.config import Settings, get_settings
+from src.core import config
+from src.core.config import Settings, get_build_id, get_settings
 
 
 def test_defaults(monkeypatch):
     monkeypatch.delenv("LOG_LEVEL", raising=False)
-    monkeypatch.delenv("BUILD_ID", raising=False)
-    settings = Settings()
-    assert settings.log_level == "INFO"
-    assert settings.build_id == "dev"
+    assert Settings().log_level == "INFO"
 
 
 def test_env_override(monkeypatch):
     monkeypatch.setenv("LOG_LEVEL", "DEBUG")
-    monkeypatch.setenv("BUILD_ID", "abc123")
-    settings = Settings()
-    assert settings.log_level == "DEBUG"
-    assert settings.build_id == "abc123"
+    assert Settings().log_level == "DEBUG"
+
+
+def test_the_build_is_the_releases_revision(monkeypatch, tmp_path):
+    monkeypatch.setattr(config, "REVISION_FILE", tmp_path / "REVISION")
+    assert get_build_id() == "dev"
+    (tmp_path / "REVISION").write_text("0123456789ab\n")
+    assert get_build_id() == "0123456789ab"
 
 
 def test_get_settings_is_cached():
@@ -324,21 +326,25 @@ def test_get_settings_is_cached():
 ```python
 """Contract test: config accessors read their defaults and honour env overrides."""
 
+from src.core import config
 from src.core.config import get_build_id, get_log_level
 
 
 def test_defaults(monkeypatch):
     monkeypatch.delenv("LOG_LEVEL", raising=False)
-    monkeypatch.delenv("BUILD_ID", raising=False)
     assert get_log_level() == "INFO"
-    assert get_build_id() == "dev"
 
 
 def test_env_override(monkeypatch):
     monkeypatch.setenv("LOG_LEVEL", "DEBUG")
-    monkeypatch.setenv("BUILD_ID", "abc123")
     assert get_log_level() == "DEBUG"
-    assert get_build_id() == "abc123"
+
+
+def test_the_build_is_the_releases_revision(monkeypatch, tmp_path):
+    monkeypatch.setattr(config, "REVISION_FILE", tmp_path / "REVISION")
+    assert get_build_id() == "dev"
+    (tmp_path / "REVISION").write_text("0123456789ab\n")
+    assert get_build_id() == "0123456789ab"
 ```
 
 ## `tests/api/test_auth.py` — only when `AUTH_STYLE=header-token`

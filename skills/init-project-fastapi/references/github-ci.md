@@ -64,5 +64,5 @@ jobs:
 
 - **`uv sync --frozen`** — CI installs exactly the committed `uv.lock`; a stale lockfile fails here instead of surfacing on the VM.
 - **Coverage gate skew.** `pyproject.toml`'s `fail_under` measures all of `src/`; if CI installs a different extras set than dev machines, the percentages diverge (observo #214 lowered its gate to reconcile a 78.6% CI vs 80.2% local split). Keep the CI install set identical to the local one, or pin the gate to the CI number.
-- **No deploy from CI.** The org deploys via systemd on the VM (`main` is the deployed code); CI is a tripwire, not a pipeline. Don't add deploy steps here without revisiting that model.
+- **No deploy from CI.** The VM deploys with `scripts/deploy.sh`, which waits for this workflow to pass on the commit (`CI_JOBS`); CI is a gate, not a pipeline. Don't add deploy steps here without revisiting that model.
 - **Submodules.** The checkout above skips `skills-vendor/` submodules deliberately — nothing in lint/test needs them, and cloning them costs time. Add `with: {submodules: recursive}` only if a test reads vendored skill content.

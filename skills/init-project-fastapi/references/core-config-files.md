@@ -45,8 +45,6 @@ coverage.xml
 # Git worktrees
 .worktrees/
 
-# Runtime (BUILD_ID stamp target — DEPLOY_TARGET=systemd writes /run/<PROJECT_NAME>/build-id)
-/run/
 ```
 
 ## `.pre-commit-config.yaml`
@@ -71,4 +69,4 @@ repos:
 
 ## `README.md`
 
-Setup, dev server, test commands; link to `docs/COMMANDS.md`. (Phase 7b appends a "Deploy" section when `DEPLOY_TARGET=systemd`.)
+Setup, dev server, test commands; link to `docs/COMMANDS.md`. (Phase 7b appends a "Deploy" section linking `DEPLOYMENT.md` when `DEPLOY_TARGET=releases`.)
