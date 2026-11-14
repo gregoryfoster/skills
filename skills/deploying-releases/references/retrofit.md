@@ -39,7 +39,7 @@ In the host's own session, with the operator. Each step is checked before the ne
 1. **The operator's one-time steps** from the repo's `DEPLOYMENT.md`: the root, `/etc/<repo>/` and the credentials, and the service user when it is a dedicated one. A retrofit starts on `exedev` (D2), with the dedicated user as a named follow-up issue.
 2. **Credential paths first.** Anything a unit reads from the old tree (a key under `~/<repo>`, a profile pointing at a checkout file) moves *before* the restart, or the first verify fails and switches back (observo#699).
 3. **`scripts/deploy.sh --no-restart`:** builds the release, migrates, switches `live`, installs the units, and restarts nothing.
-4. **Restart and verify:** `sudo systemctl restart <units>`, then `scripts/deploy.sh` again, which reuses the release and verifies each unit.
+4. **Restart and verify:** `scripts/deploy.sh --verify <sha12>` reuses the release, restarts every unit of the target and verifies each. A plain re-run verifies nothing, because the link doesn't move.
 5. **Prove branch-switch invariance:** switch the checkout to another branch, restart a unit, and check its build id is unchanged.
 6. **Drill a rollback:** deploy the previous build (`scripts/deploy.sh <sha12>`), then the current one again.
 

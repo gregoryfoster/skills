@@ -11,6 +11,7 @@ scripts/deploy.sh                 # origin/main, once its CI passed
 scripts/deploy.sh <sha12>         # an older build: this is how to roll back
 scripts/deploy.sh --skip-ci       # GitHub can't answer: an emergency, journaled
 scripts/deploy.sh --build-only    # build releases/<sha12>, switch nothing
+scripts/deploy.sh --verify <sha12> # restart and verify every unit on a build already live
 journalctl -t <PROJECT>-deploy -n 20
 ```
 
@@ -26,7 +27,7 @@ Exit 0: deployed and verified. 1: refused, or failed and switched back to a buil
    `sudo install -d -o root -g root -m 755 /etc/<PROJECT>`, then `/etc/<PROJECT>/<PROJECT>.env` (settings only, `0644`) and `/etc/<PROJECT>/credentials/` (`0700`, read through `LoadCredential=`).
 4. Private dependencies (when `UV_WRAPPER` is set): the co-pypi reader key at `/etc/<PROJECT>/co-pypi-reader.json`, `root:<deploy user> 640`.
 5. The first deploy, units installed and nothing restarted:
-   `scripts/deploy.sh --no-restart`, then `sudo systemctl enable --now <unit>` for each unit, then `scripts/deploy.sh` to verify.
+   `scripts/deploy.sh --no-restart`, then `sudo systemctl enable --now <unit>` for each unit, then `scripts/deploy.sh --verify <sha12>`, which restarts and verifies every unit on that build (a plain re-run verifies nothing: the link didn't move).
 
 The deploy user needs `sudo -n` (no password prompt) for `install`, `ln`, `mv`, `chmod`, `chown`, `tee`, `touch`, `rm` under `/srv/<PROJECT>` and `/etc/systemd/system`, `readlink` under `/proc`, and `systemctl`.
 

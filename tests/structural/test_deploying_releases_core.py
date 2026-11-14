@@ -503,6 +503,44 @@ class TestUnits:
         assert "--no-restart" in result.stderr
 
 
+class TestVerify:
+    def test_a_plain_rerun_after_no_restart_verifies_nothing(self, world):
+        world.go_live()
+        assert_ok(world.run("--no-restart"))
+        world.reset_log()
+        result = world.run()
+        assert_ok(result)
+        assert restarts(world.calls()) == []
+        assert "nothing to verify" in result.stderr
+
+    def test_verify_restarts_and_proves_a_build_already_live(self, world):
+        sha = world.go_live()
+        assert_ok(world.run("--no-restart"))
+        world.reset_log()
+        result = world.run("--verify", world.build(sha))
+        assert_ok(result)
+        calls = world.calls()
+        assert restarts(calls) == [API]
+        assert f"sudo systemctl start {BACKUP}" in calls
+        assert f"live is on {world.build(sha)}" in result.stderr
+        assert not any(c.startswith("uv ") for c in calls), "the release is reused"
+
+    def test_verify_switches_back_when_the_build_does_not_answer(self, world):
+        sha = world.go_live()
+        assert_ok(world.run("--no-restart"))
+        result = world.run(
+            "--verify", world.build(sha), FAKE_HEALTH_STALE_ON=world.build(sha)
+        )
+        assert result.returncode == 4, result.stderr
+        assert "nothing to switch back to" in result.stderr
+
+    @pytest.mark.parametrize("other", ["--no-restart", "--build-only"])
+    def test_verify_refuses_a_flag_that_restarts_nothing(self, world, other):
+        result = world.run("--verify", other)
+        assert result.returncode == 1 and "--verify" in result.stderr
+        assert world.calls() == []
+
+
 class TestTargets:
     def dev_and_live(self, world, api_only_dev: bool = False) -> dict[str, str]:
         units = dict(world.live_units)

@@ -88,7 +88,7 @@ Fill in `scripts/deploy_hooks.sh`: `PROJECT` and `GITHUB_REPO` at least. Delete 
 
 ### Deploy
 
-From the checkout, as the deploy user: `scripts/deploy.sh` (every target the release's units run, dev first), `--target dev <branch-commit>`, `--build-only`, or `--no-restart` for a first deploy or a cutover. A rollback is a deploy of the previous build: `scripts/deploy.sh <sha12>`, gated the same way. Exit 0 is verified, 1 refused or switched back to a build that answers, 4 a target left on a build that does not; the journal tag is `<project>-deploy`.
+From the checkout, as the deploy user: `scripts/deploy.sh` (every target the release's units run, dev first), `--target dev <branch-commit>`, `--build-only`, or `--no-restart` for a first deploy or a cutover, followed by `--verify <sha12>` once the units are enabled (a plain re-run verifies nothing: the link didn't move). A rollback is a deploy of the previous build: `scripts/deploy.sh <sha12>`, gated the same way. Exit 0 is verified, 1 refused or switched back to a build that answers, 4 a target left on a build that does not; the journal tag is `<project>-deploy`.
 
 ## Notes
 

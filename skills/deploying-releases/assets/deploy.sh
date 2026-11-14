@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # deploying-releases-core: version 1
-# deploying-releases-core-sha256: 68fa5419fce11ca33c23506b7f5837b986a9c7e1469a8e37798fb3f7c2fb8de1
+# deploying-releases-core-sha256: 60bc6cad5f5659916dad7c694ea3956b5a69f74da42f21e550b8844e332afdb6
 #
 # The cohort's one release-deploy core (gregoryfoster/skills#372), installed by
 # deploying-releases' install.sh. Do not edit it here: configure it in
@@ -11,6 +11,7 @@
 #   scripts/deploy.sh --skip-ci [<ref>]      without asking CI: an emergency, journaled
 #   scripts/deploy.sh --build-only [<ref>]   build releases/<sha12> and stop: nothing switched
 #   scripts/deploy.sh --no-restart [<ref>]   a first deploy or a cutover: switch and install units, restart nothing
+#   scripts/deploy.sh --verify [<ref>]       restart and verify every unit of each target, as if its link moved
 #   scripts/deploy.sh --help
 #
 # Exits 0 when deployed and verified (or built, with --build-only); 1 when
@@ -83,6 +84,7 @@ scripts/deploy.sh --target <t> [<ref>]   one target, live or dev; dev also takes
 scripts/deploy.sh --skip-ci [<ref>]      without asking CI: an emergency, journaled
 scripts/deploy.sh --build-only [<ref>]   build releases/<sha12> and stop: nothing switched
 scripts/deploy.sh --no-restart [<ref>]   a first deploy or a cutover: switch and install units, restart nothing
+scripts/deploy.sh --verify [<ref>]       restart and verify every unit of each target, as if its link moved
 scripts/deploy.sh --help
 
 Configured in scripts/deploy_hooks.sh. Exits 0 when deployed and verified, 1
@@ -94,6 +96,7 @@ EOF
 skip_ci=0
 build_only=0
 no_restart=0
+force_verify=0
 only_target=""
 ref=""
 while (($#)); do
@@ -101,6 +104,7 @@ while (($#)); do
     --skip-ci) skip_ci=1 ;;
     --build-only) build_only=1 ;;
     --no-restart) no_restart=1 ;;
+    --verify) force_verify=1 ;;
     --target)
       (($# > 1)) || die "--target needs live or dev"
       only_target="$2"
@@ -120,6 +124,7 @@ while (($#)); do
   shift
 done
 case "$only_target" in "" | live | dev) ;; *) die "--target is live or dev, not $only_target" ;; esac
+((!(force_verify && (no_restart || build_only)))) || die "--verify restarts and verifies: not with --no-restart or --build-only"
 ref="${ref:-origin/main}"
 
 # --- configuration -----------------------------------------------------------
@@ -1113,7 +1118,9 @@ for t in "${targets[@]}"; do
 
   link="$ROOT/$t"
   moved=1
-  [[ -n "${previous_link[$t]}" && "${previous[$t]}" == "$build" ]] && moved=0
+  # --verify: every unit of the target restarted and proved, as if the link
+  # moved; how a cutover proves what --no-restart switched.
+  [[ -n "${previous_link[$t]}" && "${previous[$t]}" == "$build" ]] && ((!force_verify)) && moved=0
   stage="while switching"
   swap "$link" "releases/$build" || die "cannot switch $t to $build (sudo ln, mv); nothing switched"
   stage="after the switch, installing units and verifying"
@@ -1125,7 +1132,7 @@ for t in "${targets[@]}"; do
   if ((no_restart)); then
     keep_units=""
     if ((units_ok)); then
-      say "$t is on $build (--no-restart): nothing restarted or verified. Restart its units, then verify by hand"
+      say "$t is on $build (--no-restart): nothing restarted or verified. Enable its units, then: scripts/deploy.sh --verify $build"
       continue
     fi
     note "installing $t's units failed (--no-restart); switching back"
@@ -1152,10 +1159,13 @@ for t in "${targets[@]}"; do
     sudo -n rm -f "$link" || note "removing $link failed"
     back="there was no previous release, so removed $t and put back the units it replaced"
   elif [[ "${previous[$t]}" == "$build" ]]; then
-    # The link never moved, so the units are all that changed.
-    [[ -n "$(units_touched "$t")" ]] ||
-      die "$t failed on $build, which it was already running, before any unit was replaced;" \
-        "nothing changed"
+    # The link never moved, so the units are all that changed. None replaced
+    # is --verify proving the build already live: nothing to switch back to.
+    if [[ -z "$(units_touched "$t")" ]]; then
+      journal "$t failed --verify on $build, which it already ran; nothing to switch back to"
+      dead "$t failed on $build, which it was already running, and there is nothing to switch back to:" \
+        "it is NOT answering. Deploy the build it should run: scripts/deploy.sh <sha12>"
+    fi
     back="put back the units it replaced, on $build"
   else
     back="switched $t back to $(served_build "${previous_link[$t]}")"
