@@ -142,12 +142,34 @@ The matching `get_api_auth_token()` accessor is defined in [`settings-scaffoldin
 Copy verbatim:
 
 ```python
-"""Structured JSON logging utilities."""
+"""Structured JSON logging utilities.
+
+When a handler's stream is the journal, each line also carries its level as an
+sd-daemon `<N>` prefix, so `journalctl -p warning` finds WARNING and ERROR
+(skills#500, from CannObserv/processor#76). journald strips the prefix
+(`SyslogLevelPrefix=` defaults to yes), so `journalctl -o cat` stays pure JSON.
+Anywhere else (a terminal, `systemd-run --pipe`, a test's capture) there is no
+prefix. Measured limits: only `logging` records carry a priority (an uncaught
+traceback or a bare `print` lands at info, 6); a line past journald's 48K
+`LineMax` keeps it on its first part only; the decision is made once, when the
+handler is built.
+"""
 
 import logging
+import os
 import sys
+from typing import TextIO
 
 from pythonjsonlogger.json import JsonFormatter
+
+# syslog priorities by floor, as logging filters levels (sd-daemon(3)): a custom
+# level between two floors takes the lower one's priority; below INFO is debug.
+_PRIORITIES = (
+    (logging.CRITICAL, 2),
+    (logging.ERROR, 3),
+    (logging.WARNING, 4),
+    (logging.INFO, 6),
+)
 
 
 def build_json_formatter() -> JsonFormatter:
@@ -193,6 +215,50 @@ class ColorMessageFilter(logging.Filter):
         return True
 
 
+def journal_priority(levelno: int) -> int:
+    """The syslog priority of a level: crit 2, err 3, warning 4, info 6, else 7."""
+    return next((p for floor, p in _PRIORITIES if levelno >= floor), 7)
+
+
+def is_journal_stream(stream: TextIO) -> bool:
+    """Whether `stream` is the journal stream systemd named in `JOURNAL_STREAM`.
+
+    systemd sets `JOURNAL_STREAM=<dev>:<ino>` for a unit whose stdout or stderr
+    is the journal, and children inherit it whatever their own stream is (a
+    shell started under the unit has a pipe), so only a match with the stream's
+    own descriptor counts. Unset, malformed, no descriptor (pytest's capsys):
+    not the journal.
+    """
+    dev, _, ino = os.environ.get("JOURNAL_STREAM", "").partition(":")
+    if not (dev.isdecimal() and ino.isdecimal()) or not hasattr(stream, "fileno"):
+        return False
+    try:
+        st = os.fstat(stream.fileno())
+    except OSError:  # io.UnsupportedOperation (pytest's capsys) is an OSError
+        return False
+    return (st.st_dev, st.st_ino) == (int(dev), int(ino))
+
+
+class JournalStreamHandler(logging.StreamHandler):
+    """A StreamHandler that prefixes each line with its `<N>` journald priority
+    when, and only when, its own stream is the journal.
+
+    A handler, not the formatter: `log_config.json` builds the formatter with a
+    dictConfig `"()"` factory that never sees the stream it will write to, while
+    a handler holds that stream. Both `configure_logging()` and
+    `log_config.json`'s `"class"` name this one, so app and uvicorn records
+    carry the same priority. Decided once, here; `setStream()` doesn't redo it.
+    """
+
+    def __init__(self, stream: TextIO | None = None) -> None:
+        super().__init__(stream)
+        self.journal = is_journal_stream(self.stream)
+
+    def format(self, record: logging.LogRecord) -> str:
+        line = super().format(record)
+        return f"<{journal_priority(record.levelno)}>{line}" if self.journal else line
+
+
 def configure_logging(level: int = logging.INFO) -> None:
     """Configure the root logger with JSON formatting. Call once at entry
     points that do NOT run under uvicorn (CLI scripts, alembic env, cron
@@ -201,7 +267,7 @@ def configure_logging(level: int = logging.INFO) -> None:
     harmless no-op-equivalent (it reinstalls an identical root handler), which
     keeps app logs JSON even if someone launches uvicorn without --log-config.
     """
-    handler = logging.StreamHandler(sys.stdout)
+    handler = JournalStreamHandler(sys.stdout)
     handler.setFormatter(build_json_formatter())
     root = logging.getLogger()
     root.setLevel(level)
@@ -231,7 +297,7 @@ Copy verbatim. This is uvicorn's logging config, passed via `--log-config src/co
   },
   "handlers": {
     "stdout": {
-      "class": "logging.StreamHandler",
+      "class": "src.core.logging.JournalStreamHandler",
       "formatter": "json",
       "stream": "ext://sys.stdout"
     }
@@ -260,8 +326,8 @@ Copy verbatim. This is uvicorn's logging config, passed via `--log-config src/co
 }
 ```
 
-The `"()"` factory key makes dictConfig call `build_json_formatter()`, so this file carries **no** duplicate copy of the fmt string or field renames — the formatter stays single-sourced in `logging.py`. uvicorn's `AccessFormatter` is deliberately not used: a standard `%(message)s` render of an access record already interpolates its `%s`-args into the request line (`127.0.0.1:0 - "GET /health HTTP/1.1" 200`), which lands in the JSON `message` field. Because the app's own loggers still propagate to `root`, and uvicorn's three loggers keep `propagate: false` with their own handler, every record is emitted exactly once. This dictConfig shape is also the seam a later structlog `ProcessorFormatter` migration (#68) would reuse. `tests/core/test_logging.py` pins that this file stays valid and keeps sharing the formatter.
+The `"()"` factory key makes dictConfig call `build_json_formatter()`, so this file carries **no** duplicate copy of the fmt string or field renames — the formatter stays single-sourced in `logging.py`. uvicorn's `AccessFormatter` is deliberately not used: a standard `%(message)s` render of an access record already interpolates its `%s`-args into the request line (`127.0.0.1:0 - "GET /health HTTP/1.1" 200`), which lands in the JSON `message` field. Because the app's own loggers still propagate to `root`, and uvicorn's three loggers keep `propagate: false` with their own handler, every record is emitted exactly once. This dictConfig shape is also the seam a later structlog `ProcessorFormatter` migration (#68) would reuse. The handler's `"class"` is `JournalStreamHandler`, not `logging.StreamHandler`, so uvicorn's lines carry the journald `<N>` priority prefix too: dictConfig passes it the resolved `sys.stdout`, and it checks that stream against `JOURNAL_STREAM` (skills#500). `tests/core/test_logging.py` pins that this file stays valid, keeps sharing the formatter, and builds that handler.
 
 `strip_color_message` is listed on **all three** loggers, not just the parent `uvicorn`, and that repetition is load-bearing: a logger's filters run only in `Logger.handle()` for records logged *through that logger*, and propagation walks ancestors' **handlers**, never their filters. A filter on `uvicorn` alone would therefore never see a `uvicorn.error` record — not even with `propagate: true`. Do not "simplify" it to one entry. Today only `uvicorn.error` carries the extra (uvicorn's `server.py`, `config.py`, and the `--reload` supervisors all log there; access records pass no `extra=` at all), but the other two cost nothing and hold if uvicorn moves a lifecycle line. The filter is a `"()"` factory reference like the formatter, so the existing dictConfig-validity test also catches a rename of `ColorMessageFilter` — dictConfig raises when it cannot resolve the callable.
 
-> **`LAYOUT=workspace`:** adjust **both** `"()"` import paths (`build_json_formatter` and `ColorMessageFilter`) and the `--log-config` path to the package that owns `core/logging.py` (e.g. `packages/<name>/src/...`), matching the `src.*` → package rewrite applied elsewhere in this reference.
+> **`LAYOUT=workspace`:** adjust **both** `"()"` import paths (`build_json_formatter` and `ColorMessageFilter`), the handler's `"class"` (`JournalStreamHandler`) and the `--log-config` path to the package that owns `core/logging.py` (e.g. `packages/<name>/src/...`), matching the `src.*` → package rewrite applied elsewhere in this reference.

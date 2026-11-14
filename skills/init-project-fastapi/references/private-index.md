@@ -61,7 +61,7 @@ Under `DEPLOY_TARGET=releases`, the hooks set `UV_WRAPPER=scripts/co-pypi.sh`, a
 
 ## (d) CI: Phase 7c
 
-This is a delta on [`github-ci.md`](github-ci.md)'s workflow for **every** job that runs `uv sync` (lint and test). broker, processor, watcher, observo and replicator all mint this way, as the same identity:
+This is a delta on [`github-ci.md`](github-ci.md)'s workflow for **every** job that runs `uv sync`: `lint` and `test`, or `gate` and `test` under `GITHUB_CI=pre-commit`, where `gate`'s step runs `uv sync` without `--frozen` (its `UV_LOCKED` refuses the flag). broker, processor, watcher, observo and replicator all mint this way, as the same identity:
 
 ```yaml
     # at job level:
@@ -128,7 +128,7 @@ With the lock skipped the repo *looks* complete but can't be installed, so Phase
 Add these to `## Follow-ups`:
 
 1. If Phase 12 skipped the lock: "`uv.lock` was never written. Run `scripts/co-pypi.sh uv lock` with the reader key before the first feature PR."
-2. When `GITHUB_CI=yes`: "Add this repo to the `GCP_WIF_PROVIDER` org variable's repository access, and have the provider's attribute condition admit it." A new repo inherits neither, and CI's auth fails until both are done.
+2. Unless `GITHUB_CI=no`: "Add this repo to the `GCP_WIF_PROVIDER` org variable's repository access, and have the provider's attribute condition admit it." A new repo inherits neither, and CI's auth fails until both are done.
 3. On each host that deploys or develops: "Install the `co-pypi-reader` key at `/etc/<PROJECT_NAME>/co-pypi-reader.json`, `root:<deploy user> 640`."
 4. If the repo adopts Dependabot (`adopting-dependabot`): "An org owner admits the repo to the org's co-pypi registry before its `dependabot.yml` change merges (cannobserv `docs/DEPENDABOT.md` § Onboarding a consumer)."
 

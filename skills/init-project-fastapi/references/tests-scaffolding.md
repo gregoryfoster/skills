@@ -138,24 +138,32 @@ async def test_health_returns_ok(client):
 
 ## `tests/core/test_logging.py` — always created
 
-Pins the structured-log field contract. A bare `JsonFormatter()` derives its keys from the default `"%(message)s"` fmt and silently drops level, logger name, and timestamp (skills#69) — this test turns that regression into a failure. No DB or client fixture needed; `configure_logging()` binds to `sys.stdout` at call time, so pytest's `capsys` captures the emitted line. The last three tests guard the uvicorn `--log-config` unification (skills#81, skills#82): that `src/core/log_config.json` stays valid and single-sources its formatter, that the shared formatter renders a uvicorn *access* record with the same field set — so uvicorn's own lines never regress to plain text alongside JSON app logs — and that uvicorn's `color_message` extra is stripped from the record itself. The `color_message` test asserts on the record, not only the rendered JSON, and the dictConfig test asserts the filter's **placement** on the three loggers: an output-only assertion still passes if the filter is moved to the stdout handler, and that is the variant that silently breaks under a sink that reads `record.__dict__` directly.
+Pins the structured-log field contract. A bare `JsonFormatter()` derives its keys from the default `"%(message)s"` fmt and silently drops level, logger name, and timestamp (skills#69) — this test turns that regression into a failure. No DB or client fixture needed; `configure_logging()` binds to `sys.stdout` at call time, so pytest's `capsys` captures the emitted line. The last three tests guard the uvicorn `--log-config` unification (skills#81, skills#82): that `src/core/log_config.json` stays valid and single-sources its formatter, that the shared formatter renders a uvicorn *access* record with the same field set — so uvicorn's own lines never regress to plain text alongside JSON app logs — and that uvicorn's `color_message` extra is stripped from the record itself. The `color_message` test asserts on the record, not only the rendered JSON, and the dictConfig test asserts the filter's **placement** on the three loggers: an output-only assertion still passes if the filter is moved to the stdout handler, and that is the variant that silently breaks under a sink that reads `record.__dict__` directly. The rest pin the journald `<N>` priority prefix (skills#500): present when `JOURNAL_STREAM`'s dev:ino is the handler's own stream (a real file, so `os.fstat` has a descriptor), absent when it names another descriptor, is unset or malformed, or the stream has none; the level→priority floors, including a custom level between two; and that both `configure_logging()` and `log_config.json` build `JournalStreamHandler`.
 
 ```python
 """Regression tests: JSON log records carry timestamp, level, and logger name,
 and uvicorn's own loggers share the app's JSON formatter and drop uvicorn's
-ANSI `color_message` extra (skills#69, skills#81, skills#82).
+ANSI `color_message` extra (skills#69, skills#81, skills#82). On the journal
+stream, and only there, each line carries its `<N>` priority (skills#500).
 """
 
+import io
 import json
 import logging
 import logging.config
+import os
+import sys
 from pathlib import Path
+
+import pytest
 
 from src.core.logging import (
     ColorMessageFilter,
+    JournalStreamHandler,
     build_json_formatter,
     configure_logging,
     get_logger,
+    journal_priority,
 )
 
 LOG_CONFIG_PATH = Path("src/core/log_config.json")
@@ -226,6 +234,11 @@ def test_uvicorn_log_config_is_valid_and_shares_formatter():
     saved = _snapshot(("", "uvicorn", "uvicorn.error", "uvicorn.access"))
     try:
         logging.config.dictConfig(config)  # raises on a malformed config
+        # uvicorn's lines get the journald priority only through this class.
+        for name in ("", "uvicorn", "uvicorn.error", "uvicorn.access"):
+            (handler,) = logging.getLogger(name).handlers
+            assert isinstance(handler, JournalStreamHandler)
+            assert handler.stream is sys.stdout
     finally:
         _restore(saved)
 
@@ -273,6 +286,116 @@ def test_color_message_filter_strips_extra_at_the_record_source():
     parsed = json.loads(build_json_formatter().format(record))
     assert "color_message" not in parsed
     assert parsed["message"] == "Started server process [4066888]"
+
+
+def _warning(name="src.some.module"):
+    return logging.LogRecord(name, logging.WARNING, __file__, 1, "careful", (), None)
+
+
+def _point_journal_stream_at(monkeypatch, stream):
+    """Set JOURNAL_STREAM to `stream`'s own dev:ino, as systemd would."""
+    st = os.fstat(stream.fileno())
+    monkeypatch.setenv("JOURNAL_STREAM", f"{st.st_dev}:{st.st_ino}")
+
+
+def test_journal_stream_lines_carry_their_priority(monkeypatch, tmp_path):
+    """On the journal stream a WARNING line is `<4>` + the JSON, and journald
+    strips the prefix, so the JSON after it is the whole record."""
+    with (tmp_path / "journal").open("w+") as stream:
+        _point_journal_stream_at(monkeypatch, stream)
+        handler = JournalStreamHandler(stream)
+        handler.setFormatter(build_json_formatter())
+        handler.handle(_warning())
+        stream.seek(0)
+        line = stream.read()
+
+    assert line.startswith("<4>{")
+    assert json.loads(line.removeprefix("<4>"))["level"] == "WARNING"
+
+
+@pytest.mark.parametrize(
+    "journal_stream",
+    ["other-file", None, "", "garbage", "1:2:3", "12:", "x:y"],
+)
+def test_no_prefix_off_the_journal_stream(monkeypatch, tmp_path, journal_stream):
+    """Another descriptor's dev:ino (an inherited JOURNAL_STREAM on a pipe),
+    unset, or malformed: not the journal, so no prefix."""
+    if journal_stream == "other-file":
+        with (tmp_path / "other").open("w") as other:
+            _point_journal_stream_at(monkeypatch, other)
+    elif journal_stream is None:
+        monkeypatch.delenv("JOURNAL_STREAM", raising=False)
+    else:
+        monkeypatch.setenv("JOURNAL_STREAM", journal_stream)
+
+    read, write = os.pipe()
+    with os.fdopen(read) as reader, os.fdopen(write, "w") as stream:
+        handler = JournalStreamHandler(stream)
+        handler.setFormatter(build_json_formatter())
+        assert handler.journal is False
+        handler.handle(_warning())
+        stream.close()
+        line = reader.read()
+    assert json.loads(line)["level"] == "WARNING"
+
+
+def test_no_prefix_on_a_stream_without_a_descriptor(monkeypatch, tmp_path):
+    """pytest's capsys and io.StringIO have no fileno(): not the journal, even
+    when JOURNAL_STREAM names a real file."""
+    with (tmp_path / "journal").open("w") as stream:
+        _point_journal_stream_at(monkeypatch, stream)
+    handler = JournalStreamHandler(io.StringIO())
+    handler.setFormatter(build_json_formatter())
+    assert handler.journal is False
+    assert handler.format(_warning()).startswith("{")
+
+
+@pytest.mark.parametrize(
+    ("levelno", "priority"),
+    [
+        (logging.CRITICAL, 2),
+        (logging.ERROR, 3),
+        (logging.WARNING, 4),
+        (logging.INFO, 6),
+        (logging.DEBUG, 7),
+        (logging.NOTSET, 7),
+        (25, 6),  # a custom level between two floors takes the lower one's
+        (35, 4),
+        (60, 2),
+    ],
+)
+def test_priority_by_floor(levelno, priority):
+    assert journal_priority(levelno) == priority
+
+
+def test_log_config_handler_decides_from_its_own_stream(monkeypatch, tmp_path):
+    """The dictConfig path: `ext://sys.stdout` resolves to the stream the
+    handler checks, so uvicorn's records carry the prefix on the journal."""
+    config = json.loads(LOG_CONFIG_PATH.read_text())
+    saved = _snapshot(("", "uvicorn", "uvicorn.error", "uvicorn.access"))
+    with (tmp_path / "journal").open("w+") as stream:
+        _point_journal_stream_at(monkeypatch, stream)
+        monkeypatch.setattr(sys, "stdout", stream)
+        try:
+            logging.config.dictConfig(config)
+            logging.getLogger("uvicorn.error").error("boom")
+        finally:
+            _restore(saved)
+        stream.seek(0)
+        line = stream.read()
+
+    assert line.startswith("<3>")
+    assert json.loads(line.removeprefix("<3>"))["logger"] == "uvicorn.error"
+
+
+def test_configure_logging_uses_the_journal_handler():
+    saved = _snapshot(("",))
+    try:
+        configure_logging()
+        (handler,) = logging.getLogger().handlers
+    finally:
+        _restore(saved)
+    assert isinstance(handler, JournalStreamHandler)
 ```
 
 ## `tests/core/test_config.py` — always created

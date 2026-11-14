@@ -61,7 +61,7 @@ Each has a default the user can accept silently. Defaults come from comparing 7 
 | `ADMIN_UI` | `none` | `none` \| `htmx` | Phase 3 deps (jinja2 + python-multipart), Phase 5 (`/static` mount + admin router include), Phase 5b (admin accessors), Phase 5e (templates + vendored htmx + `src/api/admin/` + `require_admin`), Phase 6 (`tests/api/test_admin.py`) — all per [`references/admin-ui.md`](references/admin-ui.md) |
 | `LINT_PROFILE` | `minimal` | `minimal` \| `strict` | Phase 3 (ruff `select` rules + per-file ignores) |
 | `LAYOUT` | `single` | `single` \| `workspace` | uv workspace monorepo — Phase 3/5 shape per [`references/workspace-layout.md`](references/workspace-layout.md) (`single` is the fully-templated path) |
-| `GITHUB_CI` | `no` | `no` \| `yes` | Phase 7c (`.github/workflows/ci.yml` from [`references/github-ci.md`](references/github-ci.md)) |
+| `GITHUB_CI` | `no` | `no` \| `yes` \| `pre-commit` | Phase 7c (`.github/workflows/ci.yml` from [`references/github-ci.md`](references/github-ci.md)) |
 | `DEPLOY_TARGET` | `releases` | `releases` \| `none` | Phase 5c (`schema_state`), Phase 7b (`deploying-releases` fresh mode: the deploy core and hooks, units on `/srv/<PROJECT_NAME>/live`, `tests/deploy/`, `DEPLOYMENT.md`), README "Deploy" section |
 | `PRIVATE_INDEX` | `no` | `no` \| `co-pypi` | Phase 3 (index, sources, the `co-pypi` group, ruff exclude), Phase 3b (the wrapper, installed by `deploying-releases`; the dev recipe), Phase 7b (`UV_WRAPPER`), Phase 7c (the WIF token step), Phase 12 (lock and sync through the wrapper), Phase 15 (grants) — all per [`references/private-index.md`](references/private-index.md) |
 
@@ -179,7 +179,7 @@ Sections in the template: Project Overview, Development Methodology, Environment
 Create the empty `__init__.py` files (`src/`, `src/api/`, `src/core/`), then copy the templates from [`references/source-skeleton.md`](references/source-skeleton.md):
 
 - `src/api/main.py` — FastAPI app with lifespan (calls `assert_database_safety()` when `DB_BACKED=yes`), version from package metadata, `/health`, (when `DB_BACKED=yes`) `/ready`, (when `AUTH_STYLE=header-token`) the authed `/api/v1` router + `require_api_key` dep, and (when `ADMIN_UI=htmx`) the `/static` mount + admin router include. The reference's "Adjustments" subsection lists the edits for each non-default branch point.
-- `src/core/logging.py` — verbatim JSON logging utility (`build_json_formatter` + `ColorMessageFilter` + `configure_logging` + `get_logger`).
+- `src/core/logging.py` — verbatim JSON logging utility (`build_json_formatter` + `ColorMessageFilter` + `JournalStreamHandler`, which adds journald's `<N>` priority (skills#500), + `configure_logging` + `get_logger`).
 - `src/core/log_config.json` — verbatim uvicorn `--log-config` file; routes uvicorn's own `uvicorn`/`uvicorn.access`/`uvicorn.error` loggers through the shared JSON formatter so journald doesn't get mixed plain+JSON lines (skills#81), and attaches `ColorMessageFilter` to all three so uvicorn's ANSI-duplicate `color_message` extra is dropped at the record source rather than in the formatter (skills#82). Wired into the API unit's `ExecStart` and the dev-server commands.
 
 ### Phase 5b — Settings (`src/core/config.py`)
@@ -237,7 +237,7 @@ Create empty `__init__.py` files (`tests/`, `tests/api/`, `tests/core/`), then c
 
 - `tests/conftest.py` — default (DB_BACKED=yes) includes session-scoped event loop fixture, `_check_test_url_safety` guard (name-based `_test` check + inequality) with `DATABASE_URL` env pinning, `test_engine` (create_all/drop_all; migration-driven alternative documented for later), savepoint-isolated `db_session`, and `client` AsyncClient with `get_db_session` dependency override. The reference also ships a no-DB variant for `DB_BACKED=no`.
 - `tests/test_health.py` — minimal smoke test that asserts `/health` returns 200 with `status` and `revision` (`dev` in a checkout), the field the deploy's verify reads. Always created.
-- `tests/core/test_logging.py` — pins the JSON log field contract (`timestamp`, `level`, `logger`, `message`); a bare `JsonFormatter()` would drop all but `message` (skills#69). Also pins the uvicorn `--log-config` unification — that `log_config.json` stays valid and single-sources its formatter (skills#81) — and that `ColorMessageFilter` is placed on the three uvicorn loggers and strips the extra from the record itself (skills#82). Always created.
+- `tests/core/test_logging.py` — pins the JSON log field contract (`timestamp`, `level`, `logger`, `message`); a bare `JsonFormatter()` would drop all but `message` (skills#69). Also pins the uvicorn `--log-config` unification — that `log_config.json` stays valid and single-sources its formatter (skills#81) — and that `ColorMessageFilter` is placed on the three uvicorn loggers and strips the extra from the record itself (skills#82), and the journald priority prefix (skills#500). Always created.
 - `tests/core/test_config.py` — pins the settings contract (defaults + env-override for `log_level`, and `get_build_id()` read from `REVISION`: the branch-point-invariant fields). Always created; the `SETTINGS_STYLE` variant matches Phase 5b. Cheap, and it lifts a fresh scaffold well clear of the coverage floor (see Phase 12).
 - `tests/api/test_auth.py` — auth-gate test. Only when `AUTH_STYLE=header-token`.
 - `tests/api/test_admin.py` — admin gate + rendering tests (browser 303 vs htmx `HX-Redirect`, fail-closed 503, full page vs fragment). Only when `ADMIN_UI=htmx`; template in [`references/admin-ui.md`](references/admin-ui.md).
@@ -256,7 +256,7 @@ Create empty `__init__.py` files (`tests/`, `tests/api/`, `tests/core/`), then c
 
 Delegate to [`deploying-releases`](../deploying-releases/SKILL.md) in **fresh mode**, following `<SKILL_DIR>/../deploying-releases/references/fresh.md` with its installer resolved there. Its inputs:
 
-- `PROJECT=<PROJECT_NAME>`, `GITHUB_REPO=<GITHUB_ORG>/<PROJECT_NAME>`, and `CI_JOBS=(lint test)`, or `CI=none` when `GITHUB_CI=no`.
+- `PROJECT=<PROJECT_NAME>`, `GITHUB_REPO=<GITHUB_ORG>/<PROJECT_NAME>`, and `CI_JOBS=(lint test)`, `(gate test)` when `GITHUB_CI=pre-commit`, or `CI=none` when `GITHUB_CI=no`.
 - One long-running unit, `<PROJECT_NAME>-api`, with `EXEC_START` `uvicorn src.api.main:app --host 127.0.0.1 --port <API_PORT> --log-config src/core/log_config.json`. `IMPORT_MODULES=(src.api.main)`, and its `verify` is `verify_http_health http://127.0.0.1:<API_PORT>/health "$2"`.
 - No dev unit: the dev server stays a manual uvicorn on `<API_PORT_DEV>`.
 - `DB=alembic` when `DB_BACKED=yes`. The deploy user can't read the DSN credential below, so `migrate` takes hook-contract's oneshot form: `deploy/<PROJECT_NAME>-migrate@.service` from `migrate@.tmpl`, in `/srv/<PROJECT_NAME>/releases/%i` with the API unit's `LoadCredential=`, upgrading only when `src.core.schema_state` exits 3; add the API unit's opt-in.
@@ -268,9 +268,9 @@ That gives the installed core and hooks, `deploy/<PROJECT_NAME>-api.service`, `t
 
 > Skip this entire phase when `GITHUB_CI=no` (default).
 
-Create `.github/workflows/ci.yml` from [`references/github-ci.md`](references/github-ci.md) — lint job (ruff check + format), test job with a Postgres 16 service, `alembic upgrade` + `alembic check` drift tripwire, pytest. The convergent archiver/observo shape.
+Create `.github/workflows/ci.yml` from [`references/github-ci.md`](references/github-ci.md) — lint job (ruff check + format), test job with a Postgres 16 service, `alembic upgrade` + `alembic check` drift tripwire, pytest. The convergent archiver/observo shape. Under `pre-commit`, a `gate` job running the hooks replaces `lint`, with its guard test, per the same reference.
 
-When `PRIVATE_INDEX=co-pypi`: give **every** job that runs `uv sync` (lint and test) `id-token: write`, `prune-cache: true`, the `GCP_WIF_PROVIDER` assert, the WIF auth step minting `co-pypi-reader`'s access token, and the pair on the `uv sync` step alone, per (d) in [`references/private-index.md`](references/private-index.md).
+When `PRIVATE_INDEX=co-pypi`: give **every** job that runs `uv sync` (lint or gate, and test) `id-token: write`, `prune-cache: true`, the `GCP_WIF_PROVIDER` assert, the WIF auth step minting `co-pypi-reader`'s access token, and the pair on the `uv sync` step alone, per (d) in [`references/private-index.md`](references/private-index.md).
 
 ### Phase 8 — `.claude/` settings and hooks
 
@@ -369,7 +369,7 @@ gh issue create \
 
 Body must include: Summary (1–2 sentences), Design doc (N/A), Scope (bulleted list of all scaffold components), and a `## Bootstrap provenance` line citing the Phase 0 clone (`gregoryfoster/skills@<SKILL_SHA>`) so future bootstraps are reproducible against the same skill revision. When Phase 12's pytest smoke step was skipped because `TEST_DATABASE_URL` wasn't set on the fresh bootstrap, add a `## Follow-ups` section noting that the smoke test must run before the first feature PR lands.
 
-When `PRIVATE_INDEX=co-pypi`, add (f)'s follow-ups from [`references/private-index.md`](references/private-index.md) to `## Follow-ups`: the skipped lock, the `GCP_WIF_PROVIDER` and WIF-provider grants when `GITHUB_CI=yes`, the reader key on each host, and Dependabot admission.
+When `PRIVATE_INDEX=co-pypi`, add (f)'s follow-ups from [`references/private-index.md`](references/private-index.md) to `## Follow-ups`: the skipped lock, the `GCP_WIF_PROVIDER` and WIF-provider grants unless `GITHUB_CI=no`, the reader key on each host, and Dependabot admission.
 
 Post a completion comment referencing the commit SHA, then close:
 
