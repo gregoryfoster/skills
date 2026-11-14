@@ -296,11 +296,53 @@ def fake_uv(tmp_path) -> Path:
     return bin_
 
 
+LOCKED_GROUP = 'co-pypi = [{ name = "google-auth", extras = ["requests"] }]\n'
+
+
+def run_wrapper(tmp_path: Path, fake_uv: Path, lock: str | None):
+    repo = tmp_path / "acme"
+    (repo / "scripts").mkdir(parents=True)
+    shutil.copy(WRAPPER, repo / "scripts" / "co-pypi.sh")
+    if lock is not None:
+        (repo / "uv.lock").write_text(lock)
+    result = subprocess.run(
+        ["bash", str(repo / "scripts" / "co-pypi.sh"), "uv", "lock"],
+        capture_output=True,
+        text=True,
+        env={"PATH": f"{fake_uv}:/usr/bin:/bin", "HOME": str(tmp_path)},
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+    return (repo / "scripts").resolve(), result
+
+
 class TestTheShellWrapper:
+    @pytest.mark.parametrize(
+        "lock", [None, "version = 1\n"], ids=["no-lock", "no-group"]
+    )
+    def test_a_lock_without_the_group_resolves_it_once_and_says_so(
+        self, tmp_path, fake_uv, lock
+    ):
+        """A repo's first `uv lock` needs the token, so --frozen can't apply yet."""
+        scripts, result = run_wrapper(tmp_path, fake_uv, lock)
+        assert result.stdout.splitlines()[0] == (
+            "args run --no-project --with google-auth[requests]>=2,<3 "
+            f"python {scripts}/co_pypi_token.py uv lock"
+        )
+        assert "holds no co-pypi group yet" in result.stderr
+
+    def test_a_lock_with_the_group_runs_it_frozen_and_quietly(self, tmp_path, fake_uv):
+        scripts, result = run_wrapper(tmp_path, fake_uv, LOCKED_GROUP)
+        assert result.stdout.splitlines()[0].startswith(
+            f"args run --project {scripts.parent} --frozen --only-group co-pypi "
+        )
+        assert result.stderr == ""
+
     def test_runs_the_locked_group_from_the_allowlist(self, tmp_path, fake_uv):
         repo = tmp_path / "acme"
         (repo / "scripts").mkdir(parents=True)
         shutil.copy(WRAPPER, repo / "scripts" / "co-pypi.sh")
+        (repo / "uv.lock").write_text(LOCKED_GROUP)
         env = {
             "PATH": f"{fake_uv}:/usr/bin:/bin",
             "HOME": str(tmp_path),

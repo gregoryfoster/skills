@@ -1,6 +1,6 @@
 # scripts/co_pypi_token.py — the co-pypi wrapper's minter (deploying-releases).
 # deploying-releases-co-pypi: version 1
-# deploying-releases-co-pypi-sha256: 0dff20874b37a955b58776c120b739164cb376aa318bede716cdd3c2cfe40e50
+# deploying-releases-co-pypi-sha256: f6c3fedd2c7dbebdfc502606d75a57f62639b9b152cec2979111bcbb36cb8c7d
 """Run one ``uv`` command with a co-pypi access token in its environment.
 
     bash scripts/co-pypi.sh uv sync --locked --group dev
@@ -38,7 +38,9 @@ netrc file; the bound is the identity's read-only role and the token's hour.
 
 Its own dependency is uv.lock's ``co-pypi`` group, run ``--frozen`` in this
 script's checkout, so nothing in the process that holds the key is resolved at
-run time.
+run time. The one exception is a lock that holds no such group yet: a repo's
+first ``uv lock`` can't be written without the token, so ``co-pypi.sh``
+resolves the group's pin from PyPI for that run and says so.
 
 Only a command that downloads from the index needs this: ``uv lock``, and a
 ``uv sync`` that needs a private file neither installed nor cached.

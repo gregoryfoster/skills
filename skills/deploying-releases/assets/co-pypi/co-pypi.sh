@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # deploying-releases-co-pypi: version 1
-# deploying-releases-co-pypi-sha256: eb3ece08bdfc201a4aeff533185689be8f02e9db2833defe03df67b2db25116c
+# deploying-releases-co-pypi-sha256: ff3579e022238c0b032d0a7f6ad14fdf3beb3ed787c690449ad867b2a7b788ce
 #
 # Run one uv command with a co-pypi access token in its environment
 # (gregoryfoster/skills#632). Installed by deploying-releases' install.sh
@@ -16,9 +16,11 @@
 # GOOGLE_APPLICATION_CREDENTIALS reach neither uv. The two lists match
 # co_pypi_token.py's ALLOWED and ALLOWED_PREFIXES, plus CO_PYPI_KEY. That
 # module's own dependency is uv.lock's co-pypi group, run --frozen in this
-# checkout (--project), never resolved at run time: the group comes from
-# public PyPI, so it syncs before any token exists. The wrapped uv runs where
-# this was called from: scripts/deploy.sh calls it in a release.
+# checkout (--project): the group comes from public PyPI, so it syncs before
+# any token exists. A lock that holds no such group yet (a repo's first
+# `uv lock`) can't be written without the token, so that run alone resolves
+# the group's pin from PyPI, and says so. The wrapped uv runs where this was
+# called from: scripts/deploy.sh calls it in a release.
 set -euo pipefail
 
 ALLOWED=(PATH HOME USER LOGNAME LANG TERM TMPDIR http_proxy https_proxy no_proxy all_proxy HTTP_PROXY HTTPS_PROXY NO_PROXY ALL_PROXY CO_PYPI_KEY)
@@ -33,5 +35,12 @@ while IFS= read -r name; do
 done < <(compgen -e)
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-exec env -i "${keep[@]}" uv run --project "$(dirname "$HERE")" --frozen --only-group co-pypi \
-  python "$HERE/co_pypi_token.py" "$@"
+ROOT="$(dirname "$HERE")"
+if grep -q '^co-pypi = \[' "$ROOT/uv.lock" 2>/dev/null; then
+  group=(--project "$ROOT" --frozen --only-group co-pypi)
+else
+  echo "co-pypi.sh: $ROOT/uv.lock holds no co-pypi group yet, so this run resolves" \
+    "google-auth from PyPI; commit the lock it writes" >&2
+  group=(--no-project --with 'google-auth[requests]>=2,<3')
+fi
+exec env -i "${keep[@]}" uv run "${group[@]}" python "$HERE/co_pypi_token.py" "$@"

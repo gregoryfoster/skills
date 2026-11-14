@@ -14,7 +14,8 @@ Splice `<PRIVATE_DEPS>` into `[project] dependencies`, then add:
 [dependency-groups]
 # scripts/co_pypi_token.py's own dependency, locked. scripts/co-pypi.sh runs it
 # `--frozen --only-group co-pypi` before any private file is fetched, so nothing
-# in the process that holds the key is resolved at run time.
+# in the process that holds the key is resolved at run time (but the first
+# `uv lock`, which resolves this pin from PyPI and says so).
 co-pypi = ["google-auth[requests]>=2,<3"]
 
 # cannobserv's packages come from its co-pypi index, and only they do
