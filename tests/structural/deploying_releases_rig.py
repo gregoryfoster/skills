@@ -288,6 +288,14 @@ echo "curl $url" >> "$FAKE_LOG"
 ci="$(dirname "$FAKE_LOG")/ci"
 if [[ "$url" == http://127.0.0.1:9000/health ]]; then
   [[ -z "${FAKE_HEALTH_DOWN:-}" ]] || exit 7
+  # FAKE_HEALTH_DEGRADED: 503 with the right build in the body, as curl
+  # --fail answers it (no body, exit 22); without --fail the body comes back.
+  if [[ -n "${FAKE_HEALTH_DEGRADED:-}" ]]; then
+    [[ " $* " == *" -fsS "* || " $* " == *" --fail "* ]] && exit 22
+    wd="$(sed -n 's/^WorkingDirectory=//p' "$FAKE_UNIT_DIR/acme-api.service" | tail -n 1)"
+    printf '{"status": "degraded", "revision": "%s"}\n' "$(cd -P "$wd" 2>/dev/null && cat REVISION)"
+    exit 0
+  fi
   wd="$(sed -n 's/^WorkingDirectory=//p' "$FAKE_UNIT_DIR/acme-api.service" | tail -n 1)"
   rev="$(cd -P "$wd" 2>/dev/null && cat REVISION 2>/dev/null)" || rev=""
   rev="${rev:-dev}"

@@ -378,6 +378,15 @@ class TestVerifyAndSwitchBack:
         assert world.target() == old
         assert "which is answering" in result.stderr
 
+    def test_a_degraded_health_that_names_the_build_still_switches_back(self, world):
+        world.go_live()
+        assert_ok(world.run())
+        old = world.target()
+        world.push()
+        result = world.run(FAKE_HEALTH_DEGRADED="1")
+        assert result.returncode == 4, result.stderr
+        assert world.target() == old
+
     def test_a_unit_that_dies_on_the_new_build_switches_back(self, world):
         world.hooks(hooks_with("verify() { return 2; }"))
         world.go_live()

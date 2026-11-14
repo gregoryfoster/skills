@@ -65,7 +65,7 @@ Each returns 0 when the unit proved `<want>`, and 1 with a note when it did not.
 
 | Helper | Proves | From |
 |---|---|---|
-| `verify_http_health <url> <want> [<jq>]` | the endpoint answers JSON that `<jq>` holds of, `$want` bound; default `.revision == $want` | status, observo, archiver |
+| `verify_http_health <url> <want> [<jq>]` | the endpoint answers 2xx with JSON that `<jq>` holds of, `$want` bound; default `.revision == $want`. A non-2xx answer never verifies, whatever its body | status, observo, archiver |
 | `verify_next_tick <service> <want> [<message>]` | the timer's next natural tick (never forced) exits 0 and, given `<message>`, logs a JSON line with that message and `.revision == <want>` | broker's probe |
 | `verify_forced_run <service> <want> [<file> <jq>]` | one forced run of a oneshot, after any run already going, exits 0 and leaves a file `<jq>` holds of | broker's backup |
 | `verify_started_on <service> <want>` | a new main PID, active, whose `/proc/<pid>/cwd` is the release `<want>` names (D9) | the core's default |

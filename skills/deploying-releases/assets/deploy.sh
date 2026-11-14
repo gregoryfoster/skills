@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # deploying-releases-core: version 1
-# deploying-releases-core-sha256: f21ae86eef0baba56bf72aa5bdf49e911f7e39932e5f2b8482a4fe2cc93bee59
+# deploying-releases-core-sha256: d3b493a517d2f302f7f0df2f33fd35bc179ea200b51dfdb6f91b90f06d3cc6b5
 #
 # The cohort's one release-deploy core (gregoryfoster/skills#372), installed by
 # deploying-releases' install.sh. Do not edit it here: configure it in
@@ -820,12 +820,13 @@ verify_started_on() { # <service> <want>
   return 1
 }
 
-# An HTTP endpoint answers, and <jq> holds of its JSON with $want bound:
-# default `.revision == $want`.
+# An HTTP endpoint answers 2xx, and <jq> holds of its JSON with $want bound:
+# default `.revision == $want`. Never a non-2xx body: a degraded /health that
+# still names the build fails (observo).
 verify_http_health() { # <url> <want> [<jq>]
   local url="$1" want="$2" expr="${3:-.revision == \$want}" deadline=$((SECONDS + VERIFY_SECONDS)) body=""
   while :; do
-    if body="$(curl -sS --max-time 10 "$url" 2>/dev/null)" &&
+    if body="$(curl -fsS --max-time 10 "$url" 2>/dev/null)" &&
       jq -e --arg want "$want" "$expr" <<<"$body" >/dev/null 2>&1; then
       say "$url answers on $want"
       return 0
