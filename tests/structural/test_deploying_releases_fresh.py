@@ -237,6 +237,11 @@ BREAKS = {
         lambda t: t.replace("StartLimitIntervalSec=300", "StartLimitIntervalSec=0"),
         "test_a_long_running_service_caps_its_restarts_in_unit",
     ),
+    "a start limit turned off with a unit": (
+        "deploy/acme-api.service",
+        lambda t: t.replace("StartLimitIntervalSec=300", "StartLimitIntervalSec=0s"),
+        "test_a_long_running_service_caps_its_restarts_in_unit",
+    ),
     "a priority prefix journald keeps": (
         "deploy/acme-sweep.service",
         lambda t: t.replace("Type=oneshot", "Type=oneshot\nSyslogLevelPrefix=no"),

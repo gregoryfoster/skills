@@ -183,7 +183,8 @@ def test_a_long_running_service_caps_its_restarts_in_unit(path):
         f"{path.name}: StartLimitIntervalSec= and StartLimitBurst= in [Unit], "
         "where systemd reads them, or a crash loop restarts forever (#644)"
     )
-    assert interval[-1] != "0", f"{path.name}: an interval of 0 is no cap"
+    no_cap = re.fullmatch(r"0+\s*[a-z]*", interval[-1])  # 0, 0s, 0min: all off
+    assert not no_cap, f"{path.name}: an interval of {interval[-1]} is no cap"
     assert burst[-1].isdigit() and int(burst[-1]) > 0, f"{path.name}: {burst[-1]}"
 
 
