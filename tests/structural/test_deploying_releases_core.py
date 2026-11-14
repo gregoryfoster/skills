@@ -641,3 +641,14 @@ def test_backup_state_is_read_through_the_hooks_own_jq(world):
     assert result.returncode in (1, 4)
     assert "without .revision == $want" in result.stderr
     assert json.loads(world.backup_state.read_text())["revision"] == "someone-else"
+
+
+@pytest.mark.parametrize(("required", "outcome"), [("", "skip"), ("1", "fail")])
+def test_gnubin_required_turns_the_skip_into_a_failure(monkeypatch, required, outcome):
+    from tests.structural import deploying_releases_rig as rig
+
+    monkeypatch.setattr(rig.shutil, "which", lambda name: None)
+    monkeypatch.setenv("GNUBIN_REQUIRED", required)
+    expected = pytest.fail.Exception if outcome == "fail" else pytest.skip.Exception
+    with pytest.raises(expected, match="DID NOT RUN"):
+        rig.require_linux_tools()

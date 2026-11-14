@@ -23,7 +23,7 @@ as a user that is not root (the core refuses root)::
     docker run --rm -v "$PWD:/w:ro" ubuntu:24.04 bash -c '
       apt-get update -qq && apt-get install -yqq python3-pytest git jq >/dev/null &&
       cp -r /w /t && useradd -m u && chown -R u /t &&
-      su u -c "cd /t && python3 -m pytest -q -p no:cacheprovider \\
+      su u -c "cd /t && GNUBIN_REQUIRED=1 python3 -m pytest -q -p no:cacheprovider \\
         tests/structural/test_deploying_releases_core.py"'
 """
 
@@ -354,19 +354,28 @@ def git(cwd: Path, *args: str, env: dict | None = None) -> str:
     ).stdout.strip()
 
 
+def _cannot_run(reason: str) -> None:
+    """Skip, loudly; or fail under GNUBIN_REQUIRED=1, where the core's tests
+    must run (a Linux CI job, the container), as SHELLCHECK_REQUIRED does."""
+    message = f"{reason}: the core's behaviour tests DID NOT RUN (GNUBIN_REQUIRED=1 makes this a failure)"
+    if os.environ.get("GNUBIN_REQUIRED", "") not in ("", "0"):
+        pytest.fail(message)
+    pytest.skip(message)
+
+
 def require_linux_tools() -> None:
     """The core runs on a Linux host: GNU stat and mv, util-linux flock, jq, bash 4."""
     missing = [t for t in ("flock", "jq", "git", "bash") if shutil.which(t) is None]
     if missing:
-        pytest.skip(f"needs {', '.join(missing)} on PATH (a Linux host's tools)")
+        _cannot_run(f"needs {', '.join(missing)} on PATH (a Linux host's tools)")
     probe = subprocess.run(["stat", "-c", "%a", "/"], capture_output=True, text=True)
     if probe.returncode != 0:
-        pytest.skip("stat is not GNU stat (no -c), so this is not a Linux host")
+        _cannot_run("stat is not GNU stat (no -c), so this is not a Linux host")
     bash = subprocess.run(
         ["bash", "-c", "echo ${BASH_VERSINFO[0]}"], capture_output=True, text=True
     )
     if int(bash.stdout.strip() or 0) < 4:
-        pytest.skip("bash on PATH is older than 4")
+        _cannot_run("bash on PATH is older than 4")
 
 
 def unit(
