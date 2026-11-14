@@ -33,7 +33,7 @@ from packaging.requirements import Requirement
 from packaging.utils import canonicalize_name
 
 REPO = Path(__file__).resolve().parents[1]
-while not (REPO / "pyproject.toml").is_file() and REPO != REPO.parent:
+while not (REPO / "pyproject.toml").is_file() and REPO.parent != REPO:
     REPO = REPO.parent
 PYPROJECT = tomllib.loads((REPO / "pyproject.toml").read_text())
 LOCK = tomllib.loads((REPO / "uv.lock").read_text())
