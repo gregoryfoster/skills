@@ -486,6 +486,16 @@ class TestUnits:
         assert "acme-sweep.timer" not in world.enabled()
         assert world.installed("acme-sweep.timer") is None
 
+    def test_a_working_directory_systemd_may_find_missing_loads_as_its_own(self, world):
+        # WorkingDirectory=-<path> is reported by systemctl show as !<path>.
+        live = world.root / "live"
+        units = dict(world.live_units, **{API: unit(API, f"-{live}")})
+        world.go_live(units)
+        world.push({API: unit(API, f"-{live}", version="v2")})
+        result = world.run()
+        assert_ok(result)
+        assert "v2" in world.installed(API)
+
     def test_a_unit_loaded_stale_switches_back_to_the_build_that_answers(self, world):
         world.go_live()
         assert_ok(world.run())

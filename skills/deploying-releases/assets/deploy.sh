@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # deploying-releases-core: version 1
-# deploying-releases-core-sha256: d3b493a517d2f302f7f0df2f33fd35bc179ea200b51dfdb6f91b90f06d3cc6b5
+# deploying-releases-core-sha256: 51308da68eaca47e465a3a1a3f2d2f9c10398740beb49fbac045f4a1f7fc3535
 #
 # The cohort's one release-deploy core (gregoryfoster/skills#372), installed by
 # deploying-releases' install.sh. Do not edit it here: configure it in
@@ -703,7 +703,9 @@ install_units() { # <target>
       return 1
     }
     wd="$(workdir_of "$UNIT_DIR/$name")"
-    [[ -z "$wd" || "$(systemctl show -p WorkingDirectory --value "$name" 2>/dev/null)" == "$wd" ]] || {
+    # systemd reports WorkingDirectory=-<path> (missing is fine) as !<path>.
+    loaded="$(systemctl show -p WorkingDirectory --value "$name" 2>/dev/null)" || loaded=""
+    [[ -z "$wd" || "${loaded#!}" == "$wd" ]] || {
       note "$name is loaded with another WorkingDirectory= than its file's $wd: systemctl cat $name"
       return 1
     }

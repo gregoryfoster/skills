@@ -195,7 +195,9 @@ STUB_SYSTEMCTL = r"""#!/usr/bin/env bash
 [[ -n "${FAKE_VIA_SUDO:-}" ]] || echo "systemctl $*" >> "$FAKE_LOG"
 dir="$(dirname "$FAKE_LOG")"
 state="$dir/state"
-wd_of() { sed -n 's/^WorkingDirectory=//p' "$FAKE_UNIT_DIR/$1" 2>/dev/null | tail -n 1; }
+# The path, without systemd's "-" (missing is fine); raw_wd keeps it.
+raw_wd() { sed -n 's/^WorkingDirectory=//p' "$FAKE_UNIT_DIR/$1" 2>/dev/null | tail -n 1; }
+wd_of() { local wd; wd="$(raw_wd "$1")"; echo "${wd#-}"; }
 served() {
   local rev
   rev="$(cd -P "$(wd_of "$1")" 2>/dev/null && cat REVISION 2>/dev/null)" || rev=""
@@ -226,7 +228,9 @@ case "$1" in
             if ((left > 0)); then echo $((left - 1)) > "$dir/backup-busy"; v=activating; else v=inactive; fi
           else v="$(cat "$state/$unit.active" 2>/dev/null || echo inactive)"; fi ;;
         NeedDaemonReload) v=no; listed "$unit" "${FAKE_NEEDS_RELOAD:-}" && v=yes ;;
-        WorkingDirectory) v="$(wd_of "$unit")"; listed "$unit" "${FAKE_STALE_LOAD:-}" && v=/elsewhere ;;
+        # As systemd reports it: WorkingDirectory=-<path> is !<path>.
+        WorkingDirectory) v="$(raw_wd "$unit")"; [[ "$v" == -* ]] && v="!${v#-}"
+          listed "$unit" "${FAKE_STALE_LOAD:-}" && v=/elsewhere ;;
         InvocationID) v="tick-$tick" ;;
         Result) v=success; ((rc == 0)) || v=exit-code ;;
         ExecMainStatus) v="$rc" ;;
@@ -292,11 +296,11 @@ if [[ "$url" == http://127.0.0.1:9000/health ]]; then
   # --fail answers it (no body, exit 22); without --fail the body comes back.
   if [[ -n "${FAKE_HEALTH_DEGRADED:-}" ]]; then
     [[ " $* " == *" -fsS "* || " $* " == *" --fail "* ]] && exit 22
-    wd="$(sed -n 's/^WorkingDirectory=//p' "$FAKE_UNIT_DIR/acme-api.service" | tail -n 1)"
+    wd="$(sed -n 's/^WorkingDirectory=-\{0,1\}//p' "$FAKE_UNIT_DIR/acme-api.service" | tail -n 1)"
     printf '{"status": "degraded", "revision": "%s"}\n' "$(cd -P "$wd" 2>/dev/null && cat REVISION)"
     exit 0
   fi
-  wd="$(sed -n 's/^WorkingDirectory=//p' "$FAKE_UNIT_DIR/acme-api.service" | tail -n 1)"
+  wd="$(sed -n 's/^WorkingDirectory=-\{0,1\}//p' "$FAKE_UNIT_DIR/acme-api.service" | tail -n 1)"
   rev="$(cd -P "$wd" 2>/dev/null && cat REVISION 2>/dev/null)" || rev=""
   rev="${rev:-dev}"
   [[ "$rev" == "${FAKE_HEALTH_STALE_ON:-none}" ]] && rev=stale
