@@ -121,11 +121,9 @@ _VERSION_COMMENT = re.compile(r"^\s+# v\d+\.\d+\.\d+$")
 
 def _load() -> dict:
     """The parsed config, or {} while it's missing, so the failure is test_config_exists's."""
-    return (
-        yaml.safe_load(CONFIG.read_text(encoding="utf-8")) or {}
-        if CONFIG.is_file()
-        else {}
-    )
+    if not CONFIG.is_file():
+        return {}
+    return yaml.safe_load(CONFIG.read_text(encoding="utf-8")) or {}
 
 
 def _updates() -> list[dict]:
@@ -177,12 +175,8 @@ def _uses(node: object) -> list[str]:
 
 def _actions() -> set[str]:
     """The distinct ``owner/repo`` actions the workflows pin: one PR each."""
-    return {
-        m.group(1)
-        for doc in _workflow_docs()
-        for ref in _uses(doc)
-        if (m := _ACTION.match(ref))
-    }
+    refs = [ref for doc in _workflow_docs() for ref in _uses(doc)]
+    return {m.group(1) for ref in refs if (m := _ACTION.match(ref))}
 
 
 def _uses_lines() -> list[tuple[str, int, str, str]]:
@@ -249,13 +243,11 @@ def _unknown_keys(config: dict) -> list[str]:
         where = f"updates[{i}]"
         bad += [f"{where}.{k}" for k in block if k not in BLOCK_KEYS]
         for key, allowed in NESTED_KEYS.items():
-            bad += [
-                f"{where}.{key}.{k}" for k in block.get(key) or {} if k not in allowed
-            ]
+            nested = block.get(key) or {}
+            bad += [f"{where}.{key}.{k}" for k in nested if k not in allowed]
         for name, group in (block.get("groups") or {}).items():
-            bad += [
-                f"{where}.groups.{name}.{k}" for k in group or {} if k not in GROUP_KEYS
-            ]
+            at = f"{where}.groups.{name}"
+            bad += [f"{at}.{k}" for k in group or {} if k not in GROUP_KEYS]
     return bad
 
 
@@ -263,7 +255,7 @@ def test_every_key_is_one_dependabot_reads() -> None:
     bad = _unknown_keys(_load())
     assert not bad, (
         "Dependabot rejects the whole config over one unknown key, and every "
-        f"update stops: {bad}"
+        f"update stops until it's removed: {bad}"
     )
 
 
@@ -296,7 +288,7 @@ def test_ecosystems_are_the_enabled_set() -> None:
     configured = {u.get("package-ecosystem") for u in _updates()}
     for eco in configured & HELD_BACK.keys():
         pytest.fail(
-            f"{eco} is held back: {HELD_BACK[eco]}. Turning it on is its own decision"
+            f"{eco} is held back: {HELD_BACK[eco]}. Turning it on is its own decision",
         )
     assert configured == ENABLED, (
         f"configured {sorted(configured, key=str)}, expected {sorted(ENABLED)}. A mistyped "
@@ -305,7 +297,9 @@ def test_ecosystems_are_the_enabled_set() -> None:
 
 
 @pytest.mark.parametrize(
-    "block", _updates(), ids=lambda b: str(b.get("package-ecosystem"))
+    "block",
+    _updates(),
+    ids=lambda b: str(b.get("package-ecosystem")),
 )
 def test_every_block_runs_on_a_schedule(block: dict) -> None:
     """No interval is a config Dependabot rejects, visibly only in its own tab."""
@@ -313,7 +307,9 @@ def test_every_block_runs_on_a_schedule(block: dict) -> None:
 
 
 @pytest.mark.parametrize(
-    "block", _updates(), ids=lambda b: str(b.get("package-ecosystem"))
+    "block",
+    _updates(),
+    ids=lambda b: str(b.get("package-ecosystem")),
 )
 def test_commits_follow_the_repo_convention(block: dict) -> None:
     """The default subject, 'Bump x from a to b', matches no type."""
@@ -346,13 +342,13 @@ def _batch(block: dict, names: set[str]) -> int:
     grouped: set[str] = set()
     groups = 0
     for group in (block.get("groups") or {}).values():
+        include = group.get("patterns", ["*"])
+        exclude = group.get("exclude-patterns", [])
         matched = {
             n
             for n in names
-            if any(fnmatch.fnmatch(n, p) for p in group.get("patterns", ["*"]))
-            and not any(
-                fnmatch.fnmatch(n, p) for p in group.get("exclude-patterns", [])
-            )
+            if any(fnmatch.fnmatch(n, p) for p in include)
+            and not any(fnmatch.fnmatch(n, p) for p in exclude)
         }
         groups += bool(matched - grouped)
         grouped |= matched
@@ -449,9 +445,9 @@ def test_every_uses_line_is_read() -> None:
 
 def _is_pinned(ref: str, rest: str) -> bool:
     """A SHA pin with its version comment, or a ``./`` action in this repo."""
-    return ref.startswith("./") or bool(
-        _SHA_PIN.match(ref) and _VERSION_COMMENT.match(rest)
-    )
+    if ref.startswith("./"):
+        return True
+    return bool(_SHA_PIN.match(ref) and _VERSION_COMMENT.match(rest))
 
 
 def test_every_action_is_sha_pinned_with_its_version() -> None:
