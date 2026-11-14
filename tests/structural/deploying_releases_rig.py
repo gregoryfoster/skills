@@ -17,11 +17,14 @@ The project is ``acme``. Its units, by default:
 
 The stubs play root (status#14): ``FAKE_ROOT_OWNED`` is a ledger of what root
 owns, kept unwritable except through ``sudo``. They need GNU coreutils and
-util-linux's ``flock``: on macOS the tests skip, and run in a Linux container::
+util-linux's ``flock``: on macOS the tests skip, and run in a Linux container,
+as a user that is not root (the core refuses root)::
 
-    docker run --rm -v "$PWD:/w" -w /w ubuntu:24.04 bash -c \\
-      'apt-get update -qq && apt-get install -yqq python3-pytest git jq >/dev/null &&
-       python3 -m pytest -q -p no:cacheprovider tests/structural/test_deploying_releases_core.py'
+    docker run --rm -v "$PWD:/w:ro" ubuntu:24.04 bash -c '
+      apt-get update -qq && apt-get install -yqq python3-pytest git jq >/dev/null &&
+      cp -r /w /t && useradd -m u && chown -R u /t &&
+      su u -c "cd /t && python3 -m pytest -q -p no:cacheprovider \\
+        tests/structural/test_deploying_releases_core.py"'
 """
 
 from __future__ import annotations
