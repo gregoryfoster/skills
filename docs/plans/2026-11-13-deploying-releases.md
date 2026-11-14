@@ -209,7 +209,7 @@ The body's six steps, plus what the comments add:
     over its 1,950 target.
   - `schema_state` ships as an asset.
   - The API unit is `<project>-api`, and `/health` reports `revision`.
-  - Exact: SKILL.md 13,888, `agents-md-template.md` 5,908, `database-scaffolding.md` 3,863.
+  - Exact: SKILL.md 14,007 (13,888 before CR 2103), `agents-md-template.md` 5,908, `database-scaffolding.md` 3,863.
 
 | File | Now | Target | Change |
 |---|---|---|---|

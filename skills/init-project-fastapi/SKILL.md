@@ -259,7 +259,8 @@ Delegate to [`deploying-releases`](../deploying-releases/SKILL.md) in **fresh mo
 - `PROJECT=<PROJECT_NAME>`, `GITHUB_REPO=<GITHUB_ORG>/<PROJECT_NAME>`, and `CI_JOBS=(lint test)`, or `CI=none` when `GITHUB_CI=no`.
 - One long-running unit, `<PROJECT_NAME>-api`, with `EXEC_START` `uvicorn src.api.main:app --host 127.0.0.1 --port <API_PORT> --log-config src/core/log_config.json`. `IMPORT_MODULES=(src.api.main)`, and its `verify` is `verify_http_health http://127.0.0.1:<API_PORT>/health "$2"`.
 - No dev unit: the dev server stays a manual uvicorn on `<API_PORT_DEV>`.
-- `DB=alembic` when `DB_BACKED=yes`, whose `migrate` hook asks `src.core.schema_state`. `PRIVATE_INDEX` as chosen, which adds `UV_WRAPPER=scripts/co-pypi.sh`.
+- `DB=alembic` when `DB_BACKED=yes`. The deploy user can't read the DSN credential below, so `migrate` takes hook-contract's oneshot form: `deploy/<PROJECT_NAME>-migrate@.service` from `oneshot.tmpl`, in `/srv/<PROJECT_NAME>/releases/%i` with the API unit's `LoadCredential=` and opt-in, upgrading only when `src.core.schema_state` exits 3.
+- `PRIVATE_INDEX` as chosen, which adds `UV_WRAPPER=scripts/co-pypi.sh`.
 
 That gives the installed core and hooks, `deploy/<PROJECT_NAME>-api.service`, `tests/deploy/`, `DEPLOYMENT.md` and `.skills/deploy_command`. Then edit the rendered API unit. When `DB_BACKED=yes`, add `postgresql.service` to `After=` for a local Postgres, `LoadCredential=database_url:/etc/<PROJECT_NAME>/credentials/database_url`, and `Environment=<PROJECT_UNDERSCORE_UPPER>_ALLOW_PRODUCTION_DB=1`, never in the env file, which a dev shell loads too. Append a README "Deploy" section that links `DEPLOYMENT.md`. `tests/deploy/` must pass in Phase 12. Nothing here touches the host: the operator's one-time steps are in `DEPLOYMENT.md`.
 
