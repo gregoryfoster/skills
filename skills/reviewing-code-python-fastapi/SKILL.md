@@ -96,7 +96,7 @@ Evaluate against these dimensions:
 - **TDD discipline** — red commit present before green commit (`git log --oneline` evidence of failing-test-first commits); new behavior has corresponding tests
 - **API contract** — Pydantic model changes flagged as breaking vs. non-breaking (field renames, removed fields, tightened validation = breaking; added optional fields = non-breaking); field names, types, validation, defaults reviewed for consistency
 - **Generated-code drift** — when a change touches an OpenAPI spec, a vendored spec snapshot, or models a generated client consumes: was the client regenerated? Stale vendored clients shipped real bugs (archiver #66)
-- **Deploy artifacts** — when `deploy/` changes: unit ordering (`After=`/`Before=`), `OnFailure=` wiring intact, bounded restarts (`StartLimit*`) preserved, main-checkout guard not removed, `EnvironmentFile` precedence unchanged
+- **Deploy artifacts** — when `deploy/` changes: unit ordering (`After=`/`Before=`), `OnFailure=` wiring intact, bounded restarts (`StartLimit*`) preserved, no unit runs the development checkout, `EnvironmentFile` precedence unchanged
 - **Version lockstep** — `pyproject.toml` version vs any mirrored version (package.json, CHANGELOG, hardcoded FastAPI `version=`) still agree
 - **Logging convention** — `get_logger(__name__)` from `src.core.logging`; `configure_logging()` only at entry points (project entrypoint module, never in library code); flag a service whose WARNINGs land at journald priority 6 — no `<N>` prefix when its handler's stream is the journal (`JOURNAL_STREAM`), so `journalctl -p warning` finds nothing (skills#500)
 - **Datetime convention** — ISO 8601, UTC only; no naive datetimes; `datetime.now(timezone.utc)` not `datetime.now()`
