@@ -598,6 +598,31 @@ def test_the_consumer_passes_its_own_test(consumer):
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+def test_a_private_package_in_a_group_is_declared(consumer):
+    """A source binds to a dependency group's names too."""
+    path = consumer / "pyproject.toml"
+    text = path.read_text().replace('"co-core>=0.37,<0.38", ', "")
+    path.write_text(
+        text.replace("co-pypi = [", 'dev = ["co-core>=0.37,<0.38"]\nco-pypi = [')
+    )
+    result = run_consumer_tests(consumer)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_a_workspace_members_private_package_is_declared(consumer):
+    """LAYOUT=workspace: the root has no [project], a member declares the name."""
+    path = consumer / "pyproject.toml"
+    project, rest = path.read_text().split("\n[dependency-groups]", 1)
+    path.write_text(
+        '[tool.uv.workspace]\nmembers = ["packages/*"]\n\n[dependency-groups]' + rest
+    )
+    member = consumer / "packages" / "api"
+    member.mkdir(parents=True)
+    (member / "pyproject.toml").write_text(project)
+    result = run_consumer_tests(consumer)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 @pytest.mark.parametrize(
     ("file", "old", "new"),
     [

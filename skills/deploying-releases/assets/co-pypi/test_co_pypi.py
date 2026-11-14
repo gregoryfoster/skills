@@ -11,7 +11,8 @@ the repo owns it after. Pure file reads: no network, no key.
 * **``explicit = true``, and a ``[tool.uv.sources]`` entry per private name.**
   An explicit index serves only the names pinned to it, so a private name never
   comes from PyPI, where it may be unclaimed, and nothing else comes from here.
-* **Every private package is declared directly.** uv binds a source to a direct
+* **Every private package is declared directly** (a dependency, an extra or a
+  group, here or in a workspace member). uv binds a source to a direct
   dependency only, so one reached transitively would go to PyPI.
 * **The lock carries each file's sha256**, and ``uv sync --locked`` refuses a
   file that misses it. A ``.wheelhouse`` lock is refused by the deploy.
@@ -47,6 +48,30 @@ HOST = "us-west1-python.pkg.dev"
 
 def _uv() -> dict:
     return PYPROJECT.get("tool", {}).get("uv", {})
+
+
+def _declared() -> set[str]:
+    """Every name declared here or in a workspace member: what a source binds to."""
+    paths = [REPO / "pyproject.toml"]
+    for pattern in _uv().get("workspace", {}).get("members", []):
+        paths += sorted(REPO.glob(f"{pattern}/pyproject.toml"))
+    names = set()
+    for path in paths:
+        data = tomllib.loads(path.read_text())
+        project = data.get("project", {})
+        lines = [
+            *project.get("dependencies", []),
+            *(
+                r
+                for extra in project.get("optional-dependencies", {}).values()
+                for r in extra
+            ),
+            *(r for group in data.get("dependency-groups", {}).values() for r in group),
+        ]
+        names |= {
+            canonicalize_name(Requirement(r).name) for r in lines if isinstance(r, str)
+        }
+    return names
 
 
 def _private() -> list[dict]:
@@ -107,13 +132,9 @@ def test_the_sweep_finds_a_private_package():
 
 @pytest.mark.parametrize("package", _private(), ids=lambda p: p["name"])
 def test_is_declared_directly_and_pinned_to_the_index(package: dict):
-    declared = {
-        canonicalize_name(Requirement(r).name)
-        for r in PYPROJECT["project"].get("dependencies", [])
-    }
-    assert canonicalize_name(package["name"]) in declared, (
-        f"{package['name']} is locked but not declared: uv binds sources to direct"
-        " dependencies only, so a transitive one resolves from PyPI"
+    assert canonicalize_name(package["name"]) in _declared(), (
+        f"{package['name']} is locked but declared nowhere: uv binds sources to"
+        " direct dependencies only, so a transitive one resolves from PyPI"
     )
     sources = {canonicalize_name(k): v for k, v in _uv().get("sources", {}).items()}
     assert sources.get(canonicalize_name(package["name"])) == {"index": INDEX}
