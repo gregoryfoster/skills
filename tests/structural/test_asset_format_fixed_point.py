@@ -56,14 +56,6 @@ EXEMPT = {
     ),
 }
 
-# Assets known to fail and being fixed elsewhere. Strict xfail, so the run
-# that fixes one fails until its entry is removed here.
-# PENDING: test_deploy_units.py is being edited by another Wave 8 set D chain
-# (#516); the orchestrator rewrites it after merging, then empties this set.
-PENDING = {
-    "skills/deploying-releases/assets/tests/test_deploy_units.py",
-}
-
 # A marker line as deploying-releases writes them, e.g.
 # `# deploying-releases-co-pypi-sha256: <64 hex>`. Anchored to a whole comment
 # line, so a test that only names the marker in a string does not count.
@@ -90,21 +82,10 @@ def _require_ruff() -> str:
     return lint._RUFF_BIN
 
 
-def _params() -> list:
-    params = []
-    for path in ASSETS:
-        rel = _rel(path)
-        if rel in EXEMPT:
-            continue
-        marks = []
-        if rel in PENDING:
-            reason = "PENDING: rewritten after another chain merges (#643)"
-            marks.append(pytest.mark.xfail(strict=True, reason=reason))
-        params.append(pytest.param(path, id=rel, marks=marks))
-    return params
-
-
-@pytest.mark.parametrize("asset", _params())
+@pytest.mark.parametrize(
+    "asset",
+    [pytest.param(p, id=_rel(p)) for p in ASSETS if _rel(p) not in EXEMPT],
+)
 def test_asset_is_a_fixed_point_at_the_consumers_line_length(asset: Path) -> None:
     ruff = _require_ruff()
     result = subprocess.run(
@@ -152,12 +133,6 @@ def test_every_exemption_still_has_its_reason(rel: str) -> None:
         f"{rel} is exempt because a sha256 marker covers its bytes, but it has "
         "no marker line any more; drop the exemption and make it a fixed point"
     )
-
-
-def test_pending_names_real_assets() -> None:
-    assets = {_rel(p) for p in ASSETS}
-    assert PENDING <= assets, f"PENDING names no asset: {sorted(PENDING - assets)}"
-    assert not PENDING & EXEMPT.keys(), "an asset is both PENDING and EXEMPT"
 
 
 @pytest.mark.parametrize(

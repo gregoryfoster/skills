@@ -108,24 +108,22 @@ def test_there_are_units():
 
 @pytest.mark.parametrize("path", units(), ids=lambda p: p.name)
 def test_no_unit_names_home(path):
-    body = "\n".join(
-        line
-        for line in path.read_text().splitlines()
-        if not line.lstrip().startswith("#")
-    )
+    lines = path.read_text().splitlines()
+    body = "\n".join(line for line in lines if not line.lstrip().startswith("#"))
     assert "/home/" not in body
 
 
 @pytest.mark.parametrize("path", services(), ids=lambda p: p.name)
 def test_no_unit_runs_uv(path):
     for line in directive(path, "ExecStart") + directive(path, "ExecStartPre"):
-        assert not re.search(r"(^|[/\s-])uv(\s|$)", line), (
-            f"{path.name} runs uv: {line}"
-        )
+        runs_uv = re.search(r"(^|[/\s-])uv(\s|$)", line)
+        assert not runs_uv, f"{path.name} runs uv: {line}"
 
 
 @pytest.mark.parametrize(
-    "path", [p for p in services() if "@" not in p.name], ids=lambda p: p.name
+    "path",
+    [p for p in services() if "@" not in p.name],
+    ids=lambda p: p.name,
 )
 def test_working_directory_is_a_target(path):
     workdirs = [w.lstrip("-") for w in directive(path, "WorkingDirectory")]
