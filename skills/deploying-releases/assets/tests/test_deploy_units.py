@@ -8,6 +8,10 @@ PROJECT, UNITS_DIR, SERVICE_DIR and HOST_CONFIGS from scripts/deploy_hooks.sh.
 - Every service's WorkingDirectory= is /srv/<project>/live or /dev: that is its
   target, and a -dev name says dev.
 - Every file under UNITS_DIR is a unit or a listed host config.
+- Every long-running service caps its restarts in [Unit], the only section
+  systemd reads the cap from: a crash loop ends failed, not flapping (#644).
+- Every service's stdout is the journal, prefix-stripped: the app's <N>
+  priority prefix needs both (#500).
 - No unit inlines a secret; none sets the three sandbox options that break a
   service (observo#696).
 - On the host, each installed unit equals the live release's copy, never the
@@ -64,10 +68,31 @@ def services() -> list[Path]:
     return [p for p in units() if p.suffix == ".service"]
 
 
-def directive(path: Path, key: str) -> list[str]:
+def section(text: str, name: str) -> str:
+    """The lines under one [name] header: some keys count in one section only."""
+    lines, current = [], None
+    for line in text.splitlines():
+        header = re.match(r"^\[(.+)\]\s*$", line)
+        if header:
+            current = header.group(1)
+        elif current == name:
+            lines.append(line)
+    return "\n".join(lines)
+
+
+def directive(path: Path, key: str, in_section: str | None = None) -> list[str]:
+    text = path.read_text()
+    if in_section is not None:
+        text = section(text, in_section)
+    return [m.group(1).strip() for m in re.finditer(rf"^{key}=(.*)$", text, flags=re.M)]
+
+
+def long_running() -> list[Path]:
+    """The services the core restarts: not a template, not Type=oneshot."""
     return [
-        m.group(1).strip()
-        for m in re.finditer(rf"^{key}=(.*)$", path.read_text(), flags=re.M)
+        p
+        for p in services()
+        if "@" not in p.name and directive(p, "Type", "Service")[-1:] != ["oneshot"]
     ]
 
 
@@ -129,6 +154,31 @@ def test_no_secret_inline(path):
 )
 def test_no_sandbox_option_that_breaks_a_service(path, option):
     assert not directive(path, option), f"{path.name} sets {option}= (observo#696)"
+
+
+@pytest.mark.parametrize("path", long_running(), ids=lambda p: p.name)
+def test_a_long_running_service_caps_its_restarts_in_unit(path):
+    interval = directive(path, "StartLimitIntervalSec", "Unit")
+    burst = directive(path, "StartLimitBurst", "Unit")
+    assert interval and burst, (
+        f"{path.name}: StartLimitIntervalSec= and StartLimitBurst= in [Unit], "
+        "where systemd reads them, or a crash loop restarts forever (#644)"
+    )
+    assert interval[-1] != "0", f"{path.name}: an interval of 0 is no cap"
+    assert burst[-1].isdigit() and int(burst[-1]) > 0, f"{path.name}: {burst[-1]}"
+
+
+@pytest.mark.parametrize("path", services(), ids=lambda p: p.name)
+def test_stdout_is_the_journal_and_its_prefix_is_stripped(path):
+    for value in directive(path, "SyslogLevelPrefix"):
+        assert value.lower() not in ("0", "no", "false", "off"), (
+            f"{path.name}: journald must strip the app's <N> priority prefix (#500)"
+        )
+    for value in directive(path, "StandardOutput"):
+        assert value in ("journal", "journal+console"), (
+            f"{path.name}: StandardOutput={value} keeps the app's lines out of the "
+            "journal its <N> priority prefix is for (#500)"
+        )
 
 
 @pytest.mark.parametrize("path", units(), ids=lambda p: p.name)

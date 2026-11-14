@@ -5,6 +5,11 @@
 Description=<PROJECT> <NAME>
 After=network-online.target
 Wants=network-online.target
+# At most 10 starts in 5 minutes, then the unit stays failed, where OnFailure=
+# and co-status see it, instead of crash-looping forever (CannObserv/usa-wa#87).
+# systemd's default, 5 in 10 s, never trips at RestartSec=5. [Unit] only.
+StartLimitIntervalSec=300
+StartLimitBurst=10
 
 [Service]
 Type=simple

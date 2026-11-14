@@ -119,6 +119,15 @@ def test_the_units_render_onto_the_release_not_the_checkout(repo):
     assert "User=acme" in api
 
 
+def test_a_journal_stdout_still_passes(repo):
+    api = repo / "deploy" / "acme-api.service"
+    api.write_text(
+        api.read_text().replace("Type=simple", "Type=simple\nStandardOutput=journal")
+    )
+    result = run_tests(repo)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 BREAKS = {
     "a unit on the checkout": (
         "deploy/acme-api.service",
@@ -162,6 +171,33 @@ BREAKS = {
             "LockPersonality=yes", "LockPersonality=yes\nProtectControlGroups=yes"
         ),
         "test_no_sandbox_option_that_breaks_a_service",
+    ),
+    "a service with no start limit": (
+        "deploy/acme-api.service",
+        lambda t: t.replace("StartLimitBurst=10\n", ""),
+        "test_a_long_running_service_caps_its_restarts_in_unit",
+    ),
+    "a start limit in [Service], which systemd ignores": (
+        "deploy/acme-api-dev.service",
+        lambda t: t.replace("StartLimitIntervalSec=300\n", "").replace(
+            "[Service]\n", "[Service]\nStartLimitIntervalSec=300\n"
+        ),
+        "test_a_long_running_service_caps_its_restarts_in_unit",
+    ),
+    "a start limit turned off": (
+        "deploy/acme-api.service",
+        lambda t: t.replace("StartLimitIntervalSec=300", "StartLimitIntervalSec=0"),
+        "test_a_long_running_service_caps_its_restarts_in_unit",
+    ),
+    "a priority prefix journald keeps": (
+        "deploy/acme-sweep.service",
+        lambda t: t.replace("Type=oneshot", "Type=oneshot\nSyslogLevelPrefix=no"),
+        "test_stdout_is_the_journal_and_its_prefix_is_stripped",
+    ),
+    "stdout that is not the journal": (
+        "deploy/acme-api.service",
+        lambda t: t.replace("Type=simple", "Type=simple\nStandardOutput=null"),
+        "test_stdout_is_the_journal_and_its_prefix_is_stripped",
     ),
     "an edited core": (
         "scripts/deploy.sh",
