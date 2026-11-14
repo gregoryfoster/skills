@@ -58,12 +58,12 @@
 26834 9407 skills/curating-context/references/validation-gate.md
 16661 6117 skills/curating-context/references/write-guard-hook.md
 9049 3654 skills/deploying-releases/SKILL.md
-3980 1753 skills/deploying-releases/references/fresh.md
-10303 4310 skills/deploying-releases/references/hook-contract.md
-5771 2189 skills/deploying-releases/references/retrofit.md
+4103 1809 skills/deploying-releases/references/fresh.md
+10580 4415 skills/deploying-releases/references/hook-contract.md
+6015 2296 skills/deploying-releases/references/retrofit.md
 6925 2578 skills/enforcing-architecture/SKILL.md
 7945 3165 skills/enforcing-architecture/references/fitness-functions.md
-33259 14007 skills/init-project-fastapi/SKILL.md
+33276 14013 skills/init-project-fastapi/SKILL.md
 13258 5263 skills/init-project-fastapi/references/admin-ui.md
 13562 5908 skills/init-project-fastapi/references/agents-md-template.md
 1189 508 skills/init-project-fastapi/references/claude-settings.md

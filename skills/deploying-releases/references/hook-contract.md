@@ -57,7 +57,7 @@ A hook runs in a subshell with errexit on: a failing command is its failure, and
 | `verify <unit> <want>` | after the restart, per changed service | 0 verified, 1 failed (switch back), 2 no check for this unit |
 | `post_verify <target>` | after a verified deploy | non-zero is a note, never a rollback. A smoke run here must refuse a target that isn't `_dev`/`_test` (provisioner) |
 
-**Migrating through a oneshot unit** (observo, whose deploy user can't read the DSN): `migrate` runs `sudo -n systemctl start <p>-migrate@<sha12>.service`, a template with the app's `User=` and `EnvironmentFile=`, then reads its outcome with `journalctl --sync` and `--since`, or it reads the previous run's line. The template is in `UNITS_DIR` like any unit, but `migrate` runs before step 7: on the deploy that adds or changes it, the hook installs it from the release itself.
+**Migrating through a oneshot unit** (observo, whose deploy user can't read the DSN): `migrate` runs `sudo -n systemctl start <p>-migrate@<sha12>.service`, a template with the app's `User=` and `EnvironmentFile=` (`assets/units/migrate@.tmpl`; the hooks template shows the call), then reads its outcome with `journalctl --sync` and `--since`, or it reads the previous run's line. The template is in `UNITS_DIR` like any unit, but `migrate` runs before step 7: on the deploy that adds or changes it, the hook installs it from the release itself.
 
 ### The verify helpers
 
@@ -86,5 +86,7 @@ Read from each script's function list and #372's thread; each repo's adoption is
 | provisioner | dev (API only), live | `service`, `deploy` | none, own minter | —, one head | as the deploy user, skipped when ahead | `/health` names the build for the API and the consumer heartbeat | — |
 | archiver | live (dev a rehearsal) | `.`, `deploy` | github, wheelhouse → co-pypi first | —, one head + every unit's entry module | migrate, `grant_readers` | `/health` `build_id`, a forced bus-health pass, `schema_serves` | — |
 | replicator | live | from its inventory | from its inventory | —, imports | — | the drained worker restarted on the new `REVISION`; handler units included | — |
+
+init's `/health` reports `revision`, which `verify_http_health` reads by default. A repo reporting `build_id`, as archiver does, passes its own expression: `verify_http_health <url> "$2" '.build_id == $want'`.
 
 Adopting the core changes two pilots' trees: processor's and provisioner's releases become root-owned (D7), and observo and provisioner start installing units (D5), which widens their deploy user's sudo grant to `install` into `/etc/systemd/system`.

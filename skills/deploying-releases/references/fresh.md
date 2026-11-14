@@ -10,7 +10,7 @@ What `init-project-fastapi` delegates when `DEPLOY_TARGET=releases`, and what a 
 | `GITHUB_REPO` | `<org>/<PROJECT>` | For the CI gate; `CI=none` when the repo has no CI |
 | The units | one API service | Each long-running unit: its name and `ExecStart` (the venv's entry point). Each oneshot: its name, module and interval |
 | `DEV_TARGET` | none | A dev unit for each that should have one, named `<unit>-dev`, on `/srv/<PROJECT>/dev`; "none" means no dev unit at all |
-| `DB` | none | Alembic: the `migrate` hook (as the deploy user, or through `<PROJECT>-migrate@.service` when it can't read the DSN) and a single-head `post_build_check` |
+| `DB` | none | Alembic: the `migrate` hook (as the deploy user, or through `<PROJECT>-migrate@.service` from `migrate@.tmpl` when it can't read the DSN) and a single-head `post_build_check` |
 | `PRIVATE_INDEX` | no | co-pypi: `install.sh --co-pypi`, then `UV_WRAPPER=scripts/co-pypi.sh` ([#632](https://github.com/gregoryfoster/skills/issues/632)) |
 
 ## Steps
@@ -20,7 +20,7 @@ What `init-project-fastapi` delegates when `DEPLOY_TARGET=releases`, and what a 
    - an HTTP service: `verify_http_health http://127.0.0.1:<port>/health "$2"`, where `/health` reports `revision` read from `REVISION` (`dev` when absent);
    - a oneshot on a timer: `verify_next_tick "$1" "$2" "<its summary message>"`, or `verify_forced_run` when a forced run is safe;
    - a worker with no port: return 2 for the core's restart check, or check the heartbeat another unit reports.
-3. **Render the units** from `assets/units/` into `deploy/`: `service.tmpl` for each long-running unit, `oneshot.tmpl` and `timer.tmpl` for each scheduled one. Substitute `<PROJECT>`, `<NAME>`, `<EXEC_START>` (relative to the venv's `bin/`, such as `uvicorn src.api.main:app --host 127.0.0.1 --port 8000`), `<MODULE>` and `<INTERVAL>`. A dev unit is the same file with `-dev` in its name and `/srv/<PROJECT>/dev` in both paths.
+3. **Render the units** from `assets/units/` into `deploy/`: `service.tmpl` for each long-running unit, `oneshot.tmpl` and `timer.tmpl` for each scheduled one, `migrate@.tmpl` under `DB` when the deploy user can't read the DSN (it runs `src.core.schema_state`). Substitute `<PROJECT>`, `<NAME>`, `<EXEC_START>` (relative to the venv's `bin/`, such as `uvicorn src.api.main:app --host 127.0.0.1 --port 8000`), `<MODULE>` and `<INTERVAL>`. A dev unit is the same file with `-dev` in its name and `/srv/<PROJECT>/dev` in both paths.
 4. **Copy the tests:** `assets/tests/test_deploy_contract.py` and `test_deploy_units.py` into `tests/deploy/`. They read the hooks file, so they need no editing, and they must pass before the first commit.
 5. **Write `DEPLOYMENT.md`** from `assets/DEPLOYMENT.md.tmpl`, substituting `<PROJECT>`, and link it from the README.
 6. **Set `.skills/deploy_command`** to `scripts/deploy.sh`.

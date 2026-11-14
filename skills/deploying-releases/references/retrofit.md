@@ -27,6 +27,7 @@ Record each in the design note; every one changes what the hooks or the units sa
 - Alembic not asserting the database it is about to migrate is the configured one (CannObserv/status#15).
 - No schema check, where `/ready` can't be added unauthenticated.
 - The old main-checkout guard, which is **deleted, not ported**.
+- **No start limit** on a long-running unit: `StartLimitIntervalSec=300` and `StartLimitBurst=10` in `[Unit]` (systemd ignores them in `[Service]`), or a crash loop restarts forever ([#644](https://github.com/gregoryfoster/skills/issues/644)).
 - **The oldest deployable commit.** A commit from before the move has no release shape and can never be a rollback target. Name it in the design note (observo's rollback drill went forward, back, forward on its first two releases).
 
 ## 4. The design note
