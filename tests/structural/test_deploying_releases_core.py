@@ -477,12 +477,16 @@ class TestUnits:
         assert "acme-sweep.timer" not in world.enabled()
         assert world.installed("acme-sweep.timer") is None
 
-    def test_a_unit_loaded_stale_fails_the_deploy(self, world):
+    def test_a_unit_loaded_stale_switches_back_to_the_build_that_answers(self, world):
         world.go_live()
+        assert_ok(world.run())
+        old = world.target()
+        before = world.installed(API)
         world.push({API: unit(API, world.root / "live", version="v2")})
         result = world.run(FAKE_NEEDS_RELOAD=API)
-        assert result.returncode in (1, 4)
+        assert result.returncode == 1, result.stderr
         assert "still needs a daemon-reload" in result.stderr
+        assert world.target() == old and world.installed(API) == before
 
     def test_a_long_running_unit_that_is_not_enabled_is_neither_restarted_nor_verified(
         self, world
@@ -637,8 +641,10 @@ def test_the_shipped_hooks_template_is_refused_until_filled_in(world):
 
 def test_backup_state_is_read_through_the_hooks_own_jq(world):
     world.go_live()
+    # The fake backup reports another build on every run, the old build's
+    # too: the switch back proves nothing either, so exit 4.
     result = world.run(FAKE_BACKUP_SAYS="someone-else")
-    assert result.returncode in (1, 4)
+    assert result.returncode == 4, result.stderr
     assert "without .revision == $want" in result.stderr
     assert json.loads(world.backup_state.read_text())["revision"] == "someone-else"
 
