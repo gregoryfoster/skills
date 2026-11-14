@@ -63,7 +63,7 @@
 6015 2296 skills/deploying-releases/references/retrofit.md
 6925 2578 skills/enforcing-architecture/SKILL.md
 7945 3165 skills/enforcing-architecture/references/fitness-functions.md
-33276 14013 skills/init-project-fastapi/SKILL.md
+33582 14139 skills/init-project-fastapi/SKILL.md
 13258 5263 skills/init-project-fastapi/references/admin-ui.md
 13562 5908 skills/init-project-fastapi/references/agents-md-template.md
 1189 508 skills/init-project-fastapi/references/claude-settings.md
@@ -71,9 +71,9 @@
 2066 1052 skills/init-project-fastapi/references/completion-report.md
 1253 583 skills/init-project-fastapi/references/core-config-files.md
 9610 3871 skills/init-project-fastapi/references/database-scaffolding.md
-5818 2460 skills/init-project-fastapi/references/github-ci.md
+5929 2491 skills/init-project-fastapi/references/github-ci.md
 4032 1900 skills/init-project-fastapi/references/postgres-provisioning.md
-8329 3505 skills/init-project-fastapi/references/private-index.md
+8230 3459 skills/init-project-fastapi/references/private-index.md
 7259 3150 skills/init-project-fastapi/references/pyproject-toml.md
 5464 2291 skills/init-project-fastapi/references/settings-scaffolding.md
 5935 2337 skills/init-project-fastapi/references/skill-symlinks.md
@@ -230,7 +230,7 @@
 14138 4667 skills/reviewing-architecture/references/dimensions.md
 13021 4814 skills/reviewing-code-php/SKILL.md
 15683 5642 skills/reviewing-code-python-click/SKILL.md
-15370 5643 skills/reviewing-code-python-fastapi/SKILL.md
+15376 5643 skills/reviewing-code-python-fastapi/SKILL.md
 11714 4238 skills/reviewing-code/SKILL.md
 15873 5915 skills/shipping-work/SKILL.md
 5797 2161 skills/shipping-work/references/deploy-command.md
