@@ -4,7 +4,7 @@ What `scripts/deploy.sh` (the core) does, what `scripts/deploy_hooks.sh` (the re
 
 ## The steps, in order
 
-Per target, dev before live. A unit's target is its `WorkingDirectory=`: `<root>/live` is live, `<root>/dev` is dev, a timer goes with its service, and a unit under neither goes with the last target. A repo with no dev unit has no dev target.
+Per target, dev before live. A unit's target is its `WorkingDirectory=`: `<root>/live` is live, `<root>/dev` is dev, a timer goes with its service, and a unit under neither goes with live (with dev only when the release has no live unit), so a dev deploy never changes a unit production uses. A repo with no dev unit has no dev target.
 
 | # | Step | Refuses or fails with |
 |---|---|---|

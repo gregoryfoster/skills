@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # deploying-releases-core: version 1
-# deploying-releases-core-sha256: 3f5b8473d302efffccbe3d60433c9ba1c7ac2033b02ba48cea7bc0cdff849d55
+# deploying-releases-core-sha256: f21ae86eef0baba56bf72aa5bdf49e911f7e39932e5f2b8482a4fe2cc93bee59
 #
 # The cohort's one release-deploy core (gregoryfoster/skills#372), installed by
 # deploying-releases' install.sh. Do not edit it here: configure it in
@@ -610,7 +610,9 @@ workdir_of() { # <unit file>: its last WorkingDirectory=, without systemd's "-"
 }
 
 # A unit's target is its WorkingDirectory=; a timer's is its service's; a unit
-# under no target (no WorkingDirectory= under the root) goes with the last.
+# under no target (no WorkingDirectory= under the root) goes with live, or
+# with dev when the release has no live unit: a dev deploy never changes one
+# that production uses.
 target_of() { # <directory> <unit name>
   local file="$1/$2" wd
   [[ "$2" != *.timer ]] || file="$1/${2%.timer}.service"
@@ -632,6 +634,8 @@ for t in dev live; do
   done < <(units_of)
 done
 ((${#targets[@]})) || die "no unit in $build's $UNITS_DIR/ runs $ROOT/live or $ROOT/dev; nothing switched"
+# From the release's whole set, before --target narrows it.
+home_target="${targets[-1]}"
 if [[ -n "$only_target" ]]; then
   [[ " ${targets[*]} " == *" $only_target "* ]] ||
     die "no unit in $build's $UNITS_DIR/ runs $ROOT/$only_target; nothing switched"
@@ -643,7 +647,7 @@ units_for() { # <target>: the release's units that go with it
   local name t
   while read -r name; do
     t="$(target_of "$release/$UNITS_DIR" "$name")"
-    [[ "$t" == "$1" || ("$t" == none && "$1" == "$last_target") ]] && echo "$name"
+    [[ "$t" == "$1" || ("$t" == none && "$1" == "$home_target") ]] && echo "$name"
   done < <(units_of)
   return 0
 }

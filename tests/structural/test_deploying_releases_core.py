@@ -582,6 +582,17 @@ class TestTargets:
         assert_ok(result)
         assert world.target("dev") and world.target("live") is None
 
+    def test_a_unit_under_no_target_goes_with_live_never_a_dev_deploy(self, world):
+        units = self.dev_and_live(world, api_only_dev=True)
+        notify = "acme-notify@.service"
+        units[notify] = unit(notify, None)
+        world.go_live({k: v for k, v in units.items() if k != notify})
+        world.push(units)
+        assert_ok(world.run("--target", "dev"))
+        assert world.installed(notify) is None
+        assert_ok(world.run("--target", "live"))
+        assert world.installed(notify) is not None
+
     def test_a_branch_commit_deploys_to_dev_only(self, world):
         world.go_live(self.dev_and_live(world))
         sha = world.push(self.dev_and_live(world), branch="feature")
