@@ -411,6 +411,14 @@ class TestInstall:
         )
         assert "extend-exclude" not in install(repo).stderr
 
+    def test_a_rerun_that_changes_nothing_still_names_the_setup(self, repo):
+        (repo / "pyproject.toml").write_text("[tool.ruff]\nline-length = 100\n")
+        install(repo)
+        result = install(repo)
+        assert result.stdout == "current\t1\t1\n"
+        assert "co-pypi dependency group" in result.stderr
+        assert "extend-exclude" in result.stderr
+
     def test_a_missing_group_is_named(self, repo):
         (repo / "pyproject.toml").write_text('[project]\nname = "acme"\n')
         assert "co-pypi dependency group" in install(repo).stderr

@@ -166,6 +166,21 @@ ensure_once() {
   fi
 }
 
+# What the installed wrapper needs from pyproject.toml, named on every path that
+# leaves the pair in place, so a re-run that changes nothing still says it.
+warn_setup() {
+  ((CO_PYPI)) || return 0
+  if ! grep -Eq '^co-pypi *=' "$REPO/pyproject.toml" 2>/dev/null; then
+    echo "install.sh: the wrapper runs pyproject.toml's co-pypi dependency group, which is missing:" \
+      "add co-pypi = [\"google-auth[requests]>=2,<3\"] under [dependency-groups], then uv lock" >&2
+  fi
+  if grep -q '^\[tool\.ruff\]' "$REPO/pyproject.toml" 2>/dev/null &&
+    ! grep -q 'scripts/co_pypi_token\.py' "$REPO/pyproject.toml"; then
+    echo "install.sh: a ruff --fix or format pass would edit the installed minter:" \
+      "add \"scripts/co_pypi_token.py\" to [tool.ruff] extend-exclude" >&2
+  fi
+}
+
 # Each file's state, then the set's: foreign and edited win, then missing (all
 # of them), current (all of them), and anything else is drift.
 installed=""
@@ -231,6 +246,7 @@ case "$state" in
   current)
     report current "$installed"
     ensure_once
+    warn_setup
     exit 0
     ;;
   edited)
@@ -272,14 +288,4 @@ else
   report updated "$installed"
 fi
 ensure_once
-if ((CO_PYPI)); then
-  if ! grep -Eq '^co-pypi *=' "$REPO/pyproject.toml" 2>/dev/null; then
-    echo "install.sh: the wrapper runs pyproject.toml's co-pypi dependency group, which is missing:" \
-      "add co-pypi = [\"google-auth[requests]>=2,<3\"] under [dependency-groups], then uv lock" >&2
-  fi
-  if grep -q '^\[tool\.ruff\]' "$REPO/pyproject.toml" 2>/dev/null &&
-    ! grep -q 'scripts/co_pypi_token\.py' "$REPO/pyproject.toml"; then
-    echo "install.sh: a ruff --fix or format pass would edit the installed minter:" \
-      "add \"scripts/co_pypi_token.py\" to [tool.ruff] extend-exclude" >&2
-  fi
-fi
+warn_setup
