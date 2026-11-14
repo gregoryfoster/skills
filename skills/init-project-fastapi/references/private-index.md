@@ -44,7 +44,7 @@ bash "<SKILL_DIR>/../deploying-releases/scripts/install.sh" --co-pypi
 
 This writes `scripts/co-pypi.sh` and `scripts/co_pypi_token.py`, both marked, and `tests/test_co_pypi.py`, which pins the rules in (a) and the markers. It warns about a missing `co-pypi` group or ruff exclude.
 
-**The key:** the `co-pypi-reader` service account's JSON key (`roles/artifactregistry.reader` on co-pypi alone), at `/etc/<PROJECT_NAME>/co-pypi-reader.json`, `root:<deploy user> 640`. `CO_PYPI_KEY` overrides the path. It's never `GOOGLE_APPLICATION_CREDENTIALS`, which would hand an identity to every Google client in the shell, and it never sits in the repo or a `.env`.
+**The key:** the `co-pypi-reader` service account's JSON key (`roles/artifactregistry.reader` on co-pypi alone), at `/etc/<PROJECT_NAME>/co-pypi-reader.json`, `root:<deploy user> 640`. `CO_PYPI_KEY` overrides the path. Under `LAYOUT=workspace` the root has no `[project].name`, so `CO_PYPI_KEY` is required, in the developer's shell and the deploy user's environment. It's never `GOOGLE_APPLICATION_CREDENTIALS`, which would hand an identity to every Google client in the shell, and it never sits in the repo or a `.env`.
 
 Emit the dev recipe into the README's Setup block and AGENTS.md's Common Commands, **regardless of `DEPLOY_TARGET`**:
 
