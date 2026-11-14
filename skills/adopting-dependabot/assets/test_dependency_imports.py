@@ -109,9 +109,8 @@ def _owning_distributions(module: str) -> frozenset[str]:
 def _imported_modules(path: Path) -> list[str]:
     """Each absolute import in *path*; ``from pkg import name`` yields ``pkg.name``."""
     found: list[str] = []
-    for node in ast.walk(
-        ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-    ):
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             found.extend(alias.name for alias in node.names)
         elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
@@ -158,7 +157,7 @@ def test_every_runtime_dependency_is_imported() -> None:
 @pytest.mark.parametrize("dist", list(NEEDED_WITHOUT_IMPORT))
 def test_allowlist_entry_is_still_declared(dist: str) -> None:
     assert canonicalize_name(dist) in _RUNTIME, (
-        f"{dist} is no longer declared; drop its entry"
+        f"{dist} is no longer declared; drop its entry from NEEDED_WITHOUT_IMPORT"
     )
 
 

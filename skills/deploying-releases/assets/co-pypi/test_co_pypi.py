@@ -59,18 +59,15 @@ def _declared() -> set[str]:
     for path in paths:
         data = tomllib.loads(path.read_text())
         project = data.get("project", {})
+        extras = project.get("optional-dependencies", {}).values()
+        groups = data.get("dependency-groups", {}).values()
         lines = [
             *project.get("dependencies", []),
-            *(
-                r
-                for extra in project.get("optional-dependencies", {}).values()
-                for r in extra
-            ),
-            *(r for group in data.get("dependency-groups", {}).values() for r in group),
+            *(r for extra in extras for r in extra),
+            *(r for group in groups for r in group),
         ]
-        names |= {
-            canonicalize_name(Requirement(r).name) for r in lines if isinstance(r, str)
-        }
+        requirements = [Requirement(r) for r in lines if isinstance(r, str)]
+        names |= {canonicalize_name(req.name) for req in requirements}
     return names
 
 
@@ -82,9 +79,7 @@ def _private() -> list[dict]:
 def test_the_wrapper_is_unedited(path: Path):
     text = path.read_text()
     match = re.search(rf"^{re.escape(MARK_SHA)}(\w+)$", text, flags=re.M)
-    assert match, (
-        f"{path.name} has no co-pypi marker: install it with install.sh --co-pypi"
-    )
+    assert match, f"{path.name} has no co-pypi marker: run install.sh --co-pypi"
     zeroed = text.replace(match.group(0), MARK_SHA + "0" * 64, 1)
     assert hashlib.sha256(zeroed.encode()).hexdigest() == match.group(1), (
         f"{path.name} was edited by hand. Raise the change on gregoryfoster/skills, "
@@ -120,9 +115,8 @@ def test_one_explicit_co_pypi_index_at_the_org_registrys_url():
 
 def test_no_wheelhouse():
     assert "find-links" not in _uv(), "the co-pypi index replaced the wheelhouse"
-    assert not [
-        p["name"] for p in LOCK["package"] if "wheelhouse" in str(p.get("source"))
-    ]
+    packages = LOCK["package"]
+    assert not [p["name"] for p in packages if "wheelhouse" in str(p.get("source"))]
 
 
 def test_the_sweep_finds_a_private_package():
@@ -159,7 +153,8 @@ def test_the_wrappers_group_needs_nothing_from_the_index():
         for r in PYPROJECT.get("dependency-groups", {}).get(INDEX, [])
         if isinstance(r, str)
     ), (
-        f"[dependency-groups] {INDEX} = ['google-auth[requests]>=2,<3'], the minter's own"
+        f"declare [dependency-groups] {INDEX} = ['google-auth[requests]>=2,<3'], "
+        "the minter's own dependency"
     )
     by_name: dict[str, list[dict]] = {}
     for package in LOCK["package"]:
