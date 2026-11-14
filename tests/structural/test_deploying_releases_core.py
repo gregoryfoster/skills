@@ -339,6 +339,16 @@ class TestHooks:
         assert result.returncode == 1 and "post_build_check failed" in result.stderr
         assert not (world.release(sha) / "REVISION").exists()
 
+    def test_hooks_run_from_the_checkout_on_a_reuse_too(self, world):
+        world.hooks(
+            hooks_with('pre_switch_check() { echo "pwd $PWD" >> "$FAKE_LOG"; }')
+        )
+        world.go_live()
+        assert_ok(world.run())
+        assert_ok(world.run())
+        seen = [c.split(" ", 1)[1] for c in world.calls() if c.startswith("pwd ")]
+        assert seen == [str(world.checkout)] * 2, seen
+
     def test_post_verify_failing_is_a_note_never_a_rollback(self, world):
         world.hooks(hooks_with("post_verify() { return 1; }"))
         sha = world.go_live()

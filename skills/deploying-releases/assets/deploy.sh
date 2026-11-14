@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # deploying-releases-core: version 1
-# deploying-releases-core-sha256: 60bc6cad5f5659916dad7c694ea3956b5a69f74da42f21e550b8844e332afdb6
+# deploying-releases-core-sha256: 3f5b8473d302efffccbe3d60433c9ba1c7ac2033b02ba48cea7bc0cdff849d55
 #
 # The cohort's one release-deploy core (gregoryfoster/skills#372), installed by
 # deploying-releases' install.sh. Do not edit it here: configure it in
@@ -214,6 +214,8 @@ case "$CI_AUTH" in anonymous | gh) ;; *) die "CI_AUTH=$CI_AUTH in $HOOKS is anon
 # A release has a copy of this script and no .git to build from.
 git -C "$SRC" rev-parse --git-dir >/dev/null 2>&1 ||
   die "run from a checkout (<checkout>/scripts/deploy.sh); $SRC is not one"
+# Hooks run from the checkout, whether this run builds the release or reuses it.
+cd "$SRC" || die "cannot enter the checkout $SRC"
 
 [[ -d "$ROOT" ]] || die "$ROOT does not exist. Once: sudo install -d -o root -g root -m 755 $ROOT"
 
