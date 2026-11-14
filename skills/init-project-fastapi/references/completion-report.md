@@ -16,7 +16,7 @@ Then present a completion table. Branch-point rows show the choice made (or "ski
 | Database | `<DB_BACKED>` — when yes: `src/core/database.py`, `src/core/db_safety.py`, `src/core/models[.py\|/]` (`<MODELS_LAYOUT>`, ULID PKs), `alembic/` |
 | Lint profile | `<LINT_PROFILE>` |
 | Layout | `<LAYOUT>` |
-| CI | `<GITHUB_CI>` — when yes: `.github/workflows/ci.yml` |
+| CI | `<GITHUB_CI>` — when yes: `.github/workflows/ci.yml`; when pre-commit: also `tests/ci/test_gate_workflow.py` |
 | Tests scaffold | `tests/conftest.py`, `tests/test_health.py`, `tests/core/test_logging.py`, `tests/core/test_config.py`, `tests/api/` |
 | Deploy | `<DEPLOY_TARGET>` — when releases: `scripts/deploy.sh` + `deploy_hooks.sh`, `deploy/<PROJECT_NAME>-api.service`, `tests/deploy/`, `DEPLOYMENT.md` |
 | Private index | `<PRIVATE_INDEX>` — when co-pypi: index + sources, `scripts/co-pypi.sh` + `co_pypi_token.py`, `tests/test_co_pypi.py`, CI's WIF step |

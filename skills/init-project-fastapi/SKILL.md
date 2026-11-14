@@ -61,7 +61,7 @@ Each has a default the user can accept silently. Defaults come from comparing 7 
 | `ADMIN_UI` | `none` | `none` \| `htmx` | Phase 3 deps (jinja2 + python-multipart), Phase 5 (`/static` mount + admin router include), Phase 5b (admin accessors), Phase 5e (templates + vendored htmx + `src/api/admin/` + `require_admin`), Phase 6 (`tests/api/test_admin.py`) — all per [`references/admin-ui.md`](references/admin-ui.md) |
 | `LINT_PROFILE` | `minimal` | `minimal` \| `strict` | Phase 3 (ruff `select` rules + per-file ignores) |
 | `LAYOUT` | `single` | `single` \| `workspace` | uv workspace monorepo — Phase 3/5 shape per [`references/workspace-layout.md`](references/workspace-layout.md) (`single` is the fully-templated path) |
-| `GITHUB_CI` | `no` | `no` \| `yes` | Phase 7c (`.github/workflows/ci.yml` from [`references/github-ci.md`](references/github-ci.md)) |
+| `GITHUB_CI` | `no` | `no` \| `yes` \| `pre-commit` | Phase 7c (`.github/workflows/ci.yml` from [`references/github-ci.md`](references/github-ci.md)) |
 | `DEPLOY_TARGET` | `releases` | `releases` \| `none` | Phase 5c (`schema_state`), Phase 7b (`deploying-releases` fresh mode: the deploy core and hooks, units on `/srv/<PROJECT_NAME>/live`, `tests/deploy/`, `DEPLOYMENT.md`), README "Deploy" section |
 | `PRIVATE_INDEX` | `no` | `no` \| `co-pypi` | Phase 3 (index, sources, the `co-pypi` group, ruff exclude), Phase 3b (the wrapper, installed by `deploying-releases`; the dev recipe), Phase 7b (`UV_WRAPPER`), Phase 7c (the WIF token step), Phase 12 (lock and sync through the wrapper), Phase 15 (grants) — all per [`references/private-index.md`](references/private-index.md) |
 
@@ -256,7 +256,7 @@ Create empty `__init__.py` files (`tests/`, `tests/api/`, `tests/core/`), then c
 
 Delegate to [`deploying-releases`](../deploying-releases/SKILL.md) in **fresh mode**, following `<SKILL_DIR>/../deploying-releases/references/fresh.md` with its installer resolved there. Its inputs:
 
-- `PROJECT=<PROJECT_NAME>`, `GITHUB_REPO=<GITHUB_ORG>/<PROJECT_NAME>`, and `CI_JOBS=(lint test)`, or `CI=none` when `GITHUB_CI=no`.
+- `PROJECT=<PROJECT_NAME>`, `GITHUB_REPO=<GITHUB_ORG>/<PROJECT_NAME>`, and `CI_JOBS=(lint test)`, `(gate test)` when `GITHUB_CI=pre-commit`, or `CI=none` when `GITHUB_CI=no`.
 - One long-running unit, `<PROJECT_NAME>-api`, with `EXEC_START` `uvicorn src.api.main:app --host 127.0.0.1 --port <API_PORT> --log-config src/core/log_config.json`. `IMPORT_MODULES=(src.api.main)`, and its `verify` is `verify_http_health http://127.0.0.1:<API_PORT>/health "$2"`.
 - No dev unit: the dev server stays a manual uvicorn on `<API_PORT_DEV>`.
 - `DB=alembic` when `DB_BACKED=yes`. The deploy user can't read the DSN credential below, so `migrate` takes hook-contract's oneshot form: `deploy/<PROJECT_NAME>-migrate@.service` from `oneshot.tmpl`, in `/srv/<PROJECT_NAME>/releases/%i` with the API unit's `LoadCredential=` and opt-in, upgrading only when `src.core.schema_state` exits 3.
@@ -268,9 +268,9 @@ That gives the installed core and hooks, `deploy/<PROJECT_NAME>-api.service`, `t
 
 > Skip this entire phase when `GITHUB_CI=no` (default).
 
-Create `.github/workflows/ci.yml` from [`references/github-ci.md`](references/github-ci.md) — lint job (ruff check + format), test job with a Postgres 16 service, `alembic upgrade` + `alembic check` drift tripwire, pytest. The convergent archiver/observo shape.
+Create `.github/workflows/ci.yml` from [`references/github-ci.md`](references/github-ci.md) — lint job (ruff check + format), test job with a Postgres 16 service, `alembic upgrade` + `alembic check` drift tripwire, pytest. The convergent archiver/observo shape. Under `pre-commit`, a `gate` job running the hooks replaces `lint`, with its guard test, per the same reference.
 
-When `PRIVATE_INDEX=co-pypi`: give **every** job that runs `uv sync` (lint and test) `id-token: write`, `prune-cache: true`, the `GCP_WIF_PROVIDER` assert, the WIF auth step minting `co-pypi-reader`'s access token, and the pair on the `uv sync` step alone, per (d) in [`references/private-index.md`](references/private-index.md).
+When `PRIVATE_INDEX=co-pypi`: give **every** job that runs `uv sync` (lint or gate, and test) `id-token: write`, `prune-cache: true`, the `GCP_WIF_PROVIDER` assert, the WIF auth step minting `co-pypi-reader`'s access token, and the pair on the `uv sync` step alone, per (d) in [`references/private-index.md`](references/private-index.md).
 
 ### Phase 8 — `.claude/` settings and hooks
 
@@ -369,7 +369,7 @@ gh issue create \
 
 Body must include: Summary (1–2 sentences), Design doc (N/A), Scope (bulleted list of all scaffold components), and a `## Bootstrap provenance` line citing the Phase 0 clone (`gregoryfoster/skills@<SKILL_SHA>`) so future bootstraps are reproducible against the same skill revision. When Phase 12's pytest smoke step was skipped because `TEST_DATABASE_URL` wasn't set on the fresh bootstrap, add a `## Follow-ups` section noting that the smoke test must run before the first feature PR lands.
 
-When `PRIVATE_INDEX=co-pypi`, add (f)'s follow-ups from [`references/private-index.md`](references/private-index.md) to `## Follow-ups`: the skipped lock, the `GCP_WIF_PROVIDER` and WIF-provider grants when `GITHUB_CI=yes`, the reader key on each host, and Dependabot admission.
+When `PRIVATE_INDEX=co-pypi`, add (f)'s follow-ups from [`references/private-index.md`](references/private-index.md) to `## Follow-ups`: the skipped lock, the `GCP_WIF_PROVIDER` and WIF-provider grants unless `GITHUB_CI=no`, the reader key on each host, and Dependabot admission.
 
 Post a completion comment referencing the commit SHA, then close:
 

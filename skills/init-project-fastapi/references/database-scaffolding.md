@@ -157,7 +157,7 @@ The deploy's question: the database's Alembic revision against this release's he
 ### Optional hardening (adopt as the schema grows)
 
 - **Boot-time head guard.** Once real migrations exist, refuse to serve behind schema: observo's `assert_db_at_head` runs in `lifespan` and raises if `alembic_version` trails the script head (observo #192 — added after removing `create_all` from startup). Not scaffolded by default because a fresh project has no revisions to compare.
-- **Autogenerate-drift tripwire.** `uv run alembic check` fails when models changed but no migration was generated. Phase 12 runs it once at bootstrap; wire it into CI (`GITHUB_CI=yes`) so the drift class from observo #202 can't land silently.
+- **Autogenerate-drift tripwire.** `uv run alembic check` fails when models changed but no migration was generated. Phase 12 runs it once at bootstrap; wire it into CI (`GITHUB_CI=yes` or `pre-commit`) so the drift class from observo #202 can't land silently.
 
 ## `src/core/db_safety.py`
 
