@@ -45,9 +45,7 @@ def sourced(expression: str) -> str:
 def test_the_core_is_unedited():
     text = CORE.read_text()
     match = re.search(rf"^{re.escape(MARK_SHA)}(\w+)$", text, flags=re.M)
-    assert match, (
-        "scripts/deploy.sh has no deploying-releases marker: reinstall it with install.sh"
-    )
+    assert match, "scripts/deploy.sh has no deploying-releases marker: run install.sh"
     zeroed = text.replace(match.group(0), MARK_SHA + "0" * 64, 1)
     assert hashlib.sha256(zeroed.encode()).hexdigest() == match.group(1), (
         "scripts/deploy.sh was edited by hand. Put the change in scripts/deploy_hooks.sh "
@@ -62,7 +60,7 @@ def test_the_core_is_executable():
 def test_the_hooks_parse_and_name_the_project():
     project = sourced('printf %s "$PROJECT"')
     assert re.fullmatch(r"[a-z][a-z0-9-]*", project), (
-        f"PROJECT={project!r} is not a unit prefix"
+        f"PROJECT={project!r} is not a unit prefix (lowercase, digits, hyphens)"
     )
 
 

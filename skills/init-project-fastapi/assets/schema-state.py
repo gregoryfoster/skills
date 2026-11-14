@@ -46,7 +46,10 @@ def code_head(script: ScriptDirectory) -> str:
 
 
 def classify(
-    db_revision: str | None, *, head: str, known: frozenset[str]
+    db_revision: str | None,
+    *,
+    head: str,
+    known: frozenset[str],
 ) -> SchemaState:
     """Pure: the state of a database at `db_revision` for code at `head`."""
     if db_revision is None:
@@ -58,13 +61,11 @@ def classify(
 
 async def database_revision(conn: AsyncConnection) -> str | None:
     """The database's revision, or None with no version table (to_regclass never raises)."""
-    if (
-        await conn.execute(text("SELECT to_regclass('alembic_version')"))
-    ).scalar() is None:
+    table = await conn.execute(text("SELECT to_regclass('alembic_version')"))
+    if table.scalar() is None:
         return None
-    return (
-        await conn.execute(text("SELECT version_num FROM alembic_version"))
-    ).scalar()
+    version = await conn.execute(text("SELECT version_num FROM alembic_version"))
+    return version.scalar()
 
 
 async def probe(url: str) -> tuple[SchemaState, str | None, str]:
