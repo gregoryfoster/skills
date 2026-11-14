@@ -201,6 +201,16 @@ The body's six steps, plus what the comments add:
    - #500, #577 and #598 go after this or in the same thread.
    - Done when every file is at or under its target below, re-anchored.
 
+  *Revised in steps 7 and 8 (2026-11-14, one thread by the operator's choice):*
+  - The co-pypi wrapper ships in `deploying-releases` (`install.sh --co-pypi`), not init.
+  - It is byte-identical across repos: `CO_PYPI_KEY`, else `/etc/<[project].name>/co-pypi-reader.json`.
+  - init's `Settings` opens no env file, so `readable_env_files()` has nothing to filter. It reads
+    `$CREDENTIALS_DIRECTORY` (`LoadCredential=`) instead, which takes `settings-scaffolding.md` to 2,291,
+    over its 1,950 target.
+  - `schema_state` ships as an asset.
+  - The API unit is `<project>-api`, and `/health` reports `revision`.
+  - Exact: SKILL.md 13,888, `agents-md-template.md` 5,908, `database-scaffolding.md` 3,863.
+
 | File | Now | Target | Change |
 |---|---|---|---|
 | init `SKILL.md` | 14,555 exact (cap 14,700) | ≤ 14,400 | the 7b delegation; drop `DEPLOY_HOME` and the `BUILD_ID`/`EnvironmentFile` invariant. The 155-token margin is for #500 |
