@@ -9,6 +9,13 @@ does: a migration is as dangerous as a request.
 To extend with a custom type renderer (e.g. ULIDType → sa.String(26)),
 define `render_item` and pass it to context.configure() in both
 do_run_migrations and run_migrations_offline.
+
+Enabling include_schemas=True means every database schema Base.metadata does
+not own (a projection, an extension's schema, a retired schema) must be
+filtered by an `include_name` hook passed to BOTH context.configure() calls,
+or autogenerate proposes dropping its tables and `alembic check` never comes
+clean. Define the hook in an importable module, not here (env.py executes on
+import), so a test can call it.
 """
 
 import asyncio
