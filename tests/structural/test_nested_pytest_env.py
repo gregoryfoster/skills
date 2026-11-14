@@ -10,6 +10,7 @@ here runs a real nested pytest from it and checks one of the three.
 
 import getpass
 import os
+import re
 import subprocess
 import sys
 import textwrap
@@ -166,4 +167,29 @@ def test_a_nested_run_takes_no_workers_and_no_outer_worker_identity(tmp_path):
     assert seen.read_text() == "in-process", (
         f"the nested run's test ran as {seen.read_text()!r}: it took workers "
         "of its own, or inherited the outer worker's identity"
+    )
+
+
+# A real nested pytest, as every site in tests/ starts one: `"-m", "pytest"` as
+# argv elements, on one line or split across two. A pytest a shell string or a
+# `pytest` binary starts is not matched; none of tests/' real ones does.
+NESTED = re.compile(r"""["']-m["']\s*,\s*["']pytest["']""")
+HELPER = "nested_pytest_env"
+
+
+def test_every_file_that_starts_a_pytest_builds_its_env_with_the_helper():
+    """Per file, not per call: a file that already uses the helper and gains
+    a second nested run is not caught. The control is this file's own runs,
+    in both the split and the one-line spelling."""
+    own = Path(__file__).read_text()
+    assert len(NESTED.findall(own)) >= 2, "the pattern no longer finds a nested run"
+    missing = sorted(
+        str(path.relative_to(REPO))
+        for path in (REPO / "tests").rglob("*.py")
+        if NESTED.search(text := path.read_text()) and HELPER not in text
+    )
+    assert not missing, (
+        "these files start a real pytest without tests/utils/nested_pytest.py's "
+        f"{HELPER}, so each run inherits the outer run's temp root, PYTEST_* "
+        f"and worker budget (#554): {missing}"
     )
