@@ -118,6 +118,18 @@ vendored="$(version_of "$CORE")"
 
 report() { printf '%s\t%s\t%s\n' "$1" "${2:--}" "$vendored"; }
 
+# The template, once: never over a repo's own hooks. On every path that
+# leaves a core in place, so a repo with the core and no hooks gets one.
+ensure_hooks() {
+  [[ ! -e "$HOOKS" ]] || return 0
+  if cp "$TEMPLATE" "$HOOKS"; then
+    echo "install.sh: wrote $HOOKS from the template; fill in PROJECT and GITHUB_REPO" >&2
+  else
+    echo "install.sh: could not write $HOOKS" >&2
+    exit 2
+  fi
+}
+
 installed=""
 state=""
 if [[ ! -e "$DEST" ]]; then
@@ -150,6 +162,7 @@ fi
 case "$state" in
   current)
     report current "$installed"
+    ensure_hooks
     exit 0
     ;;
   edited)
@@ -187,12 +200,4 @@ if [[ "$state" == missing || "$state" == foreign ]]; then
 else
   report updated "$installed"
 fi
-
-if [[ ! -e "$HOOKS" ]]; then
-  if cp "$TEMPLATE" "$HOOKS"; then
-    echo "install.sh: wrote $HOOKS from the template; fill in PROJECT and GITHUB_REPO" >&2
-  else
-    echo "install.sh: could not write $HOOKS" >&2
-    exit 2
-  fi
-fi
+ensure_hooks

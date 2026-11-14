@@ -83,6 +83,15 @@ class TestInstall:
         assert result.returncode == 0 and result.stdout == "current\t1\t1\n"
         assert hooks.read_text() == "PROJECT=mine\n"
 
+    def test_a_current_core_with_no_hooks_gets_the_template(self, repo):
+        install(repo)
+        (repo / "scripts" / "deploy_hooks.sh").unlink()
+        result = install(repo)
+        assert result.returncode == 0 and result.stdout == "current\t1\t1\n"
+        assert (
+            repo / "scripts" / "deploy_hooks.sh"
+        ).read_text() == TEMPLATE.read_text()
+
     def test_an_older_core_is_updated(self, repo):
         older = CORE.read_text().replace("version 1", "version 0", 1)
         older = older.replace(recorded_sha(older), body_sha(older), 1)
