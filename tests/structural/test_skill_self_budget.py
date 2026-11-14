@@ -449,7 +449,7 @@ SKILL_MD_RATCHETS = {
 #
 # - `init-project-fastapi` would have to stop being one skill. Its size is
 #   variant explosion in a single file — DEPLOY_TARGET, DB_BACKED, ADMIN_UI,
-#   PRIVATE_WHEELHOUSE each fork the procedure, and every run loads all four
+#   PRIVATE_INDEX each fork the procedure, and every run loads all four
 #   forks to walk one. Conditional-block delimiters (docs/CONVENTIONS.md) or a
 #   split into a core bootstrap plus per-variant references would let a run load
 #   only its own path. That is a redesign, and it is #96's kind of work.

@@ -39,7 +39,7 @@ UNIT_DOC = SKILL / "references" / "systemd-deploy.md"
 # Running an env file as shell code: `. file`, `source file`, after a line
 # start or a command separator. `>> ./.env` and `grep … ./.env` do not match.
 _SOURCES_AN_ENV_FILE = re.compile(r"(?:^|[;&|(`\s])(?:\.|source)\s+\S*\.env\b")
-# A path, not the bare `EnvironmentFile=` that prose names (private-wheelhouse.md).
+# A path, not the bare `EnvironmentFile=` that prose names.
 _ENVIRONMENT_FILE = re.compile(r"EnvironmentFile=-?([^`\s]+)")
 # The only places a production unit may read env from.
 _UNIT_ENV_PREFIXES = ("/etc/<PROJECT_NAME>/", "/run/<PROJECT_NAME>/")
