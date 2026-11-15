@@ -11,7 +11,7 @@
 # Usage: epic-edit.sh --repo OWNER/REPO --epic N [--ops FILE|-] [--dry-run]
 #                     [--scan FILE] [--accept-ticks REFS] [--adopt-live]
 #                     [--lint-all] [--account [FROM]] [--no-link-check]
-#                     [--state-dir DIR]
+#                     [--state-dir DIR] [--token-for OWNER/REPO=VAR]...
 #        epic-edit.sh --help    full usage, operations and exit codes
 #
 # Needs python3 (3.9+) and an authenticated gh. JSON summary on stdout;

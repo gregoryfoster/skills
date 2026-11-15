@@ -76,10 +76,10 @@ Walk proposed closures with the operator. Four parts each: what it asks, what ch
 
 ## Mechanics
 
-- **Draft the body to a file first.** A refused create then costs one handed-over command, not a rewrite (power-map 60). Creation is the one body write that doesn't go through `epic-edit.sh`, so guard it by hand. Refuse an empty or whitespace-only file. Take the number from the URL `gh` prints, and stop if it isn't the one the body predicted, `$PREDICTED` (archiver 2, watcher F11). A mismatch means the body's own refs to it are wrong: fix them with `epic-edit.sh` before going on.
+- **Draft the body to a file first.** A refused create then costs one handed-over command, not a rewrite (power-map 60). Creation is the one body write that doesn't go through `epic-edit.sh`, so guard it by hand. `comment.sh --lint-file` lints the draft before it is public, as the editor would, and refuses an empty or whitespace-only file; `--predicted` lets the body name its own number (#395). Take the number from the URL `gh` prints, and stop if it isn't the one the body predicted, `$PREDICTED` (archiver 2, watcher F11). A mismatch means the body's own refs to it are wrong: fix them with `epic-edit.sh` before going on.
 
   ```bash
-  grep -q '[^[:space:]]' "${SCRATCH:?}/epic.md" \
+  bash "<comment.sh>" --repo OWNER/REPO --lint-file "${SCRATCH:?}/epic.md" --predicted "$PREDICTED" \
     && URL=$(gh issue create -R OWNER/REPO --title "…" --body-file "${SCRATCH:?}/epic.md") \
     && N=${URL##*/} && echo "created #$N" \
     && bash "<epic-edit.sh>" --repo OWNER/REPO --epic "$N" --adopt-live --lint-all --ops - <<<'[]' \

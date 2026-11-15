@@ -101,7 +101,7 @@ bash "<harvest-candidates.sh>" --repo <owner/repo> --epic <N> --source <closed c
 
 Read the `named` rows, then the `judged` rows from the top. Verify each row before you write it back. A row ranks a candidate; it isn't a finding. Exits 2 and 4 mean harvest by reading alone. `--help` gives the columns and `--max-calls`, which caps a long thread.
 
-**Write back as comments,** headed "Changed since filed". A comment only appends, so it can't race a concurrent body edit, and it keeps what the issue first said. Body edits are kept for the epic's checklist and its own lines (archiver 15). A design amendment goes through a docs PR. The hand-off names it as a prerequisite once a child depends on it (archiver 16, 23).
+**Write back as comments,** headed "Changed since filed", each posted with `bash "<comment.sh>" --repo OWNER/REPO --issue N --body-file "${SCRATCH:?}/note.md"`. It refuses what the editor's lint refuses, then reads the comment back; exit 4 means it was posted, so read the issue before posting again (#395). A comment only appends, so it can't race a concurrent body edit, and it keeps what the issue first said. Body edits are kept for the epic's checklist and its own lines (archiver 15). A design amendment goes through a docs PR. The hand-off names it as a prerequisite once a child depends on it (archiver 16, 23).
 
 **When an item closes, rewrite the lines that depended on it.** "Depends on #270" becomes "dependency met: the error now carries `retry_after_seconds`, so the route only forwards it" (address-validator 45).
 
