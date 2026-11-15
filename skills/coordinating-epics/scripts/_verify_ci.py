@@ -171,7 +171,7 @@ def push_trigger(doc: dict):
 
 
 def push_runs(
-    trigger: dict, branch: str, files: list[str], warnings: list[str], wf: str
+    trigger: dict, branch: str, files: list[str] | None, warnings: list[str], wf: str
 ):
     """True, False, or "conditional" when the files can't settle it."""
     branches = as_list(trigger.get("branches"))
@@ -180,12 +180,19 @@ def push_runs(
         return False
     if ignored and matches(ignored, branch):
         return False
-    if not branches and not ignored and trigger.get("tags") is not None:
-        return False  # tags only: a branch push doesn't trigger it
+    tagged = any(trigger.get(k) is not None for k in ("tags", "tags-ignore"))
+    if not branches and not ignored and tagged:
+        return False  # tag filters only: a branch push doesn't trigger it
     paths = as_list(trigger.get("paths"))
     ignore = as_list(trigger.get("paths-ignore"))
     if not paths and not ignore:
         return True
+    if files is None:
+        warnings.append(
+            f"{wf}: the commit has no parent, so the files a path filter reads"
+            " are unknown"
+        )
+        return "conditional"
     if len(files) > FILTER_FILES:
         warnings.append(
             f"{wf}: {len(files)} files changed, and GitHub filters on the first"
@@ -368,7 +375,7 @@ def latest_on_branch(repo: str, branch: str) -> list[dict]:
         )
         # A queued run has no jobs yet: the run stands for them, or its
         # pending state would read as nothing to report.
-        for j in jobs or [dict(latest, name=None)]:
+        for j in jobs or [dict(latest, name="(no jobs yet)")]:
             rows.append(
                 job_row(
                     j,
@@ -387,7 +394,7 @@ def latest_on_branch(repo: str, branch: str) -> list[dict]:
 def expect(
     docs: dict[str, dict],
     branch: str,
-    files: list[str],
+    files: list[str] | None,
     skip_ci: bool,
     warnings: list[str],
 ) -> list[dict]:
@@ -436,6 +443,7 @@ def judge(expected: list[dict], rows: list[dict]) -> tuple[list[dict], list[dict
             r
             for r in rows
             if r["target"] == "sha"
+            and r["event"] == "push"
             and r["workflow"] == e["workflow"]
             and runs_as(r["job"] or "", e["prefix"], e["whole"])
         ]
@@ -474,7 +482,9 @@ def verdict(
 # ---------------------------------------------------------------- main
 
 
-def read_once(a, report: dict, docs: dict, files: list[str], skip_ci: bool) -> None:
+def read_once(
+    a, report: dict, docs: dict, files: list[str] | None, skip_ci: bool
+) -> None:
     warnings: list[str] = list(report["warnings_fixed"])
     expected = expect(docs, report["branch"], files, skip_ci, warnings)
     rows = check_rows(a.repo, report["sha"], "sha")
@@ -549,30 +559,29 @@ def run(argv: list[str]) -> int:
             ["api", f"repos/{a.repo}"], "reading the default branch"
         ).get("default_branch")
         fixed: list[str] = []
-        if base is None:
-            fixed.append(
-                "the commit has no parent, so every workflow file is read as changed"
-            )
-        files = changed_files(a.repo, base, sha) if base else []
+        files = changed_files(a.repo, base, sha) if base else None
         docs = workflows_at(a.repo, sha, fixed)
-        if base is None:
-            files = list(docs)
         report = {
             "repo": a.repo,
             "sha": sha,
             "base": base,
             "branch": branch,
-            "changed_files": len(files),
+            "changed_files": None if files is None else len(files),
             "warnings_fixed": fixed,
         }
         deadline = time.monotonic() + a.wait
         while True:
             read_once(a, report, docs, files, bool(SKIP_CI_RE.search(message)))
             left = deadline - time.monotonic()
-            if report["verdict"] not in ("pending", "incomplete") or left <= 0:
+            # An unmatched name stays unmatched: only a pending job or a
+            # missing one, whose run may not exist yet, can change.
+            waiting = report["verdict"] == "pending" or (
+                report["verdict"] == "incomplete" and report["missing"]
+            )
+            if not waiting or left <= 0:
                 break
             time.sleep(min(a.interval, left))
-        if report["verdict"] in ("pending", "incomplete") and a.wait:
+        if waiting and a.wait:
             report["warnings"].append(
                 f"still {report['verdict']} after --wait {a.wait}"
             )

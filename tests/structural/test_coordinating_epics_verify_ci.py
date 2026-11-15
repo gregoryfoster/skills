@@ -467,3 +467,45 @@ def test_usage_errors_are_exit_1_and_read_nothing(rig, args):
     res = rig.run(*args)
     assert res.returncode == 1, res.stderr
     assert not rig.path.exists() or "calls" not in json.loads(rig.path.read_text())
+
+
+# ---------------------------------------------------------------- CR 2242–2246
+
+
+def test_cr_2242_tags_ignore_alone_doesnt_trigger_on_a_branch_push(rig):
+    wf = "name: CI\non: {push: {tags-ignore: ['v*']}}\njobs:\n  lint:\n    runs-on: x\n"
+    rig.state["workflows"]["ci.yml"] = wf
+    rig.state["checks"][SHA] = [[]]
+    assert report(rig.run())["missing"] == []
+
+
+def test_cr_2243_a_pull_request_run_doesnt_stand_for_the_push(rig):
+    rig.state["runs"][SHA] = [run_of(".github/workflows/ci.yml", event="pull_request")]
+    rep = report(rig.run())
+    assert {m["job"] for m in rep["missing"]} == {"lint", "Tests"}
+    assert rows(rep)["lint"]["expected"] is False
+
+
+def test_cr_2244_a_root_commits_filtered_workflow_is_conditional(rig):
+    rig.state["commits"][SHA]["parents"] = []
+    rig.state["checks"][SHA] = [[]]
+    rep = report(rig.run())
+    assert rep["base"] is None and rep["changed_files"] is None
+    assert rep["missing"] == [] and any("no parent" in w for w in rep["warnings"])
+
+
+def test_cr_2245_a_queued_run_with_no_jobs_yet_is_pending(rig):
+    rig.state["latest"]["7"] = dict(run_of(".github/workflows/ci.yml"), status="queued")
+    rig.state["jobs"]["100"] = [[]]
+    rep = report(rig.run())
+    row = rows(rep, "main-latest")["(no jobs yet)"]
+    assert row["status"] == "queued" and rep["verdict"] == "pending"
+
+
+def test_cr_2246_wait_doesnt_re_read_for_a_name_it_cant_match(rig):
+    rig.state["workflows"]["ci.yml"] = CI.replace(
+        "name: Tests", "name: ${{ matrix.py }}"
+    )
+    rep = report(rig.run("--wait", "30", "--interval", "1"))
+    assert rep["verdict"] == "incomplete"
+    assert json.loads(rig.path.read_text())["reads"]["checks" + SHA] == 1
