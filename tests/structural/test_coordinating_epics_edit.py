@@ -203,6 +203,19 @@ def test_a_foreign_tick_is_a_claim_until_accepted(adopted):
     assert "- [x] #11" in body and "- [x] #12" in body
 
 
+def test_the_foreign_tick_refusal_prints_the_argument_to_pass(adopted):
+    """#621 finding 4: "pass --accept-ticks" alone was taken as the bare flag,
+    an argparse usage error. The refusal prints the whole argument."""
+    body = BODY.replace("- [ ] #12", "- [x] #12").replace("- [ ] #11", "- [x] #11")
+    adopted.issue(REPO, EPIC, body=body)
+    res = adopted.edit(REPO, EPIC, [])
+    assert res.returncode == 3, res.stderr
+    assert "--accept-ticks 'acme/widgets#11,acme/widgets#12'" in res.stderr
+    arg = re.search(r"--accept-ticks '([^']+)'", res.stderr).group(1)
+    res = adopted.edit(REPO, EPIC, [], "--accept-ticks", arg)
+    assert res.returncode == 0, res.stderr
+
+
 def test_an_uppercase_foreign_tick_is_still_a_tick(adopted):
     """CR 254: GitHub's own UI writes [x], but [X] is a tick too."""
     adopted.issue(REPO, EPIC, body=BODY.replace("- [ ] #12", "- [X] #12"))
