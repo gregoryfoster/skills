@@ -83,7 +83,7 @@ Show the operator the drafted body and the proposed closures before anything is 
 
 On "I finished #N", "next", or a report between threads:
 
-0. **Read the state.** Run `bash "<scan.sh>" --repo OWNER/REPO --epic N > "${SCRATCH:?}/scan.json"` for what arrived, and `epic-edit.sh … --dry-run` for whether the body moved. A box the implementer ticked is a claim. An operator request to unblock someone outside waits on nothing: do it first.
+0. **Read the state.** Run `bash "<scan.sh>" --repo OWNER/REPO --epic N > "${SCRATCH:?}/scan.json"` for what arrived (`--also owner/repo` per other repo of a cross-repo parent), and `epic-edit.sh … --dry-run` for whether the body moved. A box the implementer ticked is a claim. An operator request to unblock someone outside waits on nothing: do it first.
 1. **Verify from evidence** ([check-in.md](references/check-in.md) §1):
    - the whole commit range since the hand-off;
    - CI by job on the final SHA and on `main`'s tip;

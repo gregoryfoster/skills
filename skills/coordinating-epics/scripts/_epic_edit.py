@@ -102,8 +102,8 @@ operations (a JSON array, from --ops FILE or --ops - for stdin):
                                               the end at the sections' level
 
   A header op adds a line only for a cursor field the body lacks (Last
-  check-in, Last probe, Last issue seen, Last verified SHA, Next); any other
-  field must already be there. It reads unindented lines only, as scan.sh
+  check-in, Last probe, Last issue seen, Last issue seen (owner/repo), Last
+  verified SHA, Next); any other field must already be there. It reads unindented lines only, as scan.sh
   does: an indented "**Field:**" line, a checklist item's sub-note or a header
   list set in 1-3 spaces, is skipped, and the summary's notes name it. The
   line joins the top-level "- **Field:**" list holding the cursor lines, else
@@ -131,7 +131,10 @@ operations (a JSON array, from --ops FILE or --ops - for stdin):
   With --scan FILE (scan.sh's report), {checked} becomes the report's own time
   and {last_seen} its highest number (#58). Write those two into the header's
   Last check-in and Last issue seen: the next scan's window then starts where
-  this one looked, not where the write happened.
+  this one looked, not where the write happened. With scan.sh --also,
+  {last_seen:owner/repo} is that repo's highest number as owner/repo#N, for
+  its "Last issue seen (owner/repo)" line, and each such repo's new issues
+  must be mentioned by owner/repo#N, as the host's are by #N (#400).
 
 edit history:
   Each run with a baseline reads the body's edit history (GraphQL) and lists,
@@ -241,7 +244,7 @@ PLACEHOLDER_RES = [
     (re.compile(r"\bSUB\d+\b"), "an unfilled SUBn placeholder", True),
     (re.compile(r"\{\{[^}]*\}\}"), "an unfilled {{...}} placeholder", False),
     (
-        re.compile(r"\{(?:now|today|checked|last_seen)\}"),
+        re.compile(r"\{(?:now|today|checked|last_seen(?::[^{}\s]*)?)\}"),
         "an uninjected {now}/{today}/{checked}/{last_seen}",
         False,
     ),
@@ -466,6 +469,20 @@ CURSOR_FIELDS = {
 }
 
 
+PER_REPO_CURSOR_RE = re.compile(
+    r"last issue seen \((?P<repo>" + OWNER_REPO + r")\)", re.IGNORECASE
+)
+# {last_seen:owner/repo}: an --also repo's highest number, qualified (#400).
+LAST_SEEN_FOR_RE = re.compile(r"\{last_seen:(?P<repo>[^{}\s]*)\}")
+
+
+def per_repo_cursor(field: str) -> str | None:
+    """The lowercased owner/repo of a "Last issue seen (owner/repo)" field, or
+    None: an --also repo's own watermark (#400)."""
+    m = PER_REPO_CURSOR_RE.fullmatch(field.strip())
+    return m.group("repo").lower() if m else None
+
+
 def is_cursor_line(line: str) -> bool:
     """A header cursor line, whose refs (Last issue seen, Next) track no issue.
 
@@ -477,7 +494,10 @@ def is_cursor_line(line: str) -> bool:
     return (
         bool(m)
         and not line[:1].isspace()
-        and m.group("field").strip().lower() in CURSOR_FIELDS
+        and (
+            m.group("field").strip().lower() in CURSOR_FIELDS
+            or per_repo_cursor(m.group("field")) is not None
+        )
     )
 
 
@@ -1085,6 +1105,17 @@ def refs_in(lines: list[str], host: str) -> set[str]:
 
 
 def inject(text: str, now: dt.datetime, scan: dict | None = None) -> str:
+    def per_repo(m: re.Match) -> str:
+        if not scan:
+            raise Usage(f"{m.group(0)} needs --scan with scan.sh's report")
+        hit = (scan.get("also") or {}).get(m.group("repo").lower())
+        if hit is None:
+            raise Usage(
+                f"{m.group(0)}: the --scan report has no --also {m.group('repo')}"
+            )
+        return hit["last_seen"]
+
+    text = LAST_SEEN_FOR_RE.sub(per_repo, text)
     for name in ("checked", "last_seen"):
         if "{" + name + "}" in text:
             if not scan:
@@ -1238,12 +1269,15 @@ def apply_ops(
                         f" {i + 1}: neither this op nor scan.sh reads an indented"
                         " line as the header's"
                     )
-                if not hits and field.lower() in CURSOR_FIELDS:
+                if not hits and (
+                    field.lower() in CURSOR_FIELDS or per_repo_cursor(field)
+                ):
                     # An adopted epic gets its cursors through here, not a
                     # hand edit (CR 292). Other fields aren't added: a typo
                     # would make a line no script reads.
                     pos, joins = header_end(lines)
-                    new = [f"- **{CURSOR_FIELDS[field.lower()]}:** {value}".rstrip()]
+                    name = CURSOR_FIELDS.get(field.lower(), field.strip())
+                    new = [f"- **{name}:** {value}".rstrip()]
                     if pos < len(lines) and lines[pos].strip():
                         new.append("")
                     if not joins and pos and lines[pos - 1].strip():
@@ -2025,6 +2059,109 @@ def foreign_changes(
 # ---------------------------------------------------------------- state
 
 
+def also_from_report(
+    report: dict, name: str, ops: list[dict], uses_checked: bool
+) -> dict:
+    """Each --also repo's part of a scan.sh report, checked as the host's is,
+    with {checked} and {last_seen:owner/repo} guarded per repo (#400).
+
+    {checked} is one time for every repo, so a capped updates or comments
+    listing in any of them holds it. {last_seen:owner/repo} takes CR 265,
+    276 and 302's guards from that repo's own entry.
+    """
+    raw = report.get("also")
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise Usage(f"--scan {name}: also must be an object keyed by owner/repo")
+    out = {}
+    for low, e in raw.items():
+        if not isinstance(e, dict) or type(e.get("max_number")) is not int:
+            raise Usage(f"--scan {name}: also {low} has no usable max_number")
+        repo = str(e.get("repo") or low)
+        for field in ("new_numbers", "updated_since"):
+            rows = e.get(field)
+            if rows is not None and not (
+                isinstance(rows, list)
+                and all(
+                    isinstance(r, dict) and type(r.get("number")) is int for r in rows
+                )
+            ):
+                raise Usage(
+                    f"--scan {name}: also {low} {field} must be a list of rows with a number"
+                )
+        cur = e.get("cursors")
+        wm = cur.get("watermark") if isinstance(cur, dict) else "?"
+        if wm is not None and type(wm) is not int:
+            raise Usage(
+                f"--scan {name}: also {low} cursors must be an object whose"
+                " watermark is a number or null"
+            )
+        capped = e.get("capped") or []
+        if not isinstance(capped, list):
+            raise Usage(f"--scan {name}: also {low} capped must be a list")
+        out[low.lower()] = {
+            "repo": repo,
+            "last_seen": f"{repo}#{e['max_number']}",
+            # As the host's new_issues: the walk's finds, and updates above
+            # the old watermark (CR 276). Unrelated rows were never listed.
+            "new_issues": sorted(
+                {
+                    r["number"]
+                    for r in (e.get("new_numbers") or [])
+                    + [
+                        u
+                        for u in e.get("updated_since") or []
+                        if wm is not None and u["number"] > wm
+                    ]
+                    if r.get("kind") == "issue"
+                }
+            ),
+        }
+        cut = [w for w in capped if w in ("listing updates", "reading new comments")]
+        if uses_checked and cut:
+            raise Usage(
+                f"the report's {repo} {', '.join(cut)} hit its page cap, so"
+                " {checked} would move the window past rows it never listed."
+                " Re-scan with a later --since, one you have read up to"
+            )
+        if not any(
+            isinstance(v, str)
+            and any(
+                m.group("repo").lower() == low.lower()
+                for m in LAST_SEEN_FOR_RE.finditer(v)
+            )
+            for op in ops
+            for v in op.values()
+        ):
+            continue
+        if "listing updates" in capped:
+            raise Usage(
+                f"the report's {repo} listing updates hit its page cap, so"
+                f" {{last_seen:{repo}}} could skip an issue transferred in. Re-scan"
+                " with a later --since"
+            )
+        if e.get("new_numbers") is None:
+            raise Usage(
+                f"the report scanned no {repo} numbers (no watermark), so"
+                f" {{last_seen:{repo}}} would skip issues nobody saw. Write its"
+                f" '- **Last issue seen ({repo}):** {repo}#N' line, then re-scan"
+            )
+        if "listing new numbers" in capped:
+            raise Usage(
+                f"the report's {repo} number walk hit its page cap, so"
+                f" {{last_seen:{repo}}} would skip numbers it never reached."
+                " Re-scan from a closer watermark"
+            )
+        if e.get("updated_since") is None:
+            raise Usage(
+                f"the report scanned no {repo} updates (no since), so"
+                f" {{last_seen:{repo}}} would skip an issue transferred in. Give"
+                " scan.sh --since, then re-run"
+            )
+    return out
+
+
 def state_dir(arg: str | None, repo: str, num: int) -> Path:
     base = (
         Path(arg)
@@ -2402,6 +2539,7 @@ def run(argv: list[str]) -> int:
                         "the report scanned no updates (no since), so {last_seen} would"
                         " skip an issue transferred in. Give scan.sh --since, then re-run"
                     )
+            scan["also"] = also_from_report(report, a.scan, ops, uses("checked"))
         if scan is None:
             needs = sorted(
                 {
@@ -2410,6 +2548,13 @@ def run(argv: list[str]) -> int:
                     for v in op.values()
                     for p in ("{checked}", "{last_seen}")
                     if isinstance(v, str) and p in v
+                }
+                | {
+                    m.group(0)
+                    for op in ops
+                    for v in op.values()
+                    if isinstance(v, str)
+                    for m in LAST_SEEN_FOR_RE.finditer(v)
                 }
             )
             if needs:  # before the fetch: exit 1 means nothing was fetched (CR 269)
@@ -2593,6 +2738,25 @@ def run(argv: list[str]) -> int:
                 raise Refused(
                     "the scan found issues this write doesn't mention: "
                     + ", ".join(f"#{n}" for n in missing)
+                    + ". Slot each, or name it in the log line or log comment"
+                    " (e.g. 'out of epic')"
+                )
+        # The same per --also repo, by qualified ref (#400).
+        also_new = [
+            (entry["repo"], n)
+            for entry in ((scan or {}).get("also") or {}).values()
+            for n in entry["new_issues"]
+        ]
+        if also_new:
+            mentioned = refs_in([ln for ln in new if not is_cursor_line(ln)], host)
+            mentioned |= refs_in([ln for c in comments for ln in c.split("\n")], host)
+            missing_also = [
+                f"{r}#{n}" for r, n in also_new if key(r, n, host) not in mentioned
+            ]
+            if missing_also:
+                raise Refused(
+                    "the scan found issues this write doesn't mention: "
+                    + ", ".join(missing_also)
                     + ". Slot each, or name it in the log line or log comment"
                     " (e.g. 'out of epic')"
                 )

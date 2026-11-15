@@ -112,6 +112,8 @@ Read the `named` rows, then the `judged` rows from the top. Verify each row befo
 - **Updated since `Last check-in`**, with new and edited comments on the epic's items. This catches a reply on a closed child, a gate flipped in another thread, or a late approval (private-backlog 152, watcher F13, status 74). New comments on the epic itself come apart, as `epic_comments`: a sibling coordinator or the operator writes there, never in the body ([siblings.md](siblings.md)). The listing has left out an issue updated minutes earlier (#407), so the window opens 30 minutes early, comments included, and a row or comment from those minutes carries `in_overlap`: likely seen last time, so check before acting twice. The epic's own items are cross-checked too: one the listing missed comes back `recovered`, with a warning.
 - **The commit range**, from §1.
 
+**A cross-repo parent** keeps one more cursor per other repo, `- **Last issue seen (owner/repo):** owner/repo#N`. Pass `--also owner/repo` for each, and the report's `also` key gives that repo's number walk and updates, keeping only its rows that are children or mention the epic or a child; `unrelated` counts the rest. Write `{last_seen:owner/repo}` into its line. The editor refuses a new issue there that the write doesn't mention by `owner/repo#N`, and holds `{checked}` when any repo's listing hit its cap (#400). The commit range stays this repo's.
+
 Also re-read:
 - the epics listed under "not tracked here" (status 39);
 - other epics' lines that name this repo (broker 118);
