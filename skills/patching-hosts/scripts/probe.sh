@@ -53,11 +53,14 @@ Options:
                       DIR's filesystem with 131072 KiB left. The count is the
                       security set exactly only while pending.dry_run's
                       security_only is true; wider origins, or another lane,
-                      put other packages on the same line. DIR/summary holds
+                      put other packages on the same line. It counts only
+                      against lists fetched within 24 hours: pass
+                      --refresh-into DIR with it (#629). DIR/summary holds
                       when it began, its exit, count, wall time, lane and
                       security_only, in the one-origin lane what it would
-                      leave, and the version it counted of each package a
-                      hold group takes, which apply.sh --dry-run reads; its
+                      leave, the version it counted of each package a
+                      hold group takes, and whether its lists were refreshed
+                      and their age, which apply.sh --dry-run reads; its
                       download size, memory and free disk are in the JSON. An earlier
                       summary is removed first. What the run would write is
                       sized from apt's metadata, as apply.sh gates each step
@@ -67,7 +70,9 @@ Options:
                       filesystem, when it would take the disk GC's [sensor]
                       mount to its alert_at_percent, or when the GC's
                       config can't be read or parsed. A dry run that doesn't run
-                      (no root, a lane the knob doesn't resolve, an
+                      (no root, without --refresh-into the host's lists
+                      older than 24 hours or of unknown age, a lane the
+                      knob doesn't resolve, an
                       unsimulated set, an origin's site unread, a download
                       that wouldn't fit or can't be sized) still exits
                       0: it's a finding with id dry-run, and leaves no
@@ -2728,6 +2733,7 @@ origin_fresh() {  # <key>
 read_dry_run() {
   local o="" conf t0 t1 out rc line names="" n="" dlk="" free="" rss="" w sel=0 lnames="" lkeep="" lskip=""
   local oleft="" left_read=0 kw p rest unlisted="" prompts="" cfp="" cfs="" i k keys="" po="" hv
+  local lage=""
   local -a words=() cf_states=() cf_keys=()
   R_DRY=null R_PASSED_OVER=null
   if [ -z "$dryrun" ]; then
@@ -2788,6 +2794,21 @@ read_dry_run() {
       fi
       origin_split lkeep lskip "$lnames" "$SIM_DIST_OUT" ;;
   esac
+  # On lists more than a day old it counts the lists, not the host, in any
+  # lane: address-validator's, 167 hours old, counted 0 where a refresh
+  # counted 19, and that 3 s set the bulk's budget; replicator's, 525 hours
+  # old, aborted on a .deb the archive had dropped, after 60 MiB of downloads
+  # (#629). Fresh is fetched in this run, or a security list fetched within
+  # lists:stale's 24 hours, by the same ctime reading. An age that can't be
+  # read isn't fresh.
+  if [ -n "$LISTS_FETCHED" ]; then lage=$(((P_NOW - LISTS_FETCHED) / 3600)); fi
+  if [ "$REFRESHED" -eq 0 ] && [ -z "$lage" ]; then
+    finding unknown dry-run "" "the $lane lane's dry run didn't run: when the host's security list was fetched can't be read (pending.lists.source), and on lists more than a day old it counts the lists, not the host (#629). Count with --refresh-into DIR --dry-run-into DIR."
+    return 0
+  elif [ "$REFRESHED" -eq 0 ] && [ "$lage" -gt 24 ]; then
+    finding risk dry-run "" "the $lane lane's dry run didn't run: the host's security list was fetched $lage hours ago (lists:stale), and on lists that old it counts the lists, not the host: 0 where they name nothing pending, or an abort on a .deb the archive has dropped (#629). Count with --refresh-into DIR --dry-run-into DIR."
+    return 0
+  fi
   {
     if [ -n "$P_ROOT" ]; then printf 'Dir "%s/";\n' "$P_ROOT"; fi
     printf 'Dir::Cache::archives "%s/archives/";\n' "$dryrun"
@@ -2956,6 +2977,8 @@ read_dry_run() {
       "$t0" "$rc" "$n" "$((t1 - t0))" "$DRY_SECURITY_ONLY" "$lane"
     if [ "$left_read" -eq 1 ]; then printf 'origin_left=%s\n' "${oleft# }"; fi
     printf 'held_versions=%s\n' "$hv"
+    # Whether its lists were fresh, which apply.sh checks in every lane (#629).
+    printf 'lists_refreshed=%s\nlists_age_hours=%s\n' "$REFRESHED" "$lage"
   } >"$dryrun/summary"
   jadds o summary "$dryrun/summary"
   # What the run would write, sized as apply.sh sizes each step (#390),

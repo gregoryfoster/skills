@@ -245,6 +245,24 @@ class Host:
             ),
         )
 
+    def refreshed(self, *lists: str) -> tuple[str, str]:
+        """--refresh-into, which a dry run counts after (#629): an update
+        that fetches the security list, and LISTS, into the scratch copy."""
+        names = " ".join(
+            f'"${{d}}{n}"'
+            for n in (
+                "security.ubuntu.com_ubuntu_dists_noble-security_InRelease",
+                *lists,
+            )
+        )
+        self.on(
+            "apt-get",
+            "update*",
+            script="for a; do case $a in Dir::State::Lists=*) d=${a#*=} ;; esac; done; "
+            f"touch {names}; exit 0",
+        )
+        return ("--refresh-into", str(self.tmp / "fresh"))
+
     def redis_listens(self, pid: int = 4242, address: str = "0.0.0.0") -> "Host":
         """ss, as root reads it (#379): PID listens at ADDRESS on whichever
         port is asked, and on whichever socket path, in noble's format."""

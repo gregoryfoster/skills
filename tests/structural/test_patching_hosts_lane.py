@@ -109,7 +109,7 @@ def _lane(tmp_path, knob: str = KNOB + ORIGINS, extra: str = "") -> ApplyHost:
     _dump(host, extra)
     (host.dry / "summary").write_text(
         f"began={TUE_1530 - 3600}\nexit=0\ncount=6\nwall_seconds=540\n"
-        "security_only=0\nlane=maintenance\n"
+        "security_only=0\nlane=maintenance\nlists_refreshed=1\n"
     )
     return host
 
@@ -265,13 +265,37 @@ def test_a_dry_run_of_another_lane_is_refused(
 ):
     host = _lane(tmp_path)
     (host.dry / "summary").write_text(
-        f"began={TUE_1530 - 3600}\nexit=0\ncount=6\nwall_seconds=540\n{summary_lane}"
+        f"began={TUE_1530 - 3600}\nexit=0\ncount=6\nwall_seconds=540\n"
+        f"lists_refreshed=1\n{summary_lane}"
     )
     out = host.run(*args, rc=3)
     assert any(
         f"counted the {counted} lane, and this bulk runs the {runs} lane" in r
         for r in out["refused"]
     ), out["refused"]
+    assert not host.calls("unattended-upgrade")
+
+
+@pytest.mark.parametrize(
+    "lists, refused",
+    [
+        ("lists_refreshed=0\nlists_age_hours=167\n", "fetched 167 hours before it"),
+        ("", "doesn't say whether the lists it counted against were fresh"),
+    ],
+    ids=["stale", "no-line"],
+)
+def test_a_maintenance_dry_run_counted_against_stale_lists_is_refused(
+    tmp_path, lists, refused
+):
+    # #629: address-validator's maintenance-lane dry run counted 0 in 3 s on
+    # 167-hour-old lists; refreshed, it counted 19 in 39 s.
+    host = _lane(tmp_path)
+    (host.dry / "summary").write_text(
+        f"began={TUE_1530 - 3600}\nexit=0\ncount=0\nwall_seconds=3\n"
+        f"security_only=0\nlane=maintenance\n{lists}"
+    )
+    out = host.run("--lane", "maintenance", rc=3)
+    assert any(refused in r for r in out["refused"]), out["refused"]
     assert not host.calls("unattended-upgrade")
 
 
@@ -368,7 +392,9 @@ def test_the_probes_dry_run_counts_the_maintenance_lane(tmp_path):
         "Packages that will be upgraded: libaudit1 libc6\n",
     )
     scratch = host.tmp / "dry"
-    out = host.run("--dry-run-into", str(scratch), "--lane", "maintenance")
+    out = host.run(
+        *host.refreshed(), "--dry-run-into", str(scratch), "--lane", "maintenance"
+    )
     d = out["pending"]["dry_run"]
     assert d["lane"] == "maintenance"
     assert d["security_only"] is False
@@ -515,7 +541,7 @@ def _one_origin(
     host.uu(TOOK, before=f'touch "{s}/took"; ')
     (host.dry / "summary").write_text(
         f"began={TUE_1530 - 3600}\nexit=0\ncount=1\nwall_seconds=60\n"
-        f"security_only=0\nlane={TS}\norigin_left=\n"
+        f"security_only=0\nlane={TS}\norigin_left=\nlists_refreshed=1\n"
     )
     return host
 
@@ -550,7 +576,7 @@ def test_a_one_origin_dry_run_that_counted_nothing_is_refused(tmp_path):
     host = _one_origin(tmp_path)
     (host.dry / "summary").write_text(
         f"began={TUE_1530 - 3600}\nexit=0\ncount=0\nwall_seconds=60\nlane={TS}\n"
-        "origin_left=\n"
+        "origin_left=\nlists_refreshed=1\n"
     )
     out = host.run("--lane", TS, rc=3)
     assert any(
@@ -579,7 +605,8 @@ def test_a_one_origin_dry_run_that_would_leave_its_packages_is_refused(
     # doesn't start.
     host = _one_origin(tmp_path)
     (host.dry / "summary").write_text(
-        f"began={TUE_1530 - 3600}\nexit=0\ncount=1\nwall_seconds=60\nlane={TS}\n" + left
+        f"began={TUE_1530 - 3600}\nexit=0\ncount=1\nwall_seconds=60\nlane={TS}\n"
+        "lists_refreshed=1\n" + left
     )
     out = host.run("--lane", TS, rc=3)
     assert any(refused in r for r in out["refused"]), out["refused"]
@@ -688,6 +715,7 @@ def test_the_one_origin_lane_takes_only_an_origin_the_knob_follows(
     host = _one_origin(tmp_path)
     (host.dry / "summary").write_text(
         f"began={TUE_1530 - 3600}\nexit=0\ncount=1\nwall_seconds=60\nlane={lane}\n"
+        "lists_refreshed=1\n"
     )
     out = host.run("--lane", lane, rc=3)
     assert any(refused in r for r in out["refused"]), out["refused"]
