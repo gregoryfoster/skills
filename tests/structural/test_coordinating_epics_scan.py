@@ -405,6 +405,26 @@ def test_654_a_row_with_a_later_update_than_its_record_stays(rig):
     assert r["own_comments"]["rows_dropped"] == []
 
 
+def test_a_record_naming_another_epic_is_news_not_ours(rig):
+    """CR 2209: the marker names its epic. A sibling coordinator's record on a
+    shared child is that coordinator's verification, news to this one, so the
+    scan keeps it; only this epic's own records are dropped."""
+    at = {"created_at": "2026-10-02T11:00:00Z", "updated_at": "2026-10-02T11:00:00Z"}
+    rig.issue(REPO, 12, updated_at="2026-10-02T11:00:00Z")
+    rig.comment(
+        REPO, 12, 903, body="**Coordinator record, acme/gadgets#40**\n\nok", **at
+    )
+    rig.comment(
+        REPO, 11, 904, body="**Coordinator record, Acme/Widgets#10**\n\nok", **at
+    )
+    r = scan(rig)
+    rows = {x["number"]: x for x in r["updated_since"]}
+    assert 12 in rows and [c["id"] for c in rows[12]["new_comments"]] == [903]
+    assert "record_comments" not in rows[12]
+    assert rows[11]["record_comments"] == 1  # this epic's, in any case
+    assert r["own_comments"]["rows_dropped"] == []
+
+
 def test_cross_repo_refs_carry_state_or_say_why_not(rig):
     r = scan(rig)
     cross = {x["ref"]: x for x in r["cross_repo"]}
