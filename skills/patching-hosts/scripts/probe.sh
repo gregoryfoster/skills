@@ -4384,14 +4384,21 @@ idle_days() {  # <unit> [<log dir>] [<package globs>]: IDLE := the days it has b
 # history. Never dpkg's .list mtime: dpkg rewrites it at every upgrade. Each
 # counts only where it reaches further back than the boot.
 idle_since_boot() {  # <log dir> <package globs>: IDLE and IDLE_FROM
-  local boot=${MANAGER_DAYS:-$UPTIME_DAYS} d="" from=""
-  if [ -n "$1" ] && log_dir_age "$1"; then
+  local boot=${MANAGER_DAYS:-$UPTIME_DAYS} d="" from="" lrc=1
+  if [ -n "$1" ]; then lrc=0; log_dir_age "$1" || lrc=$?; fi
+  if [ "$lrc" -eq 0 ]; then
     d=$LOG_DAYS
     if [ "$LOG_EMPTY" -eq 1 ]; then
       from="counted from $1, whose files are all empty, the newest dated $LOG_ON"
     else
       from="counted from $1, last written $LOG_ON"
     fi
+  elif [ "$lrc" -eq 2 ]; then
+    # A log it couldn't read may hold a write after the install: the install
+    # date would overstate the idle time, and a false dormant is a prune
+    # proposal (CR 2159).
+    IDLE=$boot IDLE_FROM="counted from the boot, which it hasn't started since: $1 couldn't be read, and the install date would pass over what it holds"
+    return 0
   elif [ -n "$2" ] && apt_install_age "$2"; then
     d=$INSTALL_DAYS from="counted from its install on $INSTALL_ON in apt's history"
   fi
@@ -4404,14 +4411,15 @@ idle_since_boot() {  # <log dir> <package globs>: IDLE and IDLE_FROM
 
 # A log directory's newest file, by mtime, and whether every file is empty.
 # /var/log/redis is redis's alone (2750), so it's read as root.
-log_dir_age() {  # <dir>: LOG_DAYS, LOG_ON (its date) and LOG_EMPTY (1|0); 1 when it holds no file that could be read
+log_dir_age() {  # <dir>: LOG_DAYS, LOG_ON (its date) and LOG_EMPTY (1|0); 1 when it's absent or holds no file, 2 when it couldn't be read
   local d=$P_ROOT$1 out t z newest="" f
   local -a via=() files=()
   LOG_DAYS="" LOG_ON="" LOG_EMPTY=1
   [ -d "$d" ] || return 1
   if [ ! -r "$d" ] || [ ! -x "$d" ]; then via=(as_root); fi
   capture out ${via[@]+"${via[@]}"} find "$d" -mindepth 1 -maxdepth 2 -type f
-  [ "$CAP_RC" -eq 0 ] && [ -n "$out" ] || return 1
+  [ "$CAP_RC" -eq 0 ] || return 2
+  [ -n "$out" ] || return 1
   while IFS= read -r f; do files+=("$f"); done <<<"$out"
   # GNU first, as file_mtime.
   capture out ${via[@]+"${via[@]}"} stat -c '%Y %s' -- "${files[@]}"

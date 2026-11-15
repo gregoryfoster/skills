@@ -1337,8 +1337,10 @@ def test_a_never_started_redis_counts_from_its_log(tmp_path):
 
 
 @pytest.mark.skipif(os.geteuid() == 0, reason="root reads a mode-000 directory")
-def test_a_log_directory_it_cant_read_gives_way_to_the_install(tmp_path):
-    # /var/log/redis is redis's alone (2750): without root, apt's history.
+def test_a_log_directory_it_cant_read_keeps_the_boots_clock(tmp_path):
+    # /var/log/redis is redis's alone (2750). Without root it can't be read,
+    # and it may hold a write after the install: the install date would
+    # overstate the idle time, so the boot's clock stands (CR 2159).
     h = _rebooted(tmp_path, "redis-server.service", "redis-server")
     h.sudo = False
     h.write("var/log/redis/redis-server.log", "", age_days=50)
@@ -1348,8 +1350,9 @@ def test_a_log_directory_it_cant_read_gives_way_to_the_install(tmp_path):
         d = _dormant(h.run(), "redis")
     finally:
         (h.root / "var/log/redis").chmod(0o755)
-    assert d["verdict"] == "dormant"
-    assert f"counted from its install on {_day(h, 40)}" in d["evidence"]
+    assert d["verdict"] == "unknown"
+    assert "/var/log/redis couldn't be read" in d["evidence"]
+    assert "install" not in d["evidence"].split("couldn't be read")[0]
 
 
 def test_a_never_started_docker_counts_from_its_install(tmp_path):
