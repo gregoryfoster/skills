@@ -3,7 +3,7 @@
 The eighth of Wave 8's local orchestrators. The brief and its update were comments on #554, and Steps 1–9 were skipped. Base `8f2dbfae`, 10,435 / 475.
 - **Chains:** N (#554, nested pytest runs) and F (#616, #617).
 - **Workers:** three, all in `batch/g`: N (the scrub), P (a loose end of #554) and F.
-- **Review:** CR 2038–2040, one round: two fixes and a stet.
+- **Review:** two rounds. CR 2038–2040 on the batch: two fixes and a stet. CR 2041–2043 on round 1's fixes and this journal: three fixes, all in prose this run wrote.
 - **Integration gate:** 10,441 / 475 / 0, which is the base plus N's 5 and F's 1.
 
 ## Lessons
