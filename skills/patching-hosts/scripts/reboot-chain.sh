@@ -22,7 +22,9 @@ inflight commands verbatim, so the owner approves exactly what runs
 The chain, logged to the run's reboot-chain.log, root's only:
   1. the gate again: no package manager running, and every inflight command
      prints 0, run as the user recorded here, never as root. Otherwise it
-     stops nothing and ends;
+     reads it again each second, for up to 60 s, logging each busy read,
+     then stops nothing and ends: a short oneshot is waited out, a long one
+     isn't overridden;
   2. stop each restarter, then each service;
   3. a checkpoint, then stop each data store (Postgres: CHECKPOINT; Redis:
      SAVE first only where its file sets no save points and no appendonly,
@@ -50,7 +52,8 @@ Options:
                      (default 120). The gate's own time comes out of it, so
                      the chain starts where its span was gated from
   --expect SECONDS   how long the boot and the post-boot checks take
-                     (default 600). The span is the delay plus this
+                     (default 600). The span is the delay, the gate's 60 s
+                     of re-reads at the chain's start, and this
   --config FILE      the knob (default: .skills/patching-hosts at the root of
                      the repo around the current directory, or in the
                      current directory outside a repo)
@@ -77,9 +80,10 @@ root; and when a Qdrant's unit isn't active or its
 container isn't running.
 
 Output: one JSON object on stdout. Keys: reboot_chain, refused, gate, chain
-(its lines), launched, tmp (the tmpfiles rule for /tmp, and whether the
-boot empties it), tmp_staged (what the boot will empty: none where the
-rule keeps /tmp), next.
+(its lines), launched (with fires_at, and outcome: the command that shows
+the chain's log, to run once fires_at has passed), tmp (the tmpfiles rule
+for /tmp, and whether the boot empties it), tmp_staged (what the boot will
+empty: none where the rule keeps /tmp), next.
 
 Exit codes:
   0  the chain is launched
@@ -92,6 +96,10 @@ USAGE
 }
 
 approve=0 run="" config="" host="" today="" delay=120 expect=600
+# The chain's gate reads a busy host again each second for up to this long
+# before it aborts (#646): co-status's chain fired as a 60 s timer's 3 s
+# sweep began, aborted, and told no one. Its span holds the wait.
+CHAIN_WAIT=60
 while [ "$#" -gt 0 ]; do
   case $1 in
     --run | --delay | --expect | --config | --host | --today)
@@ -181,6 +189,8 @@ stamp=${stamp//[-:]/}
 unit=patching-hosts-reboot-$stamp
 script=$run/reboot-chain.sh
 log=$run/reboot-chain.log
+# What shows the chain's outcome: its log is root's only (#646).
+outcome="sudo tail -n 5 \"$log\""
 
 # --- the gate -------------------------------------------------------------------
 # No function here ends on a bare `[ … ] && …`: a function that returns
@@ -361,6 +371,7 @@ emit() {
   jadds a log "$log"
   jadds a unit "$unit"
   jaddn a delay_seconds "$delay"
+  jaddn a gate_wait_seconds "$CHAIN_WAIT"
   jaddb a approved "$approve"
   jadds a host "$host"
   jadds a knob "$config"
@@ -419,25 +430,47 @@ write_chain() {
   c 'abort() { say "ABORT: $*. Nothing was stopped."; exit 1; }'
   c 'say start'
   c ''
-  c '# 1. The gate again. No package manager running:'
+  c "# 1. The gate again. While it reads busy, it's read again each second, for up"
+  c "# to $CHAIN_WAIT s, each busy read logged: a short oneshot is waited out, and a"
+  c "# long one isn't overridden. Each read follows a 1 s sleep, so the reads"
+  c "# count the seconds where the clock can't be read."
+  c "WAIT=$CHAIN_WAIT"
+  c 'gate() {'
+  c '  BUSY=""'
+  c '  # No package manager running:'
   sq q "$PKG_RE"
-  c "if pgrep -x 'dpkg|apt|apt-get' >/dev/null || pgrep -f $q >/dev/null; then abort 'a package manager is running'; fi"
+  c "  if pgrep -x 'dpkg|apt|apt-get' >/dev/null || pgrep -f $q >/dev/null; then BUSY='a package manager is running'; return; fi"
   user=$P_KNOB_USER
   if [ "${#KNOB_INFLIGHT[@]}" -gt 0 ]; then
     sq u "$user"
     t=""
     if have timeout; then t="timeout -k $KNOB_CMD_KILL_AFTER $KNOB_CMD_TIMEOUT "; fi
-    c "# Every inflight command prints 0, run as $user, never as root:"
+    c "  # Every inflight command prints 0, run as $user, never as root:"
     for r in "${KNOB_INFLIGHT[@]}"; do
       IFS=$KNOB_US read -r -a f <<<"$r"
       cmd=${f[0]} l=${f[1]}
       sq q "$cmd"
-      c "# knob line $l: $cmd"
-      c "out=\$(runuser -u $u -- ${t}sh -c $q 2>/dev/null); rc=\$?"
-      c 'set -- $out'
-      c "if [ \"\$rc\" -ne 0 ] || [ \"\$#\" -ne 1 ] || [ \"\$1\" != 0 ]; then abort \"inflight (knob line $l) exited \$rc and printed: \$*\"; fi"
+      c "  # knob line $l: $cmd"
+      c "  out=\$(runuser -u $u -- ${t}sh -c $q 2>/dev/null); rc=\$?"
+      c '  set -- $out'
+      c "  if [ \"\$rc\" -ne 0 ] || [ \"\$#\" -ne 1 ] || [ \"\$1\" != 0 ]; then BUSY=\"inflight (knob line $l) exited \$rc and printed: \$*\"; return; fi"
     done
   fi
+  c '}'
+  c 'T0=$(date +%s 2>/dev/null) || T0=""'
+  c 'n=0'
+  c 'while gate; [ -n "$BUSY" ]; do'
+  c '  now=$(date +%s 2>/dev/null) || now=""'
+  c '  waited=$n'
+  c '  case "$T0:$now" in'
+  c '    *[!0-9:]* | :* | *:) ;;'
+  c '    *) [ $((now - T0)) -le "$n" ] || waited=$((now - T0)) ;;'
+  c '  esac'
+  c '  if [ "$waited" -ge "$WAIT" ]; then say "the gate still read busy after $waited s and $((n + 1)) reads"; abort "$BUSY"; fi'
+  c '  say "busy: $BUSY. Read again in 1 s ($waited of $WAIT s)"'
+  c '  n=$((n + 1))'
+  c '  sleep 1'
+  c 'done'
   c 'say "gate passed"'
   c ''
   c '# 2. Each restarter, then each service.'
@@ -586,7 +619,8 @@ write_chain() {
 
 gate_host
 gate_run
-gate_span "$((delay + expect))"
+# The chain's gate may wait CHAIN_WAIT before its stops (#646).
+gate_span "$((delay + CHAIN_WAIT + expect))"
 gate_packages
 gate_datastores
 # Last, so its reading is the freshest.
@@ -611,12 +645,22 @@ if [ "$TMP_CLEARED" != 0 ]; then
 fi
 J_TMP="[$_a]"
 
-NEXT+=("After the boot: bash \"$_libdir/probe.sh\" --post-boot --run \"$run\" --config \"$config\" --host $host (reboot-and-record.md section 6).")
-NEXT+=("If $log ends in ABORT, the chain stopped nothing: read why, then run reboot-chain.sh again once the gate would pass.")
-NEXT+=("The journal copy in $run/journal is a recovery-point file: delete it with the others, on their retention.")
+# The launch returns once the timer is set, so the session never sees the
+# chain's outcome: these say when to read it, and how (#646).
+next_lines() {  # <the chain's fire time, or empty when nothing is scheduled>
+  local ab="A last line with ABORT means the chain stopped nothing: read why, then run reboot-chain.sh again once the gate would pass"
+  if [ -n "$1" ]; then
+    NEXT+=("The chain fires at $1. Read its outcome once that has passed, and do not wait for the session to drop: $outcome. Busy lines are its gate reading again, for up to $CHAIN_WAIT s. $ab.")
+  else
+    NEXT+=("Once a launched chain's fire time has passed, read its outcome: $outcome. $ab.")
+  fi
+  NEXT+=("After the boot: bash \"$_libdir/probe.sh\" --post-boot --run \"$run\" --config \"$config\" --host $host (reboot-and-record.md section 6).")
+  NEXT+=("The journal copy in $run/journal is a recovery-point file: delete it with the others, on their retention.")
+}
 
 if [ "${#REFUSED[@]}" -gt 0 ]; then
   for _r in "${REFUSED[@]}"; do echo "reboot-chain: refused: $_r" >&2; done
+  next_lines ""
   emit
   exit 3
 fi
@@ -654,8 +698,12 @@ jadds _o unit "$unit"
 jaddn _o on_active_seconds "$_left"
 if [ "${#FAILED[@]}" -eq 0 ]; then
   jadds _o fires_at "$_iso"
+  jadds _o outcome "$outcome"
+  next_lines "$_iso"
 else
   jadd _o fires_at null
+  jadd _o outcome null
+  next_lines ""
 fi
 _a=""
 for _r in ${FAILED[@]+"${FAILED[@]}"}; do jpushs _a "$_r"; done

@@ -33,6 +33,11 @@ Beyond that list:
   already ran, a span outside a window or into a quiet range, a package
   manager that's running, and work in flight;
 - a chain that aborted at its own start stopped nothing, so it goes again;
+- the chain's gate reads a busy host again each second, for up to 60 s,
+  logging each busy read, before it aborts, and that minute is in the span
+  the launch gates; the launch names when the chain fires and the command
+  that shows its outcome (#646: co-status's chain fired into a 60 s sweep,
+  aborted, and nobody knew for 70 minutes);
 - the chain refuses to start while a package manager runs, since a reboot
   then could cut dpkg off mid-run;
 - a journal copy that fails still reboots: by then the services are down;
@@ -65,6 +70,7 @@ import json
 import os
 import re
 import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -232,6 +238,8 @@ def test_help_names_the_chain_and_the_exit_codes():
         "systemctl reboot",
         "a platform restart is a",
         "  3  refused",
+        # A busy gate is read again before the chain aborts (#646).
+        "each second, for up to 60 s",
     ):
         assert word in r.stdout, word
 
@@ -261,9 +269,11 @@ def test_without_approve_it_prints_the_chain_and_writes_nothing(host):
     chain = out["chain"]
     assert chain[0] == "#!/bin/sh"
     # The inflight command verbatim, run as the invoking user, never root.
-    assert "# knob line 7: echo 0" in chain
+    assert "# knob line 7: echo 0" in [line.strip() for line in chain]
     assert any(
-        line.startswith("out=$(runuser -u 'exedev' -- timeout -k 10 60 sh -c 'echo 0'")
+        line.strip().startswith(
+            "out=$(runuser -u 'exedev' -- timeout -k 10 60 sh -c 'echo 0'"
+        )
         for line in chain
     )
     assert not (host.run_dir / "reboot-chain.sh").exists()
@@ -399,6 +409,27 @@ def test_approved_it_writes_the_chain_at_0700_and_launches_it_detached(host):
     assert any(f'--post-boot --run "{host.run_dir}"' in n for n in out["next"])
 
 
+def test_the_launch_names_when_the_chain_fires_and_how_to_read_its_outcome(host):
+    # #646: the launch returns once the timer is set, so the session sees a
+    # launch, never the outcome. co-status's chain aborted at its gate, and
+    # nobody knew for 70 minutes.
+    log = host.run_dir / "reboot-chain.log"
+    tail = f'sudo tail -n 5 "{log}"'
+    out = host.reboot()
+    assert out["reboot_chain"]["gate_wait_seconds"] == 60
+    assert out["launched"]["outcome"] == tail
+    [n] = [n for n in out["next"] if tail in n]
+    assert n.startswith("The chain fires at 2026-09-29T15:32:00Z")
+    assert "once that has passed" in n
+    assert "not wait for the session to drop" in n
+    assert "ABORT" in n
+    # Before an approval, nothing fires: the command alone.
+    out = host.reboot(approve=False, rc=3)
+    assert out["launched"] is None
+    [n] = [n for n in out["next"] if tail in n]
+    assert "fires at" not in n
+
+
 def test_the_chain_fires_at_the_time_its_span_was_gated_from(host):
     # The inflight commands took 30 s: the timer gets the 90 s left.
     out = host.reboot(took=30)
@@ -487,6 +518,13 @@ def test_a_chain_it_cant_record_is_never_launched(host):
             lambda h: setattr(h, "clock", TUE_1530 + 5 * 3600 + 25 * MIN),
             "isn't wholly inside one window",
         ),
+        # From 20:48 the delay and the boot end at 21:00, inside the window,
+        # but the gate's minute of re-reads at the chain's start is part of
+        # the span too (#646): 21:01.
+        (
+            lambda h: setattr(h, "clock", TUE_1530 + 5 * 3600 + 18 * MIN),
+            "2026-09-29T21:01:00Z (780 s expected), isn't wholly inside one window",
+        ),
         # #421: the chain reads a dated window as the bulk does.
         (
             lambda h: h.knob(
@@ -527,6 +565,7 @@ def test_a_chain_it_cant_record_is_never_launched(host):
         "already-running",
         "already-ran",
         "past-the-window",
+        "past-the-window-with-the-gates-minute",
         "a-dated-window-on-another-day",
         "into-a-quiet-range",
         "work-in-flight",
@@ -608,18 +647,113 @@ def test_no_value_reaches_the_chain_unquoted(host):
     assert f"redis-cli -h 127.0.0.1;id>{mark}-bind -p 6380 SAVE" in seq
 
 
+def _ticking(host: Host, step: int = 1) -> Path:
+    """The chain's clock, `date +%s`, moved on STEP seconds by each sleep."""
+    now = host.state / "now"
+    now.write_text(f"{host.clock}\n")
+    host.cases["date"] = [("+%s", "", 0, "", f'cat "{now}"; exit 0')]
+    host.cases["sleep"] = [
+        ("1", "", 0, "", f'echo $(($(cat "{now}") + {step})) > "{now}"; exit 0')
+    ]
+    return now
+
+
+def _busy_for(host: Host, reads: int) -> None:
+    """An inflight command that prints 1 for READS reads, then 0: a oneshot
+    that runs a few seconds. Its gate at the launch reads it free."""
+    left = host.tmp / "busy-reads"
+    script = host.tmp / "busy.sh"
+    script.write_text(
+        f'n=$(cat "{left}"); if [ "$n" -gt 0 ]; then echo $((n - 1)) > "{left}"; '
+        "echo 1; else echo 0; fi\n"
+    )
+    left.write_text("0\n")
+    host.knob(KNOB_CHAIN.replace("inflight echo 0", f"inflight sh {script}"))
+    host.reboot()
+    left.write_text(f"{reads}\n")
+
+
 def test_a_chain_whose_gate_fails_at_its_start_stops_nothing(host):
     count = host.tmp / "in-flight"
     count.write_text("0\n")
     host.knob(KNOB_CHAIN.replace("inflight echo 0", f"inflight cat {count}"))
     host.reboot()
-    # Work arrived between the launch and the chain's start.
+    # Work arrived between the launch and the chain's start, and stayed.
     count.write_text("3\n")
+    _ticking(host, step=10)
     r = host.fire(_journals(host))
     assert r.returncode == 1
     assert not [c for c in host.sequence() if c.startswith("systemctl")]
     log = host.record("reboot-chain.log")
     assert "printed: 3. Nothing was stopped." in log
+
+
+def test_a_gate_busy_for_a_few_seconds_is_waited_out(host):
+    # #646: co-status's chain fired as its two 60 s sweeps started, read
+    # inflight as 2, and aborted. Each sweep runs about 3 s.
+    _busy_for(host, 3)
+    _ticking(host)
+    r = host.fire(_journals(host))
+    assert r.returncode == 0, r.stderr
+    log = host.record("reboot-chain.log")
+    busy = [line for line in log.splitlines() if " busy: " in line]
+    assert len(busy) == 3
+    assert busy[0].endswith(
+        "busy: inflight (knob line 7) exited 0 and printed: 1. Read again in 1 s (0 of 60 s)"
+    )
+    assert "ABORT" not in log
+    assert "gate passed" in log
+    assert host.sequence()[-1] == "systemctl reboot"
+
+
+def test_a_package_manager_that_ends_within_the_bound_is_waited_out(host):
+    host.reboot()
+    _ticking(host)
+    left = host.tmp / "pm-reads"
+    left.write_text("2\n")
+    host.on(
+        "pgrep",
+        "-f *",
+        script=(
+            f'n=$(cat "{left}"); [ "$n" -gt 0 ] || exit 1; '
+            f'echo $((n - 1)) > "{left}"; echo 4243; exit 0'
+        ),
+    )
+    r = host.fire(_journals(host))
+    assert r.returncode == 0, r.stderr
+    log = host.record("reboot-chain.log")
+    assert log.count("busy: a package manager is running.") == 2
+    assert "gate passed" in log
+
+
+def test_a_gate_busy_past_its_bound_aborts_with_every_read_logged(host):
+    # A long oneshot isn't overridden: past 60 s, the chain stops nothing.
+    _busy_for(host, 1000)
+    _ticking(host, step=5)
+    r = host.fire(_journals(host))
+    assert r.returncode == 1
+    assert not [c for c in host.sequence() if c.startswith("systemctl")]
+    lines = host.record("reboot-chain.log").splitlines()
+    busy = [line for line in lines if " busy: " in line]
+    # Read at 0, 5, ... 55 s and waited out; the read at 60 s aborts.
+    assert len(busy) == 12
+    assert busy[-1].endswith("Read again in 1 s (55 of 60 s)")
+    assert lines[-2].endswith("the gate still read busy after 60 s and 13 reads")
+    assert lines[-1].endswith(
+        "ABORT: inflight (knob line 7) exited 0 and printed: 1. Nothing was stopped."
+    )
+
+
+def test_a_clock_that_doesnt_move_still_ends_the_wait(host):
+    # Each re-read follows a 1 s sleep, so the reads count the seconds where
+    # the clock can't: no clock reading keeps the chain waiting forever.
+    _busy_for(host, 1000)
+    host.cases["date"] = [("+%s", "", 1, "", None)]
+    r = host.fire(_journals(host))
+    assert r.returncode == 1
+    log = host.record("reboot-chain.log")
+    assert log.count(" busy: ") == 60
+    assert "the gate still read busy after 60 s and 61 reads" in log
 
 
 def test_a_chain_that_aborted_goes_again_once_the_gate_passes(host):

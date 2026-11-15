@@ -119,7 +119,7 @@ a Redis, and 60 s for each recovery line; the bulk's span is the rest of
 the run: itself, at three times the dry run (or the knob's bulk-factor
 times it) plus --health-within where the
 knob has health lines, each held step its selection reaches, and the
-reboot chain's 720 s wherever a kernel, or a package owning a file mapped
+reboot chain's 780 s wherever a kernel, or a package owning a file mapped
 by PID 1, dbus, logind, a user@ or a datastore unit's processes, makes a
 reboot certain, or one of those maps can't be read; so the bulk also
 refuses when the dry run left no dry-run.log); while an
@@ -694,9 +694,10 @@ bulk_budget() {  # <var> <seconds>
 }
 # What the dry run selected: the bulk sizes it, less what its holds take.
 DRY_SEL=""
-# reboot-chain.sh's default span: its 120 s delay and 600 s for the boot and
-# the post-boot checks.
-CHAIN_SPAN=720
+# reboot-chain.sh's default span: its 120 s delay, its gate's 60 s of
+# re-reads at the chain's start (#646), and 600 s for the boot and the
+# post-boot checks.
+CHAIN_SPAN=780
 # Where processes and the units' cgroups are read; a test points them at a
 # fixture.
 PROC_DIR=/proc
