@@ -10,7 +10,7 @@ metadata:
 
 # Coordinating Epics
 
-One coordinator thread holds one epic. The operator implements each child in its own thread and comes back to report. The coordinator confirms the work from evidence, carries what it changed to the children it affects, finds what arrived since the last check-in, and names the next child with a brief. Built from eleven burn-downs whose findings were posted on [#348](https://github.com/gregoryfoster/skills/issues/348), 2026-09-27 to 10-14.
+One coordinator thread holds one epic. The operator implements each child in its own thread and comes back to report. The coordinator confirms the work from evidence, carries what it changed to the children it affects, finds what arrived since the last check-in, and names the next child with a brief. Built from eleven burn-downs whose findings were posted on [#348](https://github.com/gregoryfoster/skills/issues/348), 2026-09-27 to 10-14, and the runs journaled since.
 
 **Activation triggers:** "coordinate the epic", "burn down", "check-in", "I finished #N", "next issue", "what's next on the epic".
 
@@ -63,7 +63,7 @@ done
 
 ## Starting
 
-**Adopt an epic that exists.** Read it in full, with its comments. Take it as the baseline and bring it onto [the template](assets/epic-template.md) in the same call, never by hand: `header` ops add the missing cursor lines (only the five cursor fields) and turn a paragraph header into the template's list, `add-section` the order rule, the tiers and the log, and `set-line` or `add-line` the checklist. `--lint-all` lints the whole body, not just the lines you change, so legacy short refs and placeholders are fixed now. Dry-run it first:
+**Adopt an epic that exists.** Read it in full, with its comments. Take it as the baseline and bring it onto [the template](assets/epic-template.md) in the same call, never by hand: `header` ops add the missing cursor lines (only the five cursor fields) and turn a paragraph header into the template's list, `add-section` the order rule, the tiers and the log, and `set-line` or `add-line` the checklist. `--lint-all` lints the whole body, not just the lines you change, so legacy short refs and placeholders are fixed now. Dry-run it first, and read the diff, not the exit code:
 
 ```bash
 bash "<epic-edit.sh>" --repo OWNER/REPO --epic N --adopt-live --lint-all --ops "${SCRATCH:?}/adopt.json" --dry-run
@@ -117,6 +117,7 @@ Every kickoff prompt carries these, or points to the brief that does:
 - Notes for later issues go under a `**For #N:**` lead, as `shipping-work` Step 5 spells it.
 - List the verification you skipped, and why, and accepted limitations, under `**Known limits:**`.
 - Write the post-merge host steps on the issue.
+- Post an approval the operator gives in your session on the issue, quoted and timestamped, with its scope.
 - Run the code review and fix its findings, or record each declined one with its reason, before reporting. The report names the final SHA.
 - Pause for the operator before shipping.
 
