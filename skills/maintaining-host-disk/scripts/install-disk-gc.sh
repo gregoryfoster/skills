@@ -382,7 +382,7 @@ fi
 # masks with nothing), all applied in C sort order, the last value journald
 # can parse winning; cat-config prints the values it ignores as written.
 # patching-hosts' read_journal (#515) reads the drop-ins the same way, and
-# the main file as 255 and older do.
+# since #608 the main file and its Storage= by this rule and parser too.
 JOURNALD_DIRS="etc run usr/local/lib usr/lib"
 # The keys journald parses as sizes (parse_size, base 1024), held to its
 # grammar; a size too big for 64 bits isn't caught, and every other key is

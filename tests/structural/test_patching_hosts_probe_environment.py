@@ -489,6 +489,140 @@ def test_journald_drop_ins_are_read_as_journald_reads_them(
     assert (j["storage"], j["storage_set_in"]) == (storage, set_in)
 
 
+# --- journald's own parser and main file (#608) -----------------------------------
+# Ported from maintaining-host-disk's install-disk-gc.sh (#604), which
+# measured them by running systemd-journald 249 to 259. A line is trimmed
+# before it's read; only [Journal] counts; # and ; start a comment; the
+# blanks around = go. Storage= is an enum (config_parse_storage), so journald
+# ignores a value it can't parse, an empty one included, and keeps the one
+# before it.
+
+MAIN = "systemd/journald.conf"
+PARSED = [
+    ("[Journal]\n  Storage=persistent\n", "persistent", 2),
+    ("[Journal]\nStorage = volatile\n", "volatile", 2),
+    ("  [Journal]\n\tStorage=none  \n", "none", 2),
+    ("[Journal]\nStorage=persistent\n[Other]\nStorage=volatile\n", "persistent", 2),
+    ("Storage=volatile\n[Journal]\n", None, None),
+    ("[Journal]\n#Storage=volatile\n; Storage=none\nStorage=auto\n", "auto", 4),
+    ("[Journal]\nStorage=persistent\nStorage=Volatile\n", "persistent", 2),
+    ("[Journal]\nStorage=persistent\nStorage=\n", "persistent", 2),
+    # journald has no comment after a value: this one is unparseable.
+    ("[Journal]\nStorage=volatile # for now\n", None, None),
+]
+
+
+@pytest.mark.parametrize(
+    "text, storage, line",
+    PARSED,
+    ids=[
+        "indented",
+        "blanks-around-equals",
+        "indented-section",
+        "other-section",
+        "outside-a-section",
+        "comments",
+        "unparseable-keeps-earlier",
+        "empty-keeps-earlier",
+        "trailing-text",
+    ],
+)
+def test_storage_is_parsed_as_journald_parses_it(host, text, storage, line):
+    host.write(f"etc/{MAIN}", text)
+    j = host.run()["environment"]["journal"]
+    want = f"/etc/{MAIN}:{line}" if line else None
+    assert (j["storage"], j["storage_set_in"]) == (storage, want)
+
+
+def test_an_empty_storage_in_a_drop_in_keeps_the_main_files(host):
+    host.write(f"etc/{MAIN}", "[Journal]\nStorage=persistent\n")
+    host.write(f"etc/{JD}/50-x.conf", "[Journal]\nStorage=\n")
+    j = host.run()["environment"]["journal"]
+    assert (j["storage"], j["storage_set_in"]) == ("persistent", f"/etc/{MAIN}:2")
+
+
+def _systemd(host, version: str, older: bool) -> None:
+    """The root's dpkg database names systemd VERSION; OLDER answers whether
+    it sorts before 256~."""
+    host.on(
+        "dpkg-query",
+        "*-W -f ${db:Status-Status} ${Version} systemd",
+        f"installed {version}",
+    )
+    host.on("dpkg", f"--compare-versions {version} lt 256~", rc=0 if older else 1)
+
+
+OLD, NEW = "255.4-1ubuntu8.18", "259.9-0ubuntu0.1"
+DANGLING = "/nonexistent/journald.conf"
+# Measured by #604 with systemd-journald itself: 249 and 255 read /etc's main
+# file only; 256, 257 and 259 the first of /etc, /run, /usr/local/lib and
+# /usr/lib, a dangling link passed over, a link to /dev/null masking the rest.
+VERSIONED = [
+    (OLD, {f"usr/lib/{MAIN}": "volatile"}, None),
+    (OLD, {f"run/{MAIN}": "volatile"}, None),
+    ("256.17-1", {f"usr/lib/{MAIN}": "volatile"}, f"usr/lib/{MAIN}"),
+    (NEW, {f"run/{MAIN}": "volatile"}, f"run/{MAIN}"),
+    (NEW, {f"usr/local/lib/{MAIN}": "volatile"}, f"usr/local/lib/{MAIN}"),
+    (NEW, {f"etc/{MAIN}": None, f"usr/lib/{MAIN}": "volatile"}, None),
+    (NEW, {f"etc/{MAIN}": "none", f"run/{MAIN}": "volatile"}, f"etc/{MAIN}"),
+    (NEW, {f"etc/{MAIN}": DANGLING, f"usr/lib/{MAIN}": "volatile"}, f"usr/lib/{MAIN}"),
+    (OLD, {f"etc/{MAIN}": DANGLING, f"usr/lib/{MAIN}": "volatile"}, None),
+]
+
+
+@pytest.mark.parametrize(
+    "version, files, source",
+    VERSIONED,
+    ids=[
+        "255-usr-lib",
+        "255-run",
+        "256-usr-lib",
+        "259-run",
+        "259-usr-local-lib",
+        "259-etc-null-masks",
+        "259-etc-masks-run",
+        "259-etc-dangling",
+        "255-etc-dangling",
+    ],
+)
+def test_the_main_file_is_read_as_the_hosts_systemd_reads_it(
+    host, version, files, source
+):
+    _systemd(host, version, older=version == OLD)
+    for rel, value in files.items():
+        if value is None:
+            host.link(rel, "/dev/null")
+        elif value.startswith("/"):
+            host.link(rel, value)
+        else:
+            host.write(rel, f"[Journal]\nStorage={value}\n")
+    out = host.run()
+    j = out["environment"]["journal"]
+    want = (files[source], f"/{source}:2") if source else (None, None)
+    assert (j["storage"], j["storage_set_in"]) == want
+    assert not [n for n in out["not_read"] if "systemd's version" in n]
+
+
+def test_an_unread_version_reads_as_256_and_says_so(host):
+    # It reads more: a main file the newer rule reads and the older doesn't.
+    host.write(f"usr/lib/{MAIN}", "[Journal]\nStorage=volatile\n")
+    out = host.run()
+    j = out["environment"]["journal"]
+    assert (j["storage"], j["storage_set_in"]) == ("volatile", f"/usr/lib/{MAIN}:2")
+    [n] = [n for n in out["not_read"] if "systemd's version" in n]
+    assert n.startswith("journald's main file:")
+    assert "the first of /etc, /run, /usr/local/lib and /usr/lib" in n
+
+
+def test_an_unread_version_is_quiet_when_etc_has_the_main_file(host):
+    # Both rules read /etc's then.
+    host.write(f"etc/{MAIN}", "[Journal]\nStorage=persistent\n")
+    host.write(f"usr/lib/{MAIN}", "[Journal]\nStorage=volatile\n")
+    out = host.run()
+    assert out["environment"]["journal"]["storage"] == "persistent"
+    assert not [n for n in out["not_read"] if "systemd's version" in n]
+
+
 def test_a_working_directory_drop_in_in_usr_local_lib_is_read_in_name_order(host):
     # read_language's drop-in merge read /etc and /run alone (CR 236): a
     # drop-in under /usr/local/lib that sorts last sets the tree.

@@ -508,6 +508,52 @@ def test_a_scratch_directory_nobody_cant_make_says_so():
         shutil.rmtree(base)
 
 
+# --- #635: a tree audited as another user, without privilege ----------------------
+# archiver#375: `probe.sh --no-sudo` read a root-owned tree as "uv audit
+# exited 126", as_user's own status when it can't switch user. The tree now
+# says privilege is the cause, and not_read lists it.
+
+
+@pytest.mark.parametrize(
+    "owner, as_whom",
+    [
+        ("root", "its uv.lock is root's, so it's audited as nobody"),
+        ("alice", "it's audited as its uv.lock's owner, alice"),
+    ],
+    ids=["root-owned", "another-users"],
+)
+@pytest.mark.parametrize(
+    "no_sudo, hint",
+    [
+        (True, "needs root: run the probe without --no-sudo"),
+        (False, "needs root, and sudo -n needs a password: run the probe under sudo"),
+    ],
+    ids=["no-sudo", "sudo-needs-a-password"],
+)
+def test_a_tree_another_user_audits_says_privilege_is_missing(
+    tmp_path, owner, as_whom, no_sudo, hint
+):
+    # Under --no-sudo, sudo would answer: the flag alone keeps it from being asked.
+    h = _tree(LangHost(tmp_path, sudo=no_sudo).knob(KNOB))
+    h.write("etc/passwd", f"{owner}:x:{os.getuid()}:0::/home/{owner}:/bin/bash\n")
+    _uv(h)
+    h.on("apt-get", "update*", "Reading package lists...\n")
+    flags = ("--no-sudo",) if no_sudo else ()
+    out = h.run(*flags, "--refresh-into", str(h.tmp / "fresh"))
+    [t] = _lang(out)
+    assert (t["audited"], t["advisories"], t["packages"]) == (False, None, None)
+    assert t["why"] == f"{as_whom}, and running uv as another user {hint}"
+    assert out["pending"]["language"]["complete"] is False
+    assert (
+        f"language dependencies: /{APP}'s uv.lock can't be audited without root, "
+        f"since it's audited as {'nobody' if owner == 'root' else owner}: "
+        f"{hint.split(': ', 1)[1]}"
+    ) in out["not_read"]
+    # Nothing ran: no uv, and no switch to the user.
+    assert not h.calls("uv") and not h.calls("runuser")
+    assert not [c for c in h.calls("sudo") if "-u" in c[1].split()]
+
+
 # --- #594: each advisory's id, and whether a fix exists ---------------------------
 
 # uv 0.11.8's own text for a project locking pyasn1 0.6.4, verbatim
