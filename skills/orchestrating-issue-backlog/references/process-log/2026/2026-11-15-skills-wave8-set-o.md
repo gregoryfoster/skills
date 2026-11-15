@@ -5,6 +5,7 @@ The ninth of Wave 8's local orchestrators. The brief and its update were comment
 - **Workers:** six, one worktree each, all off the base and merged with `--no-ff`. The journal was written beside the chains and merged last.
 - **Decided by the operator before the build:** #636 a new finding kind, which declined the coordinator's recommendation; #610 extend the gate.
 - **Review:** one round, CR 2158–2161, four fixes.
+- **Integration gate:** 10,591 / 475 / 0, the base plus 145. Linux, the patching-hosts tests: 1,352 / 12 as root and 1,353 / 11 as another user, against the base's 1,253 / 11.
 
 ## Lessons
 
