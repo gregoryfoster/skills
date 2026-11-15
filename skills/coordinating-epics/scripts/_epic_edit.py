@@ -62,7 +62,23 @@ operations (a JSON array, from --ops FILE or --ops - for stdin):
   {"op": "log", "text": "{today}: #12 closed. No new issues. Next: #13."}
                                               append "- text" to the Log section
   {"op": "replace-section", "heading": "Measured state", "text": "..."}
-                                              replace a section's body
+                                              replace a section's body; refused
+                                              when it holds a deeper heading,
+                                              unless "scope": "tree" takes the
+                                              whole subtree (#408)
+  {"op": "rename-section", "heading": "Tier 2", "to": "Tier 2 — bugs"}
+                                              rename a heading, same level;
+                                              refuses a name already a heading
+  {"op": "set-preamble", "text": "..."}       replace the text between the title
+                                              (if any) and the header's first
+                                              "**Field:**" line or the first
+                                              section; "" removes it (#413)
+  {"op": "set-subline", "ref": "#12", "match": "Open:", "line": "  - Done: ..."}
+                                              replace the one sub-bullet under
+                                              #12's line whose text (after its
+                                              marker, or its box) starts with
+                                              match; "line": "" removes it with
+                                              its own sub-block (#429)
   {"op": "add-section", "heading": "Log", "text": "...", "before": "Notes"}
                                               add a section, once: before
                                               "before" at its level, else at
@@ -316,8 +332,15 @@ OP_FIELDS = {
     "log": ("text",),
     "replace-section": ("heading", "text"),
     "add-section": ("heading", "text"),
+    "rename-section": ("heading", "to"),
+    "set-preamble": ("text",),
+    "set-subline": ("ref", "match", "line"),
 }
-OP_OPTIONAL = {"add-line": ("after_ref", "section"), "add-section": ("before",)}
+OP_OPTIONAL = {
+    "add-line": ("after_ref", "section"),
+    "add-section": ("before",),
+    "replace-section": ("scope",),
+}
 
 
 def check_ops(ops) -> None:
@@ -340,6 +363,11 @@ def check_ops(ops) -> None:
                 raise Usage(f"op {n} ({kind}): missing field {f!r}")
         if kind == "add-line" and ("after_ref" in op) == ("section" in op):
             raise Usage(f"op {n} (add-line): give exactly one of after_ref or section")
+        # One opt-in, so a typo can't read as the default (#408).
+        if "scope" in op and op["scope"] != "tree":
+            raise Usage(f'op {n} ({kind}): scope must be "tree", not {op["scope"]!r}')
+        if kind == "set-subline" and not op["match"].strip():
+            raise Usage(f"op {n} (set-subline): match must be non-empty")
         for f in ("ref", "after_ref"):  # a typo is usage, not a refusal (CR 293)
             if f in op and not re.fullmatch(r"\s*" + REF_PAT + r"\s*", op[f]):
                 raise Usage(f"op {n} ({kind}): {f} {op[f]!r} is not #N or owner/repo#N")
@@ -652,6 +680,45 @@ def after_block(lines: list[str], i: int) -> int:
             break
         j += 1
     return end
+
+
+def indent_of(line: str) -> int:
+    """A line's indent in columns, tabs at 4, as after_block reads it."""
+    return len(line.expandtabs(4)) - len(line.expandtabs(4).lstrip())
+
+
+def sub_bullets(lines: list[str], i: int, match: str) -> list[int]:
+    """The list items in line i's block whose text starts with match (#429).
+
+    The text is read after the marker, and after a box too, so "Open:" finds
+    "  - [ ] Open: …" and "[x] verify" finds "  - [x] verify …". Any depth.
+    """
+    fence, out = fenced(lines), []
+    for j in range(i + 1, after_block(lines, i)):
+        m = LIST_MARK_RE.match(lines[j])
+        if fence[j] or not m:
+            continue
+        text = lines[j][m.end() :]
+        unboxed = re.sub(r"^\[[ xX]\]\s+", "", text)
+        if text.startswith(match) or unboxed.startswith(match):
+            out.append(j)
+    return out
+
+
+def preamble_span(lines: list[str]) -> tuple[int, int]:
+    """(start, end) of the text set-preamble owns (#413).
+
+    From below a title, else the top, to the header's first top-level
+    "**Field:**" line (list item or paragraph), else the first section. So
+    the cursor lines, and any header field, stay out of its reach.
+    """
+    hs, secs = headings(lines), section_headings(lines)
+    start = hs[0][0] + 1 if hs and secs != hs else 0
+    fence = fenced(lines)
+    stops = [i for i in range(start, len(lines)) if list_field(lines, fence, i)]
+    stops += [s for s, _ in paragraph_headers(lines) if s >= start]
+    stops += [i for i, _, _ in secs if i >= start]
+    return start, min(stops, default=len(lines))
 
 
 def list_field(lines: list[str], fence: list[bool], i: int) -> bool:
@@ -1132,6 +1199,17 @@ def apply_ops(
                 lines.insert(section_tail(lines, start, end), entry)
             elif kind == "replace-section":
                 start, end = section_span(lines, op["heading"])
+                # Its span runs to the next heading as deep or shallower, so a
+                # "##" takes its "###" subsections: once, a whole checklist (#408).
+                inner = [t for i, _, t in headings(lines) if start < i < end]
+                if inner and op.get("scope") != "tree":
+                    raise Refused(
+                        f"{op['heading']!r} holds subsections "
+                        + ", ".join(repr(t) for t in inner)
+                        + ", which replacing it would replace too. Replace a"
+                        ' subsection by its own heading, or give "scope": "tree"'
+                        " to replace the whole subtree"
+                    )
                 text = inject(op["text"], now, scan).strip("\n")
                 new_body = [""] + [ln.rstrip("\r") for ln in text.split("\n")] + [""]
                 if end == len(lines):
@@ -1175,6 +1253,95 @@ def apply_ops(
                         lines.pop()
                     lines += [""] + block
                 _add(expect, counts(new_body))
+            elif kind == "rename-section":
+                to = op["to"].strip()
+                if not to or "\n" in to:
+                    raise Refused("rename-section takes a one-line heading in to")
+                taken = {t.lower(): i for i, _, t in headings(lines)}
+                if op["heading"].strip().lower() not in taken and to.lower() in taken:
+                    notes.append(f"{where}: already headed {to!r}")
+                    continue
+                start, _ = section_span(lines, op["heading"])
+                if taken.get(to.lower(), start) != start:
+                    # A heading is an anchor: two alike, and section ops refuse both.
+                    raise Refused(f"{to!r} is already a heading")
+                level = next(lvl for i, lvl, _ in headings(lines) if i == start)
+                new = f"{'#' * level} {to}"
+                if new == lines[start]:
+                    notes.append(f"{where}: already headed {to!r}")
+                    continue
+                lines[start] = new
+            elif kind == "set-preamble":
+                text = inject(op["text"], now, scan).strip("\n")
+                new_body = [ln.rstrip("\r") for ln in text.split("\n")] if text else []
+                fence = fenced(new_body)
+                for k, ln in enumerate(new_body):
+                    if fence[k]:
+                        continue
+                    if is_cursor_line(ln) or list_field(new_body, fence, k):
+                        raise Refused(
+                            f"the text holds a header line, {ln.strip()!r}: the"
+                            " header ops own each cursor line and header field"
+                        )
+                    if HEADING_RE.match(ln):
+                        raise Refused(
+                            f"the text holds a heading, {ln.strip()!r}: use add-section"
+                        )
+                start, end = preamble_span(lines)
+                block = ([""] if start else []) + new_body
+                if new_body and end < len(lines):
+                    block.append("")
+                if normalize("\n".join(lines[start:end])) == normalize(
+                    "\n".join(block)
+                ):
+                    notes.append(f"{where}: preamble already reads so")
+                    continue
+                before, after = counts(lines[start:end]), counts(block)
+                _add(expect, {k: after[k] - before[k] for k in expect})
+                lines[start:end] = block
+            elif kind == "set-subline":
+                i = find_ref_line(lines, parse_ref(op["ref"], host), host)
+                new = inject(op["line"], now, scan).rstrip("\r\n")
+                if "\n" in new:
+                    raise Refused("set-subline takes one line")
+                hits = sub_bullets(lines, i, op["match"])
+                if new.strip():
+                    if not LIST_MARK_RE.match(new) or indent_of(new) <= indent_of(
+                        lines[i]
+                    ):
+                        raise Refused(
+                            f"the new line must be a sub-bullet indented under"
+                            f" {op['ref']}'s line: {new.strip()!r}"
+                        )
+                    if not hits and new in lines[i + 1 : after_block(lines, i)]:
+                        notes.append(
+                            f"{where}: {op['ref']}'s sub-bullet already reads so"
+                        )
+                        continue
+                if not hits:
+                    raise Refused(
+                        f"no sub-bullet under {op['ref']}'s line starts with"
+                        f" {op['match']!r}"
+                    )
+                if len(hits) > 1:
+                    raise Refused(
+                        f"{len(hits)} sub-bullets under {op['ref']}'s line start with"
+                        f" {op['match']!r}: "
+                        + "; ".join(lines[j].strip() for j in hits)
+                        + ". Make match longer"
+                    )
+                j = hits[0]
+                if not new.strip():
+                    # Its own sub-block goes with it, or it re-parents (CR 250).
+                    gone = lines[j : after_block(lines, j)]
+                    _add(expect, {k: -v for k, v in counts(gone).items()})
+                    del lines[j : j + len(gone)]
+                    continue
+                if new == lines[j]:
+                    notes.append(f"{where}: {op['ref']}'s sub-bullet already reads so")
+                    continue
+                _add(expect, _delta(item_state(lines[j]), item_state(new)))
+                lines[j] = new
             else:
                 raise Usage(f"unknown op {kind!r}")
         except Usage as e:

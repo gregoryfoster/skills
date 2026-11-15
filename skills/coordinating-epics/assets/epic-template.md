@@ -6,6 +6,7 @@ Copy the block below into the epic and fill it in. The **core** sections are in 
 
 - **Header lines** use the `- **Field:** value` form. `scan.sh` reads `Last check-in`, `Last issue seen` and `Last verified SHA` from them, and `epic-edit.sh`'s `header` op writes them, turning a paragraph-form header into this list.
 - **Checklist items** lead with their ref: `- [ ] #12 …`, or `- [ ] owner/repo#3 …` for another repo's issue. An ordinal may come first (`- [ ] 12. #447 …`), and an ordered marker is a task item too (`1. [ ] #348 …`), but a ref in a code span leads nothing: GitHub doesn't link it (#403).
+- **Headings hold no time.** A heading is an anchor, so stamp the bullets under it instead: `## Measured state`, not `## Measured state (2026-10-15T15:01Z)` (#413).
 - **Notes on a line** are appended, dated and short, each its own field after a middle dot (`·`): `- [ ] #12 … · S · Decided 2026-10-14: one PR.` The `note` op writes the dot, so its text is the note alone: `Still open: census on the next export.` or `Deploy no earlier than 2026-10-15T18:00Z.`
 
 ````markdown

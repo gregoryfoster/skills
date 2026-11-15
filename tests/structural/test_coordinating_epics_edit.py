@@ -1508,7 +1508,9 @@ def test_429_set_subline_changes_one_sub_bullet(rig):
     res = rig.edit(REPO, EPIC, [op])
     assert res.returncode == 0, res.stderr
     body = rig.body(REPO, EPIC)
-    assert "- [ ] #12 backups\n  - Done: backup ran 2026-10-17\n  - Open: restore" in body
+    assert (
+        "- [ ] #12 backups\n  - Done: backup ran 2026-10-17\n  - Open: restore" in body
+    )
     res = rig.edit(REPO, EPIC, [op])
     assert res.returncode == 0 and summary(res).get("unchanged"), res.stderr
 
