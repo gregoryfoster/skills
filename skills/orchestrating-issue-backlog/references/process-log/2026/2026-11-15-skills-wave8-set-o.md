@@ -4,7 +4,7 @@ The ninth of Wave 8's local orchestrators. The brief and its update were comment
 - **Chains:** A (#629, #607, the dry-run gate), B (#646, the reboot chain), C1 (#634, #633, #611) and C2 (#609, #608, #635), the probe's readings, D (#636, #610, the knob and the log), and the journal: nine host entries (#473, #569, #620, #623, #628, #630, #631, #637, #639).
 - **Workers:** six, one worktree each, all off the base and merged with `--no-ff`. The journal was written beside the chains and merged last.
 - **Decided by the operator before the build:** #636 a new finding kind, which declined the coordinator's recommendation; #610 extend the gate.
-- **Review:** one round, CR 2158–2161, four fixes.
+- **Review:** two rounds. CR 2158–2161 on the merged set: four fixes. CR 2162–2165 (the operator: `CR --fix`) on round 1's fixes, the journal and #610's rewrites: four fixes.
 - **Integration gate:** 10,591 / 475 / 0, the base plus 145. Linux, the patching-hosts tests: 1,352 / 12 as root and 1,353 / 11 as another user, against the base's 1,253 / 11.
 
 ## Lessons
@@ -26,7 +26,7 @@ All six merges were clean. A strict list would have left `CHAIN_SPAN` at 720 s, 
 #634 asked the probe to quote the matched line, so the owner can judge it without the grep. Doing so put an admin's host unit command line, a password flag or a URL's credentials included, into JSON that ends up in run records and public issues (CR 2158). The probe already reported secrets by name, never by value. Its new quotes didn't. Quoted evidence is now masked, and a host unit is quoted by the matched word alone.
 
 ### 4. A fallback chain stops at evidence it can't read
-#633's idle clock tries the log directory, then apt's install date. An unreadable log directory fell through to the install date, which reaches further back. That's the dangerous direction, because a false `dormant` is a prune proposal (CR 2159). An unread source now keeps the conservative clock and says why. Order a fallback chain by strength, and treat an unreadable source as unknown, not as absent.
+#633's idle clock tries the log directory, then apt's install date. An unreadable log directory fell through to the install date, which reaches further back. That's the dangerous direction, because a false `dormant` is a prune proposal (CR 2159). An unread source now keeps the conservative clock and says why. Round 2 found the same fall-through again, through a failed `stat` rather than a failed `find` (CR 2163). Order a fallback chain by strength, treat an unreadable source as unknown, not as absent, and close every read that can fail, not just the one that did.
 
 ### 5. A journal written ahead of the merge needs a reconcile pass
 The journal worker landed the entries in parallel, saying what each fix would ship by issue number. Checked against the merged code, it had one claim wrong: the promoted rule said a dry run counts only against lists "fetched in that run", but the merged gate also takes the host's own lists fetched within a day. Writing the journal early saved wall time, and one pass over its claims kept it true.
