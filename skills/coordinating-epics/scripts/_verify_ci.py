@@ -77,8 +77,10 @@ what it reads:
 
 output (JSON on stdout):
   rows: one per job, {target, workflow, job, sha, status, conclusion, url,
-  event, branch, expected}. branch is the run's: only a push run on --branch
-  counts for an expected job. target is "sha", "main" (the branch's tip) or
+  event, branch, superseded, expected}. branch is the run's: only a push run
+  on --branch counts for an expected job. superseded is true for a job of a
+  run that a later run of the same workflow, event and branch replaced, such
+  as an earlier nightly on an idle tip: shown, never judged. target is "sha", "main" (the branch's tip) or
   "main-latest". conclusion stays null until status is "completed".
   expected is true, "conditional" or false for a "sha" row, and null for the
   others, which are read, not predicted.
@@ -320,6 +322,13 @@ def check_rows(repo: str, sha: str, target: str) -> list[dict]:
             "workflow_runs",
         )
     }
+    # Scheduled and issue_comment runs are created on the tip, so an idle
+    # tip collects a suite per run: only the newest run of each workflow,
+    # event and branch is read for the verdict (CR 2260).
+    newest: dict[tuple, int] = {}
+    for r in runs.values():
+        k = (r.get("path"), r.get("event"), r.get("head_branch"))
+        newest[k] = max(newest.get(k, 0), int(r.get("id") or 0))
     rows = []
     for c in pages(
         f"repos/{repo}/commits/{sha}/check-runs",
@@ -337,6 +346,8 @@ def check_rows(repo: str, sha: str, target: str) -> list[dict]:
                 run.get("head_branch"),
             )
         )
+        k = (run.get("path"), run.get("event"), run.get("head_branch"))
+        rows[-1]["superseded"] = bool(run) and int(run.get("id") or 0) < newest[k]
     return rows
 
 
@@ -363,6 +374,9 @@ def job_row(
         # The branch the run was for: a push run on another branch, at the
         # same SHA, doesn't stand for the branch's own (CR 2258).
         "branch": branch,
+        # A later run of the same workflow, event and branch replaced it:
+        # shown, never judged (CR 2260).
+        "superseded": False,
         "expected": None,
     }
 
@@ -491,6 +505,7 @@ def judge(
     for row in rows:
         if row["target"] == "sha":
             row["expected"] = False
+    rows = [r for r in rows if not r["superseded"]]
     for e in expected:
         if e["prefix"] is None:
             unmatched.append({"workflow": e["workflow"], "job": e["job"]})
@@ -520,6 +535,8 @@ def verdict(
 
     def name(r: dict) -> str:
         return f"{r['target']}: {r['workflow'] or '(no workflow)'} / {r['job']} ({r['event']})"
+
+    rows = [r for r in rows if not r["superseded"]]
 
     red = [f"{name(r)} {r['conclusion']}" for r in rows if r["conclusion"] in BAD]
     if red:

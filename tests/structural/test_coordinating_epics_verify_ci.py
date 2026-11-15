@@ -563,3 +563,24 @@ def test_cr_2259_no_run_of_its_own_on_the_branch_is_a_warning(rig):
     assert rows(rep, "main-latest") == {}
     assert rep["verdict"] == "green"
     assert any("ci.yml" in w and "no run of its own" in w for w in rep["warnings"])
+
+
+def test_cr_2260_a_scheduled_run_a_newer_one_superseded_doesnt_hold_red(rig):
+    """Scheduled runs are created on the tip, so every nightly suite stays on
+    an idle tip: an old failure, passed since, must not keep it red."""
+    nightly = ".github/workflows/nightly.yml"
+    rig.state["runs"][SHA] = [
+        run_of(".github/workflows/ci.yml"),
+        run_of(nightly, suite=3, event="schedule", rid=102),
+        run_of(nightly, suite=2, event="schedule", rid=101),
+    ]
+    rig.state["checks"][SHA] = [
+        GREEN + [check("e2e", suite=3), check("e2e", conclusion="failure", suite=2)]
+    ]
+    rep = report(rig.run())
+    assert rep["verdict"] == "green", rep["because"]
+    e2e = [r for r in rep["rows"] if r["job"] == "e2e"]
+    assert sorted((r["conclusion"], r["superseded"]) for r in e2e) == [
+        ("failure", True),
+        ("success", False),
+    ]
