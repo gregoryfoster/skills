@@ -61,7 +61,7 @@ Which runs each rule came from, wherever it now lives. The 2026 entries are the 
 
 Call it "host N" and describe the mechanism instead ("the app fails every job in flight at boot"). Check before drafting: a landed entry stays in git history.
 
-**Third: is anything still pending?** **An entry that lists pending security updates lands only after they're applied.** It records counts and package families ("PostgreSQL 16", "a major `docker.io` bump"), never versions. A published version that's still pending tells a reader what the host is exposed to. This is the same rule as a run's own record ([reboot-and-record.md](reboot-and-record.md) §7).
+**Third: is anything still pending?** **An entry that lists pending security updates lands only after they're applied.** It records counts and package families ("PostgreSQL 16", "a major `docker.io` bump"), never versions, and so does an environment note under `environments/` (#610). A published version that's still pending tells a reader what the host is exposed to. This is the same rule as a run's own record ([reboot-and-record.md](reboot-and-record.md) §7).
 
 1. Write `process-log/<year>/<date>-<host>.md`, opening with a `## Session <date> — <host>` heading. Date it by when the run closed, in UTC: the day its record was final, as its issue closed. watcher's run was on 2026-09-28 UTC, and its entry is 2026-09-29. Date a reading taken without a run by the day it was taken. Create the directory for a new year.
 2. Add one row to `process-log/<year>/index.md`. Link the date cell to the entry as a bare filename, since the index sits beside its entries. For a new year, create its index from the previous year's, and add it to the Years list above.
