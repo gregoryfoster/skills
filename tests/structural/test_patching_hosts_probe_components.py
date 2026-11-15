@@ -1355,6 +1355,25 @@ def test_a_log_directory_it_cant_read_keeps_the_boots_clock(tmp_path):
     assert "install" not in d["evidence"].split("couldn't be read")[0]
 
 
+def test_a_log_its_files_cant_be_dated_keeps_the_boots_clock(tmp_path):
+    # Files it found but couldn't stat are a log it couldn't read, as much
+    # as a directory it couldn't list: no fall to the install date (CR 2163).
+    h = _rebooted(tmp_path, "redis-server.service", "redis-server")
+    h.write("var/log/redis/redis-server.log", "written", age_days=50)
+    _history(h, 40, "redis-server:amd64 (5:7.0.15-1build2)")
+    stat = h.bin / "stat"
+    stat.write_text(
+        "#!/bin/sh\n"
+        'case "$*" in *var/log/redis*) exit 1 ;; esac\n'
+        'for s in /usr/bin/stat /bin/stat; do [ -x "$s" ] && exec "$s" "$@"; done\n'
+        "exit 127\n"
+    )
+    stat.chmod(0o755)
+    d = _dormant(h.run(), "redis")
+    assert d["verdict"] == "unknown"
+    assert "/var/log/redis couldn't be read" in d["evidence"]
+
+
 def test_a_never_started_docker_counts_from_its_install(tmp_path):
     # Docker logs to the journal, so it has no log directory to read.
     h = _rebooted(tmp_path, "docker.service", "docker.io")

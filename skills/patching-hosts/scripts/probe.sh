@@ -4424,9 +4424,11 @@ log_dir_age() {  # <dir>: LOG_DAYS, LOG_ON (its date) and LOG_EMPTY (1|0); 1 whe
   # GNU first, as file_mtime.
   capture out ${via[@]+"${via[@]}"} stat -c '%Y %s' -- "${files[@]}"
   if [ "$CAP_RC" -ne 0 ]; then capture out ${via[@]+"${via[@]}"} stat -f '%m %z' -- "${files[@]}"; fi
-  [ "$CAP_RC" -eq 0 ] || return 1
+  # Files it found but couldn't date are a log it couldn't read, as much as a
+  # directory it couldn't list (CR 2163).
+  [ "$CAP_RC" -eq 0 ] || return 2
   while read -r t z; do
-    is_int "$t" && is_int "$z" || return 1
+    is_int "$t" && is_int "$z" || return 2
     if [ "$z" -gt 0 ]; then LOG_EMPTY=0; fi
     if [ -z "$newest" ] || [ "$t" -gt "$newest" ]; then newest=$t; fi
   done <<<"$out"
