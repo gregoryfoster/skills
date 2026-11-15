@@ -84,7 +84,7 @@ For each engine the probe knows (Docker, Postgres, Redis, nginx, Ollama, Qdrant 
 - the unit's state and whether it's enabled;
 - its listeners;
 - its workload: containers, databases with their sizes and their writes and sessions since the statistics were reset, Redis's keys, lookups, expirations, subscriptions and clients, enabled sites;
-- whether the repo's units, docs or knob name it;
+- whether the repo's units, docs or knob name it, as a word: a unit, a command, a path's own directory or file, a URL. Inside another name it doesn't count, so a unit running `check_redis_floor.sh` doesn't name Redis (#634). An `in-use` verdict quotes the line;
 - its packages in the security set;
 - whether it shipped with the image or was installed later.
 

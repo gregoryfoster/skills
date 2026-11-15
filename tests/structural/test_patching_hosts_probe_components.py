@@ -595,20 +595,105 @@ def test_a_component_deploy_names_only_in_text_is_named(host, rel, text):
         (
             "deploy/processor.service",
             "[Unit]\nAfter=docker.service\n[Service]\nExecStart=/srv/app/serve\n",
-            "deploy/processor.service names it on a line that isn't a comment",
+            "deploy/processor.service names it on a line that isn't a comment:"
+            " After=docker.service",
         ),
         (
             "deploy/compose.sh",
-            "#!/bin/sh\n# start it\ndocker compose up -d\n",
-            "deploy/compose.sh names it on a line that isn't a comment",
+            "#!/bin/sh\n# start it\n  docker compose up -d\n",
+            "deploy/compose.sh names it on a line that isn't a comment:"
+            " docker compose up -d",
         ),
     ],
     ids=["unit", "script"],
 )
 def test_a_working_deploy_line_is_in_use(host, rel, text, evidence):
+    # The evidence quotes the line, so the owner can judge it (#634).
     _repo(host, rel, text)
     d = _dormant(_docker(host).run(), "docker")
     assert (d["verdict"], d["evidence"]) == ("in-use", evidence)
+
+
+# --- a name inside another name isn't use (#634) ---------------------------------
+# On co-replicator, deploy/replicator.service ran a script that checks the
+# remote broker's version, check_redis_floor.sh, and a masked local Redis
+# with no listener read as in-use. The component's name counts where it
+# begins a word: a unit, a command, a path's own directory or file, a URL.
+
+
+def _idle_redis(host: Host) -> Host:
+    host.installed("redis-server")
+    host.show("redis-server.service", ActiveState="inactive", InactiveEnterTimestamp="")
+    return host
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "ExecStartPre=/bin/bash /home/exedev/replicator/scripts/check_redis_floor.sh",
+        "ExecStartPre=/srv/app/scripts/check-redis-floor.sh",
+        "Environment=APP_REDIS_FLOOR=7.0",
+    ],
+)
+def test_a_name_inside_another_name_isnt_use(host, line):
+    _repo(
+        host,
+        "deploy/replicator.service",
+        f"[Service]\n{line}\nExecStart=/srv/app/worker\n",
+    )
+    out = _idle_redis(host).run()
+    d = _dormant(out, "redis")
+    assert d["verdict"] == "dormant"
+    # Nor does the file name it at all: it's no text for the operator to read.
+    assert d["named_by"] == []
+    assert "dormant:redis" in _ids(out)
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "After=redis-server.service",
+        "ExecStartPre=/usr/bin/redis-cli -h 127.0.0.1 ping",
+        "Environment=BROKER_URL=redis://127.0.0.1:6379/0",
+        'ExecStart=/bin/sh -c "redis-cli ping"',
+        "ExecStart=/srv/app/worker --redis-url unix:/run/redis/redis-server.sock",
+    ],
+)
+def test_the_name_beginning_a_word_is_use(host, line):
+    _repo(
+        host,
+        "deploy/replicator.service",
+        f"[Service]\n{line}\nExecStart=/srv/app/worker\n",
+    )
+    d = _dormant(_idle_redis(host).run(), "redis")
+    assert d["verdict"] == "in-use"
+    assert d["evidence"] == (
+        f"deploy/replicator.service names it on a line that isn't a comment: {line}"
+    )
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "ExecStart=/usr/bin/docker run --rm app",
+        "ExecStart=/usr/bin/ctr --address /run/containerd/containerd.sock ls",
+        "SupplementaryGroups=docker",
+    ],
+)
+def test_a_docker_or_containerd_word_is_use(host, line):
+    _repo(host, "deploy/app.service", f"[Service]\n{line}\n")
+    d = _dormant(_docker(host).run(), "docker")
+    assert d["verdict"] == "in-use"
+    assert d["evidence"].endswith(f": {line}")
+
+
+def test_a_long_deploy_line_is_quoted_cut_short(host):
+    line = "ExecStart=/usr/bin/docker run " + "--env A=1 " * 40
+    _repo(host, "deploy/app.service", f"[Service]\n{line}\n")
+    d = _dormant(_docker(host).run(), "docker")
+    quoted = d["evidence"].split(": ", 1)[1]
+    assert quoted.startswith("ExecStart=/usr/bin/docker run --env A=1")
+    assert quoted.endswith("...") and len(quoted) == 160
 
 
 @pytest.mark.parametrize(
@@ -620,6 +705,9 @@ def test_a_working_deploy_line_is_in_use(host, rel, text, evidence):
         # A description, or a comment, is text.
         ("Description=Not docker", False),
         ("# After=docker.service", False),
+        # A script's name holding it isn't use (#634).
+        ("ExecStartPre=/bin/bash /srv/app/scripts/check_docker_floor.sh", False),
+        ("After=app-docker-sync.service", False),
     ],
 )
 def test_a_host_units_requires_after_or_exec_naming_it_is_in_use(host, line, uses):
@@ -630,7 +718,11 @@ def test_a_host_units_requires_after_or_exec_naming_it_is_in_use(host, line, use
     d = _dormant(_docker(host).run(), "docker")
     if uses:
         assert d["verdict"] == "in-use"
-        assert d["evidence"].startswith("/etc/systemd/system/app.service names it")
+        # It quotes the line (#634).
+        key = line.split("=", 1)[0]
+        assert d["evidence"] == (
+            f"/etc/systemd/system/app.service names it on its {key}= line: {line}"
+        )
     else:
         assert d["verdict"] == "dormant"
 

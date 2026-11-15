@@ -4265,27 +4265,48 @@ active_days() {  # <unit>: ACTIVE := the days it has been active, else since sys
   esac
 }
 
+# A component's name counts where it begins a word (#634): a unit
+# (After=redis-server.service), a command (/usr/bin/docker, redis-cli, psql),
+# a path's own directory or file (/run/containerd/containerd.sock), a URL
+# (redis://). Inside another name it doesn't: co-replicator's deploy unit ran
+# check_redis_floor.sh, a check of the remote broker, and a masked local
+# Redis read as in-use. A word holds letters, digits and _ . @ + -, and may
+# start with dashes (--redis-url).
+word_ere() {  # <var> <ere>: VAR := an ERE matching <ere> only where it begins a word
+  printf -v "$1" '%s' "(^|[^A-Za-z0-9_.@+-])-*($2)"
+}
+
+# A line quoted as evidence: trimmed, and cut at 160 characters.
+quote_line() {  # <var> <line>
+  local _ql=${2#"${2%%[![:space:]]*}"}
+  if [ "${#_ql}" -gt 160 ]; then _ql="${_ql:0:157}..."; fi
+  printf -v "$1" '%s' "$_ql"
+}
+
 # What the repo says of a component (#491). Only a deploy/ line that isn't a
 # comment uses it: co-processor's deploy/processor.service said in a comment
 # that its user is *not* in group docker, which read as in-use and hid a
-# prune candidate. A comment, or prose (a .md file), is text alone.
+# prune candidate. A comment, or prose (a .md file), is text alone. The
+# evidence quotes the line, so the owner can judge it without the grep (#634).
 named_by() {  # <ere>: NAMED (JSON array body); NAMED_USE, the deploy/ line that uses it; NAMED_TEXT, the deploy/ files that name it only in text
-  local out f hit rel lines line
+  local out f hit rel lines line re q
   NAMED="" NAMED_USE="" NAMED_TEXT=""
+  word_ere re "$1"
   if [ -n "$repo" ] && [ -d "$repo" ]; then
     for f in deploy docs AGENTS.md README.md; do
       [ -e "$repo/$f" ] || continue
-      capture out grep -rliE -- "$1" "$repo/$f"
+      capture out grep -rliE -- "$re" "$repo/$f"
       while IFS= read -r hit; do
         [ -n "$hit" ] || continue
         rel=${hit#"$repo"/}
         jpushs NAMED "$rel"
         case $rel in deploy/*) ;; *) continue ;; esac
         if [ -z "$NAMED_USE" ] && [[ $rel != *.md ]]; then
-          capture lines grep -iE -- "$1" "$hit"
+          capture lines grep -iE -- "$re" "$hit"
           while IFS= read -r line; do
             [[ $line =~ ^[[:space:]]*(#|\;|//) ]] && continue
-            NAMED_USE="$rel names it on a line that isn't a comment"
+            quote_line q "$line"
+            NAMED_USE="$rel names it on a line that isn't a comment: $q"
             break
           done <<<"$lines"
           [ -z "$NAMED_USE" ] || continue
@@ -4294,14 +4315,15 @@ named_by() {  # <ere>: NAMED (JSON array body); NAMED_USE, the deploy/ line that
       done <<<"$out"
     done
   fi
-  if [ -r "$config" ] && grep -qiE -- "$1" "$config" 2>/dev/null; then jpushs NAMED "the knob"; fi
+  if [ -r "$config" ] && grep -qiE -- "$re" "$config" 2>/dev/null; then jpushs NAMED "the knob"; fi
 }
 
 # A host unit that uses a component (#491): an admin's unit or drop-in whose
 # Requires=, After= or Exec* line names it. The component's own units, and
 # their drop-ins, don't count: a name that starts with the component's, as
 # postgresql@16-main and redis-server do, and app-redis-worker doesn't
-# (CR 889). NAMED_UNIT := the first, in words, or empty.
+# (CR 889). The name counts where it begins a word, as in named_by (#634).
+# NAMED_UNIT := the first, in words, quoting its line, or empty.
 unit_names() {  # <ere>
   local f base out
   NAMED_UNIT=""
@@ -4310,10 +4332,10 @@ unit_names() {  # <ere>
     base=${f#"$P_ROOT"/etc/systemd/system/}
     base=${base%%/*}
     if grep -qiE -- "^($1)" <<<"$base"; then continue; fi
-    capture out as_reader grep -m1 -iE -- "^[[:space:]]*(Requires|After|Exec[A-Za-z]*)=.*($1)" "$f"
+    capture out as_reader grep -m1 -iE -- "^[[:space:]]*(Requires|After|Exec[A-Za-z]*)=(.*[^A-Za-z0-9_.@+-])?-*($1)" "$f"
     if [ "$CAP_RC" -eq 0 ] && [ -n "$out" ]; then
-      out=${out#"${out%%[![:space:]]*}"}
-      NAMED_UNIT="${f#"$P_ROOT"} names it on its ${out%%=*}= line"
+      quote_line out "$out"
+      NAMED_UNIT="${f#"$P_ROOT"} names it on its ${out%%=*}= line: $out"
       return 0
     fi
   done
