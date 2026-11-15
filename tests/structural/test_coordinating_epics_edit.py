@@ -1811,6 +1811,22 @@ def test_654_compact_refuses_what_it_cant_compact(rig, op, code, why):
     assert rig.body(REPO, EPIC) == VERBOSE
 
 
+def test_compact_refuses_a_sub_block_holding_an_open_box(rig):
+    """CR 2208: compact drops the sub-block and takes its boxes off the derived
+    counts, so an open item under a ticked line would vanish with every check
+    green. The recipe says to give it a line of its own first; the op refuses
+    until that's done, and names the item."""
+    body = VERBOSE.replace(
+        "  - [x] docs updated\n", "  - [x] docs updated\n  - [ ] backfill the index\n"
+    )
+    _on(rig, body)
+    link = _verified(rig, 11, 9007)
+    res = rig.edit(REPO, EPIC, [{"op": "compact", "ref": "#11", "link": link}])
+    assert res.returncode == 3, res.stderr
+    assert "backfill the index" in res.stderr and "open" in res.stderr
+    assert rig.body(REPO, EPIC) == body
+
+
 def test_each_write_keeps_a_history_copy(adopted):
     """CR 264: the fallback when the baseline is lost is a local copy of each write."""
     adopted.edit(REPO, EPIC, [{"op": "tick", "ref": "#11"}])
