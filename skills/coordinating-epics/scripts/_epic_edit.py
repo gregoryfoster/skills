@@ -42,6 +42,7 @@ import tempfile
 from pathlib import Path
 
 EXIT_OK, EXIT_USAGE, EXIT_INFRA, EXIT_REFUSED, EXIT_READBACK = 0, 1, 2, 3, 4
+EXIT_COMMENT = 5
 
 USAGE_EXTRA = """\
 operations (a JSON array, from --ops FILE or --ops - for stdin):
@@ -61,6 +62,21 @@ operations (a JSON array, from --ops FILE or --ops - for stdin):
                                               set a "- **Field:** value" line
   {"op": "log", "text": "{today}: #12 closed. No new issues. Next: #13."}
                                               append "- text" to the Log section
+  {"op": "log-comment", "text": "{today}: #12 closed. Next: #13."}
+                                              post the text as a comment on the
+                                              epic, first line "**Check-in log,
+                                              <date>**" ("date", default
+                                              {today}), once the body is
+                                              confirmed (#654)
+  {"op": "compact", "ref": "#12", "link": "https://github.com/o/r/issues/12#issuecomment-1"}
+                                              cut #12's ticked line to "- [x]
+                                              **#12** <title> · [verified](link)",
+                                              its sub-block dropped, a
+                                              disposition field kept; "label":
+                                              "record" for a comment that holds
+                                              the line, not evidence; the title
+                                              is the issue's unless "title" is
+                                              given (#654)
   {"op": "replace-section", "heading": "Measured state", "text": "..."}
                                               replace a section's body; refused
                                               when it holds a deeper heading,
@@ -135,7 +151,8 @@ lint:
   refused and `App\\Tests\\` is code.
 
 exit codes:
-  0  written and read back, or nothing to write (every operation already held)
+  0  written and read back, or nothing to write (every operation already held),
+     and each log comment posted, or found already posted
   1  usage error: a bad flag, or a malformed ops or --scan file. Nothing was
      fetched or written.
   2  infrastructure failure (gh or python3 failed; gh's own stderr is shown).
@@ -144,8 +161,8 @@ exit codes:
   3  refused: a foreign edit, a baseline no write or adoption of this tool
      saved (its hash is recorded beside it, in writes.jsonl), a missing
      anchor, a count or lint failure, a new body that grows past
-     --body-limit, a header line a later op removed or
-     changed, an open issue the epic doesn't list (--account [FROM]), a new
+     --body-limit or a log comment past GitHub's 65,536 characters, a header
+     line a later op removed or changed, an open issue the epic doesn't list (--account [FROM]), a new
      issue in the --scan report that the body doesn't mention, or a closed
      epic without --closed-ok (the message names who closed it and when; a
      dry run notes it). Nothing was written.
@@ -158,6 +175,10 @@ exit codes:
      read back is the one from before the edit, so nothing landed and the
      baseline still holds. Near --body-limit, the host's size cap is the likely
      cause (#653): make the body smaller, then re-run.
+  5  a log comment wasn't posted: gh failed after every check passed. The
+     summary says whether the body was written ("readback": "matches" is a
+     confirmed write). Re-run the same call: the body ops then hold, and a
+     comment already posted is found, not posted twice.
 
 body size:
   Every summary that built a new body gives its size as GitHub keeps it,
@@ -335,12 +356,25 @@ OP_FIELDS = {
     "rename-section": ("heading", "to"),
     "set-preamble": ("text",),
     "set-subline": ("ref", "match", "line"),
+    "log-comment": ("text",),
+    "compact": ("ref", "link"),
 }
 OP_OPTIONAL = {
     "add-line": ("after_ref", "section"),
     "add-section": ("before",),
     "replace-section": ("scope",),
+    "log-comment": ("date",),
+    "compact": ("label", "title"),
 }
+COMPACT_LABELS = ("verified", "record")
+# The first line of each comment the coordinator posts as its own (#654).
+# scan.sh drops them by this line, never by author: every thread writes as
+# one account. A log comment goes on the epic; a record, on a child.
+LOG_MARK = "**Check-in log, {date}**"
+LOG_MARK_RE = re.compile(r"^\*\*Check-in log, [^*\n]+\*\*\s*$")
+RECORD_MARK_RE = re.compile(r"^\*\*Coordinator record, [^*\n]+\*\*\s*$")
+# GitHub refuses a comment body longer than this: "Body is too long".
+COMMENT_LIMIT = 65_536
 
 
 def check_ops(ops) -> None:
@@ -368,6 +402,15 @@ def check_ops(ops) -> None:
             raise Usage(f'op {n} ({kind}): scope must be "tree", not {op["scope"]!r}')
         if kind == "set-subline" and not op["match"].strip():
             raise Usage(f"op {n} (set-subline): match must be non-empty")
+        if kind == "compact" and op.get("label", "verified") not in COMPACT_LABELS:
+            raise Usage(
+                f"op {n} (compact): label must be one of {COMPACT_LABELS}, not"
+                f" {op['label']!r}"
+            )
+        if kind == "log-comment" and (
+            "\n" in op.get("date", "") or "*" in op.get("date", "")
+        ):
+            raise Usage(f"op {n} (log-comment): date must be one line with no '*'")
         for f in ("ref", "after_ref"):  # a typo is usage, not a refusal (CR 293)
             if f in op and not re.fullmatch(r"\s*" + REF_PAT + r"\s*", op[f]):
                 raise Usage(f"op {n} ({kind}): {f} {op[f]!r} is not #N or owner/repo#N")
@@ -703,6 +746,24 @@ def sub_bullets(lines: list[str], i: int, match: str) -> list[int]:
         if text.startswith(match) or unboxed.startswith(match):
             out.append(j)
     return out
+
+
+def clean_title(title: str, child: str | None, host: str) -> str:
+    """An issue's title, made safe to stand in a checklist line (#654).
+
+    A "·" would start a field, so it becomes "-"; then no word of it is a
+    field, and "not planned" in it disposes nothing. A bare name#N, which
+    links nowhere, goes into a code span. In another repo's title a bare #N
+    is that repo's, so it is qualified.
+    """
+    t = " ".join(title.split()).replace("·", "-")
+    t = SHORT_REF_RE.sub(lambda m: f"`{m.group('ref')}`", t)
+    if child and child.lower() != host.lower():
+        t = REF_RE.sub(
+            lambda m: m.group(0) if m.group("repo") else f"{child}#{m.group('num')}",
+            t,
+        )
+    return t
 
 
 def preamble_span(lines: list[str]) -> tuple[int, int]:
@@ -1342,6 +1403,48 @@ def apply_ops(
                     continue
                 _add(expect, _delta(item_state(lines[j]), item_state(new)))
                 lines[j] = new
+            elif kind == "compact":
+                m = re.fullmatch(r"\s*" + REF_PAT + r"\s*", op["ref"])
+                ref_key = parse_ref(op["ref"], host)
+                i = find_ref_line(lines, ref_key, host, want_item=True)
+                if box_state(lines[i]) != "done":
+                    raise Refused(f"{op['ref']}'s line isn't ticked: tick it first")
+                link = op["link"].strip()
+                lm = COMMENT_LINK_RE.fullmatch(link)
+                if not lm or key(lm.group("repo"), lm.group("num"), host) != ref_key:
+                    raise Refused(
+                        f"link must be a comment on {op['ref']} itself"
+                        f" (…/issues/N#issuecomment-ID): {link}"
+                    )
+                child = m.group("repo") if m else None
+                own = not child or child.lower() == host.lower()
+                ref = f"#{m.group('num')}" if own else f"{child}#{m.group('num')}"
+                title = clean_title(op.get("title", ""), child, host)
+                if not title:
+                    raise Refused(f"{op['ref']} has no title to keep")
+                bm = BOX_RE.match(lines[i])
+                assert bm
+                rest = lines[i][bm.end() :]
+                ordinal = re.match(r"(?:[0-9]{1,9}[.)]\s+)?", rest).group(0)
+                fields = FIELD_SEP_RE.split(lines[i].rstrip())[1:]
+                kept = next((f for f in fields if DISPOSITION_RE.match(f)), None)
+                new = (
+                    f"{bm.group('indent')}{bm.group('marker')} [x] {ordinal}**{ref}**"
+                    f" {title}"
+                    + (f" · {kept}" if kept else "")
+                    + f" · [{op.get('label', 'verified')}]({link})"
+                )
+                end = after_block(lines, i)
+                if new == lines[i] and end == i + 1:
+                    notes.append(f"{where}: {op['ref']}'s line is already compact")
+                    continue
+                # The sub-block goes: the evidence lives in the linked comment.
+                gone = lines[i + 1 : end]
+                _add(expect, {k: -v for k, v in counts(gone).items()})
+                _add(expect, _delta(item_state(lines[i]), item_state(new)))
+                lines[i:end] = [new]
+            elif kind == "log-comment":
+                continue  # posted after the body write: build_comments()
             else:
                 raise Usage(f"unknown op {kind!r}")
         except Usage as e:
@@ -1458,6 +1561,64 @@ def gh_graphql(query: str, variables: dict, what: str) -> tuple[dict, list[str]]
     if not isinstance(data, dict):
         raise Infra(f"{what}: gh returned no data: {r.stdout[:200]!r}")
     return data, [str(e.get("message", e)) for e in resp.get("errors") or []]
+
+
+def build_comments(ops: list[dict], now: dt.datetime, scan: dict | None) -> list[str]:
+    """Each log-comment op's comment, in op order, checked before anything is
+    written: non-empty, and under GitHub's comment cap (#654)."""
+    out = []
+    for n, op in enumerate(ops, 1):
+        if op.get("op") != "log-comment":
+            continue
+        where = f"op {n} (log-comment)"
+        text = inject(op["text"], now, scan).strip("\n").rstrip()
+        date = inject(op.get("date", "{today}"), now, scan).strip()
+        if not text.strip() or not date:
+            raise Refused(f"{where}: log-comment takes non-empty text")
+        body = LOG_MARK.format(date=date) + "\n\n" + text
+        if len(body) > COMMENT_LIMIT:
+            raise Refused(
+                f"{where}: the comment is {len(body):,} characters; GitHub refuses"
+                f" one over {COMMENT_LIMIT:,}. Split it into several log-comment ops"
+            )
+        out.append(body)
+    return out
+
+
+def posted_comments(host: str, num: int, since: str | None) -> dict[str, str]:
+    """The epic's comments since a time, by body, to their URL: a re-run finds
+    the log comment it already posted, and doesn't post it twice."""
+    path = f"repos/{host}/issues/{num}/comments?per_page=100"
+    if since:
+        path += f"&since={since}"
+    rows = gh_json(["api", path], "reading the epic's recent comments")
+    return {
+        "\n".join(normalize(c.get("body") or "")): c.get("html_url", "")
+        for c in rows
+        if isinstance(c, dict)
+    }
+
+
+def post_comment(host: str, num: int, body: str) -> str:
+    """Post a comment on the issue; its URL."""
+    fd, payload = tempfile.mkstemp(prefix="epic-comment-", suffix=".json")
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump({"body": body}, f)
+        data = gh_json(
+            [
+                "api",
+                "-X",
+                "POST",
+                f"repos/{host}/issues/{num}/comments",
+                "--input",
+                payload,
+            ],
+            "posting the log comment",
+        )
+    finally:
+        os.unlink(payload)
+    return str((data or {}).get("html_url", "")) if isinstance(data, dict) else ""
 
 
 def fetch_issue(repo: str, num: int) -> dict:
@@ -2193,6 +2354,16 @@ def run(argv: list[str]) -> int:
                 f" '{','.join(sorted(set(ticks) | accepted))}'"
             )
 
+        # compact keeps the issue's own title, read here so apply_ops stays
+        # offline; a "title" in the op skips the read (#654).
+        ops = [dict(op) for op in ops]
+        for op in ops:
+            if op.get("op") == "compact" and "title" not in op:
+                repo, num = parse_ref(op["ref"], host).rsplit("#", 1)
+                it = gh_json(
+                    ["api", f"repos/{repo}/issues/{num}"], f"reading {op['ref']}"
+                )
+                op["title"] = str((it or {}).get("title") or "")
         before = counts(live_lines)
         new, expect, notes = apply_ops(live_lines, ops, host, now, scan)
         after = counts(new)
@@ -2223,10 +2394,18 @@ def run(argv: list[str]) -> int:
                 " a link"
             )
 
+        comments = build_comments(ops, now, scan)
+        posts = [{"chars": len(c), "posted": False, "url": None} for c in comments]
+        if comments:
+            summary["log_comments"] = posts
+
         # A created epic's body never passed through apply_ops, so an empty
         # ops list would lint nothing of it (CR 291).
         added, in_fence, in_table = introduced([] if a.lint_all else live_lines, new)
         problems = lint(added, host, not a.no_link_check, in_fence, in_table)
+        for c in comments:  # a log comment is linted as a changed line (#654)
+            cl = c.split("\n")
+            problems += lint(cl, host, not a.no_link_check, fenced(cl), tabled(cl))
         if problems:
             raise Refused("lint:\n" + "\n".join(f"  {x}" for x in problems))
 
@@ -2236,6 +2415,8 @@ def run(argv: list[str]) -> int:
         # header's "Last issue seen" doesn't.
         if scan and scan["new_issues"]:
             mentioned = refs_in([ln for ln in new if not is_cursor_line(ln)], host)
+            # The log comment is the log: naming an issue there counts (#654).
+            mentioned |= refs_in([ln for c in comments for ln in c.split("\n")], host)
             missing = [
                 n for n in scan["new_issues"] if key(None, n, host) not in mentioned
             ]
@@ -2243,7 +2424,8 @@ def run(argv: list[str]) -> int:
                 raise Refused(
                     "the scan found issues this write doesn't mention: "
                     + ", ".join(f"#{n}" for n in missing)
-                    + ". Slot each, or name it in the log line (e.g. 'out of epic')"
+                    + ". Slot each, or name it in the log line or log comment"
+                    " (e.g. 'out of epic')"
                 )
 
         if a.account is not None:
@@ -2283,11 +2465,67 @@ def run(argv: list[str]) -> int:
                     + ", ".join(f"#{n}" for n in unlisted)
                 )
 
+        if comments:
+            # A re-run after an exit 4 or 5 finds what it already posted. A
+            # comment bumps the epic's updated_at, so two days before that
+            # holds any it posted (#654).
+            when = gh_time(live_issue.get("updated_at"))
+            since = (
+                (when - dt.timedelta(days=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
+                if when
+                else None
+            )
+            seen = posted_comments(host, a.epic, since)
+            for c, post in zip(comments, posts):
+                url = seen.get("\n".join(normalize(c)))
+                if url is not None:
+                    post.update(posted="already", url=url)
+
+        def post_all() -> int:
+            """Post each log comment not yet posted, in order; stop at a failure.
+
+            Only after the body is confirmed or unchanged: a comment can't be
+            taken back, and the log must not run ahead of the epic (#654).
+            """
+            for c, post in zip(comments, posts):
+                if post["posted"]:
+                    continue
+                try:
+                    post.update(posted=True, url=post_comment(host, a.epic, c))
+                except Infra as e:
+                    print(json.dumps(summary, indent=2))
+                    body = (
+                        ", but the body write is confirmed"
+                        if summary.get("written") is True
+                        else "; the body was unchanged"
+                    )
+                    print(
+                        f"ERROR the log comment wasn't posted{body}. Re-run the same"
+                        " call: the body ops hold, and a comment already posted is"
+                        " found, not posted twice",
+                        file=sys.stderr,
+                    )
+                    print(f"  gh's error: {indented(gh_cause(e))}", file=sys.stderr)
+                    return EXIT_COMMENT
+            print(json.dumps(summary, indent=2))
+            return EXIT_OK
+
+        def held_comments() -> None:
+            if any(not p["posted"] for p in posts):
+                print(
+                    "  the log comment wasn't posted: it waits for a confirmed body,"
+                    " and the re-run posts it",
+                    file=sys.stderr,
+                )
+
         diff = list(
             difflib.unified_diff(live_lines, new, "live", "new", lineterm="", n=1)
         )
         if a.dry_run:
             print("\n".join(diff) or "(no change)", file=sys.stderr)
+            for c, post in zip(comments, posts):
+                if not post["posted"]:
+                    print(f"log comment to post on the epic:\n{c}", file=sys.stderr)
             print(json.dumps(summary, indent=2))
             return EXIT_OK
         if new == live_lines:
@@ -2299,8 +2537,7 @@ def run(argv: list[str]) -> int:
                     "adopt-live" if summary.get("adopted_live") else "accept-ticks",
                 )
             summary["unchanged"] = True
-            print(json.dumps(summary, indent=2))
-            return EXIT_OK
+            return post_all()
 
         # Compare-and-swap, as near as the API allows (CR 258).
         # Raw, not normalized: a whitespace-only edit is an edit too (CR 274).
@@ -2356,6 +2593,7 @@ def run(argv: list[str]) -> int:
             )
             for label, err in causes:
                 print(f"  {label}: {indented(gh_cause(err))}", file=sys.stderr)
+            held_comments()
             return EXIT_READBACK
 
         try:
@@ -2412,6 +2650,7 @@ def run(argv: list[str]) -> int:
                 f" {size_text(size)}. {why}",
                 file=sys.stderr,
             )
+            held_comments()
             return EXIT_READBACK
         if patch_error:
             if landed:
@@ -2461,8 +2700,7 @@ def run(argv: list[str]) -> int:
         except (OSError, Infra) as e:
             summary["history"] = f"not saved: {e}"
             print(f"WARNING history copy not saved: {e}", file=sys.stderr)
-        print(json.dumps(summary, indent=2))
-        return EXIT_OK
+        return post_all()
     except Usage as e:
         print(f"USAGE {e}", file=sys.stderr)
         return EXIT_USAGE
