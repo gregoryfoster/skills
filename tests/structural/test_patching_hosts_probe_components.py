@@ -20,7 +20,10 @@ What this file holds, section by section as they stood there:
 - what the probe changes (#423, #490, #501).
 """
 
+import gzip
+import os
 import subprocess
+import time
 
 import pytest
 
@@ -1026,6 +1029,30 @@ def test_every_postgres_cluster_counts_toward_the_verdict(
     assert evidence in d["evidence"]
 
 
+def test_a_never_started_postgres_cluster_counts_from_its_log(tmp_path):
+    # Each cluster logs its start and stop to /var/log/postgresql (#633).
+    h = Host(tmp_path, uptime_days=1).knob("posture automatic\n")
+    _postgres(h, [("postgres", "7000000", "0", "", "C.UTF-8", "c", "", "0")])
+    h.cases["pg_lsclusters"].clear()
+    h.on(
+        "pg_lsclusters",
+        "-h",
+        "16 main 5432 down postgres /var/lib/postgresql/16/main "
+        "/var/log/postgresql/postgresql-16-main.log\n",
+    )
+    h.show(
+        "postgresql@16-main.service", ActiveState="inactive", InactiveEnterTimestamp=""
+    )
+    h.show("postgresql.service", ActiveState="active")
+    h.write("var/log/postgresql/postgresql-16-main.log", "shut down\n", age_days=50)
+    d = _dormant(h.run(), "postgres")
+    assert d["verdict"] == "dormant"
+    assert d["evidence"].startswith(
+        "every cluster down, the latest for 50 days, counted from /var/log/postgresql,"
+        " last written"
+    )
+
+
 REDIS_IDLE = {
     "uptime_in_days": "40",
     "connected_clients": "1",
@@ -1119,6 +1146,148 @@ def test_an_inactive_nginx_idle_past_30_days_is_dormant(host):
     d = _dormant(out, "nginx")
     assert d["verdict"] == "dormant"
     assert "40 days" in d["evidence"]
+    # With no log and no install to read, it says the clock is the boot's (#633).
+    assert "counted from the boot" in d["evidence"]
+
+
+# --- a clock that outlives the boot (#633) -------------------------------------
+# co-index reboots weekly for its patching runs, so a never-started nginx's
+# idle clock, the boot's, never reached 30 days: its logs, 0 bytes since the
+# image's install on 2026-09-09, said it had never been used.
+
+
+def _rebooted(tmp_path, unit: str, *pkgs: str) -> Host:
+    """A host booted today, whose UNIT hasn't started since."""
+    h = Host(tmp_path, uptime_days=0).knob("posture automatic\n")
+    h.installed(*pkgs)
+    h.show(unit, ActiveState="inactive", InactiveEnterTimestamp="")
+    return h
+
+
+def _day(host: Host, days_ago: int) -> str:
+    return time.strftime("%Y-%m-%d", time.gmtime(host.now - days_ago * DAY))
+
+
+def _history(host: Host, days_ago: int, install: str, rel: str = "history.log"):
+    text = (
+        f"\nStart-Date: {_day(host, days_ago)}  23:09:36\n"
+        "Commandline: apt-get install -y nginx\n"
+        f"Install: {install}\n"
+        f"End-Date: {_day(host, days_ago)}  23:09:41\n"
+    )
+    data = gzip.compress(text.encode()) if rel.endswith(".gz") else text
+    host.write(f"var/log/apt/{rel}", data)
+
+
+def test_a_never_started_unit_counts_from_its_empty_logs(tmp_path):
+    h = _rebooted(tmp_path, "nginx.service", "nginx")
+    for f in ("access.log", "error.log"):
+        h.write(f"var/log/nginx/{f}", "", age_days=66)
+    out = h.run()
+    d = _dormant(out, "nginx")
+    assert d["verdict"] == "dormant"
+    assert d["evidence"] == (
+        "inactive for 66 days, counted from /var/log/nginx, whose files are all"
+        f" empty, the newest dated {_day(h, 66)}; it hasn't started since the boot"
+    )
+    assert "dormant:nginx" in _ids(out)
+
+
+@pytest.mark.parametrize("days, verdict", [(3, "unknown"), (45, "dormant")])
+def test_a_never_started_unit_counts_from_its_last_log_write(tmp_path, days, verdict):
+    h = _rebooted(tmp_path, "nginx.service", "nginx")
+    h.write("var/log/nginx/error.log", "", age_days=66)
+    h.write("var/log/nginx/access.log.1", "GET / 200\n", age_days=days)
+    # The log is read first: an older install doesn't outrank a later write.
+    _history(h, 80, "nginx:amd64 (1.24.0-2ubuntu7)")
+    d = _dormant(h.run(), "nginx")
+    assert d["verdict"] == verdict
+    assert f"for {days} days" in d["evidence"]
+    assert f"counted from /var/log/nginx, last written {_day(h, days)}" in d["evidence"]
+
+
+@pytest.mark.parametrize("rel", ["history.log", "history.log.2.gz"])
+def test_a_never_started_unit_without_logs_counts_from_its_install(tmp_path, rel):
+    h = _rebooted(tmp_path, "nginx.service", "nginx")
+    _history(
+        h,
+        66,
+        "nginx-common:amd64 (1.24.0-2ubuntu7, automatic), nginx:amd64 (1.24.0-2ubuntu7)",
+        rel,
+    )
+    # A later install of another package, and a later upgrade, aren't its install.
+    h.write(
+        "var/log/apt/history.log.1",
+        f"Start-Date: {_day(h, 10)}  10:00:00\nInstall: jq:amd64 (1.7.1)\n"
+        f"Upgrade: nginx:amd64 (1.24.0-2ubuntu7, 1.24.0-2ubuntu7.1)\n",
+    )
+    d = _dormant(h.run(), "nginx")
+    assert d["verdict"] == "dormant"
+    assert d["evidence"] == (
+        f"inactive for 66 days, counted from its install on {_day(h, 66)} in apt's"
+        " history; it hasn't started since the boot"
+    )
+
+
+def test_dpkgs_list_file_is_never_an_install_date(tmp_path):
+    # dpkg rewrites it at every upgrade: co-index's nginx-common.list was
+    # dated by the patching run that upgraded it, not by its install.
+    h = _rebooted(tmp_path, "nginx.service", "nginx")
+    h.write("var/lib/dpkg/info/nginx.list", "/usr/sbin/nginx\n", age_days=66)
+    d = _dormant(h.run(), "nginx")
+    assert d["verdict"] == "unknown"
+    assert "counted from the boot" in d["evidence"]
+
+
+def test_a_unit_that_stopped_counts_from_its_own_stop_not_its_logs(host):
+    host.installed("nginx")
+    host.show(
+        "nginx.service",
+        ActiveState="inactive",
+        InactiveEnterTimestamp=f"@{host.now - 3 * DAY}",
+    )
+    host.write("var/log/nginx/access.log", "", age_days=66)
+    d = _dormant(host.run(), "nginx")
+    assert (d["verdict"], d["evidence"]) == (
+        "unknown",
+        "inactive for 3 days: fewer than 30",
+    )
+
+
+def test_a_never_started_redis_counts_from_its_log(tmp_path):
+    h = _rebooted(tmp_path, "redis-server.service", "redis-server")
+    h.write(
+        "var/log/redis/redis-server.log", "Ready to accept connections\n", age_days=50
+    )
+    d = _dormant(h.run(), "redis")
+    assert d["verdict"] == "dormant"
+    assert "counted from /var/log/redis, last written" in d["evidence"]
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root reads a mode-000 directory")
+def test_a_log_directory_it_cant_read_gives_way_to_the_install(tmp_path):
+    # /var/log/redis is redis's alone (2750): without root, apt's history.
+    h = _rebooted(tmp_path, "redis-server.service", "redis-server")
+    h.sudo = False
+    h.write("var/log/redis/redis-server.log", "", age_days=50)
+    _history(h, 40, "redis-server:amd64 (5:7.0.15-1build2)")
+    (h.root / "var/log/redis").chmod(0)
+    try:
+        d = _dormant(h.run(), "redis")
+    finally:
+        (h.root / "var/log/redis").chmod(0o755)
+    assert d["verdict"] == "dormant"
+    assert f"counted from its install on {_day(h, 40)}" in d["evidence"]
+
+
+def test_a_never_started_docker_counts_from_its_install(tmp_path):
+    # Docker logs to the journal, so it has no log directory to read.
+    h = _rebooted(tmp_path, "docker.service", "docker.io")
+    h.on("docker", "*", "")
+    _history(h, 60, "docker.io:amd64 (28.2.2-0ubuntu1~24.04.1)")
+    d = _dormant(h.run(), "docker")
+    assert d["verdict"] == "dormant"
+    assert f"counted from its install on {_day(h, 60)}" in d["evidence"]
 
 
 def test_parsed_lines_stay_english_when_sudo_resets_the_locale(tmp_path):
