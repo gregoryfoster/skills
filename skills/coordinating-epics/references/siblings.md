@@ -27,12 +27,15 @@ Most epics depend on another repo somewhere: an upstream release, a consumer's a
 - **Downstream audits follow inheritance and delegation,** not only direct calls (cannobserv 29).
 - **Check that a sibling's doc or PR is ordered against the cut,** and put that order on the waiting child's line (broker 111).
 - **Moving answers:** put an answer on the child that waits for it within the hour (broker 107).
+- **A sibling's account of your own service's state is a claim too.** Check it against your journal or access log before relaying it or writing a debt as discharged (replicator R2, notifier S2). The reverse holds: relay your deploy facts to a sibling coordinator as they happen, or its check-in records a stale state (power-map 11-14 addendum 4).
 
 ## Sibling epics
 
 - **Never edit a sibling epic's body** (broker 157). Comment on it, or on the child it tracks.
 - **A sibling epic filed in the same repo is referenced, not tracked twice.** Pull in only its unblocked children, and write the reorder trigger down when you slot one (broker 157).
 - **Mirror a wait** on both sides when two epics wait on each other (broker 118).
+- **One thread holding two epics keeps each child's record on one of them,** the epic that slotted or parked it. The other orders it from a single line that points there, never a copy of the checklist line. Kept on both, the lines drift: a parent's tick lagged its child's close by a week (replicator H1, notifier H1, watcher 368-F6).
+- **A cross-repo flip is its own XS child,** with the brief as its body and a two-sided read-back, each side posted by its own coordinator and both keyed on one shared id, such as the command id. A read-back request is answered on the provider's epic, with a pointer on the requester's issue (archiver 11-10, notifier S1, watcher 368-F11).
 - **Amending a peer's agreement includes telling the peer,** as part of done (processor F128). An ownership transfer moves the duties too: file each one, or record that it isn't wanted (processor F131).
 - **Scope that moves between epics is written back to both,** with the reason, so the losing epic's checklist doesn't keep claiming it (cannobserv 33).
 
