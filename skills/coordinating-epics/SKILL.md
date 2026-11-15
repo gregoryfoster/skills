@@ -93,7 +93,7 @@ On "I finished #N", "next", or a report between threads:
    - "Done when" ticked on evidence;
    - follow-ups the PR mentions but never filed.
 
-   When something is missing, say what, and don't tick.
+   When something is missing, say what, and don't tick. End in a **verification comment on the child**, first line `**Coordinator record, OWNER/REPO#<epic>**`, holding the evidence: the tick links it.
 2. **Harvest** (§2):
    - contract diffs later children depend on;
    - `For #N:` notes, moved to the issue they name;
@@ -107,7 +107,7 @@ On "I finished #N", "next", or a report between threads:
 4. **Re-check blockers and gates** (§4). Probe each one's observable condition; don't wait to be told. Read the latest comment on each cross-repo ref, and the trigger of each parked item.
 5. **Choose the next child** (§5): the order rule, then the tiebreaks written on the epic. Say when the next child is the last unblocked one. When nothing is unblocked, the hand-off is the blockers instead: each with its owner, its evidence, and the options.
 6. **Hand off** ([hand-off.md](references/hand-off.md)). Post the brief on the issue, after a pre-flight against `origin/main`: what it renames or removes, and who uses that today. Reply with the next ID and a kickoff prompt of 2–6 lines that points to the brief.
-7. **Write the epic in one call.** The ticks and notes, the header, and a log line, which is written even when nothing changed. With `--scan "${SCRATCH:?}/scan.json"` (the report you read: step 0's, or a later re-scan you've acted on), `Last check-in` takes `{checked}`, the scan's own time, and `Last issue seen` takes `{last_seen}`. The next window then starts where that scan looked. Never type either value, and never pass a report you haven't read. The editor refuses one whose new issues the body doesn't mention.
+7. **Write the epic in one call.** The ticks, each `compact`ed to its title and a link to that comment; notes on open lines; the header; and a `log-comment`, the check-in's log entry as a comment on the epic, posted even when nothing changed. Watch the summary's `body` size ([#653](https://github.com/gregoryfoster/skills/issues/653)); to bring an older epic onto this form, see [compaction.md](references/compaction.md). With `--scan "${SCRATCH:?}/scan.json"` (the report you read: step 0's, or a later re-scan you've acted on), `Last check-in` takes `{checked}`, the scan's own time, and `Last issue seen` takes `{last_seen}`. The next window then starts where that scan looked. Never type either value, and never pass a report you haven't read. The editor refuses one whose new issues the body doesn't mention.
 
 ## The implementer contract
 
@@ -152,6 +152,7 @@ If the thread goes on coordinating follow-ups, the closing summary restates the 
 - [creation.md](references/creation.md): the six ways in, dispositions, ordering, the verify recipe and baseline, creation mechanics
 - [check-in.md](references/check-in.md): verify, harvest, re-scan, blockers and gates, choosing the next child, writing the epic
 - [hand-off.md](references/hand-off.md): the brief, the kickoff prompt, pre-flight, special briefs
+- [compaction.md](references/compaction.md): moving an older epic's log into comments and cutting its ticked lines to a title and a link, once
 - [close-out.md](references/close-out.md): closing checks, the final-child runbook, an exhausted epic, parking-lot mode
 - [siblings.md](references/siblings.md): cross-repo blockers, waits, replies and sibling epics
 - [assets/epic-template.md](assets/epic-template.md): the epic body, which is the run's whole state
