@@ -6,6 +6,12 @@ markers = [
     "benchmark: expensive LLM-as-judge tests, run on-demand only",
 ]
 addopts = "-m 'not integration and not benchmark'"
+# A passing test's tmp_path goes at its teardown, and a passing run's whole
+# tree at its end; a failure's stays. A green gate otherwise left ~1.1 GB for
+# the next pytest on the host to sweep inside one of its tests (#554). The
+# count stays at 3: gates share the host's root. `-o
+# tmp_path_retention_policy=all` keeps everything for one run.
+tmp_path_retention_policy = "failed"
 
 # Adopted in #246, which asked for a decision either way: the repo DOES gate
 # Python with ruff, and `tests/structural/test_python_lint.py` is where that
