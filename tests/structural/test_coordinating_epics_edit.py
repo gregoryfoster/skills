@@ -1474,6 +1474,101 @@ def test_413_an_empty_preamble_removes_it(rig):
     )
 
 
+# The private run in #428 (#429): a stale "Open: …" sub-bullet under a child.
+SUBLINES = """\
+# Burn-down
+
+- **Last check-in:** 2026-10-17T09:00Z
+
+## Tier 1
+
+- [ ] #11 first thing
+- [ ] #12 backups
+  - Open: backup run due 2026-10-17
+  - Open: restore drill
+    - drill notes
+  - [ ] verify the off-site copy
+- [ ] #13 third thing
+
+## Log
+
+- 2026-10-17: adopted.
+"""
+
+
+def test_429_set_subline_changes_one_sub_bullet(rig):
+    """#429, verbatim: its suggested op on its own example."""
+    _on(rig, SUBLINES)
+    op = {
+        "op": "set-subline",
+        "ref": "#12",
+        "match": "Open: backup",
+        "line": "  - Done: backup ran 2026-10-17",
+    }
+    res = rig.edit(REPO, EPIC, [op])
+    assert res.returncode == 0, res.stderr
+    body = rig.body(REPO, EPIC)
+    assert "- [ ] #12 backups\n  - Done: backup ran 2026-10-17\n  - Open: restore" in body
+    res = rig.edit(REPO, EPIC, [op])
+    assert res.returncode == 0 and summary(res).get("unchanged"), res.stderr
+
+
+def test_429_set_subline_refuses_zero_or_several_matches(rig):
+    _on(rig, SUBLINES)
+    base = {"op": "set-subline", "ref": "#12", "line": "  - x"}
+    res = rig.edit(REPO, EPIC, [dict(base, match="Open:")])
+    assert res.returncode == 3 and "2 sub-bullets" in res.stderr, res.stderr
+    res = rig.edit(REPO, EPIC, [dict(base, match="Closed:")])
+    assert res.returncode == 3 and "no sub-bullet" in res.stderr, res.stderr
+    res = rig.edit(REPO, EPIC, [dict(base, ref="#11", match="Open:")])
+    assert res.returncode == 3 and "no sub-bullet" in res.stderr, res.stderr
+
+
+def test_429_an_empty_line_removes_the_sub_bullet_and_its_own_block(rig):
+    _on(rig, SUBLINES)
+    op = {"op": "set-subline", "ref": "#12", "match": "Open: restore", "line": ""}
+    res = rig.edit(REPO, EPIC, [op])
+    assert res.returncode == 0, res.stderr
+    body = rig.body(REPO, EPIC)
+    assert "restore" not in body and "drill notes" not in body
+    assert "  - Open: backup run due 2026-10-17\n  - [ ] verify" in body
+
+
+def test_429_a_boxed_sub_bullet_keeps_the_counts_right(rig):
+    _on(rig, SUBLINES)
+    op = {
+        "op": "set-subline",
+        "ref": "#12",
+        "match": "verify the off-site",
+        "line": "  - [x] verify the off-site copy",
+    }
+    res = rig.edit(REPO, EPIC, [op])
+    assert res.returncode == 0, res.stderr
+    assert summary(res)["counts_after"] == {"open": 3, "done": 1, "disposed": 0}
+    op = {"op": "set-subline", "ref": "#12", "match": "[x] verify", "line": ""}
+    res = rig.edit(REPO, EPIC, [op])
+    assert res.returncode == 0, res.stderr
+    assert summary(res)["counts_after"] == {"open": 3, "done": 0, "disposed": 0}
+
+
+@pytest.mark.parametrize(
+    "line, why",
+    [
+        ("- Done: backup ran", "indented under"),
+        ("  Done: backup ran", "sub-bullet"),
+        ("  - Done, see watcher#348", "short ref"),
+        ("  - a\n  - b", "one line"),
+    ],
+    ids=["not-indented", "not-a-bullet", "lint", "two-lines"],
+)
+def test_429_set_subline_refuses_a_line_that_isnt_a_sub_bullet(rig, line, why):
+    _on(rig, SUBLINES)
+    op = {"op": "set-subline", "ref": "#12", "match": "Open: backup", "line": line}
+    res = rig.edit(REPO, EPIC, [op])
+    assert res.returncode == 3 and why in res.stderr, res.stderr
+    assert rig.body(REPO, EPIC) == SUBLINES
+
+
 def test_each_write_keeps_a_history_copy(adopted):
     """CR 264: the fallback when the baseline is lost is a local copy of each write."""
     adopted.edit(REPO, EPIC, [{"op": "tick", "ref": "#11"}])
