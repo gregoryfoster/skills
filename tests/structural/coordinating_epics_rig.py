@@ -164,6 +164,9 @@ if method == "POST" and len(parts) == 4 and parts[3] == "issues":  # a new issue
     r["issues"][str(num)] = {"state": "open", "title": sent["title"], "body": sent["body"],
                              "created_at": now, "updated_at": now, "html_url": url}
     st.setdefault("creates", []).append([repo, num])
+    if st.get("create_fail_title") == sent["title"]:  # this one stored, then a 502
+        st["create_fail_title"] = None
+        fail("HTTP 502: Bad Gateway")
     if st.get("create_fails_after_apply"):  # GitHub stored it; gh saw a 502
         st["create_fails_after_apply"] -= 1
         fail("HTTP 502: Bad Gateway")

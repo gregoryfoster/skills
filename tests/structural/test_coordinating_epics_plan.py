@@ -287,3 +287,137 @@ def test_a_gh_failure_is_exit_2_and_shows_ghs_whole_stderr(rig, tmp_path):
     assert "HTTP 502: Bad Gateway" in res.stderr and "upstream said" in res.stderr
     st = json.loads((tmp_path / "plan.json.state.json").read_text())
     assert st["items"]["SUB3"]["state"] == "pending"  # the re-run looks first
+
+
+# ---------------------------------------------------------------- CR 2224–2236
+
+
+def test_cr2224_a_state_file_that_disagrees_with_the_plan_is_a_usage_error(
+    rig, tmp_path
+):
+    """A child the state records in one repo, which the plan now puts in
+    another, would be read and patched in the wrong repo."""
+    plan = _plan(tmp_path)
+    assert create(rig, plan).returncode == 0
+    p = json.loads(plan.read_text())
+    p["children"][2]["repo"] = HOST
+    plan.write_text(json.dumps(p))
+    res = create(rig, plan)
+    assert res.returncode == 1 and "SUB3" in res.stderr and SIB in res.stderr, (
+        res.stderr
+    )
+    other = rig.run(
+        "create-from-plan.sh",
+        "--repo",
+        SIB,
+        "--plan",
+        str(plan),
+        "--state",
+        str(tmp_path / "plan.json.state.json"),
+    )
+    assert other.returncode == 1 and HOST in other.stderr, other.stderr
+
+
+def test_cr2225_a_pending_create_is_found_by_its_recorded_title_past_one_page(
+    rig, tmp_path
+):
+    """The stored issue is looked for by the title and body sent, and past
+    the newest 100 issues."""
+    plan = _plan(tmp_path)
+    rig.set_flag("create_fails_after_apply", 1)
+    rig.set_flag("fail_paths", {"direction=desc&per_page=100": "HTTP 502: Bad Gateway"})
+    assert create(rig, plan).returncode == 2  # stored, and the lookup failed
+    rig.set_flag("fail_paths", {})
+    for n in range(7, 120):  # a busy repo since
+        rig.issue(HOST, n, created_at="2026-11-16T00:00:00Z")
+    p = json.loads(plan.read_text())
+    p["children"][0]["title"] = "Cache layer, renamed"
+    plan.write_text(json.dumps(p))
+    res = create(rig, plan)
+    assert res.returncode == 0, res.stderr
+    assert [c for c in rig.load()["creates"] if c[0] == HOST][0] == [HOST, 6]
+    assert summary(res)["children"][0] == dict(
+        summary(res)["children"][0], number=6, created="found"
+    )
+
+
+def test_cr2226_a_failed_adoption_is_exit_6_with_epic_edits_code(rig, tmp_path):
+    """Exit 1 and 3 mean nothing was created; after creation, epic-edit's
+    refusal is its own code in the summary, and this script's is 6."""
+    (tmp_path / "x").mkdir()
+    plan = _plan(tmp_path)
+    rig.set_flag("fail_paths", {"issues/8/comments --input": "HTTP 422: Unprocessable"})
+    res = create(rig, plan)
+    assert res.returncode == 6, res.stderr
+    assert summary(res)["adopt"]["exit"] == 5
+
+
+def test_cr2228_a_childs_repo_spelled_like_the_hosts_is_the_host(rig, tmp_path):
+    p = _plan(tmp_path)
+    plan = json.loads(p.read_text())
+    plan["children"][0]["repo"] = "Acme/Widgets"
+    p.write_text(json.dumps(plan))
+    res = create(rig, p)
+    assert res.returncode == 0, res.stderr
+    epic = _issue(rig, HOST, 8)["body"]
+    assert "Last issue seen (Acme/Widgets)" not in epic and "- [ ] #6 cache" in epic
+
+
+def test_cr2229_a_pending_epic_found_on_the_rerun_is_not_corrected(rig, tmp_path):
+    plan = _plan(tmp_path)
+    rig.set_flag("create_fails_after_apply", 0)
+    rig.set_flag("fail_paths", {"direction=desc&per_page=100": "HTTP 502: Bad Gateway"})
+    rig.load()
+    # Only the epic's create stores and fails: the children go through first.
+    rig.state["create_fail_title"] = "Epic: cache warming"
+    rig.save()
+    res = create(rig, plan)
+    assert res.returncode == 2, res.stderr
+    rig.set_flag("fail_paths", {})
+    res = create(rig, plan)
+    assert res.returncode == 0, res.stderr
+    e = summary(res)["epic"]
+    assert e["number"] == 8 and e["created"] == "found" and e["corrected"] is False
+    assert "predicted" not in res.stderr
+
+
+def test_cr2230_a_rerun_after_adoption_touches_nothing(rig, tmp_path):
+    plan = _plan(tmp_path)
+    assert create(rig, plan).returncode == 0
+    before = len(rig.load()["calls"])
+    rig.issue(SIB, 3, body="A person wrote SUB1 here later.\n")
+    res = create(rig, plan)
+    assert res.returncode == 0, res.stderr
+    calls = rig.load()["calls"][before:]
+    assert not [c for c in calls if "PATCH" in c or "POST" in c]
+    assert _issue(rig, SIB, 3)["body"] == "A person wrote SUB1 here later.\n"
+
+
+def test_cr2231_ids_in_code_stay_and_one_in_a_link_is_refused(rig, tmp_path):
+    """A fenced example renders as written, so its id stays (and isn't an
+    unknown id); one in a code span stays too, which the lint refuses, as it
+    refuses a SUBn left anywhere; one inside a link would break it."""
+    plan = _plan(tmp_path)
+    (tmp_path / "c3.md").write_text(
+        "Upstream half of SUB0.\n\n```\nexample: SUB9\n```\n"
+    )
+    assert create(rig, plan, "--dry-run").returncode == 0
+    (tmp_path / "c3.md").write_text("Upstream half of SUB0. See `SUB1`.\n")
+    res = create(rig, plan, "--dry-run")
+    assert res.returncode == 3 and "SUBn" in res.stderr, res.stderr
+    (tmp_path / "c3.md").write_text(
+        "See https://github.com/acme/widgets/issues/SUB1.\n"
+    )
+    res = create(rig, plan, "--dry-run")
+    assert res.returncode == 1 and "link" in res.stderr, res.stderr
+    assert "creates" not in rig.load()
+
+
+def test_cr2234_a_fenced_cursor_line_doesnt_count_as_the_header(rig, tmp_path):
+    p = _plan(tmp_path)
+    (tmp_path / "epic.md").write_text(
+        EPIC_BODY + "\n```\n- **Last issue seen (acme/gadgets):** acme/gadgets#1\n```\n"
+    )
+    assert create(rig, p).returncode == 0
+    epic = _issue(rig, HOST, 8)["body"]
+    assert "- **Last issue seen (acme/gadgets):** acme/gadgets#3\n" in epic

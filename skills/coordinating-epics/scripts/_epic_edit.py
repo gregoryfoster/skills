@@ -2070,10 +2070,18 @@ def also_from_report(
     276 and 302's guards from that repo's own entry.
     """
     raw = report.get("also")
+    if raw is not None and not isinstance(raw, dict):
+        raise Usage(f"--scan {name}: also must be an object keyed by owner/repo")
+    have = {str(k).lower() for k in (raw or {})}
+    for op in ops:  # before the fetch: exit 1 means nothing was fetched (CR 2232)
+        for v in op.values():
+            for m in LAST_SEEN_FOR_RE.finditer(v if isinstance(v, str) else ""):
+                if m.group("repo").lower() not in have:
+                    raise Usage(
+                        f"{m.group(0)}: the --scan report has no --also {m.group('repo')}"
+                    )
     if raw is None:
         return {}
-    if not isinstance(raw, dict):
-        raise Usage(f"--scan {name}: also must be an object keyed by owner/repo")
     out = {}
     for low, e in raw.items():
         if not isinstance(e, dict) or type(e.get("max_number")) is not int:
@@ -2540,6 +2548,7 @@ def run(argv: list[str]) -> int:
                         " skip an issue transferred in. Give scan.sh --since, then re-run"
                     )
             scan["also"] = also_from_report(report, a.scan, ops, uses("checked"))
+            scan["uses_checked"] = uses("checked")
         if scan is None:
             needs = sorted(
                 {
@@ -2576,6 +2585,26 @@ def run(argv: list[str]) -> int:
             live_issue.get("updated_at") or now.strftime("%Y-%m-%dT%H:%M:%SZ")
         )
         live = normalize(live_raw)  # for comparisons only
+        if scan and scan.get("uses_checked"):
+            # A repo the body keeps a cursor for, which the scan didn't walk:
+            # {checked} would move past its window unread (CR 2227).
+            kept = {
+                r
+                for ln, code in zip(live, fenced(live))
+                if not code
+                and not ln[:1].isspace()
+                and (m := FIELD_RE.match(ln))
+                and (r := per_repo_cursor(m.group("field")))
+            }
+            unwalked = sorted(kept - set(scan.get("also") or {}))
+            if unwalked:
+                raise Refused(
+                    "the epic keeps a Last issue seen for "
+                    + ", ".join(unwalked)
+                    + ", but the --scan report has no "
+                    + ", ".join(f"--also {r}" for r in unwalked)
+                    + ": {checked} would move past its window unread. Re-scan with it"
+                )
         # A child's thread once closed the epic itself, and the editor then
         # wrote to it without complaint (#519).
         closed = closed_state(live_issue)

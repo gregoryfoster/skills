@@ -262,3 +262,32 @@ def test_400_an_uninjected_per_repo_placeholder_is_linted(tmp_path):
     res = r.run("comment.sh", "--repo", HOST, "--lint-file", str(tmp_path / "c.md"))
     assert res.returncode == 3 and "uninjected" in res.stderr, res.stderr
     assert summary(res)["refused"]
+
+
+def test_cr2227_a_cursor_with_no_also_holds_checked_and_warns(tmp_path):
+    """The body keeps acme/gadgets's cursor, but the scan left out --also:
+    {checked} would move past gadgets' unread window."""
+    r = _adopted(tmp_path)
+    rep = scan(r)
+    assert any("--also acme/gadgets" in w for w in rep["warnings"])
+    path = tmp_path / "plain.json"
+    path.write_text(json.dumps(rep))
+    op = {"op": "header", "field": "Last check-in", "value": "{checked}"}
+    res = r.edit(HOST, EPIC, [op], "--scan", str(path))
+    assert res.returncode == 3 and "--also acme/gadgets" in res.stderr, res.stderr
+
+
+def test_cr2232_an_unknown_last_seen_repo_is_refused_before_any_fetch(tmp_path):
+    r = _adopted(tmp_path)
+    _, path = _report(r, tmp_path)
+    before = len(r.load()["calls"])
+    op = {"op": "header", "field": "Next", "value": "{last_seen:acme/other}"}
+    res = r.edit(HOST, EPIC, [op], "--scan", path)
+    assert res.returncode == 1 and "--also acme/other" in res.stderr
+    assert len(r.load()["calls"]) == before
+
+
+def test_cr2235_also_takes_the_form_a_cursor_line_can_hold(tmp_path):
+    r = _rig(tmp_path)
+    res = r.run("scan.sh", "--repo", HOST, "--epic", str(EPIC), "--also", "user_corp/x")
+    assert res.returncode == 1 and "owner/repo" in res.stderr

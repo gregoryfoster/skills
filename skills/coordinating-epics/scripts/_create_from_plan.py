@@ -26,9 +26,11 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
+import os
 import re
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -42,6 +44,7 @@ from _epic_edit import (  # noqa: E402
     Refused,
     Usage,
     add_token_flag,
+    code_spans,
     fenced,
     gh_cause,
     gh_json,
@@ -56,6 +59,7 @@ from _epic_edit import (  # noqa: E402
 )
 
 EXIT_OK, EXIT_USAGE, EXIT_INFRA, EXIT_REFUSED, EXIT_READBACK = 0, 1, 2, 3, 4
+EXIT_ADOPT = 6
 
 USAGE_EXTRA = """\
 the plan (a JSON file):
@@ -106,7 +110,14 @@ exit codes:
      Nothing was created.
   4  not confirmed: a body patched with the real numbers reads back
      different. Read the issue named before re-running.
-  Any other code is epic-edit.sh's own, from step 7 (its --help).
+  6  everything was created, but step 7's epic-edit.sh exited non-zero:
+     its code and summary are in "adopt" (its --help). Fix what it names on
+     the live epic; a re-run runs step 7 again, and nothing else.
+
+  A state file that disagrees with the plan or --repo (an id recorded in
+  one repo that the plan now puts in another) is exit 1: restore the plan,
+  or start a new --state. Keep the plan and its state in $SCRATCH, not in a
+  repo's working tree.
 """
 
 ID_RE = re.compile(r"SUB(?:0|[1-9][0-9]*)")
@@ -117,9 +128,32 @@ PREFIXED_RE = re.compile(OWNER_REPO + r"#SUB[0-9]+")
 EPIC_ID = "SUB0"
 
 
+# An id inside a link target would become "/issues/#6": a broken link.
+IN_LINK_RE = re.compile(r"/#?SUB[0-9]+\b")
+
+
+def prose(text: str, fn) -> str:
+    """text with fn applied to what renders as prose: a fenced block and a
+    code span show as written, so an id there is an example (CR 2231)."""
+    lines = text.split("\n")
+    fence = fenced(lines)
+    out = []
+    for ln, code in zip(lines, fence):
+        if code:
+            out.append(ln)
+            continue
+        parts, at = [], 0
+        for s, e in code_spans(ln):
+            parts += [fn(ln[at:s]), ln[s:e]]
+            at = e
+        out.append("".join(parts + [fn(ln[at:])]))
+    return "\n".join(out)
+
+
 def render(text: str, repo: str, numbers: dict[str, tuple[str, int]]) -> str:
     """text with each id numbers knows replaced by its ref as seen from repo:
-    #N there, owner/repo#N elsewhere. Unknown ids stay."""
+    #N there, owner/repo#N elsewhere. Unknown ids stay, and so does any in
+    code."""
 
     def sub(m: re.Match) -> str:
         hit = numbers.get("SUB" + m.group("n"))
@@ -128,11 +162,22 @@ def render(text: str, repo: str, numbers: dict[str, tuple[str, int]]) -> str:
         r, n = hit
         return f"#{n}" if r.lower() == repo.lower() else f"{r}#{n}"
 
-    return TOKEN_RE.sub(sub, text)
+    return prose(text, lambda s: TOKEN_RE.sub(sub, s))
+
+
+def in_prose(text: str, rx: re.Pattern) -> list[str]:
+    hits: list[str] = []
+
+    def grab(s: str) -> str:
+        hits.extend(m.group(0) for m in rx.finditer(s))
+        return s
+
+    prose(text, grab)
+    return hits
 
 
 def tokens(text: str) -> set[str]:
-    return {"SUB" + m.group("n") for m in TOKEN_RE.finditer(text)}
+    return {h.lstrip("#") for h in in_prose(text, TOKEN_RE)}
 
 
 def load_plan(path: Path, host: str) -> tuple[dict, list[dict]]:
@@ -161,7 +206,7 @@ def load_plan(path: Path, host: str) -> tuple[dict, list[dict]]:
             ):
                 raise Usage(f"{where}: id {e['id']!r} must be SUBn, n from 1")
             repo = raw.get("repo", host)
-            if not isinstance(repo, str) or not re.fullmatch(REPO_FORM, repo):
+            if not isinstance(repo, str) or not re.fullmatch(OWNER_REPO, repo):
                 raise Usage(f"{where}: repo {repo!r} must be owner/repo")
             e["repo"] = repo
             after = raw.get("after", [])
@@ -195,14 +240,23 @@ def load_plan(path: Path, host: str) -> tuple[dict, list[dict]]:
     order = ordered(children)
     problems = []
     for e in [*children, epic]:
-        for m in PREFIXED_RE.finditer(e["template"]):
+        for hit in in_prose(e["template"], PREFIXED_RE):
             problems.append(
-                f"{e['file']}: {m.group(0)}: write the id alone; its repo is added"
+                f"{e['file']}: {hit}: write the id alone; its repo is added"
+            )
+        for hit in in_prose(e["template"], IN_LINK_RE):
+            problems.append(
+                f"{e['file']}: {hit}: an id inside a link would break it; write the"
+                " id as text, and GitHub links it"
             )
         for t in sorted(tokens(e["template"]) - known):
             problems.append(f"{e['file']}: {t} names no plan entry")
     if problems:
         raise Usage("placeholders:\n" + "\n".join(f"  {p}" for p in problems))
+    # One repo, one spelling: the host's, else the first seen (CR 2228).
+    spell: dict[str, str] = {host.lower(): host}
+    for c in order:
+        c["repo"] = spell.setdefault(c["repo"].lower(), c["repo"])
     epic["log"] = plan.get("log")
     return epic, order
 
@@ -256,14 +310,21 @@ def same(a: str, b: str) -> bool:
 def find_created(repo: str, above: int, title: str, body: str, taken: set[int]):
     """The issue a create stored though gh reported a failure: numbered above
     what was read before it, with its title and body. None when there's none."""
-    rows = gh_json(
-        [
-            "api",
-            f"repos/{repo}/issues?state=all&sort=created&direction=desc&per_page=100",
-        ],
-        f"looking in {repo} for the issue a failed create may have stored",
-    )
-    for it in rows or []:
+    rows: list = []
+    for page in range(1, 21):  # newest first, down to the number read before
+        batch = gh_json(
+            [
+                "api",
+                f"repos/{repo}/issues?state=all&sort=created&direction=desc"
+                f"&per_page=100&page={page}",
+            ],
+            f"looking in {repo} for the issue a failed create may have stored",
+        )
+        rows += batch or []
+        nums = [it.get("number", 0) for it in batch or []]
+        if len(nums) < 100 or min(nums) <= above:
+            break
+    for it in rows:
         n = it.get("number")
         if (
             isinstance(n, int)
@@ -335,7 +396,30 @@ def run(argv: list[str]) -> int:
         except (OSError, json.JSONDecodeError) as e:
             raise Usage(f"reading the state file {state_path}: {e}") from None
         items: dict = state.setdefault("items", {})
+        # A state that disagrees with the plan would read, and patch, an
+        # issue in the wrong repo (CR 2224).
+        if state.get("repo") and state["repo"].lower() != host.lower():
+            raise Usage(
+                f"the state file {state_path} is for {state['repo']}, not {host}:"
+                " start a new --state"
+            )
         state["repo"] = host
+        planned = {e["id"]: e for e in [*children, epic]}
+        for i, it in items.items():
+            want = planned.get(i)
+            if it.get("number") is None and it.get("state") != "pending":
+                continue
+            if want is None:
+                raise Usage(
+                    f"the state file records {i} as {it.get('repo')}#{it.get('number')},"
+                    " which the plan no longer has: restore it, or start a new --state"
+                )
+            if str(it.get("repo", "")).lower() != want["repo"].lower():
+                raise Usage(
+                    f"the state file records {i} in {it.get('repo')}, but the plan"
+                    f" puts it in {want['repo']}: restore the plan, or start a new"
+                    " --state"
+                )
 
         def save() -> None:
             write_atomic(state_path, json.dumps(state, indent=2) + "\n")
@@ -403,7 +487,9 @@ def run(argv: list[str]) -> int:
             print(json.dumps(summary, indent=2))
             return EXIT_OK
 
-        payload = state_path.with_name(state_path.name + ".payload")
+        fd, name = tempfile.mkstemp(prefix="create-from-plan-", suffix=".json")
+        os.close(fd)
+        payload = Path(name)
         rows: list[dict] = []
 
         def create(e: dict, body: str) -> dict:
@@ -417,8 +503,13 @@ def run(argv: list[str]) -> int:
                 if x.get("number") and x["repo"].lower() == e["repo"].lower()
             }
             if it.get("state") == "pending":
+                # By what was sent, not the plan's text now (CR 2225).
                 hit = find_created(
-                    e["repo"], it["above"], e["title"], it.get("body", body), taken
+                    e["repo"],
+                    it["above"],
+                    it.get("title", e["title"]),
+                    it.get("body", body),
+                    taken,
                 )
                 if hit is not None:
                     it.update(
@@ -434,6 +525,8 @@ def run(argv: list[str]) -> int:
                 "above": above,
                 "body": body,
             }
+            if e["id"] == EPIC_ID:
+                it["predicted"] = numbers[EPIC_ID][1]
             items[e["id"]] = it
             save()
             try:
@@ -462,6 +555,23 @@ def run(argv: list[str]) -> int:
             save()
             return {"created": True, **it}
 
+        adopt = state.get("adopt") or {}
+        if adopt.get("exit") == 0 and items.get(EPIC_ID, {}).get("number"):
+            # Done: a re-run touches nothing (CR 2230).
+            summary["children"] = [
+                {
+                    "id": c["id"],
+                    "repo": c["repo"],
+                    "number": numbers[c["id"]][1],
+                    "created": "already",
+                }
+                for c in children
+            ]
+            summary["epic"] = {"number": numbers[EPIC_ID][1], "created": "already"}
+            summary["adopt"] = adopt
+            print(json.dumps(summary, indent=2))
+            return EXIT_OK
+
         for c in children:
             got = create(c, render(c["template"], c["repo"], numbers))
             numbers[c["id"]] = (c["repo"], got["number"])
@@ -478,7 +588,8 @@ def run(argv: list[str]) -> int:
         summary["children"] = rows
 
         # The epic last, naming itself by the number it predicts now.
-        guess = items.get(EPIC_ID, {}).get("number") or top_number(host) + 1
+        had = items.get(EPIC_ID, {})
+        guess = had.get("predicted") or had.get("number") or top_number(host) + 1
         numbers[EPIC_ID] = (host, guess)
         got = create(epic, render(epic["template"], host, numbers))
         n = got["number"]
@@ -506,27 +617,25 @@ def run(argv: list[str]) -> int:
 
         # Forward refs and SUB0, in every body created before they existed.
         for c in [*children, epic]:
+            it = items[c["id"]]
+            if it.get("patched") or not tokens(it.get("body", "")) & set(numbers):
+                continue
             r, num = numbers[c["id"]]
             current = gh_json(["api", f"repos/{r}/issues/{num}"], f"reading {r}#{num}")
             body = str((current or {}).get("body") or "")
-            if not tokens(body) & set(numbers):
-                continue
-            patch(r, num, render(body, r, numbers), payload)
-            for row in rows:
-                if row["id"] == c["id"]:
-                    row["patched"] = True
-
-        adopt = state.get("adopt") or {}
-        if adopt.get("exit") == 0:
-            summary["adopt"] = adopt
-            print(json.dumps(summary, indent=2))
-            return EXIT_OK
+            if tokens(body) & set(numbers):
+                patch(r, num, render(body, r, numbers), payload)
+                for row in rows:
+                    if row["id"] == c["id"]:
+                        row["patched"] = True
+            it["patched"] = True
+            save()
         epic_now = gh_json(["api", f"repos/{host}/issues/{n}"], f"reading #{n}")
         lines = normalize(str((epic_now or {}).get("body") or ""))
         have = {
             per_repo_cursor(m.group("field"))
-            for ln in lines
-            if (m := FIELD_RE.match(ln)) and not ln[:1].isspace()
+            for ln, code in zip(lines, fenced(lines))
+            if not code and (m := FIELD_RE.match(ln)) and not ln[:1].isspace()
         }
         ops = []
         for r in repos[1:]:
@@ -591,7 +700,15 @@ def run(argv: list[str]) -> int:
         }
         save()
         print(json.dumps(summary, indent=2))
-        return res.returncode
+        if res.returncode:
+            print(
+                f"ERROR every issue was created, but epic-edit.sh exited"
+                f" {res.returncode} adopting #{n}: fix what it names on the live epic,"
+                " then re-run, which runs only that step",
+                file=sys.stderr,
+            )
+            return EXIT_ADOPT
+        return EXIT_OK
     except Usage as e:
         print(f"USAGE {e}", file=sys.stderr)
         return EXIT_USAGE

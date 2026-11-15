@@ -12,7 +12,7 @@
 #        create-from-plan.sh --help    the plan's shape, the order, exit codes
 #
 # Exit codes as epic-edit.sh's: 0 ok, 1 usage, 2 infrastructure, 3 refused,
-# 4 not confirmed; past creation, epic-edit.sh's own. Needs python3 (3.9+)
+# 4 not confirmed; 6 created, but the closing epic-edit.sh failed. Needs python3 (3.9+)
 # and an authenticated gh. JSON summary on stdout; refusals and gh's own
 # stderr, whole, on stderr.
 set -euo pipefail

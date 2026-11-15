@@ -41,7 +41,6 @@ from _epic_edit import (  # noqa: E402
     OWNER_REPO,
     RECORD_MARK_RE,
     REF_RE,
-    REPO_FORM,
     Infra,
     Parser,
     Usage,
@@ -869,7 +868,8 @@ def run(argv: list[str]) -> int:
         p.error("--repo must be owner/repo")
     also: dict[str, str] = {}
     for r in a.also:
-        if not re.fullmatch(REPO_FORM, r):
+        # The form a "Last issue seen (owner/repo)" line can hold (CR 2235).
+        if not re.fullmatch(OWNER_REPO, r):
             p.error(f"--also {r!r} must be owner/repo")
         if r.lower() == host.lower():
             p.error(f"--also {r} is the epic's own repo, which every scan reads")
@@ -1037,6 +1037,16 @@ def run(argv: list[str]) -> int:
                 [report["max_number"]] + [r["number"] for r in rows]
             )
 
+        # A cursor the body keeps for a repo this scan wasn't asked to walk:
+        # {checked} would move past that repo's window unread (CR 2227).
+        for field in header_fields(lines):
+            r = per_repo_cursor(field)
+            if r and r not in also:
+                warnings.append(
+                    f"the epic keeps a Last issue seen for {r}, but this scan has no"
+                    f" --also {r}: its new numbers and updates weren't read, and"
+                    " epic-edit.sh refuses {checked} from this report"
+                )
         if also:
             report["also"] = {}
         for low, r in also.items():
