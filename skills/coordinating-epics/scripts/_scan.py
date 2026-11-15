@@ -38,6 +38,7 @@ from _epic_edit import (  # noqa: E402
     FIELD_RE,
     GH_ISSUE_URL_RE,
     LOG_MARK_RE,
+    OWNER_REPO,
     RECORD_MARK_RE,
     REF_RE,
     Infra,
@@ -183,24 +184,34 @@ def in_overlap(updated_at: str | None, since: str) -> bool:
     return bool(updated_at) and parse_ts(updated_at) < parse_ts(since)
 
 
-def marker(body: str | None) -> str | None:
+def marker(body: str | None, epic: str) -> str | None:
     """ "log" or "record" when the comment's first line is the coordinator's
     own marker (#654), else None. By the line, never the author: every thread
-    writes as one account."""
+    writes as one account. A record names its epic, as owner/repo#N: one
+    naming another epic is a sibling coordinator's, news here (CR 2209)."""
     first = next((ln.strip() for ln in (body or "").splitlines() if ln.strip()), "")
     if LOG_MARK_RE.match(first):
         return "log"
-    if RECORD_MARK_RE.match(first):
-        return "record"
+    m = RECORD_MARK_RE.match(first)
+    if m and re.fullmatch(OWNER_REPO + r"#[0-9]+", m.group("ref").strip()):
+        repo, num = m.group("ref").strip().rsplit("#", 1)
+        if key(repo, num, "") == epic:
+            return "record"
     return None
 
 
 def new_comments(
-    host: str, num: int, since: str, what: str, drop: str | None = None
+    host: str,
+    num: int,
+    since: str,
+    what: str,
+    drop: str | None = None,
+    epic: int | None = None,
 ) -> tuple[list[dict], list[dict]]:
     """Comments updated since, read from the overlapped window (#407), and
     apart, the ones whose marker is drop (#654). The body is read for the
-    marker only; no row carries it."""
+    marker only; no row carries it. A record is dropped only when it names
+    epic (CR 2209)."""
     path = f"repos/{host}/issues/{num}/comments?since={overlapped(since)}"
     kept, dropped = [], []
     for c in pages(path, what):
@@ -213,7 +224,8 @@ def new_comments(
             "in_overlap": in_overlap(c.get("updated_at"), since),
             "url": c.get("html_url"),
         }
-        (dropped if drop and marker(c.get("body")) == drop else kept).append(row)
+        mine = drop and marker(c.get("body"), key(None, epic or num, host)) == drop
+        (dropped if mine else kept).append(row)
     return kept, dropped
 
 
@@ -597,8 +609,9 @@ def run(argv: list[str]) -> int:
             "recovered: true and a warning. A failed cross-check is a warning too.\n\n"
             "The coordinator's own comments are dropped by their first line, never\n"
             "their author (#654): a log comment (**Check-in log, <date>**) from\n"
-            "epic_comments, a record comment (**Coordinator record, <epic>**) from a\n"
-            "row's new_comments, where record_comments counts it. A row that record\n"
+            "epic_comments, a record comment (**Coordinator record, OWNER/REPO#N**,\n"
+            "naming this epic; one naming another epic is news) from a row's\n"
+            "new_comments, where record_comments counts it. A row that record\n"
             "comments alone put there (no other new comment, no later update, no close\n"
             "in the window) is dropped. own_comments gives the counts and the rows\n"
             "dropped, so nothing vanishes silently.\n\n"
@@ -730,7 +743,12 @@ def run(argv: list[str]) -> int:
                 row["in_overlap"] = in_overlap(it.get("updated_at"), since)
                 if row["in_epic"]:
                     row["new_comments"], rec = new_comments(
-                        host, it["number"], since, "reading new comments", "record"
+                        host,
+                        it["number"],
+                        since,
+                        "reading new comments",
+                        "record",
+                        a.epic,
                     )
                     if rec:
                         row["record_comments"] = len(rec)

@@ -382,7 +382,7 @@ COMPACT_LABELS = ("verified", "record")
 # one account. A log comment goes on the epic; a record, on a child.
 LOG_MARK = "**Check-in log, {date}**"
 LOG_MARK_RE = re.compile(r"^\*\*Check-in log, [^*\n]+\*\*\s*$")
-RECORD_MARK_RE = re.compile(r"^\*\*Coordinator record, [^*\n]+\*\*\s*$")
+RECORD_MARK_RE = re.compile(r"^\*\*Coordinator record, (?P<ref>[^*\n]+?)\*\*\s*$")
 # GitHub refuses a longer comment body: "Body is too long" [stated: GitHub's
 # own error text, not measured here]. comment.sh reads it from here.
 COMMENT_LIMIT = 65_536
