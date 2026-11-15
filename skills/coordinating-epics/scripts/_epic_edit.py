@@ -42,6 +42,7 @@ import tempfile
 from pathlib import Path
 
 EXIT_OK, EXIT_USAGE, EXIT_INFRA, EXIT_REFUSED, EXIT_READBACK = 0, 1, 2, 3, 4
+EXIT_COMMENT = 5
 
 USAGE_EXTRA = """\
 operations (a JSON array, from --ops FILE or --ops - for stdin):
@@ -61,8 +62,39 @@ operations (a JSON array, from --ops FILE or --ops - for stdin):
                                               set a "- **Field:** value" line
   {"op": "log", "text": "{today}: #12 closed. No new issues. Next: #13."}
                                               append "- text" to the Log section
+  {"op": "log-comment", "text": "{today}: #12 closed. Next: #13."}
+                                              post the text as a comment on the
+                                              epic, first line "**Check-in log,
+                                              <date>**" ("date", default
+                                              {today}), once the body is
+                                              confirmed (#654)
+  {"op": "compact", "ref": "#12", "link": "https://github.com/o/r/issues/12#issuecomment-1"}
+                                              cut #12's ticked line to "- [x]
+                                              **#12** <title> · [verified](link)",
+                                              its sub-block dropped, a
+                                              disposition field kept; "label":
+                                              "record" for a comment that holds
+                                              the line, not evidence; the title
+                                              is the issue's unless "title" is
+                                              given (#654)
   {"op": "replace-section", "heading": "Measured state", "text": "..."}
-                                              replace a section's body
+                                              replace a section's body; refused
+                                              when it holds a deeper heading,
+                                              unless "scope": "tree" takes the
+                                              whole subtree (#408)
+  {"op": "rename-section", "heading": "Tier 2", "to": "Tier 2 — bugs"}
+                                              rename a heading, same level;
+                                              refuses a name already a heading
+  {"op": "set-preamble", "text": "..."}       replace the text between the title
+                                              (if any) and the header's first
+                                              "**Field:**" line or the first
+                                              section; "" removes it (#413)
+  {"op": "set-subline", "ref": "#12", "match": "Open:", "line": "  - Done: ..."}
+                                              replace the one sub-bullet under
+                                              #12's line whose text (after its
+                                              marker, or its box) starts with
+                                              match; "line": "" removes it with
+                                              its own sub-block (#429)
   {"op": "add-section", "heading": "Log", "text": "...", "before": "Notes"}
                                               add a section, once: before
                                               "before" at its level, else at
@@ -108,6 +140,15 @@ edit history:
   The list is a warning, not a refusal: read those edits before trusting a
   clean diff. An unread history is a warning too (summary "edit_history").
 
+tokens (#520):
+  --token-for OWNER/REPO=VAR, repeatable, reads that repo with the token in
+  $VAR: the epic's own repo, or the repo of a comment link the lint resolves.
+  gh gets it as GH_TOKEN for that repo's calls only; every other call uses the
+  ambient token. A mapped variable unset or empty is exit 1, before anything
+  is fetched. No token's value is printed: one in gh's stderr shows as <$VAR>.
+  A comment link on an unmapped repo that doesn't resolve names any set
+  GH_TOKEN_<REPO> or GH_TOKEN_<OWNER>_<REPO> that would read it.
+
 lint:
   Every line the edit adds or changes is linted whole, so ticking a line that
   already holds a short ref or an unexpanded variable is refused with it. That
@@ -119,7 +160,8 @@ lint:
   refused and `App\\Tests\\` is code.
 
 exit codes:
-  0  written and read back, or nothing to write (every operation already held)
+  0  written and read back, or nothing to write (every operation already held),
+     and each log comment posted, or found already posted
   1  usage error: a bad flag, or a malformed ops or --scan file. Nothing was
      fetched or written.
   2  infrastructure failure (gh or python3 failed; gh's own stderr is shown).
@@ -127,8 +169,9 @@ exit codes:
      read afterwards is unchanged.
   3  refused: a foreign edit, a baseline no write or adoption of this tool
      saved (its hash is recorded beside it, in writes.jsonl), a missing
-     anchor, a count or lint failure, a header line a later op removed or
-     changed, an open issue the epic doesn't list (--account [FROM]), a new
+     anchor, a count or lint failure, a new body that grows past
+     --body-limit or a log comment past GitHub's 65,536 characters, a header
+     line a later op removed or changed, an open issue the epic doesn't list (--account [FROM]), a new
      issue in the --scan report that the body doesn't mention, or a closed
      epic without --closed-ok (the message names who closed it and when; a
      dry run notes it). Nothing was written.
@@ -136,7 +179,22 @@ exit codes:
      back differs from the body sent, the read-back failed, or the baseline
      couldn't be saved; or the PATCH failed and whether it landed is unknown
      ("written": "unknown"). The summary says which. Read the epic, then take
-     it with --adopt-live before the next edit.
+     it with --adopt-live before the next edit. Or not applied ("written":
+     false, "readback": "unchanged"): the PATCH returned success, but the body
+     read back is the one from before the edit, so nothing landed and the
+     baseline still holds. Near --body-limit, the host's size cap is the likely
+     cause (#653): make the body smaller, then re-run.
+  5  a log comment wasn't posted: gh failed after every check passed. The
+     summary says whether the body was written ("readback": "matches" is a
+     confirmed write). Re-run the same call: the body ops then hold, and a
+     comment already posted is found, not posted twice.
+
+body size:
+  Every summary that built a new body gives its size as GitHub keeps it,
+  "body": {"chars", "limit", "share"}, and a WARNING past 85% of the limit.
+  Past its cap the host keeps the old body and still reports success (#653),
+  so a new body that grows past --body-limit is refused before anything is
+  sent. One that shrinks goes through, so room can always be made.
 """
 
 # A task item's marker is a bullet or an ordered one, "1." or "1)", up to
@@ -289,6 +347,10 @@ class Parser(argparse.ArgumentParser):
 
 
 ACCOUNT_LIMIT = 5000
+# Characters, as #653 measured. The host's cap is inferred, not documented:
+# 256 KiB, where a 260,219-character body plus 2,100 kept its old body.
+BODY_LIMIT = 262_144
+BODY_WARN = 0.85
 
 OP_FIELDS = {
     "tick": ("ref",),
@@ -300,8 +362,29 @@ OP_FIELDS = {
     "log": ("text",),
     "replace-section": ("heading", "text"),
     "add-section": ("heading", "text"),
+    "rename-section": ("heading", "to"),
+    "set-preamble": ("text",),
+    "set-subline": ("ref", "match", "line"),
+    "log-comment": ("text",),
+    "compact": ("ref", "link"),
 }
-OP_OPTIONAL = {"add-line": ("after_ref", "section"), "add-section": ("before",)}
+OP_OPTIONAL = {
+    "add-line": ("after_ref", "section"),
+    "add-section": ("before",),
+    "replace-section": ("scope",),
+    "log-comment": ("date",),
+    "compact": ("label", "title"),
+}
+COMPACT_LABELS = ("verified", "record")
+# The first line of each comment the coordinator posts as its own (#654).
+# scan.sh drops them by this line, never by author: every thread writes as
+# one account. A log comment goes on the epic; a record, on a child.
+LOG_MARK = "**Check-in log, {date}**"
+LOG_MARK_RE = re.compile(r"^\*\*Check-in log, [^*\n]+\*\*\s*$")
+RECORD_MARK_RE = re.compile(r"^\*\*Coordinator record, [^*\n]+\*\*\s*$")
+# GitHub refuses a longer comment body: "Body is too long" [stated: GitHub's
+# own error text, not measured here]. comment.sh reads it from here.
+COMMENT_LIMIT = 65_536
 
 
 def check_ops(ops) -> None:
@@ -324,6 +407,20 @@ def check_ops(ops) -> None:
                 raise Usage(f"op {n} ({kind}): missing field {f!r}")
         if kind == "add-line" and ("after_ref" in op) == ("section" in op):
             raise Usage(f"op {n} (add-line): give exactly one of after_ref or section")
+        # One opt-in, so a typo can't read as the default (#408).
+        if "scope" in op and op["scope"] != "tree":
+            raise Usage(f'op {n} ({kind}): scope must be "tree", not {op["scope"]!r}')
+        if kind == "set-subline" and not op["match"].strip():
+            raise Usage(f"op {n} (set-subline): match must be non-empty")
+        if kind == "compact" and op.get("label", "verified") not in COMPACT_LABELS:
+            raise Usage(
+                f"op {n} (compact): label must be one of {COMPACT_LABELS}, not"
+                f" {op['label']!r}"
+            )
+        if kind == "log-comment" and (
+            "\n" in op.get("date", "") or "*" in op.get("date", "")
+        ):
+            raise Usage(f"op {n} (log-comment): date must be one line with no '*'")
         for f in ("ref", "after_ref"):  # a typo is usage, not a refusal (CR 293)
             if f in op and not re.fullmatch(r"\s*" + REF_PAT + r"\s*", op[f]):
                 raise Usage(f"op {n} ({kind}): {f} {op[f]!r} is not #N or owner/repo#N")
@@ -636,6 +733,63 @@ def after_block(lines: list[str], i: int) -> int:
             break
         j += 1
     return end
+
+
+def indent_of(line: str) -> int:
+    """A line's indent in columns, tabs at 4, as after_block reads it."""
+    return len(line.expandtabs(4)) - len(line.expandtabs(4).lstrip())
+
+
+def sub_bullets(lines: list[str], i: int, match: str) -> list[int]:
+    """The list items in line i's block whose text starts with match (#429).
+
+    The text is read after the marker, and after a box too, so "Open:" finds
+    "  - [ ] Open: …" and "[x] verify" finds "  - [x] verify …". Any depth.
+    """
+    fence, out = fenced(lines), []
+    for j in range(i + 1, after_block(lines, i)):
+        m = LIST_MARK_RE.match(lines[j])
+        if fence[j] or not m:
+            continue
+        text = lines[j][m.end() :]
+        unboxed = re.sub(r"^\[[ xX]\]\s+", "", text)
+        if text.startswith(match) or unboxed.startswith(match):
+            out.append(j)
+    return out
+
+
+def clean_title(title: str, child: str | None, host: str) -> str:
+    """An issue's title, made safe to stand in a checklist line (#654).
+
+    A "·" would start a field, so it becomes "-"; then no word of it is a
+    field, and "not planned" in it disposes nothing. A bare name#N, which
+    links nowhere, goes into a code span. In another repo's title a bare #N
+    is that repo's, so it is qualified.
+    """
+    t = " ".join(title.split()).replace("·", "-")
+    t = SHORT_REF_RE.sub(lambda m: f"`{m.group('ref')}`", t)
+    if child and child.lower() != host.lower():
+        t = REF_RE.sub(
+            lambda m: m.group(0) if m.group("repo") else f"{child}#{m.group('num')}",
+            t,
+        )
+    return t
+
+
+def preamble_span(lines: list[str]) -> tuple[int, int]:
+    """(start, end) of the text set-preamble owns (#413).
+
+    From below a title, else the top, to the header's first top-level
+    "**Field:**" line (list item or paragraph), else the first section. So
+    the cursor lines, and any header field, stay out of its reach.
+    """
+    hs, secs = headings(lines), section_headings(lines)
+    start = hs[0][0] + 1 if hs and secs != hs else 0
+    fence = fenced(lines)
+    stops = [i for i in range(start, len(lines)) if list_field(lines, fence, i)]
+    stops += [s for s, _ in paragraph_headers(lines) if s >= start]
+    stops += [i for i, _, _ in secs if i >= start]
+    return start, min(stops, default=len(lines))
 
 
 def list_field(lines: list[str], fence: list[bool], i: int) -> bool:
@@ -1116,6 +1270,17 @@ def apply_ops(
                 lines.insert(section_tail(lines, start, end), entry)
             elif kind == "replace-section":
                 start, end = section_span(lines, op["heading"])
+                # Its span runs to the next heading as deep or shallower, so a
+                # "##" takes its "###" subsections: once, a whole checklist (#408).
+                inner = [t for i, _, t in headings(lines) if start < i < end]
+                if inner and op.get("scope") != "tree":
+                    raise Refused(
+                        f"{op['heading']!r} holds subsections "
+                        + ", ".join(repr(t) for t in inner)
+                        + ", which replacing it would replace too. Replace a"
+                        ' subsection by its own heading, or give "scope": "tree"'
+                        " to replace the whole subtree"
+                    )
                 text = inject(op["text"], now, scan).strip("\n")
                 new_body = [""] + [ln.rstrip("\r") for ln in text.split("\n")] + [""]
                 if end == len(lines):
@@ -1159,6 +1324,137 @@ def apply_ops(
                         lines.pop()
                     lines += [""] + block
                 _add(expect, counts(new_body))
+            elif kind == "rename-section":
+                to = op["to"].strip()
+                if not to or "\n" in to:
+                    raise Refused("rename-section takes a one-line heading in to")
+                taken = {t.lower(): i for i, _, t in headings(lines)}
+                if op["heading"].strip().lower() not in taken and to.lower() in taken:
+                    notes.append(f"{where}: already headed {to!r}")
+                    continue
+                start, _ = section_span(lines, op["heading"])
+                if taken.get(to.lower(), start) != start:
+                    # A heading is an anchor: two alike, and section ops refuse both.
+                    raise Refused(f"{to!r} is already a heading")
+                level = next(lvl for i, lvl, _ in headings(lines) if i == start)
+                new = f"{'#' * level} {to}"
+                if new == lines[start]:
+                    notes.append(f"{where}: already headed {to!r}")
+                    continue
+                lines[start] = new
+            elif kind == "set-preamble":
+                text = inject(op["text"], now, scan).strip("\n")
+                new_body = [ln.rstrip("\r") for ln in text.split("\n")] if text else []
+                fence = fenced(new_body)
+                for k, ln in enumerate(new_body):
+                    if fence[k]:
+                        continue
+                    if is_cursor_line(ln) or list_field(new_body, fence, k):
+                        raise Refused(
+                            f"the text holds a header line, {ln.strip()!r}: the"
+                            " header ops own each cursor line and header field"
+                        )
+                    if HEADING_RE.match(ln):
+                        raise Refused(
+                            f"the text holds a heading, {ln.strip()!r}: use add-section"
+                        )
+                start, end = preamble_span(lines)
+                block = ([""] if start else []) + new_body
+                if new_body and end < len(lines):
+                    block.append("")
+                if normalize("\n".join(lines[start:end])) == normalize(
+                    "\n".join(block)
+                ):
+                    notes.append(f"{where}: preamble already reads so")
+                    continue
+                before, after = counts(lines[start:end]), counts(block)
+                _add(expect, {k: after[k] - before[k] for k in expect})
+                lines[start:end] = block
+            elif kind == "set-subline":
+                i = find_ref_line(lines, parse_ref(op["ref"], host), host)
+                new = inject(op["line"], now, scan).rstrip("\r\n")
+                if "\n" in new:
+                    raise Refused("set-subline takes one line")
+                hits = sub_bullets(lines, i, op["match"])
+                if new.strip():
+                    if not LIST_MARK_RE.match(new) or indent_of(new) <= indent_of(
+                        lines[i]
+                    ):
+                        raise Refused(
+                            f"the new line must be a sub-bullet indented under"
+                            f" {op['ref']}'s line: {new.strip()!r}"
+                        )
+                    if not hits and new in lines[i + 1 : after_block(lines, i)]:
+                        notes.append(
+                            f"{where}: {op['ref']}'s sub-bullet already reads so"
+                        )
+                        continue
+                if not hits:
+                    raise Refused(
+                        f"no sub-bullet under {op['ref']}'s line starts with"
+                        f" {op['match']!r}"
+                    )
+                if len(hits) > 1:
+                    raise Refused(
+                        f"{len(hits)} sub-bullets under {op['ref']}'s line start with"
+                        f" {op['match']!r}: "
+                        + "; ".join(lines[j].strip() for j in hits)
+                        + ". Make match longer"
+                    )
+                j = hits[0]
+                if not new.strip():
+                    # Its own sub-block goes with it, or it re-parents (CR 250).
+                    gone = lines[j : after_block(lines, j)]
+                    _add(expect, {k: -v for k, v in counts(gone).items()})
+                    del lines[j : j + len(gone)]
+                    continue
+                if new == lines[j]:
+                    notes.append(f"{where}: {op['ref']}'s sub-bullet already reads so")
+                    continue
+                _add(expect, _delta(item_state(lines[j]), item_state(new)))
+                lines[j] = new
+            elif kind == "compact":
+                m = re.fullmatch(r"\s*" + REF_PAT + r"\s*", op["ref"])
+                ref_key = parse_ref(op["ref"], host)
+                i = find_ref_line(lines, ref_key, host, want_item=True)
+                if box_state(lines[i]) != "done":
+                    raise Refused(f"{op['ref']}'s line isn't ticked: tick it first")
+                link = op["link"].strip()
+                lm = COMMENT_LINK_RE.fullmatch(link)
+                if not lm or key(lm.group("repo"), lm.group("num"), host) != ref_key:
+                    raise Refused(
+                        f"link must be a comment on {op['ref']} itself"
+                        f" (…/issues/N#issuecomment-ID): {link}"
+                    )
+                child = m.group("repo") if m else None
+                own = not child or child.lower() == host.lower()
+                ref = f"#{m.group('num')}" if own else f"{child}#{m.group('num')}"
+                title = clean_title(op.get("title", ""), child, host)
+                if not title:
+                    raise Refused(f"{op['ref']} has no title to keep")
+                bm = BOX_RE.match(lines[i])
+                assert bm
+                rest = lines[i][bm.end() :]
+                ordinal = re.match(r"(?:[0-9]{1,9}[.)]\s+)?", rest).group(0)
+                fields = FIELD_SEP_RE.split(lines[i].rstrip())[1:]
+                kept = next((f for f in fields if DISPOSITION_RE.match(f)), None)
+                new = (
+                    f"{bm.group('indent')}{bm.group('marker')} [x] {ordinal}**{ref}**"
+                    f" {title}"
+                    + (f" · {kept}" if kept else "")
+                    + f" · [{op.get('label', 'verified')}]({link})"
+                )
+                end = after_block(lines, i)
+                if new == lines[i] and end == i + 1:
+                    notes.append(f"{where}: {op['ref']}'s line is already compact")
+                    continue
+                # The sub-block goes: the evidence lives in the linked comment.
+                gone = lines[i + 1 : end]
+                _add(expect, {k: -v for k, v in counts(gone).items()})
+                _add(expect, _delta(item_state(lines[i]), item_state(new)))
+                lines[i:end] = [new]
+            elif kind == "log-comment":
+                continue  # posted after the body write: build_comments()
             else:
                 raise Usage(f"unknown op {kind!r}")
         except Usage as e:
@@ -1224,16 +1520,141 @@ def field_hits(lines: list[str], field: str, nested: bool = False) -> list[int]:
 
 # ---------------------------------------------------------------- gh
 
+# The per-repo token map (#520): owner/repo, lowercased, to the variable
+# --token-for named for it and that variable's value. One ambient token can't
+# read a private sibling's refs, and a cohort keeps one PAT per repo. The value
+# goes to gh only as GH_TOKEN, for that repo's calls, and is never shown.
+TOKENS: dict[str, tuple[str, str]] = {}
+REPO_FORM = r"[\w.-]+/[\w.-]+"
+VAR_NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+AMBIENT_TOKENS = ("GH_TOKEN", "GITHUB_TOKEN")
+TOKEN_FOR_HELP = (
+    "read OWNER/REPO with the token held in environment variable VAR: its name,"
+    " never its value. gh gets it as GH_TOKEN for that repo's calls only."
+    " Repeatable. A cohort .env names them GH_TOKEN_<REPO>, e.g. --token-for"
+    " CannObserv/provisioner=GH_TOKEN_PROVISIONER. A mapped variable unset or"
+    " empty is a usage error, never a fall back to the ambient token"
+)
+
+
+def add_token_flag(p: argparse.ArgumentParser) -> None:
+    p.add_argument(
+        "--token-for",
+        action="append",
+        default=[],
+        metavar="OWNER/REPO=VAR",
+        help=TOKEN_FOR_HELP,
+    )
+
+
+def load_tokens(specs: list[str]) -> None:
+    """Fill TOKENS from --token-for values, or raise Usage before any gh call.
+
+    No message carries a value: a token pasted where its variable's name goes
+    is named as that, and only a spec's OWNER/REPO, which holds a "/" no token
+    does, is ever echoed.
+    """
+    TOKENS.clear()
+    for spec in specs:
+        repo, _, var = spec.partition("=")
+        if not re.fullmatch(REPO_FORM, repo):
+            raise Usage(
+                "--token-for wants OWNER/REPO=VAR; one value isn't of that form"
+            )
+        if any(rx.search(var) for rx in SECRET_RES):
+            raise Usage(
+                f"--token-for {repo}: what follows '=' looks like a token's value."
+                " Pass the name of the variable holding it, e.g. GH_TOKEN_<REPO>"
+            )
+        if not VAR_NAME_RE.fullmatch(var):
+            raise Usage(
+                f"--token-for {repo}: what follows '=' isn't an environment"
+                " variable's name"
+            )
+        value = os.environ.get(var)
+        if value is None:
+            raise Usage(f"--token-for {repo}: {var} is not set")
+        if not value.strip():
+            raise Usage(f"--token-for {repo}: {var} is empty")
+        had = TOKENS.get(repo.lower())
+        if had and had[0] != var:
+            raise Usage(f"--token-for maps {repo.lower()} to both {had[0]} and {var}")
+        TOKENS[repo.lower()] = (var, value)
+
+
+def repo_of(args: list[str]) -> str | None:
+    """The repo a gh call reads: its repos/OWNER/REPO path, or its -R."""
+    for i, a in enumerate(args):
+        if a in ("-R", "--repo") and i + 1 < len(args):
+            return args[i + 1]
+        m = re.match(r"repos/([^/?#]+/[^/?#]+)", a)
+        if m:
+            return m.group(1)
+    return None
+
+
+def gh_env(repo: str | None) -> dict | None:
+    """The environment for a call on repo: its mapped token as GH_TOKEN, else
+    None, which inherits the ambient one."""
+    hit = TOKENS.get((repo or "").lower())
+    return {**os.environ, "GH_TOKEN": hit[1]} if hit else None
+
+
+def scrub(text: str) -> str:
+    """text with every token this run holds shown as <$VAR>.
+
+    gh's whole stderr is surfaced (#410, #426), so a gh that ever printed its
+    environment would put a token in a warning or the summary (#520).
+    """
+    known = list(TOKENS.values()) + [
+        (v, os.environ.get(v) or "") for v in AMBIENT_TOKENS
+    ]
+    for var, value in sorted(known, key=lambda x: -len(x[1])):
+        if len(value) >= 8:
+            text = text.replace(value, f"<${var}>")
+    return text
+
+
+def token_hint(repo: str) -> str:
+    """What to try when a read of repo failed, or "" when nothing is known.
+
+    A mapped repo names its variable: no other token was tried. An unmapped
+    one names each set variable the cohort's .env would hold its PAT in,
+    GH_TOKEN_<REPO> or GH_TOKEN_<OWNER>_<REPO> with "." and "-" read as "_",
+    unless it holds the ambient token that just failed (#520).
+    """
+    hit = TOKENS.get(repo.lower())
+    if hit:
+        return f"read with {hit[0]} (--token-for)"
+    owner, _, name = repo.partition("/")
+
+    def up(s: str) -> str:
+        return re.sub(r"[^A-Za-z0-9]", "_", s).upper()
+
+    ambient = {os.environ.get(v) for v in AMBIENT_TOKENS} - {None, ""}
+    found = [
+        var
+        for var in (f"GH_TOKEN_{up(name)}", f"GH_TOKEN_{up(owner)}_{up(name)}")
+        if (os.environ.get(var) or "").strip() and os.environ.get(var) not in ambient
+    ]
+    if not found:
+        return ""
+    also = f" ({', '.join(found[1:])} is set too)" if found[1:] else ""
+    return f"{found[0]} is set: pass --token-for {repo}={found[0]}{also}"
+
 
 def gh(args: list[str], what: str) -> str:
     try:
-        r = subprocess.run(["gh", *args], capture_output=True, text=True)
+        r = subprocess.run(
+            ["gh", *args], capture_output=True, text=True, env=gh_env(repo_of(args))
+        )
     except FileNotFoundError:
         raise Infra("gh is not on PATH") from None
     if r.returncode != 0:
+        err = scrub(r.stderr.strip())
         raise Infra(
-            f"{what}: gh {' '.join(args)} exited {r.returncode}:\n{r.stderr.strip()}",
-            stderr=r.stderr.strip(),
+            f"{what}: gh {' '.join(args)} exited {r.returncode}:\n{err}",
+            stderr=err,
             code=r.returncode,
         )
     return r.stdout
@@ -1244,7 +1665,7 @@ def gh_json(args: list[str], what: str):
     try:
         return json.loads(out)
     except json.JSONDecodeError:
-        raise Infra(f"{what}: gh returned non-JSON: {out[:200]!r}") from None
+        raise Infra(f"{what}: gh returned non-JSON: {scrub(out[:200])!r}") from None
 
 
 def gh_graphql(query: str, variables: dict, what: str) -> tuple[dict, list[str]]:
@@ -1252,13 +1673,21 @@ def gh_graphql(query: str, variables: dict, what: str) -> tuple[dict, list[str]]
 
     gh exits 1 on a GraphQL error but still prints the response, so one null
     node (a deleted issue's alias) leaves the rest readable. With no data at
-    all (a 403, a bad query), it fails as gh() does.
+    all (a 403, a bad query), it fails as gh() does. A query whose variables
+    name an owner and a name runs with that repo's mapped token (#520).
     """
     args = ["api", "graphql", "-f", f"query={query}"]
     for k, v in variables.items():
         args += ["-F" if isinstance(v, int) else "-f", f"{k}={v}"]
+    repo = (
+        f"{variables['owner']}/{variables['name']}"
+        if {"owner", "name"} <= set(variables)
+        else None
+    )
     try:
-        r = subprocess.run(["gh", *args], capture_output=True, text=True)
+        r = subprocess.run(
+            ["gh", *args], capture_output=True, text=True, env=gh_env(repo)
+        )
     except FileNotFoundError:
         raise Infra("gh is not on PATH") from None
     try:
@@ -1267,14 +1696,73 @@ def gh_graphql(query: str, variables: dict, what: str) -> tuple[dict, list[str]]
         resp = None
     data = resp.get("data") if isinstance(resp, dict) else None
     if r.returncode != 0 and not data:
+        err = scrub(r.stderr.strip())
         raise Infra(
-            f"{what}: gh api graphql exited {r.returncode}:\n{r.stderr.strip()}",
-            stderr=r.stderr.strip(),
+            f"{what}: gh api graphql exited {r.returncode}:\n{err}",
+            stderr=err,
             code=r.returncode,
         )
     if not isinstance(data, dict):
-        raise Infra(f"{what}: gh returned no data: {r.stdout[:200]!r}")
-    return data, [str(e.get("message", e)) for e in resp.get("errors") or []]
+        raise Infra(f"{what}: gh returned no data: {scrub(r.stdout[:200])!r}")
+    return data, [scrub(str(e.get("message", e))) for e in resp.get("errors") or []]
+
+
+def build_comments(ops: list[dict], now: dt.datetime, scan: dict | None) -> list[str]:
+    """Each log-comment op's comment, in op order, checked before anything is
+    written: non-empty, and under GitHub's comment cap (#654)."""
+    out = []
+    for n, op in enumerate(ops, 1):
+        if op.get("op") != "log-comment":
+            continue
+        where = f"op {n} (log-comment)"
+        text = inject(op["text"], now, scan).strip("\n").rstrip()
+        date = inject(op.get("date", "{today}"), now, scan).strip()
+        if not text.strip() or not date:
+            raise Refused(f"{where}: log-comment takes non-empty text")
+        body = LOG_MARK.format(date=date) + "\n\n" + text
+        if len(body) > COMMENT_LIMIT:
+            raise Refused(
+                f"{where}: the comment is {len(body):,} characters; GitHub refuses"
+                f" one over {COMMENT_LIMIT:,}. Split it into several log-comment ops"
+            )
+        out.append(body)
+    return out
+
+
+def posted_comments(host: str, num: int, since: str | None) -> dict[str, str]:
+    """The epic's comments since a time, by body, to their URL: a re-run finds
+    the log comment it already posted, and doesn't post it twice."""
+    path = f"repos/{host}/issues/{num}/comments?per_page=100"
+    if since:
+        path += f"&since={since}"
+    rows = gh_json(["api", path], "reading the epic's recent comments")
+    return {
+        "\n".join(normalize(c.get("body") or "")): c.get("html_url", "")
+        for c in rows
+        if isinstance(c, dict)
+    }
+
+
+def post_comment(host: str, num: int, body: str) -> str:
+    """Post a comment on the issue; its URL."""
+    fd, payload = tempfile.mkstemp(prefix="epic-comment-", suffix=".json")
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump({"body": body}, f)
+        data = gh_json(
+            [
+                "api",
+                "-X",
+                "POST",
+                f"repos/{host}/issues/{num}/comments",
+                "--input",
+                payload,
+            ],
+            "posting the log comment",
+        )
+    finally:
+        os.unlink(payload)
+    return str((data or {}).get("html_url", "")) if isinstance(data, dict) else ""
 
 
 def fetch_issue(repo: str, num: int) -> dict:
@@ -1385,7 +1873,14 @@ def lint(
     check_links: bool,
     in_fence: list[bool] | None = None,
     in_table: list[bool] | None = None,
+    known: frozenset[int] = frozenset(),
 ) -> list[str]:
+    """Each problem in new_lines, as the refusal names it.
+
+    known holds numbers to take as existing though they are above the repo's
+    highest: a body linted before its own issue is created names the number
+    it predicts (comment.sh --lint-file --predicted, #395).
+    """
     in_fence = in_fence or [False] * len(new_lines)
     in_table = in_table or [False] * len(new_lines)
     problems = []
@@ -1427,7 +1922,7 @@ def lint(
         for text in prose
         for m in REF_RE.finditer(ref_text(text))
         if not m.group("repo")
-    }
+    } - set(known)
     if bare:
         newest = gh_json(
             [
@@ -1464,7 +1959,11 @@ def lint(
                 except Infra as e:
                     if not absent(e):
                         raise
-                    problems.append(f"comment link doesn't resolve: {m.group(0)} ({e})")
+                    hint = token_hint(m.group("repo"))
+                    problems.append(
+                        f"comment link doesn't resolve: {m.group(0)} ({e})"
+                        + (f"; {hint}" if hint else "")
+                    )
                     continue
                 if not str(data.get("issue_url", "")).endswith(
                     f"/issues/{m.group('num')}"
@@ -1639,6 +2138,34 @@ def foreign_edits(
     return sorted(out, key=lambda x: x["at"])
 
 
+def body_size(lines: list[str], limit: int) -> dict:
+    """The body's size as GitHub keeps it (no final newline), against the limit."""
+    chars = len("\n".join(lines))
+    return {"chars": chars, "limit": limit, "share": round(chars / limit, 3)}
+
+
+def size_text(size: dict) -> str:
+    """ "262,319 characters, 100.1% of the 262,144-character limit" """
+    return (
+        f"{size['chars']:,} characters, {size['chars'] / size['limit']:.1%} of the"
+        f" {size['limit']:,}-character limit"
+    )
+
+
+def near_limit(size: dict) -> bool:
+    return size["chars"] > BODY_WARN * size["limit"]
+
+
+def positive_int(value: str) -> int:
+    try:
+        n = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"{value!r} is not a whole number") from None
+    if n <= 0:
+        raise argparse.ArgumentTypeError(f"{value!r} must be above 0")
+    return n
+
+
 def write_atomic(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=path.name, suffix=".tmp")
@@ -1715,10 +2242,19 @@ def run(argv: list[str]) -> int:
         "--no-link-check", action="store_true", help="skip resolving new comment links"
     )
     p.add_argument(
+        "--body-limit",
+        type=positive_int,
+        default=BODY_LIMIT,
+        metavar="N",
+        help=f"refuse a new body that grows past N characters (default {BODY_LIMIT:,},"
+        " near the host's inferred cap, #653); warn past 85%%",
+    )
+    p.add_argument(
         "--state-dir",
         help="baseline directory, holding OWNER/REPO/N/ (default"
         " $XDG_STATE_HOME/coordinating-epics, else ~/.local/state/coordinating-epics)",
     )
+    add_token_flag(p)
     a = p.parse_args(argv)
     host = a.repo
     if not re.fullmatch(r"[\w.-]+/[\w.-]+", host) or any(
@@ -1733,6 +2269,7 @@ def run(argv: list[str]) -> int:
         "written": False,
     }
     try:
+        load_tokens(a.token_for)  # before any gh call: exit 1 fetches nothing
         ops = []
         scan = None
         try:
@@ -1966,16 +2503,35 @@ def run(argv: list[str]) -> int:
             )
         unverified = [t for t in ticks if t not in accepted]
         if unverified:
+            # The whole argument: the bare flag is a usage error (#621).
             raise Refused(
                 "boxes ticked elsewhere since the last write: "
                 + ", ".join(unverified)
                 + ". A tick is a claim: verify each child, then pass --accept-ticks"
+                f" '{','.join(sorted(set(ticks) | accepted))}'"
             )
 
+        # compact keeps the issue's own title, read here so apply_ops stays
+        # offline; a "title" in the op skips the read (#654).
+        ops = [dict(op) for op in ops]
+        for op in ops:
+            if op.get("op") == "compact" and "title" not in op:
+                repo, num = parse_ref(op["ref"], host).rsplit("#", 1)
+                it = gh_json(
+                    ["api", f"repos/{repo}/issues/{num}"], f"reading {op['ref']}"
+                )
+                op["title"] = str((it or {}).get("title") or "")
         before = counts(live_lines)
         new, expect, notes = apply_ops(live_lines, ops, host, now, scan)
         after = counts(new)
-        summary.update(counts_before=before, counts_after=after, notes=notes)
+        size = body_size(new, a.body_limit)
+        summary.update(counts_before=before, counts_after=after, notes=notes, body=size)
+        if near_limit(size):
+            print(
+                f"WARNING the body is {size_text(size)}. Past the host's cap a"
+                " write keeps the old body (#653): make room before it gets there",
+                file=sys.stderr,
+            )
         if not new:
             raise Refused("the result is empty")
         want = {k: before[k] + expect[k] for k in before}
@@ -1983,11 +2539,30 @@ def run(argv: list[str]) -> int:
             raise Refused(
                 f"checkbox counts {after} don't match the {want} the operations imply"
             )
+        # Growth past the limit only: a write that shrinks an over-limit body
+        # is how room gets made, and nothing written can't overflow (#653).
+        if size["chars"] > a.body_limit and size["chars"] > len("\n".join(live_lines)):
+            raise Refused(
+                f"the new body is {size['chars']:,} characters,"
+                f" {size['chars'] - a.body_limit:,} over the {a.body_limit:,}-character"
+                " limit (--body-limit). Past its cap the host keeps the old body and"
+                " still reports success (#653), so nothing was sent. Make room first:"
+                " move the log into comments, or cut ticked lines to their title and"
+                " a link"
+            )
+
+        comments = build_comments(ops, now, scan)
+        posts = [{"chars": len(c), "posted": False, "url": None} for c in comments]
+        if comments:
+            summary["log_comments"] = posts
 
         # A created epic's body never passed through apply_ops, so an empty
         # ops list would lint nothing of it (CR 291).
         added, in_fence, in_table = introduced([] if a.lint_all else live_lines, new)
         problems = lint(added, host, not a.no_link_check, in_fence, in_table)
+        for c in comments:  # a log comment is linted as a changed line (#654)
+            cl = c.split("\n")
+            problems += lint(cl, host, not a.no_link_check, fenced(cl), tabled(cl))
         if problems:
             raise Refused("lint:\n" + "\n".join(f"  {x}" for x in problems))
 
@@ -1997,6 +2572,8 @@ def run(argv: list[str]) -> int:
         # header's "Last issue seen" doesn't.
         if scan and scan["new_issues"]:
             mentioned = refs_in([ln for ln in new if not is_cursor_line(ln)], host)
+            # The log comment is the log: naming an issue there counts (#654).
+            mentioned |= refs_in([ln for c in comments for ln in c.split("\n")], host)
             missing = [
                 n for n in scan["new_issues"] if key(None, n, host) not in mentioned
             ]
@@ -2004,7 +2581,8 @@ def run(argv: list[str]) -> int:
                 raise Refused(
                     "the scan found issues this write doesn't mention: "
                     + ", ".join(f"#{n}" for n in missing)
-                    + ". Slot each, or name it in the log line (e.g. 'out of epic')"
+                    + ". Slot each, or name it in the log line or log comment"
+                    " (e.g. 'out of epic')"
                 )
 
         if a.account is not None:
@@ -2044,11 +2622,67 @@ def run(argv: list[str]) -> int:
                     + ", ".join(f"#{n}" for n in unlisted)
                 )
 
+        if comments:
+            # A re-run after an exit 4 or 5 finds what it already posted. A
+            # comment bumps the epic's updated_at, so two days before that
+            # holds any it posted (#654).
+            when = gh_time(live_issue.get("updated_at"))
+            since = (
+                (when - dt.timedelta(days=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
+                if when
+                else None
+            )
+            seen = posted_comments(host, a.epic, since)
+            for c, post in zip(comments, posts):
+                url = seen.get("\n".join(normalize(c)))
+                if url is not None:
+                    post.update(posted="already", url=url)
+
+        def post_all() -> int:
+            """Post each log comment not yet posted, in order; stop at a failure.
+
+            Only after the body is confirmed or unchanged: a comment can't be
+            taken back, and the log must not run ahead of the epic (#654).
+            """
+            for c, post in zip(comments, posts):
+                if post["posted"]:
+                    continue
+                try:
+                    post.update(posted=True, url=post_comment(host, a.epic, c))
+                except Infra as e:
+                    print(json.dumps(summary, indent=2))
+                    body = (
+                        ", but the body write is confirmed"
+                        if summary.get("written") is True
+                        else "; the body was unchanged"
+                    )
+                    print(
+                        f"ERROR the log comment wasn't posted{body}. Re-run the same"
+                        " call: the body ops hold, and a comment already posted is"
+                        " found, not posted twice",
+                        file=sys.stderr,
+                    )
+                    print(f"  gh's error: {indented(gh_cause(e))}", file=sys.stderr)
+                    return EXIT_COMMENT
+            print(json.dumps(summary, indent=2))
+            return EXIT_OK
+
+        def held_comments() -> None:
+            if any(not p["posted"] for p in posts):
+                print(
+                    "  the log comment wasn't posted: it waits for a confirmed body,"
+                    " and the re-run posts it",
+                    file=sys.stderr,
+                )
+
         diff = list(
             difflib.unified_diff(live_lines, new, "live", "new", lineterm="", n=1)
         )
         if a.dry_run:
             print("\n".join(diff) or "(no change)", file=sys.stderr)
+            for c, post in zip(comments, posts):
+                if not post["posted"]:
+                    print(f"log comment to post on the epic:\n{c}", file=sys.stderr)
             print(json.dumps(summary, indent=2))
             return EXIT_OK
         if new == live_lines:
@@ -2060,8 +2694,7 @@ def run(argv: list[str]) -> int:
                     "adopt-live" if summary.get("adopted_live") else "accept-ticks",
                 )
             summary["unchanged"] = True
-            print(json.dumps(summary, indent=2))
-            return EXIT_OK
+            return post_all()
 
         # Compare-and-swap, as near as the API allows (CR 258).
         # Raw, not normalized: a whitespace-only edit is an edit too (CR 274).
@@ -2117,6 +2750,7 @@ def run(argv: list[str]) -> int:
             )
             for label, err in causes:
                 print(f"  {label}: {indented(gh_cause(err))}", file=sys.stderr)
+            held_comments()
             return EXIT_READBACK
 
         try:
@@ -2149,6 +2783,32 @@ def run(argv: list[str]) -> int:
             landed = False
         else:
             landed = back == normalize(text)
+        if not patch_error and not landed and back_lines == live_lines:
+            # gh called the PATCH good, and the body is the one from before it:
+            # the host kept it, as past its size cap (#653). Nothing landed, so
+            # the baseline still matches the live body.
+            summary["readback"] = "unchanged"
+            print(json.dumps(summary, indent=2))
+            if near_limit(size):
+                why = (
+                    "The host's issue-body size cap is the likely cause: make the body"
+                    " smaller (move the log into comments, cut ticked lines to their"
+                    " title and a link), then re-run"
+                )
+            else:
+                why = (
+                    "That is far below the limit. Read the epic and its edit history,"
+                    " then re-run the same edit"
+                )
+            print(
+                "ERROR the PATCH returned success, but the body read back is the one"
+                " from before the edit: nothing landed. The baseline still matches the"
+                f" live body, so it needs no re-adopting. The new body is"
+                f" {size_text(size)}. {why}",
+                file=sys.stderr,
+            )
+            held_comments()
+            return EXIT_READBACK
         if patch_error:
             if landed:
                 print(
@@ -2197,8 +2857,7 @@ def run(argv: list[str]) -> int:
         except (OSError, Infra) as e:
             summary["history"] = f"not saved: {e}"
             print(f"WARNING history copy not saved: {e}", file=sys.stderr)
-        print(json.dumps(summary, indent=2))
-        return EXIT_OK
+        return post_all()
     except Usage as e:
         print(f"USAGE {e}", file=sys.stderr)
         return EXIT_USAGE

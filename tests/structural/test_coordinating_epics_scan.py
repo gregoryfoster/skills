@@ -361,6 +361,50 @@ def test_new_comments_on_the_epic_itself_are_reported(rig):
     assert scan(rig, "--since", "2099-01-01T00:00Z")["epic_comments"] == []
 
 
+def test_654_the_coordinators_own_comments_are_dropped_by_marker(rig):
+    """#654: the check-in's log comments on the epic, and the record comments
+    a compaction posts on its children, are the coordinator's own. Every thread
+    writes as one account, so they're told apart by their first line, never by
+    author, and counted in own_comments so nothing vanishes silently."""
+    at = {"created_at": "2026-10-02T11:00:00Z", "updated_at": "2026-10-02T11:00:00Z"}
+    me = {"user": {"login": "gregoryfoster"}}
+    rig.comment(
+        REPO, EPIC, 801, body="**Check-in log, 2026-10-02**\n\n- done", **at, **me
+    )
+    rig.comment(REPO, EPIC, 802, body="A sibling's note, same account.", **at, **me)
+    # #12: a record comment its only update; #11 has other new comments too.
+    rig.issue(REPO, 12, updated_at="2026-10-02T11:00:00Z")
+    rec = "**Coordinator record, acme/widgets#10**\n\nShipped."
+    rig.comment(REPO, 12, 901, body=rec, **at, **me)
+    rig.comment(REPO, 11, 902, body=rec, **at, **me)
+    r = scan(rig)
+    assert [c["id"] for c in r["epic_comments"]] == [802]
+    rows = {x["number"]: x for x in r["updated_since"]}
+    assert 12 not in rows
+    assert {c["id"] for c in rows[11]["new_comments"]} == {600, 701}
+    assert rows[11]["record_comments"] == 1
+    assert r["own_comments"] == {"log": 1, "record": 2, "rows_dropped": [12]}
+    assert "body" not in json.dumps(r["epic_comments"] + rows[11]["new_comments"])
+
+
+def test_654_a_row_with_a_later_update_than_its_record_stays(rig):
+    """A record comment explains the row only when it is the row's latest update."""
+    rec = "**Coordinator record, acme/widgets#10**\n\nShipped."
+    rig.issue(REPO, 12, updated_at="2026-10-02T12:00:00Z")
+    rig.comment(
+        REPO,
+        12,
+        901,
+        body=rec,
+        created_at="2026-10-02T11:00:00Z",
+        updated_at="2026-10-02T11:00:00Z",
+    )
+    r = scan(rig)
+    rows = {x["number"]: x for x in r["updated_since"]}
+    assert rows[12]["new_comments"] == [] and rows[12]["record_comments"] == 1
+    assert r["own_comments"]["rows_dropped"] == []
+
+
 def test_cross_repo_refs_carry_state_or_say_why_not(rig):
     r = scan(rig)
     cross = {x["ref"]: x for x in r["cross_repo"]}

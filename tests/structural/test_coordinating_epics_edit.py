@@ -203,6 +203,19 @@ def test_a_foreign_tick_is_a_claim_until_accepted(adopted):
     assert "- [x] #11" in body and "- [x] #12" in body
 
 
+def test_the_foreign_tick_refusal_prints_the_argument_to_pass(adopted):
+    """#621 finding 4: "pass --accept-ticks" alone was taken as the bare flag,
+    an argparse usage error. The refusal prints the whole argument."""
+    body = BODY.replace("- [ ] #12", "- [x] #12").replace("- [ ] #11", "- [x] #11")
+    adopted.issue(REPO, EPIC, body=body)
+    res = adopted.edit(REPO, EPIC, [])
+    assert res.returncode == 3, res.stderr
+    assert "--accept-ticks 'acme/widgets#11,acme/widgets#12'" in res.stderr
+    arg = re.search(r"--accept-ticks '([^']+)'", res.stderr).group(1)
+    res = adopted.edit(REPO, EPIC, [], "--accept-ticks", arg)
+    assert res.returncode == 0, res.stderr
+
+
 def test_an_uppercase_foreign_tick_is_still_a_tick(adopted):
     """CR 254: GitHub's own UI writes [x], but [X] is a tick too."""
     adopted.issue(REPO, EPIC, body=BODY.replace("- [ ] #12", "- [X] #12"))
@@ -1257,6 +1270,547 @@ def test_replace_section_at_the_end_of_the_body(adopted):
     assert res.returncode == 0 and summary(res).get("unchanged")
 
 
+# ---------------------------------------------------------------- the block model (#408, #413, #429)
+
+# CannObserv/watcher#368's shape (#408): prose under "## Coordination", then
+# three subsections, with the whole checklist under the last.
+WATCHER = """\
+# Watcher burn-down
+
+- **Last check-in:** 2026-10-15T09:00Z
+
+## Coordination
+
+Old prose about the run.
+
+### Child epics
+
+- acme/gadgets#3 the SDK epic
+
+### Cutover
+
+Cut over after the soak.
+
+### Issues
+
+- [ ] #11 first thing
+- [x] #12 second thing
+
+## Log
+
+- 2026-10-15: adopted.
+"""
+
+
+def _on(rig, body):
+    rig.issue(REPO, EPIC, body=body)
+    res = rig.edit(REPO, EPIC, [], "--adopt-live")
+    assert res.returncode == 0, res.stderr
+    return rig
+
+
+def test_408_replace_section_refuses_a_span_holding_subsections(rig):
+    """#408, verbatim: replacing only the Coordination prose would have deleted
+    the checklist under ### Issues."""
+    _on(rig, WATCHER)
+    op = {"op": "replace-section", "heading": "Coordination", "text": "New prose."}
+    res = rig.edit(REPO, EPIC, [op])
+    assert res.returncode == 3, res.stderr
+    assert "'Child epics', 'Cutover', 'Issues'" in res.stderr
+    assert '"scope": "tree"' in res.stderr
+    assert rig.body(REPO, EPIC) == WATCHER and "patches" not in rig.load()
+
+
+def test_408_scope_tree_replaces_the_whole_subtree(rig):
+    _on(rig, WATCHER)
+    text = "New prose.\n\n### Issues\n\n- [ ] #11 first thing\n- [x] #12 second thing"
+    op = {"op": "replace-section", "heading": "Coordination", "text": text}
+    res = rig.edit(REPO, EPIC, [dict(op, scope="tree")])
+    assert res.returncode == 0, res.stderr
+    body = rig.body(REPO, EPIC)
+    assert "## Coordination\n\nNew prose.\n\n### Issues\n\n- [ ] #11" in body
+    assert "Cutover" not in body and "Old prose" not in body
+    assert summary(res)["counts_after"] == summary(res)["counts_before"]
+
+
+def test_408_a_leaf_section_and_the_other_section_ops_keep_their_meaning(rig):
+    """The refusal is replace-section's alone: add-line, log and add-section
+    still read a "##" span with its subsections."""
+    _on(rig, WATCHER)
+    ops = [
+        {"op": "replace-section", "heading": "Cutover", "text": "Cut over now."},
+        {"op": "add-line", "section": "Coordination", "line": "- [ ] #13 tail"},
+        {"op": "log", "text": "2026-10-16: tidied."},
+    ]
+    res = rig.edit(REPO, EPIC, ops)
+    assert res.returncode == 0, res.stderr
+    body = rig.body(REPO, EPIC)
+    assert "### Cutover\n\nCut over now.\n\n### Issues" in body
+    assert "- [x] #12 second thing\n- [ ] #13 tail\n\n## Log" in body
+
+
+@pytest.mark.parametrize("scope", ["own", "Tree", ""])
+def test_408_scope_takes_only_tree(adopted, scope):
+    op = {"op": "replace-section", "heading": "Log", "text": "x", "scope": scope}
+    res = adopted.edit(REPO, EPIC, [op])
+    assert res.returncode == 1 and "scope" in res.stderr, res.stderr
+
+
+# CannObserv/processor#24's shape (#413): a time in a heading, an intro that
+# can't be reached, and #404's Tier 2 heading that outgrew its name.
+PROCESSOR = """\
+# Processor burn-down
+
+The protocol is `burning-down-an-epic`, a draft.
+
+- **Last check-in:** 2026-10-15T15:01Z
+- **Next:** #12
+
+## Tier 2 — editor defects this run meets
+
+- [ ] #11 first thing
+
+## Measured state (2026-10-15T15:01Z)
+
+- 3 open, measured 2026-10-15T15:01Z.
+
+## Log
+
+- 2026-10-15: adopted.
+"""
+
+
+def test_413_rename_section_and_set_preamble_reach_the_frozen_text(rig):
+    """#413, verbatim: the stale time in a heading, #404's Tier 2 name, and the
+    intro that calls the protocol a draft."""
+    _on(rig, PROCESSOR)
+    ops = [
+        {
+            "op": "rename-section",
+            "heading": "Measured state (2026-10-15T15:01Z)",
+            "to": "Measured state",
+        },
+        {
+            "op": "rename-section",
+            "heading": "Tier 2 — editor defects this run meets",
+            "to": "Tier 2 — editor and scanner defects",
+        },
+        {"op": "set-preamble", "text": "The protocol is the coordinating-epics skill."},
+    ]
+    res = rig.edit(REPO, EPIC, ops)
+    assert res.returncode == 0, res.stderr
+    body = rig.body(REPO, EPIC)
+    assert body.startswith(
+        "# Processor burn-down\n\nThe protocol is the coordinating-epics skill.\n\n"
+        "- **Last check-in:** 2026-10-15T15:01Z\n- **Next:** #12\n\n"
+        "## Tier 2 — editor and scanner defects\n"
+    ), body
+    assert "\n## Measured state\n\n- 3 open" in body
+    res = rig.edit(REPO, EPIC, ops)  # done once, the same ops change nothing
+    assert res.returncode == 0 and summary(res).get("unchanged"), res.stderr
+
+
+def test_413_rename_section_keeps_the_level_and_refuses_a_taken_name(rig):
+    _on(rig, WATCHER)
+    op = {"op": "rename-section", "heading": "Cutover", "to": "Issues"}
+    res = rig.edit(REPO, EPIC, [op])
+    assert res.returncode == 3 and "already a heading" in res.stderr, res.stderr
+    op = {"op": "rename-section", "heading": "Cutover", "to": "Go-live"}
+    res = rig.edit(REPO, EPIC, [op])
+    assert res.returncode == 0, res.stderr
+    assert "\n### Go-live\n\nCut over" in rig.body(REPO, EPIC)
+    op = {"op": "rename-section", "heading": "Nowhere", "to": "Else"}
+    assert rig.edit(REPO, EPIC, [op]).returncode == 3
+    op = {"op": "rename-section", "heading": "Log", "to": "watcher#348 log"}
+    res = rig.edit(REPO, EPIC, [op])  # the new heading is a changed line: linted
+    assert res.returncode == 3 and "short ref" in res.stderr, res.stderr
+
+
+@pytest.mark.parametrize(
+    "body, want",
+    [
+        (BODY, "# Burn-down\n\nNew intro.\n\n- **Last check-in:**"),
+        ("Old intro.\n\n## Tier 1\n\n- [ ] #11 a\n", "New intro.\n\n## Tier 1\n"),
+        (
+            "# T\n\nOld.\n\n**Last check-in:** 2026-10-15\n\n## Tier 1\n\n- [ ] #11 a\n",
+            "# T\n\nNew intro.\n\n**Last check-in:** 2026-10-15\n\n## Tier 1",
+        ),
+        (
+            "# T\n\nOld.\n\n- **Status:** live\n- **Next:** #11\n\n## Tier 1\n\n- [ ] #11 a\n",
+            "# T\n\nNew intro.\n\n- **Status:** live\n",
+        ),
+    ],
+    ids=["title-then-header", "no-title", "paragraph-header", "header-list"],
+)
+def test_413_set_preamble_stops_at_the_header_or_the_first_section(rig, body, want):
+    _on(rig, body)
+    res = rig.edit(REPO, EPIC, [{"op": "set-preamble", "text": "New intro."}])
+    assert res.returncode == 0, res.stderr
+    assert rig.body(REPO, EPIC).startswith(want), rig.body(REPO, EPIC)
+
+
+@pytest.mark.parametrize(
+    "text, why",
+    [
+        ("Intro.\n\n- **Last check-in:** 2026-10-16", "cursor line"),
+        ("Intro.\n\n## Tier 0", "heading"),
+        ("Intro, see watcher#348.", "short ref"),
+    ],
+    ids=["cursor", "heading", "lint"],
+)
+def test_413_set_preamble_refuses_what_isnt_a_preamble(rig, text, why):
+    _on(rig, PROCESSOR)
+    res = rig.edit(REPO, EPIC, [{"op": "set-preamble", "text": text}])
+    assert res.returncode == 3 and why in res.stderr, res.stderr
+    assert rig.body(REPO, EPIC) == PROCESSOR
+
+
+def test_413_an_empty_preamble_removes_it(rig):
+    _on(rig, PROCESSOR)
+    res = rig.edit(REPO, EPIC, [{"op": "set-preamble", "text": ""}])
+    assert res.returncode == 0, res.stderr
+    assert rig.body(REPO, EPIC).startswith(
+        "# Processor burn-down\n\n- **Last check-in:**"
+    )
+
+
+# The private run in #428 (#429): a stale "Open: …" sub-bullet under a child.
+SUBLINES = """\
+# Burn-down
+
+- **Last check-in:** 2026-10-17T09:00Z
+
+## Tier 1
+
+- [ ] #11 first thing
+- [ ] #12 backups
+  - Open: backup run due 2026-10-17
+  - Open: restore drill
+    - drill notes
+  - [ ] verify the off-site copy
+- [ ] #13 third thing
+
+## Log
+
+- 2026-10-17: adopted.
+"""
+
+
+def test_429_set_subline_changes_one_sub_bullet(rig):
+    """#429, verbatim: its suggested op on its own example."""
+    _on(rig, SUBLINES)
+    op = {
+        "op": "set-subline",
+        "ref": "#12",
+        "match": "Open: backup",
+        "line": "  - Done: backup ran 2026-10-17",
+    }
+    res = rig.edit(REPO, EPIC, [op])
+    assert res.returncode == 0, res.stderr
+    body = rig.body(REPO, EPIC)
+    assert (
+        "- [ ] #12 backups\n  - Done: backup ran 2026-10-17\n  - Open: restore" in body
+    )
+    res = rig.edit(REPO, EPIC, [op])
+    assert res.returncode == 0 and summary(res).get("unchanged"), res.stderr
+
+
+def test_429_set_subline_refuses_zero_or_several_matches(rig):
+    _on(rig, SUBLINES)
+    base = {"op": "set-subline", "ref": "#12", "line": "  - x"}
+    res = rig.edit(REPO, EPIC, [dict(base, match="Open:")])
+    assert res.returncode == 3 and "2 sub-bullets" in res.stderr, res.stderr
+    res = rig.edit(REPO, EPIC, [dict(base, match="Closed:")])
+    assert res.returncode == 3 and "no sub-bullet" in res.stderr, res.stderr
+    res = rig.edit(REPO, EPIC, [dict(base, ref="#11", match="Open:")])
+    assert res.returncode == 3 and "no sub-bullet" in res.stderr, res.stderr
+
+
+def test_429_an_empty_line_removes_the_sub_bullet_and_its_own_block(rig):
+    _on(rig, SUBLINES)
+    op = {"op": "set-subline", "ref": "#12", "match": "Open: restore", "line": ""}
+    res = rig.edit(REPO, EPIC, [op])
+    assert res.returncode == 0, res.stderr
+    body = rig.body(REPO, EPIC)
+    assert "restore" not in body and "drill notes" not in body
+    assert "  - Open: backup run due 2026-10-17\n  - [ ] verify" in body
+
+
+def test_429_a_boxed_sub_bullet_keeps_the_counts_right(rig):
+    _on(rig, SUBLINES)
+    op = {
+        "op": "set-subline",
+        "ref": "#12",
+        "match": "verify the off-site",
+        "line": "  - [x] verify the off-site copy",
+    }
+    res = rig.edit(REPO, EPIC, [op])
+    assert res.returncode == 0, res.stderr
+    assert summary(res)["counts_after"] == {"open": 3, "done": 1, "disposed": 0}
+    op = {"op": "set-subline", "ref": "#12", "match": "[x] verify", "line": ""}
+    res = rig.edit(REPO, EPIC, [op])
+    assert res.returncode == 0, res.stderr
+    assert summary(res)["counts_after"] == {"open": 3, "done": 0, "disposed": 0}
+
+
+@pytest.mark.parametrize(
+    "line, why",
+    [
+        ("- Done: backup ran", "indented under"),
+        ("  Done: backup ran", "sub-bullet"),
+        ("  - Done, see watcher#348", "short ref"),
+        ("  - a\n  - b", "one line"),
+    ],
+    ids=["not-indented", "not-a-bullet", "lint", "two-lines"],
+)
+def test_429_set_subline_refuses_a_line_that_isnt_a_sub_bullet(rig, line, why):
+    _on(rig, SUBLINES)
+    op = {"op": "set-subline", "ref": "#12", "match": "Open: backup", "line": line}
+    res = rig.edit(REPO, EPIC, [op])
+    assert res.returncode == 3 and why in res.stderr, res.stderr
+    assert rig.body(REPO, EPIC) == SUBLINES
+
+
+# ---------------------------------------------------------------- log comments and compact lines (#654)
+
+LOG_OP = {"op": "log-comment", "text": "{today}: #11 closed and live. No new issues."}
+
+
+def _calls(rig, verb):
+    """The indexes of the fake gh's calls using -X verb."""
+    return [i for i, c in enumerate(rig.load()["calls"]) if verb in c]
+
+
+def test_654_a_check_in_writes_the_body_then_posts_its_log_comment(adopted):
+    """#654, verbatim: the log lives in comments, one per check-in, headed
+    "**Check-in log, <date>**"; the body's ## Log is left alone."""
+    ops = [
+        {"op": "tick", "ref": "#11"},
+        {"op": "header", "field": "Next", "value": "#12"},
+        LOG_OP,
+    ]
+    res = adopted.edit(REPO, EPIC, ops)
+    assert res.returncode == 0, res.stderr
+    st = adopted.load()
+    today = _today()
+    assert st["posts"] == [
+        f"**Check-in log, {today}**\n\n{today}: #11 closed and live. No new issues."
+    ]
+    assert _calls(adopted, "PATCH")[-1] < _calls(adopted, "POST")[0]  # body first
+    s = summary(res)
+    assert s["written"] is True and s["readback"] == "matches"
+    assert s["log_comments"] == [
+        {
+            "chars": len(st["posts"][0]),
+            "posted": True,
+            "url": st["repos"][REPO]["comments"][str(EPIC)][-1]["html_url"],
+        }
+    ]
+    assert "#11 closed" not in adopted.body(REPO, EPIC)  # not in the body
+    # Re-run, as after an exit 4 or 5: the body is unchanged and the comment
+    # is found already posted, so nothing doubles.
+    res = adopted.edit(REPO, EPIC, ops)
+    assert res.returncode == 0, res.stderr
+    assert summary(res)["log_comments"][0]["posted"] == "already"
+    assert len(adopted.load()["posts"]) == 1
+
+
+def _today():
+    import datetime as dt
+
+    return dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d")
+
+
+def test_654_a_log_comment_alone_still_posts(adopted):
+    """The body doesn't change, which used to return before anything else."""
+    res = adopted.edit(REPO, EPIC, [LOG_OP])
+    assert res.returncode == 0, res.stderr
+    s = summary(res)
+    assert s.get("unchanged") and s["log_comments"][0]["posted"] is True
+    assert "patches" not in adopted.load() and len(adopted.load()["posts"]) == 1
+
+
+def test_654_a_dry_run_prints_the_comment_and_posts_nothing(adopted):
+    res = adopted.edit(REPO, EPIC, [LOG_OP], "--dry-run")
+    assert res.returncode == 0, res.stderr
+    assert f"**Check-in log, {_today()}**" in res.stderr
+    assert summary(res)["log_comments"][0]["posted"] is False
+    assert "posts" not in adopted.load()
+
+
+def test_654_no_comment_posts_when_the_body_write_isnt_confirmed(adopted):
+    adopted.set_flag("patch_noop", True)
+    res = adopted.edit(REPO, EPIC, [{"op": "tick", "ref": "#11"}, LOG_OP])
+    assert res.returncode == 4, res.stderr
+    assert "posts" not in adopted.load()
+    assert summary(res)["log_comments"][0]["posted"] is False
+    assert "log comment" in res.stderr
+
+
+def test_654_a_comment_that_fails_after_a_confirmed_write_is_exit_5(adopted):
+    adopted.set_flag("fail_paths", {"POST": "HTTP 502: Bad Gateway"})
+    res = adopted.edit(REPO, EPIC, [{"op": "tick", "ref": "#11"}, LOG_OP])
+    assert res.returncode == 5, res.stderr
+    s = summary(res)
+    assert s["written"] is True and s["readback"] == "matches"  # still confirmed
+    assert s["log_comments"][0]["posted"] is False
+    err = res.stderr.splitlines()
+    at = next(i for i, ln in enumerate(err) if ln.startswith("ERROR the log comment"))
+    assert "body write is confirmed" in err[at]
+    assert err[at + 1] == "  gh's error: gh: HTTP 502: Bad Gateway"
+    assert "- [x] #11" in adopted.body(REPO, EPIC)
+    adopted.set_flag("fail_paths", {})
+    res = adopted.edit(REPO, EPIC, [{"op": "tick", "ref": "#11"}, LOG_OP])
+    assert res.returncode == 0 and summary(res).get("unchanged"), res.stderr
+    assert len(adopted.load()["posts"]) == 1
+
+
+@pytest.mark.parametrize(
+    "text, why",
+    [
+        ("x" * 65_520, "65,536"),
+        ("{today}: see watcher#348", "short ref"),
+        ("", "non-empty"),
+    ],
+    ids=["over-the-comment-cap", "lint", "empty"],
+)
+def test_654_a_log_comment_is_checked_before_anything_is_written(adopted, text, why):
+    res = adopted.edit(
+        REPO, EPIC, [{"op": "tick", "ref": "#11"}, {"op": "log-comment", "text": text}]
+    )
+    assert res.returncode == 3 and why in res.stderr, res.stderr
+    assert "patches" not in adopted.load() and "posts" not in adopted.load()
+
+
+def test_654_a_new_issue_named_only_in_the_log_comment_is_accounted_for(adopted):
+    """The log comment is the log: naming a new issue there counts, as the
+    in-body log line did (CR 265)."""
+    report = _report(adopted, new_numbers=[{"number": 14, "kind": "issue"}])
+    ops = [{"op": "log-comment", "text": "{today}: #14 is out of epic."}]
+    res = adopted.edit(REPO, EPIC, ops, "--scan", report)
+    assert res.returncode == 0, res.stderr
+
+
+def test_654_log_comment_takes_a_date_for_a_moved_log(adopted):
+    op = {"op": "log-comment", "text": "- 2026-10-01: created.", "date": "2026-10-01"}
+    res = adopted.edit(REPO, EPIC, [op])
+    assert res.returncode == 0, res.stderr
+    assert adopted.load()["posts"][0].startswith("**Check-in log, 2026-10-01**\n\n")
+    bad = dict(op, date="**x**")
+    assert adopted.edit(REPO, EPIC, [bad]).returncode == 1
+
+
+# A ticked line as #654's epic held them before compaction: evidence in the
+# line, and an indented sub-block.
+VERBOSE = """\
+# Burn-down
+
+- **Last check-in:** 2026-11-14T09:00Z
+
+## Tier 1
+
+- [x] #11 first thing · Shipped 1a2b3c4, live 2026-11-01. CI green by job.
+  - Residual: a flaky test, filed as #14.
+  - [x] docs updated
+- [x] #12 second thing · not planned: superseded by #13
+- [ ] #13 third thing
+- [x] acme/gadgets#3 upstream fix · merged upstream
+
+## Log
+
+- 2026-11-14: adopted.
+"""
+
+
+def _verified(rig, num, cid, repo=REPO):
+    rig.comment(repo, num, cid, body="**Coordinator record, acme/widgets#10**\n\nok")
+    return f"https://github.com/{repo}/issues/{num}#issuecomment-{cid}"
+
+
+def test_654_compact_cuts_a_ticked_line_to_its_title_and_link(rig):
+    """#654, verbatim: "- [x] **#N** <issue title> · [verified](<comment URL>)",
+    the sub-block dropped and the title sanitized (" · ", a bare owner-repo#N,
+    disposition words)."""
+    _on(rig, VERBOSE)
+    rig.issue(REPO, 11, title="Cache · warm it, as watcher#348 did, not planned")
+    link = _verified(rig, 11, 9001)
+    res = rig.edit(REPO, EPIC, [{"op": "compact", "ref": "#11", "link": link}])
+    assert res.returncode == 0, res.stderr
+    body = rig.body(REPO, EPIC)
+    want = (
+        "- [x] **#11** Cache - warm it, as `watcher#348` did, not planned"
+        f" · [verified]({link})\n- [x] #12"
+    )
+    assert want in body, body
+    assert "Residual" not in body and "docs updated" not in body
+    s = summary(res)
+    assert s["counts_before"] == {"open": 1, "done": 3, "disposed": 1}
+    assert s["counts_after"] == {"open": 1, "done": 2, "disposed": 1}
+    res = rig.edit(REPO, EPIC, [{"op": "compact", "ref": "#11", "link": link}])
+    assert res.returncode == 0 and summary(res).get("unchanged"), res.stderr
+
+
+def test_654_compact_keeps_a_disposition_and_takes_a_record_label(rig):
+    _on(rig, VERBOSE)
+    link = _verified(rig, 12, 9002)
+    op = {"op": "compact", "ref": "#12", "link": link, "label": "record"}
+    res = rig.edit(REPO, EPIC, [op])
+    assert res.returncode == 0, res.stderr
+    assert (
+        f"- [x] **#12** issue 12 · not planned: superseded by #13 · [record]({link})"
+        in rig.body(REPO, EPIC)
+    )
+    assert summary(res)["counts_after"] == summary(res)["counts_before"]
+
+
+def test_654_compact_qualifies_a_cross_repo_titles_bare_refs(rig):
+    _on(rig, VERBOSE)
+    rig.issue("acme/gadgets", 3, title="Follow #5 upstream")
+    link = _verified(rig, 3, 9003, repo="acme/gadgets")
+    op = {"op": "compact", "ref": "acme/gadgets#3", "link": link}
+    res = rig.edit(REPO, EPIC, [op])
+    assert res.returncode == 0, res.stderr
+    assert (
+        f"- [x] **acme/gadgets#3** Follow acme/gadgets#5 upstream · [verified]({link})"
+        in rig.body(REPO, EPIC)
+    )
+
+
+def test_654_compact_takes_a_given_title_without_asking_github(rig):
+    _on(rig, VERBOSE)
+    link = _verified(rig, 11, 9004)
+    op = {"op": "compact", "ref": "#11", "link": link, "title": "Warm the cache"}
+    res = rig.edit(REPO, EPIC, [op])
+    assert res.returncode == 0, res.stderr
+    assert f"- [x] **#11** Warm the cache · [verified]({link})" in rig.body(REPO, EPIC)
+    assert ["api", "repos/acme/widgets/issues/11"] not in rig.load()["calls"]
+
+
+@pytest.mark.parametrize(
+    "op, code, why",
+    [
+        ({"ref": "#13"}, 3, "isn't ticked"),
+        (
+            {
+                "ref": "#11",
+                "link": "https://github.com/acme/widgets/issues/12#issuecomment-9005",
+            },
+            3,
+            "a comment on #11",
+        ),
+        ({"ref": "#11", "link": "https://example.com/x"}, 3, "a comment on #11"),
+        ({"ref": "#11", "label": "done"}, 1, "label"),
+    ],
+    ids=["unticked", "another-issues-comment", "not-a-comment", "bad-label"],
+)
+def test_654_compact_refuses_what_it_cant_compact(rig, op, code, why):
+    _on(rig, VERBOSE)
+    link = _verified(rig, 11, 9006)
+    res = rig.edit(REPO, EPIC, [dict({"op": "compact", "link": link}, **op)])
+    assert res.returncode == code and why in res.stderr, res.stderr
+    assert rig.body(REPO, EPIC) == VERBOSE
+
+
 def test_each_write_keeps_a_history_copy(adopted):
     """CR 264: the fallback when the baseline is lost is a local copy of each write."""
     adopted.edit(REPO, EPIC, [{"op": "tick", "ref": "#11"}])
@@ -1940,12 +2494,16 @@ def test_a_whitespace_only_edit_during_the_run_refuses_the_write(adopted):
 
 
 def test_a_write_the_read_back_contradicts_is_exit_4(adopted):
-    adopted.set_flag("patch_noop", True)
+    """A PATCH gh calls good, read back as a third body: written, but not as sent."""
     base = (
         adopted.state_dir / "acme" / "widgets" / "10" / "last-written.md"
     ).read_text()
+    # The host rewrites what it was sent: neither the body sent nor the old one.
+    adopted.change_on_get(EPIC, 3, BODY.replace("first thing", "first thing!"))
     res = adopted.edit(REPO, EPIC, [{"op": "tick", "ref": "#11"}])
     assert res.returncode == 4
+    assert summary(res)["written"] is True
+    assert summary(res)["readback"] == "differs"
     assert (
         "read back differs" in res.stderr and "baseline was not updated" in res.stderr
     )
@@ -1953,6 +2511,32 @@ def test_a_write_the_read_back_contradicts_is_exit_4(adopted):
     assert (
         adopted.state_dir / "acme" / "widgets" / "10" / "last-written.md"
     ).read_text() == base
+
+
+def test_an_accepted_patch_that_changed_nothing_is_not_written(adopted):
+    """#653: the PATCH returned success and the body read back is the old one.
+
+    Nothing landed, so "written" is false and the saved baseline still
+    matches the live body: the way forward is a re-run, not --adopt-live.
+    """
+    adopted.set_flag("patch_noop", True)
+    base = (
+        adopted.state_dir / "acme" / "widgets" / "10" / "last-written.md"
+    ).read_text()
+    res = adopted.edit(REPO, EPIC, [{"op": "tick", "ref": "#11"}])
+    assert res.returncode == 4, res.stderr
+    s = summary(res)
+    assert s["written"] is False and s["readback"] == "unchanged"
+    assert "nothing landed" in res.stderr and "still matches" in res.stderr
+    assert "--adopt-live" not in res.stderr
+    assert "size cap" not in res.stderr  # a small body: not the likely cause
+    assert (
+        adopted.state_dir / "acme" / "widgets" / "10" / "last-written.md"
+    ).read_text() == base
+    # The baseline held: the same edit goes through once the host takes it.
+    adopted.set_flag("patch_noop", False)
+    res = adopted.edit(REPO, EPIC, [{"op": "tick", "ref": "#11"}])
+    assert res.returncode == 0, res.stderr
 
 
 def test_a_failed_read_back_after_the_write_still_says_written(adopted):
@@ -2136,10 +2720,130 @@ def test_a_failed_whitespace_only_patch_is_not_taken_for_landed(adopted):
 
 
 def test_a_whitespace_only_patch_that_changed_nothing_is_exit_4(adopted):
-    """CR 317: an accepted PATCH whose body reads back unchanged."""
+    """CR 317: an accepted PATCH whose body reads back unchanged (#653: not written)."""
     adopted.set_flag("patch_noop", True)
     res = adopted.edit(REPO, EPIC, WHITESPACE_ONLY)
-    assert res.returncode == 4 and summary(res)["readback"] == "differs", res.stderr
+    assert res.returncode == 4, res.stderr
+    assert summary(res)["readback"] == "unchanged"
+    assert summary(res)["written"] is False
+
+
+# ---------------------------------------------------------------- body size (#653)
+
+
+def body_of(chars: int) -> str:
+    """BODY with its log padded to exactly chars characters, as GitHub keeps it
+    (no final newline), from entries holding no ref the lint would look up."""
+    pad, n = [], 0
+    while len(BODY) - 1 + sum(len(x) + 1 for x in pad) < chars - 60:
+        n += 1
+        pad.append(f"- 2026-09-{n % 28 + 1:02d}: check-in {n}. No new issues.")
+    short = chars - (len(BODY) - 1 + sum(len(x) + 1 for x in pad)) - 1
+    pad.append("- " + "x" * (short - 2))
+    body = BODY + "\n".join(pad) + "\n"
+    assert len(body) - 1 == chars, (len(body) - 1, chars)
+    return body
+
+
+def big(rig, chars: int):
+    rig.issue(REPO, EPIC, body=body_of(chars))
+    res = rig.edit(REPO, EPIC, [], "--adopt-live")
+    assert res.returncode == 0, res.stderr
+    return rig
+
+
+def test_653_a_write_that_crosses_the_cap_is_refused_and_one_that_fits_lands(rig):
+    """#653, verbatim: a 260,219-character body; a check-in adding about 2,100
+    characters, which the host kept the old body for; the same edit with compact
+    notes (net +650) landed at 260,870."""
+    big(rig, 260_219)
+    rig.set_flag("patch_noop", True)  # the host's silent keep, past its cap
+    # About 2,100 characters with its " · " separator: 2,100 here.
+    long_note = "Verified on the merge SHA: " + "e" * (2_100 - 3 - 27)
+    res = rig.edit(REPO, EPIC, [{"op": "note", "ref": "#12", "text": long_note}])
+    assert res.returncode == 3, res.stderr
+    assert "patches" not in rig.load()  # refused before the PATCH, and the re-fetch
+    s = summary(res)
+    assert s["body"] == {"chars": 262_319, "limit": 262_144, "share": 1.001}
+    assert "262,319 characters" in res.stderr and "262,144" in res.stderr
+    assert "175 over" in res.stderr
+    rig.set_flag("patch_noop", False)
+    # "net +650" in the issue's words; its two sizes differ by 651.
+    compact = "Verified on the merge SHA: " + "e" * (651 - 3 - 27)
+    res = rig.edit(REPO, EPIC, [{"op": "note", "ref": "#12", "text": compact}])
+    assert res.returncode == 0, res.stderr
+    s = summary(res)
+    assert s["written"] is True and s["readback"] == "matches"
+    assert s["body"]["chars"] == 260_870 == len(rig.body(REPO, EPIC).rstrip("\n"))
+    assert "WARNING" in res.stderr and "99.5%" in res.stderr
+
+
+def test_653_a_patch_the_host_keeps_near_the_limit_names_the_cap(rig):
+    """The host's cap may sit below --body-limit: an accepted PATCH that kept the
+    old body, on a body near the limit, names the size cap as the likely cause."""
+    big(rig, 255_000)
+    rig.set_flag("patch_noop", True)
+    res = rig.edit(REPO, EPIC, [{"op": "note", "ref": "#12", "text": "x" * 2_000}])
+    assert res.returncode == 4, res.stderr
+    s = summary(res)
+    assert s["written"] is False and s["readback"] == "unchanged"
+    assert s["body"]["chars"] == 257_003
+    assert "size cap" in res.stderr and "257,003 characters" in res.stderr
+    assert "--adopt-live" not in res.stderr
+
+
+def test_653_a_dry_run_reports_the_size_refusal(rig):
+    big(rig, 262_000)
+    res = rig.edit(
+        REPO, EPIC, [{"op": "note", "ref": "#12", "text": "x" * 500}], "--dry-run"
+    )
+    assert res.returncode == 3 and "over" in res.stderr, res.stderr
+    assert summary(res)["body"]["chars"] == 262_503
+
+
+def test_653_every_summary_carries_the_body_size(adopted):
+    chars = len(BODY) - 1
+    want = {"chars": chars, "limit": 262_144, "share": round(chars / 262_144, 3)}
+    res = adopted.edit(REPO, EPIC, [], "--dry-run")
+    assert res.returncode == 0 and summary(res)["body"] == want, res.stderr
+    res = adopted.edit(REPO, EPIC, [])
+    assert summary(res)["unchanged"] and summary(res)["body"] == want
+    res = adopted.edit(REPO, EPIC, [{"op": "tick", "ref": "#99"}])
+    assert res.returncode == 3 and "body" not in summary(res)  # never built
+    grow = [{"op": "note", "ref": "#11", "text": "x"}]
+    res = adopted.edit(REPO, EPIC, grow, "--body-limit", "100")
+    assert res.returncode == 3, res.stderr
+    assert summary(res)["body"]["limit"] == 100
+    assert "WARNING" not in adopted.edit(REPO, EPIC, [], "--dry-run").stderr
+
+
+def test_653_the_warning_starts_past_85_percent(adopted):
+    chars = len(BODY) - 1
+    under, over = str(int(chars / 0.85) + 2), str(int(chars / 0.86))
+    res = adopted.edit(REPO, EPIC, [], "--dry-run", "--body-limit", under)
+    assert res.returncode == 0 and "WARNING" not in res.stderr, res.stderr
+    res = adopted.edit(REPO, EPIC, [], "--dry-run", "--body-limit", over)
+    assert res.returncode == 0 and "WARNING the body is" in res.stderr, res.stderr
+
+
+def test_653_a_write_that_shrinks_a_body_over_the_limit_goes_through(adopted):
+    """Making room must stay possible: the guard refuses growth past the limit."""
+    res = adopted.edit(
+        REPO,
+        EPIC,
+        [{"op": "replace-section", "heading": "Log", "text": "- moved to comments"}],
+        "--body-limit",
+        "100",
+    )
+    assert res.returncode == 0, res.stderr
+    assert "WARNING" in res.stderr and summary(res)["body"]["share"] > 1
+
+
+@pytest.mark.parametrize("value", ["0", "-5", "big"])
+def test_653_a_bad_body_limit_is_usage(adopted, value):
+    res = adopted.edit(REPO, EPIC, [], "--body-limit", value)
+    assert res.returncode == 1, res.stderr
+    assert "patches" not in adopted.load()
 
 
 @pytest.mark.parametrize("error, lines", PATCH_ERRORS, ids=PATCH_ERROR_IDS)

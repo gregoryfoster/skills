@@ -3,7 +3,7 @@
 The fake serves a tiny in-memory GitHub from a JSON state file: issue bodies,
 issue lists, comments, and comment lookups. It records every PATCH, and can be
 told to accept a PATCH and change nothing, the failure address-validator#272
-finding 48 saw from the real thing.
+finding 48 saw from the real thing. It takes a POSTed comment, as "posts".
 """
 
 from __future__ import annotations
@@ -124,8 +124,8 @@ if rest[0] == "graphql":  # gh api graphql -f query=… -f owner=… -F number=�
         print("gh: " + errors[0]["message"], file=sys.stderr)
         sys.exit(1)
     out(body)
-if rest[:2] == ["-X", "PATCH"]:
-    method, rest = "PATCH", rest[2:]
+if rest[:2] in (["-X", "PATCH"], ["-X", "POST"]):
+    method, rest = rest[1], rest[2:]
 path = rest[0]
 u = urlsplit(path)
 q = {k: v[0] for k, v in parse_qs(u.query).items()}
@@ -151,6 +151,19 @@ if method == "PATCH":
     if after:  # or gh's whole stderr, when a string
         fail(after if isinstance(after, str) else "HTTP 502: Bad Gateway")
     out({"number": int(parts[4])})
+
+if method == "POST":  # a new comment: repos/O/R/issues/N/comments (#654)
+    repo = f"{parts[1]}/{parts[2]}"
+    body = json.load(open(rest[rest.index("--input") + 1]))["body"]
+    st.setdefault("posts", []).append(body)
+    cid = 9900 + len(st["posts"])
+    now = st.get("server_now", "2026-10-14T18:03:27Z")
+    url = f"https://github.com/{repo}/issues/{parts[4]}#issuecomment-{cid}"
+    find(repo).setdefault("comments", {}).setdefault(parts[4], []).append(
+        {"id": cid, "html_url": url, "body": body, "created_at": now,
+         "updated_at": now, "user": {"login": "gregoryfoster"}})
+    st["comment_index"][str(cid)] = f"https://api.github.com/repos/{repo}/issues/{parts[4]}"
+    out({"id": cid, "html_url": url})
 
 repo = f"{parts[1]}/{parts[2]}"
 r = find(repo)
