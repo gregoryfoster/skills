@@ -25,6 +25,8 @@
 - #629: a dry run counted against stale lists wrote count=0, which the bulk's
   gate took. run.md section 3 and SKILL.md step 1 now count every lane with
   `--refresh-into DIR --dry-run-into DIR`.
+- #607: section 3's bulk says that a bulk whose lane's every package is held
+  takes nothing, and isn't refused.
 """
 
 import re
@@ -329,3 +331,10 @@ def test_every_lane_counts_with_refresh_into_beside_dry_run_into():
     ):
         assert count in s3, count
     assert "`--dry-run-into <scratch>`, always beside `--refresh-into`" in _step(1)
+
+
+def test_run_md_says_a_bulk_that_takes_nothing_says_so_and_still_runs():
+    s3 = _section(RUN, "## 3. The apply")
+    assert "**A bulk that takes nothing says so** (#607)" in s3
+    assert "`takes_nothing`" in s3
+    assert "It isn't refused, since a held step needs a green bulk" in s3

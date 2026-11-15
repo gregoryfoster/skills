@@ -59,8 +59,11 @@ Options:
                       when it began, its exit, count, wall time, lane and
                       security_only, in the one-origin lane what it would
                       leave, the version it counted of each package a
-                      hold group takes, and whether its lists were refreshed
-                      and their age, which apply.sh --dry-run reads; its
+                      hold group takes, what the bulk would take and the
+                      held steps that take the rest (pending.dry_run's
+                      takes_nothing says when that's nothing; #607), and
+                      whether its lists were refreshed and their age, which
+                      apply.sh --dry-run reads; its
                       download size, memory and free disk are in the JSON. An earlier
                       summary is removed first. What the run would write is
                       sized from apt's metadata, as apply.sh gates each step
@@ -2733,7 +2736,7 @@ origin_fresh() {  # <key>
 read_dry_run() {
   local o="" conf t0 t1 out rc line names="" n="" dlk="" free="" rss="" w sel=0 lnames="" lkeep="" lskip=""
   local oleft="" left_read=0 kw p rest unlisted="" prompts="" cfp="" cfs="" i k keys="" po="" hv
-  local lage=""
+  local lage="" btake=null bsteps=null bnote=""
   local -a words=() cf_states=() cf_keys=()
   R_DRY=null R_PASSED_OVER=null
   if [ -z "$dryrun" ]; then
@@ -2969,6 +2972,17 @@ read_dry_run() {
     jpush w "{$k}"
   done
   jadd o held_versions "[$w]"
+  # What the bulk would take itself, and the held steps that take the rest:
+  # where they take it all, the bulk takes nothing, and says so (#607).
+  if [ "$sel" -eq 1 ]; then
+    bulk_split "${words[*]-}"
+    json_list btake "$BS_TAKE"
+    json_list bsteps "$BS_STEPS"
+    takes_nothing_note bnote "$BS_TAKE" "$BS_STEPS"
+  fi
+  jadd o bulk_takes "$btake"
+  jadd o held_steps "$bsteps"
+  jaddsn o takes_nothing "$bnote"
   # apply.sh reads it: the dry run's wall time is the floor of each step's
   # expected duration, in the one-origin lane what it would leave, and the
   # versions it counted for the held steps.
@@ -2977,6 +2991,7 @@ read_dry_run() {
       "$t0" "$rc" "$n" "$((t1 - t0))" "$DRY_SECURITY_ONLY" "$lane"
     if [ "$left_read" -eq 1 ]; then printf 'origin_left=%s\n' "${oleft# }"; fi
     printf 'held_versions=%s\n' "$hv"
+    if [ "$sel" -eq 1 ]; then printf 'bulk_takes=%s\nheld_steps=%s\n' "$BS_TAKE" "$BS_STEPS"; fi
     # Whether its lists were fresh, which apply.sh checks in every lane (#629).
     printf 'lists_refreshed=%s\nlists_age_hours=%s\n' "$REFRESHED" "$lage"
   } >"$dryrun/summary"

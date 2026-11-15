@@ -1099,6 +1099,12 @@ def test_the_dry_run_records_the_version_it_counted_of_each_held_package(host):
         "held_versions=postgresql-16=16.10-0ubuntu0.24.04.1 tailscale=1.102.4\n"
         in summary
     )
+    # #607: what the bulk would take, less what its held steps take.
+    d = out["pending"]["dry_run"]
+    assert d["bulk_takes"] == ["libc6"]
+    assert d["held_steps"] == ["postgres", "tailscale"]
+    assert d["takes_nothing"] is None
+    assert "bulk_takes=libc6\nheld_steps=postgres tailscale\n" in summary
 
 
 PHASED_SIM = (

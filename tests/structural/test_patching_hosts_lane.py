@@ -700,6 +700,39 @@ def test_a_one_origin_held_step_must_take_its_packages(tmp_path, took):
     assert out["upgrade"]["origin_left"] == ([] if took else ["tailscale"])
 
 
+# #607, co-index 2026-10-23 and broker 2026-10-28: an origin lane whose every
+# pending package is held runs a bulk that takes nothing, and nothing said so.
+# It isn't refused (a held step needs a green bulk): the gate and the holds
+# say it, and name the held steps that take the packages.
+CO_INDEX = "hold tailscale tailscale\norigin pkgs.tailscale.com follow\n"
+
+
+def test_an_origin_bulk_whose_every_package_is_held_says_it_takes_nothing(tmp_path):
+    host = _one_origin(tmp_path, KNOB + CO_INDEX)
+    (host.dry / "dry-run.log").write_text("Packages that will be upgraded: tailscale\n")
+    host.uu("No packages found that can be upgraded unattended\n")
+    out = host.run("--lane", TS)
+    assert out["verdict"]["ok"] is True, out
+    span = out["gate"]["run_span"]
+    assert span["bulk_takes"] == []
+    assert span["held_steps"] == ["tailscale"]
+    assert span["takes_nothing"].startswith("the bulk takes nothing")
+    assert "held step tailscale takes them" in span["takes_nothing"]
+    assert out["holds"]["placed"] == {"tailscale": ["tailscale"]}
+    assert out["holds"]["bulk_takes"] == []
+    assert out["holds"]["takes_nothing"] == span["takes_nothing"]
+
+
+def test_an_origin_bulk_that_takes_a_package_says_which(tmp_path):
+    host = _one_origin(tmp_path)
+    (host.dry / "dry-run.log").write_text("Packages that will be upgraded: tailscale\n")
+    out = host.run("--lane", TS)
+    assert out["gate"]["run_span"]["bulk_takes"] == ["tailscale"]
+    assert out["gate"]["run_span"]["takes_nothing"] is None
+    assert out["holds"]["bulk_takes"] == ["tailscale"]
+    assert out["holds"]["takes_nothing"] is None
+
+
 @pytest.mark.parametrize(
     "lane, refused",
     [
@@ -802,6 +835,29 @@ def test_a_one_origin_refresh_by_o_name_counts_against_its_sites_list(tmp_path):
         "origin:Tailscale",
     )
     assert out["pending"]["dry_run"]["count"] == 1
+
+
+def test_a_one_origin_dry_run_whose_every_package_is_held_says_the_bulk_takes_nothing(
+    tmp_path,
+):
+    # #607: the dry run's record says it before the owner approves the bulk.
+    host = ProbeHost(tmp_path).knob("class production\nposture scheduled\n" + CO_INDEX)
+    host.on("apt-get", "-s *dist-upgrade", EXTRA)
+    host.on("apt-cache", "*policy", POLICY)
+    host.on(
+        "unattended-upgrade",
+        "--dry-run -d",
+        "Packages that will be upgraded: tailscale\n",
+    )
+    scratch = host.tmp / "dry"
+    out = host.run(*_refreshed(host), "--dry-run-into", str(scratch), "--lane", TS)
+    d = out["pending"]["dry_run"]
+    assert d["count"] == 1
+    assert d["bulk_takes"] == []
+    assert d["held_steps"] == ["tailscale"]
+    assert d["takes_nothing"].startswith("the bulk takes nothing")
+    assert "held step tailscale takes them" in d["takes_nothing"]
+    assert "bulk_takes=\nheld_steps=tailscale\n" in (scratch / "summary").read_text()
 
 
 def test_a_one_origin_dry_run_on_lists_older_than_the_run_doesnt_start(tmp_path):

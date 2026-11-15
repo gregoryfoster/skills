@@ -85,6 +85,7 @@ Then:
    - `choom -n 0` puts the apply at adj 0, so the kernel doesn't sacrifice a production service to protect a -1000 session.
    - **No hard memory cap:** a `MemoryMax` kill mid-dpkg leaves packages half-configured.
    - `NEEDRESTART_MODE=l` backs up the drop-in. In apt's hook there's no `-r`, so the variable wins.
+   - **A bulk that takes nothing says so** (#607): where hold groups take every package its lane selects, as co-index's `hold tailscale tailscale` did in its `origin:` lane, `takes_nothing` in the dry run, the gate's `run_span` and `holds` names the held steps that take them. It isn't refused, since a held step needs a green bulk: tell the owner approval 2 is bookkeeping.
 4. **Each held group, under approval 3(a):**
    - stop each `restarter`;
    - unhold the packages the run held, and only those. In this order, a stop that fails leaves the group held, and the step can run again;

@@ -936,6 +936,14 @@ gate_step_span() {
   for g in $groups; do x=$((x + EXPECT + hh)); done
   json_words w "$groups"
   jadd o held_steps "$w"
+  # What the bulk takes itself, less what its held steps take: where that's
+  # nothing, the owner approves it knowing it's bookkeeping (#607). It isn't
+  # refused: a held step needs a green bulk.
+  bulk_split "$sel"
+  json_words w "$BS_TAKE"
+  jadd o bulk_takes "$w"
+  takes_nothing_note w "$BS_TAKE" "$BS_STEPS"
+  jaddsn o takes_nothing "$w"
   predict_reboot "$sel" || rc=$?
   case $rc in
     0) jadd o reboot true ;;
@@ -1683,6 +1691,7 @@ STARTED=0
 LANE_KEEP=""
 do_bulk() {
   local out pend="" p i r s g o="" a="" names="" e kw rest pol onames oskip sim bv dv="" dseen=0 c d line vout="" va="" outside="" bver=""
+  local btake hsteps=""
   local -a f=() w=()
   if ! root_has "$run" && ! as_root mkdir -p -m 700 -- "$run"; then
     fail "$run couldn't be made"
@@ -1849,6 +1858,7 @@ do_bulk() {
         in_words "$p" "$names" || in_words "$p" "$BEFORE_HOLDS" || w+=("$p")
       done ;;
   esac
+  btake=${w[*]-}
   space_check "the bulk" ${w[@]+"${w[@]}"}
   if [ "${#SPACE_REASONS[@]}" -gt 0 ]; then
     for r in "${SPACE_REASONS[@]}"; do fail "$r"; done
@@ -1868,9 +1878,16 @@ do_bulk() {
     if [ -n "$g" ]; then
       json_words e "$g"
       jadd a "$s" "$e"
+      hsteps="$hsteps $s"
     fi
   done
   jadd o placed "{$a}"
+  # What the bulk takes itself, after the holds: nothing, where its held
+  # steps take every package, and then it says so (#607).
+  json_words e "$btake"
+  jadd o bulk_takes "$e"
+  takes_nothing_note e "$btake" "${hsteps# }"
+  jaddsn o takes_nothing "$e"
   # A hold group's pending package the lane's selection doesn't take (#488).
   json_words e "$outside"
   jadd o not_in_lane "$e"
