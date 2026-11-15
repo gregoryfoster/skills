@@ -20,7 +20,10 @@ What this file holds, section by section as they stood there:
 - what the probe changes (#423, #490, #501).
 """
 
+import gzip
+import os
 import subprocess
+import time
 
 import pytest
 
@@ -425,6 +428,27 @@ def test_a_dormant_component_lists_its_pending_security_packages_only(host):
     assert d["pending_security"] == ["docker.io"]
 
 
+def test_a_dormant_dockers_cli_plugins_are_its_pending_security_packages(host):
+    # Ubuntu's and Docker's own plugin names alike (#611).
+    names = [
+        "docker-buildx",
+        "docker-compose-v2",
+        "docker-buildx-plugin",
+        "docker-compose-plugin",
+        "docker-compose",
+        "docker-ce-cli",
+    ]
+    host.on(
+        "apt-get",
+        "-s *dist-upgrade",
+        "".join(
+            f"Inst {n} [1.0] (1.1 Ubuntu:24.04/noble-security [amd64])\n" for n in names
+        ),
+    )
+    d = _dormant(_docker(host).run(), "docker")
+    assert sorted(d["pending_security"]) == sorted(names)
+
+
 @pytest.mark.parametrize(
     "extra, security_only, listed",
     [
@@ -595,20 +619,105 @@ def test_a_component_deploy_names_only_in_text_is_named(host, rel, text):
         (
             "deploy/processor.service",
             "[Unit]\nAfter=docker.service\n[Service]\nExecStart=/srv/app/serve\n",
-            "deploy/processor.service names it on a line that isn't a comment",
+            "deploy/processor.service names it on a line that isn't a comment:"
+            " After=docker.service",
         ),
         (
             "deploy/compose.sh",
-            "#!/bin/sh\n# start it\ndocker compose up -d\n",
-            "deploy/compose.sh names it on a line that isn't a comment",
+            "#!/bin/sh\n# start it\n  docker compose up -d\n",
+            "deploy/compose.sh names it on a line that isn't a comment:"
+            " docker compose up -d",
         ),
     ],
     ids=["unit", "script"],
 )
 def test_a_working_deploy_line_is_in_use(host, rel, text, evidence):
+    # The evidence quotes the line, so the owner can judge it (#634).
     _repo(host, rel, text)
     d = _dormant(_docker(host).run(), "docker")
     assert (d["verdict"], d["evidence"]) == ("in-use", evidence)
+
+
+# --- a name inside another name isn't use (#634) ---------------------------------
+# On co-replicator, deploy/replicator.service ran a script that checks the
+# remote broker's version, check_redis_floor.sh, and a masked local Redis
+# with no listener read as in-use. The component's name counts where it
+# begins a word: a unit, a command, a path's own directory or file, a URL.
+
+
+def _idle_redis(host: Host) -> Host:
+    host.installed("redis-server")
+    host.show("redis-server.service", ActiveState="inactive", InactiveEnterTimestamp="")
+    return host
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "ExecStartPre=/bin/bash /home/exedev/replicator/scripts/check_redis_floor.sh",
+        "ExecStartPre=/srv/app/scripts/check-redis-floor.sh",
+        "Environment=APP_REDIS_FLOOR=7.0",
+    ],
+)
+def test_a_name_inside_another_name_isnt_use(host, line):
+    _repo(
+        host,
+        "deploy/replicator.service",
+        f"[Service]\n{line}\nExecStart=/srv/app/worker\n",
+    )
+    out = _idle_redis(host).run()
+    d = _dormant(out, "redis")
+    assert d["verdict"] == "dormant"
+    # Nor does the file name it at all: it's no text for the operator to read.
+    assert d["named_by"] == []
+    assert "dormant:redis" in _ids(out)
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "After=redis-server.service",
+        "ExecStartPre=/usr/bin/redis-cli -h 127.0.0.1 ping",
+        "Environment=BROKER_URL=redis://127.0.0.1:6379/0",
+        'ExecStart=/bin/sh -c "redis-cli ping"',
+        "ExecStart=/srv/app/worker --redis-url unix:/run/redis/redis-server.sock",
+    ],
+)
+def test_the_name_beginning_a_word_is_use(host, line):
+    _repo(
+        host,
+        "deploy/replicator.service",
+        f"[Service]\n{line}\nExecStart=/srv/app/worker\n",
+    )
+    d = _dormant(_idle_redis(host).run(), "redis")
+    assert d["verdict"] == "in-use"
+    assert d["evidence"] == (
+        f"deploy/replicator.service names it on a line that isn't a comment: {line}"
+    )
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "ExecStart=/usr/bin/docker run --rm app",
+        "ExecStart=/usr/bin/ctr --address /run/containerd/containerd.sock ls",
+        "SupplementaryGroups=docker",
+    ],
+)
+def test_a_docker_or_containerd_word_is_use(host, line):
+    _repo(host, "deploy/app.service", f"[Service]\n{line}\n")
+    d = _dormant(_docker(host).run(), "docker")
+    assert d["verdict"] == "in-use"
+    assert d["evidence"].endswith(f": {line}")
+
+
+def test_a_long_deploy_line_is_quoted_cut_short(host):
+    line = "ExecStart=/usr/bin/docker run " + "--env A=1 " * 40
+    _repo(host, "deploy/app.service", f"[Service]\n{line}\n")
+    d = _dormant(_docker(host).run(), "docker")
+    quoted = d["evidence"].split(": ", 1)[1]
+    assert quoted.startswith("ExecStart=/usr/bin/docker run --env A=1")
+    assert quoted.endswith("...") and len(quoted) == 160
 
 
 @pytest.mark.parametrize(
@@ -620,6 +729,9 @@ def test_a_working_deploy_line_is_in_use(host, rel, text, evidence):
         # A description, or a comment, is text.
         ("Description=Not docker", False),
         ("# After=docker.service", False),
+        # A script's name holding it isn't use (#634).
+        ("ExecStartPre=/bin/bash /srv/app/scripts/check_docker_floor.sh", False),
+        ("After=app-docker-sync.service", False),
     ],
 )
 def test_a_host_units_requires_after_or_exec_naming_it_is_in_use(host, line, uses):
@@ -630,7 +742,11 @@ def test_a_host_units_requires_after_or_exec_naming_it_is_in_use(host, line, use
     d = _dormant(_docker(host).run(), "docker")
     if uses:
         assert d["verdict"] == "in-use"
-        assert d["evidence"].startswith("/etc/systemd/system/app.service names it")
+        # It quotes the line (#634).
+        key = line.split("=", 1)[0]
+        assert d["evidence"] == (
+            f"/etc/systemd/system/app.service names it on its {key}= line: {line}"
+        )
     else:
         assert d["verdict"] == "dormant"
 
@@ -934,6 +1050,30 @@ def test_every_postgres_cluster_counts_toward_the_verdict(
     assert evidence in d["evidence"]
 
 
+def test_a_never_started_postgres_cluster_counts_from_its_log(tmp_path):
+    # Each cluster logs its start and stop to /var/log/postgresql (#633).
+    h = Host(tmp_path, uptime_days=1).knob("posture automatic\n")
+    _postgres(h, [("postgres", "7000000", "0", "", "C.UTF-8", "c", "", "0")])
+    h.cases["pg_lsclusters"].clear()
+    h.on(
+        "pg_lsclusters",
+        "-h",
+        "16 main 5432 down postgres /var/lib/postgresql/16/main "
+        "/var/log/postgresql/postgresql-16-main.log\n",
+    )
+    h.show(
+        "postgresql@16-main.service", ActiveState="inactive", InactiveEnterTimestamp=""
+    )
+    h.show("postgresql.service", ActiveState="active")
+    h.write("var/log/postgresql/postgresql-16-main.log", "shut down\n", age_days=50)
+    d = _dormant(h.run(), "postgres")
+    assert d["verdict"] == "dormant"
+    assert d["evidence"].startswith(
+        "every cluster down, the latest for 50 days, counted from /var/log/postgresql,"
+        " last written"
+    )
+
+
 REDIS_IDLE = {
     "uptime_in_days": "40",
     "connected_clients": "1",
@@ -1027,6 +1167,148 @@ def test_an_inactive_nginx_idle_past_30_days_is_dormant(host):
     d = _dormant(out, "nginx")
     assert d["verdict"] == "dormant"
     assert "40 days" in d["evidence"]
+    # With no log and no install to read, it says the clock is the boot's (#633).
+    assert "counted from the boot" in d["evidence"]
+
+
+# --- a clock that outlives the boot (#633) -------------------------------------
+# co-index reboots weekly for its patching runs, so a never-started nginx's
+# idle clock, the boot's, never reached 30 days: its logs, 0 bytes since the
+# image's install on 2026-09-09, said it had never been used.
+
+
+def _rebooted(tmp_path, unit: str, *pkgs: str) -> Host:
+    """A host booted today, whose UNIT hasn't started since."""
+    h = Host(tmp_path, uptime_days=0).knob("posture automatic\n")
+    h.installed(*pkgs)
+    h.show(unit, ActiveState="inactive", InactiveEnterTimestamp="")
+    return h
+
+
+def _day(host: Host, days_ago: int) -> str:
+    return time.strftime("%Y-%m-%d", time.gmtime(host.now - days_ago * DAY))
+
+
+def _history(host: Host, days_ago: int, install: str, rel: str = "history.log"):
+    text = (
+        f"\nStart-Date: {_day(host, days_ago)}  23:09:36\n"
+        "Commandline: apt-get install -y nginx\n"
+        f"Install: {install}\n"
+        f"End-Date: {_day(host, days_ago)}  23:09:41\n"
+    )
+    data = gzip.compress(text.encode()) if rel.endswith(".gz") else text
+    host.write(f"var/log/apt/{rel}", data)
+
+
+def test_a_never_started_unit_counts_from_its_empty_logs(tmp_path):
+    h = _rebooted(tmp_path, "nginx.service", "nginx")
+    for f in ("access.log", "error.log"):
+        h.write(f"var/log/nginx/{f}", "", age_days=66)
+    out = h.run()
+    d = _dormant(out, "nginx")
+    assert d["verdict"] == "dormant"
+    assert d["evidence"] == (
+        "inactive for 66 days, counted from /var/log/nginx, whose files are all"
+        f" empty, the newest dated {_day(h, 66)}; it hasn't started since the boot"
+    )
+    assert "dormant:nginx" in _ids(out)
+
+
+@pytest.mark.parametrize("days, verdict", [(3, "unknown"), (45, "dormant")])
+def test_a_never_started_unit_counts_from_its_last_log_write(tmp_path, days, verdict):
+    h = _rebooted(tmp_path, "nginx.service", "nginx")
+    h.write("var/log/nginx/error.log", "", age_days=66)
+    h.write("var/log/nginx/access.log.1", "GET / 200\n", age_days=days)
+    # The log is read first: an older install doesn't outrank a later write.
+    _history(h, 80, "nginx:amd64 (1.24.0-2ubuntu7)")
+    d = _dormant(h.run(), "nginx")
+    assert d["verdict"] == verdict
+    assert f"for {days} days" in d["evidence"]
+    assert f"counted from /var/log/nginx, last written {_day(h, days)}" in d["evidence"]
+
+
+@pytest.mark.parametrize("rel", ["history.log", "history.log.2.gz"])
+def test_a_never_started_unit_without_logs_counts_from_its_install(tmp_path, rel):
+    h = _rebooted(tmp_path, "nginx.service", "nginx")
+    _history(
+        h,
+        66,
+        "nginx-common:amd64 (1.24.0-2ubuntu7, automatic), nginx:amd64 (1.24.0-2ubuntu7)",
+        rel,
+    )
+    # A later install of another package, and a later upgrade, aren't its install.
+    h.write(
+        "var/log/apt/history.log.1",
+        f"Start-Date: {_day(h, 10)}  10:00:00\nInstall: jq:amd64 (1.7.1)\n"
+        f"Upgrade: nginx:amd64 (1.24.0-2ubuntu7, 1.24.0-2ubuntu7.1)\n",
+    )
+    d = _dormant(h.run(), "nginx")
+    assert d["verdict"] == "dormant"
+    assert d["evidence"] == (
+        f"inactive for 66 days, counted from its install on {_day(h, 66)} in apt's"
+        " history; it hasn't started since the boot"
+    )
+
+
+def test_dpkgs_list_file_is_never_an_install_date(tmp_path):
+    # dpkg rewrites it at every upgrade: co-index's nginx-common.list was
+    # dated by the patching run that upgraded it, not by its install.
+    h = _rebooted(tmp_path, "nginx.service", "nginx")
+    h.write("var/lib/dpkg/info/nginx.list", "/usr/sbin/nginx\n", age_days=66)
+    d = _dormant(h.run(), "nginx")
+    assert d["verdict"] == "unknown"
+    assert "counted from the boot" in d["evidence"]
+
+
+def test_a_unit_that_stopped_counts_from_its_own_stop_not_its_logs(host):
+    host.installed("nginx")
+    host.show(
+        "nginx.service",
+        ActiveState="inactive",
+        InactiveEnterTimestamp=f"@{host.now - 3 * DAY}",
+    )
+    host.write("var/log/nginx/access.log", "", age_days=66)
+    d = _dormant(host.run(), "nginx")
+    assert (d["verdict"], d["evidence"]) == (
+        "unknown",
+        "inactive for 3 days: fewer than 30",
+    )
+
+
+def test_a_never_started_redis_counts_from_its_log(tmp_path):
+    h = _rebooted(tmp_path, "redis-server.service", "redis-server")
+    h.write(
+        "var/log/redis/redis-server.log", "Ready to accept connections\n", age_days=50
+    )
+    d = _dormant(h.run(), "redis")
+    assert d["verdict"] == "dormant"
+    assert "counted from /var/log/redis, last written" in d["evidence"]
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root reads a mode-000 directory")
+def test_a_log_directory_it_cant_read_gives_way_to_the_install(tmp_path):
+    # /var/log/redis is redis's alone (2750): without root, apt's history.
+    h = _rebooted(tmp_path, "redis-server.service", "redis-server")
+    h.sudo = False
+    h.write("var/log/redis/redis-server.log", "", age_days=50)
+    _history(h, 40, "redis-server:amd64 (5:7.0.15-1build2)")
+    (h.root / "var/log/redis").chmod(0)
+    try:
+        d = _dormant(h.run(), "redis")
+    finally:
+        (h.root / "var/log/redis").chmod(0o755)
+    assert d["verdict"] == "dormant"
+    assert f"counted from its install on {_day(h, 40)}" in d["evidence"]
+
+
+def test_a_never_started_docker_counts_from_its_install(tmp_path):
+    # Docker logs to the journal, so it has no log directory to read.
+    h = _rebooted(tmp_path, "docker.service", "docker.io")
+    h.on("docker", "*", "")
+    _history(h, 60, "docker.io:amd64 (28.2.2-0ubuntu1~24.04.1)")
+    d = _dormant(h.run(), "docker")
+    assert d["verdict"] == "dormant"
+    assert f"counted from its install on {_day(h, 60)}" in d["evidence"]
 
 
 def test_parsed_lines_stay_english_when_sudo_resets_the_locale(tmp_path):

@@ -31,7 +31,7 @@ bash "<prune-plan.sh>" --component <name> --out <file>
 
 It changes nothing. Its JSON is what the owner reads before approving a stage:
 - `units`: each unit, socket and timer, with its state now. For Docker that is `docker.socket` as well as `docker.service`, and `containerd.service`;
-- `packages`: what `apt-get -s remove` and `apt-get -s purge` would take, including anything dragged along, and any held;
+- `packages`: what `apt-get -s remove` and `apt-get -s purge` would take, including anything dragged along, and any held. For Docker the roots include its CLI plugins by Ubuntu's names, `docker-buildx` and `docker-compose-v2`, and by Docker's own, `docker-buildx-plugin` and `docker-compose-plugin`: installed by hand, no autoremove takes them (#611);
 - `autoremove_would_take`: what apt installed for them alone. No stage autoremoves, but a later `apt autoremove`, or unattended-upgrades' `Remove-Unused-Dependencies`, takes these: for docker.io installed with its recommends on noble, 47 packages, `iptables`, `git` and `openssh-client` among them (measured). With `--take-orphans` they're in the plan instead, as `packages.orphans` ([below](#any-other-apt-package));
 - `reverse_depends`: what else installed depends on them and stays;
 - `purge_scripts`: the lines in each package's purge script that delete files, and `debconf`, its answers. **Read these before a purge:** nginx-common's deletes `/etc/nginx` and `/var/log/nginx`, and postgresql-16's drops every cluster, data and config. It sets `postrm_purge_data` to true itself before it asks, and with no terminal nothing answers, so a false answer set beforehand keeps nothing (measured on noble). docker.io's leaves `/var/lib/docker`;

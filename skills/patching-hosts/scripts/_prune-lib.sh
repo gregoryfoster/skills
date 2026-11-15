@@ -82,7 +82,10 @@ U_LoadState=""
 roots_of() {  # <var> <component>: its package globs; empty from outside apt
   local _ro=""
   case $2 in
-    docker) _ro='docker.io docker-ce docker-ce-cli docker-ce-rootless-extras docker-buildx-plugin docker-compose-plugin docker-compose containerd containerd.io runc' ;;
+    # Ubuntu's archive names the CLI plugins docker-buildx and
+    # docker-compose-v2, and Docker's repository docker-buildx-plugin and
+    # docker-compose-plugin (#611).
+    docker) _ro='docker.io docker-ce docker-ce-cli docker-ce-rootless-extras docker-buildx docker-buildx-plugin docker-compose docker-compose-plugin docker-compose-v2 containerd containerd.io runc' ;;
     postgres) _ro='postgresql postgresql-[0-9]* postgresql-contrib postgresql-common' ;;
     redis) _ro='redis redis-server' ;;
     nginx) _ro='nginx nginx-common nginx-core nginx-full nginx-light nginx-extras libnginx-mod-*' ;;

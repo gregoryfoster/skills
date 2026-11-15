@@ -838,6 +838,25 @@ def test_the_plan_names_every_unit_package_path_and_member(tmp_path):
     assert oct((tmp_path / "docker.plan").stat().st_mode & 0o777) == "0o600"
 
 
+@pytest.mark.parametrize(
+    "plugins",
+    [
+        # Ubuntu's archive (usa-wa, noble, 2026-11-08), installed by hand,
+        # so no autoremove would take them either (#611).
+        ("docker-buildx", "docker-compose-v2"),
+        # Docker's own repository.
+        ("docker-buildx-plugin", "docker-compose-plugin"),
+    ],
+)
+def test_the_plan_takes_dockers_cli_plugins(tmp_path, plugins):
+    host = _host(tmp_path, DOCKER, "docker")
+    for name in plugins:
+        host.host_state["packages"][name] = {"state": "ii", "version": "2.40.3"}
+    pk = host.plan("docker")["packages"]
+    assert pk["roots"] == sorted(["containerd", "docker.io", "runc", *plugins])
+    assert [p["package"] for p in pk["remove"]] == pk["roots"]
+
+
 def test_the_plan_shows_what_a_purge_drags_along_and_deletes(tmp_path):
     host = _host(tmp_path, POSTGRES, "postgres")
     out = host.plan("postgres")

@@ -4325,16 +4325,104 @@ read_impact() {
 DORMANT=""
 SS_LOCAL=()
 
-idle_days() {  # <unit>: IDLE := the days it has been inactive, or empty
-  IDLE=""
+idle_days() {  # <unit> [<log dir>] [<package globs>]: IDLE := the days it has been inactive, or empty; IDLE_FROM := the clock, where it isn't the unit's own stop
+  IDLE="" IDLE_FROM=""
   unit_show "$1" ActiveState InactiveEnterTimestamp || return 0
   case $U_ActiveState in
     inactive | failed)
       case $U_InactiveEnterTimestamp in
         @[0-9]*) IDLE=$(((P_NOW - ${U_InactiveEnterTimestamp#@}) / 86400)) ;;
-        *) IDLE=${MANAGER_DAYS:-$UPTIME_DAYS} ;;
+        *) idle_since_boot "${2-}" "${3-}" ;;
       esac ;;
   esac
+}
+
+# A unit that hasn't started since the boot has no InactiveEnterTimestamp,
+# and the boot's clock resets at every boot: co-index reboots weekly for its
+# patching runs, so its unused nginx never read dormant (#633). Evidence
+# that outlives a boot reaches further back: first the component's log
+# directory, whose newest file dates its last write (a log that is empty was
+# never written at all), else the latest install of its packages in apt's
+# history. Never dpkg's .list mtime: dpkg rewrites it at every upgrade. Each
+# counts only where it reaches further back than the boot.
+idle_since_boot() {  # <log dir> <package globs>: IDLE and IDLE_FROM
+  local boot=${MANAGER_DAYS:-$UPTIME_DAYS} d="" from=""
+  if [ -n "$1" ] && log_dir_age "$1"; then
+    d=$LOG_DAYS
+    if [ "$LOG_EMPTY" -eq 1 ]; then
+      from="counted from $1, whose files are all empty, the newest dated $LOG_ON"
+    else
+      from="counted from $1, last written $LOG_ON"
+    fi
+  elif [ -n "$2" ] && apt_install_age "$2"; then
+    d=$INSTALL_DAYS from="counted from its install on $INSTALL_ON in apt's history"
+  fi
+  if is_int "$d" && { ! is_int "$boot" || [ "$d" -gt "$boot" ]; }; then
+    IDLE=$d IDLE_FROM="$from; it hasn't started since the boot"
+  else
+    IDLE=$boot IDLE_FROM="counted from the boot, which it hasn't started since: no log or install date reaches further back"
+  fi
+}
+
+# A log directory's newest file, by mtime, and whether every file is empty.
+# /var/log/redis is redis's alone (2750), so it's read as root.
+log_dir_age() {  # <dir>: LOG_DAYS, LOG_ON (its date) and LOG_EMPTY (1|0); 1 when it holds no file that could be read
+  local d=$P_ROOT$1 out t z newest="" f
+  local -a via=() files=()
+  LOG_DAYS="" LOG_ON="" LOG_EMPTY=1
+  [ -d "$d" ] || return 1
+  if [ ! -r "$d" ] || [ ! -x "$d" ]; then via=(as_root); fi
+  capture out ${via[@]+"${via[@]}"} find "$d" -mindepth 1 -maxdepth 2 -type f
+  [ "$CAP_RC" -eq 0 ] && [ -n "$out" ] || return 1
+  while IFS= read -r f; do files+=("$f"); done <<<"$out"
+  # GNU first, as file_mtime.
+  capture out ${via[@]+"${via[@]}"} stat -c '%Y %s' -- "${files[@]}"
+  if [ "$CAP_RC" -ne 0 ]; then capture out ${via[@]+"${via[@]}"} stat -f '%m %z' -- "${files[@]}"; fi
+  [ "$CAP_RC" -eq 0 ] || return 1
+  while read -r t z; do
+    is_int "$t" && is_int "$z" || return 1
+    if [ "$z" -gt 0 ]; then LOG_EMPTY=0; fi
+    if [ -z "$newest" ] || [ "$t" -gt "$newest" ]; then newest=$t; fi
+  done <<<"$out"
+  [ -n "$newest" ] || return 1
+  LOG_DAYS=$(((P_NOW - newest) / 86400))
+  iso_utc LOG_ON "$newest"
+  LOG_ON=${LOG_ON%%T*}
+}
+
+# The latest day an Install: line in apt's history names one of the
+# packages, rotated logs included. Upgrades don't count; logrotate ages the
+# logs out in the end, so the log directory goes first.
+apt_install_age() {  # <package globs>: INSTALL_DAYS and INSTALL_ON; 1 when none is found
+  local f out line day="" on="" w ed
+  local -a ws=()
+  INSTALL_DAYS="" INSTALL_ON=""
+  for f in "$P_ROOT"/var/log/apt/history.log "$P_ROOT"/var/log/apt/history.log.*; do
+    [ -f "$f" ] || continue
+    case $f in
+      *.gz) capture out as_reader gzip -dc -- "$f" ;;
+      *) capture out as_reader cat -- "$f" ;;
+    esac
+    [ "$CAP_RC" -eq 0 ] || continue
+    while IFS= read -r line; do
+      case $line in
+        Start-Date:*)
+          read -r _ day _ <<<"$line"
+          _knob_is_date "$day" || day="" ;;
+        Install:*)
+          [ -n "$day" ] || continue
+          # nginx-common:amd64 (1.24.0-2ubuntu7, automatic), nginx:amd64 (1.24.0-2ubuntu7)
+          read -r -a ws <<<"${line#Install:}" || true
+          for w in ${ws[@]+"${ws[@]}"}; do
+            case $w in '('* | *')' | *'),' | *,) continue ;; esac
+            if glob_match "${w%%:*}" "$1" && [[ $day > $on ]]; then on=$day; fi
+          done ;;
+      esac
+    done <<<"$out"
+  done
+  [ -n "$on" ] || return 1
+  knob_epoch_day ed "$on"
+  INSTALL_ON=$on INSTALL_DAYS=$((P_NOW / 86400 - ed))
 }
 
 active_days() {  # <unit>: ACTIVE := the days it has been active, else since systemd or the kernel started
@@ -4345,27 +4433,48 @@ active_days() {  # <unit>: ACTIVE := the days it has been active, else since sys
   esac
 }
 
+# A component's name counts where it begins a word (#634): a unit
+# (After=redis-server.service), a command (/usr/bin/docker, redis-cli, psql),
+# a path's own directory or file (/run/containerd/containerd.sock), a URL
+# (redis://). Inside another name it doesn't: co-replicator's deploy unit ran
+# check_redis_floor.sh, a check of the remote broker, and a masked local
+# Redis read as in-use. A word holds letters, digits and _ . @ + -, and may
+# start with dashes (--redis-url).
+word_ere() {  # <var> <ere>: VAR := an ERE matching <ere> only where it begins a word
+  printf -v "$1" '%s' "(^|[^A-Za-z0-9_.@+-])-*($2)"
+}
+
+# A line quoted as evidence: trimmed, and cut at 160 characters.
+quote_line() {  # <var> <line>
+  local _ql=${2#"${2%%[![:space:]]*}"}
+  if [ "${#_ql}" -gt 160 ]; then _ql="${_ql:0:157}..."; fi
+  printf -v "$1" '%s' "$_ql"
+}
+
 # What the repo says of a component (#491). Only a deploy/ line that isn't a
 # comment uses it: co-processor's deploy/processor.service said in a comment
 # that its user is *not* in group docker, which read as in-use and hid a
-# prune candidate. A comment, or prose (a .md file), is text alone.
+# prune candidate. A comment, or prose (a .md file), is text alone. The
+# evidence quotes the line, so the owner can judge it without the grep (#634).
 named_by() {  # <ere>: NAMED (JSON array body); NAMED_USE, the deploy/ line that uses it; NAMED_TEXT, the deploy/ files that name it only in text
-  local out f hit rel lines line
+  local out f hit rel lines line re q
   NAMED="" NAMED_USE="" NAMED_TEXT=""
+  word_ere re "$1"
   if [ -n "$repo" ] && [ -d "$repo" ]; then
     for f in deploy docs AGENTS.md README.md; do
       [ -e "$repo/$f" ] || continue
-      capture out grep -rliE -- "$1" "$repo/$f"
+      capture out grep -rliE -- "$re" "$repo/$f"
       while IFS= read -r hit; do
         [ -n "$hit" ] || continue
         rel=${hit#"$repo"/}
         jpushs NAMED "$rel"
         case $rel in deploy/*) ;; *) continue ;; esac
         if [ -z "$NAMED_USE" ] && [[ $rel != *.md ]]; then
-          capture lines grep -iE -- "$1" "$hit"
+          capture lines grep -iE -- "$re" "$hit"
           while IFS= read -r line; do
             [[ $line =~ ^[[:space:]]*(#|\;|//) ]] && continue
-            NAMED_USE="$rel names it on a line that isn't a comment"
+            quote_line q "$line"
+            NAMED_USE="$rel names it on a line that isn't a comment: $q"
             break
           done <<<"$lines"
           [ -z "$NAMED_USE" ] || continue
@@ -4374,14 +4483,15 @@ named_by() {  # <ere>: NAMED (JSON array body); NAMED_USE, the deploy/ line that
       done <<<"$out"
     done
   fi
-  if [ -r "$config" ] && grep -qiE -- "$1" "$config" 2>/dev/null; then jpushs NAMED "the knob"; fi
+  if [ -r "$config" ] && grep -qiE -- "$re" "$config" 2>/dev/null; then jpushs NAMED "the knob"; fi
 }
 
 # A host unit that uses a component (#491): an admin's unit or drop-in whose
 # Requires=, After= or Exec* line names it. The component's own units, and
 # their drop-ins, don't count: a name that starts with the component's, as
 # postgresql@16-main and redis-server do, and app-redis-worker doesn't
-# (CR 889). NAMED_UNIT := the first, in words, or empty.
+# (CR 889). The name counts where it begins a word, as in named_by (#634).
+# NAMED_UNIT := the first, in words, quoting its line, or empty.
 unit_names() {  # <ere>
   local f base out
   NAMED_UNIT=""
@@ -4390,10 +4500,10 @@ unit_names() {  # <ere>
     base=${f#"$P_ROOT"/etc/systemd/system/}
     base=${base%%/*}
     if grep -qiE -- "^($1)" <<<"$base"; then continue; fi
-    capture out as_reader grep -m1 -iE -- "^[[:space:]]*(Requires|After|Exec[A-Za-z]*)=.*($1)" "$f"
+    capture out as_reader grep -m1 -iE -- "^[[:space:]]*(Requires|After|Exec[A-Za-z]*)=(.*[^A-Za-z0-9_.@+-])?-*($1)" "$f"
     if [ "$CAP_RC" -eq 0 ] && [ -n "$out" ]; then
-      out=${out#"${out%%[![:space:]]*}"}
-      NAMED_UNIT="${f#"$P_ROOT"} names it on its ${out%%=*}= line"
+      quote_line out "$out"
+      NAMED_UNIT="${f#"$P_ROOT"} names it on its ${out%%=*}= line: $out"
       return 0
     fi
   done
@@ -4492,12 +4602,12 @@ engine() {
   fi
 }
 
-idle_verdict() {  # <unit> <state>: sets DORM or UNK from how long the unit has been idle
-  idle_days "$1"
+idle_verdict() {  # <unit> <state> [<log dir>] [<package globs>]: sets DORM or UNK from how long the unit has been idle
+  idle_days "$1" "${3-}" "${4-}"
   if window_ok "$IDLE"; then
-    DORM="$2 for $IDLE days"
+    DORM="$2 for $IDLE days${IDLE_FROM:+, $IDLE_FROM}"
   else
-    UNK="$2 for ${IDLE:-an unknown number of} days: fewer than 30"
+    UNK="$2 for ${IDLE:-an unknown number of} days: fewer than 30${IDLE_FROM:+, $IDLE_FROM}"
   fi
 }
 
@@ -4540,18 +4650,21 @@ read_docker() {
         if [ "$DISK_CONTAINERS" -gt 0 ] || [ "$DISK_VOLUMES" -gt 0 ]; then
           UNK="$state, but $DISK_CONTAINERS containers and $DISK_VOLUMES volumes are on disk, and a prune would take them"
         else
-          idle_verdict docker.service "$state"
+          # Docker logs to the journal: it has no log directory.
+          idle_verdict docker.service "$state" "" 'docker.io docker-ce'
         fi
       fi
     else
       UNK="its state couldn't be read"
     fi
   fi
-  engine docker "$inst" docker.service "" 'docker|containerd' 'docker.io docker-ce* containerd* runc' "$WL" "$INUSE" "$DORM" "$UNK"
+  # Its CLI plugins too, by Ubuntu's names and Docker's own (#611), as
+  # _prune-lib.sh's roots_of docker.
+  engine docker "$inst" docker.service "" 'docker|containerd' 'docker.io docker-ce* docker-buildx docker-buildx-plugin docker-compose docker-compose-plugin docker-compose-v2 containerd* runc' "$WL" "$INUSE" "$DORM" "$UNK"
 }
 
 read_postgres() {
-  local inst=0 out p r c online=0 nusr=0 wr=0 window="" reset d db writes own created started sess ses=0 ses_why="" ver name status up="" pg_own="" span_unknown=0 gap="" down=""
+  local inst=0 out p r c online=0 nusr=0 wr=0 window="" reset d db writes own created started sess ses=0 ses_why="" ver name status up="" pg_own="" span_unknown=0 gap="" down="" down_from=""
   local -a df=()
   WL="" INUSE="" DORM="" UNK=""
   if have dpkg-query; then
@@ -4580,16 +4693,17 @@ read_postgres() {
           online=1
           if ! in_words "$ver/$name" "$PG_READ"; then gap="$gap $ver/$name (unread)"; fi
         else
-          idle_days "postgresql@$ver-$name.service"
+          # Every cluster logs its start and its stop there (#633).
+          idle_days "postgresql@$ver-$name.service" /var/log/postgresql "postgresql-$ver"
           if ! window_ok "$IDLE"; then
-            gap="$gap $ver/$name (down ${IDLE:-an unknown number of} days)"
+            gap="$gap $ver/$name (down ${IDLE:-an unknown number of} days${IDLE_FROM:+, $IDLE_FROM})"
           elif [ -z "$down" ] || [ "$IDLE" -lt "$down" ]; then
-            down=$IDLE
+            down=$IDLE down_from=$IDLE_FROM
           fi
         fi
       done
       if [ "$online" -eq 0 ] && [ -z "$gap" ]; then
-        DORM="every cluster down, the latest for $down days"
+        DORM="every cluster down, the latest for $down days${down_from:+, $down_from}"
       elif [ "$online" -eq 0 ]; then
         UNK="every cluster down, but not each for 30 days:$gap"
       elif [ -z "${PG_READ// /}" ]; then
@@ -4743,7 +4857,7 @@ read_redis() {
     elif [ "$U_ActiveState" = active ]; then
       UNK="active, but redis-cli isn't on PATH, so its keys weren't read"
     elif [ -n "$U_ActiveState" ]; then
-      idle_verdict redis-server.service "$U_ActiveState"
+      idle_verdict redis-server.service "$U_ActiveState" /var/log/redis redis-server
     else
       UNK="its state couldn't be read"
     fi
@@ -4770,7 +4884,7 @@ read_nginx() {
         UNK="active with only the default site: whether anything calls it isn't read"
       fi
     elif [ -n "$U_ActiveState" ]; then
-      idle_verdict nginx.service "$U_ActiveState"
+      idle_verdict nginx.service "$U_ActiveState" /var/log/nginx 'nginx nginx-core nginx-full nginx-light'
     else
       UNK="its state couldn't be read"
     fi
