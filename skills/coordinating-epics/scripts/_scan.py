@@ -54,6 +54,7 @@ from _epic_edit import (  # noqa: E402
     line_ref,
     load_tokens,
     normalize,
+    per_repo_cursor,
     ref_text,
     refs_in,
     token_hint,
@@ -147,6 +148,29 @@ def cursors_from_body(lines: list[str], warnings: list[str]) -> dict:
     return out
 
 
+def also_watermark(lines: list[str], repo: str, warnings: list[str]) -> int | None:
+    """The "Last issue seen (owner/repo)" cursor, owner case folded (#400).
+
+    Its value is owner/repo#N, or a bare #N. One naming another repo is no
+    cursor: GitHub links it to that repo's issue, so it's a warning.
+    """
+    for field, value in header_fields(lines).items():
+        if per_repo_cursor(field) != repo.lower():
+            continue
+        m = re.search(r"(?:(?P<repo>" + OWNER_REPO + r"))?#(?P<num>[0-9]+)", value)
+        if not m:
+            return None
+        if m.group("repo") and m.group("repo").lower() != repo.lower():
+            warnings.append(
+                f"{repo}: its Last issue seen holds {m.group(0)}, another repo's"
+                " ref, so it is not used as a cursor; write"
+                f" {repo}#N (or {{last_seen:{repo}}})"
+            )
+            return None
+        return int(m.group("num"))
+    return None
+
+
 def item_keys(lines: list[str], host: str) -> set[str]:
     fence = fenced(lines)
     out = set()
@@ -160,7 +184,7 @@ def item_keys(lines: list[str], host: str) -> set[str]:
 CAPPED: list[str] = []  # what stopped at MAX_PAGES this run: report["capped"]
 
 
-def pages(path: str, what: str, stop=None):
+def pages(path: str, what: str, stop=None, capped: list[str] | None = None):
     sep = "&" if "?" in path else "?"
     for page in range(1, MAX_PAGES + 1):
         batch = gh_json(["api", f"{path}{sep}per_page=100&page={page}"], what)
@@ -170,7 +194,7 @@ def pages(path: str, what: str, stop=None):
         if len(batch) < 100 or (stop and stop(batch[-1])):
             return
     # A cap reached in silence reads as a complete answer (CR 259).
-    CAPPED.append(what)
+    (CAPPED if capped is None else capped).append(what)
 
 
 def overlapped(since: str) -> str:
@@ -207,14 +231,18 @@ def new_comments(
     what: str,
     drop: str | None = None,
     epic: int | None = None,
+    epic_key: str | None = None,
+    capped: list[str] | None = None,
 ) -> tuple[list[dict], list[dict]]:
     """Comments updated since, read from the overlapped window (#407), and
     apart, the ones whose marker is drop (#654). The body is read for the
     marker only; no row carries it. A record is dropped only when it names
-    epic (CR 2209)."""
+    epic (CR 2209). epic_key names it for another repo's issue, which host
+    would key wrong (#400)."""
     path = f"repos/{host}/issues/{num}/comments?since={overlapped(since)}"
     kept, dropped = [], []
-    for c in pages(path, what):
+    epic_key = epic_key or key(None, epic or num, host)
+    for c in pages(path, what, capped=capped):
         row = {
             "id": c["id"],
             "author": (c.get("user") or {}).get("login"),
@@ -224,7 +252,7 @@ def new_comments(
             "in_overlap": in_overlap(c.get("updated_at"), since),
             "url": c.get("html_url"),
         }
-        mine = drop and marker(c.get("body"), key(None, epic or num, host)) == drop
+        mine = drop and marker(c.get("body"), epic_key) == drop
         (dropped if mine else kept).append(row)
     return kept, dropped
 
@@ -284,10 +312,12 @@ def item_updates(
     return found, missing, errors
 
 
-def issue_row(it: dict, host: str, epic: int, items: set[str]) -> dict:
+def issue_row(
+    it: dict, host: str, epic: int, items: set[str], epic_key: str | None = None
+) -> dict:
     body = it.get("body") or ""
     # As GitHub renders the body: no ref in a fenced block or code span (#415).
-    mentions = key(None, epic, host) in refs_in(body.splitlines(), host)
+    mentions = (epic_key or key(None, epic, host)) in refs_in(body.splitlines(), host)
     return {
         "number": it["number"],
         "kind": "pr" if it.get("pull_request") else "issue",
@@ -301,6 +331,161 @@ def issue_row(it: dict, host: str, epic: int, items: set[str]) -> dict:
         "in_epic": key(None, it["number"], host) in items,
         "mentions_epic": mentions,
     }
+
+
+def scan_also(
+    repo: str,
+    host: str,
+    epic: int,
+    items: set[str],
+    since: str | None,
+    wm: int | None,
+    warnings: list[str],
+) -> dict:
+    """One --also repo's walk: its number walk above its own watermark and
+    its updated-since, keeping only rows that are the epic's children there,
+    or mention the epic or a child by ref (#400). A row of neither is counted
+    in "unrelated" and still moves max_number. Keyed by the host's epic, so
+    the record filter drops the coordinator's own records on children here.
+    """
+    epic_key = key(None, epic, host)
+    capped: list[str] = []
+    out: dict = {"repo": repo, "cursors": {"watermark": wm}}
+    unrelated = {"new_numbers": 0, "updated_since": 0}
+
+    def row_of(it: dict) -> dict | None:
+        row = issue_row(it, repo, epic, items, epic_key)
+        own = key(None, it["number"], repo)
+        refs = refs_in((it.get("body") or "").splitlines(), repo) - {own, epic_key}
+        row["repo"] = repo
+        row["mentions_child"] = bool(refs & items)
+        if row["in_epic"] or row["mentions_epic"] or row["mentions_child"]:
+            return row
+        return None
+
+    newest = gh_json(
+        [
+            "api",
+            f"repos/{repo}/issues?state=all&sort=created&direction=desc&per_page=1",
+        ],
+        f"reading {repo}'s highest number",
+    )
+    top = [newest[0]["number"] if newest else 0]
+    if wm is None:
+        warnings.append(f"{repo}: no watermark: new numbers not scanned")
+        out["new_numbers"] = None
+    else:
+        rows = []
+        for it in pages(
+            f"repos/{repo}/issues?state=all&sort=created&direction=desc",
+            "listing new numbers",
+            stop=lambda last: last["number"] <= wm,
+            capped=capped,
+        ):
+            if it["number"] <= wm:
+                continue
+            top.append(it["number"])
+            row = row_of(it)
+            if row is None:
+                unrelated["new_numbers"] += 1
+            else:
+                rows.append(row)
+        out["new_numbers"] = sorted(rows, key=lambda r: r["number"])
+
+    if since is None:
+        out["updated_since"] = out["own_comments"] = None
+    else:
+        queried = overlapped(since)
+        records: dict[int, list[dict]] = {}
+
+        def update_row(it: dict) -> dict | None:
+            top.append(it["number"])
+            row = row_of(it)
+            if row is None:
+                unrelated["updated_since"] += 1
+                return None
+            row["in_overlap"] = in_overlap(it.get("updated_at"), since)
+            if row["in_epic"]:
+                row["new_comments"], rec = new_comments(
+                    repo,
+                    it["number"],
+                    since,
+                    "reading new comments",
+                    "record",
+                    epic,
+                    epic_key,
+                    capped,
+                )
+                if rec:
+                    row["record_comments"] = len(rec)
+                    records[it["number"]] = rec
+            return row
+
+        rows = [
+            r
+            for r in (
+                update_row(it)
+                for it in pages(
+                    f"repos/{repo}/issues?state=all&since={queried}",
+                    "listing updates",
+                    capped=capped,
+                )
+            )
+            if r is not None
+        ]
+        # The epic's own items here, each by its own updatedAt, as the
+        # host's are: a listing can leave one out (#407).
+        prefix = repo.lower() + "#"
+        own = {int(k[len(prefix) :]) for k in items if k.startswith(prefix)} - {
+            r["number"] for r in rows
+        }
+        try:
+            updated, missing, errors = item_updates(repo, own) if own else ({}, [], [])
+        except Infra as e:
+            warnings.append(
+                f"{repo}: the epic's items there weren't cross-checked, so an"
+                f" update the listing left out goes unreported: {gh_cause(e)}"
+            )
+        else:
+            if missing:
+                warnings.append(
+                    f"{repo}: the cross-check read nothing for "
+                    + ", ".join(f"#{n}" for n in missing)
+                    + ": "
+                    + ("; ".join(errors) or "GitHub gave no reason")
+                )
+            for n, when in sorted(updated.items()):
+                if parse_ts(when) < parse_ts(queried):
+                    continue
+                it = gh_json(["api", f"repos/{repo}/issues/{n}"], f"reading {repo}#{n}")
+                row = update_row(it)
+                if row is not None:
+                    row["recovered"] = True
+                    rows.append(row)
+                    warnings.append(
+                        f"{repo}#{n} was updated at {when}, but the updates listing"
+                        " left it out; added from the epic's own items (#407)"
+                    )
+        gone = [
+            r["number"]
+            for r in rows
+            if record_only(r, records.get(r["number"], []), queried)
+        ]
+        out["updated_since"] = sorted(
+            (r for r in rows if r["number"] not in gone), key=lambda r: r["number"]
+        )
+        out["own_comments"] = {
+            "record": sum(len(v) for v in records.values()),
+            "rows_dropped": sorted(gone),
+        }
+    out["unrelated"] = unrelated
+    out["max_number"] = max(top)
+    out["capped"] = list(dict.fromkeys(capped))
+    warnings.extend(
+        f"{repo}: {w}: stopped at {MAX_PAGES * 100} rows; the list is incomplete"
+        for w in out["capped"]
+    )
+    return out
 
 
 # Always dropped, whatever the installed git lists: the ones #189 and CR 261
@@ -615,6 +800,13 @@ def run(argv: list[str]) -> int:
             "comments alone put there (no other new comment, no later update, no close\n"
             "in the window) is dropped. own_comments gives the counts and the rows\n"
             "dropped, so nothing vanishes silently.\n\n"
+            "--also OWNER/REPO (#400), for a cross-repo parent: that repo's number walk\n"
+            "from its own '- **Last issue seen (OWNER/REPO):** OWNER/REPO#N' line, and\n"
+            "its updates since Last check-in, under also[owner/repo] with their own\n"
+            "cursors, max_number, own_comments and capped. Rows are kept when they are\n"
+            "the epic's children there or mention the epic or a child; 'unrelated'\n"
+            "counts the rest, which still move max_number. The top-level keys stay\n"
+            "this repo's. A gh failure on an --also repo's listing is exit 2.\n\n"
             "exit codes: 0 report written; 1 usage; 2 gh failed on the epic, a listing\n"
             "or a comment read (its stderr shown). gh failing on one cross-repo ref, one\n"
             "PR's closing issues or the default branch costs only that: a warning with\n"
@@ -659,11 +851,29 @@ def run(argv: list[str]) -> int:
         ),
     )
     p.add_argument("--no-fetch", action="store_true", help="don't run git fetch first")
+    p.add_argument(
+        "--also",
+        action="append",
+        default=[],
+        metavar="OWNER/REPO",
+        help="also walk this repo's new numbers and updates, from its own"
+        " '- **Last issue seen (OWNER/REPO):** OWNER/REPO#N' header line,"
+        " keeping rows that are the epic's children there or mention the epic or"
+        " a child; under report['also'] (#400). Repeatable",
+    )
     add_token_flag(p)
     a = p.parse_args(argv)
     host = a.repo
     if not re.fullmatch(r"[\w.-]+/[\w.-]+", host):
         p.error("--repo must be owner/repo")
+    also: dict[str, str] = {}
+    for r in a.also:
+        # The form a "Last issue seen (owner/repo)" line can hold (CR 2235).
+        if not re.fullmatch(OWNER_REPO, r):
+            p.error(f"--also {r!r} must be owner/repo")
+        if r.lower() == host.lower():
+            p.error(f"--also {r} is the epic's own repo, which every scan reads")
+        also.setdefault(r.lower(), r)
     try:
         load_tokens(a.token_for)
     except Usage as e:
@@ -826,6 +1036,39 @@ def run(argv: list[str]) -> int:
             report["max_number"] = max(
                 [report["max_number"]] + [r["number"] for r in rows]
             )
+
+        # A cursor the body keeps for a repo this scan wasn't asked to walk:
+        # {checked} would move past that repo's window unread (CR 2227).
+        for field in header_fields(lines):
+            r = per_repo_cursor(field)
+            if r and r not in also:
+                warnings.append(
+                    f"the epic keeps a Last issue seen for {r}, but this scan has no"
+                    f" --also {r}: its new numbers and updates weren't read, and"
+                    " epic-edit.sh refuses {checked} from this report"
+                )
+        if also:
+            report["also"] = {}
+        for low, r in also.items():
+            try:
+                report["also"][low] = scan_also(
+                    r,
+                    host,
+                    a.epic,
+                    items,
+                    cur["since"],
+                    also_watermark(lines, r, warnings),
+                    warnings,
+                )
+            except Infra as e:
+                # Exit 2, as the host's own listings: a warning would let
+                # {checked} move past this repo's unread window (#400).
+                hint = token_hint(r)
+                raise Infra(
+                    f"--also {r}: {e}" + (f"\n  {hint}" if hint else ""),
+                    stderr=e.stderr,
+                    code=e.code,
+                ) from None
 
         # commits_skipped names why commits is null, at the top level, so a
         # skipped cursor can't pass for an empty range (#411).

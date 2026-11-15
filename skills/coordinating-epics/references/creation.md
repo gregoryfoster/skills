@@ -85,7 +85,12 @@ Walk proposed closures with the operator. Four parts each: what it asks, what ch
     && bash "<epic-edit.sh>" --repo OWNER/REPO --epic "$N" --adopt-live --lint-all --ops - <<<'[]' \
     && { [ "$N" = "$PREDICTED" ] || { echo "created #$N, but the body predicted #$PREDICTED" >&2; false; }; }
   ```
-- **Children not yet created** are drafted with `SUBn` placeholders, created in dependency order, and their real numbers substituted afterwards with Python `str.replace`, never `sed` (archiver 1, watcher F10). `epic-edit.sh --lint-all` refuses a leftover `SUBn`, a short ref or a secret anywhere in the body. When it refuses the new epic, the baseline isn't taken: fix the lines in the same call, `--adopt-live --lint-all --ops fix.json`.
+- **Children not yet created** are drafted with `SUBn` placeholders, created in dependency order, and their real numbers substituted afterwards, never with `sed` (archiver 1, watcher F10). `epic-edit.sh --lint-all` refuses a leftover `SUBn`, a short ref or a secret anywhere in the body. When it refuses the new epic, the baseline isn't taken: fix the lines in the same call, `--adopt-live --lint-all --ops fix.json`.
+- **`create-from-plan.sh` does the whole chain** from a JSON plan: the epic's title and body file, and each child's `SUBn` id, title, body file, optional `repo` (a cross-repo parent, watcher 368-F3) and `after` list (#396). Draft each body with the ids, `SUB0` for the epic, and it writes `#N` or `owner/repo#N` for each, as a whole token. Before anything is created it reads every repo with the token in use and lints every body on a preview with the predicted numbers. It creates the children, then the epic, and checks the epic's number, rebuilding its own refs if another issue took it. A state file beside the plan lets a re-run resume, and finds a create a 502 hid. It ends in `--adopt-live --lint-all`, with each other repo's `Last issue seen (owner/repo)` line and the first log entry as a `log-comment`. Dry-run it first; `--help` has the plan's shape.
+
+  ```bash
+  bash "<create-from-plan.sh>" --repo OWNER/REPO --plan "${SCRATCH:?}/plan.json" --dry-run
+  ```
 - **Assert the epic's own number against the watermark the body predicted** (watcher F11). The epic takes a number too.
 - **Native sub-issues are optional.** A `#N` task list is enough for one repo and fewer than about ten children (status 22). Where used, verify links against the `/sub_issues` list, not `sub_issues_summary`, which lags (archiver 3). List queries also lag right after bulk label edits: verify per issue (private-launch 35).
 - **Read a label's description before applying it** (archiver 4).

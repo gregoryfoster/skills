@@ -1399,6 +1399,15 @@ GATE_SCRIPTS = {
         "through this wrapper: test_a_gh_failure_is_exit_2_and_shows_ghs_own_stderr "
         "(test_coordinating_epics_comment.py) keeps gh's whole stderr"
     ),
+    "create-from-plan.sh": (
+        "its exit code decides whether an epic and its children were created "
+        "and adopted (#396): a plan that fails the lint or names an unreadable "
+        "repo creates nothing, and the engine branches on what gh returns, the "
+        "create, the issues it searches after a failed one, the patch and its "
+        "read-back. The wrapper `exec`s _create_from_plan.py, held by behaviour "
+        "through it: test_a_gh_failure_is_exit_2_and_shows_ghs_whole_stderr "
+        "(test_coordinating_epics_plan.py) keeps gh's whole stderr"
+    ),
 }
 
 # Bucket 2: reporting-only, or an action whose own exit code is the verdict.

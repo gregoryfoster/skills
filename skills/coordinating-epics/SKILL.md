@@ -50,7 +50,7 @@ The skill's `scripts/` directory ships inside the skill, not at the project root
 <!-- skill:required id=skill-scripts -->
 ```bash
 N=coordinating-epics
-for S in epic-edit.sh scan.sh comment.sh; do SD=
+for S in epic-edit.sh scan.sh comment.sh create-from-plan.sh; do SD=
   for d in scripts ".claude/skills/$N/scripts" "$HOME/.claude/skills/$N/scripts"; do
     [ -f "$d/$S" ] && { SD="$d"; break; }
   done
@@ -69,7 +69,7 @@ done
 bash "<epic-edit.sh>" --repo OWNER/REPO --epic N --adopt-live --lint-all --ops "${SCRATCH:?}/adopt.json" --dry-run
 ```
 
-**Create one.** There are six ways in: a design doc's Steps table, a backlog plus the operator's one-line rule, a number range, children that need scoping first, an upstream adoption checklist, and a whole-backlog audit. [creation.md](references/creation.md) has each. All of them produce the same things:
+**Create one.** There are six ways in: a design doc's Steps table, a backlog plus the operator's one-line rule, a number range, children that need scoping first, an upstream adoption checklist, and a whole-backlog audit. [creation.md](references/creation.md) has each; `<create-from-plan.sh>` creates the children, then the epic, from a plan. All of them produce the same things:
 - a disposition per issue: keep, rework, close, park, move or split;
 - the order rule, its tiebreaks and the boundary decisions, written once;
 - an exit criterion;
@@ -83,7 +83,7 @@ Show the operator the drafted body and the proposed closures before anything is 
 
 On "I finished #N", "next", or a report between threads:
 
-0. **Read the state.** Run `bash "<scan.sh>" --repo OWNER/REPO --epic N > "${SCRATCH:?}/scan.json"` for what arrived, and `epic-edit.sh … --dry-run` for whether the body moved. A box the implementer ticked is a claim. An operator request to unblock someone outside waits on nothing: do it first.
+0. **Read the state.** Run `bash "<scan.sh>" --repo OWNER/REPO --epic N > "${SCRATCH:?}/scan.json"` for what arrived (`--also owner/repo` per other repo of a cross-repo parent), and `epic-edit.sh … --dry-run` for whether the body moved. A box the implementer ticked is a claim. An operator request to unblock someone outside waits on nothing: do it first.
 1. **Verify from evidence** ([check-in.md](references/check-in.md) §1):
    - the whole commit range since the hand-off;
    - CI by job on the final SHA and on `main`'s tip;

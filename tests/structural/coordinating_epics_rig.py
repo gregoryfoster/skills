@@ -152,6 +152,26 @@ if method == "PATCH":
         fail(after if isinstance(after, str) else "HTTP 502: Bad Gateway")
     out({"number": int(parts[4])})
 
+if method == "POST" and len(parts) == 4 and parts[3] == "issues":  # a new issue (#396)
+    repo = f"{parts[1]}/{parts[2]}"
+    sent = json.load(open(rest[rest.index("--input") + 1]))
+    r = find(repo)
+    # Another writer took a number just before this one: a race (#396).
+    skip = 1 if sent["title"] == st.get("create_skip_title") else 0
+    num = max([int(n) for n in r["issues"]] + [0]) + 1 + skip
+    now = st.get("server_now", "2026-10-14T18:03:27Z")
+    url = f"https://github.com/{repo}/issues/{num}"
+    r["issues"][str(num)] = {"state": "open", "title": sent["title"], "body": sent["body"],
+                             "created_at": now, "updated_at": now, "html_url": url}
+    st.setdefault("creates", []).append([repo, num])
+    if st.get("create_fail_title") == sent["title"]:  # this one stored, then a 502
+        st["create_fail_title"] = None
+        fail("HTTP 502: Bad Gateway")
+    if st.get("create_fails_after_apply"):  # GitHub stored it; gh saw a 502
+        st["create_fails_after_apply"] -= 1
+        fail("HTTP 502: Bad Gateway")
+    out({"number": num, "html_url": url})
+
 if method == "POST":  # a new comment: repos/O/R/issues/N/comments (#654)
     repo = f"{parts[1]}/{parts[2]}"
     body = json.load(open(rest[rest.index("--input") + 1]))["body"]
@@ -187,7 +207,7 @@ issues = r.get("issues", {})
 if len(parts) == 3:  # repos/OWNER/REPO: the repo itself
     if "repo_error" in st:
         fail(st["repo_error"])
-    out({"default_branch": r.get("default_branch", "main")})
+    out({"default_branch": r.get("default_branch", "main"), "has_issues": r.get("has_issues", True)})
 
 if len(parts) == 6 and parts[3] == "issues" and parts[4] == "comments":
     cid = parts[5]
