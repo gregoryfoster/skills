@@ -22,11 +22,11 @@ Dry-run an empty ops file. The summary's `body` gives `chars`, `limit` and `shar
 
 ## 4. Compact the ticked lines
 
-One `compact` op per ticked child, `{"op": "compact", "ref": "#N", "link": "<comment URL>", "label": "record"}`. It takes the issue's title from GitHub (or `"title"`), replaces a `·` in it, puts a bare `name#N` in a code span, and qualifies another repo's bare `#N`. It keeps a `not planned` or `out of epic` field, so a disposed line stays disposed, and drops the line's indented sub-block: read each sub-block first, and give an open item in it a line of its own. `set-line` alone would orphan the sub-block, which is why #654's run rebuilt whole tier sections; `compact` doesn't need that.
+One `compact` op per ticked child, `{"op": "compact", "ref": "#N", "link": "<comment URL>", "label": "record"}`. It takes the issue's title from GitHub (or `"title"`), replaces a `·` in it, puts a bare `name#N` in a code span, and qualifies another repo's bare `#N`. It keeps a `not planned` or `out of epic` field, so a disposed line stays disposed, and drops the line's indented sub-block. It refuses one that holds an open box, and names it: give that item a line of its own (`add-line`) or remove it (`set-subline`), then compact. `set-line` alone would orphan the sub-block, which is why #654's run rebuilt whole tier sections; `compact` doesn't need that.
 
 ## 5. Dry-run, then write
 
-- `counts_after` equals `counts_before`, less only the boxes of sub-blocks you dropped on purpose.
+- `counts_after` equals `counts_before`, less only the ticked boxes of the sub-blocks it dropped.
 - In the diff, every open line is unchanged.
 - `body.share` is well under 0.85.
 

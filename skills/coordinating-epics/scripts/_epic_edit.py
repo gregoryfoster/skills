@@ -71,7 +71,8 @@ operations (a JSON array, from --ops FILE or --ops - for stdin):
   {"op": "compact", "ref": "#12", "link": "https://github.com/o/r/issues/12#issuecomment-1"}
                                               cut #12's ticked line to "- [x]
                                               **#12** <title> · [verified](link)",
-                                              its sub-block dropped, a
+                                              its sub-block dropped (refused
+                                              while it holds an open box), a
                                               disposition field kept; "label":
                                               "record" for a comment that holds
                                               the line, not evidence; the title
@@ -1449,7 +1450,18 @@ def apply_ops(
                     notes.append(f"{where}: {op['ref']}'s line is already compact")
                     continue
                 # The sub-block goes: the evidence lives in the linked comment.
+                # Its boxes come off the derived counts too, so an open one
+                # would vanish with every check green (CR 2208).
                 gone = lines[i + 1 : end]
+                still_open = [g.strip() for g in gone if box_state(g) == "open"]
+                if still_open:
+                    raise Refused(
+                        f"{op['ref']}'s sub-block holds open items, which compact"
+                        " would drop: "
+                        + "; ".join(still_open)
+                        + ". Give each a line of its own (add-line), or remove it"
+                        " with set-subline, then compact"
+                    )
                 _add(expect, {k: -v for k, v in counts(gone).items()})
                 _add(expect, _delta(item_state(lines[i]), item_state(new)))
                 lines[i:end] = [new]
