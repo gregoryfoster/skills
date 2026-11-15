@@ -76,7 +76,8 @@ what it reads:
 
 output (JSON on stdout):
   rows: one per job, {target, workflow, job, sha, status, conclusion, url,
-  event, expected}. target is "sha", "main" (the branch's tip) or
+  event, branch, expected}. branch is the run's: only a push run on --branch
+  counts for an expected job. target is "sha", "main" (the branch's tip) or
   "main-latest". conclusion stays null until status is "completed".
   expected is true, "conditional" or false for a "sha" row, and null for the
   others, which are read, not predicted.
@@ -325,12 +326,26 @@ def check_rows(repo: str, sha: str, target: str) -> list[dict]:
         "check_runs",
     ):
         run = runs.get((c.get("check_suite") or {}).get("id")) or {}
-        rows.append(job_row(c, target, run.get("path"), run.get("event"), sha))
+        rows.append(
+            job_row(
+                c,
+                target,
+                run.get("path"),
+                run.get("event"),
+                sha,
+                run.get("head_branch"),
+            )
+        )
     return rows
 
 
 def job_row(
-    c: dict, target: str, workflow: str | None, event: str | None, sha: str
+    c: dict,
+    target: str,
+    workflow: str | None,
+    event: str | None,
+    sha: str,
+    branch: str | None = None,
 ) -> dict:
     status = c.get("status")
     return {
@@ -344,6 +359,9 @@ def job_row(
         "conclusion": c.get("conclusion") if status == "completed" else None,
         "url": c.get("html_url"),
         "event": event,
+        # The branch the run was for: a push run on another branch, at the
+        # same SHA, doesn't stand for the branch's own (CR 2258).
+        "branch": branch,
         "expected": None,
     }
 
@@ -383,6 +401,7 @@ def latest_on_branch(repo: str, branch: str) -> list[dict]:
                     wf.get("path"),
                     latest.get("event"),
                     latest.get("head_sha"),
+                    latest.get("head_branch"),
                 )
             )
     return rows
@@ -429,7 +448,9 @@ def expect(
     return out
 
 
-def judge(expected: list[dict], rows: list[dict]) -> tuple[list[dict], list[dict]]:
+def judge(
+    expected: list[dict], rows: list[dict], branch: str
+) -> tuple[list[dict], list[dict]]:
     """Mark each "sha" row's expected; return (missing, unmatched)."""
     missing, unmatched = [], []
     for row in rows:
@@ -444,6 +465,7 @@ def judge(expected: list[dict], rows: list[dict]) -> tuple[list[dict], list[dict
             for r in rows
             if r["target"] == "sha"
             and r["event"] == "push"
+            and r["branch"] == branch
             and r["workflow"] == e["workflow"]
             and runs_as(r["job"] or "", e["prefix"], e["whole"])
         ]
@@ -496,7 +518,7 @@ def read_once(
     if report["main_sha"] and report["main_sha"] != report["sha"]:
         rows += check_rows(a.repo, report["main_sha"], "main")
     rows += latest_on_branch(a.repo, report["branch"])
-    missing, unmatched = judge(expected, rows)
+    missing, unmatched = judge(expected, rows, report["branch"])
     report.update(
         rows=rows,
         missing=missing,

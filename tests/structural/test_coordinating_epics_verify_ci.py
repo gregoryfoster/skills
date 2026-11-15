@@ -153,13 +153,15 @@ def check(name, status="completed", conclusion="success", suite=1, sha=SHA):
     }
 
 
-def run_of(path, suite=1, event="push", sha=SHA, rid=100):
+def run_of(path, suite=1, event="push", sha=SHA, rid=100, branch="main", repo=REPO):
     return {
         "id": rid,
         "path": path,
         "check_suite_id": suite,
         "event": event,
         "head_sha": sha,
+        "head_branch": branch,
+        "head_repository": {"full_name": repo},
     }
 
 
@@ -509,3 +511,15 @@ def test_cr_2246_wait_doesnt_re_read_for_a_name_it_cant_match(rig):
     rep = report(rig.run("--wait", "30", "--interval", "1"))
     assert rep["verdict"] == "incomplete"
     assert json.loads(rig.path.read_text())["reads"]["checks" + SHA] == 1
+
+
+def test_cr_2258_a_push_run_on_another_branch_doesnt_stand_for_the_branchs(rig):
+    """The child's feature branch ran green on the SHA, then was
+    fast-forwarded to main before main's push run existed: main's jobs never
+    ran, so nothing on the SHA counts for them."""
+    rig.state["runs"][SHA] = [run_of(".github/workflows/ci.yml", branch="feat")]
+    rep = report(rig.run())
+    assert {m["job"] for m in rep["missing"]} == {"lint", "Tests"}
+    assert rep["verdict"] == "incomplete"
+    assert rows(rep)["lint"]["branch"] == "feat"
+    assert rows(rep)["lint"]["expected"] is False
