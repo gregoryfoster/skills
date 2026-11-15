@@ -176,27 +176,32 @@ One `epic-edit.sh` call per check-in, with every change in its ops file. Write t
 cat > "${SCRATCH:?}/ops.json" <<'JSON'
 [
   {"op": "tick", "ref": "#45"},
-  {"op": "note", "ref": "#45", "text": "Shipped 1a2b3c4..5d6e7f8, live {today}."},
+  {"op": "compact", "ref": "#45", "link": "https://github.com/OWNER/REPO/issues/45#issuecomment-123"},
   {"op": "set-line", "ref": "#46", "line": "- [ ] #46 dependency met: route only forwards retry_after_seconds"},
+  {"op": "note", "ref": "#47", "text": "Deploy no earlier than 2026-10-15T18:00Z."},
   {"op": "add-line", "section": "Tier 1 — bugs", "line": "- [ ] #58 follow-up from #45's review · S"},
   {"op": "header", "field": "Last check-in", "value": "{checked}"},
   {"op": "header", "field": "Last issue seen", "value": "{last_seen}"},
   {"op": "header", "field": "Last verified SHA", "value": "5d6e7f8"},
   {"op": "header", "field": "Next", "value": "#46, brief on the issue"},
-  {"op": "log", "text": "{today}: #45 closed and live. 1 new (#58, slotted). Next: #46."}
+  {"op": "log-comment", "text": "{today}: #45 closed and live. 1 new (#58, slotted). Next: #46."}
 ]
 JSON
 bash "<epic-edit.sh>" --repo OWNER/REPO --epic N --scan "${SCRATCH:?}/scan.json" --ops "${SCRATCH:?}/ops.json" --dry-run \
   && bash "<epic-edit.sh>" --repo OWNER/REPO --epic N --scan "${SCRATCH:?}/scan.json" --ops "${SCRATCH:?}/ops.json"
 ```
 
-The `note` op writes the separator itself, so #45's line comes out as `- [x] #45 … · Shipped 1a2b3c4..5d6e7f8, live 2026-10-16.` Leave the `·` out of a note's text. A text that starts with one still gets only one.
+`compact` cuts #45's line to `- [x] **#45** <its issue title> · [verified](…)`: the link is step 1's verification comment, which holds the evidence the line used to. The `note` op writes the separator itself, so #47's line ends `… · Deploy no earlier than 2026-10-15T18:00Z.` Leave the `·` out of a note's text. A text that starts with one still gets only one.
+
+- **The log comment posts last,** once the body has read back matching, or when the body didn't change. A dry run prints it. `log` still appends in the body, for an epic not yet on this form. If gh fails posting it, the exit is 5 and the body write still stands: re-run the same call, and a comment already posted is found, not posted twice (#654).
 
 - **A refusal (exit 3) wrote nothing.** Read the reason. A foreign tick is a claim: verify that child, then pass `--accept-ticks '#N'`. Any other foreign edit means merging by hand: read the diff, rebuild your ops on the live body, and re-run with `--adopt-live`.
 - **A refusal naming a `header` op** ("set Next to …, but after every op …") is your own op order, not a foreign edit: a later section op removed or changed the line. Put section ops before `header` ops and re-run (#399). The first `header` op on an epic whose cursor lines are a paragraph shows that paragraph becoming list items in the diff, with a note; that is expected.
+- **Every part of the body has an op.** `rename-section` renames a heading, `set-preamble` rewrites the intro above the header, and `set-subline` changes or removes one sub-bullet under a child's line by its text prefix. `replace-section` refuses a section holding subsections, and names them: replace a subsection by its own heading, or pass `"scope": "tree"` to replace the whole subtree (#408, #413, #429).
 - **A lint refusal on a line you only ticked** means the line already held something the lint refuses, such as a short ref. Every changed line is linted whole (a fenced line for secrets only), so legacy text is fixed the first time it's touched: rewrite the line with `set-line`, then tick.
-- **Exit 4: not confirmed.** Either written (`"written": true`) but the read-back differed or failed, or the baseline couldn't be saved; or the PATCH failed and whether it landed is unknown (`"written": "unknown"`). Read the epic before anything else, then take it with `--adopt-live`: the `ERROR` line ends on that step, and where gh's error is behind it (the PATCH's, the read-back's), it follows that line whole, on lines of its own. A PATCH gh reported failed with the body unchanged is exit 2: nothing was written.
-- **Log every check-in,** including "No new issues; ranking unchanged". Without that line, nobody can tell "checked and found nothing" from "never checked" (address-validator 49).
+- **Exit 4: not confirmed.** Either written (`"written": true`) but the read-back differed or failed, or the baseline couldn't be saved; or the PATCH failed and whether it landed is unknown (`"written": "unknown"`). Read the epic before anything else, then take it with `--adopt-live`: the `ERROR` line ends on that step, and where gh's error is behind it (the PATCH's, the read-back's), it follows that line whole, on lines of its own. A PATCH gh reported failed with the body unchanged is exit 2: nothing was written. One gh reported good with the body unchanged is exit 4 with `"written": false` and `"readback": "unchanged"`: nothing landed, and the baseline still holds, so no `--adopt-live` (#653).
+- **Watch the body's size.** Every summary gives `"body": {"chars", "limit", "share"}`. Past the host's cap (inferred near 262,144 characters) a write keeps the old body and still reports success (#653), so the editor refuses growth past `--body-limit` and warns past 85%. Report the size beside the counts, and make room before the warning.
+- **Log every check-in,** in its `log-comment`, including "No new issues; ranking unchanged". Without that line, nobody can tell "checked and found nothing" from "never checked" (address-validator 49).
 - **The baseline lives in the per-user state directory,** never `/tmp`, which may or may not survive a reboot (broker 101). If it's lost, the issue's edit history (GraphQL `userContentEdits`) is the fallback (private-backlog 113).
 - **Only this tool saves the baseline.** Another thread once saved its own hand edit there, and the diff read clean (#518). So each body the editor writes or adopts is recorded by hash, and a baseline no record matches is refused. Each run also lists, in `foreign_edits`, the history's edits since the last write that no write of the tool made, matched by time and hash, not login: every thread may write as one account. Read each one before trusting a clean diff. A state directory from before #518 has no record, so its first run refuses: read the live body and its history, then `--adopt-live`.
 - **Procedure changes go into the epic in the same check-in,** such as a new standing check or a new recipe line, not into host memory alone (private-backlog 148, processor F108).

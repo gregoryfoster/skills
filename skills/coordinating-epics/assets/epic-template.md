@@ -6,6 +6,10 @@ Copy the block below into the epic and fill it in. The **core** sections are in 
 
 - **Header lines** use the `- **Field:** value` form. `scan.sh` reads `Last check-in`, `Last issue seen` and `Last verified SHA` from them, and `epic-edit.sh`'s `header` op writes them, turning a paragraph-form header into this list.
 - **Checklist items** lead with their ref: `- [ ] #12 …`, or `- [ ] owner/repo#3 …` for another repo's issue. An ordinal may come first (`- [ ] 12. #447 …`), and an ordered marker is a task item too (`1. [ ] #348 …`), but a ref in a code span leads nothing: GitHub doesn't link it (#403).
+- **Headings hold no time.** A heading is an anchor, so stamp the bullets under it instead: `## Measured state`, not `## Measured state (2026-10-15T15:01Z)` (#413).
+- **A ticked line is its title and a link** to the comment on the child that holds its evidence: `- [x] **#12** <title> · [verified](<comment URL>)`, written by the `compact` op. Once ticked, a line stays this size (#654).
+- **The log lives in comments** on the epic, one per check-in, written by the `log-comment` op; `## Log` holds only a pointer. The body stops growing with history, and past the host's size cap a write silently keeps the old body (#653).
+- **The coordinator's own comments carry a fixed first line,** which `scan.sh` reads, never the author: `**Check-in log, <date>**` on the epic, and `**Coordinator record, owner/repo#<epic>**` on a child, for the verification or record comment a tick links.
 - **Notes on a line** are appended, dated and short, each its own field after a middle dot (`·`): `- [ ] #12 … · S · Decided 2026-10-14: one PR.` The `note` op writes the dot, so its text is the note alone: `Still open: census on the next export.` or `Deploy no earlier than 2026-10-15T18:00Z.`
 
 ````markdown
@@ -53,7 +57,7 @@ Overrides: <date: the operator moved #N ahead, and why>.
 
 ## Log
 
-- 2026-10-14: created. 18 open in range: 12 in tiers, 4 parked, 2 proposed closures.
+Each check-in's entry is a comment on this epic, first line **Check-in log, <date>**.
 ````
 
 Optional sections, each added under its own heading after the tiers:
@@ -131,9 +135,9 @@ The design doc's Steps table. Tiebreaks: 1. context freshness; 2. migrations one
 
 ## Phase 1
 
-- [x] #301 store schema · shipped v0.41.0, live 2026-10-02
-- [x] #311 index follow-up · slotted from #301's review
-- [x] #308 move dialog · Still open: Assign not driven on dev (see Verification debt)
+- [x] **#301** Store schema for replicated entities · [verified](https://github.com/CannObserv/archiver/issues/301#issuecomment-…)
+- [x] **#311** Index the replica lookups · [verified](https://github.com/CannObserv/archiver/issues/311#issuecomment-…)
+- [x] **#308** Move dialog for replicated entities · [verified](https://github.com/CannObserv/archiver/issues/308#issuecomment-…)
 - [ ] #304 adapter on the SDK · blocked by CannObserv/power-map#607 (merge) and the API key (verify)
 
 ## Waits
@@ -144,5 +148,13 @@ The design doc's Steps table. Tiebreaks: 1. context freshness; 2. migrations one
 
 ## Log
 
-- 2026-10-05: #308 closed and live. No new issues. Epic blocked: #304 waits on CannObserv/power-map#607. Next: none.
+Each check-in's entry is a comment on this epic, first line **Check-in log, <date>**.
+````
+
+The check-in's log comment on that day:
+
+````markdown
+**Check-in log, 2026-10-05**
+
+#308 closed and live. No new issues. Epic blocked: #304 waits on CannObserv/power-map#607. Next: none.
 ````

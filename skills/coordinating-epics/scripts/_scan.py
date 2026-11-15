@@ -37,6 +37,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _epic_edit import (  # noqa: E402
     FIELD_RE,
     GH_ISSUE_URL_RE,
+    LOG_MARK_RE,
+    RECORD_MARK_RE,
     REF_RE,
     Infra,
     Parser,
@@ -181,11 +183,28 @@ def in_overlap(updated_at: str | None, since: str) -> bool:
     return bool(updated_at) and parse_ts(updated_at) < parse_ts(since)
 
 
-def new_comments(host: str, num: int, since: str, what: str) -> list[dict]:
-    """Comments updated since, read from the overlapped window (#407)."""
+def marker(body: str | None) -> str | None:
+    """ "log" or "record" when the comment's first line is the coordinator's
+    own marker (#654), else None. By the line, never the author: every thread
+    writes as one account."""
+    first = next((ln.strip() for ln in (body or "").splitlines() if ln.strip()), "")
+    if LOG_MARK_RE.match(first):
+        return "log"
+    if RECORD_MARK_RE.match(first):
+        return "record"
+    return None
+
+
+def new_comments(
+    host: str, num: int, since: str, what: str, drop: str | None = None
+) -> tuple[list[dict], list[dict]]:
+    """Comments updated since, read from the overlapped window (#407), and
+    apart, the ones whose marker is drop (#654). The body is read for the
+    marker only; no row carries it."""
     path = f"repos/{host}/issues/{num}/comments?since={overlapped(since)}"
-    return [
-        {
+    kept, dropped = [], []
+    for c in pages(path, what):
+        row = {
             "id": c["id"],
             "author": (c.get("user") or {}).get("login"),
             "created_at": c.get("created_at"),
@@ -194,8 +213,25 @@ def new_comments(host: str, num: int, since: str, what: str) -> list[dict]:
             "in_overlap": in_overlap(c.get("updated_at"), since),
             "url": c.get("html_url"),
         }
-        for c in pages(path, what)
-    ]
+        (dropped if drop and marker(c.get("body")) == drop else kept).append(row)
+    return kept, dropped
+
+
+def record_only(row: dict, records: list[dict], queried: str) -> bool:
+    """True when the row's record comments are its only reason to be listed:
+    no other new comment, the latest record is the issue's latest update, and
+    no close inside the window. An edit before the record, in the window,
+    can't be seen this way: own_comments names every row dropped (#654)."""
+    if not records or row.get("new_comments"):
+        return False
+    latest = max(r.get("updated_at") or "" for r in records)
+    closed = row.get("closed_at")
+    return (
+        bool(latest)
+        and bool(row.get("updated_at"))
+        and parse_ts(row["updated_at"]) <= parse_ts(latest)
+        and not (closed and parse_ts(closed) >= parse_ts(queried))
+    )
 
 
 def item_updates(
@@ -559,6 +595,13 @@ def run(argv: list[str]) -> int:
             "Each of the epic's own items is also checked by its own updatedAt, in one\n"
             "GraphQL query per 100 items; one the listing left out is added with\n"
             "recovered: true and a warning. A failed cross-check is a warning too.\n\n"
+            "The coordinator's own comments are dropped by their first line, never\n"
+            "their author (#654): a log comment (**Check-in log, <date>**) from\n"
+            "epic_comments, a record comment (**Coordinator record, <epic>**) from a\n"
+            "row's new_comments, where record_comments counts it. A row that record\n"
+            "comments alone put there (no other new comment, no later update, no close\n"
+            "in the window) is dropped. own_comments gives the counts and the rows\n"
+            "dropped, so nothing vanishes silently.\n\n"
             "exit codes: 0 report written; 1 usage; 2 gh failed on the epic, a listing\n"
             "or a comment read (its stderr shown). gh failing on one cross-repo ref, one\n"
             "PR's closing issues or the default branch costs only that: a warning with\n"
@@ -672,7 +715,7 @@ def run(argv: list[str]) -> int:
         if cur["since"] is None:
             warnings.append("no since: updates and comments not scanned")
             report["updated_since"] = None
-            report["epic_comments"] = None
+            report["epic_comments"] = report["own_comments"] = None
         else:
             since = cur["since"]
             # The window opens OVERLAP early, while since and {checked} keep
@@ -680,13 +723,18 @@ def run(argv: list[str]) -> int:
             # back as a re-read, not a miss (#407).
             cur["queried_since"] = queried = overlapped(since)
 
+            records: dict[int, list[dict]] = {}
+
             def update_row(it: dict) -> dict:
                 row = issue_row(it, host, a.epic, items)
                 row["in_overlap"] = in_overlap(it.get("updated_at"), since)
                 if row["in_epic"]:
-                    row["new_comments"] = new_comments(
-                        host, it["number"], since, "reading new comments"
+                    row["new_comments"], rec = new_comments(
+                        host, it["number"], since, "reading new comments", "record"
                     )
+                    if rec:
+                        row["record_comments"] = len(rec)
+                        records[it["number"]] = rec
                 return row
 
             rows = []
@@ -735,12 +783,28 @@ def run(argv: list[str]) -> int:
                         f"#{n} was updated at {when}, but the updates listing left"
                         " it out; added from the epic's own items (#407)"
                     )
-            report["updated_since"] = sorted(rows, key=lambda r: r["number"])
-            # The epic is no row of its own, but a sibling coordinator or the
-            # operator writes to it by comment (siblings.md) (CR 289).
-            report["epic_comments"] = new_comments(
-                host, a.epic, since, "reading the epic's new comments"
+            # A record comment the coordinator posted on a child is no news;
+            # a row it alone put here goes, and is named (#654).
+            gone = [
+                r["number"]
+                for r in rows
+                if record_only(r, records.get(r["number"], []), queried)
+            ]
+            report["updated_since"] = sorted(
+                (r for r in rows if r["number"] not in gone),
+                key=lambda r: r["number"],
             )
+            # The epic is no row of its own, but a sibling coordinator or the
+            # operator writes to it by comment (siblings.md) (CR 289). The
+            # check-in's own log comments aren't news (#654).
+            report["epic_comments"], logs = new_comments(
+                host, a.epic, since, "reading the epic's new comments", "log"
+            )
+            report["own_comments"] = {
+                "log": len(logs),
+                "record": sum(len(v) for v in records.values()),
+                "rows_dropped": sorted(gone),
+            }
             report["max_number"] = max(
                 [report["max_number"]] + [r["number"] for r in rows]
             )

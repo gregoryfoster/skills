@@ -28,6 +28,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from _epic_edit import (  # noqa: E402
+    COMMENT_LIMIT,
     REPO_FORM,
     Infra,
     Parser,
@@ -46,9 +47,6 @@ from _epic_edit import (  # noqa: E402
 )
 
 EXIT_OK, EXIT_USAGE, EXIT_INFRA, EXIT_REFUSED, EXIT_READBACK = 0, 1, 2, 3, 4
-# GitHub refuses a longer comment body: "Body is too long" [stated: GitHub's
-# own error text, not measured here].
-COMMENT_LIMIT = 65536
 # How far before the post a listing looks for a comment a failed POST may
 # still have stored: the local clock and GitHub's can disagree.
 CLOCK_SLACK = dt.timedelta(minutes=10)
