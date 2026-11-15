@@ -1571,6 +1571,135 @@ def test_429_set_subline_refuses_a_line_that_isnt_a_sub_bullet(rig, line, why):
     assert rig.body(REPO, EPIC) == SUBLINES
 
 
+# ---------------------------------------------------------------- log comments and compact lines (#654)
+
+LOG_OP = {"op": "log-comment", "text": "{today}: #11 closed and live. No new issues."}
+
+
+def _calls(rig, verb):
+    """The indexes of the fake gh's calls using -X verb."""
+    return [i for i, c in enumerate(rig.load()["calls"]) if verb in c]
+
+
+def test_654_a_check_in_writes_the_body_then_posts_its_log_comment(adopted):
+    """#654, verbatim: the log lives in comments, one per check-in, headed
+    "**Check-in log, <date>**"; the body's ## Log is left alone."""
+    ops = [
+        {"op": "tick", "ref": "#11"},
+        {"op": "header", "field": "Next", "value": "#12"},
+        LOG_OP,
+    ]
+    res = adopted.edit(REPO, EPIC, ops)
+    assert res.returncode == 0, res.stderr
+    st = adopted.load()
+    today = _today()
+    assert st["posts"] == [
+        f"**Check-in log, {today}**\n\n{today}: #11 closed and live. No new issues."
+    ]
+    assert _calls(adopted, "PATCH")[-1] < _calls(adopted, "POST")[0]  # body first
+    s = summary(res)
+    assert s["written"] is True and s["readback"] == "matches"
+    assert s["log_comments"] == [
+        {
+            "chars": len(st["posts"][0]),
+            "posted": True,
+            "url": st["repos"][REPO]["comments"][str(EPIC)][-1]["html_url"],
+        }
+    ]
+    assert "#11 closed" not in adopted.body(REPO, EPIC)  # not in the body
+    # Re-run, as after an exit 4 or 5: the body is unchanged and the comment
+    # is found already posted, so nothing doubles.
+    res = adopted.edit(REPO, EPIC, ops)
+    assert res.returncode == 0, res.stderr
+    assert summary(res)["log_comments"][0]["posted"] == "already"
+    assert len(adopted.load()["posts"]) == 1
+
+
+def _today():
+    import datetime as dt
+
+    return dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d")
+
+
+def test_654_a_log_comment_alone_still_posts(adopted):
+    """The body doesn't change, which used to return before anything else."""
+    res = adopted.edit(REPO, EPIC, [LOG_OP])
+    assert res.returncode == 0, res.stderr
+    s = summary(res)
+    assert s.get("unchanged") and s["log_comments"][0]["posted"] is True
+    assert "patches" not in adopted.load() and len(adopted.load()["posts"]) == 1
+
+
+def test_654_a_dry_run_prints_the_comment_and_posts_nothing(adopted):
+    res = adopted.edit(REPO, EPIC, [LOG_OP], "--dry-run")
+    assert res.returncode == 0, res.stderr
+    assert f"**Check-in log, {_today()}**" in res.stderr
+    assert summary(res)["log_comments"][0]["posted"] is False
+    assert "posts" not in adopted.load()
+
+
+def test_654_no_comment_posts_when_the_body_write_isnt_confirmed(adopted):
+    adopted.set_flag("patch_noop", True)
+    res = adopted.edit(REPO, EPIC, [{"op": "tick", "ref": "#11"}, LOG_OP])
+    assert res.returncode == 4, res.stderr
+    assert "posts" not in adopted.load()
+    assert summary(res)["log_comments"][0]["posted"] is False
+    assert "log comment" in res.stderr
+
+
+def test_654_a_comment_that_fails_after_a_confirmed_write_is_exit_5(adopted):
+    adopted.set_flag("fail_paths", {"POST": "HTTP 502: Bad Gateway"})
+    res = adopted.edit(REPO, EPIC, [{"op": "tick", "ref": "#11"}, LOG_OP])
+    assert res.returncode == 5, res.stderr
+    s = summary(res)
+    assert s["written"] is True and s["readback"] == "matches"  # still confirmed
+    assert s["log_comments"][0]["posted"] is False
+    err = res.stderr.splitlines()
+    at = next(i for i, ln in enumerate(err) if ln.startswith("ERROR the log comment"))
+    assert "body write is confirmed" in err[at]
+    assert err[at + 1] == "  gh's error: gh: HTTP 502: Bad Gateway"
+    assert "- [x] #11" in adopted.body(REPO, EPIC)
+    adopted.set_flag("fail_paths", {})
+    res = adopted.edit(REPO, EPIC, [{"op": "tick", "ref": "#11"}, LOG_OP])
+    assert res.returncode == 0 and summary(res).get("unchanged"), res.stderr
+    assert len(adopted.load()["posts"]) == 1
+
+
+@pytest.mark.parametrize(
+    "text, why",
+    [
+        ("x" * 65_520, "65,536"),
+        ("{today}: see watcher#348", "short ref"),
+        ("", "non-empty"),
+    ],
+    ids=["over-the-comment-cap", "lint", "empty"],
+)
+def test_654_a_log_comment_is_checked_before_anything_is_written(adopted, text, why):
+    res = adopted.edit(
+        REPO, EPIC, [{"op": "tick", "ref": "#11"}, {"op": "log-comment", "text": text}]
+    )
+    assert res.returncode == 3 and why in res.stderr, res.stderr
+    assert "patches" not in adopted.load() and "posts" not in adopted.load()
+
+
+def test_654_a_new_issue_named_only_in_the_log_comment_is_accounted_for(adopted):
+    """The log comment is the log: naming a new issue there counts, as the
+    in-body log line did (CR 265)."""
+    report = _report(adopted, new_numbers=[{"number": 14, "kind": "issue"}])
+    ops = [{"op": "log-comment", "text": "{today}: #14 is out of epic."}]
+    res = adopted.edit(REPO, EPIC, ops, "--scan", report)
+    assert res.returncode == 0, res.stderr
+
+
+def test_654_log_comment_takes_a_date_for_a_moved_log(adopted):
+    op = {"op": "log-comment", "text": "- 2026-10-01: created.", "date": "2026-10-01"}
+    res = adopted.edit(REPO, EPIC, [op])
+    assert res.returncode == 0, res.stderr
+    assert adopted.load()["posts"][0].startswith("**Check-in log, 2026-10-01**\n\n")
+    bad = dict(op, date="**x**")
+    assert adopted.edit(REPO, EPIC, [bad]).returncode == 1
+
+
 def test_each_write_keeps_a_history_copy(adopted):
     """CR 264: the fallback when the baseline is lost is a local copy of each write."""
     adopted.edit(REPO, EPIC, [{"op": "tick", "ref": "#11"}])
