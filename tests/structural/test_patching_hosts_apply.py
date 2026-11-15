@@ -413,13 +413,13 @@ def test_a_report_only_host_is_refused(host, knob, why):
 
 
 def test_a_span_that_starts_inside_a_window_but_runs_past_its_close_is_refused(host):
-    # The run from 20:50 ends at 21:48: the bulk at three times its 540 s dry
+    # The run from 20:50 ends at 21:49: the bulk at three times its 540 s dry
     # run plus 300 s of health checks, the postgres step's 840 s, and the
-    # reboot chain's 720 s, PID 1's files being unread (#362).
+    # reboot chain's 780 s, PID 1's files being unread (#362, #646).
     host.clock = TUE_1530 + 5 * 3600 + 20 * MIN
     out = host.run(rc=3)
     [r] = [r for r in out["refused"] if "window" in r]
-    assert "2026-09-29T20:50:00Z to 2026-09-29T21:48:00Z" in r
+    assert "2026-09-29T20:50:00Z to 2026-09-29T21:49:00Z" in r
     assert r.startswith("the run's span (the bulk at 3 times its dry run")
     assert out["gate"]["span"]["window"] is None
     assert _changed(host) == []
@@ -432,15 +432,15 @@ def test_a_span_that_starts_inside_a_window_but_runs_past_its_close_is_refused(h
     "line, factor, bulk, run",
     [
         # The default: the bulk at 3 times its 540 s dry run plus 300 s of
-        # health checks, then the postgres step's 840 s and the chain's 720 s.
-        ("", 3, 1920, 3480),
-        ("bulk-factor 4\n", 4, 2460, 4020),
-        ("bulk-factor 2.5\n", 2.5, 1650, 3210),
+        # health checks, then the postgres step's 840 s and the chain's 780 s.
+        ("", 3, 1920, 3540),
+        ("bulk-factor 4\n", 4, 2460, 4080),
+        ("bulk-factor 2.5\n", 2.5, 1650, 3270),
         # Rounded up to the second: 540 times 3.33 is 1798.2.
-        ("bulk-factor 3.33\n", 3.33, 2099, 3659),
+        ("bulk-factor 3.33\n", 3.33, 2099, 3719),
         # CR 1941: hundredths with a leading zero are decimal, not octal
         # (bash reads a bare 09 as a bad octal): 540 times 2.09 is 1128.6.
-        ("bulk-factor 2.09\n", 2.09, 1429, 2989),
+        ("bulk-factor 2.09\n", 2.09, 1429, 3049),
     ],
     ids=["default", "4", "2.5", "rounded-up", "leading-zero"],
 )
@@ -456,12 +456,12 @@ def test_the_bulks_span_takes_the_knobs_bulk_factor(host, line, factor, bulk, ru
 @pytest.mark.parametrize(
     "line, start, end",
     [
-        # From 20:00 the default span ends at 20:58, inside a window closing
-        # at 21:00; at 4 times its dry run it ends at 21:07, past it.
+        # From 20:00 the default span ends at 20:59, inside a window closing
+        # at 21:00; at 4 times its dry run it ends at 21:08, past it.
         ("", "20:00", None),
-        ("bulk-factor 4\n", "20:00", "21:07:00"),
-        # From 20:05 the default ends at 21:03; at 2.5 times, 20:58:30.
-        ("", "20:05", "21:03:00"),
+        ("bulk-factor 4\n", "20:00", "21:08:00"),
+        # From 20:05 the default ends at 21:04; at 2.5 times, 20:59:30.
+        ("", "20:05", "21:04:00"),
         ("bulk-factor 2.5\n", "20:05", None),
     ],
     ids=["default-fits", "4-refused", "default-refused", "2.5-fits"],
@@ -569,13 +569,13 @@ QUIET = {
     [
         # libc6 owns a file PID 1 maps: the bulk, the postgres step and the
         # reboot chain.
-        ("libc6 libxml2 postgresql-16", MAPS, True, "libc6, which owns", 3480),
+        ("libc6 libxml2 postgresql-16", MAPS, True, "libc6, which owns", 3540),
         # Nothing PID 1 maps, and no held group: the bulk alone.
         ("libxml2 tzdata", MAPS, False, None, 1920),
         # PID 1's files unread: the reboot is budgeted for.
-        ("libxml2 tzdata", None, None, "couldn't be read as root", 2640),
+        ("libxml2 tzdata", None, None, "couldn't be read as root", 2700),
         # A kernel needs no maps.
-        ("linux-image-6.8.0-45-generic", None, True, "a kernel", 2640),
+        ("linux-image-6.8.0-45-generic", None, True, "a kernel", 2700),
     ],
 )
 def test_the_bulks_span_is_the_rest_of_the_run(
@@ -600,8 +600,8 @@ def test_the_bulks_span_is_the_rest_of_the_run(
 
 
 # The bulk alone, at 3 times its 540 s dry run plus 300 s of health checks,
-# and that with the reboot chain's 720 s.
-BULK_ONLY, BULK_AND_CHAIN = 1920, 2640
+# and that with the reboot chain's 780 s (#646).
+BULK_ONLY, BULK_AND_CHAIN = 1920, 2700
 
 
 @pytest.mark.parametrize(

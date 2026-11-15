@@ -23,7 +23,7 @@ sudo systemd-run --unit=patching-hosts-reboot-<utc> --on-active=120 --timer-prop
 
 `AccuracySec=1s` matters: by default the transient timer fired 41 s late (CannObserv/wslcb-licensing-tracker#184). The script's steps:
 
-1. **The gate** again: no package manager is running, since a reboot then could cut dpkg off mid-run, and every `inflight` is 0, run as the non-root user recorded when the chain was written (`runuser -u <user> --`), never as root. Abort otherwise: an aborted chain stopped nothing, and `reboot-chain.sh` launches it again once the gate would pass. The script shows each knob command verbatim, so the owner approves exactly what runs ([knob.md](knob.md)).
+1. **The gate** again: no package manager is running, since a reboot then could cut dpkg off mid-run, and every `inflight` is 0, run as the non-root user recorded when the chain was written (`runuser -u <user> --`), never as root. While it reads busy, it reads it again each second, logging each busy read, for up to 60 s, which the launch's span includes: a short oneshot is waited out, a long one isn't overridden. Then it aborts: an aborted chain stopped nothing, and `reboot-chain.sh` launches it again once the gate would pass. The script shows each knob command verbatim, so the owner approves exactly what runs ([knob.md](knob.md)).
 2. Stop each `restarter`, then each `service`. A timer with `Requires=` on the service stops with it anyway.
 3. Checkpoint, then stop each data store. Postgres: `sudo -u postgres psql -c CHECKPOINT`. Redis: `systemctl stop` saves the RDB file where save points are set, and fsyncs the AOF under `appendonly yes`; with neither, `SAVE` first ([datastores.md](datastores.md#the-chains-stop)). Qdrant: no checkpoint, since its container's `docker stop` is its clean shutdown.
 4. `journalctl --sync`.
@@ -44,6 +44,8 @@ sudo systemd-run --unit=patching-hosts-reboot-<utc> --on-active=120 --timer-prop
 Before launching:
 - post the post-boot checklist in the record;
 - list anything staged under `/tmp`, where the boot empties it. `reboot-chain.sh` reads the tmpfiles rule: under a `d` rule, as on the exeuntu images since 2026-07-17, the boot keeps `/tmp`, and nothing is listed (#355).
+
+**Once the fire time has passed, read the outcome**, rather than wait for the session to drop: the launch returns once the timer is set. Its NEXT gives the time and the command, `sudo tail -n 5 <run>/reboot-chain.log` (`launched.outcome`). co-status's chain fired into a 60 s sweep, aborted, and nobody knew for 70 minutes (#646).
 
 If the reboot slips out of the window, say so, and redo the gate and the quiet-hour check.
 
