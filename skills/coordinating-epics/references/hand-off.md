@@ -4,7 +4,7 @@ What the coordinator gives the implementer: a brief posted on the issue, and a s
 
 ## Where it goes
 
-- **The brief goes on the issue as a comment.** The implementing thread finds it there, not in the coordinator's conversation. The chat reply only points to it (private-launch 29, processor F29).
+- **The brief goes on the issue as a comment,** posted with `comment.sh`, which lints it as the editor lints the body. The implementing thread finds it there, not in the coordinator's conversation. The chat reply only points to it (private-launch 29, processor F29).
 - **An issue the coordinator files itself carries the decision and the brief in its body.** The hand-off is then the issue itself (watcher F49, cannobserv 24).
 - **Brief only the child that is next now.** If a reorder makes a posted brief's first line false, edit the brief (processor F116, F124).
 - **If another coordinator already briefed this issue,** point to that brief and add only what's new (broker 139).
@@ -35,6 +35,7 @@ Shape it from cannobserv 24 and the runs since:
 - **Hazards, as things to weigh, not rules,** so the thread can overrule the brief when the code says otherwise. When it does, record the coordinator's error on the epic line (status 11, broker 127).
 - **Claims labelled by evidence:** `[measured]` read from the live system; `[traced]` followed through the code; `[stated]`, the issue or a person says so. The implementer upgrades a `[traced]` claim before relying on it (processor F88, F113). Give a bug's mechanism from the code, not the issue's title, with its label (processor F110).
 - **Diagnoses framed as "confirmed so far",** with a request to look for other symptoms of the same mechanism (private-backlog 144).
+- **The child's own reproduction, verbatim, as the first red test,** beside the tests of the decided mechanism. A decided fix passed its own tests and missed the issue's headline case; the next brief quoted the case, and its test caught a decision that missed it. It is the first red test, not the only one: the review still looks for the rest of its class (orchestrating-issue-backlog's log: 2026-11-02 skills #533, 2026-11-03 skills #550, 2026-11-06 skills #566).
 - **Open operator decisions, in brackets with a recommendation:** `[Operator decision: … — recommend Y]`. Starting the thread counts as approving the recommendation. The implementer never settles a decision by default (status 55, 69, 70).
 - **Expected side effects marked as expected,** such as a known-red window between merge and a host step, so no one chases them (archiver 51; status 80, 82).
 - **Moving targets** given as "the live value at ship time; X when this was written" (private-backlog 154).

@@ -18,7 +18,7 @@ Dry-run an empty ops file. The summary's `body` gives `chars`, `limit` and `shar
 
 - A child whose verification comment exists (posted at its check-in, holding the evidence) links that one, `"label": "verified"`.
 - Any other: post a record comment on the child, first line `**Coordinator record, OWNER/REPO#<epic>**`, then the line's text whole: its evidence, decisions and notes. `scan.sh` reads that first line, never the author, and drops the comment from the next scan. Link it with `"label": "record"` when the line held no evidence, only a description; `verified` when it did.
-- Post through `gh issue comment N --body-file FILE`, from a quoted heredoc, and read each comment's text as the lint would: no short refs, no placeholders.
+- Post each with `comment.sh`, from a file written with a quoted heredoc: it lints the text with the editor's rules and reads the comment back.
 
 ## 4. Compact the ticked lines
 

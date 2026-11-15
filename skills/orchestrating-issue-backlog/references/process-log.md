@@ -54,6 +54,7 @@ Step and Q numbers refer to `SKILL.md`; Rule and Worker-step numbers to
 - Worker step 5 ([`execution.md`](execution.md)) a measured deliverable names its instrument's version — 2026-08-27 skills selection surface (the interpreter), 2026-09-16/21 wordpress execution
 - Step 10 ("Adding an entry", below) a private consumer's entry names no identifier from it — 2026-09-16/21 wordpress execution
 - Q4's cloud-session worker mode ([`cloud-workers.md`](cloud-workers.md)): the launch as a person's step, post-then-point coordination with `await-report.sh`, the preflight against a bundled launch, the suite hook skipped over known failures, the per-pair red/green check, and "try to silence a true positive" as a review probe — 2026-10-24/25 skills #479 pilot
+- Worker step 6 ([`execution.md`](execution.md)) the issue's own reproduction, verbatim, as the first red test beside the decided mechanism's, and not the only one — 2026-11-02 skills (#533), 2026-11-03 skills (#550), 2026-11-06 skills (#566); the same line in `coordinating-epics`' brief (#571)
 
 ---
 ## Adding an entry

@@ -42,6 +42,8 @@ from _epic_edit import (  # noqa: E402
     REF_RE,
     Infra,
     Parser,
+    Usage,
+    add_token_flag,
     fenced,
     gh,
     gh_cause,
@@ -49,9 +51,11 @@ from _epic_edit import (  # noqa: E402
     gh_json,
     key,
     line_ref,
+    load_tokens,
     normalize,
     ref_text,
     refs_in,
+    token_hint,
 )
 
 EXIT_OK, EXIT_USAGE, EXIT_INFRA = 0, 1, 2
@@ -603,6 +607,9 @@ def run(argv: list[str]) -> int:
             "PR's closing issues or the default branch costs only that: a warning with\n"
             "gh's whole stderr, and exit 0. A gh with no closingIssuesReferences field\n"
             "(2.45 has none) is one warning per scan, naming its version (#412).\n"
+            "A cross-repo ref gh can't read says its updated_at is unknown, and names\n"
+            "any set GH_TOKEN_<REPO> or GH_TOKEN_<OWNER>_<REPO> that may read it: map it\n"
+            "with --token-for OWNER/REPO=VAR (#520).\n"
             "A git failure, or no tip for the range, costs the commit cursor only:\n"
             "commits is null, the reason (git's stderr included) is in commits_skipped\n"
             "and warnings, and the exit is 0. commits_skipped is null when the range\n"
@@ -639,10 +646,15 @@ def run(argv: list[str]) -> int:
         ),
     )
     p.add_argument("--no-fetch", action="store_true", help="don't run git fetch first")
+    add_token_flag(p)
     a = p.parse_args(argv)
     host = a.repo
     if not re.fullmatch(r"[\w.-]+/[\w.-]+", host):
         p.error("--repo must be owner/repo")
+    try:
+        load_tokens(a.token_for)
+    except Usage as e:
+        p.error(str(e))
     if a.since:
         try:
             a.since = utc_z(a.since)
@@ -834,9 +846,14 @@ def run(argv: list[str]) -> int:
             try:
                 it = gh_json(["api", f"repos/{repo}/issues/{num}"], f"reading {ref}")
             except Infra as e:
+                # A warning that read the same at every check-in got tuned
+                # out, and a new comment behind it was missed: name the token
+                # to try, and that the row's activity is unknown (#520).
                 row["error"] = gh_cause(e)
+                hint = token_hint(repo) or f"check which token reaches {repo}"
                 warnings.append(
-                    f"{ref} unreadable; check which token reaches {repo}: {row['error']}"
+                    f"{ref} unreadable, so its updated_at is unknown; {hint}:"
+                    f" {row['error']}"
                 )
             else:
                 row.update(

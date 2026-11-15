@@ -4,7 +4,7 @@ Most epics depend on another repo somewhere: an upstream release, a consumer's a
 
 ## Reaching them
 
-- **List repos and tokens from the source** (the env file or the credential helper), never from memory or a notes table. A 404 can mean "no access" rather than "doesn't exist"; say which (broker 86, 159). `scan.sh` reports an unreadable cross-repo ref as an error and a warning, not as absent.
+- **List repos and tokens from the source** (the env file or the credential helper), never from memory or a notes table. A 404 can mean "no access" rather than "doesn't exist"; say which (broker 86, 159). `scan.sh` reports an unreadable cross-repo ref as an error and a warning, not as absent. Its warning names any set `GH_TOKEN_<REPO>` that may read it. Pass a sibling's token as `--token-for OWNER/REPO=VAR` to `scan.sh`, `epic-edit.sh` and `comment.sh`: the variable's name, never its value (#520).
 - **Write every ref as `owner/repo#N`** wherever it's posted. A bare `#N` links to the host repo's issue of that number, and leaves a stray backlink there. `epic-edit.sh` refuses a bare ref after a qualified one, and a bare ref above the host's highest number (broker 92, 145; watcher F61).
 - **Reading a sibling repo is allowed,** and is often the cheapest way to settle a question. Read its code at a pinned commit, not its original ask (broker 113, 129; private-cli 42).
 
