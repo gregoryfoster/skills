@@ -1356,6 +1356,124 @@ def test_408_scope_takes_only_tree(adopted, scope):
     assert res.returncode == 1 and "scope" in res.stderr, res.stderr
 
 
+# CannObserv/processor#24's shape (#413): a time in a heading, an intro that
+# can't be reached, and #404's Tier 2 heading that outgrew its name.
+PROCESSOR = """\
+# Processor burn-down
+
+The protocol is `burning-down-an-epic`, a draft.
+
+- **Last check-in:** 2026-10-15T15:01Z
+- **Next:** #12
+
+## Tier 2 — editor defects this run meets
+
+- [ ] #11 first thing
+
+## Measured state (2026-10-15T15:01Z)
+
+- 3 open, measured 2026-10-15T15:01Z.
+
+## Log
+
+- 2026-10-15: adopted.
+"""
+
+
+def test_413_rename_section_and_set_preamble_reach_the_frozen_text(rig):
+    """#413, verbatim: the stale time in a heading, #404's Tier 2 name, and the
+    intro that calls the protocol a draft."""
+    _on(rig, PROCESSOR)
+    ops = [
+        {
+            "op": "rename-section",
+            "heading": "Measured state (2026-10-15T15:01Z)",
+            "to": "Measured state",
+        },
+        {
+            "op": "rename-section",
+            "heading": "Tier 2 — editor defects this run meets",
+            "to": "Tier 2 — editor and scanner defects",
+        },
+        {"op": "set-preamble", "text": "The protocol is the coordinating-epics skill."},
+    ]
+    res = rig.edit(REPO, EPIC, ops)
+    assert res.returncode == 0, res.stderr
+    body = rig.body(REPO, EPIC)
+    assert body.startswith(
+        "# Processor burn-down\n\nThe protocol is the coordinating-epics skill.\n\n"
+        "- **Last check-in:** 2026-10-15T15:01Z\n- **Next:** #12\n\n"
+        "## Tier 2 — editor and scanner defects\n"
+    ), body
+    assert "\n## Measured state\n\n- 3 open" in body
+    res = rig.edit(REPO, EPIC, ops)  # done once, the same ops change nothing
+    assert res.returncode == 0 and summary(res).get("unchanged"), res.stderr
+
+
+def test_413_rename_section_keeps_the_level_and_refuses_a_taken_name(rig):
+    _on(rig, WATCHER)
+    op = {"op": "rename-section", "heading": "Cutover", "to": "Issues"}
+    res = rig.edit(REPO, EPIC, [op])
+    assert res.returncode == 3 and "already a heading" in res.stderr, res.stderr
+    op = {"op": "rename-section", "heading": "Cutover", "to": "Go-live"}
+    res = rig.edit(REPO, EPIC, [op])
+    assert res.returncode == 0, res.stderr
+    assert "\n### Go-live\n\nCut over" in rig.body(REPO, EPIC)
+    op = {"op": "rename-section", "heading": "Nowhere", "to": "Else"}
+    assert rig.edit(REPO, EPIC, [op]).returncode == 3
+    op = {"op": "rename-section", "heading": "Log", "to": "watcher#348 log"}
+    res = rig.edit(REPO, EPIC, [op])  # the new heading is a changed line: linted
+    assert res.returncode == 3 and "short ref" in res.stderr, res.stderr
+
+
+@pytest.mark.parametrize(
+    "body, want",
+    [
+        (BODY, "# Burn-down\n\nNew intro.\n\n- **Last check-in:**"),
+        ("Old intro.\n\n## Tier 1\n\n- [ ] #11 a\n", "New intro.\n\n## Tier 1\n"),
+        (
+            "# T\n\nOld.\n\n**Last check-in:** 2026-10-15\n\n## Tier 1\n\n- [ ] #11 a\n",
+            "# T\n\nNew intro.\n\n**Last check-in:** 2026-10-15\n\n## Tier 1",
+        ),
+        (
+            "# T\n\nOld.\n\n- **Status:** live\n- **Next:** #11\n\n## Tier 1\n\n- [ ] #11 a\n",
+            "# T\n\nNew intro.\n\n- **Status:** live\n",
+        ),
+    ],
+    ids=["title-then-header", "no-title", "paragraph-header", "header-list"],
+)
+def test_413_set_preamble_stops_at_the_header_or_the_first_section(rig, body, want):
+    _on(rig, body)
+    res = rig.edit(REPO, EPIC, [{"op": "set-preamble", "text": "New intro."}])
+    assert res.returncode == 0, res.stderr
+    assert rig.body(REPO, EPIC).startswith(want), rig.body(REPO, EPIC)
+
+
+@pytest.mark.parametrize(
+    "text, why",
+    [
+        ("Intro.\n\n- **Last check-in:** 2026-10-16", "cursor line"),
+        ("Intro.\n\n## Tier 0", "heading"),
+        ("Intro, see watcher#348.", "short ref"),
+    ],
+    ids=["cursor", "heading", "lint"],
+)
+def test_413_set_preamble_refuses_what_isnt_a_preamble(rig, text, why):
+    _on(rig, PROCESSOR)
+    res = rig.edit(REPO, EPIC, [{"op": "set-preamble", "text": text}])
+    assert res.returncode == 3 and why in res.stderr, res.stderr
+    assert rig.body(REPO, EPIC) == PROCESSOR
+
+
+def test_413_an_empty_preamble_removes_it(rig):
+    _on(rig, PROCESSOR)
+    res = rig.edit(REPO, EPIC, [{"op": "set-preamble", "text": ""}])
+    assert res.returncode == 0, res.stderr
+    assert rig.body(REPO, EPIC).startswith(
+        "# Processor burn-down\n\n- **Last check-in:**"
+    )
+
+
 def test_each_write_keeps_a_history_copy(adopted):
     """CR 264: the fallback when the baseline is lost is a local copy of each write."""
     adopted.edit(REPO, EPIC, [{"op": "tick", "ref": "#11"}])
