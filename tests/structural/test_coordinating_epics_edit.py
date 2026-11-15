@@ -1940,12 +1940,16 @@ def test_a_whitespace_only_edit_during_the_run_refuses_the_write(adopted):
 
 
 def test_a_write_the_read_back_contradicts_is_exit_4(adopted):
-    adopted.set_flag("patch_noop", True)
+    """A PATCH gh calls good, read back as a third body: written, but not as sent."""
     base = (
         adopted.state_dir / "acme" / "widgets" / "10" / "last-written.md"
     ).read_text()
+    # The host rewrites what it was sent: neither the body sent nor the old one.
+    adopted.change_on_get(EPIC, 3, BODY.replace("first thing", "first thing!"))
     res = adopted.edit(REPO, EPIC, [{"op": "tick", "ref": "#11"}])
     assert res.returncode == 4
+    assert summary(res)["written"] is True
+    assert summary(res)["readback"] == "differs"
     assert (
         "read back differs" in res.stderr and "baseline was not updated" in res.stderr
     )
@@ -1953,6 +1957,32 @@ def test_a_write_the_read_back_contradicts_is_exit_4(adopted):
     assert (
         adopted.state_dir / "acme" / "widgets" / "10" / "last-written.md"
     ).read_text() == base
+
+
+def test_an_accepted_patch_that_changed_nothing_is_not_written(adopted):
+    """#653: the PATCH returned success and the body read back is the old one.
+
+    Nothing landed, so "written" is false and the saved baseline still
+    matches the live body: the way forward is a re-run, not --adopt-live.
+    """
+    adopted.set_flag("patch_noop", True)
+    base = (
+        adopted.state_dir / "acme" / "widgets" / "10" / "last-written.md"
+    ).read_text()
+    res = adopted.edit(REPO, EPIC, [{"op": "tick", "ref": "#11"}])
+    assert res.returncode == 4, res.stderr
+    s = summary(res)
+    assert s["written"] is False and s["readback"] == "unchanged"
+    assert "nothing landed" in res.stderr and "still matches" in res.stderr
+    assert "--adopt-live" not in res.stderr
+    assert "size cap" not in res.stderr  # a small body: not the likely cause
+    assert (
+        adopted.state_dir / "acme" / "widgets" / "10" / "last-written.md"
+    ).read_text() == base
+    # The baseline held: the same edit goes through once the host takes it.
+    adopted.set_flag("patch_noop", False)
+    res = adopted.edit(REPO, EPIC, [{"op": "tick", "ref": "#11"}])
+    assert res.returncode == 0, res.stderr
 
 
 def test_a_failed_read_back_after_the_write_still_says_written(adopted):
@@ -2136,10 +2166,129 @@ def test_a_failed_whitespace_only_patch_is_not_taken_for_landed(adopted):
 
 
 def test_a_whitespace_only_patch_that_changed_nothing_is_exit_4(adopted):
-    """CR 317: an accepted PATCH whose body reads back unchanged."""
+    """CR 317: an accepted PATCH whose body reads back unchanged (#653: not written)."""
     adopted.set_flag("patch_noop", True)
     res = adopted.edit(REPO, EPIC, WHITESPACE_ONLY)
-    assert res.returncode == 4 and summary(res)["readback"] == "differs", res.stderr
+    assert res.returncode == 4, res.stderr
+    assert summary(res)["readback"] == "unchanged"
+    assert summary(res)["written"] is False
+
+
+# ---------------------------------------------------------------- body size (#653)
+
+
+def body_of(chars: int) -> str:
+    """BODY with its log padded to exactly chars characters, as GitHub keeps it
+    (no final newline), from entries holding no ref the lint would look up."""
+    pad, n = [], 0
+    while len(BODY) - 1 + sum(len(x) + 1 for x in pad) < chars - 60:
+        n += 1
+        pad.append(f"- 2026-09-{n % 28 + 1:02d}: check-in {n}. No new issues.")
+    short = chars - (len(BODY) - 1 + sum(len(x) + 1 for x in pad)) - 1
+    pad.append("- " + "x" * (short - 2))
+    body = BODY + "\n".join(pad) + "\n"
+    assert len(body) - 1 == chars, (len(body) - 1, chars)
+    return body
+
+
+def big(rig, chars: int):
+    rig.issue(REPO, EPIC, body=body_of(chars))
+    res = rig.edit(REPO, EPIC, [], "--adopt-live")
+    assert res.returncode == 0, res.stderr
+    return rig
+
+
+def test_653_a_write_that_crosses_the_cap_is_refused_and_one_that_fits_lands(rig):
+    """#653, verbatim: a 260,219-character body; a check-in adding about 2,100
+    characters, which the host kept the old body for; the same edit with compact
+    notes (net +650) landed at 260,870."""
+    big(rig, 260_219)
+    rig.set_flag("patch_noop", True)  # the host's silent keep, past its cap
+    # About 2,100 characters with its " · " separator: 2,100 here.
+    long_note = "Verified on the merge SHA: " + "e" * (2_100 - 3 - 27)
+    res = rig.edit(REPO, EPIC, [{"op": "note", "ref": "#12", "text": long_note}])
+    assert res.returncode == 3, res.stderr
+    assert "patches" not in rig.load()  # refused before the PATCH, and the re-fetch
+    s = summary(res)
+    assert s["body"] == {"chars": 262_319, "limit": 262_144, "share": 1.001}
+    assert "262,319 characters" in res.stderr and "262,144" in res.stderr
+    assert "175 over" in res.stderr
+    rig.set_flag("patch_noop", False)
+    compact = "Verified on the merge SHA: " + "e" * (650 - 3 - 27)
+    res = rig.edit(REPO, EPIC, [{"op": "note", "ref": "#12", "text": compact}])
+    assert res.returncode == 0, res.stderr
+    s = summary(res)
+    assert s["written"] is True and s["readback"] == "matches"
+    assert s["body"]["chars"] == 260_870 == len(rig.body(REPO, EPIC).rstrip("\n"))
+    assert "WARNING" in res.stderr and "99.5%" in res.stderr
+
+
+def test_653_a_patch_the_host_keeps_near_the_limit_names_the_cap(rig):
+    """The host's cap may sit below --body-limit: an accepted PATCH that kept the
+    old body, on a body near the limit, names the size cap as the likely cause."""
+    big(rig, 255_000)
+    rig.set_flag("patch_noop", True)
+    res = rig.edit(REPO, EPIC, [{"op": "note", "ref": "#12", "text": "x" * 2_000}])
+    assert res.returncode == 4, res.stderr
+    s = summary(res)
+    assert s["written"] is False and s["readback"] == "unchanged"
+    assert s["body"]["chars"] == 257_003
+    assert "size cap" in res.stderr and "257,003 characters" in res.stderr
+    assert "--adopt-live" not in res.stderr
+
+
+def test_653_a_dry_run_reports_the_size_refusal(rig):
+    big(rig, 262_000)
+    res = rig.edit(
+        REPO, EPIC, [{"op": "note", "ref": "#12", "text": "x" * 500}], "--dry-run"
+    )
+    assert res.returncode == 3 and "over" in res.stderr, res.stderr
+    assert summary(res)["body"]["chars"] == 262_503
+
+
+def test_653_every_summary_carries_the_body_size(adopted):
+    chars = len(BODY) - 1
+    want = {"chars": chars, "limit": 262_144, "share": round(chars / 262_144, 3)}
+    res = adopted.edit(REPO, EPIC, [], "--dry-run")
+    assert res.returncode == 0 and summary(res)["body"] == want, res.stderr
+    res = adopted.edit(REPO, EPIC, [])
+    assert summary(res)["unchanged"] and summary(res)["body"] == want
+    res = adopted.edit(REPO, EPIC, [{"op": "tick", "ref": "#99"}])
+    assert res.returncode == 3 and "body" not in summary(res)  # never built
+    grow = [{"op": "note", "ref": "#11", "text": "x"}]
+    res = adopted.edit(REPO, EPIC, grow, "--body-limit", "100")
+    assert res.returncode == 3, res.stderr
+    assert summary(res)["body"]["limit"] == 100
+    assert "WARNING" not in adopted.edit(REPO, EPIC, [], "--dry-run").stderr
+
+
+def test_653_the_warning_starts_past_85_percent(adopted):
+    chars = len(BODY) - 1
+    under, over = str(int(chars / 0.85) + 2), str(int(chars / 0.86))
+    res = adopted.edit(REPO, EPIC, [], "--dry-run", "--body-limit", under)
+    assert res.returncode == 0 and "WARNING" not in res.stderr, res.stderr
+    res = adopted.edit(REPO, EPIC, [], "--dry-run", "--body-limit", over)
+    assert res.returncode == 0 and "WARNING the body is" in res.stderr, res.stderr
+
+
+def test_653_a_write_that_shrinks_a_body_over_the_limit_goes_through(adopted):
+    """Making room must stay possible: the guard refuses growth past the limit."""
+    res = adopted.edit(
+        REPO,
+        EPIC,
+        [{"op": "replace-section", "heading": "Log", "text": "- moved to comments"}],
+        "--body-limit",
+        "100",
+    )
+    assert res.returncode == 0, res.stderr
+    assert "WARNING" in res.stderr and summary(res)["body"]["share"] > 1
+
+
+@pytest.mark.parametrize("value", ["0", "-5", "big"])
+def test_653_a_bad_body_limit_is_usage(adopted, value):
+    res = adopted.edit(REPO, EPIC, [], "--body-limit", value)
+    assert res.returncode == 1, res.stderr
+    assert "patches" not in adopted.load()
 
 
 @pytest.mark.parametrize("error, lines", PATCH_ERRORS, ids=PATCH_ERROR_IDS)
