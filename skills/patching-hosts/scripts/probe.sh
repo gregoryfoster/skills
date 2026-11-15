@@ -1915,7 +1915,18 @@ class_of() {  # <var> <origins, ", "-separated>
       Ubuntu)
         _c_ubu=1
         case $_c_archive in *-security) _c_sec=1 ;; *-updates) _c_upd=1 ;; esac ;;
-      *) _c_third=${_c_third:-$_c_origin} ;;
+      *)
+        # Canonical's own origin is first party, as read_origins and the
+        # exposure check read it, so it's never third-party: (#609). No lane
+        # takes it and no knob line names it, so it's ubuntu-other, with
+        # Ubuntu's release, backports and proposed pockets, whatever its
+        # archive: the Ubuntu Cloud Archive's is jammy-updates (its Release
+        # file, read 2026-11-14), and the maintenance lane takes o=Ubuntu's.
+        if in_words "$_c_origin" "$FIRST_PARTY_ORIGINS"; then
+          _c_ubu=1
+        else
+          _c_third=${_c_third:-$_c_origin}
+        fi ;;
     esac
   done
   if [ "$_c_esm" -eq 1 ]; then printf -v "$1" esm
