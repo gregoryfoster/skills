@@ -1347,12 +1347,19 @@ def test_a_log_directory_it_cant_read_keeps_the_boots_clock(tmp_path):
     _history(h, 40, "redis-server:amd64 (5:7.0.15-1build2)")
     (h.root / "var/log/redis").chmod(0)
     try:
-        d = _dormant(h.run(), "redis")
+        out = h.run()
+        d = _dormant(out, "redis")
     finally:
         (h.root / "var/log/redis").chmod(0o755)
     assert d["verdict"] == "unknown"
     assert "/var/log/redis couldn't be read" in d["evidence"]
     assert "install" not in d["evidence"].split("couldn't be read")[0]
+    # Named once in not_read, as root would read it (CR 2164).
+    assert [n for n in out["not_read"] if "/var/log/redis couldn't be read" in n] == [
+        "dormant components: /var/log/redis couldn't be read, so the idle clock"
+        " of a unit that hasn't started since the boot is the boot's: a probe"
+        " with root reads it"
+    ]
 
 
 def test_a_log_its_files_cant_be_dated_keeps_the_boots_clock(tmp_path):

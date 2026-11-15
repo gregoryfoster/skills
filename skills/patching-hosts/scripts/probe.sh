@@ -4361,6 +4361,8 @@ read_impact() {
 # named (#491) or unknown (policy.md): never dormant on evidence it couldn't read, or on
 # fewer than 30 days of it.
 DORMANT=""
+# The log directories already named in not_read (CR 2164).
+LOG_UNREAD=""
 SS_LOCAL=()
 
 idle_days() {  # <unit> [<log dir>] [<package globs>]: IDLE := the days it has been inactive, or empty; IDLE_FROM := the clock, where it isn't the unit's own stop
@@ -4396,8 +4398,13 @@ idle_since_boot() {  # <log dir> <package globs>: IDLE and IDLE_FROM
   elif [ "$lrc" -eq 2 ]; then
     # A log it couldn't read may hold a write after the install: the install
     # date would overstate the idle time, and a false dormant is a prune
-    # proposal (CR 2159).
+    # proposal (CR 2159). Named once in not_read, where an owner looks for
+    # what root would read (CR 2164).
     IDLE=$boot IDLE_FROM="counted from the boot, which it hasn't started since: $1 couldn't be read, and the install date would pass over what it holds"
+    if ! in_words "$1" "$LOG_UNREAD"; then
+      LOG_UNREAD="$LOG_UNREAD $1"
+      not_read "dormant components: $1 couldn't be read, so the idle clock of a unit that hasn't started since the boot is the boot's: a probe with root reads it"
+    fi
     return 0
   elif [ -n "$2" ] && apt_install_age "$2"; then
     d=$INSTALL_DAYS from="counted from its install on $INSTALL_ON in apt's history"
