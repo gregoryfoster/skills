@@ -507,24 +507,76 @@ read_boot() {
 
 journal_first_line() { { jctl -q -o short-unix --no-pager 2>/dev/null || true; } | head -n 1; }
 
+# journald's settings, read as journald reads them (#608), ported from
+# maintaining-host-disk's install-disk-gc.sh, which measured them by running
+# systemd-journald 249 to 259 (#604). The main file: on 255 and older,
+# /etc's only; from 256, the first of /etc, /run, /usr/local/lib and
+# /usr/lib, a dangling link passed over, and a link to /dev/null, an empty
+# file or a directory masking the rest. The version is the root's dpkg
+# database's: unread, the file is read as 256 and newer read it, and that's
+# in not_read when it's another file than /etc's.
+# dpkg-query's format fields, not shell expansions.
+# shellcheck disable=SC2016
+DPKG_STATUS_VERSION='${db:Status-Status} ${Version}'
+journald_main_file() {  # <var>: journald's main file, under P_ROOT; empty for none
+  local _jm_got="" _jm_any=1 _jm_rc=0 _jm_d _jm_f _jm_main=""
+  if have dpkg-query && have dpkg; then capture _jm_got dpkgq -W -f "$DPKG_STATUS_VERSION" systemd; fi
+  case $_jm_got in
+    "installed "?*)
+      dpkg --compare-versions "${_jm_got#installed }" lt 256~ 2>/dev/null || _jm_rc=$?
+      case $_jm_rc in 0) _jm_any=0 ;; 1) ;; *) _jm_got="" ;; esac ;;
+    *) _jm_got="" ;;
+  esac
+  for _jm_d in etc run usr/local/lib usr/lib; do
+    [ "$_jm_any" -eq 1 ] || [ "$_jm_d" = etc ] || continue
+    _jm_f=$P_ROOT/$_jm_d/systemd/journald.conf
+    # -e follows a link: a dangling one isn't there.
+    if [ -e "$_jm_f" ]; then
+      if [ -f "$_jm_f" ]; then _jm_main=$_jm_f; fi
+      break
+    fi
+  done
+  if [ -z "$_jm_got" ] && [ -n "$_jm_main" ] && [ "$_jm_d" != etc ]; then
+    not_read "journald's main file: systemd's version couldn't be read from /var/lib/dpkg, so it's read as systemd 256 and newer read it, the first of /etc, /run, /usr/local/lib and /usr/lib: ${_jm_main#"$P_ROOT"}"
+  fi
+  printf -v "$1" '%s' "$_jm_main"
+}
+
 read_journal() {
-  local o="" f line n storage="" ssrc="" flush flush_live="" out pc="" vc="" verdict=unknown oldest="" reach="" at dfs
+  local o="" f line n storage="" ssrc="" flush flush_live="" out pc="" vc="" verdict=unknown oldest="" reach="" at dfs main sect k v
   # The main file, then the drop-ins as journald reads them (#515).
+  journald_main_file main
   dropin_files dfs "$P_ROOT/etc/systemd/journald.conf.d" "$P_ROOT/run/systemd/journald.conf.d" \
     "$P_ROOT/usr/local/lib/systemd/journald.conf.d" "$P_ROOT/usr/lib/systemd/journald.conf.d"
+  # Each line as journald's parser takes it (#608): trimmed, a # or ; line a
+  # comment, [Journal]'s keys only, the blanks around = gone. Storage= is an
+  # enum, parsed by config_parse_storage (DEFINE_CONFIG_PARSE_ENUM in
+  # systemd's conf-parser.h, v249 to v259): a value storage_from_string
+  # doesn't match exactly, an empty one included, is logged and ignored, and
+  # the one before it stands.
   while IFS= read -r f; do
     [ -f "$f" ] || continue
-    n=0
+    n=0 sect=""
     while IFS= read -r line || [ -n "$line" ]; do
       n=$((n + 1))
+      trim line "$line"
       case $line in
-        Storage=*)
-          storage=${line#Storage=}
-          storage=${storage%%[[:space:]]*}
+        '' | '#'* | ';'*) continue ;;
+        '['*']') sect=$line; continue ;;
+        *=*) ;;
+        *) continue ;;
+      esac
+      [ "$sect" = '[Journal]' ] || continue
+      trim k "${line%%=*}"
+      [ "$k" = Storage ] || continue
+      trim v "${line#*=}"
+      case $v in
+        auto | volatile | persistent | none)
+          storage=$v
           ssrc="${f#"$P_ROOT"}:$n" ;;
       esac
     done <"$f"
-  done <<<"$P_ROOT/etc/systemd/journald.conf"$'\n'"$dfs"
+  done <<<"$main"$'\n'"$dfs"
   unit_disk_state flush systemd-journal-flush.service
   if live_cmd systemctl; then
     capture flush_live systemctl is-enabled systemd-journal-flush.service
