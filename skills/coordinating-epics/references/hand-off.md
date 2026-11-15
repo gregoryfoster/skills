@@ -4,7 +4,7 @@ What the coordinator gives the implementer: a brief posted on the issue, and a s
 
 ## Where it goes
 
-- **The brief goes on the issue as a comment.** The implementing thread finds it there, not in the coordinator's conversation. The chat reply only points to it (private-launch 29, processor F29).
+- **The brief goes on the issue as a comment,** posted with `comment.sh`, which lints it as the editor lints the body. The implementing thread finds it there, not in the coordinator's conversation. The chat reply only points to it (private-launch 29, processor F29).
 - **An issue the coordinator files itself carries the decision and the brief in its body.** The hand-off is then the issue itself (watcher F49, cannobserv 24).
 - **Brief only the child that is next now.** If a reorder makes a posted brief's first line false, edit the brief (processor F116, F124).
 - **If another coordinator already briefed this issue,** point to that brief and add only what's new (broker 139).

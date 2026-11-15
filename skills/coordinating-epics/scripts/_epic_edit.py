@@ -1528,7 +1528,14 @@ def lint(
     check_links: bool,
     in_fence: list[bool] | None = None,
     in_table: list[bool] | None = None,
+    known: frozenset[int] = frozenset(),
 ) -> list[str]:
+    """Each problem in new_lines, as the refusal names it.
+
+    known holds numbers to take as existing though they are above the repo's
+    highest: a body linted before its own issue is created names the number
+    it predicts (comment.sh --lint-file --predicted, #395).
+    """
     in_fence = in_fence or [False] * len(new_lines)
     in_table = in_table or [False] * len(new_lines)
     problems = []
@@ -1570,7 +1577,7 @@ def lint(
         for text in prose
         for m in REF_RE.finditer(ref_text(text))
         if not m.group("repo")
-    }
+    } - set(known)
     if bare:
         newest = gh_json(
             [

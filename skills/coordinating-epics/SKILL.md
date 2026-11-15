@@ -50,7 +50,7 @@ The skill's `scripts/` directory ships inside the skill, not at the project root
 <!-- skill:required id=skill-scripts -->
 ```bash
 N=coordinating-epics
-for S in epic-edit.sh scan.sh; do SD=
+for S in epic-edit.sh scan.sh comment.sh; do SD=
   for d in scripts ".claude/skills/$N/scripts" "$HOME/.claude/skills/$N/scripts"; do
     [ -f "$d/$S" ] && { SD="$d"; break; }
   done
@@ -102,11 +102,11 @@ On "I finished #N", "next", or a report between threads:
    - accepted limitations;
    - corrections to any claim, searched everywhere it was made.
 
-   Write them back as **comments**. A comment only appends, so it can't race.
+   Write them back as **comments**, through `comment.sh`, which lints them as the editor lints the body and reads them back. A comment only appends, so it can't race.
 3. **Re-scan and slot** (§3), reading the epic's own new comments too. Each new item is a child, closed-in-fact, a split, out of epic, a duplicate, or parked. Measure before you slot.
 4. **Re-check blockers and gates** (§4). Probe each one's observable condition; don't wait to be told. Read the latest comment on each cross-repo ref, and the trigger of each parked item.
 5. **Choose the next child** (§5): the order rule, then the tiebreaks written on the epic. Say when the next child is the last unblocked one. When nothing is unblocked, the hand-off is the blockers instead: each with its owner, its evidence, and the options.
-6. **Hand off** ([hand-off.md](references/hand-off.md)). Post the brief on the issue, after a pre-flight against `origin/main`: what it renames or removes, and who uses that today. Reply with the next ID and a kickoff prompt of 2–6 lines that points to the brief.
+6. **Hand off** ([hand-off.md](references/hand-off.md)). Post the brief on the issue with `comment.sh`, after a pre-flight against `origin/main`: what it renames or removes, and who uses that today. Reply with the next ID and a kickoff prompt of 2–6 lines that points to the brief.
 7. **Write the epic in one call.** The ticks and notes, the header, and a log line, which is written even when nothing changed. With `--scan "${SCRATCH:?}/scan.json"` (the report you read: step 0's, or a later re-scan you've acted on), `Last check-in` takes `{checked}`, the scan's own time, and `Last issue seen` takes `{last_seen}`. The next window then starts where that scan looked. Never type either value, and never pass a report you haven't read. The editor refuses one whose new issues the body doesn't mention.
 
 ## The implementer contract

@@ -1391,6 +1391,14 @@ GATE_SCRIPTS = {
         "test_a_gh_failure_is_exit_2_and_shows_ghs_own_stderr "
         "(test_coordinating_epics_edit.py)"
     ),
+    "comment.sh": (
+        "its exit code decides whether a comment is posted (#395): a body the "
+        "editor's lint refuses is never posted, and the engine branches on "
+        "what gh returns, the post and the comment it reads back. The wrapper "
+        "`exec`s _comment.py, so the property lives there, held by behaviour "
+        "through this wrapper: test_a_gh_failure_is_exit_2_and_shows_ghs_own_stderr "
+        "(test_coordinating_epics_comment.py) keeps gh's whole stderr"
+    ),
 }
 
 # Bucket 2: reporting-only, or an action whose own exit code is the verdict.
