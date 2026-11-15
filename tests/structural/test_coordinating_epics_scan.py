@@ -1036,7 +1036,20 @@ def test_item_keys_reads_ordinal_led_and_ordered_items():
 def test_a_fixture_git_failure_says_what_git_said(tmp_path):
     """#617: the fixture's two failures under load left "exit status 128"
     and nothing else, because check=True drops git's stderr. A failure must
-    carry git's own message, so the next one names its cause."""
-    with pytest.raises(Exception) as failed:
-        git(tmp_path / "gone", "add", ".")
-    assert "cannot change to" in str(failed.value), str(failed.value)
+    carry git's own message, so the next one names its cause.
+
+    Compared with what git itself printed for the same command, not with a
+    phrase of it: git's wording moves between versions (#616)."""
+    gone = tmp_path / "gone"
+    direct = subprocess.run(
+        ["git", "-C", str(gone), "add", "."],
+        capture_output=True,
+        text=True,
+        env={k: v for k, v in os.environ.items() if not k.startswith("GIT_")},
+    )
+    assert direct.returncode != 0 and direct.stderr.strip(), direct
+    with pytest.raises(AssertionError) as failed:
+        git(gone, "add", ".")
+    message = str(failed.value)
+    assert f"exited {direct.returncode}" in message, message
+    assert direct.stderr.strip() in message, message
