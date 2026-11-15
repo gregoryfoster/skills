@@ -15,6 +15,8 @@ from __future__ import annotations
 import datetime as dt
 import json
 
+import pytest
+
 from tests.structural.coordinating_epics_rig import Rig, summary
 
 REPO = "acme/widgets"
@@ -202,8 +204,9 @@ def test_658_a_rerun_days_after_the_epic_last_moved_still_finds_its_comment(
 
 
 def test_658_each_attempt_is_recorded_beside_the_baseline(tmp_path):
-    """Option 2: the editor records each comment it posts or tries to post,
-    with a write id; a dry run records nothing."""
+    """Option 2: the editor records each call that posts, with a write id
+    and its comments' hashes, and each comment posted; a dry run records
+    nothing."""
     r = _adopted(tmp_path)
     assert r.edit(REPO, EPIC, [NO_CHANGE], "--dry-run").returncode == 0
     path = r.state_dir / "acme" / "widgets" / str(EPIC) / "comments.jsonl"
@@ -211,4 +214,93 @@ def test_658_each_attempt_is_recorded_beside_the_baseline(tmp_path):
     assert r.edit(REPO, EPIC, [NO_CHANGE]).returncode == 0
     recs = [json.loads(ln) for ln in path.read_text().splitlines()]
     assert [x["state"] for x in recs] == ["pending", "posted"]
-    assert recs[0]["id"] == recs[1]["id"] and recs[1]["url"].endswith("-9901")
+    assert recs[0]["call"] == recs[1]["call"] and recs[1]["seq"] == 0
+    assert len(recs[0]["keys"]) == 1 and recs[1]["url"].endswith("-9901")
+
+
+# ---------------------------------------------------------------- CR 2212–2220
+
+PART_A = {
+    "op": "log-comment",
+    "text": "part one",
+    "date": "2026-09, moved from the body",
+}
+PART_B = {
+    "op": "log-comment",
+    "text": "part two",
+    "date": "2026-10, moved from the body",
+}
+
+
+@pytest.mark.parametrize("stored", [False, True], ids=["nothing-stored", "stored-502"])
+def test_cr2212_a_rerun_after_a_partial_multi_comment_call_posts_each_part_once(
+    tmp_path, stored
+):
+    """compaction.md step 2 splits the log into several log-comment ops in
+    one call. Part two fails after part one posted: the re-run of the same
+    call finds part one, and part two is posted, or found, once."""
+    r = _adopted(tmp_path)
+    r.set_flag("post_fail", {"at": 2, "stored": stored})
+    assert r.edit(REPO, EPIC, [PART_A, PART_B]).returncode == 5
+    res = r.edit(REPO, EPIC, [PART_A, PART_B])
+    assert res.returncode == 0, res.stderr
+    posts = r.load()["posts"]
+    assert [x.splitlines()[0] for x in posts] == [
+        "**Check-in log, 2026-09, moved from the body**",
+        "**Check-in log, 2026-10, moved from the body**",
+    ]
+    got = [x["posted"] for x in summary(res)["log_comments"]]
+    assert got == ["already", "already" if stored else True]
+
+
+def test_cr2212_two_identical_comments_in_one_call_resume_as_two(tmp_path):
+    r = _adopted(tmp_path)
+    r.set_flag("post_fail", {"at": 2, "stored": False})
+    assert r.edit(REPO, EPIC, [NO_CHANGE, NO_CHANGE]).returncode == 5
+    res = r.edit(REPO, EPIC, [NO_CHANGE, NO_CHANGE])
+    assert res.returncode == 0, res.stderr
+    assert len(r.load()["posts"]) == 2
+    assert [x["posted"] for x in summary(res)["log_comments"]] == ["already", True]
+
+
+def test_cr2213_a_state_dir_from_before_the_records_keeps_the_old_match(tmp_path):
+    """An epic left at exit 5 by the version before #658 has a baseline but no
+    comments.jsonl: that one re-run matches by body, as that version did."""
+    r = _adopted(tmp_path)
+    r.set_flag("post_fails_after_apply", 1)
+    assert r.edit(REPO, EPIC, [NO_CHANGE]).returncode == 5
+    (r.state_dir / "acme" / "widgets" / str(EPIC) / "comments.jsonl").unlink()
+    res = r.edit(REPO, EPIC, [NO_CHANGE])
+    assert res.returncode == 0, res.stderr
+    assert summary(res)["log_comments"][0]["posted"] == "already"
+    assert len(r.load()["posts"]) == 1
+    # The records start here: the same call again is a second check-in.
+    res = r.edit(REPO, EPIC, [NO_CHANGE])
+    assert summary(res)["log_comments"][0]["posted"] is True
+    assert len(r.load()["posts"]) == 2
+
+
+def test_cr2214_the_search_opens_a_minute_before_the_fetch(tmp_path):
+    """GitHub's since is whole seconds, and the post can land in the second
+    the epic was fetched at: the re-run's read starts a margin earlier."""
+    r = _adopted(tmp_path)
+    r.issue(REPO, EPIC, updated_at="2026-11-15T10:00:00Z")
+    r.set_flag("post_fails_after_apply", 1)
+    assert r.edit(REPO, EPIC, [NO_CHANGE]).returncode == 5
+    # GitHub stored it at 09:59:59 by its own clock, before updated_at reads.
+    st = r.load()
+    st["repos"][REPO]["comments"][str(EPIC)][-1]["updated_at"] = "2026-11-15T09:59:59Z"
+    r.save()
+    res = r.edit(REPO, EPIC, [NO_CHANGE])
+    assert summary(res)["log_comments"][0]["posted"] == "already", res.stderr
+    assert len(r.load()["posts"]) == 1
+
+
+def test_cr2220_an_exit_4_holds_the_comments_and_records_nothing(tmp_path):
+    r = _adopted(tmp_path)
+    r.set_flag("patch_noop", True)
+    res = r.edit(REPO, EPIC, [{"op": "tick", "ref": "#11"}, NO_CHANGE])
+    assert res.returncode == 4
+    assert not (
+        r.state_dir / "acme" / "widgets" / str(EPIC) / "comments.jsonl"
+    ).exists()

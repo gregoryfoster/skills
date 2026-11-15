@@ -192,12 +192,18 @@ exit codes:
      comment already posted is found, not posted twice.
 
 log comments (#658):
-  Each log comment this tool posts, or tries to, is recorded beside the
-  baseline, in comments.jsonl: pending before the POST, posted with its URL
-  after. A re-run matches only an attempt still pending, by its text, and
-  looks for it among the epic's comments since that run's fetch; one gh
-  called failed but GitHub stored is "posted": "already". A finished attempt
-  is never matched, so two check-ins that log identical text post twice.
+  Each call that posts log comments is recorded beside the baseline, in
+  comments.jsonl, before its first POST: each comment's hash, in order, and
+  the time to search from. Each part posted, or found, is recorded with its
+  URL. A re-run of the same comments, in order, resumes the latest call not
+  finished: a part it posted is "posted": "already", and a part gh called
+  failed but GitHub stored is found among the epic's comments since. A
+  finished call is never matched, so two check-ins that log identical text
+  post twice. The record is the state dir's (--state-dir): re-run with the
+  same one. A state dir from before these records has none, so its first
+  call matches by body, as before, and the records start there. A part
+  whose POST truly failed, re-run after another state dir posted identical
+  text, reads that one as "already".
 
 body size:
   Every summary that built a new body gives its size as GitHub keeps it,
@@ -1780,45 +1786,58 @@ def comments_since(
 # ---------------------------------------------------------------- log comment attempts
 #
 # A re-run after an exit 5 must not post a log comment twice, and two
-# check-ins that log identical text must post twice (#658). So each comment
-# this tool posts, or tries to, is recorded beside the baseline: "pending"
-# before the POST, "posted" with its URL after. A re-run matches only an
-# attempt still pending, and looks for it on GitHub from the epic's
-# updated_at as that run fetched it, GitHub's clock, before the POST.
+# check-ins that log identical text must post twice (#658). So each call that
+# posts log comments is recorded beside the baseline before its first POST:
+# a "call" record with each comment's hash, in order, and the time to search
+# from, the epic's updated_at as that run fetched it (GitHub's clock) less a
+# minute. Each comment posted, or found, adds a "posted" record with its URL.
+# A re-run of the same comments, in order, resumes the latest call not yet
+# finished: a part it posted is "already", and a part it may have stored
+# though gh failed is looked for from the call's time (CR 2212). A finished
+# call is never matched, so identical text from a later check-in posts.
 
 ATTEMPTS = "comments.jsonl"
+# GitHub's since is whole seconds, and a post can land in the second the epic
+# was fetched (CR 2214).
+SEARCH_SLACK = dt.timedelta(seconds=60)
 
 
 def comment_key(body: str) -> str:
     return hashlib.sha256("\n".join(normalize(body)).encode()).hexdigest()
 
 
-def read_attempts(sd: Path) -> tuple[list[dict], set[str]]:
-    """(attempts still pending, oldest first; every URL recorded as posted).
-    A line that isn't a record is skipped, as read_writes skips one."""
+def read_calls(sd: Path) -> tuple[list[dict], set[str]] | None:
+    """(unfinished calls, oldest first, each with its posted parts by
+    position; every URL recorded as posted), or None when this state dir has
+    no record file. A line that isn't a record is skipped, as read_writes
+    skips one."""
     try:
         lines = (sd / ATTEMPTS).read_text().splitlines()
     except FileNotFoundError:
-        return [], set()
-    recs = []
+        return None
+    calls: dict[str, dict] = {}
+    urls: set[str] = set()
     for ln in lines:
         try:
             rec = json.loads(ln)
         except json.JSONDecodeError:
             continue
-        if isinstance(rec, dict) and isinstance(rec.get("id"), str):
-            recs.append(rec)
-    done = {r["id"] for r in recs if r.get("state") == "posted"}
-    urls = {str(r.get("url")) for r in recs if r.get("state") == "posted"}
-    pending = [
-        r
-        for r in recs
-        if r.get("state") == "pending"
-        and r["id"] not in done
-        and isinstance(r.get("sha256"), str)
-        and isinstance(r.get("since"), str)
+        if not isinstance(rec, dict) or not isinstance(rec.get("call"), str):
+            continue
+        if rec.get("state") == "pending" and isinstance(rec.get("keys"), list):
+            calls[rec["call"]] = {
+                "call": rec["call"],
+                "keys": rec["keys"],
+                "since": str(rec.get("since") or ""),
+                "posted": {},
+            }
+        elif rec.get("state") == "posted" and rec["call"] in calls:
+            calls[rec["call"]]["posted"][rec.get("seq")] = str(rec.get("url") or "")
+            urls.add(str(rec.get("url") or ""))
+    open_ = [
+        c for c in calls.values() if len(c["posted"]) < len(c["keys"]) and c["since"]
     ]
-    return pending, urls
+    return open_, urls - {""}
 
 
 def record_attempt(sd: Path, rec: dict) -> None:
@@ -2712,48 +2731,64 @@ def run(argv: list[str]) -> int:
                     " (compaction.md)"
                 )
 
-        # Each comment's attempt: an unfinished one of an earlier run when its
-        # text matches, so a re-run after an exit 5 resumes it; else a new
-        # one. A finished attempt is never matched: identical text from a
-        # later check-in is a new entry (#658).
-        attempts: list[dict] = []
+        # The call this run's log comments belong to: the latest unfinished
+        # one with the same comments in order, resumed, or a new one (#658).
+        call: dict = {}
         if comments:
-            pending, posted_urls = read_attempts(sd)
-            for c in comments:
-                k = comment_key(c)
-                hit = next((r for r in pending if r["sha256"] == k), None)
-                if hit is not None:
-                    pending.remove(hit)
-                    attempts.append(
-                        {"id": hit["id"], "since": hit["since"], "resumed": True}
-                    )
-                else:
-                    attempts.append({"id": uuid.uuid4().hex[:16], "since": live_at})
-            resumed = [x for x in attempts if x.get("resumed")]
-            if resumed:
-                # One read from the oldest: an earlier run's POST may have
-                # stored its comment though gh reported a failure (CR 309).
-                found, capped = comments_since(
-                    host, a.epic, min(x["since"] for x in resumed)
-                )
-                if capped:
-                    print(
-                        "WARNING the epic's comments since the unfinished post"
-                        f" passed {COMMENT_PAGES * 100}; one not read is posted again",
-                        file=sys.stderr,
-                    )
-                claimed = set(posted_urls)
-                for c, post, att in zip(comments, posts, attempts):
-                    if not att.get("resumed"):
-                        continue
-                    body = "\n".join(normalize(c))
-                    url = next(
-                        (u for b, u in found if b == body and u not in claimed), None
-                    )
+            keys = [comment_key(c) for c in comments]
+            known = read_calls(sd)
+            when = gh_time(live_at)
+            since = (
+                (when - SEARCH_SLACK).strftime("%Y-%m-%dT%H:%M:%SZ")
+                if when
+                else live_at
+            )
+            if known is None and read_writes(sd):
+                # A state dir from before these records: its last run may have
+                # left an exit 5, so this one run matches by body over the
+                # two days before the epic's updated_at, as that version did
+                # (CR 2213). The records start with this call.
+                call = {"call": uuid.uuid4().hex[:16], "since": since, "new": True}
+                old = (when - dt.timedelta(days=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
+                found, _ = comments_since(host, a.epic, old)
+                seen = {b: u for b, u in found}
+                for i, (c, post) in enumerate(zip(comments, posts)):
+                    url = seen.get("\n".join(normalize(c)))
                     if url is not None:
-                        claimed.add(url)
                         post.update(posted="already", url=url)
-                        att["found"] = url
+                        call.setdefault("found", {})[i] = url
+            else:
+                calls, claimed = known or ([], set())
+                hit = next((c for c in reversed(calls) if c["keys"] == keys), None)
+                if hit is None:
+                    call = {"call": uuid.uuid4().hex[:16], "since": since, "new": True}
+                else:
+                    call = {"call": hit["call"], "since": hit["since"], "found": {}}
+                    for i, post in enumerate(posts):
+                        if i in hit["posted"]:
+                            post.update(posted="already", url=hit["posted"][i] or None)
+                    left = [i for i in range(len(posts)) if i not in hit["posted"]]
+                    if left:
+                        # Its POST may have stored a part though gh reported a
+                        # failure (CR 309): read from the call's own time.
+                        found, capped = comments_since(host, a.epic, hit["since"])
+                        if capped:
+                            print(
+                                "WARNING the epic's comments since the unfinished"
+                                f" call passed {COMMENT_PAGES * 100}; a part not"
+                                " read is posted again",
+                                file=sys.stderr,
+                            )
+                        for i in left:
+                            body = "\n".join(normalize(comments[i]))
+                            url = next(
+                                (u for b, u in found if b == body and u not in claimed),
+                                None,
+                            )
+                            if url is not None:
+                                claimed.add(url)
+                                posts[i].update(posted="already", url=url)
+                                call["found"][i] = url
 
         def post_all() -> int:
             """Post each log comment not yet posted, in order; stop at a failure.
@@ -2761,39 +2796,44 @@ def run(argv: list[str]) -> int:
             Only after the body is confirmed or unchanged: a comment can't be
             taken back, and the log must not run ahead of the epic (#654).
             """
-            for att in attempts:  # an earlier run's post, found: it's finished
-                if att.get("found"):
-                    try:
+            if comments:
+                try:
+                    # Before the first POST: a re-run then resumes this call,
+                    # even when gh reports a failure after GitHub stored a part.
+                    if call.get("new"):
                         record_attempt(
                             sd,
-                            {"id": att["id"], "state": "posted", "url": att["found"]},
+                            {
+                                "call": call["call"],
+                                "state": "pending",
+                                "keys": [comment_key(c) for c in comments],
+                                "since": call["since"],
+                                "at": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                            },
                         )
-                    except OSError as e:
-                        print(f"WARNING attempt record not saved: {e}", file=sys.stderr)
-            for c, post, att in zip(comments, posts, attempts):
-                if post["posted"]:
-                    continue
-                try:
-                    # Before the POST: a re-run then finds it, even when gh
-                    # reports a failure after GitHub stored it (#658).
-                    record_attempt(
-                        sd,
-                        {
-                            "id": att["id"],
-                            "state": "pending",
-                            "sha256": comment_key(c),
-                            "since": att["since"],
-                            "at": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
-                        },
-                    )
+                        call["new"] = False
+                    for i, url in (call.get("found") or {}).items():
+                        record_attempt(
+                            sd,
+                            {
+                                "call": call["call"],
+                                "seq": i,
+                                "state": "posted",
+                                "url": url,
+                            },
+                        )
+                    call["found"] = {}
                 except OSError as e:
                     print(json.dumps(summary, indent=2))
                     print(
-                        "ERROR the log comment wasn't posted: its attempt couldn't be"
+                        "ERROR the log comment wasn't posted: its call couldn't be"
                         f" recorded, so a re-run couldn't tell it was tried: {e}",
                         file=sys.stderr,
                     )
                     return EXIT_COMMENT
+            for i, (c, post) in enumerate(zip(comments, posts)):
+                if post["posted"]:
+                    continue
                 try:
                     post.update(posted=True, url=post_comment(host, a.epic, c))
                 except Infra as e:
@@ -2813,9 +2853,15 @@ def run(argv: list[str]) -> int:
                     return EXIT_COMMENT
                 try:
                     record_attempt(
-                        sd, {"id": att["id"], "state": "posted", "url": post["url"]}
+                        sd,
+                        {
+                            "call": call["call"],
+                            "seq": i,
+                            "state": "posted",
+                            "url": post["url"],
+                        },
                     )
-                except OSError as e:  # the pending record still finds it
+                except OSError as e:  # the call's record still finds it
                     print(f"WARNING attempt record not saved: {e}", file=sys.stderr)
             print(json.dumps(summary, indent=2))
             return EXIT_OK
