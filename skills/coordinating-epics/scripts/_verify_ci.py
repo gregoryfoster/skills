@@ -68,8 +68,9 @@ what it reads:
     missing. A head commit carrying [skip ci] (or its kin) expects nothing.
   - the check runs on --sha, each tied to its workflow by check suite.
   - the check runs on the branch's tip, when that isn't --sha.
-  - each active workflow's latest run on the branch, any event, with its
-    jobs: a scheduled job failing there shows, whichever commit it ran on.
+  - each active workflow's latest run on the branch, any event but a pull
+    request's, from this repo, not a fork, with its jobs: a scheduled job
+    failing there shows, whichever commit it ran on.
 
   A push of several commits: pass --base as the commit before the push, or a
   file changed earlier in it is missed, and so is a workflow it triggered.
@@ -366,23 +367,57 @@ def job_row(
     }
 
 
-def latest_on_branch(repo: str, branch: str) -> list[dict]:
-    """Each active workflow's latest run on branch, any event, with its jobs."""
+# Runs GitHub's branch= filter returns that aren't this repo's own: it
+# matches head_branch, which a fork's pull request from its own `main` carries
+# too, and a pull_request_target run is a stranger's PR run in this repo's
+# context (CR 2259).
+FOREIGN_EVENTS = {"pull_request", "pull_request_target"}
+# Pages of a workflow's runs on the branch read for its latest own run.
+LATEST_PAGES = 3
+
+
+def own_latest(repo: str, wf: dict, branch: str) -> tuple[dict | None, bool]:
+    """The workflow's newest run on branch that is this repo's own: not a
+    fork's, and not a pull request's (CR 2259); and whether any run was
+    passed over to look for it."""
+    passed = False
+    for page in range(1, LATEST_PAGES + 1):
+        data = gh_json(
+            [
+                "api",
+                f"repos/{repo}/actions/workflows/{wf['id']}/runs"
+                f"?branch={branch}&per_page=100&page={page}",
+            ],
+            f"reading {wf.get('path')}'s latest run on {branch}",
+        )
+        batch = (data or {}).get("workflow_runs") or []
+        for r in batch:
+            head = str((r.get("head_repository") or {}).get("full_name") or "")
+            if head.lower() == repo.lower() and r.get("event") not in FOREIGN_EVENTS:
+                return r, passed
+            passed = True
+        if len(batch) < 100:
+            return None, passed
+    return None, passed
+
+
+def latest_on_branch(repo: str, branch: str, warnings: list[str]) -> list[dict]:
+    """Each active workflow's latest own run on branch, any event but a pull
+    request's, with its jobs."""
     rows = []
     for wf in pages(
         f"repos/{repo}/actions/workflows", "listing the workflows", "workflows"
     ):
         if wf.get("state") != "active":
             continue
-        data = gh_json(
-            [
-                "api",
-                f"repos/{repo}/actions/workflows/{wf['id']}/runs?branch={branch}&per_page=1",
-            ],
-            f"reading {wf.get('path')}'s latest run on {branch}",
-        )
-        latest = ((data or {}).get("workflow_runs") or [None])[0]
+        latest, passed = own_latest(repo, wf, branch)
         if not latest:
+            if passed:  # one never run on the branch has nothing to say
+                warnings.append(
+                    f"{wf.get('path')}: no run of its own on {branch} in its"
+                    f" latest {LATEST_PAGES * 100}, only pull requests' or forks',"
+                    " so none is read"
+                )
             continue
         jobs = list(
             pages(
@@ -517,7 +552,7 @@ def read_once(
     report["main_sha"] = ((tip or {}).get("commit") or {}).get("sha")
     if report["main_sha"] and report["main_sha"] != report["sha"]:
         rows += check_rows(a.repo, report["main_sha"], "main")
-    rows += latest_on_branch(a.repo, report["branch"])
+    rows += latest_on_branch(a.repo, report["branch"], warnings)
     missing, unmatched = judge(expected, rows, report["branch"])
     report.update(
         rows=rows,

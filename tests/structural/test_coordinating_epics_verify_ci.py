@@ -99,7 +99,9 @@ if p == ["actions", "workflows"]:
     paged("workflows", st.get("active", []))
 if p[:2] == ["actions", "workflows"] and p[3:] == ["runs"]:
     latest = st.get("latest", {}).get(p[2])
-    out({"workflow_runs": [latest] if latest else []})
+    if not isinstance(latest, list):  # one run, or a branch's runs newest first
+        latest = [latest] if latest else []
+    paged("workflow_runs", latest)
 if p[:2] == ["actions", "runs"] and p[3:] == ["jobs"]:
     paged("jobs", seq("jobs", p[2]))
 fail()
@@ -523,3 +525,41 @@ def test_cr_2258_a_push_run_on_another_branch_doesnt_stand_for_the_branchs(rig):
     assert rep["verdict"] == "incomplete"
     assert rows(rep)["lint"]["branch"] == "feat"
     assert rows(rep)["lint"]["expected"] is False
+
+
+def test_cr_2259_a_fork_prs_run_from_its_own_main_isnt_mains_latest(rig):
+    """GitHub's branch= filter matches head_branch, which a fork's pull
+    request from its own `main` carries: its passing run must not hide the
+    nightly failing on this repo's main."""
+    rig.state["workflows"]["nightly.yml"] = NIGHTLY
+    rig.state["active"].append(
+        {"id": 8, "path": ".github/workflows/nightly.yml", "state": "active"}
+    )
+    fork = dict(
+        run_of(".github/workflows/nightly.yml", event="pull_request", rid=300),
+        head_repository={"full_name": "stranger/widgets"},
+    )
+    own_pr = run_of(".github/workflows/nightly.yml", event="pull_request", rid=250)
+    nightly = run_of(
+        ".github/workflows/nightly.yml", event="schedule", sha=BASE, rid=200
+    )
+    rig.state["latest"]["8"] = [fork, own_pr, nightly]
+    rig.state["jobs"]["300"] = [[check("e2e")]]
+    rig.state["jobs"]["250"] = [[check("e2e")]]
+    rig.state["jobs"]["200"] = [[check("e2e", conclusion="failure", sha=BASE)]]
+    rep = report(rig.run())
+    assert rows(rep, "main-latest")["e2e"]["conclusion"] == "failure"
+    assert rep["verdict"] == "red"
+
+
+def test_cr_2259_no_run_of_its_own_on_the_branch_is_a_warning(rig):
+    fork = dict(
+        run_of(".github/workflows/ci.yml", event="pull_request", rid=300),
+        head_repository={"full_name": "stranger/widgets"},
+    )
+    rig.state["latest"]["7"] = [fork]
+    rig.state["jobs"]["300"] = [[check("lint", conclusion="failure")]]
+    rep = report(rig.run())
+    assert rows(rep, "main-latest") == {}
+    assert rep["verdict"] == "green"
+    assert any("ci.yml" in w and "no run of its own" in w for w in rep["warnings"])
