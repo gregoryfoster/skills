@@ -2018,10 +2018,12 @@ def run(argv: list[str]) -> int:
             )
         unverified = [t for t in ticks if t not in accepted]
         if unverified:
+            # The whole argument: the bare flag is a usage error (#621).
             raise Refused(
                 "boxes ticked elsewhere since the last write: "
                 + ", ".join(unverified)
                 + ". A tick is a claim: verify each child, then pass --accept-ticks"
+                f" '{','.join(sorted(set(ticks) | accepted))}'"
             )
 
         before = counts(live_lines)
