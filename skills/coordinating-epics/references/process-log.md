@@ -71,6 +71,8 @@ Which runs each rule came from, wherever it now lives. The 2026 seed entries are
 - not its repo, issues, files, routes, units or data;
 - nothing that would let a reader find it.
 
+A repo this repo's `.skills/cohort` lists may be named, with its issue refs, private or not; its files, routes, units and data still may not ([#659](https://github.com/gregoryfoster/skills/issues/659)).
+
 Call it "private-<shape>" (`private-launch`, `private-backlog`) and describe the mechanism instead. Check before drafting: a landed entry stays in git history.
 
 1. Write `process-log/<year>/<date>-<repo>.md`, opening with a `## Session <date> — <repo>#<epic>` heading. Date it by when the run closed or parked, in UTC. A run still open when its entry is written is dated by its last check-in, and says so.
