@@ -2629,9 +2629,15 @@ def run(argv: list[str]) -> int:
             )
             summary["unlisted"] = unlisted
             if unlisted:
+                # The body is the one place this reads: a log comment holds
+                # history, so a disposition only it records is lost here (#657).
                 raise Refused(
                     "open issues the epic doesn't reference: "
                     + ", ".join(f"#{n}" for n in unlisted)
+                    + ". Slot each, or give it a line in a body section such as"
+                    " '## Out of epic' (e.g. '- #N · out of epic: why'): a log"
+                    " comment doesn't count, since --account reads the body only"
+                    " (compaction.md)"
                 )
 
         if comments:

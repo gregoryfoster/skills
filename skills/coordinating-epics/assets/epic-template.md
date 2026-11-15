@@ -80,6 +80,10 @@ Optional sections, each added under its own heading after the tiers:
 |---|---|---|
 | #21 | the producer writes observations again | 2026-10-14 |
 
+## Out of epic
+
+- #22 · out of epic: <why>, <date>. On an `--account` epic, every out-of-epic or duplicate issue has a line here: `--account` reads the body, not the log comments.
+
 ## Proposed closures (pending approval)
 
 - #30 · done in fact by #28 · evidence: <commit or query> · the one reason to keep it: <…>
