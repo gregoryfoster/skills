@@ -26,6 +26,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.utils.nested_pytest import nested_pytest_env
+
 REPO = Path(__file__).resolve().parents[2]
 
 
@@ -39,7 +41,11 @@ def _trace(tmp_path: Path, body: str, *extra: str) -> dict[str, dict]:
         f"REPO = Path({str(REPO)!r})\n\n" + textwrap.dedent(body)
     )
     prefix = tmp_path / "trace"
-    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    # The nested scrub (#554): an inherited PYTEST_XDIST_WORKER would name the
+    # child's trace file after the outer worker, not "main".
+    env = nested_pytest_env(
+        tmp_path, {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    )
     env["GATE_TRACE"] = str(prefix)
     env["PYTHONPATH"] = str(REPO)
     r = subprocess.run(

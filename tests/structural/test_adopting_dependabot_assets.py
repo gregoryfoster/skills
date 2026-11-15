@@ -17,6 +17,7 @@ from pathlib import Path
 
 import pytest
 
+from tests.utils.nested_pytest import nested_pytest_env
 from tests.utils.skill_loader import SKILLS_DIR
 
 ASSETS = SKILLS_DIR / "adopting-dependabot" / "assets"
@@ -51,7 +52,10 @@ def _pytest(root: Path, test: str) -> subprocess.CompletedProcess:
         cwd=root,
         capture_output=True,
         text=True,
-        env=_env(),
+        # The nested scrub (#554), its temp root beside the fixture repo in
+        # the calling test's tmp_path. The shipped asset is left as consumers
+        # copy it; the scrub belongs to the test that runs it.
+        env=nested_pytest_env(root.parent, _env()),
         timeout=120,
     )
 

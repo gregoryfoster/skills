@@ -18,6 +18,8 @@ import sys
 import textwrap
 from pathlib import Path
 
+from tests.utils.nested_pytest import nested_pytest_env
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 # The isolation's own marker: a parent session that set it would make the
 # inner run skip isolating, so it is dropped here (spelled out rather than
@@ -46,11 +48,17 @@ def _signing_world(tmp_path: Path) -> tuple[dict, Path]:
     home = tmp_path / "home"
     home.mkdir()
     (home / ".gitconfig").write_text(config)
-    env = {
-        k: v
-        for k, v in os.environ.items()
-        if k != MARKER and not k.startswith(("GIT_", "PYTEST_"))
-    }
+    # The nested scrub (#554) drops every PYTEST_*, as this file always did,
+    # and gives the inner run no workers and a temp root of its own. GIT_* goes
+    # first, so the signing config set below is the only git config it carries.
+    env = nested_pytest_env(
+        tmp_path,
+        {
+            k: v
+            for k, v in os.environ.items()
+            if k != MARKER and not k.startswith("GIT_")
+        },
+    )
     env.update(HOME=str(home), GIT_CONFIG_GLOBAL=str(global_config))
     return env, mark
 

@@ -20,6 +20,7 @@ from pathlib import Path
 import pytest
 
 from tests.structural.deploying_releases_rig import INSTALL, SKILL, clean_env
+from tests.utils.nested_pytest import nested_pytest_env
 
 UNITS = SKILL / "assets" / "units"
 TESTS = SKILL / "assets" / "tests"
@@ -96,7 +97,9 @@ def run_tests(repo: Path) -> subprocess.CompletedProcess:
         cwd=repo,
         capture_output=True,
         text=True,
-        env=clean_env(),
+        # The nested scrub (#554); its temp root beside the consumer, in the
+        # calling test's tmp_path.
+        env=nested_pytest_env(repo.parent, clean_env()),
         timeout=120,
     )
 
