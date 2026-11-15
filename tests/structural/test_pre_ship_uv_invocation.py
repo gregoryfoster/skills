@@ -40,6 +40,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.utils.nested_pytest import nested_pytest_env
+
 SKILLS_DIR = Path(__file__).resolve().parents[2] / "skills"
 
 # The gates that run their suite through uv. The click and fastapi variants
@@ -113,13 +115,17 @@ MARKERS_INI = "markers =\n    integration: live services\n    browser: playwrigh
 
 
 def _clean_env(project: Path, **extra: str) -> dict:
-    """No `GIT_*` (docs/STYLE.md) and no inherited PYTEST_ADDOPTS; the stub
-    `uv` first on PATH."""
-    env = {
-        k: v
-        for k, v in os.environ.items()
-        if not k.startswith("GIT_") and k != "PYTEST_ADDOPTS"
-    }
+    """No `GIT_*` (docs/STYLE.md); the stub `uv` first on PATH. The gate's
+    pytest is a real one, so it gets the nested scrub (#554): no inherited
+    PYTEST_*, a gate that sizes no pool of its own (`gate-workers.sh` reads
+    PYTEST_XDIST_AUTO_NUM_WORKERS first, so it runs serially), and a temp root
+    in this test's tmp_path. The root goes by PYTEST_DEBUG_TEMPROOT, since a
+    `--basetemp` cannot reach a pytest the gate script starts. A test that
+    wants PYTEST_ADDOPTS passes it in `extra`."""
+    env = nested_pytest_env(
+        project.parent,
+        {k: v for k, v in os.environ.items() if not k.startswith("GIT_")},
+    )
     env["PATH"] = f"{project.parent / 'fakebin'}{os.pathsep}{env.get('PATH', '')}"
     env["UV_LOG"] = str(project.parent / "uv.log")
     env["RAN_LOG"] = str(project.parent / "ran.log")

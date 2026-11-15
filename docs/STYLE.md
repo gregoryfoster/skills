@@ -121,6 +121,10 @@ Two properties make this worth a rule rather than a habit:
 
 Separately, `git config --local` from a **linked worktree** writes the *shared* config of the main checkout. Scrubbing the environment does not change that — it is what `--local` means — and neither does `extensions.worktreeConfig` (below). A script that sets repo-wide config should detect a linked worktree (`.git` is a file rather than a directory) and refuse, naming the command for the operator to run in the main checkout; [skills/curating-context/scripts/install-cadence.sh](../skills/curating-context/scripts/install-cadence.sh)'s `ensure_driver` is the reference.
 
+## A nested pytest uses `nested_pytest_env`
+
+It drops the outer gate's `PYTEST_*`, workers and temp root ([#554](https://github.com/gregoryfoster/skills/issues/554); [tests/utils/nested_pytest.py](../tests/utils/nested_pytest.py) says why). Strip `GIT_*` from its `base` first. `test_nested_pytest_env.py` checks files, not calls.
+
 ## `extensions.worktreeConfig` is refused here
 
 [#189](https://github.com/gregoryfoster/skills/issues/189) proposed it "so a worktree's `--local` writes stay local". Measured on git 2.39.3 against a throwaway repo with a linked worktree, it does not do that, and no variant of it earns its cost. Every claim below is pinned by [tests/structural/test_worktree_config_extension.py](../tests/structural/test_worktree_config_extension.py), so a git release that changes one turns the decision red instead of leaving a stale rationale in prose.

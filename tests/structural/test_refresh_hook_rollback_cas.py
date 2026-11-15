@@ -255,8 +255,15 @@ class TestAPushAnotherSessionLanded:
         other session's push moved the remote's main after this one read its
         advertisement, and nothing has written this checkout's tracking ref.
         A pre-push hook moves it here, so the remote refuses this push for
-        real ("incorrect old value provided"). Asked once, the remote has
-        the commit."""
+        real. Asked once, the remote has the commit.
+
+        The fixture check keys on `[remote rejected]`, the status line
+        receive-pack's refusal prints and the hook matches, not on git's
+        reason for it, which differs by version (#616): after the same
+        "cannot lock ref … but expected", 2.54 gives the reason
+        "(incorrect old value provided)" and 2.47 "(failed to update ref)".
+        A client-side refusal prints `[rejected]` instead, so this line is
+        the remote's own."""
         c = _stranded(tmp_path)
         # The bump's objects on the remote, so its main can be moved to it.
         git(c.path, "push", "-q", "origin", f"{c.bump}:refs/heads/elsewhere")
@@ -270,9 +277,12 @@ class TestAPushAnotherSessionLanded:
 
         result = run_hook(c)
 
-        assert "incorrect old value" in log_text(c), (
-            "fixture: the remote should refuse the push itself\n" + log_text(c)
+        log = log_text(c)
+        assert "[remote rejected]" in log, (
+            "fixture: the remote should refuse the push itself\n" + log
         )
+        # The remote was asked, not @{u}: only that branch names the ref.
+        assert f"origin already has {c.bump[:7]} at refs/heads/main" in log, log
         _pushed_by_another(c, result)
 
 
