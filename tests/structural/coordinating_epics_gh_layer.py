@@ -124,4 +124,3 @@ def token_calls(rig) -> list[tuple[str, str]]:
 
 def output(res) -> str:
     return res.stdout + res.stderr
-

@@ -108,6 +108,15 @@ edit history:
   The list is a warning, not a refusal: read those edits before trusting a
   clean diff. An unread history is a warning too (summary "edit_history").
 
+tokens (#520):
+  --token-for OWNER/REPO=VAR, repeatable, reads that repo with the token in
+  $VAR: the epic's own repo, or the repo of a comment link the lint resolves.
+  gh gets it as GH_TOKEN for that repo's calls only; every other call uses the
+  ambient token. A mapped variable unset or empty is exit 1, before anything
+  is fetched. No token's value is printed: one in gh's stderr shows as <$VAR>.
+  A comment link on an unmapped repo that doesn't resolve names any set
+  GH_TOKEN_<REPO> or GH_TOKEN_<OWNER>_<REPO> that would read it.
+
 lint:
   Every line the edit adds or changes is linted whole, so ticking a line that
   already holds a short ref or an unexpanded variable is refused with it. That
@@ -1224,16 +1233,141 @@ def field_hits(lines: list[str], field: str, nested: bool = False) -> list[int]:
 
 # ---------------------------------------------------------------- gh
 
+# The per-repo token map (#520): owner/repo, lowercased, to the variable
+# --token-for named for it and that variable's value. One ambient token can't
+# read a private sibling's refs, and a cohort keeps one PAT per repo. The value
+# goes to gh only as GH_TOKEN, for that repo's calls, and is never shown.
+TOKENS: dict[str, tuple[str, str]] = {}
+REPO_FORM = r"[\w.-]+/[\w.-]+"
+VAR_NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+AMBIENT_TOKENS = ("GH_TOKEN", "GITHUB_TOKEN")
+TOKEN_FOR_HELP = (
+    "read OWNER/REPO with the token held in environment variable VAR: its name,"
+    " never its value. gh gets it as GH_TOKEN for that repo's calls only."
+    " Repeatable. A cohort .env names them GH_TOKEN_<REPO>, e.g. --token-for"
+    " CannObserv/provisioner=GH_TOKEN_PROVISIONER. A mapped variable unset or"
+    " empty is a usage error, never a fall back to the ambient token"
+)
+
+
+def add_token_flag(p: argparse.ArgumentParser) -> None:
+    p.add_argument(
+        "--token-for",
+        action="append",
+        default=[],
+        metavar="OWNER/REPO=VAR",
+        help=TOKEN_FOR_HELP,
+    )
+
+
+def load_tokens(specs: list[str]) -> None:
+    """Fill TOKENS from --token-for values, or raise Usage before any gh call.
+
+    No message carries a value: a token pasted where its variable's name goes
+    is named as that, and only a spec's OWNER/REPO, which holds a "/" no token
+    does, is ever echoed.
+    """
+    TOKENS.clear()
+    for spec in specs:
+        repo, _, var = spec.partition("=")
+        if not re.fullmatch(REPO_FORM, repo):
+            raise Usage(
+                "--token-for wants OWNER/REPO=VAR; one value isn't of that form"
+            )
+        if any(rx.search(var) for rx in SECRET_RES):
+            raise Usage(
+                f"--token-for {repo}: what follows '=' looks like a token's value."
+                " Pass the name of the variable holding it, e.g. GH_TOKEN_<REPO>"
+            )
+        if not VAR_NAME_RE.fullmatch(var):
+            raise Usage(
+                f"--token-for {repo}: what follows '=' isn't an environment"
+                " variable's name"
+            )
+        value = os.environ.get(var)
+        if value is None:
+            raise Usage(f"--token-for {repo}: {var} is not set")
+        if not value.strip():
+            raise Usage(f"--token-for {repo}: {var} is empty")
+        had = TOKENS.get(repo.lower())
+        if had and had[0] != var:
+            raise Usage(f"--token-for maps {repo.lower()} to both {had[0]} and {var}")
+        TOKENS[repo.lower()] = (var, value)
+
+
+def repo_of(args: list[str]) -> str | None:
+    """The repo a gh call reads: its repos/OWNER/REPO path, or its -R."""
+    for i, a in enumerate(args):
+        if a in ("-R", "--repo") and i + 1 < len(args):
+            return args[i + 1]
+        m = re.match(r"repos/([^/?#]+/[^/?#]+)", a)
+        if m:
+            return m.group(1)
+    return None
+
+
+def gh_env(repo: str | None) -> dict | None:
+    """The environment for a call on repo: its mapped token as GH_TOKEN, else
+    None, which inherits the ambient one."""
+    hit = TOKENS.get((repo or "").lower())
+    return {**os.environ, "GH_TOKEN": hit[1]} if hit else None
+
+
+def scrub(text: str) -> str:
+    """text with every token this run holds shown as <$VAR>.
+
+    gh's whole stderr is surfaced (#410, #426), so a gh that ever printed its
+    environment would put a token in a warning or the summary (#520).
+    """
+    known = list(TOKENS.values()) + [
+        (v, os.environ.get(v) or "") for v in AMBIENT_TOKENS
+    ]
+    for var, value in sorted(known, key=lambda x: -len(x[1])):
+        if len(value) >= 8:
+            text = text.replace(value, f"<${var}>")
+    return text
+
+
+def token_hint(repo: str) -> str:
+    """What to try when a read of repo failed, or "" when nothing is known.
+
+    A mapped repo names its variable: no other token was tried. An unmapped
+    one names each set variable the cohort's .env would hold its PAT in,
+    GH_TOKEN_<REPO> or GH_TOKEN_<OWNER>_<REPO> with "." and "-" read as "_",
+    unless it holds the ambient token that just failed (#520).
+    """
+    hit = TOKENS.get(repo.lower())
+    if hit:
+        return f"read with {hit[0]} (--token-for)"
+    owner, _, name = repo.partition("/")
+
+    def up(s: str) -> str:
+        return re.sub(r"[^A-Za-z0-9]", "_", s).upper()
+
+    ambient = {os.environ.get(v) for v in AMBIENT_TOKENS} - {None, ""}
+    found = [
+        var
+        for var in (f"GH_TOKEN_{up(name)}", f"GH_TOKEN_{up(owner)}_{up(name)}")
+        if (os.environ.get(var) or "").strip() and os.environ.get(var) not in ambient
+    ]
+    if not found:
+        return ""
+    also = f" ({', '.join(found[1:])} is set too)" if found[1:] else ""
+    return f"{found[0]} is set: pass --token-for {repo}={found[0]}{also}"
+
 
 def gh(args: list[str], what: str) -> str:
     try:
-        r = subprocess.run(["gh", *args], capture_output=True, text=True)
+        r = subprocess.run(
+            ["gh", *args], capture_output=True, text=True, env=gh_env(repo_of(args))
+        )
     except FileNotFoundError:
         raise Infra("gh is not on PATH") from None
     if r.returncode != 0:
+        err = scrub(r.stderr.strip())
         raise Infra(
-            f"{what}: gh {' '.join(args)} exited {r.returncode}:\n{r.stderr.strip()}",
-            stderr=r.stderr.strip(),
+            f"{what}: gh {' '.join(args)} exited {r.returncode}:\n{err}",
+            stderr=err,
             code=r.returncode,
         )
     return r.stdout
@@ -1244,7 +1378,7 @@ def gh_json(args: list[str], what: str):
     try:
         return json.loads(out)
     except json.JSONDecodeError:
-        raise Infra(f"{what}: gh returned non-JSON: {out[:200]!r}") from None
+        raise Infra(f"{what}: gh returned non-JSON: {scrub(out[:200])!r}") from None
 
 
 def gh_graphql(query: str, variables: dict, what: str) -> tuple[dict, list[str]]:
@@ -1252,13 +1386,21 @@ def gh_graphql(query: str, variables: dict, what: str) -> tuple[dict, list[str]]
 
     gh exits 1 on a GraphQL error but still prints the response, so one null
     node (a deleted issue's alias) leaves the rest readable. With no data at
-    all (a 403, a bad query), it fails as gh() does.
+    all (a 403, a bad query), it fails as gh() does. A query whose variables
+    name an owner and a name runs with that repo's mapped token (#520).
     """
     args = ["api", "graphql", "-f", f"query={query}"]
     for k, v in variables.items():
         args += ["-F" if isinstance(v, int) else "-f", f"{k}={v}"]
+    repo = (
+        f"{variables['owner']}/{variables['name']}"
+        if {"owner", "name"} <= set(variables)
+        else None
+    )
     try:
-        r = subprocess.run(["gh", *args], capture_output=True, text=True)
+        r = subprocess.run(
+            ["gh", *args], capture_output=True, text=True, env=gh_env(repo)
+        )
     except FileNotFoundError:
         raise Infra("gh is not on PATH") from None
     try:
@@ -1267,14 +1409,15 @@ def gh_graphql(query: str, variables: dict, what: str) -> tuple[dict, list[str]]
         resp = None
     data = resp.get("data") if isinstance(resp, dict) else None
     if r.returncode != 0 and not data:
+        err = scrub(r.stderr.strip())
         raise Infra(
-            f"{what}: gh api graphql exited {r.returncode}:\n{r.stderr.strip()}",
-            stderr=r.stderr.strip(),
+            f"{what}: gh api graphql exited {r.returncode}:\n{err}",
+            stderr=err,
             code=r.returncode,
         )
     if not isinstance(data, dict):
-        raise Infra(f"{what}: gh returned no data: {r.stdout[:200]!r}")
-    return data, [str(e.get("message", e)) for e in resp.get("errors") or []]
+        raise Infra(f"{what}: gh returned no data: {scrub(r.stdout[:200])!r}")
+    return data, [scrub(str(e.get("message", e))) for e in resp.get("errors") or []]
 
 
 def fetch_issue(repo: str, num: int) -> dict:
@@ -1464,7 +1607,11 @@ def lint(
                 except Infra as e:
                     if not absent(e):
                         raise
-                    problems.append(f"comment link doesn't resolve: {m.group(0)} ({e})")
+                    hint = token_hint(m.group("repo"))
+                    problems.append(
+                        f"comment link doesn't resolve: {m.group(0)} ({e})"
+                        + (f"; {hint}" if hint else "")
+                    )
                     continue
                 if not str(data.get("issue_url", "")).endswith(
                     f"/issues/{m.group('num')}"
@@ -1719,6 +1866,7 @@ def run(argv: list[str]) -> int:
         help="baseline directory, holding OWNER/REPO/N/ (default"
         " $XDG_STATE_HOME/coordinating-epics, else ~/.local/state/coordinating-epics)",
     )
+    add_token_flag(p)
     a = p.parse_args(argv)
     host = a.repo
     if not re.fullmatch(r"[\w.-]+/[\w.-]+", host) or any(
@@ -1733,6 +1881,7 @@ def run(argv: list[str]) -> int:
         "written": False,
     }
     try:
+        load_tokens(a.token_for)  # before any gh call: exit 1 fetches nothing
         ops = []
         scan = None
         try:

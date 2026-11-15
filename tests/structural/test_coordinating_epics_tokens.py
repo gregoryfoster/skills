@@ -159,9 +159,10 @@ def test_f169_a_comment_link_on_a_private_sibling_resolves_with_its_token(rig):
     res = edit(rig, ops)
     assert res.returncode == 3, res.stderr
     assert "comment link doesn't resolve" in res.stderr
+    # The link's own spelling of the repo, which GitHub reads either way.
     assert (
         "GH_TOKEN_PROVISIONER is set: pass --token-for"
-        " cannobserv/provisioner=GH_TOKEN_PROVISIONER" in res.stderr
+        f" {PROV}=GH_TOKEN_PROVISIONER" in res.stderr
     ), res.stderr
     res = edit(rig, ops, *MAP)
     assert res.returncode == 0, res.stderr

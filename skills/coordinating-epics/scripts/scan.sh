@@ -8,6 +8,7 @@
 #
 # Usage: scan.sh --repo OWNER/REPO --epic N [--since TS] [--watermark N]
 #                [--from-sha SHA] [--git-dir DIR] [--ref REF] [--no-fetch]
+#                [--token-for OWNER/REPO=VAR]...
 #        scan.sh --help    full usage and exit codes
 #
 # Needs python3 (3.9+), git and an authenticated gh. JSON report on stdout,
