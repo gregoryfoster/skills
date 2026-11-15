@@ -107,7 +107,7 @@ A deviation the owner accepts is declared, not ignored:
 exception <what> <review-by YYYY-MM-DD> <reason>
 ```
 
-- A passed review-by date **expires** the exception, and the deviation becomes a finding again. So does the expiry: `expired-exception`, or `soak-ended` for a `disabled:` or `removed:` prune stage, below.
+- A passed review-by date **expires** the exception, and the deviation becomes a finding again. The expiry is itself a knob finding: `expired-exception`, or `soak-ended` for a `disabled:` or `removed:` prune stage, below.
 - Keeping a dormant component is an exception: `exception keep:<component> <review-by> <reason>`.
 - Each prune stage is declared the same way, as `disabled:<component>`, `removed:<component>` or `purged:<component>`. The review-by date is the prune calendar: when a `disabled:` or `removed:` line's passes, its expiry is `soak-ended`, not `expired-exception`, and the probe proposes the next stage for a component it reads, one of the six (#636). A `purged:` line has no next stage, so its expiry stays `expired-exception`. The probe doesn't read an `apt:<package>` component, so only `soak-ended` prompts it, and its next stage is `prune-plan.sh`'s `stage` ([pruning.md](pruning.md#any-other-apt-package)). A `purged:` line stays until the base image stops shipping the component.
 - **A package hold is declared as `held:<package>`.** A hold on a package in the pending set defers its update, and a security package never waits without an exception ([Two lanes](#two-lanes)). So an undeclared hold on a pending package is a finding, whether the owner placed it or an aborted run left it ([run.md](run.md)).
