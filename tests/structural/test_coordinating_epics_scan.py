@@ -41,13 +41,21 @@ BODY = """\
 
 
 def git(repo, *args):
-    return subprocess.run(
+    """Fails with git's own stderr (#617): a bare exit status was all two
+    load failures here left, so their cause could not be named. No retry:
+    a load reproduction (62 runs of this file under -n 8, load average up
+    to 263) did not fail, so a retry would hide a cause nobody has seen."""
+    r = subprocess.run(
         ["git", "-C", str(repo), *args],
         capture_output=True,
         text=True,
-        check=True,
         env={k: v for k, v in os.environ.items() if not k.startswith("GIT_")},
-    ).stdout.strip()
+    )
+    if r.returncode != 0:
+        raise AssertionError(
+            f"fixture git {' '.join(args)} exited {r.returncode} in {repo}:\n{r.stderr}"
+        )
+    return r.stdout.strip()
 
 
 @pytest.fixture
