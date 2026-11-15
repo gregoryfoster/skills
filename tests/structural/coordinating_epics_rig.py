@@ -162,7 +162,12 @@ if method == "POST":  # a new comment: repos/O/R/issues/N/comments (#654)
     find(repo).setdefault("comments", {}).setdefault(parts[4], []).append(
         {"id": cid, "html_url": url, "body": body, "created_at": now,
          "updated_at": now, "user": {"login": "gregoryfoster"}})
+    if st.get("post_bumps_issue"):  # GitHub moves the issue's updated_at (#658)
+        find(repo)["issues"][parts[4]]["updated_at"] = now
     st["comment_index"][str(cid)] = f"https://api.github.com/repos/{repo}/issues/{parts[4]}"
+    if st.get("post_fails_after_apply"):  # GitHub stored it; gh saw a 502 (#658)
+        st["post_fails_after_apply"] -= 1
+        fail("HTTP 502: Bad Gateway")
     out({"id": cid, "html_url": url})
 
 repo = f"{parts[1]}/{parts[2]}"

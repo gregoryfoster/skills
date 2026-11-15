@@ -1607,12 +1607,13 @@ def test_654_a_check_in_writes_the_body_then_posts_its_log_comment(adopted):
         }
     ]
     assert "#11 closed" not in adopted.body(REPO, EPIC)  # not in the body
-    # Re-run, as after an exit 4 or 5: the body is unchanged and the comment
-    # is found already posted, so nothing doubles.
+    # The same call again, after an exit 0: a second check-in, so its entry
+    # posts (#658). A re-run after an exit 5 finds its comment instead
+    # (test_coordinating_epics_log_comments.py).
     res = adopted.edit(REPO, EPIC, ops)
     assert res.returncode == 0, res.stderr
-    assert summary(res)["log_comments"][0]["posted"] == "already"
-    assert len(adopted.load()["posts"]) == 1
+    assert summary(res)["log_comments"][0]["posted"] is True
+    assert len(adopted.load()["posts"]) == 2
 
 
 def _today():

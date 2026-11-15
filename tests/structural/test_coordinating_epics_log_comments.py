@@ -12,6 +12,9 @@ attempt. A fake gh stands in for GitHub.
 
 from __future__ import annotations
 
+import datetime as dt
+import json
+
 from tests.structural.coordinating_epics_rig import Rig, summary
 
 REPO = "acme/widgets"
@@ -110,3 +113,102 @@ def test_657_the_recipes_dry_run_names_them_and_a_body_section_accounts_for_them
     assert body.rstrip().endswith(POINTER)
     s = summary(res)
     assert s["unlisted"] == [] and s["counts_after"] == s["counts_before"]
+
+
+# ---------------------------------------------------------------- #658
+
+
+def _today() -> str:
+    return dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d")
+
+
+NO_CHANGE = {"op": "log-comment", "text": "No change. Next: #13."}
+
+
+def _adopted(tmp_path):
+    r = Rig(tmp_path)
+    r.issue(REPO, EPIC, body=LOGGED, updated_at="2026-11-14T09:00:00Z")
+    for n in (11, 12, 13, 14, 15):
+        r.issue(REPO, n)
+    res = r.edit(REPO, EPIC, [], "--adopt-live")
+    assert res.returncode == 0, res.stderr
+    r.set_flag("server_now", "2026-11-15T10:00:00Z")
+    r.set_flag("post_bumps_issue", True)
+    return r
+
+
+def test_658_two_check_ins_on_one_date_with_identical_text_post_two_comments(
+    tmp_path,
+):
+    """#658, verbatim: two calls on the same date with identical log-comment
+    text post two comments. The log records every check-in, one that found
+    nothing included."""
+    r = _adopted(tmp_path)
+    first = r.edit(REPO, EPIC, [NO_CHANGE])
+    assert first.returncode == 0, first.stderr
+    second = r.edit(REPO, EPIC, [NO_CHANGE])
+    assert second.returncode == 0, second.stderr
+    assert summary(second)["log_comments"][0]["posted"] is True
+    want = f"**Check-in log, {_today()}**\n\nNo change. Next: #13."
+    assert r.load()["posts"] == [want, want]
+    urls = [summary(x)["log_comments"][0]["url"] for x in (first, second)]
+    assert urls[0] != urls[1]
+
+
+def test_658_a_rerun_after_exit_5_still_posts_nothing_twice(tmp_path):
+    """#658, verbatim: a re-run after an exit 5 still posts nothing twice,
+    both when the failed POST stored nothing and when it landed anyway."""
+    r = _adopted(tmp_path)
+    r.set_flag("fail_paths", {"POST": "HTTP 502: Bad Gateway"})
+    assert r.edit(REPO, EPIC, [NO_CHANGE]).returncode == 5
+    r.set_flag("fail_paths", {})
+    res = r.edit(REPO, EPIC, [NO_CHANGE])  # nothing was stored: it posts
+    assert res.returncode == 0 and summary(res)["log_comments"][0]["posted"] is True
+    assert len(r.load()["posts"]) == 1
+
+    r.set_flag("post_fails_after_apply", 1)
+    assert r.edit(REPO, EPIC, [NO_CHANGE]).returncode == 5
+    assert len(r.load()["posts"]) == 2  # stored, though gh said 502
+    res = r.edit(REPO, EPIC, [NO_CHANGE])
+    assert res.returncode == 0, res.stderr
+    post = summary(res)["log_comments"][0]
+    assert post["posted"] == "already"
+    assert post["url"] == r.load()["repos"][REPO]["comments"][str(EPIC)][-1]["html_url"]
+    assert len(r.load()["posts"]) == 2
+
+
+def test_658_a_rerun_days_after_the_epic_last_moved_still_finds_its_comment(
+    tmp_path,
+):
+    """#658's second edge: the re-run comes after a later comment moved the
+    epic's updated_at more than two days on. The old window, two days before
+    updated_at, no longer held the comment, and it posted again."""
+    r = _adopted(tmp_path)
+    r.set_flag("post_fails_after_apply", 1)
+    assert r.edit(REPO, EPIC, [NO_CHANGE]).returncode == 5
+    r.comment(
+        REPO,
+        EPIC,
+        777,
+        body="a sibling's note",
+        created_at="2026-11-19T10:00:00Z",
+        updated_at="2026-11-19T10:00:00Z",
+    )
+    r.issue(REPO, EPIC, updated_at="2026-11-19T10:00:00Z")
+    res = r.edit(REPO, EPIC, [NO_CHANGE])
+    assert res.returncode == 0, res.stderr
+    assert summary(res)["log_comments"][0]["posted"] == "already"
+    assert len(r.load()["posts"]) == 1
+
+
+def test_658_each_attempt_is_recorded_beside_the_baseline(tmp_path):
+    """Option 2: the editor records each comment it posts or tries to post,
+    with a write id; a dry run records nothing."""
+    r = _adopted(tmp_path)
+    assert r.edit(REPO, EPIC, [NO_CHANGE], "--dry-run").returncode == 0
+    path = r.state_dir / "acme" / "widgets" / str(EPIC) / "comments.jsonl"
+    assert not path.exists()
+    assert r.edit(REPO, EPIC, [NO_CHANGE]).returncode == 0
+    recs = [json.loads(ln) for ln in path.read_text().splitlines()]
+    assert [x["state"] for x in recs] == ["pending", "posted"]
+    assert recs[0]["id"] == recs[1]["id"] and recs[1]["url"].endswith("-9901")
