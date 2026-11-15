@@ -4578,7 +4578,9 @@ read_docker() {
       UNK="its state couldn't be read"
     fi
   fi
-  engine docker "$inst" docker.service "" 'docker|containerd' 'docker.io docker-ce* containerd* runc' "$WL" "$INUSE" "$DORM" "$UNK"
+  # Its CLI plugins too, by Ubuntu's names and Docker's own (#611), as
+  # _prune-lib.sh's roots_of docker.
+  engine docker "$inst" docker.service "" 'docker|containerd' 'docker.io docker-ce* docker-buildx docker-buildx-plugin docker-compose docker-compose-plugin docker-compose-v2 containerd* runc' "$WL" "$INUSE" "$DORM" "$UNK"
 }
 
 read_postgres() {

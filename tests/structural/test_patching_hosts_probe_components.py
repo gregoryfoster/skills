@@ -428,6 +428,27 @@ def test_a_dormant_component_lists_its_pending_security_packages_only(host):
     assert d["pending_security"] == ["docker.io"]
 
 
+def test_a_dormant_dockers_cli_plugins_are_its_pending_security_packages(host):
+    # Ubuntu's and Docker's own plugin names alike (#611).
+    names = [
+        "docker-buildx",
+        "docker-compose-v2",
+        "docker-buildx-plugin",
+        "docker-compose-plugin",
+        "docker-compose",
+        "docker-ce-cli",
+    ]
+    host.on(
+        "apt-get",
+        "-s *dist-upgrade",
+        "".join(
+            f"Inst {n} [1.0] (1.1 Ubuntu:24.04/noble-security [amd64])\n" for n in names
+        ),
+    )
+    d = _dormant(_docker(host).run(), "docker")
+    assert sorted(d["pending_security"]) == sorted(names)
+
+
 @pytest.mark.parametrize(
     "extra, security_only, listed",
     [
