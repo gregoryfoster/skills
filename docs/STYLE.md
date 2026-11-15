@@ -123,7 +123,7 @@ Separately, `git config --local` from a **linked worktree** writes the *shared* 
 
 ## A nested pytest uses `nested_pytest_env`
 
-It drops the outer gate's `PYTEST_*`, workers and temp root ([#554](https://github.com/gregoryfoster/skills/issues/554); [tests/utils/nested_pytest.py](../tests/utils/nested_pytest.py) says why). Strip `GIT_*` from its `base` first. `test_nested_pytest_env.py` checks files, not calls.
+It keeps the outer gate's `PYTEST_*`, workers and temp root out of the child ([#554](https://github.com/gregoryfoster/skills/issues/554); [tests/utils/nested_pytest.py](../tests/utils/nested_pytest.py) says why). Strip `GIT_*` from its `base` first. `test_nested_pytest_env.py` checks files, not calls.
 
 ## `extensions.worktreeConfig` is refused here
 
