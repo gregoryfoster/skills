@@ -1,11 +1,11 @@
 # Ending a run
 
-There are four ways a run ends. It closes. It hands a final child to the operator. It runs out of children before its exit criterion. Or it parks. A citation such as "watcher F58" names a run's entry in [process-log.md](process-log.md), then that run's finding number.
+There are four ways a run ends. It closes. It hands a final child to the operator. It runs out of children before its exit criterion. Or it parks. A citation such as "watcher F58" names a run's entry in [process-log.md](process-log.md), then that run's finding number; where a repo has two entries, the date follows the repo ("archiver 11-10 3").
 
 ## The final child the operator runs
 
 When the last child is the operator's (a cutover, a migration run by hand), consolidate first. Comments from many check-ins pile up on that issue: step answers, renames, verification debt, accepted behaviours, preconditions. Fold them into one ordered runbook (archiver 55, 56):
-1. Verification debt to discharge first, on dev. Debts that share setup run together; one debt's setup can create the state the next one needs.
+1. Verification debt to discharge first, on dev. Debts that share setup run together; one debt's setup can create the state the next one needs. Where a gate's window may close unrun, name the substitute evidence before the freeze (private-library 10-27 2).
 2. Production steps, with the answers already known.
 3. Read-only verification.
 4. Expected quirks, from the accepted-limitations routing.
@@ -18,13 +18,14 @@ Tag each item with the child it came from. **Before the last item ships, propose
 
 **Closing checks** (archiver 58; watcher F58, F63):
 - **Every sub-issue is closed.** Every unticked line is ticked, moved to a follow-up issue, or marked out of scope. Promised out-of-epic issues are filed (archiver 59).
+- **Every line is re-probed against its own refs and condition, not only its box.** An open line's work may have landed elsewhere (archiver 11-10 3). A ticked line may name a ref still open, and a closed child's "parked on the epic" may have no Parked line; `--account` passes both (power-map 11-14 A1, P2). A parent or sibling epic's copy of the line may lag (watcher 368-F6). Copy the facts a surviving item depends on from the watch blocks onto that issue (processor F176).
 - **The final state is re-verified independently,** never taken from the last thread's report. For example: SQL equality on destinations, the public object returning 200, the follower's journal.
 - **Watching and verification debt are settled.** Each item is resolved, filed, or moved to a dated issue. A check dated after the end goes to a dated issue rather than holding the epic open (watcher F60).
 - **Readings that need uptime come before any restart** (watcher F58).
 - **The implementers' unfiled observations** are listed in the summary for the operator to decide on, never dropped.
 - **The accounting check passes,** for a whole-backlog or number-range epic: `epic-edit.sh … --account [N]`.
 
-**The order:** write the final body, then post the summary comment, then close. The final body write passes `--closed-ok`: a final child's thread may have closed the epic already (#502 F5), and without the flag the editor refuses a closed epic (#519). Its summary then names who closed it and when; if that wasn't the operator, say so in the summary comment. A summary groups by theme, not by issue order, and records the live state left behind (status 98, watcher F63). Post the summary with `bash "<comment.sh>" --repo OWNER/REPO --issue N --body-file <summary>`, which refuses an empty file and lints it, then `gh issue close N`.
+**The order:** write the final body, then post the summary comment, then close. The final body write passes `--closed-ok`: a final child's thread may have closed the epic already (private-library 10-27 5), and without the flag the editor refuses a closed epic (#519). Its summary then names who closed it and when; if that wasn't the operator, say so in the summary comment. A summary groups by theme, not by issue order, and records the live state left behind (status 98, watcher F63). Post the summary with `bash "<comment.sh>" --repo OWNER/REPO --issue N --body-file <summary>`, which refuses an empty file and lints it, then `gh issue close N`.
 
 **If the thread keeps coordinating follow-ups,** the summary restates the role: "This thread continues as coordinator for #A and #B; implementation stays in separate threads." Without that line, a later "proceed" read as "implement here", and the coordinator built and shipped a child in its own thread (archiver 60).
 

@@ -1,6 +1,6 @@
 # The hand-off
 
-What the coordinator gives the implementer: a brief posted on the issue, and a short kickoff prompt that points to it. A citation such as "processor F88" names a run's entry in [process-log.md](process-log.md), then that run's finding number.
+What the coordinator gives the implementer: a brief posted on the issue, and a short kickoff prompt that points to it. A citation such as "processor F88" names a run's entry in [process-log.md](process-log.md), then that run's finding number. Where a repo has two entries whose numbers collide, the date follows the repo: "private-library 10-27 5".
 
 ## Where it goes
 
@@ -24,6 +24,8 @@ Run these against `origin/main` without switching branches: `git fetch`, then `g
 - **Measure usage, and test the suspected cause against the incident data.** Either can re-tier, split or redirect the child (private-backlog 138, 141).
 - **Probe an operator step live before handing it over.** It may already be done (broker 97).
 - **Check that recommended tags and refs resolve** (broker 148).
+- **Read the exact headroom of every budgeted doc the child will touch.** A doc at its budget is a shared surface: sequence the children that grow it, and when one defers an overage, name the child that pays it (broker 123; broker 10-23 5; replicator P1).
+- **A parked brief's pre-flight is a list to re-run, not a result.** Re-run it when the item becomes next, and search by meaning as well as by token: who produces, who publishes, "replaced by" (replicator P1, P2).
 - **Settle an open design question before naming the child.** Read the code for the facts, offer options with that evidence, and post the decision on the issue (private-launch 28, private-backlog 136).
 
 ## What the brief holds
@@ -33,11 +35,12 @@ Shape it from cannobserv 24 and the runs since:
 - **What changed since filed,** from the harvest.
 - **Blockers now clear,** and which docs PR to merge first, if a child depends on one (archiver 13, 16).
 - **Hazards, as things to weigh, not rules,** so the thread can overrule the brief when the code says otherwise. When it does, record the coordinator's error on the epic line (status 11, broker 127).
-- **Claims labelled by evidence:** `[measured]` read from the live system; `[traced]` followed through the code; `[stated]`, the issue or a person says so. The implementer upgrades a `[traced]` claim before relying on it (processor F88, F113). Give a bug's mechanism from the code, not the issue's title, with its label (processor F110).
+- **Claims labelled by evidence:** `[measured]` read from the live system; `[traced]` followed through the code; `[stated]`, the issue or a person says so. The implementer upgrades a `[traced]` claim before relying on it (processor F88, F113). Give a bug's mechanism from the code, not the issue's title, with its label (processor F110). A claim about another system (a consumer's code, a host inventory, a peer's or a stream's state, a guard's coverage) is `[traced]` or `[measured]` only when read at its source in this check-in. From notes, a policy file's summary line or memory it is `[stated]`, and an inventory claim stays `[stated]` until the operator confirms it. Where a decision turns on a peer's state, measure it or put the question to the peer (private-library 10-20 2, 10-27 3; notifier A2; archiver 11-10 1; power-map 11-14 addendum 2).
 - **Diagnoses framed as "confirmed so far",** with a request to look for other symptoms of the same mechanism (private-backlog 144).
 - **The child's own reproduction, verbatim, as the first red test,** beside the tests of the decided mechanism. A decided fix passed its own tests and missed the issue's headline case; the next brief quoted the case, and its test caught a decision that missed it. It is the first red test, not the only one: the review still looks for the rest of its class (orchestrating-issue-backlog's log: 2026-11-02 skills #533, 2026-11-03 skills #550, 2026-11-06 skills #566).
 - **Open operator decisions, in brackets with a recommendation:** `[Operator decision: … — recommend Y]`. Starting the thread counts as approving the recommendation. The implementer never settles a decision by default (status 55, 69, 70).
 - **Expected side effects marked as expected,** such as a known-red window between merge and a host step, so no one chases them (archiver 51; status 80, 82).
+- **Who closes the child, and when:** at merge, at the release, or after the coordinator verifies, and a release's tag form. Implementers otherwise re-derive the epic's practice, or close before verification (private-library 10-20 4; power-map 11-14 addendum 3).
 - **Moving targets** given as "the live value at ship time; X when this was written" (private-backlog 154).
 - **The deploy policy,** whenever a peer is in a soak (processor F104).
 - **Templates:** the last shipped child that looks like this one.
@@ -56,7 +59,7 @@ Run the code review and fix its findings, or record each declined one with its r
 The report names the final SHA. Pause before shipping. Never close the epic, even after the last child: the coordinator closes it.
 ```
 
-**Keep "never close the epic" on a final child's kickoff.** One run's final child thread verified, posted a summary and closed the epic itself, so the coordinator's last body write never happened and the cursors stayed stale (#502 F5). `epic-edit.sh` now refuses a closed epic without `--closed-ok` (#519).
+**Keep "never close the epic" on a final child's kickoff.** One run's final child thread verified, posted a summary and closed the epic itself, so the coordinator's last body write never happened and the cursors stayed stale (private-library 10-27 5). `epic-edit.sh` now refuses a closed epic without `--closed-ok` (#519).
 
 **A prompt instruction the implementer skips gets noted, and the wording adjusted. It isn't enforced** (status 42). **A review "stet" that recurs across close-outs** points to a gap in the prompt. Offer the operator a one-line addition; don't add it on your own (watcher F31, F34).
 
@@ -69,7 +72,7 @@ The report names the final SHA. Pause before shipping. Never close the epic, eve
 - **A flake:** ask for a forced, deterministic reproduction, not more loops (status 96).
 - **A child that writes production data:** name the write gate, and how narrow the write must be. Send one field, not a read-modify-write of the whole record. Check each derived value against its back-link. Stop for the operator before writing (private-cli 45).
 - **"This command breaks prod":** put the safe reproduction and the restore command at the top (private-backlog 135).
-- **Destructive or irreversible steps:** name each one as "needs your approval in the thread", so the stop is expected (broker 138).
+- **Destructive or irreversible steps:** name each one as "needs your approval in the thread", so the stop is expected (broker 138). A Verify step that needs a production Job or a production database read names the operator's consent as its precondition (private-release-move 6).
 - **A doc correction:** list every doc found by searching the claim's terms, not its figure (broker 154).
 - **An item that changes how code reaches production:** flag the deploy recipe steps it affects. Take the new recipe from the merged docs, and treat its first use as its test (processor F95, F97).
 - **A decision that replaces a reference implementation:** require an equivalence check while both still exist (processor F126, F132).
