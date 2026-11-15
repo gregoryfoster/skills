@@ -127,7 +127,8 @@ exit codes:
      read afterwards is unchanged.
   3  refused: a foreign edit, a baseline no write or adoption of this tool
      saved (its hash is recorded beside it, in writes.jsonl), a missing
-     anchor, a count or lint failure, a header line a later op removed or
+     anchor, a count or lint failure, a new body that grows past
+     --body-limit, a header line a later op removed or
      changed, an open issue the epic doesn't list (--account [FROM]), a new
      issue in the --scan report that the body doesn't mention, or a closed
      epic without --closed-ok (the message names who closed it and when; a
@@ -136,7 +137,18 @@ exit codes:
      back differs from the body sent, the read-back failed, or the baseline
      couldn't be saved; or the PATCH failed and whether it landed is unknown
      ("written": "unknown"). The summary says which. Read the epic, then take
-     it with --adopt-live before the next edit.
+     it with --adopt-live before the next edit. Or not applied ("written":
+     false, "readback": "unchanged"): the PATCH returned success, but the body
+     read back is the one from before the edit, so nothing landed and the
+     baseline still holds. Near --body-limit, the host's size cap is the likely
+     cause (#653): make the body smaller, then re-run.
+
+body size:
+  Every summary that built a new body gives its size as GitHub keeps it,
+  "body": {"chars", "limit", "share"}, and a WARNING past 85% of the limit.
+  Past its cap the host keeps the old body and still reports success (#653),
+  so a new body that grows past --body-limit is refused before anything is
+  sent. One that shrinks goes through, so room can always be made.
 """
 
 # A task item's marker is a bullet or an ordered one, "1." or "1)", up to
@@ -289,6 +301,10 @@ class Parser(argparse.ArgumentParser):
 
 
 ACCOUNT_LIMIT = 5000
+# Characters, as #653 measured. The host's cap is inferred, not documented:
+# 256 KiB, where a 260,219-character body plus 2,100 kept its old body.
+BODY_LIMIT = 262_144
+BODY_WARN = 0.85
 
 OP_FIELDS = {
     "tick": ("ref",),
@@ -1639,6 +1655,34 @@ def foreign_edits(
     return sorted(out, key=lambda x: x["at"])
 
 
+def body_size(lines: list[str], limit: int) -> dict:
+    """The body's size as GitHub keeps it (no final newline), against the limit."""
+    chars = len("\n".join(lines))
+    return {"chars": chars, "limit": limit, "share": round(chars / limit, 3)}
+
+
+def size_text(size: dict) -> str:
+    """ "262,319 characters, 100.1% of the 262,144-character limit" """
+    return (
+        f"{size['chars']:,} characters, {size['chars'] / size['limit']:.1%} of the"
+        f" {size['limit']:,}-character limit"
+    )
+
+
+def near_limit(size: dict) -> bool:
+    return size["chars"] > BODY_WARN * size["limit"]
+
+
+def positive_int(value: str) -> int:
+    try:
+        n = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"{value!r} is not a whole number") from None
+    if n <= 0:
+        raise argparse.ArgumentTypeError(f"{value!r} must be above 0")
+    return n
+
+
 def write_atomic(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=path.name, suffix=".tmp")
@@ -1713,6 +1757,14 @@ def run(argv: list[str]) -> int:
     )
     p.add_argument(
         "--no-link-check", action="store_true", help="skip resolving new comment links"
+    )
+    p.add_argument(
+        "--body-limit",
+        type=positive_int,
+        default=BODY_LIMIT,
+        metavar="N",
+        help=f"refuse a new body that grows past N characters (default {BODY_LIMIT:,},"
+        " near the host's inferred cap, #653); warn past 85%%",
     )
     p.add_argument(
         "--state-dir",
@@ -1975,13 +2027,31 @@ def run(argv: list[str]) -> int:
         before = counts(live_lines)
         new, expect, notes = apply_ops(live_lines, ops, host, now, scan)
         after = counts(new)
-        summary.update(counts_before=before, counts_after=after, notes=notes)
+        size = body_size(new, a.body_limit)
+        summary.update(counts_before=before, counts_after=after, notes=notes, body=size)
+        if near_limit(size):
+            print(
+                f"WARNING the body is {size_text(size)}. Past the host's cap a"
+                " write keeps the old body (#653): make room before it gets there",
+                file=sys.stderr,
+            )
         if not new:
             raise Refused("the result is empty")
         want = {k: before[k] + expect[k] for k in before}
         if after != want:
             raise Refused(
                 f"checkbox counts {after} don't match the {want} the operations imply"
+            )
+        # Growth past the limit only: a write that shrinks an over-limit body
+        # is how room gets made, and nothing written can't overflow (#653).
+        if size["chars"] > a.body_limit and size["chars"] > len("\n".join(live_lines)):
+            raise Refused(
+                f"the new body is {size['chars']:,} characters,"
+                f" {size['chars'] - a.body_limit:,} over the {a.body_limit:,}-character"
+                " limit (--body-limit). Past its cap the host keeps the old body and"
+                " still reports success (#653), so nothing was sent. Make room first:"
+                " move the log into comments, or cut ticked lines to their title and"
+                " a link"
             )
 
         # A created epic's body never passed through apply_ops, so an empty
@@ -2149,6 +2219,31 @@ def run(argv: list[str]) -> int:
             landed = False
         else:
             landed = back == normalize(text)
+        if not patch_error and not landed and back_lines == live_lines:
+            # gh called the PATCH good, and the body is the one from before it:
+            # the host kept it, as past its size cap (#653). Nothing landed, so
+            # the baseline still matches the live body.
+            summary["readback"] = "unchanged"
+            print(json.dumps(summary, indent=2))
+            if near_limit(size):
+                why = (
+                    "The host's issue-body size cap is the likely cause: make the body"
+                    " smaller (move the log into comments, cut ticked lines to their"
+                    " title and a link), then re-run"
+                )
+            else:
+                why = (
+                    "That is far below the limit. Read the epic and its edit history,"
+                    " then re-run the same edit"
+                )
+            print(
+                "ERROR the PATCH returned success, but the body read back is the one"
+                " from before the edit: nothing landed. The baseline still matches the"
+                f" live body, so it needs no re-adopting. The new body is"
+                f" {size_text(size)}. {why}",
+                file=sys.stderr,
+            )
+            return EXIT_READBACK
         if patch_error:
             if landed:
                 print(

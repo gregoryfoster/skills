@@ -2214,7 +2214,8 @@ def test_653_a_write_that_crosses_the_cap_is_refused_and_one_that_fits_lands(rig
     assert "262,319 characters" in res.stderr and "262,144" in res.stderr
     assert "175 over" in res.stderr
     rig.set_flag("patch_noop", False)
-    compact = "Verified on the merge SHA: " + "e" * (650 - 3 - 27)
+    # "net +650" in the issue's words; its two sizes differ by 651.
+    compact = "Verified on the merge SHA: " + "e" * (651 - 3 - 27)
     res = rig.edit(REPO, EPIC, [{"op": "note", "ref": "#12", "text": compact}])
     assert res.returncode == 0, res.stderr
     s = summary(res)
