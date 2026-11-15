@@ -599,3 +599,15 @@ def test_cr_2261_more_check_runs_than_it_reads_says_what_to_do(rig):
     assert res.returncode == 2
     assert "narrow the range" not in res.stderr
     assert "by hand" in res.stderr and "#394" in res.stderr
+
+
+def test_cr_2263_a_disabled_workflows_jobs_arent_expected(rig):
+    """A workflow disabled on GitHub never runs, so its push jobs would read
+    as never ran at every check-in, and every --wait would run out."""
+    rig.state["workflows"]["old.yml"] = "on: push\njobs:\n  t:\n    runs-on: x\n"
+    rig.state["active"].append(
+        {"id": 9, "path": ".github/workflows/old.yml", "state": "disabled_manually"}
+    )
+    rep = report(rig.run())
+    assert rep["missing"] == [] and rep["verdict"] == "green", rep["because"]
+    assert any("old.yml" in w and "disabled_manually" in w for w in rep["warnings"])

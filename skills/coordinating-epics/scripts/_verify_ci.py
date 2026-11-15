@@ -61,11 +61,12 @@ SKIP_CI_RE = re.compile(
 USAGE_EXTRA = """\
 what it reads:
   - the workflows in .github/workflows at --sha, and the files changed from
-    --base (default: --sha's first parent) to --sha. Each workflow whose push
-    trigger matches --branch, and whose paths / paths-ignore filter the changed
-    files pass, is expected to run every job. A job with its own `if:`, or one
-    that needs such a job, is "conditional": reported when it ran, never
-    missing. A head commit carrying [skip ci] (or its kin) expects nothing.
+    --base (default: --sha's first parent) to --sha. Each workflow not
+    disabled on GitHub whose push trigger matches --branch, and whose paths /
+    paths-ignore filter the changed files pass, is expected to run every job.
+    A job with its own `if:`, or one that needs such a job, is "conditional":
+    reported when it ran, never missing. A head commit carrying [skip ci] (or
+    its kin) expects nothing.
   - the check runs on --sha, each tied to its workflow by check suite.
   - the check runs on the branch's tip, when that isn't --sha.
   - each active workflow's latest run on the branch, any event but a pull
@@ -80,8 +81,9 @@ output (JSON on stdout):
   event, branch, superseded, expected}. branch is the run's: only a push run
   on --branch counts for an expected job. superseded is true for a job of a
   run that a later run of the same workflow, event and branch replaced, such
-  as an earlier nightly on an idle tip: shown, never judged. target is "sha", "main" (the branch's tip) or
-  "main-latest". conclusion stays null until status is "completed".
+  as an earlier nightly on an idle tip: shown, never judged. target is
+  "sha", "main" (the branch's tip) or "main-latest". conclusion stays null
+  until status is "completed".
   expected is true, "conditional" or false for a "sha" row, and null for the
   others, which are read, not predicted.
   missing: each expected job with no check run on --sha, {workflow, job}.
@@ -430,13 +432,20 @@ def own_latest(repo: str, wf: dict, branch: str) -> tuple[dict | None, bool]:
     return None, passed
 
 
-def latest_on_branch(repo: str, branch: str, warnings: list[str]) -> list[dict]:
+def workflow_states(repo: str) -> list[dict]:
+    """GitHub's workflows, each with its state: active, or disabled."""
+    return list(
+        pages(f"repos/{repo}/actions/workflows", "listing the workflows", "workflows")
+    )
+
+
+def latest_on_branch(
+    repo: str, branch: str, warnings: list[str], listing: list[dict]
+) -> list[dict]:
     """Each active workflow's latest own run on branch, any event but a pull
     request's, with its jobs."""
     rows = []
-    for wf in pages(
-        f"repos/{repo}/actions/workflows", "listing the workflows", "workflows"
-    ):
+    for wf in listing:
         if wf.get("state") != "active":
             continue
         latest, passed = own_latest(repo, wf, branch)
@@ -481,6 +490,7 @@ def expect(
     skip_ci: bool,
     warnings: list[str],
     capped: bool = False,
+    disabled: dict[str, str] | None = None,
 ) -> list[dict]:
     """Each job the push should run: {workflow, job, prefix, whole, conditional}."""
     out = []
@@ -492,6 +502,11 @@ def expect(
     for path, doc in sorted(docs.items()):
         trigger = push_trigger(doc)
         if trigger is None:
+            continue
+        if path in (disabled or {}):  # it never runs (CR 2263)
+            warnings.append(
+                f"{path} is {disabled[path]} on GitHub, so its jobs aren't expected"
+            )
             continue
         runs = push_runs(
             trigger if isinstance(trigger, dict) else {},
@@ -581,6 +596,7 @@ def read_once(
     a, report: dict, docs: dict, files: list[str] | None, skip_ci: bool
 ) -> None:
     warnings: list[str] = list(report["warnings_fixed"])
+    listing = workflow_states(a.repo)
     expected = expect(
         docs,
         report["branch"],
@@ -588,6 +604,11 @@ def read_once(
         skip_ci,
         warnings,
         (report["changed_files"] or 0) >= FILTER_FILES,
+        {
+            str(wf.get("path")): str(wf.get("state"))
+            for wf in listing
+            if wf.get("state") != "active"
+        },
     )
     rows = check_rows(a.repo, report["sha"], "sha")
     tip = gh_json(
@@ -597,7 +618,7 @@ def read_once(
     report["main_sha"] = ((tip or {}).get("commit") or {}).get("sha")
     if report["main_sha"] and report["main_sha"] != report["sha"]:
         rows += check_rows(a.repo, report["main_sha"], "main")
-    rows += latest_on_branch(a.repo, report["branch"], warnings)
+    rows += latest_on_branch(a.repo, report["branch"], warnings, listing)
     missing, unmatched = judge(expected, rows, report["branch"])
     report.update(
         rows=rows,
