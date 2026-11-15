@@ -83,7 +83,10 @@ if p[:1] == ["commits"] and len(p) == 2:
     out({"sha": sha, "parents": [{"sha": x} for x in c.get("parents", [])],
          "commit": {"message": c.get("message", "a change")}})
 if p[:1] == ["compare"]:
-    paged("files", [{"filename": f} for f in st["files"]])
+    # GitHub's compare lists 300 files at most, on page 1; later pages are
+    # empty (CR 2262).
+    files = [{"filename": f} for f in st["files"][:300]]
+    out({"files": files if page == 1 else []})
 if p[:3] == ["contents", ".github", "workflows"] and len(p) == 3:
     out([{"type": "file", "path": ".github/workflows/" + n} for n in st["workflows"]])
 if p[:3] == ["contents", ".github", "workflows"]:
@@ -400,11 +403,13 @@ def test_the_tip_is_read_when_it_isnt_the_sha(rig):
 
 
 def test_over_300_changed_files_makes_a_filtered_workflow_conditional(rig):
+    """GitHub's compare stops at 300 files, so 300 read means 300 or more
+    (CR 2262): the fake lists 301 and returns 300, as GitHub does."""
     rig.state["files"] = [f"src/f{i}.py" for i in range(301)]
     rig.state["checks"][SHA] = [[]]
     rep = report(rig.run())
-    assert rep["missing"] == [] and rep["changed_files"] == 301
-    assert any("first 300" in w for w in rep["warnings"])
+    assert rep["missing"] == [] and rep["changed_files"] == 300
+    assert any("300 or more" in w and "first 300" in w for w in rep["warnings"])
 
 
 def test_base_defaults_to_the_first_parent_and_can_be_given(rig):

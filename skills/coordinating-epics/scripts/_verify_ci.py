@@ -92,6 +92,8 @@ output (JSON on stdout):
     pending     a job isn't completed yet; re-run, or pass --wait
     incomplete  an expected job never ran, or a name couldn't be matched
     green       every job completed, and none of those
+  changed_files: how many files GitHub's compare listed, 300 at most: at 300,
+  a filtered workflow is "conditional", since GitHub filters on those only.
   warnings: what limited the reading, such as a filter over 300 files.
 
 waiting:
@@ -175,7 +177,12 @@ def push_trigger(doc: dict):
 
 
 def push_runs(
-    trigger: dict, branch: str, files: list[str] | None, warnings: list[str], wf: str
+    trigger: dict,
+    branch: str,
+    files: list[str] | None,
+    warnings: list[str],
+    wf: str,
+    capped: bool = False,
 ):
     """True, False, or "conditional" when the files can't settle it."""
     branches = as_list(trigger.get("branches"))
@@ -197,10 +204,10 @@ def push_runs(
             " are unknown"
         )
         return "conditional"
-    if len(files) > FILTER_FILES:
+    if capped:  # GitHub's compare lists no more than these (CR 2262)
         warnings.append(
-            f"{wf}: {len(files)} files changed, and GitHub filters on the first"
-            f" {FILTER_FILES} only, so whether it ran can't be predicted"
+            f"{wf}: {FILTER_FILES} or more files changed, and GitHub filters on"
+            f" the first {FILTER_FILES} only, so whether it ran can't be predicted"
         )
         return "conditional"
     if paths:
@@ -306,15 +313,18 @@ def workflows_at(repo: str, sha: str, warnings: list[str]) -> dict[str, dict]:
     return out
 
 
-def changed_files(repo: str, base: str, sha: str) -> list[str]:
-    files = []
+def changed_files(repo: str, base: str, sha: str) -> tuple[list[str], int]:
+    """The paths the change touches, and how many files GitHub listed: a
+    rename is one file, two paths."""
+    files, listed = [], 0
     for f in pages(
         f"repos/{repo}/compare/{base}...{sha}", "reading the changed files", "files"
     ):
+        listed += 1
         files.append(f.get("filename", ""))
         if f.get("previous_filename"):  # a rename touches both paths
             files.append(f["previous_filename"])
-    return files
+    return files, listed
 
 
 def check_rows(repo: str, sha: str, target: str) -> list[dict]:
@@ -470,6 +480,7 @@ def expect(
     files: list[str] | None,
     skip_ci: bool,
     warnings: list[str],
+    capped: bool = False,
 ) -> list[dict]:
     """Each job the push should run: {workflow, job, prefix, whole, conditional}."""
     out = []
@@ -483,7 +494,12 @@ def expect(
         if trigger is None:
             continue
         runs = push_runs(
-            trigger if isinstance(trigger, dict) else {}, branch, files, warnings, path
+            trigger if isinstance(trigger, dict) else {},
+            branch,
+            files,
+            warnings,
+            path,
+            capped,
         )
         if runs is False:
             continue
@@ -565,7 +581,14 @@ def read_once(
     a, report: dict, docs: dict, files: list[str] | None, skip_ci: bool
 ) -> None:
     warnings: list[str] = list(report["warnings_fixed"])
-    expected = expect(docs, report["branch"], files, skip_ci, warnings)
+    expected = expect(
+        docs,
+        report["branch"],
+        files,
+        skip_ci,
+        warnings,
+        (report["changed_files"] or 0) >= FILTER_FILES,
+    )
     rows = check_rows(a.repo, report["sha"], "sha")
     tip = gh_json(
         ["api", f"repos/{a.repo}/branches/{report['branch']}"],
@@ -638,14 +661,14 @@ def run(argv: list[str]) -> int:
             ["api", f"repos/{a.repo}"], "reading the default branch"
         ).get("default_branch")
         fixed: list[str] = []
-        files = changed_files(a.repo, base, sha) if base else None
+        files, listed = changed_files(a.repo, base, sha) if base else (None, None)
         docs = workflows_at(a.repo, sha, fixed)
         report = {
             "repo": a.repo,
             "sha": sha,
             "base": base,
             "branch": branch,
-            "changed_files": None if files is None else len(files),
+            "changed_files": listed,
             "warnings_fixed": fixed,
         }
         deadline = time.monotonic() + a.wait
