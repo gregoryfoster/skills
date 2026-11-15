@@ -1322,6 +1322,48 @@ hold_group_versions() {  # <var> <simulation>
   printf -v "$1" '%s' "${_hv# }"
 }
 
+# The bulk's share of a selection: BS_TAKE, the packages no hold group's
+# globs take, and BS_STEPS, each held step that takes the others, in the
+# order the selection names them (#607).
+BS_TAKE="" BS_STEPS=""
+bulk_split() {  # <package words>
+  local _bp _bg _bs
+  local -a _bf=()
+  BS_TAKE="" BS_STEPS=""
+  for _bp in $1; do
+    _bs=""
+    for _bg in ${KNOB_HOLD[@]+"${KNOB_HOLD[@]}"}; do
+      IFS=$KNOB_US read -r -a _bf <<<"$_bg"
+      if glob_match "$_bp" "${_bf[1]}"; then
+        _bs=${_bf[0]}
+        break
+      fi
+    done
+    if [ -z "$_bs" ]; then
+      BS_TAKE="$BS_TAKE $_bp"
+    elif ! in_words "$_bs" "$BS_STEPS"; then
+      BS_STEPS="$BS_STEPS $_bs"
+    fi
+  done
+  BS_TAKE=${BS_TAKE# } BS_STEPS=${BS_STEPS# }
+}
+
+# What a bulk that takes nothing says, naming the held steps that take its
+# lane's packages, so the owner approves it as bookkeeping: co-index's and
+# broker's did, unannounced (#607). Empty for a bulk that takes something,
+# or that nothing is selected for.
+takes_nothing_note() {  # <var> <the bulk's take> <the held steps>
+  local _tn=""
+  if [ -z "$2" ] && [ -n "$3" ]; then
+    case $3 in
+      *" "*) _tn="held steps $3 take them" ;;
+      *) _tn="held step $3 takes them" ;;
+    esac
+    _tn="the bulk takes nothing: every package it would upgrade is in a hold group. It refreshes the lists, records the before-versions and places the holds; $_tn (#607)"
+  fi
+  printf -v "$1" '%s' "$_tn"
+}
+
 # A package's version in hold_group_versions' words, or empty.
 version_in() {  # <var> <words> <package>
   local _vw _vv=""

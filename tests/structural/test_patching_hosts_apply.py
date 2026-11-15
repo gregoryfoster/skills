@@ -193,6 +193,7 @@ class Host(RigHost):
         self.dry.mkdir()
         (self.dry / "summary").write_text(
             f"began={TUE_1530 - 3600}\nexit=0\ncount=4\nwall_seconds=540\nsecurity_only=1\n"
+            "lists_refreshed=1\n"
         )
         (self.dry / "dry-run.log").write_text(
             "Packages that will be upgraded: libc6 libxml2 libssl3t64 postgresql-16 libpq5\n"
@@ -792,6 +793,7 @@ def _at(host: Host, clock: int) -> Host:
     host.clock = clock
     (host.dry / "summary").write_text(
         f"began={clock - 3600}\nexit=0\ncount=4\nwall_seconds=540\nsecurity_only=1\n"
+        "lists_refreshed=1\n"
     )
     return host
 
@@ -864,6 +866,56 @@ def test_a_dry_run_that_counted_nothing_refuses(host):
     out = host.run(rc=3)
     assert any("counted nothing" in r for r in out["refused"])
     assert _changed(host) == []
+
+
+# #629, address-validator 2026-11-13: on 167-hour-old lists the security
+# lane's dry run counted 0 in 3 s, which passed this gate and set the bulk's
+# budget at 9 s; the bulk took 18 packages in 113 s.
+STALE = f"began={TUE_1530 - 3600}\nexit=0\ncount=0\nwall_seconds=3\nsecurity_only=1\n"
+
+
+@pytest.mark.parametrize(
+    "lists, refused",
+    [
+        (
+            "lists_refreshed=0\nlists_age_hours=167\n",
+            "the dry run counted against lists fetched 167 hours before it",
+        ),
+        (
+            "lists_refreshed=0\nlists_age_hours=\n",
+            "the dry run counted against lists whose age is unknown",
+        ),
+        (
+            "",
+            "doesn't say whether the lists it counted against were fresh: "
+            "count again with this skill's probe.sh",
+        ),
+    ],
+    ids=["stale", "age-unknown", "no-line"],
+)
+def test_a_dry_run_counted_against_stale_lists_refuses(host, lists, refused):
+    (host.dry / "summary").write_text(STALE + lists)
+    out = host.run(rc=3)
+    assert any(refused in r for r in out["refused"]), out["refused"]
+    assert any("--refresh-into DIR --dry-run-into DIR" in r for r in out["refused"])
+    assert _changed(host) == []
+
+
+@pytest.mark.parametrize(
+    "lists",
+    [
+        "lists_refreshed=1\nlists_age_hours=\n",
+        "lists_refreshed=0\nlists_age_hours=24\n",
+    ],
+    ids=["refreshed", "fetched-within-a-day"],
+)
+def test_a_dry_run_counted_against_fresh_lists_passes(host, lists):
+    (host.dry / "summary").write_text(
+        f"began={TUE_1530 - 3600}\nexit=0\ncount=4\nwall_seconds=540\nsecurity_only=1\n"
+        + lists
+    )
+    out = host.run()
+    assert out["verdict"]["ok"] is True, out["refused"]
 
 
 @pytest.mark.parametrize(
@@ -2287,7 +2339,8 @@ REDIS_NOW = "5:7.0.15-1ubuntu0.24.04.1"
 def _counted(host: Host, held: str | None) -> Host:
     line = "" if held is None else f"held_versions={held}\n"
     (host.dry / "summary").write_text(
-        f"began={TUE_1530 - 3600}\nexit=0\ncount=4\nwall_seconds=540\nsecurity_only=1\n{line}"
+        f"began={TUE_1530 - 3600}\nexit=0\ncount=4\nwall_seconds=540\nsecurity_only=1\n"
+        f"lists_refreshed=1\n{line}"
     )
     return host
 

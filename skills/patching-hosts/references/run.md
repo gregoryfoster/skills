@@ -72,7 +72,7 @@ Every host records its before-versions, which the bulk writes to its run directo
 
 **Each step is gated on the space it writes** (#390). Its download, each candidate's `Size` less an archive already in apt's cache at that size, must fit in apt's cache. Its install growth, `Installed-Size` against the installed version's, plus its largest upgrade, must fit on `/`: dpkg unpacks an upgrade beside the files it replaces, so for a moment both are there. Each filesystem also keeps **128 MiB free** for what no `Installed-Size` counts: a kernel install used 46 MiB more than apt said, 19 MiB of it the initrd (noble, 2026-10-26). Where apt's cache and `/` share a filesystem, the sum is checked once. The figures are apt's own, read from its metadata. `apt-get --assume-no` prints the same two, but it's no dry run: an install of exactly the packages it names asks no question, so it installs them. A held step is refused before it changes anything. The bulk reads its figures after its `apt-get update`, since only then are they the host's, and a shortfall stops it there with nothing held (exit 1): free space, then run it again. **Where the host runs the canonical disk GC** (`/etc/cannobserv/disk-gc/disk-gc.conf`, [maintaining-host-disk](../../maintaining-host-disk/references/turning-on.md#picking-the-lines)), a step whose download and growth would take the sensor's `[sensor] mount` to its `alert_at_percent` or past it, by its sensor's own `df` Use%, rounded up, is refused too: a patch run must not push the host into a headroom page. A key the file leaves out takes the GC's own default in VERSION 2, 3 and 4 (85, `/`). A file that can't be read or parsed stops the step and never passes it, as it stops the GC.
 
-Count first (`probe.sh --dry-run-into DIR` does both, with apt's cache in `DIR/archives`, and leaves `DIR/summary` for `apply.sh --dry-run DIR`). Its own download must fit in `DIR` first ([readings.md](readings.md)):
+Count first, in every lane, with `probe.sh --refresh-into DIR --dry-run-into DIR` (plus `--lane` for another): it does both, with apt's cache in `DIR/archives`, and leaves `DIR/summary` for `apply.sh --dry-run DIR`. **Never on stale lists** (#629): on 167-hour-old ones, address-validator's dry run counted 0 in 3 s, where refreshed ones counted 19 and the bulk took 113 s; replicator's aborted on a `.deb` the archive had dropped. Without `--refresh-into` it runs only on a security list fetched within 24 hours, and the bulk refuses a summary that doesn't say its lists were fresh. Its own download must fit in `DIR` first ([readings.md](readings.md)):
 - Count security from `sudo unattended-upgrade --dry-run -d`, from its `Packages that will be upgraded` line, while its origins are `-security` alone (the probe's `security_only`): wider origins put other packages on that line too. The `pkgs that look like they should be upgraded:` header lists the whole selection one per line, and `apt list | grep -security` undercounts (usa-wa: 178 against 185).
 - Record the dry run's time and max RSS. Its `space` sizes what the run writes, with the free space on `/` and `/var/backups` beside it, and raises a finding wherever the gate above would stop a step.
 
@@ -85,6 +85,7 @@ Then:
    - `choom -n 0` puts the apply at adj 0, so the kernel doesn't sacrifice a production service to protect a -1000 session.
    - **No hard memory cap:** a `MemoryMax` kill mid-dpkg leaves packages half-configured.
    - `NEEDRESTART_MODE=l` backs up the drop-in. In apt's hook there's no `-r`, so the variable wins.
+   - **A bulk that takes nothing says so** (#607): where hold groups take every package its lane selects, as co-index's `hold tailscale tailscale` did in its `origin:` lane, `takes_nothing` in the dry run, the gate's `run_span` and `holds` names the held steps that take them. It isn't refused, since a held step needs a green bulk: tell the owner approval 2 is bookkeeping.
 4. **Each held group, under approval 3(a):**
    - stop each `restarter`;
    - unhold the packages the run held, and only those. In this order, a stop that fails leaves the group held, and the step can run again;
@@ -94,7 +95,7 @@ Then:
 5. **Record auto-removals** apart from upgrades (`Remove-New-Unused-Dependencies`).
 6. Confirm `apt-mark showhold` matches the list recorded before the run: the run's own holds are gone, and the owner's are still there.
 
-**The maintenance lane** is the same run, with the same gates, recovery point, holds, `choom`, `NEEDRESTART_MODE` and verdict: `apply.sh --lane maintenance`, counted first with `probe.sh --lane maintenance --dry-run-into`. Only the selection widens, through an `APT_CONFIG` file the bulk writes to the run's directory, root-only, and each held step reads:
+**The maintenance lane** is the same run, with the same gates, recovery point, holds, `choom`, `NEEDRESTART_MODE` and verdict: `apply.sh --lane maintenance`, counted first with `probe.sh --lane maintenance --refresh-into DIR --dry-run-into DIR`. Only the selection widens, through an `APT_CONFIG` file the bulk writes to the run's directory, root-only, and each held step reads:
 
 ```
 // <run>/lane.conf

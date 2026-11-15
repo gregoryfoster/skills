@@ -66,11 +66,13 @@ Options:
                            recovery point
   --dry-run DIR            the bulk only, and required there: the directory
                            probe.sh --dry-run-into wrote, within 24 hours,
-                           for the same lane. Its wall time is a held step's
-                           expected duration; the bulk's is three times it,
-                           or the knob's bulk-factor times it, rounded up,
-                           and its span is the rest of the run (below). Its
-                           dry-run.log names what the bulk selects
+                           for the same lane, against lists fetched within
+                           24 hours (--refresh-into). Its wall time is a
+                           held step's expected duration; the bulk's is
+                           three times it, or the knob's bulk-factor times
+                           it, rounded up, and its span is the rest of the
+                           run (below). Its dry-run.log names what the bulk
+                           selects
   --offnode-sha256 HEX     the bulk only: a dump's sha256, typed after the
                            owner checks their own copy off the node. One per
                            dump the recovery point recorded
@@ -101,7 +103,8 @@ host's own origins could take an origin the knob holds or pins, or apt
 doesn't read the lane's file, or a held step's knob follows other origins
 than its bulk did, or origin:<origin> names one the knob doesn't follow;
 for the bulk, without --dry-run, or when its summary is missing, failed, is
-more than 24 hours old, or counted another lane, or in the one-origin lane,
+more than 24 hours old, counted against lists more than 24 hours old or of
+unknown age, or counted another lane, or in the one-origin lane,
 nothing or not all of the origin's upgrades; when dpkg --audit isn't
 clean; when what the step writes wouldn't fit (#390): its download in
 apt's cache, and its install growth plus its largest upgrade, unpacked
@@ -624,13 +627,14 @@ gate_reboot() {
 DRY_SUMMARY="" DRY_MAX_AGE=86400
 gate_dry() {
   local line rc="" count="" began="" iso dlane=security dleft="" dleft_seen=0
+  local lref="" lage=""
   [ "$step" = bulk ] || return 0
   if [ -z "$dryrun" ]; then
-    refuse "no --dry-run DIR: count first with probe.sh --dry-run-into DIR (run.md section 3). Its wall time is the floor of the step's expected duration"
+    refuse "no --dry-run DIR: count first with probe.sh --refresh-into DIR --dry-run-into DIR (run.md section 3). Its wall time is the floor of the step's expected duration"
     return 0
   fi
   if [ ! -r "$dryrun/summary" ]; then
-    refuse "$dryrun/summary is missing: run probe.sh --dry-run-into $dryrun first"
+    refuse "$dryrun/summary is missing: run probe.sh --refresh-into DIR --dry-run-into $dryrun first"
     return 0
   fi
   DRY_SUMMARY=$(cat "$dryrun/summary")
@@ -642,11 +646,13 @@ gate_dry() {
       wall_seconds=*) EXPECT=${line#wall_seconds=} ;;
       lane=*) dlane=${line#lane=} ;;
       origin_left=*) dleft=${line#origin_left=} dleft_seen=1 ;;
+      lists_refreshed=*) lref=${line#lists_refreshed=} ;;
+      lists_age_hours=*) lage=${line#lists_age_hours=} ;;
     esac
   done <<<"$DRY_SUMMARY"
   # Its wall time is this step's floor only for the selection it counted.
   if [ "$dlane" != "$LANE" ]; then
-    refuse "the dry run counted the $dlane lane, and this bulk runs the $LANE lane: count again with probe.sh --lane $LANE --dry-run-into DIR"
+    refuse "the dry run counted the $dlane lane, and this bulk runs the $LANE lane: count again with probe.sh --lane $LANE --refresh-into DIR --dry-run-into DIR"
   fi
   if [ "$rc" != 0 ]; then
     refuse "the dry run exited ${rc:-unknown}: read $dryrun/dry-run.log, and count again"
@@ -666,6 +672,18 @@ gate_dry() {
     elif [ "$count" -eq 0 ]; then
       refuse "the dry run counted nothing from the ${LANE#origin:} origin, so this window would take nothing: its packages are current, its source isn't configured, or the owner holds them. Read $dryrun/dry-run.log"
     fi
+  fi
+  # On lists more than a day old the count is the lists', in any lane:
+  # address-validator's security lane counted 0 in 3 s on 167-hour-old ones,
+  # which set the bulk's budget, and its bulk took 18 packages in 113 s
+  # (#629). Fresh is what probe.sh counts with: fetched in its run, or
+  # within lists:stale's 24 hours.
+  if [ -z "$lref" ]; then
+    refuse "$dryrun/summary doesn't say whether the lists it counted against were fresh: count again with this skill's probe.sh --refresh-into DIR --dry-run-into DIR"
+  elif [ "$lref" != 1 ] && ! is_int "$lage"; then
+    refuse "the dry run counted against lists whose age is unknown, so its count may be the lists', not the host's: count again with probe.sh --refresh-into DIR --dry-run-into DIR"
+  elif [ "$lref" != 1 ] && [ "$lage" -gt 24 ]; then
+    refuse "the dry run counted against lists fetched $lage hours before it, so its count is the lists', not the host's: count again with probe.sh --refresh-into DIR --dry-run-into DIR"
   fi
   is_int "$EXPECT" || refuse "$dryrun/summary holds no wall time"
   if ! is_int "$began"; then
@@ -895,7 +913,7 @@ gate_step_span() {
     return 0
   fi
   if [ ! -r "$dryrun/dry-run.log" ]; then
-    refuse "$dryrun/dry-run.log is missing, so what the bulk selects, and so the run's span, is unknown: count again with probe.sh --dry-run-into"
+    refuse "$dryrun/dry-run.log is missing, so what the bulk selects, and so the run's span, is unknown: count again with probe.sh --refresh-into DIR --dry-run-into DIR"
     gate_span ""
     return 0
   fi
@@ -919,6 +937,14 @@ gate_step_span() {
   for g in $groups; do x=$((x + EXPECT + hh)); done
   json_words w "$groups"
   jadd o held_steps "$w"
+  # What the bulk takes itself, less what its held steps take: where that's
+  # nothing, the owner approves it knowing it's bookkeeping (#607). It isn't
+  # refused: a held step needs a green bulk.
+  bulk_split "$sel"
+  json_words w "$BS_TAKE"
+  jadd o bulk_takes "$w"
+  takes_nothing_note w "$BS_TAKE" "$BS_STEPS"
+  jaddsn o takes_nothing "$w"
   predict_reboot "$sel" || rc=$?
   case $rc in
     0) jadd o reboot true ;;
@@ -1666,6 +1692,7 @@ STARTED=0
 LANE_KEEP=""
 do_bulk() {
   local out pend="" p i r s g o="" a="" names="" e kw rest pol onames oskip sim bv dv="" dseen=0 c d line vout="" va="" outside="" bver=""
+  local btake hsteps=""
   local -a f=() w=()
   if ! root_has "$run" && ! as_root mkdir -p -m 700 -- "$run"; then
     fail "$run couldn't be made"
@@ -1832,6 +1859,7 @@ do_bulk() {
         in_words "$p" "$names" || in_words "$p" "$BEFORE_HOLDS" || w+=("$p")
       done ;;
   esac
+  btake=${w[*]-}
   space_check "the bulk" ${w[@]+"${w[@]}"}
   if [ "${#SPACE_REASONS[@]}" -gt 0 ]; then
     for r in "${SPACE_REASONS[@]}"; do fail "$r"; done
@@ -1851,9 +1879,16 @@ do_bulk() {
     if [ -n "$g" ]; then
       json_words e "$g"
       jadd a "$s" "$e"
+      hsteps="$hsteps $s"
     fi
   done
   jadd o placed "{$a}"
+  # What the bulk takes itself, after the holds: nothing, where its held
+  # steps take every package, and then it says so (#607).
+  json_words e "$btake"
+  jadd o bulk_takes "$e"
+  takes_nothing_note e "$btake" "${hsteps# }"
+  jaddsn o takes_nothing "$e"
   # A hold group's pending package the lane's selection doesn't take (#488).
   json_words e "$outside"
   jadd o not_in_lane "$e"

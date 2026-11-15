@@ -472,7 +472,7 @@ def test_the_dry_runs_selection_is_security_only_while_its_origins_are(
         "--dry-run -d",
         "Packages that will be upgraded: docker.io\n",
     )
-    out = _docker(host).run("--dry-run-into", str(host.tmp / "dry"))
+    out = _docker(host).run(*host.refreshed(), "--dry-run-into", str(host.tmp / "dry"))
     assert out["pending"]["dry_run"]["security_only"] is security_only
     assert _dormant(out, "docker")["pending_security"] == listed
 

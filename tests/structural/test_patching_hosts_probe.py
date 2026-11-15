@@ -818,7 +818,7 @@ def test_the_dry_run_counts_security_exactly_into_its_scratch_cache(host):
         "Allowed origins are: o=Ubuntu,a=noble-security\n"
         "Packages that will be upgraded: libc6 libxml2 libssl3t64 postgresql-16\n",
     )
-    out = host.run("--dry-run-into", str(scratch))
+    out = host.run(*host.refreshed(), "--dry-run-into", str(scratch))
     d = out["pending"]["dry_run"]
     assert d["count"] == 4
     assert d["exit"] == 0
@@ -837,6 +837,64 @@ def test_the_dry_run_counts_security_exactly_into_its_scratch_cache(host):
     assert f'Dir::Cache::archives "{scratch.resolve()}/archives/";' in conf
     assert f'Dir "{host.root.resolve()}/";' in conf
     assert [c for c in host.calls("choom") if "-n 0" in c[1]]
+
+
+# --- the dry run's lists (#629) -----------------------------------------------
+# address-validator, 2026-11-13: on 167-hour-old lists, without --refresh-into,
+# the dry run counted 0 in 3 s and passed apply.sh's gate; with them refreshed
+# it counted 19, and the bulk took 18 in 113 s. replicator's, 525 hours old,
+# aborted on a .deb the archive had dropped, after 60 MiB of downloads.
+
+ORIGINS_KNOB = "class production\nposture scheduled\norigin Tailscale follow\n"
+
+
+@pytest.mark.parametrize("lane", ["security", "maintenance"])
+def test_a_dry_run_on_lists_more_than_a_day_old_doesnt_start(tmp_path, lane):
+    host = LaterHost(tmp_path, 30).knob(ORIGINS_KNOB)
+    _unpacked_then_fetched(host)
+    host.write(SECURITY_IN_RELEASE, "x")
+    _counted(host)
+    scratch = host.tmp / "dry"
+    out = host.run("--dry-run-into", str(scratch), "--lane", lane)
+    f = _finding(out, "dry-run")
+    assert f["kind"] == "risk"
+    assert f["message"].startswith(
+        f"the {lane} lane's dry run didn't run: the host's security list was fetched 30 hours ago"
+    )
+    assert "--refresh-into DIR --dry-run-into DIR" in f["message"]
+    assert out["pending"]["dry_run"] is None
+    assert not host.calls("unattended-upgrade")
+    assert not (scratch / "summary").exists()
+
+
+def test_a_dry_run_whose_lists_age_cant_be_read_doesnt_start(host):
+    # No security list the probe can date: not fresh (#629).
+    scratch = host.tmp / "dry"
+    out = _counted(host).run("--dry-run-into", str(scratch))
+    f = _finding(out, "dry-run")
+    assert f["kind"] == "unknown"
+    assert "can't be read" in f["message"]
+    assert "--refresh-into DIR --dry-run-into DIR" in f["message"]
+    assert not host.calls("unattended-upgrade")
+    assert not (scratch / "summary").exists()
+
+
+def test_the_summary_says_its_lists_were_refreshed(host):
+    scratch = host.tmp / "dry"
+    _counted(host).run(*host.refreshed(), "--dry-run-into", str(scratch))
+    summary = (scratch / "summary").read_text()
+    assert "lists_refreshed=1\nlists_age_hours=0\n" in summary
+
+
+def test_a_dry_run_on_the_hosts_own_lists_fetched_within_a_day_runs(tmp_path):
+    host = LaterHost(tmp_path, 2).knob(ORIGINS_KNOB)
+    _unpacked_then_fetched(host)
+    host.write(SECURITY_IN_RELEASE, "x")
+    scratch = host.tmp / "dry"
+    out = _counted(host).run("--dry-run-into", str(scratch))
+    assert out["pending"]["dry_run"]["count"] == 3
+    summary = (scratch / "summary").read_text()
+    assert "lists_refreshed=0\nlists_age_hours=2\n" in summary
 
 
 # --- the dry run's free space (#390) ------------------------------------------
@@ -866,7 +924,7 @@ def test_help_says_what_the_dry_runs_space_reads():
 
 
 def test_the_dry_run_sizes_what_the_run_writes_and_the_free_space_beside_it(host):
-    out = _counted(host).run("--dry-run-into", str(host.tmp / "dry"))
+    out = _counted(host).run(*host.refreshed(), "--dry-run-into", str(host.tmp / "dry"))
     d = out["pending"]["dry_run"]
     assert (d["space"]["download_kib"], d["space"]["growth_kib"]) == (DOWNLOAD, GROWTH)
     assert d["space"]["peak_kib"] == PEAK
@@ -887,7 +945,7 @@ def test_a_run_that_wouldnt_fit_is_a_finding(host):
     # The dry run's own download fits in DIR (#499); the run doesn't.
     host.on("df", f"-Pk -- {host.tmp}/dry/archives", df_row(1, 9000000, "/scratch"))
     host.on("df", "-Pk -- *", df_row(9000000, 1000))
-    out = host.run("--dry-run-into", str(host.tmp / "dry"))
+    out = host.run(*host.refreshed(), "--dry-run-into", str(host.tmp / "dry"))
     f = _finding(out, "dry-run:space:disk")
     assert f["kind"] == "risk"
     assert f["message"].startswith("The run needs ")
@@ -902,7 +960,7 @@ def test_a_run_that_wouldnt_fit_is_a_finding(host):
 
 
 def test_the_dry_run_sizes_its_own_download_before_it_starts(host):
-    out = _counted(host).run("--dry-run-into", str(host.tmp / "dry"))
+    out = _counted(host).run(*host.refreshed(), "--dry-run-into", str(host.tmp / "dry"))
     d = out["pending"]["dry_run"]
     assert d["download_bound_kib"] == DOWNLOAD
     assert isinstance(d["free_kib_dry_run_dir"], int)
@@ -928,7 +986,7 @@ def test_a_dry_run_whose_download_wouldnt_fit_doesnt_start(host, short):
     dry = host.tmp / "dry"
     free = DOWNLOAD + FLOOR - short
     host.on("df", f"-Pk -- {dry}/archives", df_row(9000000, free, "/scratch"))
-    out = host.run("--dry-run-into", str(dry))
+    out = host.run(*host.refreshed(), "--dry-run-into", str(dry))
     if not short:
         assert out["pending"]["dry_run"]["free_kib_dry_run_dir"] == free
         assert host.calls("unattended-upgrade")
@@ -951,7 +1009,7 @@ def test_a_dry_run_whose_download_cant_be_sized_doesnt_start(host, unread):
         host.on("apt-get", "--print-uris *", rc=100, stderr="E: Broken packages\n")
     else:
         host.on("df", f"-Pk -- {dry}/archives", rc=1)
-    out = host.run("--dry-run-into", str(dry))
+    out = host.run(*host.refreshed(), "--dry-run-into", str(dry))
     f = _finding(out, "dry-run")
     assert f["kind"] == "unknown"
     assert "didn't run" in f["message"]
@@ -973,7 +1031,7 @@ def test_a_run_that_would_cross_the_gcs_headroom_line_is_a_finding(host):
     host.write(GC_CONF, "[sensor]\nalert_at_percent = 80\n")
     # 80% used less 1 KiB: the run's 2599 KiB and 281 KiB cross the line.
     host.on("df", "-Pk -- *", df_row(7999999, 2000001))
-    out = host.run("--dry-run-into", str(host.tmp / "dry"))
+    out = host.run(*host.refreshed(), "--dry-run-into", str(host.tmp / "dry"))
     f = _finding(out, "dry-run:space:headroom")
     assert f["kind"] == "risk"
     assert "alert_at_percent of 80" in f["message"]
@@ -991,7 +1049,7 @@ def test_a_gc_config_that_cant_be_read_is_a_finding(host, conf):
         (host.root / GC_CONF).mkdir(parents=True)
     else:
         host.write(GC_CONF, conf)
-    out = host.run("--dry-run-into", str(host.tmp / "dry"))
+    out = host.run(*host.refreshed(), "--dry-run-into", str(host.tmp / "dry"))
     f = _finding(out, "dry-run:space:disk-gc-conf")
     assert f["kind"] == "unknown"
     assert f["message"].startswith(str(host.root / GC_CONF) + ": ")
@@ -1000,7 +1058,7 @@ def test_a_gc_config_that_cant_be_read_is_a_finding(host, conf):
 def test_sizes_the_dry_run_cant_read_are_a_finding(host):
     _counted(host)
     host.on("apt-cache", "* show *", "", rc=100, stderr="E: no such version\n")
-    out = host.run("--dry-run-into", str(host.tmp / "dry"))
+    out = host.run(*host.refreshed(), "--dry-run-into", str(host.tmp / "dry"))
     f = _finding(out, "dry-run:space")
     assert f["kind"] == "unknown"
     assert "apt-cache show exited 100" in f["message"]
@@ -1031,7 +1089,7 @@ def test_the_dry_run_records_the_version_it_counted_of_each_held_package(host):
         "--dry-run -d",
         "Packages that will be upgraded: libc6 postgresql-16 tailscale\n",
     )
-    out = host.run("--dry-run-into", str(scratch))
+    out = host.run(*host.refreshed(), "--dry-run-into", str(scratch))
     assert out["pending"]["dry_run"]["held_versions"] == [
         {"package": "postgresql-16", "version": "16.10-0ubuntu0.24.04.1"},
         {"package": "tailscale", "version": "1.102.4"},
@@ -1041,6 +1099,12 @@ def test_the_dry_run_records_the_version_it_counted_of_each_held_package(host):
         "held_versions=postgresql-16=16.10-0ubuntu0.24.04.1 tailscale=1.102.4\n"
         in summary
     )
+    # #607: what the bulk would take, less what its held steps take.
+    d = out["pending"]["dry_run"]
+    assert d["bulk_takes"] == ["libc6"]
+    assert d["held_steps"] == ["postgres", "tailscale"]
+    assert d["takes_nothing"] is None
+    assert "bulk_takes=libc6\nheld_steps=postgres tailscale\n" in summary
 
 
 PHASED_SIM = (
@@ -1083,14 +1147,14 @@ def test_a_dry_run_selection_the_class_lists_dont_name_is_a_finding(host):
         "--dry-run -d",
         "Packages that will be upgraded: libc6 dnsmasq-base\n",
     )
-    out = host.run("--dry-run-into", str(host.tmp / "dry"))
+    out = host.run(*host.refreshed(), "--dry-run-into", str(host.tmp / "dry"))
     assert out["pending"]["dry_run"]["unlisted"] == ["dnsmasq-base"]
     f = _finding(out, "dry-run:unlisted")
     assert f["kind"] == "risk"
     assert "dnsmasq-base" in f["message"]
     # Nothing unlisted, no finding.
     host.cases["apt-get"].insert(0, ("-s *dist-upgrade", PHASED_SIM, 0, "", None))
-    out = host.run("--dry-run-into", str(host.tmp / "dry2"))
+    out = host.run(*host.refreshed(), "--dry-run-into", str(host.tmp / "dry2"))
     assert out["pending"]["dry_run"]["unlisted"] == []
     assert "dry-run:unlisted" not in _ids(out)
 
@@ -1123,7 +1187,7 @@ def test_a_package_passed_over_at_a_conffile_prompt_is_named_with_its_conffiles(
     host.write("etc/fwupd/fwupd.conf", "unchanged\n")
     host.STUBBED = (*host.STUBBED, "md5sum")
     host.cases["md5sum"] = [("*fwupd.conf", "4567cdef  x\n", 0, "", None)]
-    out = host.run("--dry-run-into", str(host.tmp / "dry"))
+    out = host.run(*host.refreshed(), "--dry-run-into", str(host.tmp / "dry"))
     d = out["pending"]["dry_run"]
     assert d["conffile_prompts"] == [
         {
@@ -1205,7 +1269,7 @@ def _conffile_prompt(
         host.on("apt-cache", f"*policy {name}", "", rc=100, stderr="E: broken\n")
     else:
         host.on("apt-cache", f"*policy {name}", policy)
-    out = host.run("--dry-run-into", str(host.tmp / "dry"))
+    out = host.run(*host.refreshed(), "--dry-run-into", str(host.tmp / "dry"))
     return _finding(out, f"dry-run:conffile:{name}")
 
 
@@ -1337,7 +1401,8 @@ def test_a_modified_conffile_alone_has_no_restore(host):
 def test_a_failed_dry_run_still_reports_its_cost(host):
     # GNU time writes the failed command's status line above its own.
     host.on("unattended-upgrade", "--dry-run -d", "An error occurred\n", rc=1)
-    d = host.run("--dry-run-into", str(host.tmp / "dry"))["pending"]["dry_run"]
+    out = host.run(*host.refreshed(), "--dry-run-into", str(host.tmp / "dry"))
+    d = out["pending"]["dry_run"]
     assert d["exit"] == 1
     assert d["max_rss_kib"] == 2048
 
@@ -1345,7 +1410,7 @@ def test_a_failed_dry_run_still_reports_its_cost(host):
 def test_a_dry_run_without_a_selection_line_is_a_finding(host):
     # Exit 0, but nothing to count: the operator who asked hears why.
     host.on("unattended-upgrade", "--dry-run -d", "Lock could not be acquired\n")
-    out = host.run("--dry-run-into", str(host.tmp / "dry"))
+    out = host.run(*host.refreshed(), "--dry-run-into", str(host.tmp / "dry"))
     assert out["pending"]["dry_run"]["count"] is None
     f = _finding(out, "dry-run")
     assert "neither" in f["message"] and "dry-run.log" in f["message"]
@@ -1362,7 +1427,7 @@ def test_a_dry_runs_empty_selection_line_counts_0(host, line):
         "--dry-run -d",
         f"Packages that will be {line}\nPackages that are auto removed: libfoo1\n",
     )
-    out = host.run("--dry-run-into", str(host.tmp / "dry"))
+    out = host.run(*host.refreshed(), "--dry-run-into", str(host.tmp / "dry"))
     d = out["pending"]["dry_run"]
     assert (d["count"], d["packages"]) == (0, [])
     assert "dry-run" not in _ids(out)
