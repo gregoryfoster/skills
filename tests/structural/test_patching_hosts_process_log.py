@@ -1,5 +1,5 @@
-"""patching-hosts' process log records counts and families, never versions
-(#313, plan step 7).
+"""patching-hosts' process log and environment notes record counts and
+families, never versions (#313, plan step 7; #610).
 
 The log is public, and a host's entry describes what it ran. Its "Adding an
 entry" rule says an entry that lists pending security updates lands only after
@@ -8,7 +8,9 @@ docker.io bump"), never versions: a published version still pending tells a
 reader what the host is exposed to, and one already applied still dates the
 host's patch level. Whether an update was applied when the entry landed can't
 be read from the text, so the gate is the stricter half: no entry carries a
-Debian package version at all.
+Debian package version at all. The environment notes under `environments/`
+are held to the same rule (#610): they record what a host ran, and nothing
+stops one from naming a version still pending.
 
 A Debian version is recognised by the shapes the archive's own versions take:
 an `ubuntu<N>` or `build<N>` revision, a `~24.04`-style backport suffix, an
@@ -30,10 +32,12 @@ LOG = Path(__file__).resolve().parents[2] / "skills/patching-hosts/references"
 ENTRIES = sorted(
     p for p in (LOG / "process-log").glob("*/*.md") if p.name != "index.md"
 )
+ENVIRONMENTS = sorted((LOG / "environments").glob("*.md"))
 FILES = [
     LOG / "process-log.md",
     *sorted((LOG / "process-log").glob("*/index.md")),
     *ENTRIES,
+    *ENVIRONMENTS,
 ]
 
 VERSION = re.compile(
@@ -50,6 +54,7 @@ VERSION = re.compile(
 def test_the_log_has_entries() -> None:
     # A moved layout must not empty the parametrization into a green run.
     assert ENTRIES, f"no entries under {LOG / 'process-log'}"
+    assert ENVIRONMENTS, f"no environment notes under {LOG / 'environments'}"
 
 
 @pytest.mark.parametrize("doc", FILES, ids=lambda p: p.name)
@@ -61,7 +66,8 @@ def test_no_entry_carries_a_package_version(doc: Path) -> None:
     ]
     assert not hits, (
         f"{doc.name} carries what reads as a package version: {hits}. "
-        "process-log.md's 'Adding an entry' records counts and families, never versions."
+        "process-log.md's 'Adding an entry' records counts and families, never "
+        "versions, in an entry and an environment note alike."
     )
 
 

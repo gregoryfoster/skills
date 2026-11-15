@@ -1,6 +1,6 @@
 # Profile: exe.dev VMs on the exeuntu image
 
-This profile records how exe.dev's exeuntu image behaves where it differs from stock Ubuntu 24.04. Every fact carries its source and date. Most come from the step 0 round of [#313](https://github.com/gregoryfoster/skills/issues/313): ten hosts patched by hand, 2026-09-21 to 09-29, synthesised in [#313 comment 5898628226](https://github.com/gregoryfoster/skills/issues/313#issuecomment-5898628226). A measurement is an event: it stays true of the run that made it, and a newer image may differ. Re-measure before relying on it.
+This profile records how exe.dev's exeuntu image behaves where it differs from stock Ubuntu 24.04. Every fact carries its source and date, and names a package by its family, never its version ([process-log.md](../process-log.md#adding-an-entry), #610). Most come from the step 0 round of [#313](https://github.com/gregoryfoster/skills/issues/313): ten hosts patched by hand, 2026-09-21 to 09-29, synthesised in [#313 comment 5898628226](https://github.com/gregoryfoster/skills/issues/313#issuecomment-5898628226). A measurement is an event: it stays true of the run that made it, and a newer image may differ. Re-measure before relying on it.
 
 ## Detection
 
@@ -14,7 +14,7 @@ The probe reports the three labels in `environment.image_conf` (#388), each null
 The platform's exist only on an exe.dev VM:
 - the kernel's `init=/exe.dev/bin/exe-init` in `/proc/cmdline`;
 - `/exe.dev/`, which the platform supplies at boot. The image doesn't carry it. `/exe.dev/etc/init-style` (it reads `metadata`) appears from the May-2026 image on, and `/exe.dev/etc/shelley-version` from the August one;
-- a platform kernel (6.12.93 in the round), with no installed `linux-image-*` package. It can change at any reboot ([below](#update-channels)).
+- a platform kernel (the 6.12 series in the round), with no installed `linux-image-*` package. It can change at any reboot ([below](#update-channels)).
 
 The image's are in any tree of it, so they're all an offline read sees. Their dates come from [boldsoftware/exeuntu](https://github.com/boldsoftware/exeuntu)'s history, read 2026-10-01:
 - the `exedev` account, named "exe.dev user", and `/usr/local/bin/init`, the init wrapper that names the image: since its import (`6f88f30`, 2026-01-22);
@@ -81,7 +81,7 @@ The needrestart drop-in (`$nrconf{restart} = 'l';`) governs needrestart's apt ho
 | `polkit` | restarts itself | 3 of 4 (not watcher) |
 | `libc6` / `systemd` | PID 1 re-executes itself | replicator, watcher, address-validator, wslcb |
 | `systemd` | the user manager re-executes, and journald and timesyncd restart | wslcb. On address-validator, needrestart still listed journald and timesyncd after the apply, so they hadn't restarted there. |
-| `redis-server` | restarts the server from its postinst on upgrade (read in noble's 7.0.15-1ubuntu0.24.04.4, 2026-09-30); not measured in the round | — |
+| `redis-server` | restarts the server from its postinst on upgrade (read in noble's package, 2026-09-30); not measured in the round | — |
 | `tailscale` | restarts `tailscaled` from its postinst (`deb-systemd-invoke restart 'tailscaled.service'`), whatever needrestart's mode. needrestart in list mode then reported nothing to restart: the restart had happened already (#432) | co-provisioner, co-processor, co-status, co-index, usa-wa |
 | `packagekit` | D-Bus-activated, not restarted | — |
 
@@ -96,7 +96,7 @@ u-u's `Remove-New-Unused-Dependencies` removed packages the upgrade left unused:
 ## `/tmp` and `/var/tmp`
 
 **Whether the boot empties `/tmp` depends on the image, not the package.**
-- noble's systemd 255.4-1ubuntu8.17 ships `D /tmp 1777 root root 30d`, and `systemd-tmpfiles-setup.service` runs `--create --remove --boot`. Under that rule the boot empties `/tmp` (read in the package, 2026-09-29; measured on wslcb).
+- noble's systemd ships `D /tmp 1777 root root 30d`, and `systemd-tmpfiles-setup.service` runs `--create --remove --boot`. Under that rule the boot empties `/tmp` (read in the package, 2026-09-29; measured on wslcb).
 - exeuntu overrides it since `120bf12` (2026-07-17) with `/etc/tmpfiles.d/tmp.conf`, which reads `d /tmp 1777 root root 30d`. Lowercase `d` keeps the 30-day age cleanup, but empties nothing at boot. On an image built 2026-09-29, a marker in `/tmp` survived a platform restart and an in-guest reboot, with the same systemd (#346).
 - Across 13 cohort hosts on 2026-10-01, the 8 on images built from 2026-08-25 had `d`, and the 5 built from February to May had `D`.
 
@@ -152,16 +152,16 @@ So a copy isn't the recovery point: that's the data store's own ([run.md](../run
 - `docker-clean` empties apt's `.deb` cache after every run, so a rollback fetches the recorded version from snapshot.ubuntu.com.
 - The ingress is exe.dev's own `sshd` in `init.scope`. `ssh.service` is disabled and `ssh.socket` masked, so an openssh-server upgrade touches nothing live (power-map, address-validator, wslcb).
 - **Every exeuntu image read for it so far, Feb-2026 and `may-2026`, deletes `fwupd`'s conffile `/etc/update-motd.d/85-fwupd`,** and masks its three units, `fwupd.service`, `fwupd-refresh.service` and `fwupd-refresh.timer`, at the image's build. When a new `fwupd` changes that conffile, unattended-upgrade passes it over at a conffile prompt and exits 1, though dpkg itself would keep the deletion without asking. Read with the trap:
-  - the Feb-2026 image, on wslcb, 2026-10-07: fwupd 1.9.33 installed, 2.0.20 pending in `-updates`, the masks dated 2026-02-06 (CannObserv/wslcb-licensing-tracker#192, CannObserv/wslcb-licensing-tracker#193);
-  - `may-2026`, on usa-wa, 2026-10-14: 1.9.34 installed, 2.0.20 pending, the masks dated May 23 (CannObserv/usa-wa#497, #392);
+  - the Feb-2026 image, on wslcb, 2026-10-07: the image's fwupd installed, a major-version upgrade pending in `-updates`, the masks dated 2026-02-06 (CannObserv/wslcb-licensing-tracker#192, CannObserv/wslcb-licensing-tracker#193);
+  - `may-2026`, on usa-wa, 2026-10-14: a later build of the same series installed, the same upgrade pending, the masks dated May 23 (CannObserv/usa-wa#497, #392);
   - `may-2026`, on host 6, 2026-10-20: the same exit at the same conffile (#460);
-  - the Feb-2026 image, on address-validator, 2026-11-06: 1.9.33 installed, 2.0.20 pending (#582).
+  - the Feb-2026 image, on address-validator, 2026-11-06: the Feb-2026 image's build installed, the same upgrade pending (#582).
 
   The probe's `dry-run:conffile:fwupd` catches it on any image: it reads the dry run, not the generation. On host 6's newer-generation VM, 2026-10-26, fwupd wasn't pending, so the dry run couldn't show the trap either way (#489). Hosts held it, as `exception held:fwupd`, or purged it: it's a prune candidate on a VM with no firmware of its own (CannObserv/wslcb-licensing-tracker#193, CannObserv/usa-wa#497). Both purges ran by hand; `prune-plan.sh --component apt:fwupd --take-orphans` plans one now ([pruning.md](../pruning.md#any-other-apt-package)). **A hold doesn't move with the host:** on host 6's new VM, `apt-mark showhold` was empty while the knob still declared `held:fwupd`, and the probe raised nothing, since fwupd wasn't pending (#489).
 
   **On the Feb-2026 image every `/etc/update-motd.d/*` conffile is absent:** 11, across `base-files` (3), `overlayroot`, `ubuntu-pro-client`, `ubuntu-release-upgrader-core`, `unattended-upgrades` and `update-notifier-common` (4), read with `dpkg-query -W -f='${Conffiles}'` on address-validator, 2026-11-06 (#582). Any whose new version changes its motd script hits the same prompt.
 
-  **A `--force-confmiss` reinstall must name the installed build, and the conffile restore needs no package operation** ([policy.md](../policy.md#exceptions)). On address-validator, `apt-cache policy fwupd` listed 1.9.33 from `/var/lib/dpkg/status` alone, and an unnamed reinstall resolved to a three-package upgrade (#582). The restore worked: the build was snapshot.ubuntu.com's `/ubuntu/20260301T000000Z/pool/main/f/fwupd/fwupd_1.9.33-0ubuntu1%7E24.04.1ubuntu1_amd64.deb`, the file `./etc/update-motd.d/85-fwupd`, with md5 `ded254e0…` (matching the snapshot `.deb`, 2026-11-07), installed `-o root -g root -m 0755`. The dry run then exited 0, and the bulk replaced the unmodified conffile without asking (CannObserv/address-validator#311).
+  **A `--force-confmiss` reinstall must name the installed build, and the conffile restore needs no package operation** ([policy.md](../policy.md#exceptions)). On address-validator, `apt-cache policy fwupd` listed the installed build from `/var/lib/dpkg/status` alone, and an unnamed reinstall resolved to a three-package upgrade (#582). The restore worked: the build's `.deb` came from snapshot.ubuntu.com's `20260301T000000Z` snapshot of noble's pool, the file `./etc/update-motd.d/85-fwupd`, with md5 `ded254e0…` (matching the snapshot `.deb`, 2026-11-07), installed `-o root -g root -m 0755`. The dry run then exited 0, and the bulk replaced the unmodified conffile without asking (CannObserv/address-validator#311).
 - nginx ships with the image, disabled, and was in the security set on six hosts: patched for nothing. A dormant-component candidate ([policy.md](../policy.md)).
 - **Docker is socket-activated:** the image disables `docker.service` and enables `docker.socket`, so the first `docker` call starts dockerd (read in the image built from `1b74aabd`, 2026-10-01). Don't ask an idle Docker anything you'd want to read as idle. And a restart policy does nothing at boot: a container with `unless-stopped` stayed down after a reboot until dockerd was started, which is why power-map's qdrant waited for first use. A host whose containers must come back by themselves needs `docker.service` enabled, the owner's change.
 
