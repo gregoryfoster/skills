@@ -2,7 +2,7 @@
 
 One row per run; each links its entry file in this directory. The root of the log, and the layout rules, are in [`process-log.md`](../../process-log.md).
 
-The eleven 2026-10 rows are the seed: runs whose findings were posted on [#348](https://github.com/gregoryfoster/skills/issues/348) before the skill existed, each worked by hand.
+The eleven rows from 2026-10-02 to 2026-10-14 are the seed: runs whose findings were posted on [#348](https://github.com/gregoryfoster/skills/issues/348) before the skill existed, each worked by hand.
 
 | Date | Run | Headline |
 |---|---|---|
@@ -17,3 +17,4 @@ The eleven 2026-10 rows are the seed: runs whose findings were posted on [#348](
 | [2026-10-13](2026-10-13-private-backlog.md) | private-backlog | A 78-issue audit by parallel read-only agents: mostly closures and parks. Job-level check-runs exposed a ten-week silent failure. Step 0 allows only verified ticks; re-scan by updated_at; "no issue" calls shown up front. The end of the live-risk tier is the operator's call |
 | [2026-10-13](2026-10-13-status.md) | CannObserv/status#16 | A backlog plus "bugs and smaller first": 7 children grew to 30, 29 check-ins over 12 days. Closed is not live; implementers may tick and the coordinator verifies; ask for the whole bug class, then a guard test; end only on an empty re-scan |
 | [2026-10-14](2026-10-14-broker.md) | CannObserv/broker#80 | An ops backlog, still open. CI red for 27 pushes, found by running the gate at creation. Most decay came from sibling trackers; replies posted at creation. Verify the whole range: children move after close. Auto-ticks are unreliable, so set every box by name |
+| [2026-10-17](2026-10-17-private-release-move.md) | private-release-move | A design-doc epic moving a service onto a root-owned release: 6 children, 7 check-ins, the skill adopted at close-out. Foreign ticks on 5 of 6 children. Independent checks found 4 facts no report stated (a cgroup escape, an unseen 46 h outage, a test leak, an env-file cwd). Kickoffs say "fix the review" |
