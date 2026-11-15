@@ -584,3 +584,13 @@ def test_cr_2260_a_scheduled_run_a_newer_one_superseded_doesnt_hold_red(rig):
         ("failure", True),
         ("success", False),
     ]
+
+
+def test_cr_2261_more_check_runs_than_it_reads_says_what_to_do(rig):
+    """An idle tip passes 2000 check runs in days; there is no range to
+    narrow, so the error names the way out."""
+    rig.state["checks"][SHA] = [GREEN * 401]
+    res = rig.run()
+    assert res.returncode == 2
+    assert "narrow the range" not in res.stderr
+    assert "by hand" in res.stderr and "#394" in res.stderr

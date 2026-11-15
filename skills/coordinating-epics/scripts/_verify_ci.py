@@ -265,7 +265,12 @@ def pages(path: str, what: str, key: str | None = None):
         yield from batch
         if len(batch) < 100:
             return
-    raise Infra(f"{what}: more than {MAX_PAGES * 100} rows; narrow the range")
+    # No option narrows these reads (CR 2261): an idle tip collects a suite
+    # per scheduled run, and the reading stops rather than judge a part.
+    raise Infra(
+        f"{what}: more than {MAX_PAGES * 100} rows, more than this reads, so no"
+        " verdict is given. Read that commit's jobs on GitHub by hand (#394)"
+    )
 
 
 def workflows_at(repo: str, sha: str, warnings: list[str]) -> dict[str, dict]:
