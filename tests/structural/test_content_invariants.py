@@ -1408,6 +1408,15 @@ GATE_SCRIPTS = {
         "through it: test_a_gh_failure_is_exit_2_and_shows_ghs_whole_stderr "
         "(test_coordinating_epics_plan.py) keeps gh's whole stderr"
     ),
+    "verify-ci.sh": (
+        "its verdict decides whether a child counts as verified (#394): a "
+        "job it fails to read must never read as one that passed, so gh "
+        "failing on any read is exit 2 with gh's whole stderr, never a "
+        "shorter report. The wrapper `exec`s _verify_ci.py, so the property "
+        "lives there, held by behaviour through this wrapper: "
+        "test_a_gh_failure_is_exit_2_and_shows_ghs_own_stderr "
+        "(test_coordinating_epics_verify_ci.py)"
+    ),
 }
 
 # Bucket 2: reporting-only, or an action whose own exit code is the verdict.
