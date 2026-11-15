@@ -2344,11 +2344,28 @@ la_pkg_end() {
   LA_P="" LA_IDS="" LA_FIXES=""
 }
 lang_audit() {  # <dir> <user> <home>
-  local d=$1 u=$2 home=$3 uvb="" out err="" line re ra rf rc n=0 sum="" p v
+  local d=$1 u=$2 home=$3 uvb="" out err="" line re ra rf rc n=0 sum="" p v as asw run priv
   local -a fv=()
   LA_AUDITED=0 LA_N="" LA_PKGS="" LA_WHY=""
   if [ ! -e "$P_ROOT$d/pyproject.toml" ] && ! as_root test -e "$P_ROOT$d/pyproject.toml" 2>/dev/null; then
     LA_WHY="no pyproject.toml beside its uv.lock, which uv audit needs"
+    return 0
+  fi
+  # Another user's tree is audited as that user, which as_user can't switch
+  # to without root: it returns 126, which read as uv's own "exited 126"
+  # (#635). So with no privilege, the tree says why and isn't audited. The
+  # --version below is asked only after the audit ran as the user, so it
+  # never meets that 126.
+  if [ "$u" = root ]; then
+    as=nobody asw="its uv.lock is root's, so it's audited as nobody"
+  else
+    as=$u asw="it's audited as its uv.lock's owner, $u"
+  fi
+  if [ "$as" != "$P_USER" ] && [ "$P_PRIV" = none ]; then
+    run="run the probe under sudo" priv="needs root, and sudo -n needs a password"
+    if [ "$P_NO_SUDO" -eq 1 ]; then run="run the probe without --no-sudo" priv="needs root"; fi
+    LA_WHY="$asw, and running uv as another user $priv: $run"
+    not_read "language dependencies: $d's uv.lock can't be audited without root, since it's audited as $as: $run"
     return 0
   fi
   if [ "$u" = root ]; then
