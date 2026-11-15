@@ -32,8 +32,12 @@ The briefed scrub would have shipped that bug. Brief the failure modes, and leav
 - **Load a plugin with `-p`, not `PYTEST_ADDOPTS`.** At the base, nested runs inherit `PYTEST_ADDOPTS`, and a child that replaces `PYTHONPATH` can't import the plugin.
 - **Alternate base and merged runs.** That controls for host drift. The file went from 15.1–19.6 s to 9.3–9.8 s, and its spread from 4.5 s to 0.5 s.
 
-### 6. Schedule deliberate load alone
-F's #617 load phase drove host load to 263 while the other two workers ran their gates. P's gate timed out in shellcheck, and N's gate took 15 minutes. A load reproduction is an experiment on a shared host: run it with nothing else running.
+### 6. Schedule deliberate load alone, and stagger the gates
+F's #617 load phase ran 15:52–16:01 PST and drove host load to 263.
+- **P's gate overlapped it** [inferred from its 22-minute run, ending near 16:15] and timed out in shellcheck at load 39–68.
+- **N's gate started after the phase ended** (16:02–16:17). It ran beside P's and F's own full gates at load 70–100, and took 15 minutes.
+
+A load reproduction is an experiment on a shared host: run it with nothing else running. Three workers' full gates at once are a load of their own, so stagger them.
 
 ### 7. A docs fix inside a doc at its budget
 `docs/STYLE.md` was at 9,829 of 10,000 tokens. The first draft of CR 2038 read 10,380 by estimate. A cut that read 9,996 by estimate read 10,020 exact. The final text is 9,976 exact. Take the exact reading before committing to a doc that close to its budget.
