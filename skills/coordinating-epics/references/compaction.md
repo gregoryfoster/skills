@@ -10,6 +10,7 @@ Dry-run an empty ops file. The summary's `body` gives `chars`, `limit` and `shar
 
 ## 2. Move the log into comments, oldest first
 
+- **On an `--account` epic, first keep each disposition only the log holds** (#657). `--account` reads the body, never a log comment, so an issue that only a log line accounts for ("out of epic", "duplicate of") reads as unlisted once the log goes. Dry-run the second call below with `--account`: its refusal names each one, and any open issue nothing lists yet. Check each name against the log: one the log disposed of gets a line in an `## Out of epic` section, `- #N · out of epic: why` or `- #N · duplicate of #M`, added (`add-section`) in that same call; any other is new, to slot.
 - Post the `## Log` entries as `log-comment` ops, in date order, one call holding only those ops: the body doesn't change, so each posts as soon as every check passes.
 - GitHub refuses a comment over 65,536 characters, and the editor refuses one first. Split the log at entry boundaries into parts under that, one op per part, each with a `"date"` naming its span: `{"op": "log-comment", "text": "...", "date": "2026-09-01 to 2026-10-15, moved from the body"}`.
 - Confirm the summary's `log_comments` URLs, then, in a second call, `replace-section` the Log with the pointer the template shows. Two calls, so the in-body log goes only once the comments exist.

@@ -155,6 +155,12 @@ if method == "PATCH":
 if method == "POST":  # a new comment: repos/O/R/issues/N/comments (#654)
     repo = f"{parts[1]}/{parts[2]}"
     body = json.load(open(rest[rest.index("--input") + 1]))["body"]
+    # {"at": k, "stored": bool}: the k-th comment POST fails, before or after
+    # GitHub stores it (#658's CR 2212).
+    st["post_attempts"] = st.get("post_attempts", 0) + 1
+    pf = st.get("post_fail") or {}
+    if pf.get("at") == st["post_attempts"] and not pf.get("stored"):
+        fail("HTTP 502: Bad Gateway")
     st.setdefault("posts", []).append(body)
     cid = 9900 + len(st["posts"])
     now = st.get("server_now", "2026-10-14T18:03:27Z")
@@ -162,7 +168,14 @@ if method == "POST":  # a new comment: repos/O/R/issues/N/comments (#654)
     find(repo).setdefault("comments", {}).setdefault(parts[4], []).append(
         {"id": cid, "html_url": url, "body": body, "created_at": now,
          "updated_at": now, "user": {"login": "gregoryfoster"}})
+    if st.get("post_bumps_issue"):  # GitHub moves the issue's updated_at (#658)
+        find(repo)["issues"][parts[4]]["updated_at"] = now
     st["comment_index"][str(cid)] = f"https://api.github.com/repos/{repo}/issues/{parts[4]}"
+    if pf.get("at") == st["post_attempts"] and pf.get("stored"):
+        fail("HTTP 502: Bad Gateway")
+    if st.get("post_fails_after_apply"):  # GitHub stored it; gh saw a 502 (#658)
+        st["post_fails_after_apply"] -= 1
+        fail("HTTP 502: Bad Gateway")
     out({"id": cid, "html_url": url})
 
 repo = f"{parts[1]}/{parts[2]}"
