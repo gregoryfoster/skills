@@ -20,6 +20,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.utils.nested_pytest import nested_pytest_env
+
 REPO = Path(__file__).resolve().parent.parent.parent
 
 # Module, and the class in it that reads only docs.
@@ -30,10 +32,12 @@ DOCS_ONLY = [("test_maintaining_host_disk_bytecode.py", "TestTheDocsSayIt")]
 def test_the_docs_checks_run_without_linux_tools(tmp_path, module, docs_class):
     empty = tmp_path / "bin"
     empty.mkdir()
-    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    # The nested scrub (#554) drops PYTEST_ADDOPTS among the rest: an inherited
+    # `-q` would cancel `-v` and hide the per-test lines this reads.
+    env = nested_pytest_env(
+        tmp_path, {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    )
     env["PATH"] = str(empty)
-    # An inherited `-q` would cancel `-v` and hide the per-test lines this reads.
-    env.pop("PYTEST_ADDOPTS", None)
     result = subprocess.run(
         [
             sys.executable,

@@ -26,6 +26,7 @@ from pathlib import Path
 import pytest
 
 from tests.structural.deploying_releases_rig import INSTALL, SKILL, clean_env
+from tests.utils.nested_pytest import nested_pytest_env
 
 ASSETS = SKILL / "assets" / "co-pypi"
 WRAPPER = ASSETS / "co-pypi.sh"
@@ -588,7 +589,10 @@ def run_consumer_tests(repo: Path) -> subprocess.CompletedProcess:
         cwd=repo,
         capture_output=True,
         text=True,
-        env=clean_env(),
+        # The nested scrub (#554). The consumer repo IS the calling test's
+        # tmp_path here, so the temp root sits in it; the run collects only
+        # `tests`, and the consumer's test reads only named files.
+        env=nested_pytest_env(repo, clean_env()),
         timeout=120,
     )
 
