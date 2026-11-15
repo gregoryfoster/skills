@@ -1270,6 +1270,92 @@ def test_replace_section_at_the_end_of_the_body(adopted):
     assert res.returncode == 0 and summary(res).get("unchanged")
 
 
+# ---------------------------------------------------------------- the block model (#408, #413, #429)
+
+# CannObserv/watcher#368's shape (#408): prose under "## Coordination", then
+# three subsections, with the whole checklist under the last.
+WATCHER = """\
+# Watcher burn-down
+
+- **Last check-in:** 2026-10-15T09:00Z
+
+## Coordination
+
+Old prose about the run.
+
+### Child epics
+
+- acme/gadgets#3 the SDK epic
+
+### Cutover
+
+Cut over after the soak.
+
+### Issues
+
+- [ ] #11 first thing
+- [x] #12 second thing
+
+## Log
+
+- 2026-10-15: adopted.
+"""
+
+
+def _on(rig, body):
+    rig.issue(REPO, EPIC, body=body)
+    res = rig.edit(REPO, EPIC, [], "--adopt-live")
+    assert res.returncode == 0, res.stderr
+    return rig
+
+
+def test_408_replace_section_refuses_a_span_holding_subsections(rig):
+    """#408, verbatim: replacing only the Coordination prose would have deleted
+    the checklist under ### Issues."""
+    _on(rig, WATCHER)
+    op = {"op": "replace-section", "heading": "Coordination", "text": "New prose."}
+    res = rig.edit(REPO, EPIC, [op])
+    assert res.returncode == 3, res.stderr
+    assert "'Child epics', 'Cutover', 'Issues'" in res.stderr
+    assert '"scope": "tree"' in res.stderr
+    assert rig.body(REPO, EPIC) == WATCHER and "patches" not in rig.load()
+
+
+def test_408_scope_tree_replaces_the_whole_subtree(rig):
+    _on(rig, WATCHER)
+    text = "New prose.\n\n### Issues\n\n- [ ] #11 first thing\n- [x] #12 second thing"
+    op = {"op": "replace-section", "heading": "Coordination", "text": text}
+    res = rig.edit(REPO, EPIC, [dict(op, scope="tree")])
+    assert res.returncode == 0, res.stderr
+    body = rig.body(REPO, EPIC)
+    assert "## Coordination\n\nNew prose.\n\n### Issues\n\n- [ ] #11" in body
+    assert "Cutover" not in body and "Old prose" not in body
+    assert summary(res)["counts_after"] == summary(res)["counts_before"]
+
+
+def test_408_a_leaf_section_and_the_other_section_ops_keep_their_meaning(rig):
+    """The refusal is replace-section's alone: add-line, log and add-section
+    still read a "##" span with its subsections."""
+    _on(rig, WATCHER)
+    ops = [
+        {"op": "replace-section", "heading": "Cutover", "text": "Cut over now."},
+        {"op": "add-line", "section": "Coordination", "line": "- [ ] #13 tail"},
+        {"op": "log", "text": "2026-10-16: tidied."},
+    ]
+    res = rig.edit(REPO, EPIC, ops)
+    assert res.returncode == 0, res.stderr
+    body = rig.body(REPO, EPIC)
+    assert "### Cutover\n\nCut over now.\n\n### Issues" in body
+    assert "- [x] #12 second thing\n- [ ] #13 tail\n\n## Log" in body
+
+
+@pytest.mark.parametrize("scope", ["own", "Tree", ""])
+def test_408_scope_takes_only_tree(adopted, scope):
+    op = {"op": "replace-section", "heading": "Log", "text": "x", "scope": scope}
+    res = adopted.edit(REPO, EPIC, [op])
+    assert res.returncode == 1 and "scope" in res.stderr, res.stderr
+
+
 def test_each_write_keeps_a_history_copy(adopted):
     """CR 264: the fallback when the baseline is lost is a local copy of each write."""
     adopted.edit(REPO, EPIC, [{"op": "tick", "ref": "#11"}])
