@@ -84,7 +84,7 @@ For each engine the probe knows (Docker, Postgres, Redis, nginx, Ollama, Qdrant 
 - the unit's state and whether it's enabled;
 - its listeners;
 - its workload: containers, databases with their sizes and their writes and sessions since the statistics were reset, Redis's keys, lookups, expirations, subscriptions and clients, enabled sites;
-- whether the repo's units, docs or knob name it, as a word: a unit, a command, a path's own directory or file, a URL. Inside another name it doesn't count, so a unit running `check_redis_floor.sh` doesn't name Redis (#634). An `in-use` verdict quotes the line;
+- whether the repo's units, docs or knob name it, as a word: a unit, a command, a path's own directory or file, a URL. Inside another name it doesn't count, so a unit running `check_redis_floor.sh` doesn't name Redis (#634). An `in-use` verdict quotes a `deploy/` line with its secrets masked, and a host unit by the word alone (CR 2158);
 - its packages in the security set;
 - how long it has been idle: since its unit's stop, or, for a unit that hasn't started since the boot, whichever reaches further back of the boot and evidence that outlives one (#633). That's its log directory's newest file (`/var/log/nginx`, `/var/log/redis`, `/var/log/postgresql`; all empty means never written), else the latest `Install:` of its packages in `/var/log/apt/history.log*`. Never dpkg's `.list` mtime, which every upgrade rewrites. The evidence names the clock;
 - whether it shipped with the image or was installed later.

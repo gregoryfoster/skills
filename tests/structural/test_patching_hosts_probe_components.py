@@ -742,13 +742,64 @@ def test_a_host_units_requires_after_or_exec_naming_it_is_in_use(host, line, use
     d = _dormant(_docker(host).run(), "docker")
     if uses:
         assert d["verdict"] == "in-use"
-        # It quotes the line (#634).
-        key = line.split("=", 1)[0]
+        # It quotes the word that names it, not the host's line (CR 2158).
+        key, value = line.split("=", 1)
+        word = next(w for w in value.split() if "docker" in w)
         assert d["evidence"] == (
-            f"/etc/systemd/system/app.service names it on its {key}= line: {line}"
+            f"/etc/systemd/system/app.service names it on its {key}= line, as {word}"
         )
     else:
         assert d["verdict"] == "dormant"
+
+
+def test_a_host_units_line_is_quoted_by_its_word_alone(host):
+    # A host unit's command line is the host's, and may hold a secret no
+    # pattern knows: only the word that names it is quoted (CR 2158).
+    host.write(
+        "etc/systemd/system/app.service",
+        "[Service]\nExecStartPre=/usr/bin/docker login -u ci hunter2-literal\n",
+    )
+    d = _dormant(_docker(host).run(), "docker")
+    assert d["verdict"] == "in-use"
+    assert d["evidence"] == (
+        "/etc/systemd/system/app.service names it on its ExecStartPre= line,"
+        " as /usr/bin/docker"
+    )
+    assert "hunter2" not in d["evidence"]
+
+
+@pytest.mark.parametrize(
+    "line, quoted",
+    [
+        (
+            "Environment=BROKER_URL=redis://:hunter2@127.0.0.1:6379/0",
+            "Environment=BROKER_URL=redis://<hidden>@127.0.0.1:6379/0",
+        ),
+        (
+            "ExecStartPre=/usr/bin/redis-cli -a hunter2 ping",
+            "ExecStartPre=/usr/bin/redis-cli -a <hidden> ping",
+        ),
+        (
+            "Environment=REDIS_PASSWORD=hunter2",
+            "Environment=REDIS_PASSWORD=<hidden>",
+        ),
+        (
+            "ExecStart=/srv/app/worker --redis-url redis://127.0.0.1 --password=hunter2",
+            "ExecStart=/srv/app/worker --redis-url redis://127.0.0.1 --password=<hidden>",
+        ),
+    ],
+    ids=["url", "flag", "assignment", "long-flag"],
+)
+def test_a_quoted_deploy_line_masks_its_secrets(host, line, quoted):
+    # The probe names a secret, never its value; evidence lands in run
+    # records and issues (CR 2158).
+    _repo(host, "deploy/replicator.service", f"[Service]\n{line}\n")
+    d = _dormant(_idle_redis(host).run(), "redis")
+    assert d["verdict"] == "in-use"
+    assert d["evidence"] == (
+        f"deploy/replicator.service names it on a line that isn't a comment: {quoted}"
+    )
+    assert "hunter2" not in d["evidence"]
 
 
 def test_idle_evidence_younger_than_30_days_is_unknown(tmp_path):

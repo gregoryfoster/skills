@@ -4482,9 +4482,36 @@ word_ere() {  # <var> <ere>: VAR := an ERE matching <ere> only where it begins a
   printf -v "$1" '%s' "(^|[^A-Za-z0-9_.@+-])-*($2)"
 }
 
-# A line quoted as evidence: trimmed, and cut at 160 characters.
+# A quoted line's secrets, masked (CR 2158): the probe names a secret, never
+# its value (SP_RE), and evidence lands in run records and issues. A URL's
+# user and password, a credential assignment's value, and a password flag's
+# argument (redis-cli -a) read as <hidden>.
+MASK_RE=(
+  '([A-Za-z][A-Za-z0-9+.-]*://)[^/@[:space:]<][^/@[:space:]]*@'
+  '((password|passwd|secret|token|api_?key|auth_?key)[A-Za-z_]*[[:space:]]*[=:][[:space:]]*)[^[:space:]<][^[:space:]]*'
+  '((^|[[:space:]])(-a|--pass|--password|--requirepass|--auth)([[:space:]]+|=))[^[:space:]<-][^[:space:]]*'
+)
+MASK_TO=('<hidden>@' '<hidden>' '<hidden>')
+mask_secrets() {  # <var> <text>
+  local _ms=$2 _mi _nc=0
+  if shopt -q nocasematch; then _nc=1; fi
+  shopt -s nocasematch
+  for _mi in "${!MASK_RE[@]}"; do
+    # The value can't begin with <, so each pass masks one more.
+    while [[ $_ms =~ ${MASK_RE[$_mi]} ]]; do
+      _ms=${_ms/"${BASH_REMATCH[0]}"/"${BASH_REMATCH[1]}${MASK_TO[$_mi]}"}
+    done
+  done
+  if [ "$_nc" -eq 0 ]; then shopt -u nocasematch; fi
+  printf -v "$1" '%s' "$_ms"
+}
+
+# A line quoted as evidence: its secrets masked, trimmed, and cut at 160
+# characters.
 quote_line() {  # <var> <line>
-  local _ql=${2#"${2%%[![:space:]]*}"}
+  local _ql
+  mask_secrets _ql "$2"
+  _ql=${_ql#"${_ql%%[![:space:]]*}"}
   if [ "${#_ql}" -gt 160 ]; then _ql="${_ql:0:157}..."; fi
   printf -v "$1" '%s' "$_ql"
 }
@@ -4529,10 +4556,14 @@ named_by() {  # <ere>: NAMED (JSON array body); NAMED_USE, the deploy/ line that
 # their drop-ins, don't count: a name that starts with the component's, as
 # postgresql@16-main and redis-server do, and app-redis-worker doesn't
 # (CR 889). The name counts where it begins a word, as in named_by (#634).
-# NAMED_UNIT := the first, in words, quoting its line, or empty.
+# NAMED_UNIT := the first, in words, quoting the word that names it, or
+# empty. Only the word: a host unit's command line is the host's, not the
+# repo's, and may hold a secret no pattern knows (CR 2158).
 unit_names() {  # <ere>
-  local f base out
+  local f base out re w q
+  local -a ws=()
   NAMED_UNIT=""
+  word_ere re "$1"
   for f in "$P_ROOT"/etc/systemd/system/*.service "$P_ROOT"/etc/systemd/system/*.service.d/*.conf; do
     [ -f "$f" ] || continue
     base=${f#"$P_ROOT"/etc/systemd/system/}
@@ -4540,8 +4571,19 @@ unit_names() {  # <ere>
     if grep -qiE -- "^($1)" <<<"$base"; then continue; fi
     capture out as_reader grep -m1 -iE -- "^[[:space:]]*(Requires|After|Exec[A-Za-z]*)=(.*[^A-Za-z0-9_.@+-])?-*($1)" "$f"
     if [ "$CAP_RC" -eq 0 ] && [ -n "$out" ]; then
-      quote_line out "$out"
-      NAMED_UNIT="${f#"$P_ROOT"} names it on its ${out%%=*}= line: $out"
+      q=""
+      read -r -a ws <<<"${out#*=}" || true
+      for w in ${ws[@]+"${ws[@]}"}; do
+        w=${w#[\"\']} w=${w%[\"\']}
+        if grep -qiE -- "$re" <<<"$w"; then q=$w; break; fi
+      done
+      trim out "${out%%=*}"
+      if [ -n "$q" ]; then
+        quote_line q "$q"
+        NAMED_UNIT="${f#"$P_ROOT"} names it on its $out= line, as $q"
+      else
+        NAMED_UNIT="${f#"$P_ROOT"} names it on its $out= line"
+      fi
       return 0
     fi
   done
