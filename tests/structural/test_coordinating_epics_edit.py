@@ -1700,6 +1700,117 @@ def test_654_log_comment_takes_a_date_for_a_moved_log(adopted):
     assert adopted.edit(REPO, EPIC, [bad]).returncode == 1
 
 
+# A ticked line as #654's epic held them before compaction: evidence in the
+# line, and an indented sub-block.
+VERBOSE = """\
+# Burn-down
+
+- **Last check-in:** 2026-11-14T09:00Z
+
+## Tier 1
+
+- [x] #11 first thing · Shipped 1a2b3c4, live 2026-11-01. CI green by job.
+  - Residual: a flaky test, filed as #14.
+  - [x] docs updated
+- [x] #12 second thing · not planned: superseded by #13
+- [ ] #13 third thing
+- [x] acme/gadgets#3 upstream fix · merged upstream
+
+## Log
+
+- 2026-11-14: adopted.
+"""
+
+
+def _verified(rig, num, cid, repo=REPO):
+    rig.comment(repo, num, cid, body="**Coordinator record, acme/widgets#10**\n\nok")
+    return f"https://github.com/{repo}/issues/{num}#issuecomment-{cid}"
+
+
+def test_654_compact_cuts_a_ticked_line_to_its_title_and_link(rig):
+    """#654, verbatim: "- [x] **#N** <issue title> · [verified](<comment URL>)",
+    the sub-block dropped and the title sanitized (" · ", a bare owner-repo#N,
+    disposition words)."""
+    _on(rig, VERBOSE)
+    rig.issue(REPO, 11, title="Cache · warm it, as watcher#348 did, not planned")
+    link = _verified(rig, 11, 9001)
+    res = rig.edit(REPO, EPIC, [{"op": "compact", "ref": "#11", "link": link}])
+    assert res.returncode == 0, res.stderr
+    body = rig.body(REPO, EPIC)
+    want = (
+        "- [x] **#11** Cache - warm it, as `watcher#348` did, not planned"
+        f" · [verified]({link})\n- [x] #12"
+    )
+    assert want in body, body
+    assert "Residual" not in body and "docs updated" not in body
+    s = summary(res)
+    assert s["counts_before"] == {"open": 1, "done": 3, "disposed": 1}
+    assert s["counts_after"] == {"open": 1, "done": 2, "disposed": 1}
+    res = rig.edit(REPO, EPIC, [{"op": "compact", "ref": "#11", "link": link}])
+    assert res.returncode == 0 and summary(res).get("unchanged"), res.stderr
+
+
+def test_654_compact_keeps_a_disposition_and_takes_a_record_label(rig):
+    _on(rig, VERBOSE)
+    link = _verified(rig, 12, 9002)
+    op = {"op": "compact", "ref": "#12", "link": link, "label": "record"}
+    res = rig.edit(REPO, EPIC, [op])
+    assert res.returncode == 0, res.stderr
+    assert (
+        f"- [x] **#12** issue 12 · not planned: superseded by #13 · [record]({link})"
+        in rig.body(REPO, EPIC)
+    )
+    assert summary(res)["counts_after"] == summary(res)["counts_before"]
+
+
+def test_654_compact_qualifies_a_cross_repo_titles_bare_refs(rig):
+    _on(rig, VERBOSE)
+    rig.issue("acme/gadgets", 3, title="Follow #5 upstream")
+    link = _verified(rig, 3, 9003, repo="acme/gadgets")
+    op = {"op": "compact", "ref": "acme/gadgets#3", "link": link}
+    res = rig.edit(REPO, EPIC, [op])
+    assert res.returncode == 0, res.stderr
+    assert (
+        f"- [x] **acme/gadgets#3** Follow acme/gadgets#5 upstream · [verified]({link})"
+        in rig.body(REPO, EPIC)
+    )
+
+
+def test_654_compact_takes_a_given_title_without_asking_github(rig):
+    _on(rig, VERBOSE)
+    link = _verified(rig, 11, 9004)
+    op = {"op": "compact", "ref": "#11", "link": link, "title": "Warm the cache"}
+    res = rig.edit(REPO, EPIC, [op])
+    assert res.returncode == 0, res.stderr
+    assert f"- [x] **#11** Warm the cache · [verified]({link})" in rig.body(REPO, EPIC)
+    assert ["api", "repos/acme/widgets/issues/11"] not in rig.load()["calls"]
+
+
+@pytest.mark.parametrize(
+    "op, code, why",
+    [
+        ({"ref": "#13"}, 3, "isn't ticked"),
+        (
+            {
+                "ref": "#11",
+                "link": "https://github.com/acme/widgets/issues/12#issuecomment-9005",
+            },
+            3,
+            "a comment on #11",
+        ),
+        ({"ref": "#11", "link": "https://example.com/x"}, 3, "a comment on #11"),
+        ({"ref": "#11", "label": "done"}, 1, "label"),
+    ],
+    ids=["unticked", "another-issues-comment", "not-a-comment", "bad-label"],
+)
+def test_654_compact_refuses_what_it_cant_compact(rig, op, code, why):
+    _on(rig, VERBOSE)
+    link = _verified(rig, 11, 9006)
+    res = rig.edit(REPO, EPIC, [dict({"op": "compact", "link": link}, **op)])
+    assert res.returncode == code and why in res.stderr, res.stderr
+    assert rig.body(REPO, EPIC) == VERBOSE
+
+
 def test_each_write_keeps_a_history_copy(adopted):
     """CR 264: the fallback when the baseline is lost is a local copy of each write."""
     adopted.edit(REPO, EPIC, [{"op": "tick", "ref": "#11"}])
