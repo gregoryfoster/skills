@@ -2352,7 +2352,7 @@ la_pkg_end() {
   LA_P="" LA_IDS="" LA_FIXES=""
 }
 lang_audit() {  # <dir> <user> <home>
-  local d=$1 u=$2 home=$3 uvb="" out err="" line re ra rf rc n=0 sum="" p v as asw run priv
+  local d=$1 u=$2 home=$3 uvb="" out err="" line re ra rf rc n=0 sum="" p v as asw advice priv
   local -a fv=()
   LA_AUDITED=0 LA_N="" LA_PKGS="" LA_WHY=""
   if [ ! -e "$P_ROOT$d/pyproject.toml" ] && ! as_root test -e "$P_ROOT$d/pyproject.toml" 2>/dev/null; then
@@ -2370,10 +2370,10 @@ lang_audit() {  # <dir> <user> <home>
     as=$u asw="it's audited as its uv.lock's owner, $u"
   fi
   if [ "$as" != "$P_USER" ] && [ "$P_PRIV" = none ]; then
-    run="run the probe under sudo" priv="needs root, and sudo -n needs a password"
-    if [ "$P_NO_SUDO" -eq 1 ]; then run="run the probe without --no-sudo" priv="needs root"; fi
-    LA_WHY="$asw, and running uv as another user $priv: $run"
-    not_read "language dependencies: $d's uv.lock can't be audited without root, since it's audited as $as: $run"
+    advice="run the probe under sudo" priv="needs root, and sudo -n needs a password"
+    if [ "$P_NO_SUDO" -eq 1 ]; then advice="run the probe without --no-sudo" priv="needs root"; fi
+    LA_WHY="$asw, and running uv as another user $priv: $advice"
+    not_read "language dependencies: $d's uv.lock can't be audited without root, since it's audited as $as: $advice"
     return 0
   fi
   if [ "$u" = root ]; then
