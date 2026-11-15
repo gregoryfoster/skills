@@ -41,13 +41,21 @@ BODY = """\
 
 
 def git(repo, *args):
-    return subprocess.run(
+    """Fails with git's own stderr (#617): a bare exit status was all two
+    load failures here left, so their cause could not be named. No retry:
+    a load reproduction (62 runs of this file under -n 8, load average up
+    to 263) did not fail, so a retry would hide a cause nobody has seen."""
+    r = subprocess.run(
         ["git", "-C", str(repo), *args],
         capture_output=True,
         text=True,
-        check=True,
         env={k: v for k, v in os.environ.items() if not k.startswith("GIT_")},
-    ).stdout.strip()
+    )
+    if r.returncode != 0:
+        raise AssertionError(
+            f"fixture git {' '.join(args)} exited {r.returncode} in {repo}:\n{r.stderr}"
+        )
+    return r.stdout.strip()
 
 
 @pytest.fixture
@@ -1023,3 +1031,12 @@ def test_item_keys_reads_ordinal_led_and_ordered_items():
     spec.loader.exec_module(scan_mod)
     lines = ["- [x] 12. #447 a", "1. [ ] #348 b", "- [ ] `#5` c"]
     assert scan_mod.item_keys(lines, REPO) == {"acme/widgets#447", "acme/widgets#348"}
+
+
+def test_a_fixture_git_failure_says_what_git_said(tmp_path):
+    """#617: the fixture's two failures under load left "exit status 128"
+    and nothing else, because check=True drops git's stderr. A failure must
+    carry git's own message, so the next one names its cause."""
+    with pytest.raises(Exception) as failed:
+        git(tmp_path / "gone", "add", ".")
+    assert "cannot change to" in str(failed.value), str(failed.value)
