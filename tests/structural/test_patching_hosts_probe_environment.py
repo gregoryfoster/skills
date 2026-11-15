@@ -1287,6 +1287,24 @@ def test_an_exception_moves_a_deviation_to_excepted_until_it_expires(host):
     ]
 
 
+def test_a_prune_stage_past_its_date_is_a_soak_ending_in_the_probe(host):
+    # #636: the knob's soak-ended reaches the probe under its own id, so a
+    # consumer can tell the prompt for a prune's next stage from a lapse. A
+    # purge has no next stage, and stays an expired exception.
+    host.knob(
+        "posture automatic\n"
+        "exception disabled:nginx 2026-09-01 soaking\n"
+        "exception purged:docker 2026-09-01 the image still ships it\n"
+    )
+    out = host.run()
+    knob = {
+        f["message"].split(":")[0]: f for f in out["findings"] if f["kind"] == "knob"
+    }
+    assert knob["knob line 2"]["id"] == "knob:soak-ended"
+    assert "prune-plan.sh --component nginx" in knob["knob line 2"]["message"]
+    assert knob["knob line 3"]["id"] == "knob:expired-exception"
+
+
 # --- the environment profile -------------------------------------------------------
 
 LINUX_IMAGE = "*-W -f ${Package} ${db:Status-Abbrev}\\n linux-image-*"

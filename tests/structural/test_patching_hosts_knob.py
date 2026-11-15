@@ -15,7 +15,9 @@ What this file pins, against references/knob.md:
   name; equally specific globs tie, and neither applies;
 - scalars take the most specific value, lists are replaced whole, keyed
   directives accumulate per key;
-- an exception expires the day after its review-by date;
+- an exception expires the day after its review-by date; a `disabled:` or
+  `removed:` stage's expiry is `soak-ended`, every other one's
+  `expired-exception` (#636);
 - `cadence weekly|monthly` is one value, weekly by default (#529);
 - `bulk-factor <n>` is one value, 3 by default: a number from 1 to 99.99 with
   at most two decimals, and anything else is malformed (#556);
@@ -265,6 +267,55 @@ def test_an_exception_expires_the_day_after_its_review_by_date(tmp_path):
     # An expired exception is a deviation to report, not a reason to distrust
     # the knob.
     assert after["report_only"] is False
+
+
+@pytest.mark.parametrize(
+    "what, kind",
+    [
+        ("disabled:nginx", "soak-ended"),
+        ("removed:nginx", "soak-ended"),
+        ("disabled:fwupd", "soak-ended"),
+        ("purged:nginx", "expired-exception"),
+        ("keep:nginx", "expired-exception"),
+    ],
+    ids=["disabled", "removed", "disabled-apt-package", "purged", "keep"],
+)
+def test_a_prune_stage_past_its_date_is_a_soak_ending_not_a_lapse(tmp_path, what, kind):
+    # #636: a disable or remove stage's review-by date is its soak, so its
+    # passing is the prompt for the next stage, a kind of its own that a repo's
+    # knob test can allow. A purge has no next stage, so its date is a recheck
+    # and stays expired-exception, as does every other exception.
+    text = f"posture scheduled\nexception {what} 2026-09-30 soaking\n"
+    on_the_day = _read(tmp_path, text, today="2026-09-30")
+    assert on_the_day["exception"][0]["expired"] is False
+    assert on_the_day["findings"] == []
+    after = _read(tmp_path, text, today="2026-10-01")
+    assert after["exception"][0]["expired"] is True
+    assert _kinds(after) == [kind]
+    [f] = after["findings"]
+    assert f["line"] == 2
+    assert what in f["message"] and "2026-09-30" in f["message"]
+    if kind == "soak-ended":
+        assert "soak ended" in f["message"]
+        # fwupd is an apt package the probe doesn't read, so its stage is
+        # planned as apt:fwupd and nothing else prompts it (pruning.md).
+        component = what.split(":", 1)[1]
+        if component == "fwupd":
+            component = "apt:fwupd"
+        assert f"prune-plan.sh --component {component} " in f["message"]
+        assert ("probe reports" in f["message"]) is (component == "nginx")
+    assert after["report_only"] is False
+
+
+def test_a_soak_ending_names_each_component_the_probe_reads():
+    # The library's list of the six is the prune library's (#636): a seventh
+    # added there alone would be told the probe doesn't read it.
+    prune_lib = (SKILL / "scripts" / "_prune-lib.sh").read_text()
+    knob_lib = (SKILL / "scripts" / "_knob-lib.sh").read_text()
+    six = re.search(r'^PRUNE_COMPONENTS="([^"]+)"', prune_lib, re.M).group(1).split()
+    case = re.search(r"^\s*([a-z|\s]+)\)\s*# the six \(#636\)", knob_lib, re.M)
+    assert case, "the soak-ended case on the six is gone from _knob-lib.sh"
+    assert sorted(w.strip() for w in case.group(1).split("|")) == sorted(six)
 
 
 def test_a_repeat_at_the_same_precedence_is_a_finding_and_the_later_line_wins(tmp_path):

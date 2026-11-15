@@ -555,7 +555,7 @@ _knob_select() {  # <directive> <keyed|list>
 }
 
 _knob_resolve() {
-  local i k d u=$KNOB_US step val
+  local i k d u=$KNOB_US step val next
   local -a f=()
 
   _knob_select class keyed
@@ -652,8 +652,23 @@ _knob_resolve() {
           # A passed review-by date expires it: the day itself still counts.
           if [[ $KNOB_TODAY > ${f[1]} ]]; then
             KNOB_EXCEPTION+=("$val${u}1$u${_KP_LINE[$i]}")
-            _knob_finding "${_KP_LINE[$i]}" expired-exception \
-              "exception ${f[0]} passed its review-by date, ${f[1]}; the deviation it covered is a finding again"
+            # A disable or remove stage's date is its soak, so its passing
+            # is the prompt for the next stage, not a lapse; a purge has
+            # none, and keeps expired-exception like every other (#636).
+            case ${f[0]} in
+              disabled:* | removed:*)
+                next=${f[0]#*:}
+                case $next in
+                  docker | postgres | redis | nginx | ollama | qdrant) # the six (#636)
+                    next="the probe reports the component again; prune-plan.sh --component $next names the next stage" ;;
+                  *) next="the probe doesn't read an apt package; prune-plan.sh --component apt:$next names the next stage" ;;
+                esac
+                _knob_finding "${_KP_LINE[$i]}" soak-ended \
+                  "exception ${f[0]} passed its review-by date, ${f[1]}: its soak ended, and $next" ;;
+              *)
+                _knob_finding "${_KP_LINE[$i]}" expired-exception \
+                  "exception ${f[0]} passed its review-by date, ${f[1]}; the deviation it covered is a finding again" ;;
+            esac
           else
             KNOB_EXCEPTION+=("$val${u}0$u${_KP_LINE[$i]}")
           fi ;;
