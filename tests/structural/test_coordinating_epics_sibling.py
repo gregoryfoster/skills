@@ -88,7 +88,9 @@ def test_660_a_child_ticked_on_one_epic_and_not_the_other_is_one_drift_row(tmp_p
     assert twelve["sibling"]["epic"] == "acme/widgets#20"
     assert twelve["sibling"]["ticked"] is True
     assert [r["child"] for r in rep["cross_epic"] if r["drift"]] == ["acme/widgets#12"]
-    assert rep["siblings"] == [{"epic": "acme/widgets#20", "children": 4, "shared": 3}]
+    assert rep["siblings"] == [
+        {"epic": "acme/widgets#20", "state": "open", "children": 4, "shared": 3}
+    ]
     assert any("acme/widgets#12" in w and "drift" in w for w in rep["warnings"])
 
 
@@ -171,7 +173,9 @@ def test_660_an_unreadable_sibling_is_a_warning_naming_the_token(tmp_path):
         "acme/private=GH_TOKEN_PRIVATE",
         env=env,
     )
-    assert rep["siblings"] == [{"epic": "acme/private#40", "children": 4, "shared": 0}]
+    assert rep["siblings"] == [
+        {"epic": "acme/private#40", "state": "open", "children": 4, "shared": 0}
+    ]
 
 
 def test_660_an_unread_childs_state_is_null_with_a_warning(tmp_path):
@@ -202,3 +206,12 @@ def test_660_help_names_the_flag_and_its_keys(tmp_path):
     res = _rig(tmp_path).run("scan.sh", "--help")
     for word in ("--sibling", "cross_epic", "drift", "#660"):
         assert word in res.stdout, word
+
+
+def test_660_a_closed_siblings_state_is_given_beside_its_drift(tmp_path):
+    """CR 2319, measured on #516 against the closed #404: five lines froze
+    unticked when #404 was folded in, so their drift is history, not a lag."""
+    r = _rig(tmp_path)
+    r.issue(HOST, SIB, state="closed")
+    rep = scan(r, "--sibling", f"{HOST}#{SIB}")
+    assert rep["siblings"][0]["state"] == "closed"
