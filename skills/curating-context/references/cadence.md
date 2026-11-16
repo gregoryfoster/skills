@@ -247,8 +247,10 @@ installed file:
 - `behind` gives how many lines a re-render would change;
 - `unknown` means the render itself failed.
 
-A Dependabot-moved pin and a custom `--cron` aren't drift, since a re-render
-keeps both. Like the pin line, `re-render:` never sets the exit code, because
+A Dependabot-moved pin isn't drift, since a re-render keeps it (#373). Nor is
+a custom `--cron`, but a plain re-run doesn't keep that: it writes the derived
+schedule. So the `behind` line names the command with `--cron` and the
+installed schedule (CR 2299). Like the pin line, `re-render:` never sets the exit code, because
 consumers' CI may call `--check` and a newer template is not a broken install.
 `managing-skills`' refresh hook reads `behind` after a bump, and
 `shipping-work`'s doc-check does too on a branch that changes
