@@ -135,6 +135,11 @@ Behaviour:
     suite longer than the 120 s timeout is not run on a pointer bump. A
     commit made by hand still runs every hook. A knob that is present but
     unusable skips nothing, and says so on stderr.
+  - After a bump that moves the vendored tree, runs each installed
+    renderer's --check against it (#647): today install-cadence.sh, when
+    .github/workflows/context-cadence.yml exists. A 're-render: behind'
+    line is logged and said once on stderr, and in pr mode written into
+    the body of a pull request this run opens. Nothing is re-rendered.
   - Logs each phase's elapsed time, and warns on stderr when a refresh
     passes 90 s of its 120 s timeout.
   - Logs to .git/skills-update.log (bounded to ~64 KiB / 200 lines).
@@ -2423,7 +2428,7 @@ _pr_nothing_left() {
 # _pr_publish <commit> <subject> — the commit onto $PR_BRANCH, and ONE pull
 # request for it.
 _pr_publish() {
-  local c="$1" msg="$2" prs rc=0 tip_line tip n s oid open="" declined="" out
+  local c="$1" msg="$2" prs rc=0 tip_line tip n s oid open="" declined="" out body
   local unread=() refspecs=() pr missing
   # Every PR from the branch, any state. gh failing is not "none".
   prs="$(_gh pr list --head "$PR_BRANCH" --base "$PR_BASE_BRANCH" --state all \
@@ -2527,13 +2532,23 @@ PRS_EOF
       _pr_refused "the push to $PR_BRANCH" "$out"
       return 0
     fi
+    PR_PUSHED=1
   fi
   if [ -n "$open" ]; then
     _log "pr: PR #$open proposes the bump"
     return 0
   fi
   rc=0
-  out="$(_gh pr create --head "$PR_BRANCH" --base "$PR_BASE_BRANCH" --title "$msg" --body "$PR_BODY" 2>&1)" || rc=$?
+  # The renderers' drift goes in the body (#647). Only here, where the PR is
+  # opened: an open PR's body is the human's to edit, and the hook never
+  # does, so a later bump's drift reaches stderr and the log alone.
+  body=$PR_BODY
+  if [ -n "$RENDER_DRIFT" ]; then
+    body="$body
+
+This bump leaves $RENDER_DRIFT behind what $RENDER_BY writes at the new pointer (its --check says \`re-render: behind\`). After this merges and main is pulled, run bash $RENDER_BY and review the diff; re-rendered before then, it writes the old template."
+  fi
+  out="$(_gh pr create --head "$PR_BRANCH" --base "$PR_BASE_BRANCH" --title "$msg" --body "$body" 2>&1)" || rc=$?
   { echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] gh pr create exited $rc:"; [ -z "$out" ] || printf '%s\n' "$out"; } >>"$LOG" 2>/dev/null || true
   if [ "$rc" -eq 0 ]; then
     _log "pr: opened $out"
@@ -2546,6 +2561,53 @@ PRS_EOF
   return 0
 }
 
+# _check_renders (#647) — after a bump, whether a rendered artifact is now
+# behind what its renderer writes. A bump can move a template behind a file a
+# skill rendered once, and nothing re-ran its renderer: one host's cadence
+# workflow stayed on a seven-week-old template through every daily bump.
+# Today's one renderer with a --check is curating-context's
+# install-cadence.sh, for .github/workflows/context-cadence.yml. Run against
+# the bumped tree, its `re-render: behind` line is the drift. Its exit 3 is
+# not: a clone without the per-clone merge drivers is exit 3 on every check.
+# The renderer is looked for where the rendered workflow looks for its
+# scripts. Anything that stops the check is a log line, never the hook's
+# failure, and nothing is re-rendered: a re-render is a reviewed change.
+# Sets RENDER_DRIFT to the artifact and RENDER_BY to its renderer.
+RENDER_DRIFT=""
+RENDER_BY=""
+BUMP_COMMIT=""
+PR_PUSHED=0
+_check_renders() {
+  local wf=.github/workflows/context-cadence.yml d renderer="" out rc=0
+  RENDER_DRIFT=""
+  RENDER_BY=""
+  [ -f "$wf" ] || return 0
+  for d in scripts .claude/skills/curating-context/scripts skills/curating-context/scripts; do
+    if [ -f "$d/install-cadence.sh" ]; then
+      renderer="$d/install-cadence.sh"
+      break
+    fi
+  done
+  if [ -z "$renderer" ]; then
+    _log "renders: $wf is installed, but no install-cadence.sh in scripts/, .claude/skills/curating-context/scripts/ or skills/curating-context/scripts/ — not checked"
+    return 0
+  fi
+  out="$(bash "$renderer" --check </dev/null 2>&1)" || rc=$?
+  if [ "$rc" -ne 0 ] && [ "$rc" -ne 3 ]; then
+    { echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] renders: $renderer --check exited $rc:"; printf '%s\n' "$out"; } >>"$LOG" 2>/dev/null || true
+    _log "renders: could not check $wf (exit $rc)"
+    return 0
+  fi
+  if ! printf '%s\n' "$out" | grep -qE '^re-render: +behind'; then
+    _log "renders: $wf is what $renderer writes"
+    return 0
+  fi
+  { echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] renders: $wf is behind $renderer (--check, exit $rc):"; printf '%s\n' "$out"; } >>"$LOG" 2>/dev/null || true
+  RENDER_DRIFT=$wf
+  RENDER_BY=$renderer
+  return 0
+}
+
 PR_BODY='Proposed by the skills auto-refresh hook (managing-skills), because .skills/merge_mode is pr here: the hook never pushes to the default branch.
 
 Later sessions update this branch in place, at most once a day, while this pull request is open and its branch holds only the hook'"'"'s commit. Closing it unmerged declines this bump; the next upstream change is proposed again. To hold one submodule at a commit, use .skills/skills-pin.'
@@ -2555,6 +2617,13 @@ _pr_refresh() {
   local bumped head_tree base base_tree tree rc=0 msg moves c
   # 1. The bump, read off the working tree onto HEAD.
   bumped="$(_pr_tree HEAD "${COMMIT_PATHS[@]}")" || rc=$?
+  # 1a. The renderers' --check (#647), while the bumped tree is the one
+  # checked out: the restore below puts main's back. Only for a bump that
+  # moved the vendored tree; a doctor-only refresh changes no template.
+  if [ "$rc" -eq 0 ] && [ -n "$bumped" ] &&
+    ! git diff --quiet HEAD "$bumped" -- skills-vendor/ 2>/dev/null; then
+    _check_renders
+  fi
   # 2. The content goes back before anything else, success or not.
   _pr_restore
   if [ "$rc" -ne 0 ] || [ -z "$bumped" ]; then
@@ -2621,6 +2690,12 @@ _pr_refresh() {
   _log "pr: proposing $c on $PR_UPSTREAM ($msg)"
   # 6. The network, with the checkout already back on its pointer.
   _pr_publish "$c" "$msg"
+  # Said by the run that pushed the bump, once; a later run finding the
+  # same bump already proposed says nothing more.
+  if [ "$PR_PUSHED" = "1" ] && [ -n "$RENDER_DRIFT" ]; then
+    _log "renders: $RENDER_DRIFT is behind the bump proposed on $PR_BRANCH — re-render after it merges"
+    echo "skills update: the bump proposed on $PR_BRANCH leaves $RENDER_DRIFT behind what $RENDER_BY writes at the new pointer. Once that pull request merges and main is pulled, run bash $RENDER_BY and review the diff: re-rendered before then, it writes the template main records now (see $LOG)" >&2 || true
+  fi
   return 0
 }
 
@@ -2740,6 +2815,9 @@ if [ "$STATUS_RC" -eq 0 ] && [ -n "$STATUS_OUT" ]; then
         # still staged as a kill.
         COMMIT_RC=0
         _hook_git commit -m "$MSG" -- "${STAGED_PATHS[@]}" 2>&1 || COMMIT_RC=$?
+        if [ "$COMMIT_RC" -eq 0 ] && [ "$STAGED_SUB" = "1" ]; then
+          BUMP_COMMIT="$(git rev-parse -q --verify HEAD 2>/dev/null || true)"
+        fi
         rm -f "$COMMIT_KILLS" 2>/dev/null || true
         if [ -f "$STAGING" ]; then
           printf 'done\n' >>"$STAGING" 2>/dev/null || true
@@ -2768,6 +2846,18 @@ _finish_refresh
 # `>>"$LOG"` redirect, where the operator would never see it (the failure the
 # log-a-warning alternative was rejected for).
 _reconcile_unpushed
+
+# The renderers' --check (#647), once the bump is HEAD and pushed if it
+# could be: a push refused rolls the bump back, and then there is no new
+# template to be behind.
+if [ -n "$BUMP_COMMIT" ] &&
+  [ "$(git rev-parse -q --verify HEAD 2>/dev/null || true)" = "$BUMP_COMMIT" ]; then
+  _check_renders
+  _phase "renders"
+  if [ -n "$RENDER_DRIFT" ]; then
+    echo "skills update: this bump leaves $RENDER_DRIFT behind what $RENDER_BY now writes, so the workflow runs the old template until it is re-rendered: run bash $RENDER_BY and review the diff before committing it (see $LOG)" >&2 || true
+  fi
+fi
 
 exit 0
 }

@@ -156,6 +156,7 @@ Pulls upstream submodule changes once per calendar day, on `main` only, and auto
 - Matches diff scope to add scope, so unrelated dirty work cannot be absorbed and empty commits cannot be created. Exactly two paths are ever staged: `skills-vendor/` and, when present, `.skills/doctor.sh` — never `.skills/` wholesale, which would sweep in operator config like `.skills/plans_dir` and `.skills/worktree_root`.
 - Commit message names what changed: `chore: update skills submodules`, `chore: refresh .skills/doctor.sh`, or both.
 - Pushes what it commits, rolling back a failed push; under `.skills/merge_mode` `pr`, opens one PR.
+- After a bump, says when a rendered file (the cadence workflow) is behind its renderer's template; never re-renders (#647).
 - **Installs/updates `.skills/doctor.sh`** every session on any branch, so a deleted doctor self-heals, and again after a refresh so a bump commits the doctor it ships (#299); **commits it** only past the `main` and once-per-day gates (#86). The first vendored installer to succeed wins; all failing reaches stderr (#300). Not in a fresh worktree, whose `skills-vendor/*` is empty.
 - To verify the hook is running, check `.git/skills-update.log` after a session start on `main`. Lines beginning `unexpected hook error` come from the ERR-trap backstop; the hook still exits 0.
 

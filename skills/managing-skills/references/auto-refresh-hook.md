@@ -101,6 +101,10 @@ With `.skills/merge_mode` `pr` the hook never pushes to `main`: it proposes the 
 
 The hook commits and pushes through the consumer's pre-commit and pre-push hooks, inside its 120 s `timeout`. A suite too slow for that is skipped on the hook's own commit and pushes with `.skills/refresh-skip-hooks`. The budget, the knob, keeping the vendored-tree tests, and the per-phase timing in the log: [auto-refresh-hook/timeout-budget.md](auto-refresh-hook/timeout-budget.md).
 
+## A bump that leaves a rendered file behind ([#647](https://github.com/gregoryfoster/skills/issues/647))
+
+After a bump that moves the vendored tree, the hook runs each installed renderer's `--check` against the new tree and reports a file a re-render would change, on stderr once and in the log. It never re-renders. Which renderers, what counts, and the `pr` mode ordering: [auto-refresh-hook/rendered-artifacts.md](auto-refresh-hook/rendered-artifacts.md).
+
 ## A run killed part way ([#555](https://github.com/gregoryfoster/skills/issues/555))
 
 The VS Code extension starts a short-lived "config cache" CLI process at every window (re)connect. It runs the SessionStart hooks and shuts down about 2–3 s later, killing what is still running; the real session runs them again about a second after. A refresh that fetches a hundred upstream commits and then commits through a consumer's pre-commit framework does not fit. CannObserv/address-validator was killed there twice: after `git add`, leaving `.skills/doctor.sh` and the gitlink staged, and after the submodule update, leaving the content ahead of the pointer. Both times the killed run had already stamped the day's lock, so the real session's run exited at the guard, and the next try fell in the same window a day later.
