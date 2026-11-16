@@ -2551,6 +2551,7 @@ This bump leaves $RENDER_DRIFT behind what $RENDER_BY writes at the new pointer 
   out="$(_gh pr create --head "$PR_BRANCH" --base "$PR_BASE_BRANCH" --title "$msg" --body "$body" 2>&1)" || rc=$?
   { echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] gh pr create exited $rc:"; [ -z "$out" ] || printf '%s\n' "$out"; } >>"$LOG" 2>/dev/null || true
   if [ "$rc" -eq 0 ]; then
+    PR_OPENED=1
     _log "pr: opened $out"
   else
     case "$out" in
@@ -2577,6 +2578,7 @@ RENDER_DRIFT=""
 RENDER_BY=""
 BUMP_COMMIT=""
 PR_PUSHED=0
+PR_OPENED=0
 _check_renders() {
   local wf=.github/workflows/context-cadence.yml d renderer="" out rc=0
   RENDER_DRIFT=""
@@ -2690,9 +2692,11 @@ _pr_refresh() {
   _log "pr: proposing $c on $PR_UPSTREAM ($msg)"
   # 6. The network, with the checkout already back on its pointer.
   _pr_publish "$c" "$msg"
-  # Said by the run that pushed the bump, once; a later run finding the
-  # same bump already proposed says nothing more.
-  if [ "$PR_PUSHED" = "1" ] && [ -n "$RENDER_DRIFT" ]; then
+  # Said by the run that pushed the bump or opened its pull request, once:
+  # a PR opened over a bump an earlier run pushed (its `gh pr create` had
+  # failed) carries the note in its body, so stderr says it too (CR 2298).
+  # A later run finding the same bump already proposed says nothing more.
+  if { [ "$PR_PUSHED" = "1" ] || [ "$PR_OPENED" = "1" ]; } && [ -n "$RENDER_DRIFT" ]; then
     _log "renders: $RENDER_DRIFT is behind the bump proposed on $PR_BRANCH — re-render after it merges"
     echo "skills update: the bump proposed on $PR_BRANCH leaves $RENDER_DRIFT behind what $RENDER_BY writes at the new pointer. Once that pull request merges and main is pulled, run bash $RENDER_BY and review the diff: re-rendered before then, it writes the template main records now (see $LOG)" >&2 || true
   fi

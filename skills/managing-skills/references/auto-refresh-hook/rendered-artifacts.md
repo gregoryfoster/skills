@@ -19,7 +19,7 @@ After a bump that moves the vendored tree, the hook runs each installed renderer
 - **`.git/skills-update.log`:** one `renders:` line for each check. A drift or a failure also logs `--check`'s whole output.
 - **stderr, once, from the run whose bump caused it:**
   - **Direct mode:** after the bump commit is pushed, or held unpushed, and only while it is still `HEAD`. A push refused and rolled back leaves no new template to be behind, so nothing is reported. The phase is logged as `renders`.
-  - **`pr` mode:** from the run that pushes the bump to `skills/submodule-refresh`. A later run that finds the same bump already proposed says nothing.
+  - **`pr` mode:** from the run that pushes the bump to `skills/submodule-refresh`, or opens its pull request over a bump an earlier run pushed. A later run that finds the same bump already proposed says nothing.
 - **The pull request's body,** in `pr` mode, when this run opens the PR. The hook never edits an open PR's body, because that body is the reviewer's. So a later bump's drift reaches stderr and the log only.
 
 ## In `pr` mode, re-render after the merge

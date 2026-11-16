@@ -34,6 +34,7 @@ from tests.structural.test_refresh_hook_pr_mode import (
     _commit_knob,
     _creates,
     _gh,
+    _new_day,
     _rule,
 )
 from tests.utils.refresh_hook_consumer import (
@@ -223,3 +224,26 @@ def test_pr_mode_with_a_current_workflow_leaves_the_body_as_it_was(tmp_path):
     assert len(_creates(state)) == 1, _calls(state)
     assert WF not in "\n".join(_calls(state))
     assert WF not in r.stderr, r.stderr
+
+
+def test_pr_mode_opening_the_pr_without_a_push_says_so_too(tmp_path):
+    """CR 2298: the branch already carries the bump (yesterday's `gh pr
+    create` failed), so today's run pushes nothing and only opens the PR. Its
+    body names the drift, and stderr must too, or the session never hears
+    of the body's note."""
+    c = _consumer(tmp_path)
+    _commit_knob(c, "pr\n")
+    _rule(c)
+    state = _gh(c)
+    (state / "create_err").write_text("HTTP 502: the server had a bad day\n")
+    _upstream_renderer_moves(c)
+    first = run_hook(c)
+    assert first.returncode == 0, first.stderr
+    assert _creates(state) and not (state / "prs").exists(), _calls(state)
+    (state / "create_err").unlink()
+    _new_day(c)
+    r = run_hook(c)
+    assert r.returncode == 0, r.stderr
+    assert len(_creates(state)) == 2, _calls(state)
+    assert WF in _creates(state)[-1] or WF in "\n".join(_calls(state)), _calls(state)
+    assert WF in r.stderr, r.stderr
