@@ -408,7 +408,16 @@ def cross_epic(
             continue
         theirs = item_lines(normalize(it.get("body") or ""), repo)
         shared = sorted(set(mine) & set(theirs), key=ref_order)
-        read.append({"epic": ref, "children": len(theirs), "shared": len(shared)})
+        # A closed sibling's lines froze when it closed: its drift is history,
+        # not a lag, so the row says which it is (CR 2319).
+        read.append(
+            {
+                "epic": ref,
+                "state": it.get("state"),
+                "children": len(theirs),
+                "shared": len(shared),
+            }
+        )
         for k in shared:
             for here_ticked, here_line in mine[k]:
                 for ticked, line in theirs[k]:
@@ -935,9 +944,10 @@ def run(argv: list[str]) -> int:
             "both here and there (a line's subject, its leading refs: a pointer line has\n"
             "none), with both boxes and lines, the child's state, and drift: true when\n"
             "the boxes differ. A bare #N there is that epic's repo's. siblings gives each\n"
-            "one's children (each a checklist line leads) and how many are shared, or\n"
-            "its error. Reporting only, so an unread sibling or state is a warning,\n"
-            "and drift is one too.\n\n"
+            "one's state, its children (each a checklist line leads) and how many are\n"
+            "shared, or its error: a closed sibling's lines froze when it closed.\n"
+            "Reporting only, so an unread sibling or state is a warning, and drift is\n"
+            "one too.\n\n"
             "exit codes: 0 report written; 1 usage; 2 gh failed on the epic, a listing\n"
             "or a comment read (its stderr shown). gh failing on one cross-repo ref, one\n"
             "PR's closing issues or the default branch costs only that: a warning with\n"
