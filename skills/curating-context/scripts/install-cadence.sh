@@ -670,12 +670,11 @@ if [ "$MODE" = "check" ]; then
     # --print's stderr is left to reach ours: it says why a render failed.
     rr_args=(--print --file "$WF_PATH")
     [ "$LEDGER_SET" -eq 0 ] || rr_args+=(--ledger "$LEDGER")
-    if [ -n "$CRON" ]; then
-      rr_args+=(--cron "$CRON")
-    else
+    rr_cron="$CRON"
+    if [ -z "$rr_cron" ]; then
       rr_cron="$(sed -n "s/^ *- cron: *'\(.*\)'\$/\1/p" "$WF" | head -1)"
-      [ -z "$rr_cron" ] || rr_args+=(--cron "$rr_cron")
     fi
+    [ -z "$rr_cron" ] || rr_args+=(--cron "$rr_cron")
     rr_rc=0
     rr_out="$(bash "${BASH_SOURCE[0]}" "${rr_args[@]}")" || rr_rc=$?
     if [ "$rr_rc" -ne 0 ]; then
@@ -687,9 +686,14 @@ if [ "$MODE" = "check" ]; then
       # Lines it writes or drops, whichever is more: a pin moved is one line.
       rr_n="$(diff <(printf '%s\n' "$rr_out") "$WF" |
         awk '/^</ { a++ } /^>/ { b++ } END { print (a > b ? a : b) + 0 }' || true)"
+      # The command keeps the schedule this compared with (CR 2299): a re-run
+      # without --cron writes the derived one over a custom schedule.
+      rr_q="'"
+      rr_cmd="install-cadence.sh"
+      [ -z "$rr_cron" ] || rr_cmd="$rr_cmd --cron $rr_q$rr_cron$rr_q"
       echo "re-render:          behind — a re-render rewrites $rr_n line(s) of the"
-      echo "                    installed workflow. Run install-cadence.sh and"
-      echo "                    review the diff before committing it."
+      echo "                    installed workflow. Run $rr_cmd"
+      echo "                    and review the diff before committing it."
     fi
   else
     echo "workflow:           MISSING ($WF_PATH)"

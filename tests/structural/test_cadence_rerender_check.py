@@ -181,3 +181,14 @@ def test_the_help_names_the_line():
     text = " ".join(r.stdout.split())
     assert "A tenth, re-render," in text, r.stdout
     assert "`none`, or `behind`" in text, r.stdout
+
+
+def test_the_advice_keeps_a_custom_schedule(tmp_path):
+    """CR 2299: the comparison keeps the installed schedule, but a plain
+    re-run of the installer writes the derived one over a custom --cron. So
+    the `behind` advice names the command that keeps it."""
+    repo = _installed(tmp_path, "--cron", "1 2 * * 3")
+    _move_pin(repo, "      - uses: actions/checkout@v5")
+    r = _run(repo, "--check")
+    assert BEHIND.search(r.stdout), r.stdout
+    assert "install-cadence.sh --cron '1 2 * * 3'" in r.stdout, r.stdout
