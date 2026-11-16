@@ -169,7 +169,8 @@ subjects (#662):
   or "and": "- [x] #46 + #47 ..." has two, and refs later in it are mentions.
   With --account, a ticked line whose subject is still open is a WARNING and
   a summary ticked_open entry, never a refusal; ticked_unchecked lists ticked
-  subjects in another repo, which the open list can't speak for. A new or
+  subjects in another repo, which the open list can't speak for. That list
+  holds issues only, so an open PR as a subject passes unseen. A new or
   changed checkbox line with two or more subjects is a WARNING too
   (multi_subject): a line each lets each box follow its own issue.
 
