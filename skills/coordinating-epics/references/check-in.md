@@ -116,6 +116,8 @@ Read the `named` rows, then the `judged` rows from the top. Verify each row befo
 
 **A cross-repo parent** keeps one more cursor per other repo, `- **Last issue seen (owner/repo):** owner/repo#N`. Pass `--also owner/repo` for each, and the report's `also` key gives that repo's number walk and updates, keeping only its rows that are children or mention the epic or a child; `unrelated` counts the rest. Write `{last_seen:owner/repo}` into its line. The editor refuses a new issue there that the write doesn't mention by `owner/repo#N`, and holds `{checked}` when any repo's listing hit its cap, or the epic keeps a cursor for a repo the scan didn't walk (#400). The commit range stays this repo's.
 
+**A child kept on two epics:** pass `--sibling owner/repo#N` for each sibling epic that keeps lines for the same children. `cross_epic` lists each child that leads a checklist item in both, with both boxes and its state. `drift: true` marks boxes that differ (#660). Act on a drift row as on a foreign tick: verify, then bring the lagging box in line, or keep the record on one epic ([siblings.md](siblings.md)).
+
 Also re-read:
 - the epics listed under "not tracked here" (status 39);
 - other epics' lines that name this repo (broker 118);
@@ -129,7 +131,7 @@ Also re-read:
 - **duplicate**;
 - **park**, with a trigger.
 
-On an `--account` epic, give each out-of-epic or duplicate issue a line under `## Out of epic` in the body too. `--account` reads the body, never the log comment, so a call that names it only there is refused (#657).
+On an `--account` epic, give each out-of-epic or duplicate issue a line under `## Out of epic` in the body too. `--account` reads the body, never the log comment, so a call that names it only there is refused (#657). It also warns about a ticked line whose subject is still open (`ticked_open`, #662). The subject is the refs the line leads with, so `- [x] #46 + #47` has two. Untick the line, or close the issue. A write that adds a line with two subjects is nudged toward a line each.
 
 **The epic's kind predicts most slots, but read every item.** In 6 public burn-downs, 157 of 177 new issues became children. In 7 themed epics, 75 of 140 were out. A TypeSafe Choice per item lost to that prior plus a mention check in burn-downs, and only tied it in themed epics ([#439](https://github.com/gregoryfoster/skills/issues/439)).
 

@@ -115,7 +115,8 @@ if rest[0] == "graphql":  # gh api graphql -f query=… -f owner=… -F number=�
             errors.append({"type": "NOT_FOUND", "path": ["repository", alias],
                            "message": f"Could not resolve to an issue or pull request with the number of {num}."})
         else:
-            data[alias] = {"number": int(num), "updatedAt": it.get("updated_at")}
+            data[alias] = {"number": int(num), "updatedAt": it.get("updated_at"),
+                           "state": (it.get("state") or "open").upper()}
     body = {"data": {"repository": data}}
     if errors:  # gh prints the body, then fails with the errors (exit 1)
         body["errors"] = errors
