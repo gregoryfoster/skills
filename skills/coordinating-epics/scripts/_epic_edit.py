@@ -684,7 +684,8 @@ def line_subjects(line: str, host: str) -> tuple[str, list[str]] | None:
             while n := SUBJECT_NEXT_RE.match(line, pos):
                 out.append(key(n.group("repo"), n.group("num"), host))
                 pos = n.end()
-            return kind, out
+            # "#46 + #47 + #46" names #46 once (CR 2317).
+            return kind, list(dict.fromkeys(out))
     return None
 
 
