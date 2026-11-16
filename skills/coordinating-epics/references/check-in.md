@@ -129,7 +129,7 @@ Also re-read:
 - **duplicate**;
 - **park**, with a trigger.
 
-On an `--account` epic, give each out-of-epic or duplicate issue a line under `## Out of epic` in the body too. `--account` reads the body, never the log comment, so a call that names it only there is refused (#657).
+On an `--account` epic, give each out-of-epic or duplicate issue a line under `## Out of epic` in the body too. `--account` reads the body, never the log comment, so a call that names it only there is refused (#657). It also warns about a ticked line whose subject is still open (`ticked_open`, #662). The subject is the refs the line leads with, so `- [x] #46 + #47` has two. Untick the line, or close the issue. A write that adds a line with two subjects is nudged toward a line each.
 
 **The epic's kind predicts most slots, but read every item.** In 6 public burn-downs, 157 of 177 new issues became children. In 7 themed epics, 75 of 140 were out. A TypeSafe Choice per item lost to that prior plus a mention check in burn-downs, and only tied it in themed epics ([#439](https://github.com/gregoryfoster/skills/issues/439)).
 

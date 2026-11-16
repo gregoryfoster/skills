@@ -164,6 +164,15 @@ lint:
   cell, so \\`make\\` (the escaped backticks an unquoted heredoc leaves) is
   refused and `App\\Tests\\` is code.
 
+subjects (#662):
+  A line's subject is the run of refs it leads with, joined by "+", ",", "&"
+  or "and": "- [x] #46 + #47 ..." has two, and refs later in it are mentions.
+  With --account, a ticked line whose subject is still open is a WARNING and
+  a summary ticked_open entry, never a refusal; ticked_unchecked lists ticked
+  subjects in another repo, which the open list can't speak for. A new or
+  changed checkbox line with two or more subjects is a WARNING too
+  (multi_subject): a line each lets each box follow its own issue.
+
 exit codes:
   0  written and read back, or nothing to write (every operation already held),
      and each log comment posted, or found already posted
@@ -644,14 +653,63 @@ def ref_text(line: str) -> str:
     return BARE_ISSUE_URL_RE.sub(as_ref, ANGLED_ISSUE_URL_RE.sub(as_ref, line))
 
 
-def line_ref(line: str, host: str) -> tuple[str, str] | None:
-    """(kind, key) when the line is an item, bullet or row led by a ref."""
+# Each ref after a line's lead that continues its subject (#662): a "+", ",",
+# "&" or "and", with markup closing the ref before and opening the next, as in
+# "**#46** + **#47**". Text of any other kind ends the run.
+SUBJECT_NEXT_RE = re.compile(
+    r"(?:~~|\*\*|\])*\s*(?:\+|,|&|\band\b)\s*" + MARKUP + REF_PAT
+)
+
+
+def line_subjects(line: str, host: str) -> tuple[str, list[str]] | None:
+    """(kind, keys) when the line is an item, bullet or row led by a ref.
+
+    The keys are its subject: the run of refs it leads with, so
+    "- [x] #46 + #47 title" has two, and refs later in the line are mentions
+    (#662, decided 2026-11-15). The first is the lead every op finds it by.
+    """
     line = ref_text(line)
     for kind, rx in (("item", ITEM_RE), ("bullet", BULLET_RE), ("row", ROW_RE)):
         m = rx.match(line)
         if m:
-            return kind, key(m.group("repo"), m.group("num"), host)
+            out = [key(m.group("repo"), m.group("num"), host)]
+            pos = m.end()
+            while n := SUBJECT_NEXT_RE.match(line, pos):
+                out.append(key(n.group("repo"), n.group("num"), host))
+                pos = n.end()
+            return kind, out
     return None
+
+
+def line_ref(line: str, host: str) -> tuple[str, str] | None:
+    """(kind, key) when the line is an item, bullet or row led by a ref."""
+    ls = line_subjects(line, host)
+    return (ls[0], ls[1][0]) if ls else None
+
+
+def ticked_subjects(
+    lines: list[str], host: str, open_keys: set[str]
+) -> tuple[list[dict], list[str]]:
+    """Each ticked item outside fences whose subject is in open_keys, as
+    {"line", "open"}, and the ticked subjects in another repo, which
+    open_keys can't speak for (#662)."""
+    fence = fenced(lines)
+    mine = host.lower() + "#"
+    found: list[dict] = []
+    other: dict[str, None] = {}
+    for i, ln in enumerate(lines):
+        if fence[i] or box_state(ln) != "done":
+            continue
+        ls = line_subjects(ln, host)
+        if not ls:
+            continue
+        other.update((s, None) for s in ls[1] if not s.startswith(mine))
+        still = [s for s in ls[1] if s in open_keys]
+        if still:
+            found.append(
+                {"line": ln.strip(), "open": ["#" + s[len(mine) :] for s in still]}
+            )
+    return found, list(other)
 
 
 def find_ref_line(
@@ -2471,7 +2529,7 @@ def run(argv: list[str]) -> int:
         metavar="FROM",
         help="refuse unless every open issue (numbered FROM or above, if given) is referenced"
         " in the body; a ref only in code doesn't count. For a whole-backlog or number-range"
-        " epic, not a chosen subset",
+        " epic, not a chosen subset. Warns about a ticked line whose subject is open",
     )
     p.add_argument(
         "--scan",
@@ -2837,6 +2895,21 @@ def run(argv: list[str]) -> int:
         # ops list would lint nothing of it (CR 291).
         added, in_fence, in_table = introduced([] if a.lint_all else live_lines, new)
         problems = lint(added, host, not a.no_link_check, in_fence, in_table)
+        # One checkbox line per issue lets each box follow its own issue (#662).
+        # Valid either way, so a nudge on the lines this write adds or changes.
+        multi = []
+        for ln, code in zip(added, in_fence):
+            ls = None if code else line_subjects(ln, host)
+            if ls and ls[0] == "item" and len(ls[1]) > 1:
+                multi.append(ln.strip())
+        if multi:
+            summary["multi_subject"] = multi
+            print(
+                "WARNING checkbox lines leading with two or more issues: "
+                + "; ".join(f"'{m}'" for m in multi)
+                + ". A line each lets each box follow its own issue (#662)",
+                file=sys.stderr,
+            )
         for c in comments:  # a log comment is linted as a changed line (#654)
             cl = c.split("\n")
             problems += lint(cl, host, not a.no_link_check, fenced(cl), tabled(cl))
@@ -2912,6 +2985,35 @@ def run(argv: list[str]) -> int:
                 and key(None, i["number"], host) not in listed
             )
             summary["unlisted"] = unlisted
+            # A ticked line's subject should be closed (#662). The open set is
+            # the whole repo's, so every ticked line is read, whatever N. A
+            # warning, not a refusal: an existing epic may hold such a line.
+            ticked_open, unchecked = ticked_subjects(
+                new,
+                host,
+                {
+                    key(None, i["number"], host)
+                    for i in open_issues
+                    if i["number"] != a.epic
+                },
+            )
+            summary["ticked_open"] = ticked_open
+            summary["ticked_unchecked"] = unchecked
+            if ticked_open:
+                print(
+                    "WARNING ticked lines whose subject is still open: "
+                    + "; ".join(
+                        f"{', '.join(t['open'])} on '{t['line']}'" for t in ticked_open
+                    )
+                    + ". Untick the line, or close the issue (#662)",
+                    file=sys.stderr,
+                )
+            if unchecked:
+                print(
+                    "NOTE ticked subjects in another repo aren't checked by --account: "
+                    + ", ".join(unchecked),
+                    file=sys.stderr,
+                )
             if unlisted:
                 # The body is the one place this reads: a log comment holds
                 # history, so a disposition only it records is lost here (#657).
