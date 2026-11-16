@@ -51,8 +51,9 @@ never logged, never put in an argument, and never in an error message: every
 message this module builds is redacted against it.
 
 **Skips go through the API, never an exit code.** `connect()` raises `Skipped`
-with `reason` set to `not-opted-in` or `no-key`, and `.line` holds the single
-line to print. Exit 3 already means a finding or a loss in several scripts, and
+with `reason` set to `not-opted-in` or `no-key`, or `primary-unresolved` when
+git refuses the primary checkout the knob and key are read from (#613), and
+`.line` holds the single line to print, with git's reason in it. Exit 3 already means a finding or a loss in several scripts, and
 `prove-no-loss.sh` is among them, so a skip that exited 3 would read as content
 loss. A pass inside an existing script prints `.line` to stderr and leaves that
 script's exit code alone (the epic's boundary rule: every TypeSafe step is
@@ -130,10 +131,10 @@ USER_AGENT = "gregoryfoster-skills-typesafe/1"
 
 
 class Skipped(Exception):
-    """The step did not run: not opted in, or no key. Not a result, not a failure."""
+    """The step did not run: not opted in, no key, or no primary checkout to read either from. Not a result."""
 
     def __init__(self, reason: str, detail: str):
-        self.reason = reason  # "not-opted-in" | "no-key"
+        self.reason = reason  # "not-opted-in" | "no-key" | "primary-unresolved"
         self.line = f"typesafe: skipped ({reason}): {detail}"
         super().__init__(self.line)
 
@@ -164,26 +165,65 @@ class RequestTooLarge(TypeSafeError):
 # --- opt-in ------------------------------------------------------------------
 
 
-def _git(args: list[str], cwd: str) -> str | None:
+# Git exports GIT_DIR to every hook, and it beats cwd: an inherited one answers
+# for the repository it names (#613, #612 gap 3). Every ask below drops these.
+_HOOK_VARS = ("GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR")
+# Git found no repository at all: for the candidate below that says only that
+# it is no checkout, which is the layout, not a failure (set U's CR 1996).
+_NO_REPO = "fatal: not a git repository (or any of the parent directories)"
+
+
+class PrimaryUnresolved(Exception):
+    """git refused the primary checkout, or no path to it exists from here.
+
+    The message carries git's reason when it gave one. `connect()` turns this
+    into `Skipped("primary-unresolved")`, so a host step stays advisory.
+    """
+
+
+def _git(args: list[str], cwd: str) -> tuple[int, str, str] | None:
+    """(exit code, stdout, stderr) of git in `cwd`, or None when git can't run there."""
+    env = {k: v for k, v in os.environ.items() if k not in _HOOK_VARS}
+    env["LC_ALL"] = "C"  # git's reason is matched below; a translation would miss it
     try:
         out = subprocess.run(
-            ["git", *args], cwd=cwd, capture_output=True, text=True, check=True
+            ["git", *args], cwd=cwd, capture_output=True, text=True, env=env
         )
-    except (OSError, subprocess.CalledProcessError):
+    except OSError:
         return None
-    return out.stdout.strip() or None
+    return out.returncode, out.stdout.strip(), out.stderr.strip()
+
+
+def _ok(r: tuple[int, str, str] | None) -> str | None:
+    return r[1] or None if r is not None and r[0] == 0 else None
 
 
 def project_root(cwd: str | None = None) -> Path | None:
     """The primary checkout holding `cwd`, or None outside a git work tree.
 
-    `--show-toplevel` names the current checkout, which from a linked worktree
-    is the worktree, where an untracked knob doesn't exist. The parent of
-    `--git-common-dir` is the primary checkout, except inside a submodule,
-    where it's `<super>/.git/modules`, so the candidate is kept only if it's a
-    checkout sharing that common dir. This is the same guard as
-    `resolve-plans-dir.sh`, and it shares that script's one unhandled shape
-    (#203): a linked worktree of a submodule falls back to the worktree.
+    Set U's rule, as `resolve-worktree-root.sh` resolves its project root
+    (#585, #605, #613). Every git call drops an inherited `GIT_DIR`,
+    `GIT_WORK_TREE` and `GIT_COMMON_DIR` (#612 gap 3).
+
+    1. From the primary itself, where the git dir is the common dir, the
+       answer is its own top level. Asked first: a `--separate-git-dir` store
+       whose path ends in `/.git` is listed as the directory above it, which
+       git takes for a work tree (#612 gap 1).
+    2. Otherwise the parent of `--git-common-dir`, kept if it's a checkout
+       sharing that common dir.
+    3. If git refuses that parent, and its `.git` can be this repository's,
+       that's `PrimaryUnresolved` with git's reason ("dubious ownership"),
+       never the current checkout standing in (CR 1858).
+    4. A bare primary (its `bare` line confirmed by `--is-bare-repository`,
+       since git before 2.25 marks a `--separate-git-dir` store bare, #612 gap
+       2) and a submodule's linked worktree (#203) answer the current checkout.
+    5. Anything else is a linked worktree of a primary git knows no path to (a
+       `--separate-git-dir` or symlinked `.git`): `PrimaryUnresolved`.
+
+    Not handled: from a linked worktree of a store whose path ends in `/.git`,
+    git itself names the store's parent as the primary, and that is answered.
+    Case 1 needs no `--path-format`, so unlike the shell resolvers it holds
+    below git 2.31 too.
     """
     if cwd is None:
         try:
@@ -192,20 +232,52 @@ def project_root(cwd: str | None = None) -> Path | None:
             OSError
         ):  # the directory was deleted under us: outside any checkout (CR 400)
             return None
-    top = _git(["rev-parse", "--show-toplevel"], cwd)
+    top = _ok(_git(["rev-parse", "--show-toplevel"], cwd))
     if top is None:
         return None
-    common = _git(["rev-parse", "--git-common-dir"], cwd)
-    if common is not None:
-        common_abs = os.path.realpath(os.path.join(cwd, common))
-        candidate = os.path.dirname(common_abs)
-        cand_common = _git(["rev-parse", "--git-common-dir"], candidate)
-        if (
-            cand_common is not None
-            and os.path.realpath(os.path.join(candidate, cand_common)) == common_abs
-        ):
-            return Path(candidate)
-    return Path(top)
+    git_dir = _ok(_git(["rev-parse", "--git-dir"], cwd))
+    common = _ok(_git(["rev-parse", "--git-common-dir"], cwd))
+    if git_dir is None or common is None:
+        raise PrimaryUnresolved(
+            f"could not read the git dirs of {top}, so its primary checkout is unknown"
+        )
+    common_abs = os.path.realpath(os.path.join(cwd, common))
+    if os.path.realpath(os.path.join(cwd, git_dir)) == common_abs:
+        return Path(top)  # 1. the primary itself
+    candidate = os.path.dirname(common_abs)
+    asked = _git(["rev-parse", "--git-common-dir"], candidate)
+    cand_common = _ok(asked)
+    if cand_common is not None:
+        if os.path.realpath(os.path.join(candidate, cand_common)) == common_abs:
+            return Path(candidate)  # 2.
+    elif asked is not None:
+        dot_git = os.path.join(candidate, ".git")
+        ours = os.path.islink(dot_git) or os.path.isfile(dot_git)
+        if not ours and os.path.isdir(dot_git):
+            ours = os.path.realpath(dot_git) == common_abs
+        if ours:  # 3.
+            reason = asked[2].splitlines()[0] if asked[2] else ""
+            raise PrimaryUnresolved(
+                f"could not resolve the primary checkout {candidate}: "
+                + (reason or f"git will not open {dot_git} and gives no reason")
+            )
+    listed = _ok(_git(["worktree", "list", "--porcelain"], cwd)) or ""
+    block = listed.split("\n\n", 1)[0].splitlines()
+    if "bare" in block[1:] and block[0].startswith("worktree "):
+        entry = block[0][len("worktree ") :]
+        if _ok(_git(["rev-parse", "--is-bare-repository"], entry)) == "true":
+            return Path(top)  # 4. a bare primary
+    if _ok(_git(["rev-parse", "--is-inside-git-dir"], candidate)) == "true":
+        return Path(top)  # 4. a submodule's linked worktree (#203)
+    reason = ""
+    if asked is not None and asked[0] != 0 and not asked[2].startswith(_NO_REPO):
+        reason = asked[2].splitlines()[0] + "; "
+    raise PrimaryUnresolved(
+        f"could not resolve the primary checkout: {reason}this repository's common "
+        f"dir {common_abs} is no checkout's .git (as with `git init "
+        "--separate-git-dir` or a symlinked `.git`), and only the primary knows "
+        "its work tree, so run this from the primary checkout"
+    )
 
 
 class _Unreadable(Exception):
@@ -329,12 +401,17 @@ def connect(
     environ = os.environ if environ is None else environ
     key = (environ.get(KEY_ENV) or "").strip()
     root = _UNSET
-    if not key:
-        # Read before the opt-in is decided, so a key kept only in the file is
-        # redacted from a malformed opt-in's echo too (CR 404). Nothing is sent.
-        root = project_root(cwd)
-        key = key_from_env_file(root) or ""
-    on, why = opted_in(environ, cwd, root=root)
+    try:
+        if not key:
+            # Read before the opt-in is decided, so a key kept only in the file is
+            # redacted from a malformed opt-in's echo too (CR 404). Nothing is sent.
+            root = project_root(cwd)
+            key = key_from_env_file(root) or ""
+        on, why = opted_in(environ, cwd, root=root)
+    except PrimaryUnresolved as e:
+        # Neither the knob nor the key can be read, so nothing is sent, and the
+        # host step stays advisory: its callers catch Skipped alone (#613).
+        raise Skipped("primary-unresolved", f"{e}; nothing was sent") from None
     if key:
         # A malformed opt-in is echoed, so a key pasted into the wrong place
         # (the env var or the knob file) would be printed (CR 404).
