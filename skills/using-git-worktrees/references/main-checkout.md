@@ -10,7 +10,8 @@ worktree list` is not always that checkout
    the first row of `git worktree list`. That holds for a plain primary and
    for a submodule, whose first row is its git dir. It names the main
    checkout.
-2. **"must be run in a work tree":** the row has no work tree.
+2. **"must be run in a work tree",** or on git before 2.25 nothing at all:
+   the row has no work tree.
    - **Marked `(bare)`:** a bare repository. The main checkout is the
      linked worktree that holds the default branch, the row ending
      `[<default>]`. If no worktree holds it, ask which checkout is meant.
@@ -34,7 +35,7 @@ A worktree that something else made, such as the Agent tool's `isolation:
 
 ```bash
 main=$(git -C "$(git worktree list --porcelain | sed -n '1s/^worktree //p')" rev-parse --show-toplevel) &&
-  { grep -qsxE '[[:space:]]*none[[:space:]]*' "$main/.skills/worktree_venv" || ln -s "$main/.venv" .venv; }
+  [ -n "$main" ] && { grep -qsxE '[[:space:]]*none[[:space:]]*' "$main/.skills/worktree_venv" || ln -s "$main/.venv" .venv; }
 ```
 
 Where `$main` fails, step 2 applies: link the `.venv` of the checkout it

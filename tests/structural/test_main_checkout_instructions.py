@@ -147,3 +147,20 @@ def test_in_a_bare_layout_it_points_to_the_reference(tmp_path):
     assert r.returncode == 2, r.stdout + r.stderr
     assert "main-checkout.md" in r.stderr, r.stderr
     assert "repo.git" not in r.stderr.split("refusing", 1)[-1], r.stderr
+
+
+def test_on_git_2_17_a_bare_primary_links_nothing(tmp_path):
+    """CR 2267: inside a git dir git 2.17 answers --show-toplevel with
+    nothing, at exit 0, so the command linked `.venv -> /.venv`."""
+    home = layouts.bare_home(tmp_path, "direct\n")
+    env = layouts.old_git_bare_env(layouts.env(), tmp_path / "bin")
+    r = subprocess.run(
+        ["bash", "-c", _venv_command()],
+        cwd=home,
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=30,
+    )
+    assert r.returncode != 0
+    assert not (home / ".venv").is_symlink(), "linked to /.venv"
