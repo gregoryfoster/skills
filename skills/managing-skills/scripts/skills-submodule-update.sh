@@ -2546,7 +2546,7 @@ PRS_EOF
   if [ -n "$RENDER_DRIFT" ]; then
     body="$body
 
-This bump leaves $RENDER_DRIFT behind what $RENDER_BY writes at the new pointer (its --check says \`re-render: behind\`). After this merges and main is pulled, run bash $RENDER_BY and review the diff; re-rendered before then, it writes the old template."
+This bump leaves $RENDER_DRIFT behind what $RENDER_BY writes at the new pointer (its --check says \`re-render: behind\`). After this merges and main is pulled, re-render it with the command bash $RENDER_BY --check names, which keeps the installed schedule, and review the diff; re-rendered before then, it writes the old template."
   fi
   out="$(_gh pr create --head "$PR_BRANCH" --base "$PR_BASE_BRANCH" --title "$msg" --body "$body" 2>&1)" || rc=$?
   { echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] gh pr create exited $rc:"; [ -z "$out" ] || printf '%s\n' "$out"; } >>"$LOG" 2>/dev/null || true
@@ -2698,7 +2698,7 @@ _pr_refresh() {
   # A later run finding the same bump already proposed says nothing more.
   if { [ "$PR_PUSHED" = "1" ] || [ "$PR_OPENED" = "1" ]; } && [ -n "$RENDER_DRIFT" ]; then
     _log "renders: $RENDER_DRIFT is behind the bump proposed on $PR_BRANCH — re-render after it merges"
-    echo "skills update: the bump proposed on $PR_BRANCH leaves $RENDER_DRIFT behind what $RENDER_BY writes at the new pointer. Once that pull request merges and main is pulled, run bash $RENDER_BY and review the diff: re-rendered before then, it writes the template main records now (see $LOG)" >&2 || true
+    echo "skills update: the bump proposed on $PR_BRANCH leaves $RENDER_DRIFT behind what $RENDER_BY writes at the new pointer. Once that pull request merges and main is pulled, re-render it with the command bash $RENDER_BY --check names and review the diff: re-rendered before then, it writes the template main records now (see $LOG)" >&2 || true
   fi
   return 0
 }
@@ -2859,7 +2859,7 @@ if [ -n "$BUMP_COMMIT" ] &&
   _check_renders
   _phase "renders"
   if [ -n "$RENDER_DRIFT" ]; then
-    echo "skills update: this bump leaves $RENDER_DRIFT behind what $RENDER_BY now writes, so the workflow runs the old template until it is re-rendered: run bash $RENDER_BY and review the diff before committing it (see $LOG)" >&2 || true
+    echo "skills update: this bump leaves $RENDER_DRIFT behind what $RENDER_BY now writes, so the workflow runs the old template until it is re-rendered: re-render it with the command bash $RENDER_BY --check names, which keeps the installed schedule, and review the diff before committing it (see $LOG)" >&2 || true
   fi
 fi
 

@@ -390,9 +390,10 @@ print_render_note() {
   echo ""
   echo "Knob-rendered artifact: .skills/merge_mode changes on this branch, and"
   echo "$RENDER_WF is rendered by it. Re-render it after this branch merges,"
-  echo "once the default branch has the knob: run install-cadence.sh from the"
-  echo "primary checkout and review the diff. Re-rendered on this branch, it"
-  echo "renders the mode the primary checkout reads now."
+  echo "once the default branch has the knob: in the primary checkout, run the"
+  echo "command install-cadence.sh --check names on its re-render: line (it"
+  echo "keeps the installed schedule) and review the diff. Re-rendered on this"
+  echo "branch, it renders the mode the primary checkout reads now."
   if [[ -z "$renderer" ]]; then
     echo "  (no install-cadence.sh in scripts/, .claude/skills/curating-context/scripts/"
     echo "  or skills/curating-context/scripts/, so its --check was not run)"

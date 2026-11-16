@@ -131,6 +131,9 @@ def test_a_bump_that_leaves_the_workflow_behind_says_so(tmp_path):
     assert WF in r.stderr, r.stderr
     assert "skills/curating-context/scripts/install-cadence.sh" in r.stderr, r.stderr
     assert "review the diff" in r.stderr, r.stderr
+    # CR 2302: the command --check names keeps a custom schedule; a bare
+    # re-run of the installer would write the derived one over it.
+    assert f"bash {CC_SCRIPTS}/install-cadence.sh --check names" in r.stderr, r.stderr
     log = log_text(c)
     assert re.search(r"renders: .*context-cadence\.yml.*behind", log), log
     # Reported, never re-rendered.
@@ -203,6 +206,7 @@ def test_pr_mode_writes_it_into_the_pull_request_and_says_after_the_merge(tmp_pa
     calls = "\n".join(_calls(state))
     assert WF in calls, f"the PR body doesn't name the workflow: {calls}"
     assert "after this merges" in calls.split(WF, 1)[1].lower(), calls
+    assert "--check names" in calls.split(WF, 1)[1], calls
     assert WF in r.stderr and PR_BRANCH in r.stderr, r.stderr
     assert "once that pull request merges" in r.stderr.split(WF, 1)[1].lower(), r.stderr
     # The checkout is back on main's pointer; nothing was re-rendered.

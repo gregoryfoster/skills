@@ -78,6 +78,7 @@ def test_a_knob_flip_says_to_re_render_after_the_merge(tmp_path):
     assert WF in text, r.stdout
     assert "after this branch merges" in text, r.stdout
     assert RENDERER in text, r.stdout
+    assert "install-cadence.sh --check names" in text, r.stdout
     # The renderer's own verdict, read from its --check.
     assert "re-render:" in r.stdout, r.stdout
 
