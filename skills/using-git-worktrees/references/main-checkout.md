@@ -41,3 +41,18 @@ main=$(git -C "$(git worktree list --porcelain | sed -n '1s/^worktree //p')" rev
 Where `$main` fails, step 2 applies: link the `.venv` of the checkout it
 names, by hand. Link, don't re-create: a freshly resolved environment is a
 different one, which can collect fewer tests and still report green.
+
+## A `.bare` layout
+
+Git's store in `<dir>/.bare`, a gitfile `<dir>/.git` pointing at it, and
+every branch a worktree under `<dir>`. Its `.skills/` knobs are read from
+two places, a split parked in
+[#663](https://github.com/gregoryfoster/skills/issues/663):
+
+- **`<dir>`:** `worktree_root`, `worktree_venv`, and `.skills/typesafe`
+  with its key.
+- **The current checkout:** every other knob, `merge_mode`,
+  `deploy_command`, `pre_restart` and `default_branch` among them.
+
+Nothing in `<dir>/.skills/` can be committed, since `<dir>` is not a work
+tree.

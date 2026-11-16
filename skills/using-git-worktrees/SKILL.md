@@ -197,7 +197,7 @@ Wrappers must not silently bypass the Iron Law gates. If the wrapper genuinely n
 
 - `git worktree list` is authoritative — never maintain a separate registry
 - A branch may be deleted while a worktree on it exists; reattach with `git worktree repair` if you need to recover
-- A bare primary has no work tree: its `.skills/` knobs are read from the current checkout, and the root's `.gitignore` check skips it
+- A bare primary has no work tree: its `.skills/` knobs are read from the current checkout, and the root's `.gitignore` check skips it; `.bare` [differs](references/main-checkout.md)
 
 ## Detail Docs
 

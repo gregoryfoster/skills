@@ -243,7 +243,7 @@ class TestTheBlock:
 # primary, layout by layout (test_plans_dir_contract.py holds the two
 # resolvers to each other). Two layouts answer apart, as before #612:
 # - a bare primary, which the block marks and its callers stand in their
-#   checkout, where the resolver names `<dir>` for a `.bare` store (#614);
+#   checkout, where the resolver names `<dir>` for a `.bare` store (#663);
 # - a submodule's linked worktree, which the resolver keeps as its own root
 #   (#203), where the readers name the submodule's checkout.
 PARITY: dict[str, Callable[[Path], Path]] = {
