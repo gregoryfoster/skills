@@ -24,10 +24,10 @@ there the script exits 2 and says to run from the primary itself
 layout needs git 2.31 or later: older git is exit 2 from the primary too.
 Below about 2.25 git lists such a store as bare, which the script checks
 before believing ([#612](https://github.com/gregoryfoster/skills/issues/612)).
-A store whose path ends in `/.git` is read right from the primary, but from
-a linked worktree git itself names the directory above the store as the
-primary, so its `.skills/` is read there: run from the primary, or keep the
-store under another name.
+On git 2.31 or later, a store whose path ends in `/.git` is read right from
+the primary. With older git, from anywhere, and any git from a linked
+worktree, git itself names the directory above the store as the primary,
+so its `.skills/` is read there: keep the store under another name.
 The command runs from that checkout's root.
 
 ```

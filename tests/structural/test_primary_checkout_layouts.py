@@ -414,7 +414,13 @@ def test_the_deploy_reference_says_where_a_separate_git_dir_primary_is_read():
         in text
     )
     assert "and says so" not in text
-    assert "A store whose path ends in `/.git` is read right from the primary" in text
+    # CR 2266: from the primary only on git 2.31 or later; below it the
+    # primary can't tell itself apart, and the directory above is read.
+    assert (
+        "On git 2.31 or later, a store whose path ends in `/.git` is read right"
+        " from the primary" in text
+    )
+    assert "older git, from anywhere, and any git from a linked worktree" in text
     assert "git itself names the directory above the store" in text
 
 
