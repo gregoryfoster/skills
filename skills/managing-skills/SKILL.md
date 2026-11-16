@@ -172,7 +172,7 @@ It is idempotent, repairs a partial install, and never commits. Check state with
 1. `.claude/hooks/skills-submodule-update.sh` — a symlink into the vendor
 2. a `SessionStart` entry in `.claude/settings.json` — the registration
 
-A repo carrying artifact 1 without artifact 2 looks installed to anyone who lists `.claude/hooks/` and refreshes nothing. Four of twelve audited consumers were in exactly that state — symlink present and tracked, registration absent — pinned at one commit for over a week while the rest of the cohort moved through four skill versions ([#167](https://github.com/gregoryfoster/skills/issues/167)). This procedure was prose and `install-doctor.sh` was a script, which is the only difference between them that predicts the failure population. `.skills/doctor.sh` now warns when it sees that half-installed state.
+A repo carrying artifact 1 without artifact 2 looks installed to anyone who lists `.claude/hooks/` and refreshes nothing. Four of twelve audited consumers were in exactly that state — symlink present and tracked, registration absent — pinned at one commit for over a week while the rest of the cohort moved through four skill versions ([#167](https://github.com/gregoryfoster/skills/issues/167)). `.skills/doctor.sh` now warns when it sees that half-installed state.
 
 What the installer does with `.claude/settings.json`, the two load-bearing
 details of that merge, why it pushes what it commits and what happens where it
