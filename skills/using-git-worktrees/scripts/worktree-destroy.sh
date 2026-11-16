@@ -222,7 +222,8 @@ here_git() {
 # where its untracked .skills/ knobs live. Prints nothing.
 #   0: RP_TREE is the primary's work tree. For a bare primary RP_BARE is 1
 #      and RP_TREE is <dir>'s own top level, empty when <dir> has none.
-#   1: RP_ERR says what failed, with git's reason, and what to run.
+#   1: RP_ERR says what failed and what to run; RP_REASON is git's own
+#      stderr, whole, which a caller that refuses aloud prints above it.
 # Git is asked without an inherited GIT_DIR, GIT_WORK_TREE or GIT_COMMON_DIR:
 # git exports GIT_DIR to every hook, and each of them beats -C (CR 1895).
 #   1. From the primary itself (its git dir is the common dir), its own top
@@ -238,9 +239,9 @@ here_git() {
 # An empty top level is none: inside a git dir git 2.17 prints nothing, at
 # exit 0, where later git refuses.
 resolve_primary() {
-  local dir=$1 dirs wt block entry gd reason ver
+  local dir=$1 dirs wt block entry gd ver
   local -a g=(env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR git -C "$dir")
-  RP_TREE="" RP_BARE=0 RP_ERR=""
+  RP_TREE="" RP_BARE=0 RP_ERR="" RP_REASON=""
   dirs=$("${g[@]}" rev-parse --path-format=absolute --git-dir --git-common-dir 2>/dev/null) || dirs=""
   if [ -n "$dirs" ] && [ "${dirs%%$'\n'*}" = "${dirs#*$'\n'}" ] &&
     RP_TREE=$("${g[@]}" rev-parse --show-toplevel 2>/dev/null) && [ -n "$RP_TREE" ]; then
@@ -248,9 +249,9 @@ resolve_primary() {
   fi
   RP_TREE=""
   if ! wt=$("${g[@]}" worktree list --porcelain 2>/dev/null); then
-    reason=$("${g[@]}" worktree list --porcelain 2>&1 >/dev/null) || true
-    reason=${reason%%$'\n'*}
-    RP_ERR="git worktree list failed in '$dir' (git: ${reason:-no reason given}), so the primary checkout is unknown"
+    RP_REASON=$("${g[@]}" worktree list --porcelain 2>&1 >/dev/null) || true
+    RP_REASON=${RP_REASON:-git printed no reason}
+    RP_ERR="git worktree list failed in '$dir', so the primary checkout is unknown"
     return 1
   fi
   block=${wt%%$'\n\n'*}
@@ -277,9 +278,9 @@ resolve_primary() {
     return 0
   fi
   RP_TREE=""
-  reason=$("${g[@]}" -C "$entry" rev-parse --show-toplevel 2>&1 >/dev/null) || true
-  reason=${reason%%$'\n'*}
-  RP_ERR="could not resolve the primary checkout's work tree from $entry (git: ${reason:-no reason given})"
+  RP_REASON=$("${g[@]}" -C "$entry" rev-parse --show-toplevel 2>&1 >/dev/null) || true
+  RP_REASON=${RP_REASON:-git printed no reason}
+  RP_ERR="could not resolve the primary checkout's work tree from $entry"
   if [ "$("${g[@]}" -C "$entry" rev-parse --is-inside-git-dir 2>/dev/null)" = true ]; then
     RP_ERR="$RP_ERR; it is a git dir with no work tree, as a primary whose .git is a file makes it (git init --separate-git-dir), and"
     if [ "${dirs%%$'\n'*}" = --path-format=absolute ]; then
@@ -516,6 +517,7 @@ if [[ $DESCOPED -eq 0 ]]; then
     # every layout this would (CR 2029); this refusal stands for a
     # merge-mode.sh that answered anyway (a project's own scripts/ copy).
     if ! resolve_primary .; then
+      [ -z "$RP_REASON" ] || printf '%s\n' "$RP_REASON" >&2
       echo "ERROR: $RP_ERR, so its .skills/default_branch cannot be read" >&2
       exit 2
     fi

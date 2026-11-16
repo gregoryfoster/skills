@@ -118,7 +118,8 @@ def _run_block() -> str:
         "set -euo pipefail\n"
         + _block(COPIES[0])
         + 'rc=0; resolve_primary "${1:-.}" || rc=$?\n'
-        + 'printf "%s\\n%s\\n%s\\n%s" "$rc" "$RP_TREE" "$RP_BARE" "$RP_ERR"\n'
+        + 'printf "%s\\n%s\\n%s\\n%s\\n%s" "$rc" "$RP_TREE" "$RP_BARE" "$RP_ERR"'
+        + ' "$RP_REASON"\n'
     )
 
 
@@ -128,14 +129,15 @@ class Answer:
     tree: str
     bare: str
     err: str
+    reason: str
 
 
 def _resolve(cwd: Path, env: dict | None = None, *args: str) -> Answer:
     r = _bash(_run_block(), cwd, layouts.env() if env is None else env, *args)
     assert r.returncode == 0, r.stderr
     assert r.stderr == "", f"the block prints nothing: {r.stderr!r}"
-    rc, tree, bare, err = r.stdout.split("\n", 3)
-    return Answer(int(rc), tree, bare, err)
+    rc, tree, bare, err, reason = r.stdout.split("\n", 4)
+    return Answer(int(rc), tree, bare, err, reason)
 
 
 def _root(cwd: Path, env: dict | None = None) -> subprocess.CompletedProcess:
@@ -187,8 +189,10 @@ class TestTheBlock:
         primary, linked = _plain(tmp_path)
         a = _resolve(linked, layouts.different_owner(layouts.env(), linked))
         assert a.rc == 1 and a.tree == "", a
-        assert "dubious ownership" in a.err, a
         assert str(primary.resolve()) in a.err or str(primary) in a.err, a
+        # Git's reason whole, its safe.directory command included (CR 2265).
+        assert "dubious ownership" in a.reason, a
+        assert "safe.directory" in a.reason, a
 
     def test_gap_1_a_git_suffixed_store_from_its_primary(self, tmp_path):
         primary = layouts.git_suffixed_store(tmp_path, "pr\n")
@@ -630,3 +634,24 @@ def test_gap_4_below_git_2_31_every_copy_says_git_is_too_old(tmp_path, name, whe
     if c.says(r):
         assert layouts.OLD_GIT_HINT in c.says(r), _said(r)
         assert "run this from the primary checkout" not in c.says(r), _said(r)
+
+
+# The hook keeps git's first line in MERGE_MODE_ERR, as it did before
+# #612, and the doctor says nothing; every other copy says it all.
+ALOUD = [n for n in NAMES if n not in ("doctor.sh", "skills-submodule-update.sh")]
+
+
+@pytest.mark.parametrize("name", ALOUD)
+def test_a_refused_primary_keeps_gits_whole_reason(tmp_path, name):
+    """CR 2265: git's refusal is several lines, the last of them the
+    `git config --global --add safe.directory` command to run. #612 kept
+    the first line only, so the refusal no longer said what to run."""
+    c = BY_NAME[name]
+    primary = layouts.seed(tmp_path / "p", c.text, c.knob)
+    linked = tmp_path / "wt"
+    layouts.git(primary, "worktree", "add", "-q", "-b", "feature/x", str(linked))
+    env = layouts.different_owner(_env_for(c), linked)
+    r = c.run(linked, env, tmp_path)
+    assert c.refused(r), _said(r)
+    assert "dubious ownership" in _said(r), _said(r)
+    assert "safe.directory" in _said(r), _said(r)
