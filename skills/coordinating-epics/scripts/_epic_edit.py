@@ -655,9 +655,16 @@ def ref_text(line: str) -> str:
 
 # Each ref after a line's lead that continues its subject (#662): a "+", ",",
 # "&" or "and", with markup closing the ref before and opening the next, as in
-# "**#46** + **#47**". Text of any other kind ends the run.
+# "**#46** + **#47**". Text of any other kind ends the run. GitHub decodes an
+# entity before it links refs: "&amp;" is an "&", and the "#183" of "&#183;"
+# (a "·") is no ref (CR 2314).
+ENTITY_AMP = r"&(?=(?:[A-Za-z][A-Za-z0-9]*|#[0-9]+|#[xX][0-9A-Fa-f]+);)"
 SUBJECT_NEXT_RE = re.compile(
-    r"(?:~~|\*\*|\])*\s*(?:\+|,|&|\band\b)\s*" + MARKUP + REF_PAT
+    r"(?:~~|\*\*|\])*\s*(?:\+|,|&amp;|(?!"
+    + ENTITY_AMP
+    + r")&|\band\b)\s*"
+    + MARKUP
+    + REF_PAT
 )
 
 
