@@ -53,6 +53,11 @@ BAD = {
     "startup_failure",
     "stale",
 }
+# Workflows reported but never judged: their runs say nothing about the
+# child's CI. Dependabot's update job fails on the registry or the lockfile,
+# and turned both live checks red with the child's CI green (the operator's
+# decision on #394, 2026-11-15). Its dependency-graph job still counts.
+ADVISORY = {"dynamic/dependabot/dependabot-updates": "Dependabot's update job"}
 # Any of these in the head commit's message skips push workflows.
 SKIP_CI_RE = re.compile(
     r"\[(?:skip ci|ci skip|no ci|skip actions|actions skip)\]", re.IGNORECASE
@@ -81,7 +86,10 @@ output (JSON on stdout):
   event, branch, superseded, expected}. branch is the run's: only a push run
   on --branch counts for an expected job. superseded is true for a job of a
   run that a later run of the same workflow, event and branch replaced, such
-  as an earlier nightly on an idle tip: shown, never judged. target is
+  as an earlier nightly on an idle tip: shown, never judged. advisory is
+  true for Dependabot's update job (dynamic/dependabot/dependabot-updates),
+  whose failures say nothing about the child's CI: shown, never judged,
+  and a warning names it when it failed or hasn't finished. target is
   "sha", "main" (the branch's tip) or "main-latest". conclusion stays null
   until status is "completed".
   expected is true, "conditional" or false for a "sha" row, and null for the
@@ -394,6 +402,8 @@ def job_row(
         # A later run of the same workflow, event and branch replaced it:
         # shown, never judged (CR 2260).
         "superseded": False,
+        # Shown, never judged (ADVISORY).
+        "advisory": bool(workflow) and workflow.split("@", 1)[0] in ADVISORY,
         "expected": None,
     }
 
@@ -572,7 +582,7 @@ def verdict(
     def name(r: dict) -> str:
         return f"{r['target']}: {r['workflow'] or '(no workflow)'} / {r['job']} ({r['event']})"
 
-    rows = [r for r in rows if not r["superseded"]]
+    rows = [r for r in rows if not r["superseded"] and not r["advisory"]]
 
     red = [f"{name(r)} {r['conclusion']}" for r in rows if r["conclusion"] in BAD]
     if red:
@@ -627,6 +637,14 @@ def read_once(
         warnings=warnings,
     )
     report["verdict"], report["because"] = verdict(rows, missing, unmatched)
+    for r in rows:
+        if r["advisory"] and not r["superseded"]:
+            state = r["conclusion"] if r["status"] == "completed" else r["status"]
+            if state in BAD or r["status"] != "completed":
+                warnings.append(
+                    f"{r['workflow']}: {ADVISORY[r['workflow']]} {state} on"
+                    f" {r['target']}, shown in rows, not judged"
+                )
 
 
 def run(argv: list[str]) -> int:

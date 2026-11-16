@@ -611,3 +611,44 @@ def test_cr_2263_a_disabled_workflows_jobs_arent_expected(rig):
     rep = report(rig.run())
     assert rep["missing"] == [] and rep["verdict"] == "green", rep["because"]
     assert any("old.yml" in w and "disabled_manually" in w for w in rep["warnings"])
+
+
+DEPENDABOT = "dynamic/dependabot/dependabot-updates"
+
+
+def test_dependabots_update_job_is_a_row_never_the_verdict(rig):
+    """The operator's decision (#394, 2026-11-15): Dependabot's own update
+    job failing turned both read-only live checks red, though the child's CI
+    was green. It stays in rows, marked advisory, and a warning names it."""
+    rig.state["active"].append({"id": 11, "path": DEPENDABOT, "state": "active"})
+    rig.state["latest"]["11"] = run_of(DEPENDABOT, event="dynamic", rid=400)
+    rig.state["jobs"]["400"] = [[check("Dependabot", conclusion="failure")]]
+    rep = report(rig.run())
+    row = rows(rep, "main-latest")["Dependabot"]
+    assert row["advisory"] is True and row["conclusion"] == "failure"
+    assert rep["verdict"] == "green", rep["because"]
+    assert any(DEPENDABOT in w and "not judged" in w for w in rep["warnings"])
+    assert rows(rep, "main-latest")["lint"]["advisory"] is False
+
+
+def test_dependabots_update_job_pending_doesnt_hold_the_verdict(rig):
+    rig.state["active"].append({"id": 11, "path": DEPENDABOT, "state": "active"})
+    rig.state["latest"]["11"] = run_of(DEPENDABOT, event="dynamic", rid=400)
+    rig.state["jobs"]["400"] = [
+        [check("Dependabot", status="in_progress", conclusion=None)]
+    ]
+    rep = report(rig.run("--wait", "30", "--interval", "1"))
+    assert rep["verdict"] == "green"
+    assert json.loads(rig.path.read_text())["reads"]["checks" + SHA] == 1
+
+
+def test_another_dynamic_workflow_still_counts(rig):
+    """Only Dependabot's update job was decided; Dependabot's dependency graph
+    and any other managed run still turn the verdict."""
+    path = "dynamic/dependabot/update-graph"
+    rig.state["active"].append({"id": 12, "path": path, "state": "active"})
+    rig.state["latest"]["12"] = run_of(path, event="dynamic", rid=401)
+    rig.state["jobs"]["401"] = [[check("submit", conclusion="failure")]]
+    rep = report(rig.run())
+    assert rep["verdict"] == "red"
+    assert rows(rep, "main-latest")["submit"]["advisory"] is False
