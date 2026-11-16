@@ -124,6 +124,25 @@ def test_400_a_record_comment_on_a_sibling_child_is_dropped_by_the_hosts_key(
     assert also["own_comments"] == {"record": 1, "rows_dropped": [3]}
 
 
+def test_666_an_also_row_stamped_a_second_after_its_record_is_dropped(tmp_path):
+    """#666: the --also walk shares the host's predicate, so GitHub's
+    one-second stamp after a record comment drops the row there too."""
+    r = _rig(tmp_path)
+    r.issue(
+        SIB, 3, updated_at="2026-10-03T00:00:01Z", created_at="2026-09-30T00:00:00Z"
+    )
+    r.comment(
+        SIB,
+        3,
+        801,
+        body="**Coordinator record, acme/widgets#10**\n\nverified",
+        created_at="2026-10-03T00:00:00Z",
+        updated_at="2026-10-03T00:00:00Z",
+    )
+    also = scan(r, "--also", SIB)["also"]["acme/gadgets"]
+    assert also["own_comments"] == {"record": 1, "rows_dropped": [3]}
+
+
 def test_400_a_failed_listing_in_an_also_repo_is_exit_2(tmp_path):
     """A warning would let {checked} move past that repo's unread window."""
     r = _rig(tmp_path)
