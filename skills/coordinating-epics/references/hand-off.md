@@ -19,6 +19,7 @@ Run these against `origin/main` without switching branches: `git fetch`, then `g
   - other repos' release state;
   - credentials or peers that exist only elsewhere.
 - **Probe the behaviour the design depends on.** A one-line check in the venv decided one design (cannobserv 25).
+- **Say what an upstream release changes from the released artifact, not its CHANGELOG or a report.** Diff the package over what the host imports, and read every changed file. A CHANGELOG misdescribed three pin moves in one run (replicator 10-28; replicator 11-16 B2).
 - **Search the cohort for an existing implementation** of the same mechanism, and brief "port this" when one exists. Name the precondition that made it safe there, and whether it holds here (private-backlog 105, 146; processor F121).
 - **Search upstream for a known issue** before designing a workaround (broker 115).
 - **Measure usage, and test the suspected cause against the incident data.** Either can re-tier, split or redirect the child (private-backlog 138, 141).

@@ -41,6 +41,8 @@ The children run out before the exit criterion, or the exit criterion is met wit
 
 Record the choice beside the exit criterion.
 
+A whole-backlog epic's order rule keeps producing children after the issues its criterion names are done. Its real end is "no child unblocked", so write the criterion that way at creation, or expect to restate it (replicator 11-16 B11).
+
 ## Parking-lot mode
 
 When the burn-down is done but items wait on triggers, the epic can stay open as a parking lot (processor F135, F137, F138):
