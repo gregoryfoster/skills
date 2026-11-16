@@ -61,6 +61,10 @@ def _bare_trunk(tmp_path: Path, *, tracked: bool = True) -> Path:
     bare = tmp_path / "repo.git"
     layouts.git(tmp_path, "clone", "-q", "--bare", str(src), str(bare))
     assert layouts.git(bare, "symbolic-ref", "HEAD") == "refs/heads/trunk"
+    # A clone copies no local config, and git on Linux can't always work out
+    # an email, so a commit in the worktree needs its own identity (#667).
+    layouts.git(bare, "config", "user.email", "test@example.com")
+    layouts.git(bare, "config", "user.name", "test")
     home = tmp_path / "home"
     layouts.git(bare, "worktree", "add", "-q", str(home), "trunk")
     if tracked:
