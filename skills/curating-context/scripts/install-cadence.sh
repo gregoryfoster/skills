@@ -261,13 +261,15 @@ KNOB_PRIMARY=""
 #      Where that store is this checkout's git dir, this is the primary.
 #   3. Any other entry is asked for its work tree (a submodule's through
 #      core.worktree). That failing is a refusal, never a fallback (CR 1858).
+# An empty top level is none: inside a git dir git 2.17 prints nothing, at
+# exit 0, where later git refuses.
 resolve_primary() {
   local dir=$1 dirs wt block entry gd reason ver
   local -a g=(env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR git -C "$dir")
   RP_TREE="" RP_BARE=0 RP_ERR=""
   dirs=$("${g[@]}" rev-parse --path-format=absolute --git-dir --git-common-dir 2>/dev/null) || dirs=""
   if [ -n "$dirs" ] && [ "${dirs%%$'\n'*}" = "${dirs#*$'\n'}" ] &&
-    RP_TREE=$("${g[@]}" rev-parse --show-toplevel 2>/dev/null); then
+    RP_TREE=$("${g[@]}" rev-parse --show-toplevel 2>/dev/null) && [ -n "$RP_TREE" ]; then
     return 0
   fi
   RP_TREE=""
@@ -291,13 +293,13 @@ resolve_primary() {
       gd=$("${g[@]}" rev-parse --git-dir 2>/dev/null) &&
         gd=$(CDPATH='' cd -- "$dir" && CDPATH='' cd -- "$gd" && pwd -P) || gd=""
       if [ -n "$gd" ] && [ "$gd" = "$(CDPATH='' cd -- "$entry" 2>/dev/null && pwd -P)" ] &&
-        RP_TREE=$("${g[@]}" rev-parse --show-toplevel 2>/dev/null); then
+        RP_TREE=$("${g[@]}" rev-parse --show-toplevel 2>/dev/null) && [ -n "$RP_TREE" ]; then
         return 0
       fi
       RP_TREE=""
       ;;
   esac
-  if RP_TREE=$("${g[@]}" -C "$entry" rev-parse --show-toplevel 2>/dev/null); then
+  if RP_TREE=$("${g[@]}" -C "$entry" rev-parse --show-toplevel 2>/dev/null) && [ -n "$RP_TREE" ]; then
     return 0
   fi
   RP_TREE=""

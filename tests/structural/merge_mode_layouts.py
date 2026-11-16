@@ -221,8 +221,9 @@ OLD_GIT_HINT = (
 # also lists a --separate-git-dir store as `bare` (#612 gap 2) [measured,
 # ubuntu:18.04, git 2.17.1: `worktree <store>` then `bare`, no HEAD line],
 # though `rev-parse --is-bare-repository` there says false. The shim plays
-# --version, the echo and, with `bare`, that listing; every other call is
-# the real git, so the store's own answers stay true.
+# --version, the echo and, with `bare`, that listing and 2.17's answer to
+# `rev-parse --show-toplevel` inside a git dir: nothing, at exit 0, where
+# later git refuses [measured]. Every other call is the real git.
 OLD_GIT_SHIM = """\
 #!/bin/sh
 real="{real}"
@@ -237,6 +238,13 @@ case " $* " in
       first {{ next }}
       {{ print }}'
     exit 0 ;;
+  *" rev-parse --show-toplevel "*)
+    [ {bare} = 1 ] || exec "$real" "$@"
+    out=$("$real" "$@" 2>/dev/null) && {{ printf '%s\\n' "$out"; exit 0; }}
+    err=$("$real" "$@" 2>&1 >/dev/null)
+    case $err in *"must be run in a work tree"*) exit 0 ;; esac
+    printf '%s\\n' "$err" >&2
+    exit 128 ;;
   *" --path-format=absolute "*)
     echo --path-format=absolute
     for a do shift; [ "$a" = --path-format=absolute ] || set -- "$@" "$a"; done
