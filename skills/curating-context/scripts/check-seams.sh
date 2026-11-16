@@ -117,8 +117,9 @@ What it reports, in four classes:
                    the title of a section that LEFT the policy file since
                    --base. These are the highest-confidence seams: something
                    still points at a home that no longer exists. A title of two
-                   or more words (and 8+ characters) is matched anywhere; a
-                   generic one — People, Organizations — only on a line that
+                   or more space-separated words (and 8+ characters) is matched
+                   anywhere; a generic one — People, Organizations, or a
+                   hyphenated name like co-broker — only on a line that
                    points somewhere, meaning a §, a markdown link, or a .md
                    filename, because otherwise it matches every ordinary use of
                    the word. The report names the titles swept that way.
@@ -535,8 +536,15 @@ moved = {k: v for k, v in base_titles.items() if k not in now_titles and v}
 
 def is_specific(k):
     """The bare tier: two or more words and 8+ characters. ONE definition,
-    shared by class 2 and a group's decline, so the two cannot disagree."""
-    return len(k) >= 8 and len(WORDS.findall(k)) >= 2
+    shared by class 2 and a group's decline, so the two cannot disagree.
+
+    A word is a whitespace-separated token carrying a letter or digit. Counting
+    `[0-9a-z]+` runs made `co-broker` two words: a per-host split on
+    provisioner swept every host name bare, 263 hits on 200 lines and not one a
+    pointer (#568). A hyphenated or slug-like title is one name, so it takes
+    the pointer tier. Requiring the letter or digit keeps a lone `—` from
+    counting, so no title is promoted that the old count held back."""
+    return len(k) >= 8 and sum(1 for w in k.split() if WORDS.search(w)) >= 2
 
 
 sweepable = {k: v for k, v in moved.items() if is_specific(k)}
