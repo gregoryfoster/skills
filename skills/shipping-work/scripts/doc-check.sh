@@ -333,10 +333,21 @@ path_matches() {
   return 1
 }
 
-# Resolve base ref: explicit > origin/HEAD > origin/main > main
+# Resolve base ref: explicit > origin/HEAD > a bare repository's own HEAD
+# (origin/<it>, then <it>: `clone --bare` keeps no origin/HEAD, #615) >
+# origin/main > main
+bare_head() {
+  [[ "$(git config --bool core.bare 2>/dev/null)" == true ]] || return 1
+  git --git-dir="$(git rev-parse --git-common-dir)" symbolic-ref --quiet --short HEAD 2>/dev/null
+}
 if [[ -z "$BASE_REF" ]]; then
   if git rev-parse --verify --quiet origin/HEAD >/dev/null; then
     BASE_REF=$(git rev-parse --abbrev-ref origin/HEAD)
+  elif BARE_HEAD=$(bare_head) &&
+    git rev-parse --verify --quiet "origin/$BARE_HEAD" >/dev/null; then
+    BASE_REF="origin/$BARE_HEAD"
+  elif [[ -n "${BARE_HEAD:-}" ]] && git rev-parse --verify --quiet "$BARE_HEAD" >/dev/null; then
+    BASE_REF="$BARE_HEAD"
   elif git rev-parse --verify --quiet origin/main >/dev/null; then
     BASE_REF="origin/main"
   elif git rev-parse --verify --quiet main >/dev/null; then

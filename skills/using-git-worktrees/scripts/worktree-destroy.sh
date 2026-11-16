@@ -212,8 +212,88 @@ cd "$PROJECT_ROOT"
 # holds the same rule. Each call answers for the checkout this runs in
 # (docs/STYLE.md, #189).
 here_git() {
-  env -u GIT_DIR -u GIT_WORK_TREE git "$@"
+  env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR git "$@"
 }
+
+# >>> resolve_primary: one body in nine readers (#612), held byte-identical
+# by tests/structural/test_primary_checkout_copies.py. Change every copy.
+#
+# resolve_primary <dir>: the primary checkout of the repository at <dir>,
+# where its untracked .skills/ knobs live. Prints nothing.
+#   0: RP_TREE is the primary's work tree. For a bare primary RP_BARE is 1
+#      and RP_TREE is <dir>'s own top level, empty when <dir> has none.
+#   1: RP_ERR says what failed and what to run; RP_REASON is git's own
+#      stderr, whole, which a caller that refuses aloud prints above it.
+# Git is asked without an inherited GIT_DIR, GIT_WORK_TREE or GIT_COMMON_DIR:
+# git exports GIT_DIR to every hook, and each of them beats -C (CR 1895).
+#   1. From the primary itself (its git dir is the common dir), its own top
+#      level, asked first: a --separate-git-dir store whose path ends in
+#      /.git is listed as the directory above it, a work tree to git.
+#   2. Else the first `git worktree list --porcelain` block. Its `bare` line
+#      counts once git confirms it (the shared core.bare, read from here, as
+#      a store git refuses for its owner still has; else the entry's own
+#      answer): below git 2.25 a --separate-git-dir store is listed bare too.
+#      Where that store is this checkout's git dir, this is the primary.
+#   3. Any other entry is asked for its work tree (a submodule's through
+#      core.worktree). That failing is a refusal, never a fallback (CR 1858).
+# An empty top level is none: inside a git dir git 2.17 prints nothing, at
+# exit 0, where later git refuses.
+resolve_primary() {
+  local dir=$1 dirs wt block entry gd ver
+  local -a g=(env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR git -C "$dir")
+  RP_TREE="" RP_BARE=0 RP_ERR="" RP_REASON=""
+  dirs=$("${g[@]}" rev-parse --path-format=absolute --git-dir --git-common-dir 2>/dev/null) || dirs=""
+  if [ -n "$dirs" ] && [ "${dirs%%$'\n'*}" = "${dirs#*$'\n'}" ] &&
+    RP_TREE=$("${g[@]}" rev-parse --show-toplevel 2>/dev/null) && [ -n "$RP_TREE" ]; then
+    return 0
+  fi
+  RP_TREE=""
+  if ! wt=$("${g[@]}" worktree list --porcelain 2>/dev/null); then
+    RP_REASON=$("${g[@]}" worktree list --porcelain 2>&1 >/dev/null) || true
+    RP_REASON=${RP_REASON:-git printed no reason}
+    RP_ERR="git worktree list failed in '$dir', so the primary checkout is unknown"
+    return 1
+  fi
+  block=${wt%%$'\n\n'*}
+  entry=${block%%$'\n'*}
+  entry=${entry#worktree }
+  case $'\n'"$block"$'\n' in
+    *$'\n'bare$'\n'*)
+      if [ "$("${g[@]}" config --bool core.bare 2>/dev/null)" = true ] ||
+        [ "$("${g[@]}" -C "$entry" rev-parse --is-bare-repository 2>/dev/null)" = true ]; then
+        RP_BARE=1
+        RP_TREE=$("${g[@]}" rev-parse --show-toplevel 2>/dev/null) || RP_TREE=""
+        return 0
+      fi
+      gd=$("${g[@]}" rev-parse --git-dir 2>/dev/null) &&
+        gd=$(CDPATH='' cd -- "$dir" && CDPATH='' cd -- "$gd" && pwd -P) || gd=""
+      if [ -n "$gd" ] && [ "$gd" = "$(CDPATH='' cd -- "$entry" 2>/dev/null && pwd -P)" ] &&
+        RP_TREE=$("${g[@]}" rev-parse --show-toplevel 2>/dev/null) && [ -n "$RP_TREE" ]; then
+        return 0
+      fi
+      RP_TREE=""
+      ;;
+  esac
+  if RP_TREE=$("${g[@]}" -C "$entry" rev-parse --show-toplevel 2>/dev/null) && [ -n "$RP_TREE" ]; then
+    return 0
+  fi
+  RP_TREE=""
+  RP_REASON=$("${g[@]}" -C "$entry" rev-parse --show-toplevel 2>&1 >/dev/null) || true
+  RP_REASON=${RP_REASON:-git printed no reason}
+  RP_ERR="could not resolve the primary checkout's work tree from $entry"
+  if [ "$("${g[@]}" -C "$entry" rev-parse --is-inside-git-dir 2>/dev/null)" = true ]; then
+    RP_ERR="$RP_ERR; it is a git dir with no work tree, as a primary whose .git is a file makes it (git init --separate-git-dir), and"
+    if [ "${dirs%%$'\n'*}" = --path-format=absolute ]; then
+      ver=$(git --version 2>/dev/null) || ver=""
+      ver=${ver#git version }
+      RP_ERR="$RP_ERR git ${ver:-(unknown version)} predates 2.31, which this layout needs to tell its primary from a linked worktree: upgrade git (from a linked worktree, then run from the primary checkout)"
+    else
+      RP_ERR="$RP_ERR only that primary knows its work tree, so run this from the primary checkout"
+    fi
+  fi
+  return 1
+}
+# <<< resolve_primary
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -302,7 +382,13 @@ SELF_ROOT=$(realpath "$PROJECT_ROOT" 2>/dev/null || printf '%s' "$PROJECT_ROOT")
 TARGET_ROOT=$(realpath "$WORKTREE_PATH" 2>/dev/null || printf '%s' "$WORKTREE_PATH")
 if [[ "$SELF_ROOT" == "$TARGET_ROOT" ]]; then
   echo "ERROR: refusing to destroy '$WORKTREE_PATH' — it is the worktree this command is running from" >&2
-  echo "cd to the main checkout first: git worktree list | head -n1" >&2
+  # Named as resolve_primary names it (#614): the first row of `git worktree
+  # list` is the store in a bare or --separate-git-dir layout.
+  if resolve_primary . && [[ "$RP_BARE" == 0 ]] && ! [[ "$RP_TREE" -ef "$PROJECT_ROOT" ]]; then
+    echo "cd to the main checkout first: cd $RP_TREE" >&2
+  else
+    echo "cd to another checkout first: using-git-worktrees' references/main-checkout.md says how to find the main one" >&2
+  fi
   exit 2
 fi
 
@@ -420,56 +506,39 @@ if [[ $DESCOPED -eq 0 ]]; then
       exit 2
     fi
   else
-    # The knob is read from the PRIMARY checkout (the first `git worktree
-    # list` entry), as merge-mode.sh reads .skills/merge_mode (#559). It is
-    # untracked, so it does not exist in a linked worktree: an orchestrator
-    # destroying from its own orchestrate/<topic> worktree read nothing here
-    # and checked the merge against origin/HEAD or main instead. PROJECT_ROOT
-    # stays the current checkout, which the self-destruction guard needs.
-    WT_LIST=$(here_git worktree list --porcelain) || {
-      echo "ERROR: failed to enumerate worktrees (git worktree list --porcelain)" >&2
+    # The knob is read from the PRIMARY checkout, as merge-mode.sh reads
+    # .skills/merge_mode (#559), resolved by the same block above (#612). It
+    # is untracked, so it does not exist in a linked worktree: an
+    # orchestrator destroying from its own orchestrate/<topic> worktree read
+    # nothing here and checked the merge against origin/HEAD or main
+    # instead. A bare primary has no work tree, so the knob is this
+    # checkout's. PROJECT_ROOT stays the current checkout, which the
+    # self-destruction guard needs. merge-mode.sh runs first and refuses
+    # every layout this would (CR 2029); this refusal stands for a
+    # merge-mode.sh that answered anyway (a project's own scripts/ copy).
+    if ! resolve_primary .; then
+      [ -z "$RP_REASON" ] || printf '%s\n' "$RP_REASON" >&2
+      echo "ERROR: $RP_ERR, so its .skills/default_branch cannot be read" >&2
       exit 2
-    }
-    # The primary is the first porcelain block, up to the first blank line.
-    # Its entry is not always a work tree (CR 1839): for a bare primary it
-    # is `repo.git`, and in a submodule (git 2.54) `<super>/.git/modules/<n>`.
-    # Neither holds `.skills/`. A block with a `bare` line has no work tree,
-    # so the knob can only live in the current checkout; any other entry is
-    # asked for its work tree (a submodule's via core.worktree). That ask
-    # failing is exit 2, never a fallback (CR 1858): "dubious ownership"
-    # silently read the current linked worktree's knob instead.
-    # One exception, which is no other checkout (#605, set R's CR 1892): a
-    # primary whose .git is a pointer file (`git init --separate-git-dir`)
-    # lists its store, which names no work tree. From that primary itself,
-    # the work tree is this one: its git dir is the common dir. From a linked
-    # worktree git knows no path to it, so that stays exit 2.
-    #
-    # The refusal itself is merge-mode.sh's (CR 2029). It runs first, on this
-    # same rule, and refuses every layout this would, with git's reason and
-    # the hint; here the ask failing is exit 2 without more, for a merge-mode.sh
-    # that answered anyway (a project's own scripts/ copy, say).
-    PRIMARY_BLOCK=${WT_LIST%%$'\n\n'*}
-    PRIMARY_ENTRY=${PRIMARY_BLOCK%%$'\n'*}
-    PRIMARY_ENTRY=${PRIMARY_ENTRY#worktree }
-    case $'\n'"$PRIMARY_BLOCK"$'\n' in
-      *$'\n'bare$'\n'*) PRIMARY=$PROJECT_ROOT ;;
-      *)
-        if ! PRIMARY=$(here_git -C "$PRIMARY_ENTRY" rev-parse --show-toplevel 2>/dev/null); then
-          DIRS=$(here_git rev-parse --path-format=absolute --git-dir --git-common-dir 2>/dev/null) || DIRS=""
-          if [[ -z "$DIRS" || "${DIRS%%$'\n'*}" != "${DIRS#*$'\n'}" ]] ||
-            ! PRIMARY=$(here_git rev-parse --show-toplevel 2>/dev/null); then
-            echo "ERROR: could not resolve the primary checkout '$PRIMARY_ENTRY', so its .skills/default_branch cannot be read" >&2
-            exit 2
-          fi
-        fi
-        ;;
-    esac
+    fi
+    PRIMARY=$RP_TREE
+    [[ "$RP_BARE" == 0 ]] || PRIMARY=$PROJECT_ROOT
     BASE=""
     if [[ -f "$PRIMARY/.skills/default_branch" ]]; then
       BASE=$(head -n1 "$PRIMARY/.skills/default_branch" | tr -d '[:space:]')
     fi
     if [[ -z "$BASE" ]]; then
       BASE=$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's@^origin/@@' || true)
+    fi
+    # A bare clone keeps no origin/HEAD; its own HEAD is the remote's
+    # default as `clone --bare` kept it (#615). Only a branch that exists:
+    # `git init --bare` names one it never made (CR 2264).
+    if [[ -z "$BASE" && "$RP_BARE" == 1 ]]; then
+      BASE=$(git --git-dir="$(git rev-parse --git-common-dir)" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
+      if [[ -n "$BASE" ]] && ! git rev-parse --verify --quiet "refs/heads/$BASE" >/dev/null &&
+        ! git rev-parse --verify --quiet "refs/remotes/origin/$BASE" >/dev/null; then
+        BASE=""
+      fi
     fi
     if [[ -z "$BASE" ]]; then
       BASE="main"

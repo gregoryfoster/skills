@@ -118,13 +118,7 @@ The script:
 
 `cd` into the worktree path printed by Phase 2. Three responsibilities the calling agent must handle (the upstream skill cannot prescribe specifics — projects vary):
 
-- **Interpreter environment** — a worktree inherits no `.venv` / `node_modules`. `worktree-create.sh` links a `.venv` for you, but a worktree provisioned by something else — notably the Claude Code Agent tool's `isolation: "worktree"`, which calls `git worktree add` directly — never runs it. There, link it by hand **before the first test run**:
-
-  ```bash
-  ln -s "$(dirname "$(cd "$(git rev-parse --git-common-dir)" && pwd)")/.venv" .venv
-  ```
-
-  Link, don't re-create. A symlink is by construction the same interpreter and the same installed packages; a freshly resolved environment is a *different* one that can silently collect fewer tests and still report a green suite — a failure with no error message to notice. Unless `.skills/worktree_venv` is `none` — see above.
+- **Interpreter environment** — a worktree inherits no `.venv` / `node_modules`. `worktree-create.sh` links a `.venv` for you, but a worktree provisioned by something else — notably the Claude Code Agent tool's `isolation: "worktree"`, which calls `git worktree add` directly — never runs it. There, link the main checkout's by hand **before the first test run**, `ln -s <main>/.venv .venv`, finding `<main>` and honouring its knob as [references/main-checkout.md](references/main-checkout.md) shows. Link, don't re-create: a freshly resolved environment is a *different* one that can silently collect fewer tests and still report green.
 - **Env separation** — if the project ships env files (`.env`, `/etc/<project>/.env`), copy or symlink them into the worktree. Consult the project's AGENTS.md.
 - **Port allocation** — if the branch runs a dev server, allocate a distinct port so it doesn't collide with the main checkout's. Project AGENTS.md is authoritative for the scheme; if none is documented, pick an unused port and record it in `<worktree>/.port` so destroy can free it.
 
@@ -143,7 +137,7 @@ If any check fails, fix before proceeding. Work in the wrong checkout silently l
 When the branch is ready:
 
 1. Commit and push from inside the worktree
-2. `cd` to the main checkout — its path is the first row of `bash "<worktree-list.sh>"` (or `git worktree list | head -n1 | awk '{print $1}'`)
+2. `cd` to the main checkout: `bash "<worktree-list.sh>"` lists the rows, and [references/main-checkout.md](references/main-checkout.md) says which one it is
 3. `git switch main` (or the project's default branch)
 4. `git merge <branch>` (a project whose AGENTS.md requires PRs sets `.skills/merge_mode` to `pr`; see below)
 5. Confirm the merge succeeded before Phase 5
@@ -167,8 +161,8 @@ Flags are position-independent here too: `--force <branch>` works, as with `work
 
 The script:
 - **Finds the worktree by branch**, via `git worktree list --porcelain`, so any layout works regardless of how the directory leaf is named. Only when the branch has no registered worktree does it fall back to the `<root>/<slug>` scheme `worktree-create.sh` uses, so a mistyped branch still names a concrete path.
-- Verifies the branch is an ancestor of the base ref (the actual "merged" check, not just "pushed"). Default base resolution: `.skills/default_branch` → origin's HEAD → `main`, preferring `origin/<base>` over local `<base>` so unpublished local merges don't fool the gate. Pass `--base <ref>` to verify against an explicit non-default integration branch instead (e.g., `batch/<x>` in a multi-agent orchestration); the supplied ref is used as-given. Refuses if the branch is not merged AND `--descoped <reason>` was not supplied. In `pr` mode it fetches first and also accepts a merged PR headed at the tip (squash, rebase); gh failing is exit 2.
-- Refuses to destroy the worktree it is being run from. `cd` to the main checkout first.
+- Verifies the branch is an ancestor of the base ref (the actual "merged" check, not just "pushed"). Default base resolution: `.skills/default_branch` → origin's HEAD → a bare clone's HEAD → `main`, preferring `origin/<base>` over local `<base>` so unpublished local merges don't fool the gate. Pass `--base <ref>` to verify against an explicit non-default integration branch instead (e.g., `batch/<x>` in a multi-agent orchestration); the supplied ref is used as-given. Refuses if the branch is not merged AND `--descoped <reason>` was not supplied. In `pr` mode it fetches first and also accepts a merged PR headed at the tip (squash, rebase); gh failing is exit 2.
+- Refuses to destroy the worktree it is being run from, naming the main checkout to `cd` to.
 - If `<worktree>/.port` exists, kills any process bound to that port via `lsof -ti tcp:<port>` (portable to macOS + Linux). Falls back to a warning if `lsof` isn't installed.
 - Runs `git worktree remove <path>` (or `git worktree remove --force <path>` if `--force` was supplied)
 - Runs `git worktree prune` to clean stale metadata
@@ -209,6 +203,7 @@ Wrappers must not silently bypass the Iron Law gates. If the wrapper genuinely n
 
 - [references/destroy-flags.md](references/destroy-flags.md) — when each `worktree-destroy.sh` flag is the right instrument, and what each does not cover
 - [references/pr-mode.md](references/pr-mode.md) — `pr` mode: Phase 4, and destroy's merged-PR evidence
+- [references/main-checkout.md](references/main-checkout.md) — finding the main checkout in every layout, and linking its `.venv` by hand
 
 **Self-budget:** held to a **6,000-token ratchet (estimate and exact)** by
 `tests/structural/test_skill_self_budget.py` — both readings must clear it, so

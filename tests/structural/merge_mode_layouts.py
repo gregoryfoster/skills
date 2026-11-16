@@ -13,7 +13,9 @@ a git dir rather than a work tree:
   submodule's work tree through `core.worktree`.
 
 Read as a checkout, neither holds `.skills/`, so a reader that did so said
-`direct` in silence. A third, `separate_git_dir` (CR 1892), names a store no
+`direct` in silence. A third, `git_suffixed_store` (#612), names a
+directory git takes for a work tree that isn't one: a store whose path ends
+in `/.git` is listed as its parent, where it leaves a DECOY. A third, `separate_git_dir` (CR 1892), names a store no
 `-C` can resolve; it is kept out of LAYOUTS because from its linked worktree
 the honest answer is unusable. Each builder here returns the checkout to read from, with
 the knob where that layout keeps it: `.skills/merge_mode`, or the file its
@@ -109,8 +111,51 @@ def submodule_linked(tmp_path: Path, text: str, name: str = "merge_mode") -> Pat
     return wt
 
 
+# What a reader finds where a layout's listing points away from its primary:
+# no reader accepts it, so one that reads it says so rather than `direct`.
+DECOY = "decoy-read-from-the-wrong-checkout\n"
+
+
+def git_suffixed_store(tmp_path: Path, text: str, name: str = "merge_mode") -> Path:
+    """#612 gap 1: a `--separate-git-dir` store whose path ends in `/.git`,
+    read from its primary, which holds the knob.
+
+    `git worktree list` names the store's parent, `<T>/stores/proj`, and
+    `git -C` there finds the store as that directory's `.git`, so git takes
+    the parent for a work tree. A reader that trusts the listing reads the
+    DECOY left there. From the primary its own git dir is the common dir, so
+    its own top level answers. From a linked worktree git itself names the
+    parent, so that half is documented, not in LAYOUTS.
+    """
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    stray = tmp_path / "stores" / "proj"
+    stray.mkdir(parents=True)
+    primary = tmp_path / "proj"
+    git(
+        tmp_path,
+        "init",
+        "-q",
+        "-b",
+        "main",
+        "--separate-git-dir",
+        str(stray / ".git"),
+        str(primary),
+    )
+    git(primary, "config", "user.email", "test@example.com")
+    git(primary, "config", "user.name", "test")
+    (primary / "README.md").write_text("x\n")
+    git(primary, "add", "-A")
+    git(primary, "-c", "commit.gpgsign=false", "commit", "-q", "-m", "init")
+    knob(primary, text, name)
+    knob(stray, DECOY, name)
+    first = git(primary, "worktree", "list", "--porcelain").split("\n\n")[0]
+    assert first.splitlines()[0] == f"worktree {stray.resolve()}", first
+    return primary
+
+
 LAYOUTS: dict[str, Callable[..., Path]] = {
     "bare_home": bare_home,
+    "git_suffixed_store": git_suffixed_store,
     "submodule_linked": submodule_linked,
 }
 
@@ -169,6 +214,73 @@ OLD_GIT_HINT = (
     "predates 2.31, which this layout needs to tell its primary from a "
     "linked worktree: upgrade git"
 )
+
+
+# Old git, played by a shim on PATH. Below 2.31 rev-parse echoes
+# `--path-format=absolute` back as a line (CR 1990). Below about 2.25 git
+# also lists a --separate-git-dir store as `bare` (#612 gap 2) [measured,
+# ubuntu:18.04, git 2.17.1: `worktree <store>` then `bare`, no HEAD line],
+# though `rev-parse --is-bare-repository` there says false. The shim plays
+# --version, the echo and, with `bare`, that listing and 2.17's answer to
+# `rev-parse --show-toplevel` inside a git dir: nothing, at exit 0, where
+# later git refuses [measured]. Every other call is the real git.
+OLD_GIT_SHIM = """\
+#!/bin/sh
+real="{real}"
+case " $* " in
+  " --version ") echo "git version {version}"; exit 0 ;;
+  *" worktree list "*)
+    [ {bare} = 1 ] || exec "$real" "$@"
+    out=$("$real" "$@") || exit $?
+    printf '%s\\n\\n' "$out" | awk '
+      NR == 1 {{ print; print "bare"; first = 1; next }}
+      first && /^$/ {{ first = 0 }}
+      first {{ next }}
+      {{ print }}'
+    exit 0 ;;
+  *" rev-parse --show-toplevel "*)
+    [ {bare} = 1 ] || exec "$real" "$@"
+    out=$("$real" "$@" 2>/dev/null) && {{ printf '%s\\n' "$out"; exit 0; }}
+    err=$("$real" "$@" 2>&1 >/dev/null)
+    case $err in *"must be run in a work tree"*) exit 0 ;; esac
+    printf '%s\\n' "$err" >&2
+    exit 128 ;;
+  *" --path-format=absolute "*)
+    echo --path-format=absolute
+    for a do shift; [ "$a" = --path-format=absolute ] || set -- "$@" "$a"; done
+    ;;
+esac
+exec "$real" "$@"
+"""
+
+
+def old_git_env(
+    base: dict, bin_dir: Path, *, version: str = "2.30.2", bare: bool = False
+) -> dict:
+    """`base` with OLD_GIT_SHIM first on PATH, written into `bin_dir`:
+    git `version`, listing a --separate-git-dir store as `bare` when `bare`
+    (git 2.17.1's listing, #612 gap 2)."""
+    real = subprocess.run(
+        ["sh", "-c", "command -v git"],
+        capture_output=True,
+        text=True,
+        check=True,
+        env=base,
+    ).stdout.strip()
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    shim = bin_dir / "git"
+    shim.write_text(
+        OLD_GIT_SHIM.format(real=real, version=version, bare=1 if bare else 0)
+    )
+    shim.chmod(0o755)
+    out = dict(base)
+    out["PATH"] = f"{bin_dir}{os.pathsep}{base['PATH']}"
+    return out
+
+
+def old_git_bare_env(base: dict, bin_dir: Path) -> dict:
+    """git 2.17.1, which lists a --separate-git-dir store as `bare`."""
+    return old_git_env(base, bin_dir, version="2.17.1", bare=True)
 
 
 def different_owner(base: dict, safe: Path) -> dict:

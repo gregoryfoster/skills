@@ -42,7 +42,7 @@ fi
 # submodule `git -C "$CANDIDATE"` answered for this checkout and put the plans
 # directory inside .git. Why, beside the twin in resolve-worktree-root.sh.
 here_git() {
-  env -u GIT_DIR -u GIT_WORK_TREE git "$@"
+  env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR git "$@"
 }
 
 PROJECT_ROOT=$(here_git rev-parse --show-toplevel) || {
@@ -111,7 +111,13 @@ if ! CANDIDATE_COMMON=$(here_git -C "$CANDIDATE" rev-parse --git-common-dir 2>/d
   CANDIDATE_COMMON=""
   CANDIDATE_FAILED=1
 fi
-if [[ "$CANDIDATE_COMMON" == "$COMMON_DIR" ]]; then
+# 1. The main worktree (its git dir is the common dir) is the primary, asked
+# first (#612): a --separate-git-dir store whose path ends in /.git has the
+# store's parent for its candidate, which git takes for a work tree.
+DIRS=$(here_git rev-parse --path-format=absolute --git-dir --git-common-dir 2>/dev/null) || DIRS=""
+if [[ -n "$DIRS" && "${DIRS%%$'\n'*}" == "${DIRS#*$'\n'}" ]]; then
+  : # 1. the main worktree
+elif [[ "$CANDIDATE_COMMON" == "$COMMON_DIR" ]]; then
   PROJECT_ROOT="$CANDIDATE"
 else
   # candidate_reason: git's reason for the silent ask about the candidate,
@@ -130,15 +136,26 @@ else
       *) printf '%s\n' "$err" >&2 ;;
     esac
   }
-  DIRS=$(here_git rev-parse --path-format=absolute --git-dir --git-common-dir 2>/dev/null) || DIRS=""
   WT_LIST=$(here_git worktree list --porcelain) || {
     echo "ERROR: failed to enumerate worktrees (git worktree list --porcelain)" >&2
     exit 2
   }
   PRIMARY_BLOCK=${WT_LIST%%$'\n\n'*}
-  if [[ -n "$DIRS" && "${DIRS%%$'\n'*}" == "${DIRS#*$'\n'}" ]]; then
-    : # 1. the main worktree
-  elif [[ $CANDIDATE_FAILED -eq 1 &&
+  PRIMARY_ENTRY=${PRIMARY_BLOCK%%$'\n'*}
+  PRIMARY_ENTRY=${PRIMARY_ENTRY#worktree }
+  # A `bare` line counts once git confirms it (#612): the shared core.bare,
+  # read from here, as a store git refuses for its owner still has, else the
+  # entry's own answer. Below git 2.25 a --separate-git-dir store is listed
+  # bare too; where that store is this checkout's git dir, this is the primary.
+  listed_bare() {
+    local gd
+    [[ $'\n'"$PRIMARY_BLOCK"$'\n' == *$'\n'bare$'\n'* ]] || return 1
+    [[ "$(here_git config --bool core.bare 2>/dev/null)" == true ]] && return 0
+    [[ "$(here_git -C "$PRIMARY_ENTRY" rev-parse --is-bare-repository 2>/dev/null)" == true ]] && return 0
+    gd=$(here_git rev-parse --git-dir 2>/dev/null) && gd=$(cd "$gd" && pwd -P) || return 1
+    [[ "$gd" == "$(cd "$PRIMARY_ENTRY" 2>/dev/null && pwd -P)" ]]
+  }
+  if [[ $CANDIDATE_FAILED -eq 1 &&
     (-L "$CANDIDATE/.git" || -f "$CANDIDATE/.git" || "$CANDIDATE/.git" -ef "$COMMON_DIR") ]]; then
     # The candidate has a .git that can be this repository's, and git would
     # not answer for it: the primary is there, or meant to be, and git
@@ -155,7 +172,7 @@ else
       echo "ERROR: could not resolve the primary checkout '$CANDIDATE': git will not open '$CANDIDATE/.git' and gives no reason (an empty directory, or a dangling link?)" >&2
     fi
     exit 2
-  elif [[ $'\n'"$PRIMARY_BLOCK"$'\n' == *$'\n'bare$'\n'* ]]; then
+  elif listed_bare; then
     : # 2. a bare primary
   elif [[ "$(here_git -C "$CANDIDATE" rev-parse --is-inside-git-dir 2>/dev/null)" == true ]]; then
     : # 3. a submodule's linked worktree (#203)

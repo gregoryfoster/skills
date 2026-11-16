@@ -654,7 +654,9 @@ class TestPrimaryEntryWithoutAWorkTree:
         assert "ancestor of 'trunk'" in result.stdout, result.stdout
 
     def test_the_remedy_never_points_inside_a_git_directory(self, tmp_path: Path):
-        """No knob, no origin/HEAD, no main: the error names where to write one."""
+        """No knob, no origin/HEAD, no main: the error names where to write one.
+        Since #615 a bare clone's own HEAD answers, so it names a branch that
+        is gone, which is no answer either (CR 2264)."""
         seed = tmp_path / "seed"
         seed.mkdir()
         _run_git(tmp_path, "init", "-b", "trunk", str(seed))
@@ -666,8 +668,10 @@ class TestPrimaryEntryWithoutAWorkTree:
         _run_git(tmp_path, "clone", "-q", "--bare", str(seed), str(bare))
         home = _add_worktree(bare, tmp_path / "home", "trunk")
         _add_worktree(bare, tmp_path / "wts" / "feature-y", "feature/y")
+        _run_git(bare, "symbolic-ref", "HEAD", "refs/heads/gone")
         result = _run_destroy(home, "feature/y", "--dry-run")
         assert result.returncode == 2, result.stderr
+        assert "base branch 'main'" in result.stderr, result.stderr
         assert f"default_branch in {home.resolve()} " in result.stderr, result.stderr
         assert "repo.git" not in result.stderr, (
             f"the remedy must name a work tree, not a git dir: {result.stderr}"

@@ -103,7 +103,7 @@ Multiple issues: `#19, #20 [type]: <description>`
 
 ### Step 2.5 — Worktree-aware merge (if applicable)
 
-If this checkout is a worktree (test: `git rev-parse --show-toplevel` differs from the main checkout, listed first in `git worktree list`):
+If this checkout is a worktree (test: `git rev-parse --show-toplevel` differs from the main checkout, named as [references/pr-mode.md](references/pr-mode.md)'s post-merge step 1 says):
 
 1. Commit current changes inside the worktree (Step 2 above)
 2. Invoke `using-git-worktrees` Phase 4 to merge the branch back into the main checkout before continuing
@@ -184,7 +184,7 @@ Present a summary table:
 
 ### Step 8 — Deploy, or next-steps notification
 
-**`pr` mode:** this step waits for the **post-merge pass**, the next "ship it" once the PR shows merged: in the main checkout, `git switch <default>` and `git pull --ff-only`, then this step there (`run-deploy-command.sh` refuses any branch but the default), then the held issues, then `using-git-worktrees` Phase 5.
+**`pr` mode:** this step waits for the **post-merge pass**, the next "ship it" once the PR shows merged: in the main checkout (its step 1), `git switch <default>` and `git pull --ff-only`, then this step there (`run-deploy-command.sh` refuses any branch but the default), then the held issues, then `using-git-worktrees` Phase 5.
 
 **With `.skills/deploy_command` set**, the project deploys through its own command, and this step runs after Step 5, before Step 6 ([references/deploy-command.md](references/deploy-command.md)):
 
