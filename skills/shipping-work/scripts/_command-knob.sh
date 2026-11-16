@@ -33,66 +33,95 @@ case "${0##*/}" in
   _command-knob.sh) case "${1-}" in -h | --help) command_knob_usage; exit 0 ;; esac ;;
 esac
 
-# here_git <args>: git for resolving the primary, without an inherited
-# GIT_DIR or GIT_WORK_TREE (#605, set R's CR 1895). Git exports GIT_DIR to
-# every hook, absolute in a linked worktree, and it beats -C: asked for a
-# submodule's work tree, git named the entry itself, and the knob read as
-# absent. merge-mode.sh holds the same rule. Every call below answers for the
-# checkout this runs in (docs/STYLE.md, #189).
-here_git() {
-  env -u GIT_DIR -u GIT_WORK_TREE git "$@"
-}
-
-# The first entry is a git dir, not a working tree, in two layouts (CR 1839b):
-# a bare primary (`repo.git`) and a submodule (`<super>/.git/modules/<name>`).
-# Neither holds a .skills/, so a knob there read as absent. --show-toplevel
-# names the submodule's working tree; a bare primary has none, so the current
-# checkout's top level stands in, as using-git-worktrees resolves it.
-# Only a `bare` line in the first porcelain block means bare (CR 1858): any
-# other rev-parse failure, "dubious ownership" say, exits 2 with git's reason,
-# since standing in the current checkout would run a feature branch's knob.
-# One exception, which is no other checkout (#605, set R's CR 1892): a
-# primary whose .git is a pointer file (`git init --separate-git-dir`) lists
-# its store, which names no work tree. From that primary itself, the work
-# tree is this one: its git dir is the common dir. From a linked worktree git
-# knows no path to it, so that stays exit 2, and says so.
-primary_checkout() {
-  local wt_list block entry dirs hint ver
-  wt_list=$(here_git worktree list --porcelain) || die "git worktree list failed: not in a git checkout?"
-  block=${wt_list%%$'\n\n'*}
+# >>> resolve_primary: one body in nine readers (#612), held byte-identical
+# by tests/structural/test_primary_checkout_copies.py. Change every copy.
+#
+# resolve_primary <dir>: the primary checkout of the repository at <dir>,
+# where its untracked .skills/ knobs live. Prints nothing.
+#   0: RP_TREE is the primary's work tree. For a bare primary RP_BARE is 1
+#      and RP_TREE is <dir>'s own top level, empty when <dir> has none.
+#   1: RP_ERR says what failed, with git's reason, and what to run.
+# Git is asked without an inherited GIT_DIR, GIT_WORK_TREE or GIT_COMMON_DIR:
+# git exports GIT_DIR to every hook, and each of them beats -C (CR 1895).
+#   1. From the primary itself (its git dir is the common dir), its own top
+#      level, asked first: a --separate-git-dir store whose path ends in
+#      /.git is listed as the directory above it, a work tree to git.
+#   2. Else the first `git worktree list --porcelain` block. Its `bare` line
+#      counts once git confirms it (the shared core.bare, read from here, as
+#      a store git refuses for its owner still has; else the entry's own
+#      answer): below git 2.25 a --separate-git-dir store is listed bare too.
+#      Where that store is this checkout's git dir, this is the primary.
+#   3. Any other entry is asked for its work tree (a submodule's through
+#      core.worktree). That failing is a refusal, never a fallback (CR 1858).
+resolve_primary() {
+  local dir=$1 dirs wt block entry gd reason ver
+  local -a g=(env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR git -C "$dir")
+  RP_TREE="" RP_BARE=0 RP_ERR=""
+  dirs=$("${g[@]}" rev-parse --path-format=absolute --git-dir --git-common-dir 2>/dev/null) || dirs=""
+  if [ -n "$dirs" ] && [ "${dirs%%$'\n'*}" = "${dirs#*$'\n'}" ] &&
+    RP_TREE=$("${g[@]}" rev-parse --show-toplevel 2>/dev/null); then
+    return 0
+  fi
+  RP_TREE=""
+  if ! wt=$("${g[@]}" worktree list --porcelain 2>/dev/null); then
+    reason=$("${g[@]}" worktree list --porcelain 2>&1 >/dev/null) || true
+    reason=${reason%%$'\n'*}
+    RP_ERR="git worktree list failed in '$dir' (git: ${reason:-no reason given}), so the primary checkout is unknown"
+    return 1
+  fi
+  block=${wt%%$'\n\n'*}
   entry=${block%%$'\n'*}
   entry=${entry#worktree }
-  [ -d "$entry" ] || die "could not resolve the primary checkout (got '$entry')"
   case $'\n'"$block"$'\n' in
     *$'\n'bare$'\n'*)
-      PRIMARY=$(here_git rev-parse --show-toplevel) ||
-        die "the primary ($entry) is bare and this is not a working tree"
-      ;;
-    *)
-      if ! PRIMARY=$(here_git -C "$entry" rev-parse --show-toplevel 2>/dev/null); then
-        dirs=$(here_git rev-parse --path-format=absolute --git-dir --git-common-dir 2>/dev/null) || dirs=""
-        if [ -z "$dirs" ] || [ "${dirs%%$'\n'*}" != "${dirs#*$'\n'}" ] ||
-          ! PRIMARY=$(here_git rev-parse --show-toplevel 2>/dev/null); then
-          # Asked again for git's reason, which goes to stderr.
-          here_git -C "$entry" rev-parse --show-toplevel >/dev/null || true
-          hint=""
-          if [ "$(here_git -C "$entry" rev-parse --is-inside-git-dir 2>/dev/null)" = true ]; then
-            # Below git 2.31, rev-parse echoes the flag back as a line, so
-            # the fallback above can't fire even from the primary (CR 1999).
-            # The core phrase is chain W's resolver's, word for word.
-            if [ "${dirs%%$'\n'*}" = --path-format=absolute ]; then
-              ver=$(here_git --version 2>/dev/null) || ver=""
-              ver=${ver#git version }
-              hint="; it is a git dir with no work tree, as a primary whose .git is a file makes it (git init --separate-git-dir), and git ${ver:-(unknown version)} predates 2.31, which this layout needs to tell its primary from a linked worktree: upgrade git (from a linked worktree, then run from the primary checkout)"
-            else
-              hint="; it is a git dir with no work tree, as a primary whose .git is a file makes it (git init --separate-git-dir), and only that primary knows its work tree, so run this from the primary checkout"
-            fi
-          fi
-          die "could not resolve the primary checkout's working tree from $entry (git's reason is above)$hint"
-        fi
+      if [ "$("${g[@]}" config --bool core.bare 2>/dev/null)" = true ] ||
+        [ "$("${g[@]}" -C "$entry" rev-parse --is-bare-repository 2>/dev/null)" = true ]; then
+        RP_BARE=1
+        RP_TREE=$("${g[@]}" rev-parse --show-toplevel 2>/dev/null) || RP_TREE=""
+        return 0
       fi
+      gd=$("${g[@]}" rev-parse --git-dir 2>/dev/null) &&
+        gd=$(CDPATH='' cd -- "$dir" && CDPATH='' cd -- "$gd" && pwd -P) || gd=""
+      if [ -n "$gd" ] && [ "$gd" = "$(CDPATH='' cd -- "$entry" 2>/dev/null && pwd -P)" ] &&
+        RP_TREE=$("${g[@]}" rev-parse --show-toplevel 2>/dev/null); then
+        return 0
+      fi
+      RP_TREE=""
       ;;
   esac
+  if RP_TREE=$("${g[@]}" -C "$entry" rev-parse --show-toplevel 2>/dev/null); then
+    return 0
+  fi
+  RP_TREE=""
+  reason=$("${g[@]}" -C "$entry" rev-parse --show-toplevel 2>&1 >/dev/null) || true
+  reason=${reason%%$'\n'*}
+  RP_ERR="could not resolve the primary checkout's work tree from $entry (git: ${reason:-no reason given})"
+  if [ "$("${g[@]}" -C "$entry" rev-parse --is-inside-git-dir 2>/dev/null)" = true ]; then
+    RP_ERR="$RP_ERR; it is a git dir with no work tree, as a primary whose .git is a file makes it (git init --separate-git-dir), and"
+    if [ "${dirs%%$'\n'*}" = --path-format=absolute ]; then
+      ver=$(git --version 2>/dev/null) || ver=""
+      ver=${ver#git version }
+      RP_ERR="$RP_ERR git ${ver:-(unknown version)} predates 2.31, which this layout needs to tell its primary from a linked worktree: upgrade git (from a linked worktree, then run from the primary checkout)"
+    else
+      RP_ERR="$RP_ERR only that primary knows its work tree, so run this from the primary checkout"
+    fi
+  fi
+  return 1
+}
+# <<< resolve_primary
+
+# PRIMARY := the primary checkout's working tree, resolved by the block above
+# (#612), which run-deploy-command.sh and run-pre-restart.sh share with
+# merge-mode.sh. A bare primary has none, so the current checkout's top
+# level stands in, as using-git-worktrees resolves it; anything else git
+# can't resolve exits 2 with git's reason, since standing in the current
+# checkout would run a feature branch's knob (CR 1858).
+primary_checkout() {
+  resolve_primary . || die "$RP_ERR"
+  PRIMARY=$RP_TREE
+  if [ "$RP_BARE" = 1 ] && [ -z "$PRIMARY" ]; then
+    die "the primary is bare and this is not a working tree"
+  fi
 }
 
 read_command_knob() {

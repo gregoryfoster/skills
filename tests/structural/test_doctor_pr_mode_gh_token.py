@@ -210,7 +210,14 @@ class TestTheHooksSourcesSilenceIt:
 
 
 def _primary(checkout: Path) -> Path:
-    """The primary work tree, as the hook's _read_merge_mode resolves it."""
+    """The primary work tree, as the hook's _read_merge_mode resolves it:
+    from the primary itself (its git dir is the common dir) its own top
+    level, which a store ending in /.git needs (#612); else the first block."""
+    gd, common = layouts.git(
+        checkout, "rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir"
+    ).splitlines()
+    if gd == common:
+        return Path(layouts.git(checkout, "rev-parse", "--show-toplevel"))
     first = layouts.git(checkout, "worktree", "list", "--porcelain").split("\n\n")[0]
     if "\nbare" in first:
         return checkout.resolve()

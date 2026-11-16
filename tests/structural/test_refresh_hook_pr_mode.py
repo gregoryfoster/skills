@@ -362,9 +362,13 @@ class TestAbsentOrDirectIsToday:
 
 
 def _reader_source() -> str:
-    m = re.search(r"^_read_merge_mode\(\) \{\n.*?^\}\n", HOOK.read_text(), re.M | re.S)
-    assert m, "the hook has no _read_merge_mode() at column 0"
-    return m.group(0)
+    """_read_merge_mode, with the shared resolve_primary it calls (#612)."""
+    out = ""
+    for name in ("resolve_primary", "_read_merge_mode"):
+        m = re.search(rf"^{name}\(\) \{{\n.*?^\}}\n", HOOK.read_text(), re.M | re.S)
+        assert m, f"the hook has no {name}() at column 0"
+        out += m.group(0)
+    return out
 
 
 def _read_mode(cwd: Path, env: dict | None = None) -> tuple[str, str]:

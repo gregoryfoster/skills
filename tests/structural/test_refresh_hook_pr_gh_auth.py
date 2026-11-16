@@ -293,6 +293,7 @@ def _token_source(cwd: Path, env: dict) -> tuple[int, str, str]:
     resolves the primary checkout whose .env the fallback reads."""
     r = _bash(
         'PR_GH_REPO="github.com/o/r"\n'
+        + _function("resolve_primary")
         + _function("_read_merge_mode")
         + _function("_env_value")
         + _function("_pr_token")
