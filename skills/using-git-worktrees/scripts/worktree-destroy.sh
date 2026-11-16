@@ -529,9 +529,14 @@ if [[ $DESCOPED -eq 0 ]]; then
       BASE=$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's@^origin/@@' || true)
     fi
     # A bare clone keeps no origin/HEAD; its own HEAD is the remote's
-    # default as `clone --bare` kept it (#615).
+    # default as `clone --bare` kept it (#615). Only a branch that exists:
+    # `git init --bare` names one it never made (CR 2264).
     if [[ -z "$BASE" && "$RP_BARE" == 1 ]]; then
       BASE=$(git --git-dir="$(git rev-parse --git-common-dir)" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
+      if [[ -n "$BASE" ]] && ! git rev-parse --verify --quiet "refs/heads/$BASE" >/dev/null &&
+        ! git rev-parse --verify --quiet "refs/remotes/origin/$BASE" >/dev/null; then
+        BASE=""
+      fi
     fi
     if [[ -z "$BASE" ]]; then
       BASE="main"

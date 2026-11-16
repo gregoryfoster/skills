@@ -178,3 +178,37 @@ class TestDocCheck:
         assert "could not resolve a base ref" not in r.stderr, r.stderr
         assert r.returncode == 1, r.stdout + r.stderr
         assert "AGENTS.md" in r.stdout, r.stdout
+
+
+class TestAnUnbornBareHeadIsNoAnswer:
+    """CR 2264: `git init --bare` names `master` (or init.defaultBranch) in
+    HEAD whether or not it exists, and a bare repository filled by push or
+    fetch keeps that name. Taken unchecked, it refused a deploy and a destroy
+    that resolved `main` before #615."""
+
+    def _home(self, tmp_path: Path) -> Path:
+        home = _bare_trunk(tmp_path)
+        bare = tmp_path / "repo.git"
+        layouts.git(bare, "branch", "main", "trunk")
+        layouts.git(bare, "symbolic-ref", "HEAD", "refs/heads/never-made")
+        layouts.git(home, "switch", "-q", "main")
+        layouts.git(home, "fetch", "-q", "origin")
+        layouts.git(home, "branch", "-q", "--set-upstream-to=origin/trunk")
+        return home
+
+    def test_deploy_falls_through_to_main(self, tmp_path):
+        home = self._home(tmp_path)
+        record = _deploy_knobs(home, tmp_path)
+        r = _run(DEPLOY, cwd=home, STUB_RECORD=str(record))
+        assert "never-made" not in r.stderr, r.stderr
+        assert "only the default branch" not in r.stderr, r.stderr
+
+    def test_destroy_falls_through_to_main(self, tmp_path):
+        home = self._home(tmp_path)
+        layouts.git(home, "branch", "feature/y", "HEAD")
+        wts = tmp_path / "wts"
+        layouts.git(home, "worktree", "add", "-q", str(wts / "feature-y"), "feature/y")
+        r = _run(DESTROY, "feature/y", "--dry-run", cwd=home, WORKTREE_ROOT=str(wts))
+        assert "never-made" not in r.stderr, r.stderr
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "ancestor of 'main'" in r.stdout, r.stdout

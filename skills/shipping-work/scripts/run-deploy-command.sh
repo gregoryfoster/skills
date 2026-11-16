@@ -149,8 +149,14 @@ if [ "$MODE" = pr ]; then
   fi
   # A bare clone keeps no origin/HEAD, and its own HEAD is what `clone
   # --bare` kept of the remote's default (#615): a `trunk` repo read as `main`.
+  # Only a branch that exists: `git init --bare` names one it never made, and
+  # a repository filled by push keeps that name (CR 2264).
   if [ -z "$DEFAULT" ] && [ "$RP_BARE" = 1 ]; then
     DEFAULT=$(git --git-dir="$(git rev-parse --git-common-dir)" symbolic-ref --quiet --short HEAD) || DEFAULT=""
+    if [ -n "$DEFAULT" ] && ! git rev-parse --verify --quiet "refs/heads/$DEFAULT" >/dev/null &&
+      ! git rev-parse --verify --quiet "refs/remotes/origin/$DEFAULT" >/dev/null; then
+      DEFAULT=""
+    fi
   fi
   [ -n "$DEFAULT" ] || DEFAULT=main
   REMEDY="in the main checkout, git switch $DEFAULT && git pull --ff-only, then re-run"
