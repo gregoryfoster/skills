@@ -9,13 +9,15 @@ only `install-refresh.sh`, which `SKILL.md` covers.
 1. **Symlinks** rather than copies, so upstream fixes propagate through the normal submodule refresh. The target is relative and derived from the vendor directory actually found, not from a hand-substituted `<owner>-<repo>` — that substitution is how a symlink ends up pointing at a plausible path that does not exist.
 2. **Merges** `.claude/settings.json` with jq, dedupe-then-append: it creates `.hooks`/`.hooks.SessionStart` when absent, preserves every other hook and key, and strips any pre-existing entry for this hook first so a re-run cannot duplicate it.
 
+Four of twelve audited consumers once carried the symlink with no registration ([#167](https://github.com/gregoryfoster/skills/issues/167)). The procedure was prose and `install-doctor.sh` was a script, which is the only difference between them that predicts the failure population.
+
 The mechanism itself is `scripts/install-hook.sh`, which takes the hook's constants as arguments so all three hooks a consumer ends up with — this one and `init-socraticode`'s two — inherit one implementation and one set of hardening rounds ([#200](https://github.com/gregoryfoster/skills/issues/200)). `install-refresh.sh` is the wrapper that supplies this hook's; run it, not the generic one.
 
 Two details in that merge are load-bearing, and `install-hook.sh` carries the full reasoning inline:
 
 - **The command is anchored on `$CLAUDE_PROJECT_DIR`**, not the hook process's cwd ([#110](https://github.com/gregoryfoster/skills/issues/110)). The `${CLAUDE_PROJECT_DIR:-.}` fallback matters: unset, a bare `"$CLAUDE_PROJECT_DIR/…"` becomes `bash "/.claude/hooks/…"` and errors on every session start, where `.` degrades to exactly the old behaviour.
 - **The strip matches the script path, not the whole command.** An equality test would skip an entry written in the older cwd-relative form — duplicating the hook, and leaving the original unremovable by the uninstall filter.
-- **The entry carries an explicit `timeout`, and a re-run keeps whatever is already there** ([#259](https://github.com/gregoryfoster/skills/issues/259)). Each hook's figure lives in its `<hook>.install` manifest — 120 for this one and for `socraticode-health.sh`, both of which reach the network; 5 for `socraticode-reminder.sh`, which is one `echo` — so the constants stay beside the hook they configure rather than in a branch inside the installer. Without a `timeout` the harness default applies, and for a hook that stamps a once-per-UTC-day lock *before* doing its work — `socraticode-health.sh` does, and this one did until [#555](#a-run-killed-part-way-555) — a kill consumes the day's attempt and reports nothing: silent-when-clean becomes indistinguishable from silent-when-killed, with no retry until tomorrow. And because the merge is dedupe-then-append, it used to rebuild the entry from constants and *discard* a `timeout` a consumer had added by hand — the repair silently undone by the tool that prescribed it. A value already on the entry now wins over the flag; the run names both numbers, and `--check` reports the disagreement without failing on it.
+- **The entry carries an explicit `timeout`, and a re-run keeps whatever is already there** ([#259](https://github.com/gregoryfoster/skills/issues/259)): why, in [the timeout budget](auto-refresh-hook/timeout-budget.md#the-entrys-timeout-259).
 
 </details>
 
@@ -98,6 +100,10 @@ With `.skills/merge_mode` `pr` the hook never pushes to `main`: it proposes the 
 ## The timeout budget ([#572](https://github.com/gregoryfoster/skills/issues/572))
 
 The hook commits and pushes through the consumer's pre-commit and pre-push hooks, inside its 120 s `timeout`. A suite too slow for that is skipped on the hook's own commit and pushes with `.skills/refresh-skip-hooks`. The budget, the knob, keeping the vendored-tree tests, and the per-phase timing in the log: [auto-refresh-hook/timeout-budget.md](auto-refresh-hook/timeout-budget.md).
+
+## A bump that leaves a rendered file behind ([#647](https://github.com/gregoryfoster/skills/issues/647))
+
+After a bump that moves the vendored tree, the hook runs each installed renderer's `--check` against the new tree and reports a file a re-render would change, on stderr once and in the log. It never re-renders. Which renderers, what counts, and the `pr` mode ordering: [auto-refresh-hook/rendered-artifacts.md](auto-refresh-hook/rendered-artifacts.md).
 
 ## A run killed part way ([#555](https://github.com/gregoryfoster/skills/issues/555))
 

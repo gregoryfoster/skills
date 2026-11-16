@@ -234,6 +234,30 @@ that last case. It is not a guarantee, so it never sets exit 3. `--print` reads
 the installed line too, which is what lets this repo's parity test pass a bare
 Dependabot bump of `context-cadence.yml`.
 
+## `--check` says when a re-render would change the file
+
+Each line above checks one known half, so a template change none of them
+names read as current. The checkout pin moving from `@v5` to `@v7` was the case
+found, on a host whose workflow went through weeks of skill bumps unchanged
+([#647](https://github.com/gregoryfoster/skills/issues/647)). `--check` now
+ends the workflow's lines with `re-render:`. It renders what `--print` would
+write, keeping the installed schedule and ledger, and compares that with the
+installed file:
+- `none` means a re-render writes the file back unchanged;
+- `behind` gives how many lines a re-render would change;
+- `unknown` means the render itself failed.
+
+A Dependabot-moved pin isn't drift, since a re-render keeps it (#373). Nor is
+a custom `--cron`, but a plain re-run doesn't keep that: it writes the derived
+schedule. So the `behind` line names the command with `--cron` and the
+installed schedule (CR 2299). Like the pin line, `re-render:` never sets the exit code, because
+consumers' CI may call `--check` and a newer template is not a broken install.
+`managing-skills`' refresh hook reads `behind` after a bump, and
+`shipping-work`'s doc-check does too on a branch that changes
+`.skills/merge_mode`. Each says to re-render, and neither re-renders. Because
+the knob is read from the primary checkout, re-rendering on the branch that
+flips it renders the old mode, so the re-render comes after the merge.
+
 ## Under a PR-only ruleset: `merge_mode` `pr`
 
 A default branch with a PR-only ruleset and no bypass refuses this job's push,

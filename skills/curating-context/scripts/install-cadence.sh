@@ -46,6 +46,11 @@ Options:
                    A ninth line, the checkout pin, says what a re-render
                    would write over the installed actions/checkout line
                    (#373); it is not a guarantee and never sets the exit.
+                   A tenth, re-render, compares the whole installed workflow
+                   with what a re-render keeping its schedule and ledger
+                   would write (#647): `none`, or `behind` and how many lines.
+                   It never sets the exit either: a newer template is not a
+                   broken install.
                    Exit 0 all present, 3 any missing, or a merge mode it
                    reports UNUSABLE or STALE.
   --uninstall      Remove the workflow file AND every merge attribute it
@@ -655,6 +660,41 @@ if [ "$MODE" = "check" ]; then
         echo "checkout pin:       none (no actions/checkout line installed; a re-render"
         echo "                    writes the template's @v$TEMPLATE_CHECKOUT_MAJOR)" ;;
     esac
+    # The whole file, not one line (#647). Every line above checks one known
+    # half, so a template change none of them names (the pin was the case
+    # found) read as current. This renders what a re-render would write, with
+    # the installed schedule and ledger kept as --print keeps them, and
+    # compares. Never rc=3: consumers' CI may call --check, and a newer
+    # template is not a broken install. `re-render: behind` is the form the
+    # refresh hook and shipping-work's doc-check.sh read; keep the label.
+    # --print's stderr is left to reach ours: it says why a render failed.
+    rr_args=(--print --file "$WF_PATH")
+    [ "$LEDGER_SET" -eq 0 ] || rr_args+=(--ledger "$LEDGER")
+    rr_cron="$CRON"
+    if [ -z "$rr_cron" ]; then
+      rr_cron="$(sed -n "s/^ *- cron: *'\(.*\)'\$/\1/p" "$WF" | head -1)"
+    fi
+    [ -z "$rr_cron" ] || rr_args+=(--cron "$rr_cron")
+    rr_rc=0
+    rr_out="$(bash "${BASH_SOURCE[0]}" "${rr_args[@]}")" || rr_rc=$?
+    if [ "$rr_rc" -ne 0 ]; then
+      echo "re-render:          unknown — install-cadence.sh --print exited $rr_rc,"
+      echo "                    so what a re-render writes can't be compared."
+    elif printf '%s\n' "$rr_out" | cmp -s - "$WF"; then
+      echo "re-render:          none (a re-render writes the installed file back)"
+    else
+      # Lines it writes or drops, whichever is more: a pin moved is one line.
+      rr_n="$(diff <(printf '%s\n' "$rr_out") "$WF" |
+        awk '/^</ { a++ } /^>/ { b++ } END { print (a > b ? a : b) + 0 }' || true)"
+      # The command keeps the schedule this compared with (CR 2299): a re-run
+      # without --cron writes the derived one over a custom schedule.
+      rr_q="'"
+      rr_cmd="install-cadence.sh"
+      [ -z "$rr_cron" ] || rr_cmd="$rr_cmd --cron $rr_q$rr_cron$rr_q"
+      echo "re-render:          behind — a re-render rewrites $rr_n line(s) of the"
+      echo "                    installed workflow. Run $rr_cmd"
+      echo "                    and review the diff before committing it."
+    fi
   else
     echo "workflow:           MISSING ($WF_PATH)"
     rc=3

@@ -364,6 +364,52 @@ if [[ -z "$CHANGED" ]]; then
   exit 0
 fi
 
+# A knob an installed artifact is rendered by (#647). Today's one is
+# .skills/merge_mode, by which curating-context's install-cadence.sh renders
+# .github/workflows/context-cadence.yml. Nothing re-ran the renderer when the
+# knob changed, so a cohort host's workflow kept pushing to the default branch
+# under `pr`. The renderer reads the knob from the primary checkout, so a
+# re-render on this branch renders the mode the primary reads now (from a
+# linked worktree, the old one), in silence. Hence the note in the branch that
+# changes the knob: re-render after it merges. A hit, exit 1, because it asks
+# for a follow-up. A renderer missing or failing is said, never exit 2: the
+# doc check itself ran. The renderer is looked for where the workflow looks.
+RENDER_WF=".github/workflows/context-cadence.yml"
+RENDER_NOTE=0
+if grep -qxF ".skills/merge_mode" <<<"$CHANGED" && [[ -f "$RENDER_WF" ]]; then
+  RENDER_NOTE=1
+fi
+print_render_note() {
+  local d renderer="" out rc=0
+  for d in scripts .claude/skills/curating-context/scripts skills/curating-context/scripts; do
+    if [[ -f "$d/install-cadence.sh" ]]; then
+      renderer="$d/install-cadence.sh"
+      break
+    fi
+  done
+  echo ""
+  echo "Knob-rendered artifact: .skills/merge_mode changes on this branch, and"
+  echo "$RENDER_WF is rendered by it. Re-render it after this branch merges,"
+  echo "once the default branch has the knob: in the primary checkout, run the"
+  echo "command install-cadence.sh --check names on its re-render: line (it"
+  echo "keeps the installed schedule) and review the diff. Re-rendered on this"
+  echo "branch, it renders the mode the primary checkout reads now."
+  if [[ -z "$renderer" ]]; then
+    echo "  (no install-cadence.sh in scripts/, .claude/skills/curating-context/scripts/"
+    echo "  or skills/curating-context/scripts/, so its --check was not run)"
+    return 0
+  fi
+  out=$(bash "$renderer" --check </dev/null 2>&1) || rc=$?
+  if [[ $rc -ne 0 && $rc -ne 3 ]]; then
+    echo "  bash $renderer --check exited $rc:"
+    printf '%s\n' "$out" | sed 's/^/    /'
+    return 0
+  fi
+  echo "  bash $renderer --check says, of the mode read now:"
+  printf '%s\n' "$out" |
+    awk '/^[^ ]/ { keep = ($0 ~ /^(merge mode|re-render):/) } keep { print "    " $0 }'
+}
+
 HITS=()
 while IFS= read -r file; do
   for entry in "${SENSITIVE_PATHS[@]}"; do
@@ -434,6 +480,10 @@ if [[ ${#HITS[@]} -eq 0 ]]; then
     echo "not have contributed to that result:"
     printf '  - %s\n' "${DEAD[@]}"
   fi
+  if [[ $RENDER_NOTE -eq 1 ]]; then
+    print_render_note
+    exit 1
+  fi
   exit 0
 fi
 
@@ -480,5 +530,8 @@ elif [[ "$LIST_SOURCE" == "$DEFAULTS_LABEL" && "$SECTIONS_SOURCE" != "$DEFAULTS_
   echo "skill's defaults, which may not watch the files your sections describe — a"
   echo "change to one of those can pass unflagged. Commit .skills/doc-sensitive-paths"
   echo "to watch the paths your docs depend on."
+fi
+if [[ $RENDER_NOTE -eq 1 ]]; then
+  print_render_note
 fi
 exit 1
