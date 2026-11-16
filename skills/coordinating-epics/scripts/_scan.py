@@ -45,6 +45,7 @@ from _epic_edit import (  # noqa: E402
     Parser,
     Usage,
     add_token_flag,
+    box_state,
     fenced,
     gh,
     gh_cause,
@@ -52,6 +53,7 @@ from _epic_edit import (  # noqa: E402
     gh_json,
     key,
     line_ref,
+    line_subjects,
     load_tokens,
     normalize,
     per_repo_cursor,
@@ -310,6 +312,120 @@ def item_updates(
             else:
                 missing.append(n)
     return found, missing, errors
+
+
+def item_lines(lines: list[str], host: str) -> dict[str, list[tuple[bool, str]]]:
+    """Each subject's checklist items outside fences, as (ticked, line).
+
+    host keys a bare #N: a sibling epic's own repo, not the scan's (#660).
+    """
+    fence = fenced(lines)
+    out: dict[str, list[tuple[bool, str]]] = {}
+    for i, ln in enumerate(lines):
+        ls = None if fence[i] else line_subjects(ln, host)
+        if ls and ls[0] == "item":
+            for s in ls[1]:
+                out.setdefault(s, []).append((box_state(ln) == "done", ln.strip()))
+    return out
+
+
+def ref_order(k: str) -> tuple[str, int]:
+    repo, num = k.rsplit("#", 1)
+    return repo, int(num)
+
+
+def child_states(keys: set[str], warnings: list[str]) -> dict[str, str | None]:
+    """Each key's state, lowercase as REST gives it, in one GraphQL query per
+    repo per GRAPHQL_BATCH; None where it couldn't be read, with a warning."""
+    by_repo: dict[str, list[int]] = {}
+    for k in sorted(keys, key=ref_order):
+        repo, num = ref_order(k)
+        by_repo.setdefault(repo, []).append(num)
+    out: dict[str, str | None] = dict.fromkeys(keys)
+    for repo, nums in by_repo.items():
+        owner, name = repo.split("/")
+        for i in range(0, len(nums), GRAPHQL_BATCH):
+            batch = nums[i : i + GRAPHQL_BATCH]
+            fields = " ".join(
+                f"i{n}: issueOrPullRequest(number: {n}) {{"
+                " ... on Issue { state } ... on PullRequest { state } }"
+                for n in batch
+            )
+            try:
+                data, errs = gh_graphql(
+                    "query($owner: String!, $name: String!) {"
+                    f" repository(owner: $owner, name: $name) {{ {fields} }} }}",
+                    {"owner": owner, "name": name},
+                    f"reading {repo}'s shared children",
+                )
+            except Infra as e:
+                hint = token_hint(repo)
+                warnings.append(
+                    f"cross_epic: the state of {repo}'s shared children is unknown:"
+                    f" {gh_cause(e)}" + (f"; {hint}" if hint else "")
+                )
+                continue
+            node = data.get("repository") or {}
+            for n in batch:
+                st = (node.get(f"i{n}") or {}).get("state")
+                out[f"{repo}#{n}"] = st.lower() if st else None
+            if errs:
+                warnings.append(
+                    f"cross_epic: some of {repo}'s shared children are unread: "
+                    + "; ".join(errs)
+                )
+    return out
+
+
+def cross_epic(
+    lines: list[str], host: str, siblings: dict[str, str], warnings: list[str]
+) -> tuple[list[dict], list[dict]]:
+    """(cross_epic, siblings): each child leading a checklist item both here
+    and on a sibling epic, with both boxes, and each sibling's counts or the
+    reason it went unread. Reporting only (#660)."""
+    mine = item_lines(lines, host)
+    rows: list[dict] = []
+    read: list[dict] = []
+    for ref in siblings.values():
+        repo, num = ref.rsplit("#", 1)
+        try:
+            it = gh_json(["api", f"repos/{repo}/issues/{num}"], f"reading {ref}")
+        except Infra as e:
+            # Listed with its error, so an unread sibling never reads as one
+            # in step; the warning names the token to map (#520).
+            read.append({"epic": ref, "error": gh_cause(e)})
+            hint = token_hint(repo) or f"check which token reaches {repo}"
+            warnings.append(
+                f"--sibling {ref} unreadable, so its lines weren't compared;"
+                f" {hint}: {gh_cause(e)}"
+            )
+            continue
+        theirs = item_lines(normalize(it.get("body") or ""), repo)
+        shared = sorted(set(mine) & set(theirs), key=ref_order)
+        read.append({"epic": ref, "items": len(theirs), "shared": len(shared)})
+        for k in shared:
+            for here_ticked, here_line in mine[k]:
+                for ticked, line in theirs[k]:
+                    rows.append(
+                        {
+                            "child": k,
+                            "here": {"ticked": here_ticked, "line": here_line},
+                            "sibling": {"epic": ref, "ticked": ticked, "line": line},
+                            "drift": here_ticked != ticked,
+                        }
+                    )
+    states = child_states({r["child"] for r in rows}, warnings)
+    for r in rows:
+        r["state"] = states[r["child"]]
+    drift = list(dict.fromkeys(r["child"] for r in rows if r["drift"]))
+    if drift:
+        warnings.append(
+            "cross_epic: boxes drift across epics for "
+            + ", ".join(drift)
+            + ": tick or untick to match the child's state, or keep its record on"
+            " one epic and point to it from the other (siblings.md)"
+        )
+    return rows, read
 
 
 def issue_row(
@@ -807,6 +923,13 @@ def run(argv: list[str]) -> int:
             "the epic's children there or mention the epic or a child; 'unrelated'\n"
             "counts the rest, which still move max_number. The top-level keys stay\n"
             "this repo's. A gh failure on an --also repo's listing is exit 2.\n\n"
+            "--sibling OWNER/REPO#N (#660), for a child kept on two epics: that epic's\n"
+            "body is read, and cross_epic lists each child that leads a checklist item\n"
+            "both here and there (a line's subject, its leading refs: a pointer line has\n"
+            "none), with both boxes and lines, the child's state, and drift: true when\n"
+            "the boxes differ. A bare #N there is that epic's repo's. siblings gives each\n"
+            "one's items and shared counts, or its error; reporting only, so an unread\n"
+            "sibling or state is a warning, and drift is one too.\n\n"
             "exit codes: 0 report written; 1 usage; 2 gh failed on the epic, a listing\n"
             "or a comment read (its stderr shown). gh failing on one cross-repo ref, one\n"
             "PR's closing issues or the default branch costs only that: a warning with\n"
@@ -861,6 +984,15 @@ def run(argv: list[str]) -> int:
         " keeping rows that are the epic's children there or mention the epic or"
         " a child; under report['also'] (#400). Repeatable",
     )
+    p.add_argument(
+        "--sibling",
+        action="append",
+        default=[],
+        metavar="OWNER/REPO#N",
+        help="also read this sibling epic's body, and list under cross_epic each"
+        " child that leads a checklist item both here and there, with both boxes"
+        " (#660). Repeatable",
+    )
     add_token_flag(p)
     a = p.parse_args(argv)
     host = a.repo
@@ -874,6 +1006,15 @@ def run(argv: list[str]) -> int:
         if r.lower() == host.lower():
             p.error(f"--also {r} is the epic's own repo, which every scan reads")
         also.setdefault(r.lower(), r)
+    siblings: dict[str, str] = {}
+    for r in a.sibling:
+        m = re.fullmatch(r"(" + OWNER_REPO + r")#([0-9]+)", r)
+        if not m:
+            p.error(f"--sibling {r!r} must be OWNER/REPO#N")
+        if key(m.group(1), m.group(2), host) == key(None, a.epic, host):
+            p.error(f"--sibling {r} is the epic itself")
+        k = key(m.group(1), m.group(2), host)
+        siblings.setdefault(k, k)
     try:
         load_tokens(a.token_for)
     except Usage as e:
@@ -1130,6 +1271,10 @@ def run(argv: list[str]) -> int:
                 )
             cross.append(row)
         report["cross_repo"] = cross
+        if siblings:
+            report["cross_epic"], report["siblings"] = cross_epic(
+                lines, host, siblings, warnings
+            )
         # epic-edit.sh reads "capped": a {last_seen} past a cut-off walk
         # would skip what the walk never reached (CR 302).
         report["capped"] = list(dict.fromkeys(CAPPED))
