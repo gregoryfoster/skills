@@ -40,6 +40,7 @@ from tests.structural.test_refresh_hook_pr_mode import (
 from tests.utils.refresh_hook_consumer import (
     VENDOR,
     _vendor_commit,
+    break_remote,
     build,
     clean_env,
     git,
@@ -247,3 +248,39 @@ def test_pr_mode_opening_the_pr_without_a_push_says_so_too(tmp_path):
     assert len(_creates(state)) == 2, _calls(state)
     assert WF in _creates(state)[-1] or WF in "\n".join(_calls(state)), _calls(state)
     assert WF in r.stderr, r.stderr
+
+
+def test_pr_mode_an_open_pr_updated_in_place_keeps_its_body(tmp_path):
+    """CR 2301: a later bump pushed onto the open PR's branch is said on
+    stderr, and the PR's body, which the reviewer owns, is never edited."""
+    c = _consumer(tmp_path)
+    _commit_knob(c, "pr\n")
+    (c.path / WF).write_text(_print(c))
+    git(c.path, "commit", "-qam", "re-render for pr")
+    git(c.path, "push", "-q", "origin", "main")
+    _rule(c)
+    state = _gh(c)
+    _vendor_commit(c.up, c.v2 + "# fixture: doctor only\n", "vendor: doctor only")
+    first = run_hook(c)
+    assert first.returncode == 0, first.stderr
+    assert len(_creates(state)) == 1 and WF not in first.stderr, first.stderr
+    _new_day(c)
+    _upstream_renderer_moves(c)
+    r = run_hook(c)
+    assert r.returncode == 0, r.stderr
+    assert len(_creates(state)) == 1, _calls(state)
+    assert not [x for x in _calls(state) if x.startswith("pr edit")], _calls(state)
+    assert WF in r.stderr and PR_BRANCH in r.stderr, r.stderr
+
+
+def test_direct_mode_a_refused_push_rolls_back_and_says_nothing(tmp_path):
+    """CR 2300: a push that fails rolls the bump back, so there is no new
+    template to be behind, and the check isn't run."""
+    c = _consumer(tmp_path)
+    _upstream_renderer_moves(c)
+    break_remote(c)
+    r = run_hook(c)
+    assert r.returncode == 0, r.stderr
+    assert gitlink(c) == c.old, "the refused bump wasn't rolled back"
+    assert WF not in r.stderr, r.stderr
+    assert "renders:" not in log_text(c), log_text(c)
