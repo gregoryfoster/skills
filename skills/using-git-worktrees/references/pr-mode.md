@@ -23,7 +23,8 @@ do that.
 4. Nothing merges here. The main checkout stays where it is: don't `git
    switch` it, and don't merge into it.
 
-Once the PR shows as merged, update the main checkout with `git switch
+Once the PR shows as merged, update the main checkout
+([main-checkout.md](main-checkout.md) says how to find it) with `git switch
 <default>` and `git pull --ff-only`, then destroy the worktree (Phase 5).
 `shipping-work`'s post-merge pass does all three, and deploys between the
 pull and the destroy.

@@ -381,7 +381,13 @@ SELF_ROOT=$(realpath "$PROJECT_ROOT" 2>/dev/null || printf '%s' "$PROJECT_ROOT")
 TARGET_ROOT=$(realpath "$WORKTREE_PATH" 2>/dev/null || printf '%s' "$WORKTREE_PATH")
 if [[ "$SELF_ROOT" == "$TARGET_ROOT" ]]; then
   echo "ERROR: refusing to destroy '$WORKTREE_PATH' — it is the worktree this command is running from" >&2
-  echo "cd to the main checkout first: git worktree list | head -n1" >&2
+  # Named as resolve_primary names it (#614): the first row of `git worktree
+  # list` is the store in a bare or --separate-git-dir layout.
+  if resolve_primary . && [[ "$RP_BARE" == 0 ]] && ! [[ "$RP_TREE" -ef "$PROJECT_ROOT" ]]; then
+    echo "cd to the main checkout first: cd $RP_TREE" >&2
+  else
+    echo "cd to another checkout first: using-git-worktrees' references/main-checkout.md says how to find the main one" >&2
+  fi
   exit 2
 fi
 
