@@ -405,6 +405,38 @@ def test_654_a_row_with_a_later_update_than_its_record_stays(rig):
     assert r["own_comments"]["rows_dropped"] == []
 
 
+@pytest.mark.parametrize(
+    "issue_at, dropped",
+    [
+        ("2026-10-02T11:00:01Z", True),
+        ("2026-10-02T11:00:02Z", True),
+        ("2026-10-02T11:00:03Z", False),
+        ("2026-10-02T11:01:00Z", False),
+    ],
+    ids=["plus-1s", "plus-2s", "plus-3s", "plus-60s"],
+)
+def test_666_an_issue_stamped_a_second_after_its_record_is_still_record_only(
+    rig, issue_at, dropped
+):
+    """#666, measured on #516's scan of 2026-11-16: GitHub stamped 21 of 190
+    children's updated_at 1 s after their record comment, and each such row
+    came back. Up to 2 s is the comment's own stamp; an edit 60 s later is not."""
+    rec = "**Coordinator record, acme/widgets#10**\n\nShipped."
+    rig.issue(REPO, 12, updated_at=issue_at)
+    rig.comment(
+        REPO,
+        12,
+        901,
+        body=rec,
+        created_at="2026-10-02T11:00:00Z",
+        updated_at="2026-10-02T11:00:00Z",
+    )
+    r = scan(rig)
+    rows = {x["number"]: x for x in r["updated_since"]}
+    assert (12 not in rows) is dropped
+    assert r["own_comments"]["rows_dropped"] == ([12] if dropped else [])
+
+
 def test_a_record_naming_another_epic_is_news_not_ours(rig):
     """CR 2209: the marker names its epic. A sibling coordinator's record on a
     shared child is that coordinator's verification, news to this one, so the

@@ -259,11 +259,17 @@ def new_comments(
     return kept, dropped
 
 
+# GitHub stamps the issue up to a second after the comment that updated it:
+# 21 of #516's 190 compaction rows, 2026-11-16 (#666).
+RECORD_STAMP_SLACK = dt.timedelta(seconds=2)
+
+
 def record_only(row: dict, records: list[dict], queried: str) -> bool:
     """True when the row's record comments are its only reason to be listed:
-    no other new comment, the latest record is the issue's latest update, and
-    no close inside the window. An edit before the record, in the window,
-    can't be seen this way: own_comments names every row dropped (#654)."""
+    no other new comment, the latest record is the issue's latest update, to
+    within RECORD_STAMP_SLACK, and no close inside the window. An edit before
+    the record, or inside the slack, can't be seen this way: own_comments
+    names every row dropped (#654, #666)."""
     if not records or row.get("new_comments"):
         return False
     latest = max(r.get("updated_at") or "" for r in records)
@@ -271,7 +277,7 @@ def record_only(row: dict, records: list[dict], queried: str) -> bool:
     return (
         bool(latest)
         and bool(row.get("updated_at"))
-        and parse_ts(row["updated_at"]) <= parse_ts(latest)
+        and parse_ts(row["updated_at"]) <= parse_ts(latest) + RECORD_STAMP_SLACK
         and not (closed and parse_ts(closed) >= parse_ts(queried))
     )
 
@@ -913,9 +919,10 @@ def run(argv: list[str]) -> int:
             "epic_comments, a record comment (**Coordinator record, OWNER/REPO#N**,\n"
             "naming this epic; one naming another epic is news) from a row's\n"
             "new_comments, where record_comments counts it. A row that record\n"
-            "comments alone put there (no other new comment, no later update, no close\n"
-            "in the window) is dropped. own_comments gives the counts and the rows\n"
-            "dropped, so nothing vanishes silently.\n\n"
+            "comments alone put there (no other new comment, no update more than 2 s\n"
+            "after the latest record, no close in the window) is dropped: GitHub can\n"
+            "stamp the issue a second after the comment (#666). own_comments gives the\n"
+            "counts and the rows dropped, so nothing vanishes silently.\n\n"
             "--also OWNER/REPO (#400), for a cross-repo parent: that repo's number walk\n"
             "from its own '- **Last issue seen (OWNER/REPO):** OWNER/REPO#N' line, and\n"
             "its updates since Last check-in, under also[owner/repo] with their own\n"
