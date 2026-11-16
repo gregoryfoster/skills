@@ -165,7 +165,20 @@ def _separate_primary(tmp_path: Path) -> Path:
     return layouts.separate_git_dir(tmp_path, None)[0]
 
 
+def _dot_bare(tmp_path: Path) -> Path:
+    """`<dir>/.bare` holds a bare clone, `<dir>/.git` is a gitfile naming it,
+    and a worktree sits under `<dir>` (CR 2291). Both name `<dir>`."""
+    src = layouts.seed(tmp_path / "seed", "direct\n")
+    root = tmp_path / "dir"
+    root.mkdir()
+    layouts.git(root, "clone", "-q", "--bare", str(src), str(root / ".bare"))
+    (root / ".git").write_text("gitdir: ./.bare\n")
+    layouts.git(root, "worktree", "add", "-q", str(root / "main"), "main")
+    return root / "main"
+
+
 PARITY = {
+    "dot_bare": _dot_bare,
     "plain": _plain,
     "plain_linked": _plain_linked,
     "submodule": _submodule,
