@@ -147,6 +147,11 @@ if [ "$MODE" = pr ]; then
       *) die "git symbolic-ref refs/remotes/origin/HEAD failed (exit $SR_RC)" ;;
     esac
   fi
+  # A bare clone keeps no origin/HEAD, and its own HEAD is what `clone
+  # --bare` kept of the remote's default (#615): a `trunk` repo read as `main`.
+  if [ -z "$DEFAULT" ] && [ "$RP_BARE" = 1 ]; then
+    DEFAULT=$(git --git-dir="$(git rev-parse --git-common-dir)" symbolic-ref --quiet --short HEAD) || DEFAULT=""
+  fi
   [ -n "$DEFAULT" ] || DEFAULT=main
   REMEDY="in the main checkout, git switch $DEFAULT && git pull --ff-only, then re-run"
   CURRENT=$(git symbolic-ref --quiet --short HEAD) ||
