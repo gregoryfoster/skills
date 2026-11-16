@@ -261,8 +261,15 @@ def project_root(cwd: str | None = None) -> Path | None:
                 f"could not resolve the primary checkout {candidate}: "
                 + (reason or f"git will not open {dot_git} and gives no reason")
             )
-    listed = _ok(_git(["worktree", "list", "--porcelain"], cwd)) or ""
-    block = listed.split("\n\n", 1)[0].splitlines()
+    listing = _git(["worktree", "list", "--porcelain"], cwd)
+    if listing is None or listing[0] != 0:
+        # Read as "not bare", it would end below as a --separate-git-dir
+        # layout, which says nothing true about git failing (CR 2290).
+        why = (
+            listing[2].splitlines()[0] if listing and listing[2] else "no reason given"
+        )
+        raise PrimaryUnresolved(f"git worktree list failed in {top}: {why}")
+    block = listing[1].split("\n\n", 1)[0].splitlines()
     if "bare" in block[1:] and block[0].startswith("worktree "):
         entry = block[0][len("worktree ") :]
         if _ok(_git(["rev-parse", "--is-bare-repository"], entry)) == "true":

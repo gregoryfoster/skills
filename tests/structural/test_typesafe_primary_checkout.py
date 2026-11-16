@@ -196,3 +196,24 @@ class TestParityWithTheResolver:
         with pytest.raises(ts.PrimaryUnresolved) as e:
             ts.project_root(str(linked))
         assert "run this from the primary checkout" in str(e.value), str(e.value)
+
+    def test_a_failed_worktree_list_is_said_as_such(self, tmp_path, monkeypatch):
+        """CR 2290: read as "not bare", it ended as the --separate-git-dir
+        message, which says nothing true about git failing."""
+        _, linked = layouts.separate_git_dir(tmp_path / "l", None)
+        real = subprocess.run(
+            ["sh", "-c", "command -v git"], capture_output=True, text=True, check=True
+        ).stdout.strip()
+        shim = tmp_path / "bin"
+        shim.mkdir()
+        (shim / "git").write_text(
+            "#!/bin/sh\n"
+            'case " $* " in *" worktree list "*) echo "fatal: shim says no" >&2; exit 128 ;; esac\n'
+            f'exec "{real}" "$@"\n'
+        )
+        (shim / "git").chmod(0o755)
+        monkeypatch.setenv("PATH", f"{shim}{os.pathsep}{os.environ['PATH']}")
+        with pytest.raises(ts.PrimaryUnresolved) as e:
+            ts.project_root(str(linked))
+        assert "git worktree list failed" in str(e.value), str(e.value)
+        assert "shim says no" in str(e.value), str(e.value)
