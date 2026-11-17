@@ -143,12 +143,14 @@ DOCS_DIR="$(ctx_docs_dir "$ROOT")"
 # matter as much as modified ones here — a brand-new docs/API.md is the single
 # most common way a branch adds to the surface, and `git diff` never lists it.
 #
-# The shape gather-context.sh took as CR 1807 (#570): core.quotePath=false lists
-# a non-ASCII path as named, where git's default C-quotes it and it then matches
-# no docs/*.md pattern; the `--` keeps a file named HEAD, or named like the base
-# branch, from making the base ambiguous; and a git that fails is reported, not
-# read as an empty list, because an empty list prints nothing — the same output
-# as a branch that touched no context file.
+# The shape gather-context.sh took as CR 1807 (#570), plus -z: a C-quoted path
+# matches no docs/*.md pattern and drops out silently, and core.quotePath=false
+# stops git quoting only bytes above 0x80 — a `"`, `\`, tab or newline in a name
+# is quoted regardless (CR 2364). So every list is NUL-delimited, and so is
+# every record after it, down to the table. The `--` keeps a file named HEAD,
+# or named like the base branch, from making the base ambiguous. And a git that
+# fails is reported, not read as an empty list, because an empty list prints
+# nothing — the same output as a branch that touched no context file.
 #
 # An unborn HEAD is not a failure: with no commit, every file is new, so the
 # base is the empty tree (ctx_prev_bytes then finds nothing at HEAD, prev 0).
@@ -173,9 +175,9 @@ list_changed() {
     } >&2
   fi
 }
-list_changed "git diff --name-only $BASE" diff --name-only "$DIFF_BASE" --
-list_changed "git diff --name-only --staged $BASE" diff --name-only --staged "$DIFF_BASE" --
-list_changed "git ls-files --others" ls-files --others --exclude-standard --
+list_changed "git diff --name-only $BASE" diff --name-only -z "$DIFF_BASE" --
+list_changed "git diff --name-only --staged $BASE" diff --name-only --staged -z "$DIFF_BASE" --
+list_changed "git ls-files --others" ls-files --others --exclude-standard -z --
 if [ -n "$LIST_FAILED" ]; then
   echo ""
   echo "=== Context budget (informational — not a gate) ==="
@@ -184,12 +186,12 @@ if [ -n "$LIST_FAILED" ]; then
   RC=2
   exit
 fi
-sort -u "$TMP/changed.raw" >"$TMP/changed"
+sort -z -u "$TMP/changed.raw" >"$TMP/changed"
 
 # Classify and follow symlinks first, then dedupe: a branch touching both
 # AGENTS.md and a CLAUDE.md that points at it must produce one row, not two.
 : >"$TMP/surface"
-while IFS= read -r f; do
+while IFS= read -r -d '' f; do
   [ -n "$f" ] || continue
   kind=""
   case "$f" in
@@ -202,12 +204,14 @@ while IFS= read -r f; do
     [ -n "$t" ] || continue
     f="$t"
   fi
-  printf '%s\t%s\n' "$kind" "$f" >>"$TMP/surface"
+  printf '%s\t%s\0' "$kind" "$f" >>"$TMP/surface"
 done <"$TMP/changed"
-sort -u "$TMP/surface" >"$TMP/surface.u"
+sort -z -u "$TMP/surface" >"$TMP/surface.u"
 
+# The path is the LAST field of every record from here on, so a tab inside it
+# lands in the final variable `read` assigns rather than splitting the record.
 : >"$TMP/rows"
-while IFS="$(printf '\t')" read -r kind f; do
+while IFS="$CTX_TAB" read -r -d '' kind f; do
   [ -n "$f" ] || continue
   nb=""
   [ ! -f "$f" ] || nb="$(LC_ALL=C wc -c <"$f" 2>/dev/null || echo 0)"
@@ -225,7 +229,7 @@ while IFS="$(printf '\t')" read -r kind f; do
   prev="${est%%"$CTX_TAB"*}"
 
   if [ "$kind" = "policy" ]; then b="$BUDGET"; else b="$DOC_BUDGET"; fi
-  printf '%s\t%s\t%s\t%s\t%s\n' "$kind" "$f" "$now" "$prev" "$b" >>"$TMP/rows"
+  printf '%s\t%s\t%s\t%s\t%s\0' "$kind" "$now" "$prev" "$b" "$f" >>"$TMP/rows"
 done <"$TMP/surface.u"
 
 [ -s "$TMP/rows" ] || exit 0
@@ -237,7 +241,7 @@ done <"$TMP/surface.u"
 # this tier exists to end (#273).
 if [ "$QUIET" -eq 1 ]; then
   worth_saying=0
-  while IFS="$(printf '\t')" read -r kind f now prev b; do
+  while IFS="$CTX_TAB" read -r -d '' kind now prev b f; do
     if [ "$now" -gt "$b" ] || [ "$now" -gt "$prev" ] \
       || ctx_near_budget "$now" "$b" "$PROXIMITY_PCT"; then worth_saying=1; break; fi
   done <"$TMP/rows"
@@ -249,7 +253,9 @@ echo "=== Context budget (informational — not a gate) ==="
 printf '%-34s %9s %9s %9s  %s\n' "file" "tokens" "delta" "budget" "status"
 
 flagged=0
-while IFS="$(printf '\t')" read -r kind f now prev b; do
+NL='
+'
+while IFS="$CTX_TAB" read -r -d '' kind now prev b f; do
   delta=$(( now - prev ))
   if [ "$now" -eq 0 ]; then
     status="deleted (freed $prev)"
@@ -264,7 +270,10 @@ while IFS="$(printf '\t')" read -r kind f now prev b; do
     status="ok ($(( b - now )) headroom)"
   fi
   # printf %+d needs a signed integer; 0 renders as +0, which reads fine.
-  printf '%-34s %9s %+9d %9s  %s\n' "$f" "$now" "$delta" "$b" "$status"
+  # A newline or tab in the name is shown escaped, so the row stays one line.
+  shown="${f//$NL/\\n}"
+  shown="${shown//$CTX_TAB/\\t}"
+  printf '%-34s %9s %+9d %9s  %s\n' "$shown" "$now" "$delta" "$b" "$status"
 done <"$TMP/rows"
 
 if [ "$flagged" -eq 1 ]; then

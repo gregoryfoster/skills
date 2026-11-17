@@ -26,6 +26,8 @@ import os
 import subprocess
 from pathlib import Path
 
+import pytest
+
 DELTA = (
     Path(__file__).resolve().parent.parent.parent
     / "skills"
@@ -190,3 +192,49 @@ class TestFailedDiff:
         repo = _repo(tmp_path)
         r = _delta(repo)
         assert r.returncode == 0 and r.stdout == "", (r.stdout, r.stderr)
+
+
+class TestPathsGitQuotesAnyway:
+    """CR 2364: `core.quotePath=false` stops git quoting bytes above 0x80, not
+    `"`, `\\`, a tab or a newline. Those paths still came back C-quoted, matched
+    no `docs/*.md` pattern, and were dropped with exit 0. The lists are read
+    NUL-delimited (`-z`) now, and the table shows a tab or newline as `\\t` or
+    `\\n` so a row stays one line."""
+
+    @pytest.mark.parametrize(
+        "name,shown",
+        [
+            ('say "hi".md', 'docs/say "hi".md'),
+            ("back\\slash.md", "docs/back\\slash.md"),
+            ("tab\there.md", "docs/tab\\there.md"),
+            ("new\nline.md", "docs/new\\nline.md"),
+        ],
+        ids=["double-quote", "backslash", "tab", "newline"],
+    )
+    def test_untracked_doc_is_listed(self, tmp_path: Path, name: str, shown: str):
+        repo = _repo(tmp_path)
+        (repo / "docs" / name).write_text("# Doc\n\n" + "word " * 100)
+        r = _delta(repo)
+        assert r.returncode == 0, (r.stdout, r.stderr)
+        rows = [ln for ln in r.stdout.splitlines() if ln.startswith("docs/")]
+        assert len(rows) == 1, r.stdout
+        assert rows[0].startswith(shown + " "), (rows, shown)
+        assert "headroom" in rows[0], rows
+
+    def test_committed_doc_with_a_newline_is_measured_against_base(
+        self, tmp_path: Path
+    ):
+        """The base side too: the newline path's previous size comes from the
+        base, so its delta is the change, not the whole file."""
+        repo = _repo(tmp_path)
+        doc = repo / "docs" / "two\nlines.md"
+        doc.write_text("# Doc\n\n" + "word " * 100)
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-q", "-m", "newline doc")
+        doc.write_text("# Doc\n\n" + "word " * 110)
+        r = _delta(repo)
+        assert r.returncode == 0, (r.stdout, r.stderr)
+        rows = [ln for ln in r.stdout.splitlines() if ln.startswith("docs/")]
+        assert len(rows) == 1 and rows[0].startswith("docs/two\\nlines.md "), rows
+        tokens, delta = rows[0].split()[1:3]
+        assert 0 < int(delta) < int(tokens) // 2, rows
