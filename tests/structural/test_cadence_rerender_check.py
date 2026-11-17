@@ -184,11 +184,17 @@ def test_the_help_names_the_line():
 
 
 def test_the_advice_keeps_a_custom_schedule(tmp_path):
-    """CR 2299: the comparison keeps the installed schedule, but a plain
-    re-run of the installer writes the derived one over a custom --cron. So
-    the `behind` advice names the command that keeps it."""
+    """CR 2299 named `--cron '<installed>'` in the `behind` advice, because a
+    plain re-run wrote the derived schedule over a custom one. A plain re-run
+    now keeps it (#664), so the advice is the plain command, and following it
+    writes exactly what --check compared with."""
     repo = _installed(tmp_path, "--cron", "1 2 * * 3")
     _move_pin(repo, "      - uses: actions/checkout@v5")
     r = _run(repo, "--check")
     assert BEHIND.search(r.stdout), r.stdout
-    assert "install-cadence.sh --cron '1 2 * * 3'" in r.stdout, r.stdout
+    assert "Run install-cadence.sh\n" in r.stdout, r.stdout
+    assert "--cron" not in r.stdout, r.stdout
+    r = _run(repo)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "- cron: '1 2 * * 3'" in (repo / WF).read_text()
+    assert NONE.search(_run(repo, "--check").stdout)

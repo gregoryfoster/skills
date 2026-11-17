@@ -24,9 +24,13 @@ Usage:
   install-cadence.sh [options]
 
 Options:
-  --cron EXPR      Five-field cron for the schedule. Default: a weekly slot
-                   derived from the repo name, so a twelve-repo cohort spreads
-                   across the window instead of firing at once.
+  --cron EXPR      Five-field cron for the schedule. Default: a re-run keeps
+                   the installed schedule, as it keeps the checkout pin, and
+                   says so when that differs from the derived slot (#664). A
+                   first install takes a weekly slot derived from the repo
+                   name, so a twelve-repo cohort spreads across the window
+                   instead of firing at once. `--cron derived` moves an
+                   installed workflow back to that slot.
   --file PATH      Workflow path. Default: .github/workflows/context-cadence.yml
   --ledger PATH    Ledger the cadence records into, relative to the repo root.
                    Default: .skills/context-metrics.jsonl. Threaded through
@@ -60,8 +64,10 @@ Options:
                    drivers: a defined driver with no attribute pointing at it
                    never runs, and other merge rules may depend on them.
   --print          Write the rendered workflow to stdout and exit; touch
-                   nothing. Still needs to be inside a git repo: the default
-                   schedule is derived from the repo identity.
+                   nothing. Renders what a plain re-run would write, so it
+                   keeps the installed schedule too. Still needs to be inside
+                   a git repo: a schedule it doesn't keep is derived from the
+                   repo identity.
   -h, --help       Show this help and exit 0.
 
 Merge mode (#560):
@@ -130,6 +136,7 @@ USAGE
 }
 
 CRON=""
+CRON_ARG=""   # --cron as given, `derived` included; --check passes it on
 WF_PATH=".github/workflows/context-cadence.yml"
 LEDGER=".skills/context-metrics.jsonl"
 LEDGER_SET=0
@@ -137,7 +144,7 @@ MODE="install"
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --cron) CRON="${2:?--cron needs a cron expression}"; shift 2 ;;
+    --cron) CRON_ARG="${2:?--cron needs a cron expression}"; shift 2 ;;
     --file) WF_PATH="${2:?--file needs a path}"; shift 2 ;;
     --ledger) LEDGER="${2:?--ledger needs a path}"; LEDGER_SET=1; shift 2 ;;
     --check) MODE="check"; shift ;;
@@ -148,9 +155,14 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+# `derived` is the one word --cron takes: it asks for the derived slot over an
+# installed schedule a plain re-run would keep (#664).
+[ "$CRON_ARG" = derived ] || CRON="$CRON_ARG"
+
 # Five whitespace-separated fields. Deliberately shallow — the point is to catch
-# a prose string or a six-field spec, not to reimplement cron.
-if [ -n "$CRON" ]; then
+# a prose string or a six-field spec, not to reimplement cron. Used on --cron
+# and on the installed schedule a re-run keeps (#664).
+cron_fields() {
   # `set -f` is load-bearing, not decoration. Word splitting is what counts the
   # fields, but the same unquoted expansion also globs — and a cron expression
   # is mostly `*`. Run from any directory with visible files, `0 15 * * 1`
@@ -159,11 +171,15 @@ if [ -n "$CRON" ]; then
   set -f
   # Deliberate word split; globbing is off for exactly these two lines.
   # shellcheck disable=SC2086
-  set -- $CRON
+  set -- $1
   set +f
-  [ "$#" -eq 5 ] || {
-    echo "ERROR --cron needs five fields (got $#): '$CRON'" >&2
-    echo "      e.g. --cron '0 15 * * 1'" >&2
+  echo "$#"
+}
+if [ -n "$CRON" ]; then
+  n="$(cron_fields "$CRON")"
+  [ "$n" -eq 5 ] || {
+    echo "ERROR --cron needs five fields (got $n): '$CRON'" >&2
+    echo "      e.g. --cron '0 15 * * 1' (or --cron derived)" >&2
     exit 1; }
 fi
 
@@ -185,6 +201,31 @@ fi
 # Otherwise describe the repo rather than the invocation.
 if [ "$LEDGER_SET" -eq 0 ] && [ -n "$INSTALLED_LEDGER" ]; then
   LEDGER="$INSTALLED_LEDGER"
+fi
+
+# The schedule is read back too (#664). A re-run used to derive a slot from
+# the repo name and write it over the installed one, a custom --cron included,
+# while --check's re-render kept the installed one and so said `none` for a
+# re-run that changed the file. Now --cron wins, `--cron derived` asks for the
+# derived slot, and otherwise an installed schedule is kept. That keeps a slot
+# derived under an older formula or an older repo name too, which is the safe
+# direction: a re-render should not move a working schedule. A cron line this
+# can't read as five fields falls back to the derived slot, said on stderr.
+CRON_SRC="derived"   # flag | kept | unread | derived
+INSTALLED_CRON=""
+if [ -n "$CRON" ]; then
+  CRON_SRC="flag"
+elif [ -z "$CRON_ARG" ] && [ -f "$WF" ]; then
+  INSTALLED_CRON="$(grep -m1 -E '^ *- cron:' "$WF" |
+    sed -E "s/^ *- cron:[[:space:]]*//; s/[[:space:]]*\$//; s/^'(.*)'\$/\\1/; s/^\"(.*)\"\$/\\1/" || true)"
+  if [ -n "$INSTALLED_CRON" ]; then
+    if [ "$(cron_fields "$INSTALLED_CRON")" -eq 5 ]; then
+      CRON="$INSTALLED_CRON"
+      CRON_SRC="kept"
+    else
+      CRON_SRC="unread"
+    fi
+  fi
 fi
 
 # The checkout pin is read back from the installed workflow too (#373). The
@@ -712,12 +753,11 @@ if [ "$MODE" = "check" ]; then
     # template is not a broken install. `re-render: behind` is the form the
     # refresh hook and shipping-work's doc-check.sh read; keep the label.
     # --print's stderr is left to reach ours: it says why a render failed.
+    # A plain --print keeps the installed schedule as a plain re-run does
+    # (#664), so the only --cron passed on is one this --check was given.
     rr_args=(--print --file "$WF_PATH")
     [ "$LEDGER_SET" -eq 0 ] || rr_args+=(--ledger "$LEDGER")
-    rr_cron="$CRON"
-    if [ -z "$rr_cron" ]; then
-      rr_cron="$(sed -n "s/^ *- cron: *'\(.*\)'\$/\1/p" "$WF" | head -1)"
-    fi
+    rr_cron="$CRON_ARG"
     [ -z "$rr_cron" ] || rr_args+=(--cron "$rr_cron")
     rr_rc=0
     rr_out="$(bash "${BASH_SOURCE[0]}" "${rr_args[@]}")" || rr_rc=$?
@@ -730,11 +770,16 @@ if [ "$MODE" = "check" ]; then
       # Lines it writes or drops, whichever is more: a pin moved is one line.
       rr_n="$(diff <(printf '%s\n' "$rr_out") "$WF" |
         awk '/^</ { a++ } /^>/ { b++ } END { print (a > b ? a : b) + 0 }' || true)"
-      # The command keeps the schedule this compared with (CR 2299): a re-run
-      # without --cron writes the derived one over a custom schedule.
+      # The command writes what this compared with. A plain re-run keeps the
+      # installed schedule (#664), so it needs --cron only when this --check
+      # was given one; CR 2299's `--cron '<installed>'` is no longer needed.
       rr_q="'"
       rr_cmd="install-cadence.sh"
-      [ -z "$rr_cron" ] || rr_cmd="$rr_cmd --cron $rr_q$rr_cron$rr_q"
+      case "$rr_cron" in
+        '') ;;
+        derived) rr_cmd="$rr_cmd --cron derived" ;;
+        *) rr_cmd="$rr_cmd --cron $rr_q$rr_cron$rr_q" ;;
+      esac
       echo "re-render:          behind — a re-render rewrites $rr_n line(s) of the"
       echo "                    installed workflow. Run $rr_cmd"
       echo "                    and review the diff before committing it."
@@ -898,7 +943,10 @@ fi
 # land in GitHub's most contended slot (the top of the hour), where scheduled
 # runs are delayed most. Derive an offset from the repo name so the spread needs
 # no per-repo decision and is stable across re-runs of this installer.
-if [ -z "$CRON" ]; then
+# Computed even when a schedule is given or kept, so a kept one that differs
+# can be named beside it (#664).
+DERIVED_CRON=""
+{
   # The ORIGIN basename, not the checkout directory. #102 fixed this same latent
   # bug in record-telemetry.sh, where a worktree path recorded
   # `feat-161-curating-context` as the repo; here it would only make two repos
@@ -914,8 +962,9 @@ if [ -z "$CRON" ]; then
   MIN=$(( H % 60 ))
   HOUR=$(( 13 + (H / 60) % 6 ))   # 13:00-18:00 UTC — inside a working day
   DOW=$(( 1 + (H / 360) % 5 ))    # Mon-Fri; weekends delay hardest
-  CRON="$MIN $HOUR * * $DOW"
-fi
+  DERIVED_CRON="$MIN $HOUR * * $DOW"
+}
+[ -n "$CRON" ] || CRON="$DERIVED_CRON"
 
 # The ledger is append-only, so two appends land on the SAME last line and git
 # cannot auto-merge them: a human commit during the measurement makes the push a
@@ -1615,6 +1664,18 @@ else
     echo "installed: $WF_PATH (schedule: $CRON)"
   fi
 fi
+# Said only when it changes something a reader would want to know: a kept
+# schedule equal to today's derived slot is the ordinary case (#664).
+case "$CRON_SRC" in
+  kept)
+    if [ "$CRON" != "$DERIVED_CRON" ]; then
+      echo "kept: schedule '$CRON', the installed one; the derived slot is" \
+           "'$DERIVED_CRON' (--cron derived moves to it) (#664)"
+    fi ;;
+  unread)
+    echo "replaced: schedule '$INSTALLED_CRON' (not five fields) with the derived" \
+         "'$CRON' — restore it with --cron if it was deliberate (#664)" >&2 ;;
+esac
 case "$CHECKOUT_PIN" in
   sha|newer) echo "kept: actions/checkout@$INSTALLED_CHECKOUT_REF, the installed pin (#373)" ;;
   unread)    echo "replaced: actions/checkout@$INSTALLED_CHECKOUT_REF with the template's" \

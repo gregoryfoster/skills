@@ -248,9 +248,8 @@ installed file:
 - `unknown` means the render itself failed.
 
 A Dependabot-moved pin isn't drift, since a re-render keeps it (#373). Nor is
-a custom `--cron`, but a plain re-run doesn't keep that: it writes the derived
-schedule. So the `behind` line names the command with `--cron` and the
-installed schedule (CR 2299). Like the pin line, `re-render:` never sets the exit code, because
+a custom `--cron`: a plain re-run keeps the installed schedule too (#664), so
+`behind` names a plain re-run. Like the pin line, `re-render:` never sets the exit code, because
 consumers' CI may call `--check` and a newer template is not a broken install.
 `managing-skills`' refresh hook reads `behind` after a bump, and
 `shipping-work`'s doc-check does too on a branch that changes
@@ -352,7 +351,10 @@ the pin between it and `install-cadence.sh` is protecting:
 Twelve repos all firing at `0 15 * * 1` produce twelve simultaneous
 `count_tokens` bursts and twelve commits in one minute. `install-cadence.sh`
 derives a per-repo offset from the repo name so the cohort spreads across the
-window without anybody choosing twelve times. Pass `--cron` to override.
+window without anybody choosing twelve times. Pass `--cron` to override. A
+re-run keeps an installed schedule, even a slot derived under an older formula
+or repo name, and says when it differs from today's slot. `--cron derived`
+moves back to that slot (#664).
 
 GitHub also delays scheduled workflows under load and drops them on repos idle
 for 60 days, so treat the series as approximately weekly. `delta_days` records
