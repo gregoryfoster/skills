@@ -109,10 +109,16 @@ Phase 5 first calls `codebase_health`, and goes on only when it reports
 `Qdrant mode: external` and the store's endpoint, and no container — from the
 server that will index, where nothing stands in. Anything else is a session
 that predates the block: restart Claude Code (reload the editor window) and
-ask again. The fallback path needs no extra step: `mcp-driver.mjs index`
-launches its own server, and its `validate-store` guard refuses a process that
-lacks the block or predates it. Phase 6 asks again after the index; on the
-fallback path `mcp-driver.mjs verify` makes that check and fails without it.
+ask again. On the fallback path, `mcp-driver.mjs index` launches its own
+server, and its `validate-store` guard refuses a process that lacks the block
+or predates it — but that guard reads only the driver's own environment. The
+index lock is host-local and keyed on the `projectId`
+(`os.tmpdir()/socraticode-locks/<projectId>-index`), so a correctly configured
+driver still waits behind a stale editor session's lock. So on either path,
+reload or close every session in this checkout that predates the block before
+`mcp-driver.mjs index` or `codebase_index`. Phase 6 asks again after the index;
+on the fallback path `mcp-driver.mjs verify` makes that check and fails
+without it.
 
 **What indexing from a stale session looks like.** Its server runs managed but
 reads the new `projectId` live from `.socraticode.json`, so collections under

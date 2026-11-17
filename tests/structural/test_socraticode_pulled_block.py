@@ -103,3 +103,27 @@ class TestTheStubStepIsReported:
         # On a managed store a stub names a collection this host's Qdrant
         # lacks: the step there is a checkout this host indexes.
         assert "managed store" in para, para
+
+
+def _trust() -> str:
+    return _section(
+        _flat(EXTERNAL_REF),
+        "## Confirm trust before the first index",
+        "## One host per",
+    )
+
+
+class TestTheFallbackPathWaitsOnAStaleSessionToo:
+    """CR 2465: the driver's guard checks only its own environment, while the
+    index lock is host-local and keyed on projectId (upstream lock.js:
+    os.tmpdir()/socraticode-locks/<projectId>-index). So a correctly
+    configured driver `index` waits behind a stale editor session's lock —
+    #626's own incident."""
+
+    def test_the_fallback_path_is_not_called_covered(self) -> None:
+        assert "needs no extra step" not in _trust()
+
+    def test_stale_sessions_are_closed_before_the_driver_indexes(self) -> None:
+        trust = _trust()
+        assert "keyed on the `projectId`" in trust, trust
+        assert "before `mcp-driver.mjs index`" in trust, trust
