@@ -325,7 +325,7 @@ Present a completion table:
 | Component | Status |
 |---|---|
 | Preflight | Docker ✓ (boot-enabled: `<yes/n-a>`; containers on loopback) or not needed · `external`: store `<url>` ✓, `env` block in session ✓ · Node `<version>` (>=18.17; >=20 beside local containers) ✓ · npx ✓ |
-| Store config | `validate-store` ✓ · `.socraticode.json`: `projectId` `<id/none>`, `<N>` relative `linkedProjects` |
+| Store config | `validate-store` ✓ · `.socraticode.json`: `projectId` `<id/none>`, `<N>` relative `linkedProjects` · stub step per added link not resolving here (external-store.md) |
 | Plugin | marketplace `socraticode` registered · `plugin:socraticode:socraticode` Connected |
 | Backend | `<EMBEDDING_BACKEND>`, or the store's (`external`: `OLLAMA_URL`, model) |
 | Policy | `## Code Exploration Policy` in `<POLICY_FILE>` (marker-delimited, variant `<A/B>`) · `docs/SOCRATICODE.md` written |

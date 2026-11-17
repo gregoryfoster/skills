@@ -154,9 +154,24 @@ it. A stub naming a collection that does not exist yet is skipped by search,
 silently.
 
 **A stub is a host step, not this skill's.** It sits outside the repo, so the
-skill writes none. Name each linked entry whose path does not resolve in the
-completion table's Store config row, beside the `linkedProjects` count — the
-daily health check names them too — and leave the stubs to the operator.
+skill writes none. Instead the completion table's Store config row prints the
+step for each link this run added that does not resolve here, rather than
+leaving the daily health check to find the gap a day later
+([#574](https://github.com/gregoryfoster/skills/issues/574)). On every host
+this repo is searched from, at the repo root:
+
+```bash
+mkdir -p <entry> && printf '{"projectId": "%s"}\n' <sibling-id> > <entry>/.socraticode.json
+```
+
+`<entry>` is the link exactly as `linkedProjects` holds it. `<sibling-id>` is
+the `projectId` the sibling's own repo commits — by this skill's default its
+repo name, but read it there rather than guess. On a managed store a stub does
+not help: it names a collection this host's Qdrant lacks, so the step there is
+to check the sibling out on this host and index it
+([`linked-projects.md`](linked-projects.md)). Any other entry that does not
+resolve is named beside the `linkedProjects` count; the daily health check
+names them too. The stubs themselves are left to the operator.
 
 ## Adopting `projectId` on a repo already in the store
 

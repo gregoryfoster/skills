@@ -81,3 +81,25 @@ class TestTheServerIsAskedBeforeTheIndex:
         )
         for phrase in ("local", "locks", "INDEX_TIMEOUT_MS", "restart"):
             assert phrase in trust, (phrase, trust)
+
+
+class TestTheStubStepIsReported:
+    """#574 part 1."""
+
+    def test_the_store_config_row_carries_it(self) -> None:
+        row = next(
+            line
+            for line in SKILL_MD.read_text().splitlines()
+            if line.startswith("| Store config |")
+        )
+        assert "stub" in row, row
+
+    def test_the_reference_gives_the_exact_step(self) -> None:
+        para = _section(_flat(EXTERNAL_REF), "**A stub is a host step", "## Adopting")
+        assert "each link this run added" in para, para
+        assert "/.socraticode.json" in para, para
+        assert "projectId" in para, para
+        assert "every host" in para, para
+        # On a managed store a stub names a collection this host's Qdrant
+        # lacks: the step there is a checkout this host indexes.
+        assert "managed store" in para, para
