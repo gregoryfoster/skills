@@ -190,16 +190,14 @@ Follow [`references/code-exploration-policy.md`](references/code-exploration-pol
    [`references/linked-projects.md`](references/linked-projects.md).
 5. **Client `env` block** (only `STORE=external`, and only after step 4 wrote
    `projectId`) → merge it into `.claude/settings.json`, per
-   [`references/external-store.md`](references/external-store.md) (the key is
-   already in git-ignored `.claude/settings.local.json`). Never the block
-   alone: without a `projectId`
-   a session names its collections by a hash of the checkout path, shared by
-   every host with the same layout. Unless this session's Phase 1 already
+   [`references/external-store.md`](references/external-store.md). Never the
+   block alone: it names collections by a checkout-path hash that hosts share.
+   Unless this session's Phase 1 already
    showed the `env` block line ✓, restart Claude Code here, trusting the folder
    if asked, and re-run this skill in the new session (Phases 1–4 are
    idempotent); its bare `preflight.sh --check` must show that line ✓ before
-   Phase 5. The session that wrote the block cannot index: its server started
-   without it.
+   Phase 5. Any session started before the block reached this checkout,
+   whether written there or pulled, cannot index: its server started without it.
 
 ### Phase 4 — Configure context artifacts
 
@@ -247,25 +245,25 @@ session (run the `ToolSearch` prefetch from
 [`references/code-exploration-policy.md`](references/code-exploration-policy.md)
 first):
 
-1. `codebase_index { projectPath: <PROJECT_PATH> }` — returns immediately; work
+1. `STORE=external`: `codebase_health` must first report `Qdrant mode:
+   external`; else this session predates the block — restart (external-store.md).
+2. `codebase_index { projectPath: <PROJECT_PATH> }` — returns immediately; work
    runs in the server process.
-2. Poll `codebase_status` until the run reports **`Last operation: Full index —
+3. Poll `codebase_status` until the run reports **`Last operation: Full index —
    completed`** with no "in progress" block, **and** `codebase_graph_status` is
    **READY**, **and** context artifacts are **N/N**. "100% embedded" alone is NOT
    done (gotcha C), and don't *wait* to see 100%: a finished run prints no
    percentage at all (gotcha J).
-3. If artifacts aren't auto-indexed, run `codebase_context_index { projectPath }`
-   — a full, synchronous re-embed of **every** artifact, emitting no progress,
-   so on a large manifest it can outlast Claude Code's 1800 s tool idle timeout.
-   **A timeout there is not evidence it failed**: the server runs on past the
-   client's abort — check `lastIndexedAt` in `socraticode_metadata` before
-   re-running. Afterwards, a *stale* artifact is repaired by `codebase_update`,
-   which re-embeds only what changed
+4. If artifacts aren't auto-indexed, run `codebase_context_index { projectPath }`
+   — a silent re-embed of **every** artifact that can outlast the 1800 s tool
+   idle timeout. **A timeout is not evidence it failed**: the server runs on;
+   check `lastIndexedAt` in `socraticode_metadata` before re-running. A *stale*
+   artifact later takes `codebase_update`, which re-embeds only what changed
    ([#317](https://github.com/gregoryfoster/skills/issues/317)); outside a
    session, under [row U](references/troubleshooting.md)'s cap,
-   `node "<SKILL_DIR>/scripts/mcp-driver.mjs" update "<PROJECT_PATH>"`, which
-   exits 1 if it did not finish (another session holding the lock, say).
-4. Confirm the file watcher registered (`codebase_watch` / status); it is
+   `node "<SKILL_DIR>/scripts/mcp-driver.mjs" update "<PROJECT_PATH>"` (exit 1:
+   unfinished, e.g. another session holds the lock).
+5. Confirm the file watcher registered (`codebase_watch` / status); it is
    **ephemeral**, living only while a server runs (gotcha E).
 
 **Fallback path** — when the server is Connected but the tools were never injected
