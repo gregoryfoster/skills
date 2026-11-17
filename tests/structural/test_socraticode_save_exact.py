@@ -27,8 +27,9 @@ MIN_SITES = 11
 # `npm install` up to the end of its command: the next quote, backtick or
 # line end. A doc's prose naming the line (host-memory.md's "the same
 # `npm install … --prefix` line") is held to it too, since it is what an
-# operator copies.
-INSTALL = re.compile(r"npm install\b[^'\"`\n]*")
+# operator copies. Not `npm install-scripts` (#606), which installs nothing:
+# `\b` matches before its hyphen, so the lookahead is what keeps it out.
+INSTALL = re.compile(r"npm install(?![-\w])[^'\"`\n]*")
 
 
 def _sites() -> list[tuple[str, str]]:

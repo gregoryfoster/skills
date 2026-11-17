@@ -1,11 +1,10 @@
 # Host memory — the install peak, and a production service beside the session
 
-Row U of [`troubleshooting.md`](troubleshooting.md), as procedures. Two
-halves: the launch installs, and that install is the measured peak, so don't
-install at launch; and on a host that also runs a production service, give that
-service memory the sessions cannot take — then check that the setting which
-says so actually does. `preflight.sh` reports total memory, swap, and whether a
-unit's `MemoryLow=` can take effect on this host.
+Row U of [`troubleshooting.md`](troubleshooting.md), as procedures. The launch
+installs, and that install is the measured peak, so don't install at launch;
+beside a production service, give it memory the sessions cannot take, then
+check that the setting does. `preflight.sh` reports total memory, swap, and
+whether a unit's `MemoryLow=` can take effect here.
 
 ## Don't install at launch: the pinned pre-install
 
@@ -40,10 +39,20 @@ npm install --save-exact --prefix ~/.socraticode/pin socraticode@<version>
 ```
 
 `resolveServerLaunch()` prefers that build over the plugin's command, so no
-driver launch installs anything. Nothing else has to be configured: absent, the
-pin resolves nothing and the chain is exactly what it was.
+driver launch installs anything. Absent, the pin changes nothing.
 `SOCRATICODE_PIN_DIR` moves it; `node "<SKILL_DIR>/scripts/mcp-driver.mjs"
 resolve` says which path won, without launching a server.
+
+**npm ≥ 11.20 skips dependencies' install scripts** unless the pin's
+`allowScripts` approves them, warning only at install
+([#606](https://github.com/gregoryfoster/skills/issues/606)). Parsers and the
+file watcher load prebuilds where the platform has one (`tree-sitter-gdscript`
+6.1.0: darwin, linux-x64, win32-x64); elsewhere that parser or the watcher is
+lost silently. `preflight.sh` names unreviewed packages
+(`npm install-scripts ls --prefix <pin>`). Once each loads (`require("<name>")`
+in the pin; an `@ast-grep/lang-*`'s `libraryPath` must exist), record the
+review with `npm install-scripts deny --all --prefix <pin>`. Never approve:
+that runs `node-gyp` builds.
 
 **Pin the session too: `SOCRATICODE_SPEC`.** The pin above covers the
 driver's launches — the health hook, `index`, `status`, `verify`. The session's
@@ -87,8 +96,7 @@ systemd-run --user --scope -p MemoryHigh=1200M -p MemoryMax=1536M \
   npm exec --yes --prefer-online --package=socraticode@<version> -- true
 ```
 
-From then on an exact version resolves from the npx cache without installing —
-the fix for the install at launch on a small or co-tenant host.
+From then on an exact version resolves from the npx cache without installing.
 `preflight.sh` reports both pins, names a pinned spec no npx cache tree holds,
 and says when the installed plugin does not read the variable
 ([#327](https://github.com/gregoryfoster/skills/issues/327)).
@@ -177,23 +185,17 @@ and peaks near 75 MB; the cap is for a host that never pinned, a pin that broke
 command in `.claude/settings.json` (`fb73b74..fba4cd9`). The installer rebuilds
 that command from its constants on every run
 ([#259](https://github.com/gregoryfoster/skills/issues/259)), so the next Step C
-re-run removes the wrapper, silently — which is why the cap lives in the
-script, and why removing the wrapper now loses nothing. Kept, it is redundant:
-the hook's own scope takes the payload.
+re-run removes the wrapper silently, which is why the cap lives in the script.
+Kept, it is redundant: the hook's own scope takes the payload.
 
 ## A production service on the same host
 
 Measure, pin, reserve, and keep the kernel ahead of exhaustion — all four,
 whatever the first step finds. The first step decides only what an early
-killer is worth (§4). Five CannObserv VMs, and most findings rest on one of
-them: broker (the install peak, sessions at -1000), notifier (sessions at 0,
-then at -1000 after a reboot changed their path in; the spaced earlyoom
-regex), wslcb-licensing-tracker (the inert `MemoryLow=`,
-the `$`-anchored `--prefer`, earlyoom on stock arguments), address-validator
-(the templated-slice clamp, and -1000 with no `exe-init` — both measured
-there alone — plus the stock-arguments earlyoom again) and replicator (swap —
-8 GiB and 4 G when #331 measured it — at -1000 until its `exe-init` was
-replaced, at 0 since (#339), and earlyoom declined at both). Where the hosts disagreed, the
+killer is worth (§4). Five CannObserv VMs — broker, notifier,
+wslcb-licensing-tracker, address-validator (the templated-slice clamp, and
+-1000 with no `exe-init`, both measured there alone) and replicator — and most
+findings rest on one of them, named where it is stated; where they disagreed, the
 disagreement is stated rather than resolved
 ([#295](https://github.com/gregoryfoster/skills/issues/295),
 [#303](https://github.com/gregoryfoster/skills/issues/303),
@@ -244,7 +246,7 @@ and skips in CI and outside a session (`297c339`,
 
 ### 2. Pin
 
-The section above. It removes the 1.2 G peak, which is the only step that makes
+The section above. It removes the 1.2 G peak (broker's), the only step that makes
 the launch itself small.
 
 ### 3. Reserve — on the unit, and on every slice above it
@@ -334,11 +336,11 @@ deep; it names the slice that clamps one (with `memory_recursiveprot`, that
 passes it only a share), and the slice whose children's claims add up past its
 grant.
 On wslcb, after the fix, the service read 256 MiB effective. Its
-`OOMScoreAdjust=-700` (`oom_score` 208) was calibrated to sit below 300, the
-floor of an earlyoom `--prefer` match. That floor is a match whose own
-`oom_score` is 0, which is a -1000 process, and earlyoom never takes one,
-though a dry run prints the 300 anyway (§4); a session at 0 reads ~667 or
-more, ~967 as a `--prefer` match. 300 is not a line worth calibrating to.
+`OOMScoreAdjust=-700` (`oom_score` 208) was calibrated below 300, the floor of
+an earlyoom `--prefer` match. That floor is a match whose own `oom_score` is 0,
+a -1000 process, which earlyoom never takes, though a dry run prints the 300
+(§4); a session at 0 reads ~667 or more, ~967 as a `--prefer` match. 300 is no
+line to calibrate to.
 
 ### 4. Keep the kernel ahead of exhaustion — `vm.min_free_kbytes`, and earlyoom where it reaches a session
 
@@ -385,7 +387,7 @@ Five ways it silently runs something other than what you wrote:
   255.4), but the file's own double quotes are gone by then, so a bare space
   inside a `--prefer` or `--avoid` regex becomes a second argument, and
   earlyoom does not run the configuration you wrote — no early killer, under a
-  unit that looks active (#303). Keep spaces out rather than quoting around
+  unit that looks active (#303, notifier). Keep spaces out rather than quoting around
   them.
 - **No backslash either.** The same split drops a backslash and keeps the
   character after it, so `\.` reaches earlyoom as `.`, which matches anything,
@@ -393,7 +395,7 @@ Five ways it silently runs something other than what you wrote:
 - **Never `$`-anchor `--prefer`.** The regexes match `/proc/<pid>/comm`, which
   the kernel truncates to 15 characters: `npm exec socraticode@latest` is
   `npm exec socrat`, so `^(node|npm|npx)$` never matches the server, with no
-  startup error (#307). Spell it `^npm`, start-anchored, which also keeps the
+  startup error (#307, wslcb). Spell it `^npm`, start-anchored, which also keeps the
   spaces out. Name `MainThread`: node renames its main thread, so sessions do
   not appear under a matchable binary name.
 - **Installing starts it on stock arguments.** `apt install earlyoom` starts
@@ -404,7 +406,7 @@ Five ways it silently runs something other than what you wrote:
 - **With swap, the memory threshold waits for swap.** earlyoom acts only when
   memory **and** swap are both below their minimums, and the package default
   is `-s 10`. On a host with swap, `-m 12,6` alone acts only after swap is ~90%
-  used: on replicator (4 G, `vm.swappiness=10`) ~3.7 GB paged out before the
+  used: on replicator (8 GiB, 4 G swap, `vm.swappiness=10`) ~3.7 GB paged out before the
   first SIGTERM, and a dry run's startup line says so (`swap <= 10.00%`).
   `-s 100,100` lets memory alone decide, and changes nothing where there is no
   swap. Both figures: `-s 100` alone leaves SIGKILL's at half of it, so
