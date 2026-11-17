@@ -55,6 +55,11 @@
 # not observed; a pinned spec no npx cache tree holds is named too, since its
 # first launch installs (#332).
 #
+# On npm >= 11.20, which runs a dependency's install script only once the
+# project's allowScripts approves it, the pin's packages whose scripts were
+# skipped and never reviewed are named (#606): read offline with
+# `npm install-scripts ls --json`, a warning, and never approved here.
+#
 # Network reads, all bounded to a few seconds and none a write:
 #   - Node 26+ only, and only while the session's launch floats: `npm view
 #     socraticode version`, to learn whether the build that will launch carries
@@ -1512,6 +1517,98 @@ elif [ -n "$SC_PLUGIN_FLOATS" ]; then
   fi
 fi
 # <<< launch-pins
+
+# ── The pin's install scripts, which npm >= 11.20 skips (#606) ──────────────
+# npm 11.20 runs a dependency's install script only once the project's
+# allowScripts approves it. In the pin above that is 18 packages at
+# socraticode 1.16.2 — sixteen @ast-grep/lang-*, @parcel/watcher and
+# tree-sitter-gdscript, all transitive — and npm says so once, on stderr, at
+# install, then never again. Each loads a prebuild where the platform has one;
+# a platform without one loses that parser, or the watcher, with no error.
+#
+# So the pending ones are named — a warning, never a failure, since every one
+# loaded on the hosts measured. Nothing is approved: approving runs node-gyp
+# builds this skill would then own, against a list that moves with every
+# release. `deny --all` is the review's record, by name, and the listing is
+# empty after it, so this line stops until a re-pin brings a new package.
+#
+# Measured on npm 11.20.0 (2026-11-17): `ls` exits 0 whether or not anything is
+# pending, so the JSON decides; `ls` with `--all` is a usage error; and npm
+# before 11.20 does not know the command. It reads the local tree, and
+# `--offline` holds it there, so no timeout is needed. An npm whose version
+# cannot be read is not guessed at.
+# >>> pin-install-scripts
+SC_NPM_SCRIPTS_MIN=11.20.0
+if [ -n "$SC_PIN_VER" ] && command -v npm >/dev/null 2>&1; then
+  SC_NPM_VER="$(npm --version 2>/dev/null || true)"
+  SC_NPM_VER="$(printf '%s' "$SC_NPM_VER" | tail -n 1 | tr -d '[:space:]')"
+  case "$SC_NPM_VER" in
+    [0-9]*.[0-9]*.[0-9]*)
+      if version_ge "$SC_NPM_VER" "$SC_NPM_SCRIPTS_MIN"; then
+        # stderr is dropped on this read only: a newer npm on an older Node
+        # warns there (EBADENGINE) and still answers, and the JSON on stdout is
+        # what decides. A read that fails is re-run below for npm's own words,
+        # so nothing that explains a failure is lost.
+        SC_IS_RC=0
+        SC_IS_JSON="$(npm install-scripts ls --json --offline --prefix "$SC_PIN_DIR" 2>/dev/null)" || SC_IS_RC=$?
+        SC_IS_FOUND=""
+        SC_IS_READ=0
+        # The ${...} below are JavaScript template literals, for node, not bash.
+        # shellcheck disable=SC2016
+        if [ "$SC_IS_RC" -eq 0 ] && SC_IS_FOUND="$(printf '%s' "$SC_IS_JSON" | node -e '
+          let d;
+          try { d = JSON.parse(require("fs").readFileSync(0, "utf8")); } catch { process.exit(2); }
+          const a = d && d.allowScripts;
+          if (!Array.isArray(a)) process.exit(2);
+          const names = [...new Set(a
+            .filter((e) => e && typeof e.name === "string" && Array.isArray(e.changes)
+              && e.changes.some((c) => c && c.change === "pending"))
+            .map((e) => e.name))].sort();
+          if (!names.length) process.exit(0);
+          // One line: a family of three or more sharing a stem is one entry
+          // with its count (@ast-grep/lang-* (16)), and past eight entries the
+          // rest are counted, not listed.
+          const stems = new Map();
+          for (const n of names) {
+            const i = n.lastIndexOf("-");
+            const stem = i > n.lastIndexOf("/") ? n.slice(0, i + 1) : n;
+            stems.set(stem, [...(stems.get(stem) || []), n]);
+          }
+          const shown = [];
+          for (const [stem, ns] of stems) {
+            if (ns.length >= 3) shown.push(`${stem}* (${ns.length})`); else shown.push(...ns);
+          }
+          const list = shown.length > 8
+            ? `${shown.slice(0, 8).join(", ")} and ${shown.length - 8} more`
+            : shown.join(", ");
+          process.stdout.write(`${names.length}\t${list}`);
+        ')"; then
+          SC_IS_READ=1
+        fi
+        if [ "$SC_IS_READ" = 0 ]; then
+          if [ "$SC_IS_RC" -ne 0 ]; then
+            SC_IS_WHY="$(npm install-scripts ls --json --offline --prefix "$SC_PIN_DIR" 2>&1 >/dev/null \
+              | grep -v '^[[:space:]]*$' | head -n 1 || true)"
+            SC_IS_WHY="exited $SC_IS_RC${SC_IS_WHY:+: $SC_IS_WHY}"
+          else
+            SC_IS_WHY="answered with something other than its JSON listing"
+          fi
+          warn "Install scripts in the pin not measured — npm $SC_NPM_VER's 'install-scripts ls' $SC_IS_WHY"
+          hint "Run it by hand: npm install-scripts ls --prefix $SC_PIN_DIR"
+        elif [ -n "$SC_IS_FOUND" ]; then
+          SC_IS_N="${SC_IS_FOUND%%	*}"
+          SC_IS_NAMES="${SC_IS_FOUND#*	}"
+          SC_IS_WORD=packages
+          [ "$SC_IS_N" = 1 ] && SC_IS_WORD=package
+          warn "npm $SC_NPM_VER skipped the install scripts of $SC_IS_N $SC_IS_WORD in the pin (socraticode $SC_PIN_VER), none reviewed: $SC_IS_NAMES"
+          hint "npm >= $SC_NPM_SCRIPTS_MIN runs a dependency's install script only once allowScripts approves it. The parsers and the file watcher load prebuilds where the platform has one; without one, that parser or the watcher is lost with no error (references/host-memory.md)"
+          hint "Confirm they load (references/host-memory.md has the check), then record the review: npm install-scripts deny --all --prefix $SC_PIN_DIR — a re-pin then lists only new packages. Don't approve: that runs node-gyp builds"
+        fi
+      fi
+      ;;
+  esac
+fi
+# <<< pin-install-scripts
 
 # ── Claude Code: the binary running this session, its version and age ───────
 # Advisory (#310, #316). Everything else this skill depends on has its version

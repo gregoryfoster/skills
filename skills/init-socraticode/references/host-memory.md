@@ -43,6 +43,17 @@ driver launch installs anything. Absent, the pin changes nothing.
 `SOCRATICODE_PIN_DIR` moves it; `node "<SKILL_DIR>/scripts/mcp-driver.mjs"
 resolve` says which path won, without launching a server.
 
+**npm ≥ 11.20 skips dependencies' install scripts** unless the pin's
+`allowScripts` approves them, warning only at install
+([#606](https://github.com/gregoryfoster/skills/issues/606)). Parsers and the
+file watcher load prebuilds where the platform has one (`tree-sitter-gdscript`
+6.1.0: darwin, linux-x64, win32-x64); elsewhere that parser or the watcher is
+lost silently. `preflight.sh` names unreviewed packages
+(`npm install-scripts ls --prefix <pin>`). Once each loads (`require("<name>")`
+in the pin; an `@ast-grep/lang-*`'s `libraryPath` must exist), record the
+review with `npm install-scripts deny --all --prefix <pin>`. Never approve:
+that runs `node-gyp` builds.
+
 **Pin the session too: `SOCRATICODE_SPEC`.** The pin above covers the
 driver's launches — the health hook, `index`, `status`, `verify`. The session's
 server is the plugin's, and since upstream
@@ -85,8 +96,7 @@ systemd-run --user --scope -p MemoryHigh=1200M -p MemoryMax=1536M \
   npm exec --yes --prefer-online --package=socraticode@<version> -- true
 ```
 
-From then on an exact version resolves from the npx cache without installing —
-the fix for the install at launch on a small or co-tenant host.
+From then on an exact version resolves from the npx cache without installing.
 `preflight.sh` reports both pins, names a pinned spec no npx cache tree holds,
 and says when the installed plugin does not read the variable
 ([#327](https://github.com/gregoryfoster/skills/issues/327)).
@@ -326,11 +336,11 @@ deep; it names the slice that clamps one (with `memory_recursiveprot`, that
 passes it only a share), and the slice whose children's claims add up past its
 grant.
 On wslcb, after the fix, the service read 256 MiB effective. Its
-`OOMScoreAdjust=-700` (`oom_score` 208) was calibrated to sit below 300, the
-floor of an earlyoom `--prefer` match. That floor is a match whose own
-`oom_score` is 0, which is a -1000 process, and earlyoom never takes one,
-though a dry run prints the 300 anyway (§4); a session at 0 reads ~667 or
-more, ~967 as a `--prefer` match. 300 is not a line worth calibrating to.
+`OOMScoreAdjust=-700` (`oom_score` 208) was calibrated below 300, the floor of
+an earlyoom `--prefer` match. That floor is a match whose own `oom_score` is 0,
+a -1000 process, which earlyoom never takes, though a dry run prints the 300
+(§4); a session at 0 reads ~667 or more, ~967 as a `--prefer` match. 300 is no
+line to calibrate to.
 
 ### 4. Keep the kernel ahead of exhaustion — `vm.min_free_kbytes`, and earlyoom where it reaches a session
 
