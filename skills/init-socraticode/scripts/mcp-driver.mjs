@@ -1500,44 +1500,62 @@ async function indexedArtifactHashes(projectPath, env) {
 async function artifactPointCounts(projectPath, env, names) {
   const prefix = env.QDRANT_COLLECTION_PREFIX || '';
   const collection = `${prefix}context_${effectiveProjectId(projectPath, env).value}`;
-  let base;
-  try { base = qdrantBase(env); } catch (e) {
+  let store;
+  try { store = qdrantStore(env); } catch (e) {
     return { counts: null, collection, error: `QDRANT_URL does not parse (${e.message})` };
   }
-  const headers = { 'content-type': 'application/json', ...(env.QDRANT_API_KEY ? { 'api-key': env.QDRANT_API_KEY } : {}) };
   const counts = new Map();
   for (const name of names) {
-    let res;
-    try {
-      res = await fetch(`${base}/collections/${collection}/points/count`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({ filter: { must: [{ key: 'artifactName', match: { value: name } }] }, exact: true }),
-        signal: AbortSignal.timeout(QDRANT_READ_TIMEOUT_MS),
-      });
-    } catch (e) {
-      return { counts: null, collection, error: `cannot reach Qdrant at ${base} (${e.cause?.code || e.message})` };
-    }
-    // Missing only on Qdrant's own word: its 404 names the collection
-    // ("Not found: Collection `x` doesn't exist!"). A 404 from a proxy or a
-    // wrong path names nothing, and reading it as "no collection" would call
-    // every artifact empty, daily, over an address fault (CR 2).
-    if (res.status === 404) {
-      let said = '';
-      try { said = String((await res.json())?.status?.error ?? ''); } catch { /* not Qdrant's JSON */ }
-      if (said.includes(collection)) {
-        return { counts: null, collection, missing: true, error: `Qdrant at ${base} holds no ${collection} collection` };
-      }
-    }
-    if (!res.ok) return { counts: null, collection, error: `Qdrant at ${base} answered HTTP ${res.status} for ${collection}` };
-    let n;
-    try { n = (await res.json())?.result?.count; } catch (e) {
-      return { counts: null, collection, error: `Qdrant at ${base} answered unparseable JSON (${e.message})` };
-    }
-    if (!Number.isInteger(n)) return { counts: null, collection, error: `Qdrant at ${base} answered no count for ${collection}` };
-    counts.set(name, n);
+    const read = await qdrantCount(store, collection, { must: [{ key: 'artifactName', match: { value: name } }] });
+    if (read.error) return { counts: null, collection, ...read };
+    counts.set(name, read.count);
   }
   return { counts, collection };
+}
+
+// The address and headers every store read sends, as the server's client
+// sends them. Throws on a QDRANT_URL that does not parse; the callers word it.
+function qdrantStore(env) {
+  return {
+    base: qdrantBase(env),
+    headers: { 'content-type': 'application/json', ...(env.QDRANT_API_KEY ? { 'api-key': env.QDRANT_API_KEY } : {}) },
+  };
+}
+
+// One read-only `points/count` on `collection`, filtered or not → { count } or
+// { error, missing? }. Exact: an unfiltered count is a sum over segments, cheap
+// on any collection, and an approximate zero would be a false "empty". Never
+// throws. Shared by #333's artifact counts and #573's linked collections.
+async function qdrantCount({ base, headers }, collection, filter) {
+  let res;
+  try {
+    res = await fetch(`${base}/collections/${collection}/points/count`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ ...(filter ? { filter } : {}), exact: true }),
+      signal: AbortSignal.timeout(QDRANT_READ_TIMEOUT_MS),
+    });
+  } catch (e) {
+    return { error: `cannot reach Qdrant at ${base} (${e.cause?.code || e.message})` };
+  }
+  // Missing only on Qdrant's own word: its 404 names the collection
+  // ("Not found: Collection `x` doesn't exist!"). A 404 from a proxy or a
+  // wrong path names nothing, and reading it as "no collection" would call
+  // every artifact empty, daily, over an address fault (CR 2).
+  if (res.status === 404) {
+    let said = '';
+    try { said = String((await res.json())?.status?.error ?? ''); } catch { /* not Qdrant's JSON */ }
+    if (said.includes(collection)) {
+      return { missing: true, error: `Qdrant at ${base} holds no ${collection} collection` };
+    }
+  }
+  if (!res.ok) return { error: `Qdrant at ${base} answered HTTP ${res.status} for ${collection}` };
+  let n;
+  try { n = (await res.json())?.result?.count; } catch (e) {
+    return { error: `Qdrant at ${base} answered unparseable JSON (${e.message})` };
+  }
+  if (!Number.isInteger(n)) return { error: `Qdrant at ${base} answered no count for ${collection}` };
+  return { count: n };
 }
 
 // Pure: the listing against the store. `empty` is #333's shape — listed
@@ -2387,6 +2405,119 @@ function linkedProjectsFinding(linked) {
   return parts.length ? parts.join('; ') : null;
 }
 
+// ── resolved ≠ useful: clones and empty collections (#573) ──────────────────
+// A link that resolves passes #281 and can still be one of two things the
+// hook should say, from CannObserv/index#32's setup checks.
+//
+// A full clone where a stub would do. On an external store the linked path
+// only selects a collection — upstream reads the directory's .socraticode.json
+// and nothing else — so a whole checkout there is disk spent for nothing
+// (external-store.md, "One host per projectId"). Not on a managed store, where
+// the sibling's collection lives in this host's Qdrant and the checkout is
+// what indexes it; and not where the sibling carries its own SocratiCode
+// manifest, since one host can be the home of both repos and that checkout is
+// the one its own index is written from.
+const LINK_SIZE_TIMEOUT_MS = 5000;
+const STUB_ID_UNKNOWN = "<sibling's projectId>";
+
+// du, bounded: a session-start hook cannot sit on a cold walk of a big tree.
+// Through the real path, so a symlinked link is measured and not the link.
+// → KiB, or null when du failed or ran past its budget.
+function linkSizeKiB(dir) {
+  const out = spawnSync('du', ['-sk', realOrSelf(dir)], { encoding: 'utf8', timeout: LINK_SIZE_TIMEOUT_MS });
+  if (out.error || out.status !== 0) return null;
+  const kib = Number.parseInt(out.stdout, 10);
+  return Number.isInteger(kib) ? kib : null;
+}
+
+// Each resolved link that is a full checkout and not its repo's home.
+function linkedClones(projectPath, linked, sizeOf = linkSizeKiB) {
+  const root = resolvePath(projectPath);
+  const clones = [];
+  for (const entry of linked.resolved) {
+    const dir = resolvePath(root, entry.path);
+    let names;
+    try { names = readdirSync(dir); } catch { continue; }
+    if (!names.some((n) => n !== SOCRATICODE_CONFIG_NAME)) continue;
+    if (names.includes(MANIFEST_NAME)) continue;
+    clones.push({ path: entry.path, source: entry.source, id: declaredProjectId(dir), kib: sizeOf(dir) });
+  }
+  return clones;
+}
+
+function formatKiB(kib) {
+  if (kib < 1024) return `${kib} KiB`;
+  const mib = kib / 1024;
+  if (mib < 1024) return `${mib < 10 ? mib.toFixed(1) : Math.round(mib)} MiB`;
+  return `${(mib / 1024).toFixed(1)} GiB`;
+}
+
+// One defect for every clone, or null.
+function linkedCloneFinding(clones) {
+  if (!clones.length) return null;
+  const named = clones.map((c) => `${c.path} (${c.kib == null ? 'size not measured' : formatKiB(c.kib)}; `
+    + `stub {"projectId": "${c.id ?? STUB_ID_UNKNOWN}"})`).join(', ');
+  return `linkedProjects — a full checkout where a one-file stub would do, on an external store: ${named}. `
+    + "The server reads only a link's .socraticode.json, so the rest is disk spent for nothing. "
+    + 'Replace each with a directory holding just that file, a host step outside this repo';
+}
+
+// A link whose collection is missing or empty contributes nothing to
+// includeLinked search, and upstream skips it without a word. The collection
+// each link names, as resolveLinkedCollections() names it (socraticode 1.16.2
+// config.js:365): effectiveBaseProjectId() — the sibling's own declared id,
+// else the sha256 of its resolved path, with no SOCRATICODE_PROJECT_ID and no
+// branch suffix — prefixed, de-duplicated against this project's id and each
+// other. A link whose declared id is invalid is skipped: storeConfig already
+// reports it, and upstream throws on it before any collection is read.
+function linkedCollectionTargets(projectPath, linked, env) {
+  const root = resolvePath(projectPath);
+  const prefix = env.QDRANT_COLLECTION_PREFIX || '';
+  const seen = new Set([effectiveProjectId(root, env).value]);
+  const targets = [];
+  for (const entry of linked.resolved) {
+    const dir = resolvePath(root, entry.path);
+    const declared = declaredProjectId(dir);
+    if (declared && !PROJECT_ID_PATTERN.test(declared)) continue;
+    const id = declared ?? pathHash(dir);
+    if (seen.has(id)) continue;
+    seen.add(id);
+    targets.push({ path: entry.path, source: entry.source, declared: Boolean(declared), collection: `${prefix}codebase_${id}` });
+  }
+  return targets;
+}
+
+// One read-only count per target, on the store the server was launched
+// against → { entries: [{ ...target, points }] } with `points` null for a
+// collection the store says does not exist, or { error } — an unreachable
+// store is not a missing collection. Never throws.
+async function linkedCollectionCounts(env, targets) {
+  let store;
+  try { store = qdrantStore(env); } catch (e) { return { error: `QDRANT_URL does not parse (${e.message})` }; }
+  const entries = [];
+  for (const target of targets) {
+    const read = await qdrantCount(store, target.collection, null);
+    if (read.error && !read.missing) return { error: read.error };
+    entries.push({ ...target, points: read.missing ? null : read.count });
+  }
+  return { entries };
+}
+
+// One defect for every link with nothing in its collection, or null.
+function linkedCollectionFinding(entries, external) {
+  const empty = entries.filter((e) => !e.points);
+  if (!empty.length) return null;
+  const n = empty.length;
+  const named = empty.map((e) => `${e.path} (${e.collection}: `
+    + `${e.points == null ? 'no such collection' : '0 points'}${e.declared === false ? '; declares no projectId' : ''})`).join(', ');
+  return `linkedProjects — ${n} resolved link${n === 1 ? '' : 's'} ${n === 1 ? 'adds' : 'add'} `
+    + `nothing to codebase_search with includeLinked: true, and the server says nothing: ${named}. `
+    + (external
+      ? 'Index each from its own host, the one that writes its projectId — or, for a link that declares '
+        + "none, write the sibling's projectId into the link's .socraticode.json"
+      : "Index each on this host: on a managed store its collection lives in this host's Qdrant");
+}
+
 // ── the store a launched server would address (#287) ────────────────────────
 // SocratiCode names a project's collections by its projectId, which config.js
 // (1.13.3) resolves from SOCRATICODE_PROJECT_ID, then `.socraticode.json`'s
@@ -3189,6 +3320,7 @@ async function cmdHealthCheck(projectPath, probePath) {
   }
 
   let session = null;
+  let launchEnv = null;
   if (!launchBlocked) await withClient(async (client) => {
     const call = async (tool, args) => {
       try {
@@ -3213,6 +3345,10 @@ async function cmdHealthCheck(projectPath, probePath) {
       pinned: client.launch.pinned === true,
       pinVersion: client.launch.pinVersion ?? null,
     };
+    // The environment the server was launched with, for the linked
+    // collections read after this block (#573): set only when the server
+    // checks ran, which is what licenses a store read at all.
+    launchEnv = { ...process.env, ...client.launch.env };
     // `server` above is the server THIS CHECK launched. The graph is rebuilt by
     // the one answering the session's queries, which under Claude Code is the
     // plugin's, and the two need not agree (#305). Recorded beside it, with how
@@ -3690,6 +3826,29 @@ async function cmdHealthCheck(projectPath, probePath) {
   const linkedFinding = linkedProjectsFinding(linked);
   if (linkedFinding) defect(linkedFinding);
 
+  // ── resolved ≠ useful (#573) ─────────────────────────────────────────────
+  // Defects, not notes: the hook prints only on exit 1, and each names its own
+  // repair. The clone check is the filesystem's, and runs wherever the store
+  // is external. The collection count is a store read, so only where the
+  // server checks ran — a refused launch means this environment addresses the
+  // wrong store — and only for a repo with links: one without pays nothing.
+  const linkEnv = launchEnv ?? process.env;
+  const external = linkEnv.QDRANT_MODE === 'external';
+  linked.clones = external ? linkedClones(projectPath, linked) : [];
+  const cloneFinding = linkedCloneFinding(linked.clones);
+  if (cloneFinding) defect(cloneFinding);
+  linked.collections = null;
+  const targets = launchEnv ? linkedCollectionTargets(projectPath, linked, launchEnv) : [];
+  if (targets.length) {
+    linked.collections = await linkedCollectionCounts(launchEnv, targets);
+    if (linked.collections.error) {
+      note(`linked collections not counted in the store — ${linked.collections.error}`);
+    } else {
+      const emptyFinding = linkedCollectionFinding(linked.collections.entries, external);
+      if (emptyFinding) defect(emptyFinding);
+    }
+  }
+
   // One array, both severities, in encounter order — the shape the JSON has
   // always had. `renderFinding` is what makes the severity legible: a note
   // carries its marker into the string, so nothing has to be cross-referenced
@@ -3881,6 +4040,13 @@ Commands:
            Also reports linked projects that are configured and do not
            resolve (.socraticode.json's linkedProjects and
            SOCRATICODE_LINKED_PROJECTS), which the server drops silently.
+           A resolved link is a defect too (#573) when its codebase_<id>
+           collection is missing or empty — one read-only points/count per
+           link, the id read as upstream reads it, and only where the server
+           checks ran — or, on an external store, when it is a full checkout
+           where a one-file stub would do, sized by du (5 s budget). A
+           checkout carrying its own SocratiCode manifest is its repo's home,
+           and is not reported.
            A context artifact whose source is newer than its index time is
            confirmed by content before it is called stale: hashed as the
            server hashes it and compared with the contentHash the server
@@ -4145,6 +4311,9 @@ export {
   SEVERITY, NOTE_PREFIX, renderFinding,
   // configured ≠ resolved linked projects (#281)
   linkedProjects, linkedProjectsFinding,
+  // resolved ≠ useful: clones where a stub would do, empty collections (#573)
+  linkedClones, linkedCloneFinding, linkedCollectionTargets, linkedCollectionCounts,
+  linkedCollectionFinding, qdrantCount,
   // the store and id a launch would address (#287)
   storeConfig, pathHash,
   GRAPH_YIELD_MIN_EDGES_PER_NODE, GRAPH_YIELD_MIN_NODES,
