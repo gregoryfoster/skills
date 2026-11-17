@@ -203,8 +203,10 @@ decide whether the checker is usable:
   around such a fragment is still resolved.
 
 Same-file anchors (`[jump](#setup)`) are checked too — a heading rename inside one
-long file breaks them exactly as a cross-file rename does. Explicit
-`<a id="…">` anchors are **not** modelled; a repo using them gets a
+long file breaks them exactly as a cross-file rename does. An explicit
+`<a id="…">` or `<a name="…">` outside code is an anchor too, matched
+case-insensitively, since GitHub prefixes and resolves it as it does a heading
+(#624). Setext headings are **not** modelled; a repo using them gets a
 `dead_anchors` entry to judge rather than a silent pass.
 
 **Archival subtrees are scanned as sources.** `docs/plans/` and friends are excluded

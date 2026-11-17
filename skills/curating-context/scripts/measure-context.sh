@@ -175,12 +175,13 @@ Output (stdout, JSON):
               not orphans, and rarely found by an agent routing by the policy
               file's words (#274). The two are disjoint.
               `dead` is a link whose FILE does not exist. `dead_anchors` is a
-              link whose file exists and whose #fragment names no heading in it
-              — reported as its own class so `dead` keeps its meaning for
-              existing consumers and a repo adopting the check can stage the
-              cleanup. Archival subtrees are scanned as SOURCES of anchors even
-              though they are excluded from the doc inventory: a dated plan
-              pointing into a live doc is navigation and goes stale the same way.
+              link whose file exists and whose #fragment names no heading or
+              `<a id>`/`<a name>` in it — reported as its own class so `dead`
+              keeps its meaning for existing consumers and a repo adopting the
+              check can stage the cleanup. Archival subtrees are scanned as
+              SOURCES of anchors even though they are excluded from the doc
+              inventory: a dated plan pointing into a live doc is navigation
+              and goes stale the same way.
   totals    { tokens_policy, tokens_docs, tokens_live, files_docs, archival_skipped }
 
   tokens_live is the number that matters: the policy file plus every live
@@ -1472,11 +1473,24 @@ slugs_of() {
   # fence otherwise manufactures an anchor that masks a real miss, and this
   # cohort's docs are dense with bash fences.
   #
-  # Not modelled: explicit `<a id="...">` anchors, and setext headings (`Title`
-  # over `=====`). A repo using either sees a dead_anchors entry to judge rather
-  # than a silent pass, which is why the miss class is reported separately from
-  # `dead` in the first place.
-  LC_ALL=C awk '
+  # Explicit anchors count too (#624): the id or name of every `<a ...>` tag
+  # outside code, with either quote. GitHub renders both as
+  # `user-content-<value>`, as it does a heading's id, and resolves #<value> to
+  # them [measured, `gh api markdown`, 2026-11-16; document mode keeps the
+  # value's case, gfm lowercases it]. Each is emitted as written but lowercased,
+  # because anchor_missing compares lowercased fragments. It is not slugged and
+  # it doesn't take a -1/-2 slot, since the counter is for generated heading
+  # slugs. A code span is cut first, so a doc that names the syntax mints no
+  # anchor. Another element's `id` is prefixed the same way but isn't modelled.
+  #
+  # Not modelled: setext headings (`Title` over `=====`). A repo using them
+  # sees a dead_anchors entry to judge rather than a silent pass, which is why
+  # the miss class is reported separately from `dead` in the first place.
+  LC_ALL=C awk -v q="'" '
+    BEGIN {
+      tag_re = "<[Aa][ \t][^>]*>"
+      attr_re = "[ \t]([Ii][Dd]|[Nn][Aa][Mm][Ee])[ \t]*=[ \t]*(\"[^\"]*\"|" q "[^" q "]*" q ")"
+    }
     {
       line = $0
       gsub(/\t/, "    ", line)   # a tab is up to four columns of indent
@@ -1499,6 +1513,19 @@ slugs_of() {
         next
       }
       if (fence) next
+      rest = line
+      gsub(/`[^`]*`/, "", rest)
+      while (match(rest, tag_re)) {
+        tag = substr(rest, RSTART, RLENGTH)
+        rest = substr(rest, RSTART + RLENGTH)
+        while (match(tag, attr_re)) {
+          v = substr(tag, RSTART, RLENGTH)
+          tag = substr(tag, RSTART + RLENGTH)
+          sub(/^[^=]*=[ \t]*/, "", v)
+          v = tolower(substr(v, 2, length(v) - 2))
+          if (v != "") print v
+        }
+      }
       if (line !~ /^#+ /) next
       sub(/^#+ +/, "", line)
       sub(/ +#+ *$/, "", line)   # closed ATX: `## Heading ##`
