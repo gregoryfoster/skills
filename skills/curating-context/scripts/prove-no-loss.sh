@@ -140,6 +140,22 @@ Warranted losses (.skills/context-loss-ok):
   told apart by whether the first field names a warrant, so CONTENT may itself
   contain a `::`.
 
+  A run's entries can be stamped as a GROUP, so they stop reading "matched
+  nothing" once that run merges (#579):
+
+    # @run base=<sha> file=<target>     either key, or both
+    ...entries...
+    # @run end                          back to unstamped entries
+
+  A group runs to the next `# @run` line. base= (7+ hex) is consulted only on a
+  run whose --base, as a full commit, starts with it; on any other run its
+  entries are HISTORICAL — listed on their own, never consulted, never stale.
+  file= scopes the whole group the way PATH scopes an entry. When a line is
+  unaccounted for, the report prints the header for this run. A malformed
+  header is warned about and read as the comment it is to older readers, and
+  an unstamped entry reads as it always did. .skills/context-claims-ok and
+  .skills/context-seams-ok take the same header.
+
   WARRANT names WHY, from a closed set — an unrecognised one is refused rather
   than ignored, because a mute allowlist is not a judgement:
 
@@ -484,6 +500,10 @@ case "$MODE" in
 esac
 git show "$BASE:$POLICY" >"$TMP/before" 2>/dev/null || {
   echo "ERROR cannot read $BASE:$POLICY" >&2; exit 2; }
+# The base as a full commit, for `# @run base=` groups in the ack files (#579):
+# a group is consulted only on a run whose base its stamp names. Read once here,
+# where the revision is known to resolve, rather than in the reader.
+BASE_SHA="$(git rev-parse --verify --quiet "$BASE^{commit}" 2>/dev/null)" || BASE_SHA=""
 
 # Destinations: the policy file itself (content that stayed), every live
 # reference doc, and anything named with --also.
@@ -523,7 +543,7 @@ sort -u "$TMP/dests" >"$TMP/dests.u"
 
 RC=0
 python3 - "$TMP/before" "$POLICY" "$TMP/dests.u" "$SHOW_RELOCATED" "$ACK_FILE" \
-  "$DOCS_DIR" "$CLAIMS" "$CLAIMS_ACK_FILE" "$CANDIDATES" <<'PY' || RC=$?
+  "$DOCS_DIR" "$CLAIMS" "$CLAIMS_ACK_FILE" "$CANDIDATES" "$BASE_SHA" <<'PY' || RC=$?
 import json
 import os
 import re
@@ -531,7 +551,8 @@ import sys
 from collections import Counter
 
 (before_path, policy, dests_path, show, ack_path, docs_dir, claims_on,
- claims_ack_path, candidates_out) = sys.argv[1:10]
+ claims_ack_path, candidates_out, base_sha) = sys.argv[1:11]
+base_sha = base_sha.lower()
 claims_on = claims_on == "1"
 
 # Why an unaccounted line was legitimate. A CLOSED set on purpose: the point of
@@ -909,8 +930,58 @@ def reaches(content, line):
 # another target (#139). PATH is matched as a substring of the target, the same
 # way .skills/context-seams-ok pins an entry to one file. Scoping only ever
 # NARROWS what an entry can reach.
+# A RUN GROUP (#579). An entry records a judgement about one run's diff, and
+# nothing tied it to that run: once the run merged, every later sweep reported
+# it "matched nothing", because the line it warranted is gone — which is what
+# the run did. One repo pruned 7 such entries by hand, and a "0 matched-nothing
+# on main" ratchet could not hold after any run that wrote one. Worse, an
+# unpruned entry is still CONSULTED: a later run losing a line its CONTENT
+# reaches is warranted by a judgement that was never about it.
+#
+#   # @run base=<sha> file=<target>     either key, or both
+#   ...entries...
+#   # @run end                          back to unstamped
+#
+# A group runs to the next `# @run` line. `base=` (7+ hex) is consulted only on
+# a run whose --base, as a full commit, starts with it; on any other run the
+# group is HISTORICAL — not consulted, counted on its own line, never stale.
+# `file=` is a PATH scope for every entry in the group, an entry's own PATH
+# still applying too. A comment, so every reader that predates it — an older
+# vendored copy of this script, check-counts.sh, the eval miner — reads the
+# entries as unstamped, which is exactly today's reading. A line that looks
+# like a header and is not one is WARNED about and read as the comment it
+# always was: refusing it would turn a legal ledger into an error. The same
+# grammar is read by check-seams.sh; the two readers are twins.
+RUN_HEADER = re.compile(r"^#\s*@run\b(.*)$")
+RUN_BASE = re.compile(r"[0-9a-fA-F]{7,40}")
+
+
+def parse_run_header(rest):
+    """`# @run` arguments -> ("end", None), ("group", {base, file}), or
+    ("bad", why)."""
+    toks = rest.split()
+    if toks == ["end"]:
+        return "end", None
+    if not toks:
+        return "bad", "no keys; give base=<sha>, file=<target>, or both"
+    group = {"base": None, "file": None}
+    for t in toks:
+        k, eq, v = t.partition("=")
+        if not eq or k not in group or not v:
+            return "bad", f"`{t}` is not base=<sha> or file=<target>"
+        if group[k] is not None:
+            return "bad", f"{k}= given twice"
+        if k == "base" and not RUN_BASE.fullmatch(v):
+            return "bad", f"base={v} is not 7 to 40 hex digits"
+        group[k] = v.lower() if k == "base" else v
+    return "group", group
+
+
 def parse_ack(path, warrants, unit):
-    """Read an acknowledgement file. Returns (entries, malformed).
+    """Read an acknowledgement file. Returns (entries, malformed, historical).
+
+    `historical` holds the entries of a `# @run base=` group stamped for
+    another base, as (warrant, content, scope, stamp): never consulted.
 
     Shared by the loss file and the claim file, because two files with the same
     grammar and two parsers is how they drift: the scoped form (#139) would have
@@ -930,15 +1001,27 @@ def parse_ack(path, warrants, unit):
     that is quietly shorter than the file says is precisely what this file
     cannot be allowed to be.
     """
-    entries, malformed = [], []
+    entries, malformed, historical = [], [], []
+    group = None
     try:
         fh = open(path, encoding="utf-8")
     except OSError:
-        return entries, malformed
+        return entries, malformed, historical
     with fh:
         for lineno, raw in enumerate(fh, 1):
             raw = raw.rstrip("\n")
-            if not raw.strip() or raw.lstrip().startswith("#"):
+            if not raw.strip():
+                continue
+            if raw.lstrip().startswith("#"):
+                m = RUN_HEADER.match(raw.strip())
+                if m:
+                    kind, val = parse_run_header(m.group(1))
+                    if kind == "bad":
+                        print(f"WARN {path}:{lineno}: not a `# @run` group "
+                              f"header ({val}) — read as a plain comment",
+                              file=sys.stderr)
+                    else:
+                        group = val
                 continue
             head, sep, tail = raw.partition("::")
             scope, warrant, content = None, head.strip(), tail.strip()
@@ -961,10 +1044,20 @@ def parse_ack(path, warrants, unit):
                 why = (f"empty {unit} — an entry with no {unit.lower()} matches "
                        "everything")
             else:
+                # A group's target first: a group judged for another file sits
+                # out under that file's name, which is the more useful thing to
+                # say on a run against this one. Its own PATH, when it has one
+                # and the group's target applies, still narrows it.
+                if group and group["file"] and not applies_here(group["file"]):
+                    scope = group["file"]
+                elif group and group["base"] and not base_sha.startswith(
+                        group["base"]):
+                    historical.append((warrant, content, scope, group["base"]))
+                    continue
                 entries.append((warrant, content, scope))
                 continue
             malformed.append((lineno, raw.strip()[:100], why))
-    return entries, malformed
+    return entries, malformed, historical
 
 
 def refuse_malformed(path, malformed):
@@ -978,14 +1071,14 @@ def refuse_malformed(path, malformed):
     sys.exit(1)
 
 
-entries, malformed = parse_ack(ack_path, WARRANTS, "CONTENT")
+entries, malformed, historical = parse_ack(ack_path, WARRANTS, "CONTENT")
 refuse_malformed(ack_path, malformed)
 
 # An atom is matched WHOLE against a set, so neither refusal the loss file runs
 # after charging applies: a set element cannot be over-broad, and `#41`
 # identifies itself at three characters, so no atom is a fragment of another.
-claim_entries, claim_malformed = parse_ack(
-    claims_ack_path, CLAIM_WARRANTS, "ATOM") if claims_on else ([], [])
+claim_entries, claim_malformed, claim_historical = parse_ack(
+    claims_ack_path, CLAIM_WARRANTS, "ATOM") if claims_on else ([], [], [])
 refuse_malformed(claims_ack_path, claim_malformed)
 
 inline = dests.get(policy, set())
@@ -1646,9 +1739,26 @@ if ambiguous:
     for warrant, content, _ in ambiguous:
         print(f"    {warrant} :: {content[:70]}", file=out)
 
+def report_historical(rows, noun, indent="  "):
+    """A `# @run base=` group stamped for another base (#579): that run's
+    judgements, never consulted here, and never called stale — the line each
+    warranted is gone because that run is what removed it."""
+    if not rows:
+        return
+    stamps = ", ".join(sorted({r[3] for r in rows}))
+    print(f"\n{indent}{len(rows)} {noun}(ies) stamped for another base "
+          f"({stamps}) — historical:\n{indent}judged against that run's base, "
+          "so not consulted here and not stale.\n"
+          f"{indent}Prune a group once the run it judged is on main:", file=out)
+    for warrant, content, scope, _ in rows:
+        where = f"{scope} :: " if scope else ""
+        print(f"{indent}  {where}{warrant} :: {content[:60]}", file=out)
+
+
 # Said out loud rather than silently skipped. An entry this run never consulted
 # is not evidence of anything about this run, but a file whose entries quietly
 # stop applying is one nobody can audit.
+report_historical(historical, "entry")
 if out_of_scope:
     print(f"\n  {len(out_of_scope)} entry(ies) scoped to another target — not "
           f"consulted for {policy}:", file=out)
@@ -1713,6 +1823,7 @@ if claims_on:
               f"target — not consulted for {policy}:", file=out)
         for warrant, content, scope in claim_out_of_scope:
             print(f"    {scope} :: {warrant} :: {content[:60]}", file=out)
+    report_historical(claim_historical, "claim entry")
 
 if claims_unwarranted:
     print(
@@ -1755,6 +1866,19 @@ elif warranted:
 else:
     print("\nOK — every line is either still inline or relocated verbatim.",
           file=out)
+
+# A rebase moves a run's base, and its own stamped group then sits out as
+# historical: the run fails rather than passes, which is the safe direction,
+# but the report must say why the warrants it wrote stopped counting.
+if (unwarranted and historical) or (claims_unwarranted and claim_historical):
+    print("\nSome entries above are stamped for another base and were not "
+          "consulted. If this\nrun continues that one — a rebase moved its "
+          "base — re-stamp the group:\nbase=" + (base_sha[:12] or "<this base>")
+          + ".", file=out)
+# The header for this run's own entries, so stamping costs nothing to work out.
+if base_sha and (lost or (claims_on and dropped_atoms)):
+    print(f"\nStamp this run's new entries with:\n  # @run base={base_sha[:12]} "
+          f"file={policy}", file=out)
 
 print(f"\nduplicated: {len(duplicated)}", file=out)
 print(f"loss_warranted: {len(warranted)}", file=out)
