@@ -2414,33 +2414,59 @@ function linkedProjectsFinding(linked) {
 // and nothing else — so a whole checkout there is disk spent for nothing
 // (external-store.md, "One host per projectId"). Not on a managed store, where
 // the sibling's collection lives in this host's Qdrant and the checkout is
-// what indexes it; and not where the sibling carries its own SocratiCode
-// manifest, since one host can be the home of both repos and that checkout is
-// the one its own index is written from.
-const LINK_SIZE_TIMEOUT_MS = 5000;
+// what indexes it.
+//
+// Nor where someone set the checkout up on this host on purpose: its own
+// git-ignored settings.local.json declares a store variable. That is the
+// sibling's home — one host can hold both repos — or a deliberate second
+// checkout opted out of writing, and neither is wasted disk. Host-local by
+// design: the manifest was the first signal tried, and every cohort repo
+// commits it, so every clone carried it and nothing was ever reported
+// (CR 2464). A host holding the key only in user settings has its home
+// checkout reported — an accepted limitation.
+const LINK_SIZE_BUDGET_MS = 5000;
 const STUB_ID_UNKNOWN = "<sibling's projectId>";
+const HOME_STORE_KEYS = ['QDRANT_MODE', 'QDRANT_URL', 'QDRANT_API_KEY'];
+// What an OS file manager leaves in any directory it opened. Anything else
+// beside the stub counts — a README too, and its size says it is small (CR 2468).
+const OS_CLUTTER = new Set(['.DS_Store', 'Thumbs.db', 'desktop.ini']);
 
 // du, bounded: a session-start hook cannot sit on a cold walk of a big tree.
 // Through the real path, so a symlinked link is measured and not the link.
-// → KiB, or null when du failed or ran past its budget.
-function linkSizeKiB(dir) {
-  const out = spawnSync('du', ['-sk', realOrSelf(dir)], { encoding: 'utf8', timeout: LINK_SIZE_TIMEOUT_MS });
+// → KiB, or null when du failed or ran past `timeoutMs`.
+function linkSizeKiB(dir, timeoutMs) {
+  const out = spawnSync('du', ['-sk', realOrSelf(dir)], { encoding: 'utf8', timeout: timeoutMs });
   if (out.error || out.status !== 0) return null;
   const kib = Number.parseInt(out.stdout, 10);
   return Number.isInteger(kib) ? kib : null;
 }
 
-// Each resolved link that is a full checkout and not its repo's home.
-function linkedClones(projectPath, linked, sizeOf = linkSizeKiB) {
+// The sibling's own settings.local.json declares a store variable. Unreadable
+// or unparseable reads as absent.
+function setUpOnThisHost(dir) {
+  const env = readJsonOrNull(joinPath(dir, LOCAL_SETTINGS))?.env;
+  return Boolean(env && typeof env === 'object' && HOME_STORE_KEYS.some((k) => Object.hasOwn(env, k)));
+}
+
+// Each resolved link that is a full checkout nobody set up here. One du
+// budget for all of them, not one each: spawnSync blocks the event loop, and
+// with it the health check's own ceiling, so N clones at 5 s each would be N×5 s
+// of a timer that cannot fire (CR 2467). Once it is spent, the rest are
+// "size not measured".
+function linkedClones(projectPath, linked, { sizeOf = linkSizeKiB, budgetMs = LINK_SIZE_BUDGET_MS, now = Date.now } = {}) {
   const root = resolvePath(projectPath);
+  const deadline = now() + budgetMs;
   const clones = [];
   for (const entry of linked.resolved) {
     const dir = resolvePath(root, entry.path);
     let names;
     try { names = readdirSync(dir); } catch { continue; }
-    if (!names.some((n) => n !== SOCRATICODE_CONFIG_NAME)) continue;
-    if (names.includes(MANIFEST_NAME)) continue;
-    clones.push({ path: entry.path, source: entry.source, id: declaredProjectId(dir), kib: sizeOf(dir) });
+    if (!names.some((n) => n !== SOCRATICODE_CONFIG_NAME && !OS_CLUTTER.has(n))) continue;
+    if (setUpOnThisHost(dir)) continue;
+    const left = deadline - now();
+    clones.push({
+      path: entry.path, source: entry.source, id: declaredProjectId(dir), kib: left > 0 ? sizeOf(dir, left) : null,
+    });
   }
   return clones;
 }
@@ -2477,6 +2503,15 @@ function linkedCollectionTargets(projectPath, linked, env) {
   const targets = [];
   for (const entry of linked.resolved) {
     const dir = resolvePath(root, entry.path);
+    // A link that resolves to a file names no project: upstream hashes its
+    // path into a collection nobody writes. Said as what it is, with no store
+    // read — no projectId can be written into a file's .socraticode.json (CR 2471).
+    let isDir = false;
+    try { isDir = statSync(dir).isDirectory(); } catch { /* resolved a moment ago */ }
+    if (!isDir) {
+      targets.push({ path: entry.path, source: entry.source, notDir: true, collection: null });
+      continue;
+    }
     const declared = declaredProjectId(dir);
     if (declared && !PROJECT_ID_PATTERN.test(declared)) continue;
     const id = declared ?? pathHash(dir);
@@ -2487,35 +2522,54 @@ function linkedCollectionTargets(projectPath, linked, env) {
   return targets;
 }
 
-// One read-only count per target, on the store the server was launched
-// against → { entries: [{ ...target, points }] } with `points` null for a
-// collection the store says does not exist, or { error } — an unreachable
-// store is not a missing collection. Never throws.
+// One read-only count per directory target, on the store the server was
+// launched against → { entries: [{ ...target, points }] } with `points` null
+// for a collection the store says does not exist, and for a link that is not
+// a directory (read nowhere). On an unreachable store → { error, entries }
+// holding only the links that needed no read: unreachable is not missing.
+// Never throws.
 async function linkedCollectionCounts(env, targets) {
+  const unread = targets.filter((t) => t.notDir).map((t) => ({ ...t, points: null }));
+  const toRead = targets.filter((t) => !t.notDir);
+  if (!toRead.length) return { entries: unread };
   let store;
-  try { store = qdrantStore(env); } catch (e) { return { error: `QDRANT_URL does not parse (${e.message})` }; }
-  const entries = [];
-  for (const target of targets) {
+  try { store = qdrantStore(env); } catch (e) {
+    return { error: `QDRANT_URL does not parse (${e.message})`, entries: unread };
+  }
+  const entries = [...unread];
+  for (const target of toRead) {
     const read = await qdrantCount(store, target.collection, null);
-    if (read.error && !read.missing) return { error: read.error };
+    if (read.error && !read.missing) return { error: read.error, entries: unread };
     entries.push({ ...target, points: read.missing ? null : read.count });
   }
   return { entries };
 }
 
-// One defect for every link with nothing in its collection, or null.
+// One defect for every link that adds nothing, or null.
 function linkedCollectionFinding(entries, external) {
   const empty = entries.filter((e) => !e.points);
   if (!empty.length) return null;
   const n = empty.length;
-  const named = empty.map((e) => `${e.path} (${e.collection}: `
-    + `${e.points == null ? 'no such collection' : '0 points'}${e.declared === false ? '; declares no projectId' : ''})`).join(', ');
+  const named = empty.map((e) => (e.notDir
+    ? `${e.path} (not a directory)`
+    : `${e.path} (${e.collection}: ${e.points == null ? 'no such collection' : '0 points'}`
+      + `${e.declared === false ? '; declares no projectId' : ''})`)).join(', ');
+  const dirs = empty.filter((e) => !e.notDir);
+  const fixes = [];
+  if (dirs.length) {
+    fixes.push(external
+      ? 'Index each from its own host, the one that writes its projectId'
+        + (dirs.some((e) => e.declared === false)
+          ? " — or, for a link that declares none, write the sibling's projectId into the link's .socraticode.json"
+          : '')
+      : "Index each on this host: on a managed store its collection lives in this host's Qdrant");
+  }
+  if (dirs.length < n) {
+    fixes.push("A link that is not a directory names no project: point it at the sibling's directory");
+  }
   return `linkedProjects — ${n} resolved link${n === 1 ? '' : 's'} ${n === 1 ? 'adds' : 'add'} `
     + `nothing to codebase_search with includeLinked: true, and the server says nothing: ${named}. `
-    + (external
-      ? 'Index each from its own host, the one that writes its projectId — or, for a link that declares '
-        + "none, write the sibling's projectId into the link's .socraticode.json"
-      : "Index each on this host: on a managed store its collection lives in this host's Qdrant");
+    + fixes.join('. ');
 }
 
 // ── the store a launched server would address (#287) ────────────────────────
@@ -3843,10 +3897,9 @@ async function cmdHealthCheck(projectPath, probePath) {
     linked.collections = await linkedCollectionCounts(launchEnv, targets);
     if (linked.collections.error) {
       note(`linked collections not counted in the store — ${linked.collections.error}`);
-    } else {
-      const emptyFinding = linkedCollectionFinding(linked.collections.entries, external);
-      if (emptyFinding) defect(emptyFinding);
     }
+    const emptyFinding = linkedCollectionFinding(linked.collections.entries, external);
+    if (emptyFinding) defect(emptyFinding);
   }
 
   // One array, both severities, in encounter order — the shape the JSON has
@@ -4044,9 +4097,11 @@ Commands:
            collection is missing or empty — one read-only points/count per
            link, the id read as upstream reads it, and only where the server
            checks ran — or, on an external store, when it is a full checkout
-           where a one-file stub would do, sized by du (5 s budget). A
-           checkout carrying its own SocratiCode manifest is its repo's home,
-           and is not reported.
+           where a one-file stub would do, sized by du (one 5 s budget for
+           every link). A checkout whose own .claude/settings.local.json
+           declares QDRANT_MODE, QDRANT_URL or QDRANT_API_KEY was set up on
+           this host on purpose, and is not reported; a host holding the key
+           only in user settings has its home checkout reported.
            A context artifact whose source is newer than its index time is
            confirmed by content before it is called stale: hashed as the
            server hashes it and compared with the contentHash the server

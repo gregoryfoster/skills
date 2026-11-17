@@ -8,8 +8,10 @@ CannObserv/index#32's setup checks:
   sibling is read for its `.socraticode.json` alone — the path only selects
   the collection — so a whole checkout there is disk spent for nothing. Not on
   a managed store, where the sibling must be a checkout this host indexed, and
-  not where the sibling carries its own SocratiCode manifest: one host can be
-  the home of both repos.
+  not where the sibling's git-ignored `.claude/settings.local.json` declares a
+  store variable: someone set it up here on purpose, as its home (one host can
+  hold both repos) or an opted-out second checkout. Not the committed
+  manifest, which every cohort clone carries (CR 2464).
 - **A link whose collection is missing or empty.** It contributes nothing to
   `codebase_search` with `includeLinked: true`, and upstream says nothing.
 
@@ -34,6 +36,8 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+
+import pytest
 
 from .test_context_artifact_parity import (
     CONTEXT_ALL_INDEXED,
@@ -136,18 +140,32 @@ def _stub(tmp_path: Path, name: str, project_id: str | None = None) -> Path:
 
 
 def _clone(
-    tmp_path: Path, name: str, manifest: bool = False, declare: bool = True
+    tmp_path: Path,
+    name: str,
+    declare: bool = True,
+    settings_env: dict | None = None,
+    settings_text: str | None = None,
 ) -> Path:
-    """A whole checkout: a git dir and some source beside the config file."""
+    """A whole checkout: a git dir, some source, the config file — and the
+    committed manifest, which every cohort repo tracks (CR 2464), so it says
+    nothing about whose home this host is. `settings_env` writes the
+    git-ignored `.claude/settings.local.json` that someone setting the
+    checkout up on this host leaves; `settings_text` writes it verbatim."""
     sibling = tmp_path / name
     (sibling / ".git").mkdir(parents=True)
     (sibling / ".git" / "HEAD").write_text("ref: refs/heads/main\n")
     (sibling / "src").mkdir()
     (sibling / "src" / "app.py").write_text("x = 1\n" * 4000)
+    (sibling / ".socraticodecontextartifacts.json").write_text('{"artifacts": []}')
     if declare:
         (sibling / ".socraticode.json").write_text(json.dumps({"projectId": name}))
-    if manifest:
-        (sibling / ".socraticodecontextartifacts.json").write_text('{"artifacts": []}')
+    if settings_env is not None or settings_text is not None:
+        (sibling / ".claude").mkdir()
+        (sibling / ".claude" / "settings.local.json").write_text(
+            settings_text
+            if settings_text is not None
+            else json.dumps({"env": settings_env})
+        )
     return sibling
 
 
@@ -193,15 +211,94 @@ class TestAFullCloneWhereAStubWouldDo:
         assert report["linkedProjects"]["clones"][0]["path"] == "../watcher", report
 
     @requires_node
-    def test_a_clone_with_its_own_manifest_is_that_repos_home(
+    def test_a_committed_manifest_does_not_make_a_clone_a_home(
         self, tmp_path: Path
     ) -> None:
-        _clone(tmp_path, "watcher", manifest=True)
+        """CR 2464: the manifest is tracked, so every clone carries it."""
+        sibling = _clone(tmp_path, "watcher")
+        assert (sibling / ".socraticodecontextartifacts.json").exists()
+        repo = _project(tmp_path, ["../watcher"])
+        with _store({"codebase_watcher": 120}) as (port, _):
+            result, report, _ = _check(tmp_path, repo, port, **EXTERNAL)
+        assert [f for f in report["findings"] if CLONE in f], report["findings"]
+        assert result.returncode == 1, result.stderr
+
+    @pytest.mark.parametrize(
+        "variable", ["QDRANT_MODE", "QDRANT_URL", "QDRANT_API_KEY"]
+    )
+    @requires_node
+    def test_a_clone_set_up_on_this_host_is_not_reported(
+        self, tmp_path: Path, variable: str
+    ) -> None:
+        """Its git-ignored settings declare a store variable: someone set it up
+        here on purpose — its home, or an opted-out second checkout."""
+        _clone(tmp_path, "watcher", settings_env={variable: "x"})
         repo = _project(tmp_path, ["../watcher"])
         with _store({"codebase_watcher": 120}) as (port, _):
             result, report, _ = _check(tmp_path, repo, port, **EXTERNAL)
         assert _linked_findings(report) == [], report["findings"]
         assert result.returncode == 0, result.stderr
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            json.dumps({"env": {"SOCRATICODE_WATCHER": "off"}}),
+            '{"env": {"QDRANT_MODE": "external"},',
+        ],
+        ids=["no-store-variable", "unparseable"],
+    )
+    @requires_node
+    def test_settings_that_declare_no_store_variable_are_absent(
+        self, tmp_path: Path, text: str
+    ) -> None:
+        _clone(tmp_path, "watcher", settings_text=text)
+        repo = _project(tmp_path, ["../watcher"])
+        with _store({"codebase_watcher": 120}) as (port, _):
+            _, report, _ = _check(tmp_path, repo, port, **EXTERNAL)
+        assert [f for f in report["findings"] if CLONE in f], report["findings"]
+
+    @requires_node
+    def test_os_clutter_beside_a_stub_is_not_a_clone(self, tmp_path: Path) -> None:
+        """CR 2468: Finder and Explorer droppings are not a checkout."""
+        sibling = _stub(tmp_path, "watcher")
+        for name in (".DS_Store", "Thumbs.db", "desktop.ini"):
+            (sibling / name).write_text("x")
+        repo = _project(tmp_path, ["../watcher"])
+        with _store({"codebase_watcher": 120}) as (port, _):
+            _, report, _ = _check(tmp_path, repo, port, **EXTERNAL)
+        assert _linked_findings(report) == [], report["findings"]
+
+    @requires_node
+    def test_a_readme_beside_a_stub_is_still_reported(self, tmp_path: Path) -> None:
+        """Accepted limitation (CR 2468): anything else counts; the size shows
+        it is small."""
+        sibling = _stub(tmp_path, "watcher")
+        (sibling / "README.md").write_text("stub\n")
+        repo = _project(tmp_path, ["../watcher"])
+        with _store({"codebase_watcher": 120}) as (port, _):
+            _, report, _ = _check(tmp_path, repo, port, **EXTERNAL)
+        line = next(f for f in report["findings"] if CLONE in f)
+        assert "KiB" in line, line
+
+    @requires_node
+    def test_a_symlinked_link_is_sized_through_its_real_path(
+        self, tmp_path: Path
+    ) -> None:
+        real = _clone(tmp_path / "elsewhere", "watcher-real")
+        (tmp_path / "watcher").symlink_to(real, target_is_directory=True)
+        repo = _project(tmp_path, ["../watcher"])
+        with _store({"codebase_watcher-real": 120}) as (port, _):
+            _, report, _ = _check(tmp_path, repo, port, **EXTERNAL)
+        clone = report["linkedProjects"]["clones"][0]
+        assert clone["kib"] is not None and clone["kib"] >= 20, clone
+
+    @requires_node
+    def test_a_link_to_a_file_is_not_a_clone(self, tmp_path: Path) -> None:
+        (tmp_path / "watcher").write_text("not a checkout\n")
+        repo = _project(tmp_path, ["../watcher"])
+        with _store({}) as (port, _):
+            _, report, _ = _check(tmp_path, repo, port, **EXTERNAL)
+        assert not [f for f in report["findings"] if CLONE in f], report["findings"]
 
     @requires_node
     def test_a_clone_on_a_managed_store_is_required(self, tmp_path: Path) -> None:
@@ -326,6 +423,103 @@ class TestALinkThatSearchesNothing:
         assert not [r for r in received if "filter" not in r["body"]], received
         assert report["linkedProjects"]["collections"] is None, report
         assert result.returncode == 0, result.stderr
+
+    @requires_node
+    def test_a_link_to_a_file_says_not_a_directory(self, tmp_path: Path) -> None:
+        """CR 2471: no projectId can be written into a file's .socraticode.json."""
+        (tmp_path / "watcher").write_text("not a checkout\n")
+        repo = _project(tmp_path, ["../watcher"])
+        with _store({}) as (port, received):
+            result, report, _ = _check(tmp_path, repo, port, **EXTERNAL)
+        line = next(f for f in report["findings"] if NOTHING in f)
+        assert "../watcher (not a directory)" in line, line
+        assert "declares no projectId" not in line, line
+        assert "point it at the sibling's directory" in line, line
+        assert not [r for r in received if "filter" not in r["body"]], received
+        assert result.returncode == 1, result.stderr
+
+    @requires_node
+    def test_two_links_on_one_id_are_counted_once(self, tmp_path: Path) -> None:
+        _stub(tmp_path, "watcher")
+        _stub(tmp_path, "watcher-copy", "watcher")
+        repo = _project(tmp_path, ["../watcher", "../watcher-copy"])
+        with _store({"codebase_watcher": 3}) as (port, received):
+            _, report, _ = _check(tmp_path, repo, port, **EXTERNAL)
+        unfiltered = [r["path"] for r in received if "filter" not in r["body"]]
+        assert unfiltered == ["/collections/codebase_watcher/points/count"], received
+        assert len(report["linkedProjects"]["collections"]["entries"]) == 1, report
+
+    @requires_node
+    def test_a_link_with_an_invalid_id_is_not_counted(self, tmp_path: Path) -> None:
+        """storeConfig reports it, and upstream throws before reading any
+        collection — so it is not counted, and not called empty."""
+        _stub(tmp_path, "watcher", "bad id!")
+        repo = _project(tmp_path, ["../watcher"])
+        with _store({}) as (port, received):
+            _, report, _ = _check(tmp_path, repo, port, **EXTERNAL)
+        assert not [r for r in received if "filter" not in r["body"]], received
+        assert not [f for f in report["findings"] if NOTHING in f], report["findings"]
+        assert any("outside [a-zA-Z0-9_-]" in f for f in report["findings"]), report
+
+
+def _node(script: str) -> object:
+    result = subprocess.run(
+        ["node", "--input-type=module", "-e", script],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env=_clean_env(),
+    )
+    assert result.returncode == 0, result.stderr
+    return json.loads(result.stdout)
+
+
+class TestTheTargetsMirrorUpstream:
+    @requires_node
+    def test_a_link_on_this_projects_id_is_not_counted(self, tmp_path: Path) -> None:
+        """Upstream seeds its seen-set with the project's own id, so the link
+        is dropped — and storeConfig reports it as a blocking defect."""
+        _stub(tmp_path, "watcher", "index")
+        repo = _project(tmp_path, ["../watcher"])
+        targets = _node(
+            f"import {{ linkedProjects, linkedCollectionTargets }} from {json.dumps(str(DRIVER))};"
+            f"const p = {json.dumps(str(repo))};"
+            "process.stdout.write(JSON.stringify("
+            "linkedCollectionTargets(p, linkedProjects(p), {})));"
+        )
+        assert targets == [], targets
+
+
+class TestOneDuBudgetForEveryClone:
+    @requires_node
+    def test_the_budget_is_shared_and_runs_out(self, tmp_path: Path) -> None:
+        """CR 2467: spawnSync blocks the health timer, so 5 s is the whole
+        walk, not each clone's. A fake du spends 3 s of a fake clock each."""
+        for name in ("a", "b", "c"):
+            _clone(tmp_path, name)
+        repo = _project(tmp_path, ["../a", "../b", "../c"])
+        result = _node(
+            f"import {{ linkedProjects, linkedClones }} from {json.dumps(str(DRIVER))};"
+            f"const p = {json.dumps(str(repo))};"
+            "let t = 0; const asked = [];"
+            "const sizeOf = (dir, ms) => { asked.push(ms); t += 3000; return 64; };"
+            "const clones = linkedClones(p, linkedProjects(p),"
+            " { sizeOf, budgetMs: 5000, now: () => t });"
+            "process.stdout.write(JSON.stringify({ asked, kib: clones.map((c) => c.kib) }));"
+        )
+        assert result == {"asked": [5000, 2000], "kib": [64, 64, None]}, result
+
+    @requires_node
+    def test_a_spent_budget_says_size_not_measured(self, tmp_path: Path) -> None:
+        _clone(tmp_path, "a")
+        repo = _project(tmp_path, ["../a"])
+        result = _node(
+            f"import {{ linkedProjects, linkedClones, linkedCloneFinding }} from {json.dumps(str(DRIVER))};"
+            f"const p = {json.dumps(str(repo))};"
+            "const clones = linkedClones(p, linkedProjects(p), { budgetMs: 0 });"
+            "process.stdout.write(JSON.stringify(linkedCloneFinding(clones)));"
+        )
+        assert "size not measured" in result, result
 
 
 def _finding(fn: str, *args: object) -> str | None:
