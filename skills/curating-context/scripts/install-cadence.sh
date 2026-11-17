@@ -203,6 +203,34 @@ if [ "$LEDGER_SET" -eq 0 ] && [ -n "$INSTALLED_LEDGER" ]; then
   LEDGER="$INSTALLED_LEDGER"
 fi
 
+# Stagger the cohort. Twelve repos on one cron produce twelve simultaneous
+# count_tokens bursts and twelve commits in the same minute; worse, they all
+# land in GitHub's most contended slot (the top of the hour), where scheduled
+# runs are delayed most. Derive an offset from the repo name so the spread needs
+# no per-repo decision and is stable across re-runs of this installer.
+# Computed even when a schedule is given or kept, so a kept one that differs
+# can be named beside it, and --check can name what replaces an unreadable
+# one (#664, CR 2368).
+DERIVED_CRON=""
+{
+  # The ORIGIN basename, not the checkout directory. #102 fixed this same latent
+  # bug in record-telemetry.sh, where a worktree path recorded
+  # `feat-161-curating-context` as the repo; here it would only make two repos
+  # draw the same slot, but the precedence should not differ between scripts.
+  ORIGIN="$(git remote get-url origin 2>/dev/null)" || ORIGIN=""
+  if [ -n "$ORIGIN" ]; then
+    NAME="${ORIGIN%/}"; NAME="${NAME##*[/:]}"; NAME="${NAME%.git}"
+  else
+    NAME="$(basename "$ROOT")"
+  fi
+  # cksum is POSIX and stable across platforms, unlike $RANDOM or md5/md5sum.
+  H="$(printf '%s' "$NAME" | cksum | cut -d' ' -f1)"
+  MIN=$(( H % 60 ))
+  HOUR=$(( 13 + (H / 60) % 6 ))   # 13:00-18:00 UTC — inside a working day
+  DOW=$(( 1 + (H / 360) % 5 ))    # Mon-Fri; weekends delay hardest
+  DERIVED_CRON="$MIN $HOUR * * $DOW"
+}
+
 # The schedule is read back too (#664). A re-run used to derive a slot from
 # the repo name and write it over the installed one, a custom --cron included,
 # while --check's re-render kept the installed one and so said `none` for a
@@ -211,13 +239,26 @@ fi
 # derived under an older formula or an older repo name too, which is the safe
 # direction: a re-render should not move a working schedule. A cron line this
 # can't read as five fields falls back to the derived slot, said on stderr.
+# quote_cron <value>: the value in single quotes, once. A value that still
+# carries a quote of its own (an unmatched one) is shown as it stands, so a
+# message never reads ''0 9 * * 3' (CR 2368).
+quote_cron() {
+  case "$1" in
+    *"'"*|*'"'*) printf '%s' "$1" ;;
+    *) printf "'%s'" "$1" ;;
+  esac
+}
 CRON_SRC="derived"   # flag | kept | unread | derived
 INSTALLED_CRON=""
 if [ -n "$CRON" ]; then
   CRON_SRC="flag"
 elif [ -z "$CRON_ARG" ] && [ -f "$WF" ]; then
+  # A trailing YAML comment comes off before the quotes (CR 2368): with
+  # `'0 9 * * 3'  # set by ops` the quotes weren't at the line's end, so the
+  # value kept them, read as unreadable, and the derived slot replaced it.
+  # Only whitespace then `#`: cron itself has no ` #`.
   INSTALLED_CRON="$(grep -m1 -E '^ *- cron:' "$WF" |
-    sed -E "s/^ *- cron:[[:space:]]*//; s/[[:space:]]*\$//; s/^'(.*)'\$/\\1/; s/^\"(.*)\"\$/\\1/" || true)"
+    sed -E "s/^ *- cron:[[:space:]]*//; s/[[:space:]]+#.*\$//; s/[[:space:]]*\$//; s/^'(.*)'\$/\\1/; s/^\"(.*)\"\$/\\1/" || true)"
   if [ -n "$INSTALLED_CRON" ]; then
     if [ "$(cron_fields "$INSTALLED_CRON")" -eq 5 ]; then
       CRON="$INSTALLED_CRON"
@@ -681,6 +722,14 @@ if [ "$MODE" = "check" ]; then
   if [ -f "$WF" ]; then
     echo "workflow:           $WF_PATH"
     sed -n 's/^ *- cron: *\(.*\)$/  schedule:         \1/p' "$WF"
+    # A re-run replaces a schedule it can't read with the derived slot, and
+    # `re-render: behind` alone doesn't say so (CR 2368). Informational, like
+    # re-render: it never sets the exit code.
+    if [ "$CRON_SRC" = unread ]; then
+      echo "  schedule unread:  $(quote_cron "$INSTALLED_CRON") isn't five fields, so a re-run"
+      echo "                    replaces it with the derived '$DERIVED_CRON'. Keep a"
+      echo "                    schedule with --cron '<five fields>'."
+    fi
     # The workflow is the THIRD place the drivers must exist — the runner is
     # a fresh clone, so nothing set here or in any developer checkout reaches
     # it. A workflow rendered before #237 rebases without the newest-wins
@@ -938,32 +987,8 @@ EOF
   exit 0
 fi
 
-# Stagger the cohort. Twelve repos on one cron produce twelve simultaneous
-# count_tokens bursts and twelve commits in the same minute; worse, they all
-# land in GitHub's most contended slot (the top of the hour), where scheduled
-# runs are delayed most. Derive an offset from the repo name so the spread needs
-# no per-repo decision and is stable across re-runs of this installer.
-# Computed even when a schedule is given or kept, so a kept one that differs
-# can be named beside it (#664).
-DERIVED_CRON=""
-{
-  # The ORIGIN basename, not the checkout directory. #102 fixed this same latent
-  # bug in record-telemetry.sh, where a worktree path recorded
-  # `feat-161-curating-context` as the repo; here it would only make two repos
-  # draw the same slot, but the precedence should not differ between scripts.
-  ORIGIN="$(git remote get-url origin 2>/dev/null)" || ORIGIN=""
-  if [ -n "$ORIGIN" ]; then
-    NAME="${ORIGIN%/}"; NAME="${NAME##*[/:]}"; NAME="${NAME%.git}"
-  else
-    NAME="$(basename "$ROOT")"
-  fi
-  # cksum is POSIX and stable across platforms, unlike $RANDOM or md5/md5sum.
-  H="$(printf '%s' "$NAME" | cksum | cut -d' ' -f1)"
-  MIN=$(( H % 60 ))
-  HOUR=$(( 13 + (H / 60) % 6 ))   # 13:00-18:00 UTC — inside a working day
-  DOW=$(( 1 + (H / 360) % 5 ))    # Mon-Fri; weekends delay hardest
-  DERIVED_CRON="$MIN $HOUR * * $DOW"
-}
+# The derived slot (DERIVED_CRON) is computed above, beside the installed
+# schedule it is compared with (#664).
 [ -n "$CRON" ] || CRON="$DERIVED_CRON"
 
 # The ledger is append-only, so two appends land on the SAME last line and git
@@ -1673,7 +1698,7 @@ case "$CRON_SRC" in
            "'$DERIVED_CRON' (--cron derived moves to it) (#664)"
     fi ;;
   unread)
-    echo "replaced: schedule '$INSTALLED_CRON' (not five fields) with the derived" \
+    echo "replaced: schedule $(quote_cron "$INSTALLED_CRON") (not five fields) with the derived" \
          "'$CRON' — restore it with --cron if it was deliberate (#664)" >&2 ;;
 esac
 case "$CHECKOUT_PIN" in

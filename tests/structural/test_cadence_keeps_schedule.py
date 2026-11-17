@@ -200,3 +200,60 @@ def test_the_help_documents_cron_derived():
     text = " ".join(r.stdout.split())
     assert "--cron derived" in text, r.stdout
     assert "keeps the installed schedule" in text, r.stdout
+
+
+def _set_cron_line(repo: Path, value: str) -> None:
+    wf = repo / WF
+    text, n = re.subn(
+        r"^( *- cron: ).*$",
+        lambda m: m.group(1) + value,
+        wf.read_text(),
+        count=1,
+        flags=re.M,
+    )
+    assert n == 1, "the rendered workflow has no cron line"
+    wf.write_text(text)
+
+
+def test_a_trailing_yaml_comment_does_not_make_the_schedule_unreadable(tmp_path):
+    """CR 2368: `- cron: '0 9 * * 3'  # set by ops` is a five-field schedule
+    with a YAML comment after it. It read as unreadable, and a plain re-run
+    wrote the derived slot over it."""
+    repo = _repo(tmp_path)
+    _run(repo)
+    _set_cron_line(repo, f"'{CUSTOM}'  # set by ops")
+    r = _run(repo)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert _schedule(repo) == CUSTOM, r.stdout + r.stderr
+    assert "replaced: schedule" not in r.stderr, r.stderr
+
+
+def test_the_replaced_message_quotes_the_schedule_once(tmp_path):
+    """CR 2368: the message wrapped a still-quoted value in quotes again."""
+    repo = _repo(tmp_path)
+    _run(repo)
+    _set_cron_line(repo, "'0 9 * *'  # four fields")
+    r = _run(repo)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "replaced: schedule '0 9 * *' " in r.stderr, r.stderr
+    assert "''" not in r.stderr, r.stderr
+
+
+def test_check_says_an_unreadable_schedule_would_be_replaced(tmp_path):
+    """CR 2368: --check said only `behind … Run install-cadence.sh`, with no
+    word that following it replaces the installed schedule."""
+    repo = _repo(tmp_path)
+    derived = _derived(tmp_path)
+    _run(repo)
+    _set_cron_line(repo, "'0 9 * *'")
+    r = _run(repo, "--check")
+    assert re.search(r"^ +schedule unread: ", r.stdout, re.M), r.stdout
+    assert f"'{derived}'" in r.stdout, r.stdout
+    assert r.returncode == 0, r.stdout + r.stderr
+
+
+def test_check_says_nothing_extra_for_a_readable_schedule(tmp_path):
+    repo = _repo(tmp_path)
+    _run(repo, "--cron", CUSTOM)
+    r = _run(repo, "--check")
+    assert "schedule unread" not in r.stdout, r.stdout
