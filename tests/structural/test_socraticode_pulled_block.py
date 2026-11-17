@@ -103,3 +103,92 @@ class TestTheStubStepIsReported:
         # On a managed store a stub names a collection this host's Qdrant
         # lacks: the step there is a checkout this host indexes.
         assert "managed store" in para, para
+
+
+def _trust() -> str:
+    return _section(
+        _flat(EXTERNAL_REF),
+        "## Confirm trust before the first index",
+        "## One host per",
+    )
+
+
+class TestTheFallbackPathWaitsOnAStaleSessionToo:
+    """CR 2465: the driver's guard checks only its own environment, while the
+    index lock is host-local and keyed on projectId (upstream lock.js:
+    os.tmpdir()/socraticode-locks/<projectId>-index). So a correctly
+    configured driver `index` waits behind a stale editor session's lock —
+    #626's own incident."""
+
+    def test_the_fallback_path_is_not_called_covered(self) -> None:
+        assert "needs no extra step" not in _trust()
+
+    def test_stale_sessions_are_closed_before_the_driver_indexes(self) -> None:
+        trust = _trust()
+        assert "keyed on the `projectId`" in trust, trust
+        assert "before `mcp-driver.mjs index`" in trust, trust
+
+
+class TestTheStraysAreNotRemovedThroughTheSharedNames:
+    """CR 2466: the strays share their names with the shared store's
+    collections, so the remove tools, run from a restarted session, delete
+    the SHARED collections. The cleanup is a prohibition, not a remark."""
+
+    def test_the_remove_tools_are_ruled_out(self) -> None:
+        trust = _trust()
+        assert "Don't clean them up with the remove tools" in trust, trust
+        assert "delete the **shared** collections" in trust, trust
+
+    def test_the_safe_choices_are_named(self) -> None:
+        trust = _trust()
+        assert "remove them from the local Qdrant itself, or leave them" in trust
+
+
+class TestTheStubCommandQuotesItsPlaceholders:
+    """CR 2469: an entry or id substituted unquoted splits on a space or
+    expands a glob, and the stub lands somewhere the link does not name."""
+
+    def test_every_placeholder_is_quoted(self) -> None:
+        command = (
+            'mkdir -p "<entry>" && printf \'{"projectId": "%s"}\\n\' '
+            '"<sibling-id>" > "<entry>/.socraticode.json"'
+        )
+        assert command in EXTERNAL_REF.read_text()
+
+
+class TestTheSkillAndTheReferenceAgree:
+    """CR 2470: three places where SKILL.md said less than, or other than,
+    external-store.md."""
+
+    def test_the_pre_index_check_is_phase_six_s_whole_check(self) -> None:
+        """(a) The reference requires the store's endpoint and no container
+        too; step 1 defers to Phase 6's check, which names all three."""
+        flat = _flat(SKILL_MD)
+        native = _section(flat, "**Preferred (native) path**", "**Fallback path**")
+        assert "as Phase 6 checks it" in native, native
+        phase6 = _section(flat, "### Phase 6", "**Graph yield")
+        for phrase in ("Qdrant mode: external", "store's endpoint", "not a container"):
+            assert phrase in phase6, (phrase, phase6)
+
+    def test_the_row_names_the_host_step_on_either_store(self) -> None:
+        """(b) On a managed store the step is a check-out, not a stub."""
+        row = next(
+            line
+            for line in SKILL_MD.read_text().splitlines()
+            if line.startswith("| Store config |")
+        )
+        assert "host step" in row, row
+        assert "check-out" in row, row
+
+    def test_the_path_hash_is_shared_only_by_one_layout(self) -> None:
+        """(c) Only hosts with the same checkout layout share the hash."""
+        flat = _flat(SKILL_MD)
+        assert "checkout-path hash that hosts share." not in flat
+        assert "checkout-path hash that hosts with one layout share" in flat
+
+    def test_the_stub_paragraph_names_the_health_check_s_link_findings(self) -> None:
+        """The daily check now names a full clone where a stub would do, and a
+        link whose collection is missing or empty (#573)."""
+        para = _section(_flat(EXTERNAL_REF), "**A stub is a host step", "## Adopting")
+        assert "full clone" in para, para
+        assert "missing or empty" in para, para

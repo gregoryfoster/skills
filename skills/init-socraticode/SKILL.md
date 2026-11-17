@@ -118,8 +118,7 @@ SOCRATICODE_AUTO_RESUME=off claude mcp list   # read-only (gotcha R); expect: pl
 **The marketplace step is not optional on a fresh host:** `socraticode@socraticode`
 is `plugin@marketplace`, so with none registered the install fails.
 `giancarloerra/socraticode` is canonical (per the plugin-hub listing); forks
-such as `oltivex/socraticode` and `Flink-JP/socraticode` exist — add one only
-deliberately, and the plugin name stays the same. Preflight Gate 4 reports the
+(`oltivex/…`, `Flink-JP/…`) only deliberately — the plugin name stays. Preflight Gate 4 reports the
 marketplace separately from the connection, and flags a redundant standalone
 `mcp__socraticode__*` beside the plugin's (`claude mcp remove socraticode`).
 
@@ -191,7 +190,8 @@ Follow [`references/code-exploration-policy.md`](references/code-exploration-pol
 5. **Client `env` block** (only `STORE=external`, and only after step 4 wrote
    `projectId`) → merge it into `.claude/settings.json`, per
    [`references/external-store.md`](references/external-store.md). Never the
-   block alone: it names collections by a checkout-path hash that hosts share.
+   block alone: it names collections by a checkout-path hash that hosts with
+   one layout share.
    Unless this session's Phase 1 already
    showed the `env` block line ✓, restart Claude Code here, trusting the folder
    if asked, and re-run this skill in the new session (Phases 1–4 are
@@ -245,8 +245,8 @@ session (run the `ToolSearch` prefetch from
 [`references/code-exploration-policy.md`](references/code-exploration-policy.md)
 first):
 
-1. `STORE=external`: `codebase_health` must first report `Qdrant mode:
-   external`; else this session predates the block — restart (external-store.md).
+1. `STORE=external`: first, `codebase_health` as Phase 6 checks it
+   (`Qdrant mode: external`); else this session predates the block — restart.
 2. `codebase_index { projectPath: <PROJECT_PATH> }` — returns immediately; work
    runs in the server process.
 3. Poll `codebase_status` until the run reports **`Last operation: Full index —
@@ -325,7 +325,7 @@ Present a completion table:
 | Component | Status |
 |---|---|
 | Preflight | Docker ✓ (boot-enabled: `<yes/n-a>`; containers on loopback) or not needed · `external`: store `<url>` ✓, `env` block in session ✓ · Node `<version>` (>=18.17; >=20 beside local containers) ✓ · npx ✓ |
-| Store config | `validate-store` ✓ · `.socraticode.json`: `projectId` `<id/none>`, `<N>` relative `linkedProjects` · stub step per added link not resolving here (external-store.md) |
+| Store config | `validate-store` ✓ · `.socraticode.json`: `projectId` `<id/none>`, `<N>` relative `linkedProjects` · per added link not resolving here: its host step (stub; `managed`: check-out) |
 | Plugin | marketplace `socraticode` registered · `plugin:socraticode:socraticode` Connected |
 | Backend | `<EMBEDDING_BACKEND>`, or the store's (`external`: `OLLAMA_URL`, model) |
 | Policy | `## Code Exploration Policy` in `<POLICY_FILE>` (marker-delimited, variant `<A/B>`) · `docs/SOCRATICODE.md` written |

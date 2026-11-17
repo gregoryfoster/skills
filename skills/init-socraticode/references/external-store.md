@@ -109,10 +109,16 @@ Phase 5 first calls `codebase_health`, and goes on only when it reports
 `Qdrant mode: external` and the store's endpoint, and no container — from the
 server that will index, where nothing stands in. Anything else is a session
 that predates the block: restart Claude Code (reload the editor window) and
-ask again. The fallback path needs no extra step: `mcp-driver.mjs index`
-launches its own server, and its `validate-store` guard refuses a process that
-lacks the block or predates it. Phase 6 asks again after the index; on the
-fallback path `mcp-driver.mjs verify` makes that check and fails without it.
+ask again. On the fallback path, `mcp-driver.mjs index` launches its own
+server, and its `validate-store` guard refuses a process that lacks the block
+or predates it — but that guard reads only the driver's own environment. The
+index lock is host-local and keyed on the `projectId`
+(`os.tmpdir()/socraticode-locks/<projectId>-index`), so a correctly configured
+driver still waits behind a stale editor session's lock. So on either path,
+reload or close every session in this checkout that predates the block before
+`mcp-driver.mjs index` or `codebase_index`. Phase 6 asks again after the index;
+on the fallback path `mcp-driver.mjs verify` makes that check and fails
+without it.
 
 **What indexing from a stale session looks like.** Its server runs managed but
 reads the new `projectId` live from `.socraticode.json`, so collections under
@@ -120,8 +126,11 @@ the new names appear in the **local** store, and it holds their index locks
 (host-local, as above). A driver `index` then waits behind those locks until
 `INDEX_TIMEOUT_MS`, and nothing reaches the shared store. It is silent where
 the local containers remain, and loud — the server cannot reach Docker —
-where they are gone. Restart the session. The stray collections are only in
-the local store; a restarted session's remove tools address the shared one.
+where they are gone. Restart the session. Don't clean them up with the remove
+tools: the strays share their names with the shared store's collections, so
+`codebase_remove` and its siblings, run from the restarted session, delete the
+**shared** collections. Either remove them from the local Qdrant itself, or
+leave them.
 
 Trust is checked by its effect because it cannot be read reliably from outside:
 it is inherited from a parent folder, and IDE and SDK sessions skip the prompt.
@@ -161,7 +170,7 @@ leaving the daily health check to find the gap a day later
 this repo is searched from, at the repo root:
 
 ```bash
-mkdir -p <entry> && printf '{"projectId": "%s"}\n' <sibling-id> > <entry>/.socraticode.json
+mkdir -p "<entry>" && printf '{"projectId": "%s"}\n' "<sibling-id>" > "<entry>/.socraticode.json"
 ```
 
 `<entry>` is the link exactly as `linkedProjects` holds it. `<sibling-id>` is
@@ -171,7 +180,8 @@ not help: it names a collection this host's Qdrant lacks, so the step there is
 to check the sibling out on this host and index it
 ([`linked-projects.md`](linked-projects.md)). Any other entry that does not
 resolve is named beside the `linkedProjects` count; the daily health check
-names them too. The stubs themselves are left to the operator.
+names them too, and also a full clone where a stub would do and a link whose
+collection is missing or empty. The stubs themselves are left to the operator.
 
 ## Adopting `projectId` on a repo already in the store
 
