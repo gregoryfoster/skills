@@ -50,9 +50,10 @@ file watcher load prebuilds where the platform has one (`tree-sitter-gdscript`
 6.1.0: darwin, linux-x64, win32-x64); elsewhere that parser or the watcher is
 lost silently. `preflight.sh` names unreviewed packages
 (`npm install-scripts ls --prefix <pin>`). Once each loads (`require("<name>")`
-in the pin; an `@ast-grep/lang-*`'s `libraryPath` must exist), record the
-review with `npm install-scripts deny --all --prefix <pin>`. Never approve:
-that runs `node-gyp` builds.
+in the pin; an `@ast-grep/lang-*`'s `libraryPath` must exist),
+`npm install-scripts deny --all --prefix <pin>` records the review by name,
+covering later versions, so re-run the load check after every re-pin. Never
+approve: that runs `node-gyp` builds.
 
 **Pin the session too: `SOCRATICODE_SPEC`.** The pin above covers the
 driver's launches — the health hook, `index`, `status`, `verify`. The session's
@@ -80,8 +81,8 @@ plugin's args were expanded before the block was merged, so the server ran
 environment. The machine setting pinned all three — though each reconnect also
 moved the extension to 2.1.281, so whether the block alone works there is not
 measured. On co-replicator (#327) the block alone worked, and why the hosts
-differ is not known. Keep the block as the declared value if you like —
-preflight compares against it — but not as the mechanism
+differ is not known. Keep the block as the declared value, which preflight
+compares against, but not as the mechanism
 ([#332](https://github.com/gregoryfoster/skills/issues/332)).
 
 **The first launch of a new exact spec installs.** npx keys its cache on the
@@ -109,8 +110,8 @@ manifests, and only the one `.claude-plugin/plugin.json` names is live:
 | `.claude-plugin/mcp.json` | `${SOCRATICODE_SPEC:-socraticode@latest}` | **yes** — `plugin.json`'s `mcpServers` names it |
 | `.mcp.json`, `mcp.json` (plugin root) | hardcoded `socraticode@latest` | no — since `0c33776`; before it, `plugin.json` named `./.mcp.json` |
 
-Reading a root one confirms that the session cannot be pinned, and that is how
-#295 came to say so. The variable also landed after the 1.14.0 release with no
+Reading a root one is how #295 came to say the session cannot be pinned. The
+variable also landed after the 1.14.0 release with no
 version bump, so a cache directory labelled `1.14.0` can predate it: its
 `plugin.json` names `./.mcp.json`, and the variable does nothing there.
 `claude plugin update` can report success and keep reusing that directory;
@@ -132,8 +133,8 @@ environment, which the block reaches either way. `preflight.sh` and
 not observe as not observed ([#332](https://github.com/gregoryfoster/skills/issues/332)).
 
 **A pinned driver beside a floating session is a new divergence.** Before the
-pin both floated and agreed by coincidence of timing; with only the driver
-pinned, the driver is deterministic while the session goes on floating.
+pin both floated and agreed by coincidence of timing; pinning only the driver
+leaves the session floating.
 `health-check` measures it, and splits on how wide the gap is, because a pin is
 *meant* to lag:
 
@@ -305,9 +306,8 @@ while `systemctl show -p MemoryLow`, the unit's own `memory.low`, a clean
 is at most the smallest `memory.low` on the way up from the unit — without
 `memory_recursiveprot`; with it, a link granting less passes a usage-dependent
 share this walk cannot read — so grant every link, which makes its figure the
-unit's reservation either way. How many links there are depends on whether the
-unit is templated, so walk its real `ControlGroup` rather than a path you
-assume:
+unit's reservation either way. The number of links depends on templating, so
+walk the unit's real `ControlGroup`, not an assumed path:
 
 ```bash
 unit=<unit>
@@ -406,7 +406,8 @@ Five ways it silently runs something other than what you wrote:
 - **With swap, the memory threshold waits for swap.** earlyoom acts only when
   memory **and** swap are both below their minimums, and the package default
   is `-s 10`. On a host with swap, `-m 12,6` alone acts only after swap is ~90%
-  used: on replicator (8 GiB, 4 G swap, `vm.swappiness=10`) ~3.7 GB paged out before the
+  used: on replicator (8 GiB, 4 G swap when #331 measured it,
+  `vm.swappiness=10`) ~3.7 GB paged out before the
   first SIGTERM, and a dry run's startup line says so (`swap <= 10.00%`).
   `-s 100,100` lets memory alone decide, and changes nothing where there is no
   swap. Both figures: `-s 100` alone leaves SIGKILL's at half of it, so
