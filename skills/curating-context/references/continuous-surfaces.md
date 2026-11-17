@@ -47,7 +47,12 @@ The next two catch regrowth *between* those weekly measurements.
 budget position per changed file, nothing at all when the diff touches no
 context-surface file. The four `reviewing-code*` variants already call it from
 their `gather-context.sh` when this skill is vendored alongside them, so it needs
-no wiring there. It is informational by construction and exits 0 on every path.
+no wiring there. It is informational by construction and exits 0 on every path
+but one: when git can't list the changed files (a bad `--base`, a shallow
+clone), it prints "delta unknown" where the table would be, puts git's error on
+stderr and exits 2, rather than print nothing, which reads as "no change"
+([#570](https://github.com/gregoryfoster/skills/issues/570)). The `gather-context.sh` callers ignore the exit
+code, so the review shows the line and goes on.
 
 It sees what the write guard cannot, twice over: the guard evaluates one edit at a
 time, so a 400-token addition that replaced 600 elsewhere reads the same as a
