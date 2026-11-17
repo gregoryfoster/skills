@@ -6,9 +6,11 @@
 # negotiate. Prints nothing when the diff touches no context-surface file, so it
 # never adds noise to an ordinary code review.
 #
-# Informational only. Exits 0 on every path — a context budget is not a review
-# gate, and a review that failed on one would be a gate wearing a report's
-# clothes. The gate belongs in enforcing-architecture.
+# Informational only. Exits 0 on every path but one — a context budget is not a
+# review gate, and a review that failed on one would be a gate wearing a report's
+# clothes. The gate belongs in enforcing-architecture. The one exception is exit
+# 2, "delta unknown": git could not list the changed files, so there was nothing
+# to measure, and a quiet exit 0 would read as "no change" (#570).
 set -euo pipefail
 
 usage() {
@@ -48,7 +50,11 @@ whether a section belongs in docs/; run measure-context.sh --exact for an
 authoritative count, which also recalibrates the ratio for this repo.
 
 Exit codes:
-  0  always (informational)
+  0  measured, or nothing on the surface changed. Never a budget verdict: an
+     OVER row still exits 0.
+  2  delta unknown: git failed listing the changed files (a bad --base, or a
+     shallow clone without it). stdout says so where the table would be, and
+     git's own error is on stderr. Not "no change" (#570).
 USAGE
 }
 
@@ -75,8 +81,12 @@ done
 # installing 'exit 0' here and replacing it with the combined handler after
 # mktemp would leave a window in which a failure exits non-zero, and this script
 # is called from four gather-context.sh files that must not fail.
+#
+# RC is the one deliberate exception (2, delta unknown; #570), set only after
+# git has said why. Any other failure still exits 0 through the trap.
+RC=0
 TMP="$(mktemp -d 2>/dev/null)" || { trap 'exit 0' EXIT; exit 0; }
-trap 'rm -rf "$TMP"; exit 0' EXIT
+trap 'rm -rf "$TMP"; exit "$RC"' EXIT
 
 # --- shared library -------------------------------------------------------
 # Resolve through a symlink chain: this script may be reached through a symlinked
@@ -132,10 +142,49 @@ DOCS_DIR="$(ctx_docs_dir "$ROOT")"
 # included on purpose: removing a doc changes the surface too. Untracked files
 # matter as much as modified ones here — a brand-new docs/API.md is the single
 # most common way a branch adds to the surface, and `git diff` never lists it.
-{ git diff --name-only "$BASE" 2>/dev/null || true
-  git diff --name-only --staged "$BASE" 2>/dev/null || true
-  git ls-files --others --exclude-standard 2>/dev/null || true
-} | sort -u >"$TMP/changed"
+#
+# The shape gather-context.sh took as CR 1807 (#570): core.quotePath=false lists
+# a non-ASCII path as named, where git's default C-quotes it and it then matches
+# no docs/*.md pattern; the `--` keeps a file named HEAD, or named like the base
+# branch, from making the base ambiguous; and a git that fails is reported, not
+# read as an empty list, because an empty list prints nothing — the same output
+# as a branch that touched no context file.
+#
+# An unborn HEAD is not a failure: with no commit, every file is new, so the
+# base is the empty tree (ctx_prev_bytes then finds nothing at HEAD, prev 0).
+DIFF_BASE="$BASE"
+if [ "$BASE" = HEAD ] && ! git rev-parse --verify -q HEAD >/dev/null 2>&1 \
+  && git symbolic-ref -q HEAD >/dev/null 2>&1; then
+  DIFF_BASE="$(git hash-object -t tree /dev/null)"
+fi
+: >"$TMP/changed.raw"
+LIST_FAILED=""
+list_changed() {
+  # list_changed <label> <git args...>. Every command still runs, but only the
+  # first failure is named, so stderr leads with the command that broke.
+  local label="$1" rc=0
+  shift
+  git -c core.quotePath=false "$@" >>"$TMP/changed.raw" 2>"$TMP/git.err" || rc=$?
+  if [ "$rc" -ne 0 ] && [ -z "$LIST_FAILED" ]; then
+    LIST_FAILED="$label"
+    {
+      echo "context-delta: '$label' failed (exit $rc):"
+      sed 's/^/  /' "$TMP/git.err"
+    } >&2
+  fi
+}
+list_changed "git diff --name-only $BASE" diff --name-only "$DIFF_BASE" --
+list_changed "git diff --name-only --staged $BASE" diff --name-only --staged "$DIFF_BASE" --
+list_changed "git ls-files --others" ls-files --others --exclude-standard --
+if [ -n "$LIST_FAILED" ]; then
+  echo ""
+  echo "=== Context budget (informational — not a gate) ==="
+  echo "delta unknown: '$LIST_FAILED' failed, so no changed file could be"
+  echo "listed against $BASE. This is not \"no change\"; git's error is on stderr."
+  RC=2
+  exit
+fi
+sort -u "$TMP/changed.raw" >"$TMP/changed"
 
 # Classify and follow symlinks first, then dedupe: a branch touching both
 # AGENTS.md and a CLAUDE.md that points at it must produce one row, not two.
