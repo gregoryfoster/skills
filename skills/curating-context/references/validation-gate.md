@@ -303,6 +303,24 @@ simply wrong. Expiry is only trustworthy while every warning means something,
 so an entry that cannot apply must say which target it was for rather than look
 dead (#139).
 
+**Across runs, stamp the group (#579).** An entry judges one run's diff. Once
+that run merges, its line is gone from every later base, so it read "matched
+nothing" from then on. Unpruned, it was still consulted, and could warrant a
+later run's loss of a line it happened to reach. A header ties a run's entries
+to that run:
+
+```
+# @run base=<sha> file=<target>      either key, or both; `# @run end` closes
+```
+
+The group is consulted when `--base` is the stamped commit or an ancestor of
+it, because that run spans the one that judged it. On any other run it is
+**historical**: listed, never consulted, never stale. A loss that a group
+stamped at an ancestor would reach needs its own warrant. The report prints
+the header to paste whenever a line is unaccounted for, so a rebased run
+re-stamps with it. To re-verify a merged run, pass its branch point:
+`--base <branch point> --claims`.
+
 ### Phase 6's remaining assertions in full
 
   A line the run had to **rewrite** rather than move — a pointer whose target this same change relocated, a heading Phase 6.5 forces you to rename, a [class-C tightening](keep-cut-rubric.md#proving-a-class-c-tightening) (add `--claims`, which the `tighten` warrant is refused without), an index line Phase 5 extended in place (`index`, which the script checks) — is not a loss and must not be recorded as one. Give each a judged entry in `.skills/context-loss-ok` (`WARRANT :: CONTENT`, or `PATH :: WARRANT :: CONTENT` to scope it to one target — see [Warranted losses](#warranted-losses-are-not-the-same-claim-as-no-loss); warrant from the closed set in `--help`), re-run, and carry `loss_warranted:` to Phase 7 as `--no-loss-warrants M`. Entries expire when their line changes and each is charged with its hits, so one blanket line is visible. **Never** warrant a line you have not read against its replacement.

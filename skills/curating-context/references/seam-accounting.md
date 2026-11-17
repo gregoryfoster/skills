@@ -122,6 +122,40 @@ that describes moved content without naming its section. So group only where the
 lines are about policy files in general, and judge a line that makes a claim
 about the repo's own policy file line by line.
 
+## An ack after its run has merged
+
+An ack records a judgement about one run's hits. Nothing tied it to that run,
+so once the run merged, each one read "matched nothing" on every later sweep.
+One repo pruned 18 such acks by hand
+([#579](https://github.com/gregoryfoster/skills/issues/579)). Two readings now
+tell an ack that cannot match from one that went stale:
+
+- **Dormant, with no syntax needed.** An unused ack whose class did not run on
+  this sweep is listed as dormant, with the reason. Examples: moved-title when
+  nothing moved, or a source class with the source sweep shut. The class is
+  known from a plain entry that starts with its name, or from a `PATH ::` entry
+  whose PATH is neither markdown nor under the docs root.
+- **Historical, by a group header.** It is the grammar `prove-no-loss.sh`
+  reads:
+
+  ```
+  # @run base=<sha> file=<target>
+  docs/SCHEMA.md :: see AGENTS.md § Schema
+  # @run end
+  ```
+
+  `file=` consults the group only on a sweep of that target. That is the scope
+  a seam ack's own `PATH ::` cannot give, because that PATH is the *hit's*
+  file. `base=` consults it on a sweep from that commit or an ancestor of it,
+  since such a sweep spans the run that judged it. On any other sweep the
+  group is historical: listed, never consulted, never stale.
+
+  Stamp what judges one run's interval: moved-title, source-moved-title, and a
+  doc split's `--file` acks. Leave back-reference and source-back-reference
+  acks unstamped, because those recur on every sweep that opens their class.
+  `@mentions` lines ignore the header.
+  Unstamped entries read exactly as before.
+
 ## Bare digits the count gate passes over (optional, TypeSafe)
 
 `check-counts.sh` never reports a bare digit: in a policy file one is nearly

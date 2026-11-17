@@ -102,6 +102,22 @@ Options:
                    reported for judgement as usual. The report prints each
                    group's hit count and reason; a line-scoped entry is tried
                    first. The reason is required; a malformed entry exits 1.
+
+                   Entries may be stamped as a group, with the grammar
+                   prove-no-loss.sh reads (#579):
+                     # @run base=<sha> file=<target>   either key, or both
+                     # @run end                        back to unstamped
+                   file= consults the group only on a sweep of that target;
+                   base= only on a sweep from that commit or an ancestor of
+                   it, which spans the run that judged it — on any other, the
+                   group is HISTORICAL: listed, not consulted, never stale.
+                   A malformed header is warned about and closes the group.
+                   @mentions lines are untouched. An unused entry whose class
+                   did not run this sweep — moved-title with nothing moved, a
+                   source class with the source sweep shut — is DORMANT, not
+                   stale. The class is known from a plain entry that starts
+                   with it, or a PATH :: entry whose PATH is neither markdown
+                   nor under the docs root.
   -h, --help       Show this help and exit 0.
 
 What it reports, in four classes:
@@ -117,8 +133,9 @@ What it reports, in four classes:
                    the title of a section that LEFT the policy file since
                    --base. These are the highest-confidence seams: something
                    still points at a home that no longer exists. A title of two
-                   or more words (and 8+ characters) is matched anywhere; a
-                   generic one — People, Organizations — only on a line that
+                   or more space-separated words (and 8+ characters) is matched
+                   anywhere; a generic one — People, Organizations, or a
+                   hyphenated name like co-broker — only on a line that
                    points somewhere, meaning a §, a markdown link, or a .md
                    filename, because otherwise it matches every ordinary use of
                    the word. The report names the titles swept that way.
@@ -392,6 +409,9 @@ if ! git show "$BASE:$REL" >"$TMP/base_policy" 2>"$TMP/git.err"; then
   echo "ERROR cannot read $REL at $BASE: $(tr -d '\n' <"$TMP/git.err")" >&2
   exit 2
 fi
+# The base this sweep actually used — explicit, ledger-derived, or the HEAD
+# fallback — as a full commit, for `# @run base=` groups in the ack file (#579).
+BASE_SHA="$(git rev-parse --verify --quiet "$BASE^{commit}" 2>/dev/null)" || BASE_SHA=""
 
 # Said out loud, the way prove-no-loss.sh says it. "every title moved" is the
 # truth about a split that deleted its source, and it is indistinguishable in
@@ -437,13 +457,18 @@ fi
 
 RC=0
 python3 - "$TMP/base_policy" "$REL" "$TMP/docs" "$ACK_FILE" "$TMP/src" \
-  "$SWEEP_SOURCE" "$BASE" "$SEAM_INTERVAL" "$DOCS_DIR" <<'PY' || RC=$?
+  "$SWEEP_SOURCE" "$BASE" "$SEAM_INTERVAL" "$DOCS_DIR" "$BASE_SHA" <<'PY' || RC=$?
 import os
 import re
+import subprocess
 import sys
 
 (base_policy_path, policy_rel, docs_list, ack_file, src_list,
- sweep_source, base_ref, seam_interval, docs_dir) = sys.argv[1:10]
+ sweep_source, base_ref, seam_interval, docs_dir, base_sha) = sys.argv[1:11]
+base_sha = base_sha.lower()
+# The swept file as a `file=` names it, normalised as prove-no-loss.sh
+# normalises its own (CR 2378).
+run_target = os.path.normpath(policy_rel)
 
 with open(base_policy_path, encoding="utf-8", errors="replace") as fh:
     base_lines = fh.read().splitlines()
@@ -535,8 +560,15 @@ moved = {k: v for k, v in base_titles.items() if k not in now_titles and v}
 
 def is_specific(k):
     """The bare tier: two or more words and 8+ characters. ONE definition,
-    shared by class 2 and a group's decline, so the two cannot disagree."""
-    return len(k) >= 8 and len(WORDS.findall(k)) >= 2
+    shared by class 2 and a group's decline, so the two cannot disagree.
+
+    A word is a whitespace-separated token carrying a letter or digit. Counting
+    `[0-9a-z]+` runs made `co-broker` two words: a per-host split on
+    provisioner swept every host name bare, 263 hits on 200 lines and not one a
+    pointer (#568). A hyphenated or slug-like title is one name, so it takes
+    the pointer tier. Requiring the letter or digit keeps a lone `—` from
+    counting, so no title is promoted that the old count held back."""
+    return len(k) >= 8 and sum(1 for w in k.split() if WORDS.search(w)) >= 2
 
 
 sweepable = {k: v for k, v in moved.items() if is_specific(k)}
@@ -976,15 +1008,128 @@ def under(path, prefix):
 # requires, since that class matches on #\d{2,} — into a BROADER pattern than
 # the author wrote. "Fixed in #412" became "Fixed in", which still matched the
 # judged hit and every future "Fixed in ..." hit nobody judged.
+#
+# A RUN GROUP (#579) stamps the entries after it with the run that judged them:
+#
+#   # @run base=<sha> file=<target>     either key, or both
+#   # @run end                          back to unstamped
+#
+# An ack records a judgement about one run's hits, and nothing tied it to that
+# run: a doc-split ack matched only on a `--file` sweep of that split, and an
+# interval-class ack read "matched nothing" on every sweep after its run merged
+# (#579 pruned 18 such acks by hand). `file=` holds the group to sweeps of that
+# target — the scope a seam ack's own `PATH ::` cannot give, since that PATH is
+# the HIT's file. `base=` holds it to sweeps from that commit or an ancestor of
+# it (stamp_kind()); on any other the group is HISTORICAL: not consulted,
+# counted on its own line, never stale.
+# `@mentions` lines are untouched — they name their swept file and never expire.
+# A comment to every older reader, so an unstamped reading is today's reading;
+# a malformed header is WARNED about and read as the comment it always was. The
+# twin of prove-no-loss.sh's reader: same grammar, same consequences.
+RUN_HEADER = re.compile(r"^#\s*(@run)\b(.*)$", re.IGNORECASE)
+RUN_BASE = re.compile(r"[0-9a-fA-F]{7,40}")
+
+
+def parse_run_header(word, rest):
+    """`# @run` arguments -> ("end", None), ("group", {base, file}), or
+    ("bad", why). A trailing `# ...` is a comment on the header (CR 2376)."""
+    if word != "@run":
+        return "bad", f"`{word}` must be written `@run`"
+    toks = re.sub(r"\s#.*$", "", rest).split()
+    if toks == ["end"]:
+        return "end", None
+    if not toks:
+        return "bad", "no keys; give base=<sha>, file=<target>, or both"
+    group = {"base": None, "file": None}
+    for t in toks:
+        k, eq, v = t.partition("=")
+        if not eq or k not in group or not v:
+            return "bad", f"`{t}` is not base=<sha> or file=<target>"
+        if group[k] is not None:
+            return "bad", f"{k}= given twice"
+        if k == "base" and not RUN_BASE.fullmatch(v):
+            return "bad", f"base={v} is not 7 to 40 hex digits"
+        group[k] = v.lower() if k == "base" else os.path.normpath(v)
+    return "group", group
+
+
+# How a stamp relates to this run's base (CR 2373). A prefix test was the
+# first version, and it re-reported every judged line on a sweep from an OLDER
+# base that spans the run: a weekly sweep whose last ledger row predates it,
+# or a re-verification from further back.
+#
+#   current    the base is the stamp or an ancestor of it: the sweep spans
+#              the run that judged the group, so its judgements apply
+#   past       the stamp is a proper ancestor of the base: that run is behind
+#              this one, and a line its entries reach now is a NEW loss
+#   unrelated  neither, or the stamp names nothing here: another branch's
+#              run, or this one before a rebase rewrote its branch point
+_STAMP_KINDS = {}
+
+
+def _git_rc(*args):
+    r = subprocess.run(["git", *args], capture_output=True, text=True)
+    if r.returncode > 1:
+        print(f"WARN git {' '.join(args)}: {r.stderr.strip()}", file=sys.stderr)
+    return r.returncode, r.stdout.strip()
+
+
+def stamp_kind(stamp):
+    if stamp in _STAMP_KINDS:
+        return _STAMP_KINDS[stamp]
+    if not base_sha:
+        if not _STAMP_KINDS:
+            # CR 2380: a tree, not a commit, has no history to place a stamp in.
+            print("WARN this run's base is not a commit, so no `# @run base=` "
+                  "group can apply: each reads as unrelated", file=sys.stderr)
+        kind = "unrelated"
+    elif base_sha.startswith(stamp):
+        kind = "current"
+    else:
+        rc, full = _git_rc("rev-parse", "--verify", "--quiet",
+                           stamp + "^{commit}")
+        if rc != 0 or not full:
+            kind = "unrelated"
+        elif _git_rc("merge-base", "--is-ancestor", base_sha, full)[0] == 0:
+            kind = "current"
+        elif _git_rc("merge-base", "--is-ancestor", full, base_sha)[0] == 0:
+            kind = "past"
+        else:
+            kind = "unrelated"
+    _STAMP_KINDS[stamp] = kind
+    return kind
+
+
 patterns, groups = [], []
+historical, scoped_out = [], []
+run = None
 try:
     with open(ack_file, encoding="utf-8") as fh:
         for n, raw in enumerate(fh, 1):
             raw = raw.strip()
-            if not raw or raw.startswith("#"):
+            if not raw:
+                continue
+            if raw.startswith("#"):
+                m = RUN_HEADER.match(raw)
+                if m:
+                    kind, val = parse_run_header(m.group(1), m.group(2))
+                    if kind == "bad":
+                        # Closed, not carried (CR 2376), as prove-no-loss.sh.
+                        print(f"WARN {ack_file}:{n}: not a `# @run` group "
+                              f"header ({val}) — read as a plain comment, and "
+                              "the group above it is closed: entries below "
+                              "are unstamped until the next header",
+                              file=sys.stderr)
+                        run = None
+                    else:
+                        run = val
                 continue
             if raw.startswith(GROUP_KEY + " ") or raw == GROUP_KEY:
                 groups.append(parse_group(raw, n))
+            elif run and run["file"] and run["file"] not in run_target:
+                scoped_out.append((raw, run["file"]))
+            elif run and run["base"] and stamp_kind(run["base"]) != "current":
+                historical.append((raw, run["base"], stamp_kind(run["base"])))
             else:
                 patterns.append(raw)
 except OSError:
@@ -1004,6 +1149,62 @@ def matches(p, cls, path, full):
         p_path, p_content = p.split(" :: ", 1)
         return p_path in path and p_content in full
     return p in f"{cls} {path} {full}"
+
+
+# Which classes this sweep RAN (#579). An ack for a class that did not run could
+# not have matched, so reporting it "matched nothing" told the operator to prune
+# a live judgement: #208's nine source acks read stale on every sweep that
+# relocated nothing. The standing classes always run.
+CLASSES = ("back-reference", "moved-title", "duplicate-heading",
+           "provenance-heading", "source-back-reference", "source-moved-title")
+SOURCE_CLASSES = {"source-back-reference", "source-moved-title"}
+source_opened = bool(src and (moved or relocated))
+if sweep_source != "1":
+    _source_off = "the source classes did not run: --no-source"
+elif not src:
+    _source_off = ("the source classes did not run: no tracked source outside "
+                   "the docs tree")
+else:
+    _source_off = (f"the source classes did not run: nothing left {policy_rel} "
+                   "since --base")
+_no_move = f"moved-title did not run: no section title left {policy_rel} since --base"
+NOT_RUN = {}
+if not moved:
+    NOT_RUN["moved-title"] = _no_move
+    NOT_RUN["source-moved-title"] = _source_off if not source_opened else _no_move
+if not source_opened:
+    NOT_RUN["source-back-reference"] = _source_off
+    NOT_RUN["source-moved-title"] = _source_off
+
+
+def _is_source_path(p_path):
+    """A `PATH ::` that only a source class can hit: not markdown, not the
+    docs tree. Anything else keeps today's reading."""
+    if p_path.endswith((".md", ".markdown")) or p_path == policy_rel:
+        return False
+    # A seam ack's PATH is a SUBSTRING of the hit's path, so `RUNBOOK` reaches
+    # docs/RUNBOOK.md: a PATH that any doc or the policy file contains can be a
+    # doc hit, and keeps today's reading (CR 2375).
+    if p_path in policy_rel or any(p_path in d for d in docs):
+        return False
+    root = docs_dir.rstrip("/")
+    return not (root and (p_path == root or p_path.startswith(root + "/")))
+
+
+def dormant_why(p):
+    """Why an unused entry could not have matched this sweep, or None."""
+    if " :: " in p:
+        if not _is_source_path(p.split(" :: ", 1)[0]):
+            return None
+        classes = SOURCE_CLASSES
+    else:
+        first = p.split(None, 1)[0] if p.strip() else ""
+        if first not in CLASSES:
+            return None
+        classes = {first}
+    if all(c in NOT_RUN for c in classes):
+        return "; ".join(sorted({NOT_RUN[c] for c in classes}))
+    return None
 
 
 groups = [g for g in groups if g["swept"] == policy_rel]
@@ -1149,11 +1350,45 @@ if acked:
                   f"{len(files)} file(s)) — an acknowledgement should cover ONE "
                   "judged line; split it or re-judge")
     unused = [p for p in patterns if not matched_by[p]]
-    if unused:
-        print(f"\n  {len(unused)} entry(ies) matched nothing — the line each "
+    dormant = [(p, dormant_why(p)) for p in unused if dormant_why(p)]
+    stale = [p for p in unused if not dormant_why(p)]
+    if stale:
+        print(f"\n  {len(stale)} entry(ies) matched nothing — the line each "
               "acknowledged has changed or gone; re-judge and prune:")
-        for p in unused:
+        for p in stale:
             print(f"    {p[:70]}")
+    if dormant:
+        print(f"\n  {len(dormant)} entry(ies) dormant — the class each can "
+              "match did not run on this sweep,\n  so matching nothing says "
+              "nothing about them; keep them:")
+        for p, why in dormant:
+            print(f"    {p[:70]}")
+            print(f"      ({why})")
+# A run group that sat this sweep out (#579). Outside the block above, because
+# whether they apply has nothing to do with whether anything else was acked.
+if scoped_out:
+    print(f"\n{len(scoped_out)} entry(ies) scoped to another target by "
+          f"`# @run file=` — not consulted for {policy_rel}:")
+    for p, target in scoped_out:
+        print(f"  {target} :: {p[:60]}")
+# Split by what the stamp is to this base (CR 2373): a PAST group's run is
+# behind this sweep, an UNRELATED one is another branch's or this run's own
+# from before a rebase — and only that one is ever worth re-stamping.
+for kind, how, advice in (
+        ("past", "an ancestor of this one", "that run is behind this base. "
+         "Prune a group once its run is on main:"),
+        ("unrelated", "neither an ancestor nor a descendant of this one, or "
+         "not in this repo", "another branch's run, or this one before a "
+         "rebase. Re-stamp it only if this sweep continues that one:")):
+    sel = [(p, b) for p, b, k in historical if k == kind]
+    if not sel:
+        continue
+    stamps = ", ".join(sorted({b for _, b in sel}))
+    print(f"\n{len(sel)} entry(ies) stamped for another base, {how} "
+          f"({stamps}) —\nhistorical: not consulted here, and not stale. "
+          f"{advice}")
+    for p, _ in sel:
+        print(f"  {p[:70]}")
 
 # ABOVE the two counts, which stay the last two lines. The three readers in the
 # cadence template match `^seams:` / `^seams_acked:` anchored, then `tail -1` —

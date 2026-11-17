@@ -10,6 +10,8 @@
 # is spent the moment the change it warrants lands, and prune it then — leaving
 # it behind means every future run reports it as "matched nothing", which is the
 # same signal a genuinely stale entry gives, and the file stops being readable.
+# Or stamp the run's entries with `# @run base=<sha>` (#579): once that run
+# merges they read as historical rather than matched-nothing, until pruned.
 #
 # "Lands" means: the commit that rewrote the line is an ancestor of every --base
 # a future run can pick, i.e. it is on main. NOT "the tracking issue closed" —

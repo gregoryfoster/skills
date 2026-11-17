@@ -191,6 +191,102 @@ class TestGenericMovedTitles:
         assert "Deployment Topology" not in r.stdout
 
 
+def _inventory_split_repo(tmp_path: Path) -> Path:
+    """CannObserv/provisioner#119 in miniature: docs/inventory.md's per-host
+    sections moved to an annex, one commit old. The hosts' names are
+    hyphenated proper nouns, used as plain words across the docs."""
+    repo = tmp_path / "inventory"
+    repo.mkdir()
+    _git(repo, "init", "-q")
+    _git(repo, "config", "user.email", "t@t")
+    _git(repo, "config", "user.name", "t")
+    _write(repo, "AGENTS.md", "# Guide\n\n## Build\n\nrun make\n")
+    _write(
+        repo,
+        "docs/inventory.md",
+        "# Inventory\n\n## Hosts\n\n### co-broker\n\nRuns redis.\n\n"
+        "### co-provisioner\n\nRuns the VMs.\n\n"
+        "## Patch Order\n\nBroker last.\n",
+    )
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "pre")
+    _write(
+        repo,
+        "docs/inventory.md",
+        "# Inventory\n\n## Hosts\n\nPer-host detail: docs/hosts.md.\n",
+    )
+    _write(
+        repo,
+        "docs/hosts.md",
+        "# Hosts\n\n## co-broker\n\nRuns redis.\n\n"
+        "## co-provisioner\n\nRuns the VMs.\n\n"
+        "## Patch Order\n\nBroker last.\n",
+    )
+    return repo
+
+
+class TestHyphenatedTitles:
+    """#568: words were counted as `[0-9a-z]+` runs, so the hyphen made
+    `co-broker` two words and swept it bare. On provisioner's split that was
+    263 hits on 200 lines, every one the host's name used as a word, while the
+    three real pointers were links. Words are now whitespace-separated tokens
+    that carry a letter or digit, so a slug-like title is held to the pointer
+    tier, and a title can only lose the bare tier, never gain it."""
+
+    def test_a_hyphenated_name_used_as_a_word_is_not_a_seam(self, tmp_path: Path):
+        repo = _inventory_split_repo(tmp_path)
+        _write(
+            repo,
+            "docs/ops.md",
+            "# Ops\n\nRestart co-broker after the deploy.\n"
+            "co-provisioner holds the VM images.\n",
+        )
+        r = _run(repo, "--file", "docs/inventory.md", "--no-source")
+        assert "docs/ops.md" not in r.stdout, r.stdout
+        assert r.returncode == 0, r.stdout
+
+    def test_a_link_to_the_moved_host_section_is_still_caught(self, tmp_path: Path):
+        """The provisioner run's three real seams were links like this one."""
+        repo = _inventory_split_repo(tmp_path)
+        _write(
+            repo,
+            "docs/ops.md",
+            "# Ops\n\nSee [co-broker](inventory.md#co-broker) for its ports.\n",
+        )
+        r = _run(repo, "--file", "docs/inventory.md", "--no-source")
+        assert r.returncode == 3, r.stdout
+        assert "docs/ops.md:3" in r.stdout
+
+    def test_a_spaced_title_is_still_swept_bare(self, tmp_path: Path):
+        repo = _inventory_split_repo(tmp_path)
+        _write(repo, "docs/ops.md", "# Ops\n\nThe Patch Order rules apply.\n")
+        r = _run(repo, "--file", "docs/inventory.md", "--no-source")
+        assert r.returncode == 3, r.stdout
+        assert "docs/ops.md:3" in r.stdout
+
+    def test_the_report_names_hyphenated_titles_as_pointer_only(self, tmp_path: Path):
+        r = _run(_inventory_split_repo(tmp_path), "--file", "docs/inventory.md")
+        note = [ln for ln in r.stdout.splitlines() if "too generic" in ln]
+        assert note and "co-broker" in note[0] and "co-provisioner" in note[0]
+        assert "Patch Order" not in note[0]
+
+    def test_a_separator_does_not_make_a_title_two_words(self, tmp_path: Path):
+        """A bare whitespace split would count `—` as a word and PROMOTE
+        `Overview —` to the bare tier, which the `[0-9a-z]+` count never did."""
+        repo = tmp_path / "sep"
+        repo.mkdir()
+        _git(repo, "init", "-q")
+        _git(repo, "config", "user.email", "t@t")
+        _git(repo, "config", "user.name", "t")
+        _write(repo, "AGENTS.md", "# Guide\n\n## Overview —\n\nText.\n")
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-qm", "pre")
+        _write(repo, "AGENTS.md", "# Guide\n\nShort now.\n")
+        _write(repo, "docs/a.md", "# A\n\nOverview — the rest of it.\n")
+        r = _run(repo, "--no-source")
+        assert "docs/a.md" not in r.stdout, r.stdout
+
+
 class TestSourceSweep:
     """#113: the sweep read the policy file and docs/*.md and nothing else, so
     16 docstring references in shipped packages survived a clean exit — worse
