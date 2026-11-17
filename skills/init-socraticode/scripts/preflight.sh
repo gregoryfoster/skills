@@ -454,7 +454,7 @@ case "$MEM_KB" in
       # passes that score to the install, and at -1000 the cap stalls it
       # rather than killing it. choom's `--` is not optional — it permutes its
       # options, so `--prefix` would be read as one of its own.
-      hint "Pre-install once under a cap instead of installing at every launch: systemd-run --user --scope -p MemoryMax=1536M -p MemorySwapMax=0 choom -n 500 -- npm install --save-exact --prefix $SC_PIN_DIR socraticode@<version>"
+      hint "Pre-install once under a cap instead of installing at every launch: systemd-run --user --scope -p MemoryMax=1536M -p MemorySwapMax=0 choom -n 500 -- npm install --save-exact --prefix \"$SC_PIN_DIR\" socraticode@<version>"
       hint "mcp-driver.mjs prefers that pin over the plugin's 'npx ... @latest', so no driver launch installs anything (references/host-memory.md)"
       # The unattended launch is covered without a step here (#330): the
       # health hook opens this scope itself wherever the host can, so a
@@ -1300,7 +1300,7 @@ else
         pass "Node $NODE_RAW with pinned socraticode $SC_PIN_VER (>=$NODE26_SERVER_MIN carries the Node 26 Qdrant transport bridge)"
       else
         fail "Node $NODE_RAW with pinned socraticode $SC_PIN_VER — the driver's server exits on start (undici 6 vs Node 26's undici 8)"
-        hint "Re-pin above $NODE26_SERVER_MIN: 'npm install --save-exact --prefix $SC_PIN_DIR socraticode@latest', or use Node 22"
+        hint "Re-pin above $NODE26_SERVER_MIN: 'npm install --save-exact --prefix \"$SC_PIN_DIR\" socraticode@latest', or use Node 22"
       fi
     fi
     # Network read, never a mutation, and its failure is not this gate's
@@ -1478,7 +1478,7 @@ if [ -n "$SC_PLUGIN_FIXED" ]; then
       SC_SESSION_SIDE="$SC_PINNED_IN launches $SC_PLUGIN_FIXED (not observed: ${SC_SEEN_WHY:-the process table was not read})"
     fi
     warn "Launch pins disagree: the driver's pin is socraticode $SC_PIN_VER, $SC_SESSION_SIDE — two builds writing one store"
-    hint "Pin both to one version: $SPEC_NAME=socraticode@$SC_PIN_VER, or re-pin the driver with 'npm install --save-exact --prefix $SC_PIN_DIR socraticode@$SC_PLUGIN_FIXED'"
+    hint "Pin both to one version: $SPEC_NAME=socraticode@$SC_PIN_VER, or re-pin the driver with 'npm install --save-exact --prefix \"$SC_PIN_DIR\" socraticode@$SC_PLUGIN_FIXED'"
   elif [ -n "$SC_SEEN_SPEC" ]; then
     pass "Plugin session launched socraticode $SC_PLUGIN_FIXED — observed: its server (pid $SC_SEEN_PIDS) was launched as socraticode@$SC_PLUGIN_FIXED${SC_PIN_VER:+, matching the driver pin} — no launch installs"
   else
@@ -1518,7 +1518,7 @@ elif [ -n "$SC_PLUGIN_FLOATS" ]; then
 fi
 # <<< launch-pins
 
-# ── The pin's install scripts, which npm >= 11.20 skips (#606) ──────────────
+# ── The pin's unreviewed install scripts, which npm >= 11.20 skips (#606) ───
 # npm 11.20 runs a dependency's install script only once the project's
 # allowScripts approves it. In the pin above that is 18 packages at
 # socraticode 1.16.2 — sixteen @ast-grep/lang-*, @parcel/watcher and
@@ -1526,17 +1526,22 @@ fi
 # install, then never again. Each loads a prebuild where the platform has one;
 # a platform without one loses that parser, or the watcher, with no error.
 #
-# So the pending ones are named — a warning, never a failure, since every one
-# loaded on the hosts measured. Nothing is approved: approving runs node-gyp
-# builds this skill would then own, against a list that moves with every
-# release. `deny --all` is the review's record, by name, and the listing is
-# empty after it, so this line stops until a re-pin brings a new package.
+# So the unreviewed ones are named — a warning, never a failure, since every
+# one loaded on the hosts measured. `ls` reflects the allowScripts policy, not
+# what ran: a pin an older npm built, its scripts run, lists the same way, so
+# the line says "not reviewed", never "skipped". Nothing is approved:
+# approving runs node-gyp builds this skill would then own, against a list
+# that moves with every release. `deny --all` is the review's record, by name
+# — so it covers later versions too, and the load check is re-run after
+# every re-pin — and the listing is empty after it.
 #
-# Measured on npm 11.20.0 (2026-11-17): `ls` exits 0 whether or not anything is
-# pending, so the JSON decides; `ls` with `--all` is a usage error; and npm
-# before 11.20 does not know the command. It reads the local tree, and
-# `--offline` holds it there, so no timeout is needed. An npm whose version
-# cannot be read is not guessed at.
+# Measured on npm 11.20.0 (2026-11-17): `ls` lists only what allowScripts has
+# not reviewed and exits 0 whether or not it lists anything, so the JSON
+# decides; a failure puts `{"error": {"code", "summary"}}` on stdout, and on
+# stderr `npm warn` lines can come before `npm error` (an always-auth .npmrc);
+# `ls --all` is a usage error; npm before 11.20 does not know the command. It
+# reads the local tree, and `--offline` holds it there, so no timeout is
+# needed. An npm whose version cannot be read is not guessed at.
 # >>> pin-install-scripts
 SC_NPM_SCRIPTS_MIN=11.20.0
 if [ -n "$SC_PIN_VER" ] && command -v npm >/dev/null 2>&1; then
@@ -1545,64 +1550,92 @@ if [ -n "$SC_PIN_VER" ] && command -v npm >/dev/null 2>&1; then
   case "$SC_NPM_VER" in
     [0-9]*.[0-9]*.[0-9]*)
       if version_ge "$SC_NPM_VER" "$SC_NPM_SCRIPTS_MIN"; then
-        # stderr is dropped on this read only: a newer npm on an older Node
-        # warns there (EBADENGINE) and still answers, and the JSON on stdout is
-        # what decides. A read that fails is re-run below for npm's own words,
-        # so nothing that explains a failure is lost.
+        # One read. stdout is the JSON that decides; stderr goes to a file, so
+        # a failure keeps npm's own words without a second run — and a newer
+        # npm on an older Node ("npm warn cli npm vX does not support Node.js
+        # vY") still answers. Where no temp file can be made, stderr is left
+        # on the terminal rather than discarded.
+        SC_TAB=$'\t'
         SC_IS_RC=0
-        SC_IS_JSON="$(npm install-scripts ls --json --offline --prefix "$SC_PIN_DIR" 2>/dev/null)" || SC_IS_RC=$?
-        SC_IS_FOUND=""
-        SC_IS_READ=0
+        SC_IS_ERRF="$(mktemp "${TMPDIR:-/tmp}/socraticode-install-scripts.XXXXXX" 2>/dev/null || true)"
+        if [ -n "$SC_IS_ERRF" ]; then
+          SC_IS_JSON="$(npm install-scripts ls --json --offline --prefix "$SC_PIN_DIR" 2>"$SC_IS_ERRF")" || SC_IS_RC=$?
+        else
+          SC_IS_JSON="$(npm install-scripts ls --json --offline --prefix "$SC_PIN_DIR")" || SC_IS_RC=$?
+        fi
+        # → "ok<TAB>count<TAB>packages-word<TAB>list", "ok" alone when nothing
+        # is listed, "error<TAB>code: summary" for npm's --json error, or
+        # "unknown<TAB>why". Exit 2 only when stdout is not JSON at all.
         # The ${...} below are JavaScript template literals, for node, not bash.
         # shellcheck disable=SC2016
-        if [ "$SC_IS_RC" -eq 0 ] && SC_IS_FOUND="$(printf '%s' "$SC_IS_JSON" | node -e '
+        SC_IS_OUT="$(printf '%s' "$SC_IS_JSON" | node -e '
           let d;
           try { d = JSON.parse(require("fs").readFileSync(0, "utf8")); } catch { process.exit(2); }
+          const say = (...f) => process.stdout.write(f.join("\t"));
+          if (d && d.error && typeof d.error === "object") {
+            const e = d.error;
+            say("error", [e.code, e.summary].filter((x) => typeof x === "string" && x).join(": "));
+            process.exit(0);
+          }
           const a = d && d.allowScripts;
-          if (!Array.isArray(a)) process.exit(2);
-          const names = [...new Set(a
-            .filter((e) => e && typeof e.name === "string" && Array.isArray(e.changes)
-              && e.changes.some((c) => c && c.change === "pending"))
+          if (!Array.isArray(a)) { say("unknown", "its JSON carries no allowScripts list"); process.exit(0); }
+          if (!a.length) { say("ok"); process.exit(0); }
+          // `ls` lists only what allowScripts has not reviewed, so every
+          // named entry counts, whatever its changes say.
+          const names = [...new Set(a.filter((e) => e && typeof e.name === "string" && e.name)
             .map((e) => e.name))].sort();
-          if (!names.length) process.exit(0);
-          // One line: a family of three or more sharing a stem is one entry
-          // with its count (@ast-grep/lang-* (16)), and past eight entries the
-          // rest are counted, not listed.
-          const stems = new Map();
+          if (!names.length) {
+            say("unknown", `its ${a.length} allowScripts entries name no package`);
+            process.exit(0);
+          }
+          // One line: three or more of one scope sharing a prefix are one
+          // entry with its count (@ast-grep/lang-* (16)). Only a scoped
+          // family: node-pty, node-sass and node-expat are not one. Past
+          // eight entries the rest are counted in packages.
+          const groups = new Map();
           for (const n of names) {
-            const i = n.lastIndexOf("-");
-            const stem = i > n.lastIndexOf("/") ? n.slice(0, i + 1) : n;
-            stems.set(stem, [...(stems.get(stem) || []), n]);
+            const m = /^(@[^/]+\/[^-]+-)/.exec(n);
+            const key = m ? m[1] : n;
+            groups.set(key, [...(groups.get(key) || []), n]);
           }
-          const shown = [];
-          for (const [stem, ns] of stems) {
-            if (ns.length >= 3) shown.push(`${stem}* (${ns.length})`); else shown.push(...ns);
+          const entries = [];
+          for (const [key, ns] of groups) {
+            if (ns.length >= 3) entries.push({ text: `${key}* (${ns.length})`, n: ns.length });
+            else for (const n of ns) entries.push({ text: n, n: 1 });
           }
-          const list = shown.length > 8
-            ? `${shown.slice(0, 8).join(", ")} and ${shown.length - 8} more`
-            : shown.join(", ");
-          process.stdout.write(`${names.length}\t${list}`);
-        ')"; then
-          SC_IS_READ=1
+          const shown = entries.slice(0, 8).map((e) => e.text).join(", ");
+          const rest = entries.slice(8).reduce((t, e) => t + e.n, 0);
+          say("ok", names.length, names.length === 1 ? "package" : "packages",
+            rest ? `${shown} and ${rest} more` : shown);
+        ')" || SC_IS_OUT="unknown${SC_TAB}it answered with something other than JSON"
+        SC_IS_KIND="${SC_IS_OUT%%"${SC_TAB}"*}"
+        SC_IS_WHY=""
+        case "$SC_IS_KIND" in
+          error) SC_IS_WHY="exited $SC_IS_RC: ${SC_IS_OUT#*"${SC_TAB}"}" ;;
+          unknown) SC_IS_WHY="${SC_IS_OUT#*"${SC_TAB}"}" ;;
+          ok) [ "$SC_IS_RC" -eq 0 ] || SC_IS_WHY="exited $SC_IS_RC" ;;
+          *) SC_IS_WHY="its answer could not be read" ;;
+        esac
+        # A failure with no --json error: stderr's first `npm error` line,
+        # past any `npm warn` ahead of it.
+        if [ -n "$SC_IS_WHY" ] && [ "$SC_IS_KIND" != error ] && [ "$SC_IS_RC" -ne 0 ] \
+          && [ -n "$SC_IS_ERRF" ] && [ -s "$SC_IS_ERRF" ]; then
+          SC_IS_ERRLINE="$(grep -m 1 '^npm error' "$SC_IS_ERRF" || true)"
+          [ -z "$SC_IS_ERRLINE" ] || SC_IS_WHY="exited $SC_IS_RC: $SC_IS_ERRLINE"
         fi
-        if [ "$SC_IS_READ" = 0 ]; then
-          if [ "$SC_IS_RC" -ne 0 ]; then
-            SC_IS_WHY="$(npm install-scripts ls --json --offline --prefix "$SC_PIN_DIR" 2>&1 >/dev/null \
-              | grep -v '^[[:space:]]*$' | head -n 1 || true)"
-            SC_IS_WHY="exited $SC_IS_RC${SC_IS_WHY:+: $SC_IS_WHY}"
-          else
-            SC_IS_WHY="answered with something other than its JSON listing"
-          fi
+        [ -z "$SC_IS_ERRF" ] || rm -f "$SC_IS_ERRF"
+        if [ -n "$SC_IS_WHY" ]; then
           warn "Install scripts in the pin not measured — npm $SC_NPM_VER's 'install-scripts ls' $SC_IS_WHY"
-          hint "Run it by hand: npm install-scripts ls --prefix $SC_PIN_DIR"
-        elif [ -n "$SC_IS_FOUND" ]; then
-          SC_IS_N="${SC_IS_FOUND%%	*}"
-          SC_IS_NAMES="${SC_IS_FOUND#*	}"
-          SC_IS_WORD=packages
-          [ "$SC_IS_N" = 1 ] && SC_IS_WORD=package
-          warn "npm $SC_NPM_VER skipped the install scripts of $SC_IS_N $SC_IS_WORD in the pin (socraticode $SC_PIN_VER), none reviewed: $SC_IS_NAMES"
-          hint "npm >= $SC_NPM_SCRIPTS_MIN runs a dependency's install script only once allowScripts approves it. The parsers and the file watcher load prebuilds where the platform has one; without one, that parser or the watcher is lost with no error (references/host-memory.md)"
-          hint "Confirm they load (references/host-memory.md has the check), then record the review: npm install-scripts deny --all --prefix $SC_PIN_DIR — a re-pin then lists only new packages. Don't approve: that runs node-gyp builds"
+          hint "Run it by hand: npm install-scripts ls --prefix \"$SC_PIN_DIR\""
+        elif [ "$SC_IS_OUT" != ok ]; then
+          SC_IS_REST="${SC_IS_OUT#*"${SC_TAB}"}"
+          SC_IS_N="${SC_IS_REST%%"${SC_TAB}"*}"
+          SC_IS_REST="${SC_IS_REST#*"${SC_TAB}"}"
+          SC_IS_WORD="${SC_IS_REST%%"${SC_TAB}"*}"
+          SC_IS_NAMES="${SC_IS_REST#*"${SC_TAB}"}"
+          warn "$SC_IS_N $SC_IS_WORD in the pin (socraticode $SC_PIN_VER) have install scripts allowScripts has not reviewed — npm >= $SC_NPM_SCRIPTS_MIN skips them at install: $SC_IS_NAMES"
+          hint "Every one: npm install-scripts ls --prefix \"$SC_PIN_DIR\". The parsers and the file watcher load prebuilds where the platform has one; without one, that parser or the watcher is lost with no error (references/host-memory.md)"
+          hint "Confirm they load (references/host-memory.md has the check), then record the review: npm install-scripts deny --all --prefix \"$SC_PIN_DIR\". It records them by name, so it covers later versions too: re-run the load check after every re-pin. Don't approve: that runs node-gyp builds"
         fi
       fi
       ;;

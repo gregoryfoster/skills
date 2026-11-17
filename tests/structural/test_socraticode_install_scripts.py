@@ -117,8 +117,13 @@ exit 0
     return binv
 
 
-def _run(tmp_path: Path, binv: Path | None, pin_ver: str = "1.16.2"):
-    pin = tmp_path / "pin"
+def _run(
+    tmp_path: Path,
+    binv: Path | None,
+    pin_ver: str = "1.16.2",
+    pin_name: str = "pin",
+):
+    pin = tmp_path / pin_name
     program = (
         "set -euo pipefail\nFAIL=0\n"
         + _helpers()
@@ -159,7 +164,12 @@ class TestPendingScriptsAreNamed:
         warns = _warnings(lines)
         assert len(warns) == 1, lines
         w = warns[0]
-        assert "18" in w, w
+        assert "18 packages in the pin" in w, w
+        assert "have install scripts allowScripts has not reviewed" in w, w
+        assert "skipped" not in w, (
+            "ls reflects the policy, not what ran: a pin built by an older npm "
+            f"whose scripts did run lists the same way (CR 2478) — {w}"
+        )
         for name in ("@ast-grep/lang-*", "@parcel/watcher", "tree-sitter-gdscript"):
             assert name in w, f"{name} not named: {w}"
         assert "16" in w, f"the grouped scope must carry its count: {w}"
@@ -179,8 +189,13 @@ class TestPendingScriptsAreNamed:
         lines, log = _run(tmp_path, binv)
         hints = [ln for ln in lines if "→" in ln]
         text = "\n".join(hints)
-        assert f"npm install-scripts deny --all --prefix {tmp_path / 'pin'}" in text, (
-            hints
+        pin = tmp_path / "pin"
+        assert f'npm install-scripts deny --all --prefix "{pin}"' in text, hints
+        assert "by name" in text and "later versions" in text, (
+            f"deny --all records names, so it covers later versions (CR 2477): {hints}"
+        )
+        assert "re-pin" in text and "load" in text, (
+            f"the load check is re-run after every re-pin (CR 2477): {hints}"
         )
         assert "prebuild" in text, hints
         assert "host-memory.md" in text, hints
@@ -200,6 +215,50 @@ class TestPendingScriptsAreNamed:
         (w,) = _warnings(lines)
         assert "@parcel/watcher" in w and " x" in w and "2 packages" in w, w
 
+    def test_only_a_scoped_family_collapses(self, tmp_path: Path) -> None:
+        """CR 2479: node-pty, node-sass and node-expat share a stem and
+        nothing else; `@scope/prefix-*` is a family, `node-*` is not."""
+        keys = ["node-pty@1", "node-sass@9", "node-expat@2"] + [
+            f"@x/lang-{c}@1" for c in "abc"
+        ]
+        binv = _fake_npm(tmp_path, "11.20.0", _listing(keys))
+        lines, _ = _run(tmp_path, binv)
+        (w,) = _warnings(lines)
+        assert "@x/lang-* (3)" in w, w
+        assert "node-*" not in w, w
+        for name in ("node-pty", "node-sass", "node-expat"):
+            assert name in w, w
+
+    def test_the_tail_is_counted_in_packages(self, tmp_path: Path) -> None:
+        """CR 2479: "and N more" counts packages, not list entries. Nine
+        singletons and a family of three sort as ten entries; the last two
+        hold four packages."""
+        keys = [f"@a{i}/x@1" for i in range(1, 10)] + [f"@b/lang-{c}@1" for c in "abc"]
+        binv = _fake_npm(tmp_path, "11.20.0", _listing(keys))
+        lines, _ = _run(tmp_path, binv)
+        (w,) = _warnings(lines)
+        assert "12 packages" in w and "and 4 more" in w, w
+
+    def test_the_full_list_is_one_command_away(self, tmp_path: Path) -> None:
+        binv = _fake_npm(tmp_path, "11.20.0", _listing(PENDING))
+        lines, _ = _run(tmp_path, binv)
+        pin = tmp_path / "pin"
+        assert any(
+            "→" in ln and f'npm install-scripts ls --prefix "{pin}"' in ln
+            for ln in lines
+        ), lines
+
+    def test_every_listed_name_counts(self, tmp_path: Path) -> None:
+        """CR 2474: `ls` lists only what allowScripts has not reviewed, so an
+        entry is counted by its name, whatever its changes say."""
+        out = json.dumps(
+            {"allowScripts": [{"name": "a"}, {"name": "b", "changes": []}]}
+        )
+        binv = _fake_npm(tmp_path, "11.20.0", out)
+        lines, _ = _run(tmp_path, binv)
+        (w,) = _warnings(lines)
+        assert "2 packages" in w and "a, b" in w, w
+
     def test_later_npm_majors_are_read_too(self, tmp_path: Path) -> None:
         binv = _fake_npm(tmp_path, "12.2.2", _listing(["@parcel/watcher@2.6.0"]))
         lines, _ = _run(tmp_path, binv)
@@ -214,6 +273,13 @@ class TestNothingToSay:
         lines, log = _run(tmp_path, binv)
         assert lines == [], lines
         assert any(ln.startswith("install-scripts") for ln in log), log
+
+    def test_the_release_before_is_not_asked(self, tmp_path: Path) -> None:
+        """CR 2481: 11.19.x is below the floor — no read, no warning."""
+        binv = _fake_npm(tmp_path, "11.19.9", _listing(PENDING))
+        lines, log = _run(tmp_path, binv)
+        assert lines == [], lines
+        assert not any(ln.startswith("install-scripts") for ln in log), log
 
     def test_older_npm_is_not_asked(self, tmp_path: Path) -> None:
         """npm 11.5.2 has no such command; it runs every install script."""
@@ -249,10 +315,87 @@ class TestAFailedReadIsSaidNotGuessed:
         assert "not measured" in w and "EBROKEN" in w, w
 
     def test_output_that_is_not_the_listing(self, tmp_path: Path) -> None:
+        """Exit 0 with stdout that is not JSON (CR 2481)."""
         binv = _fake_npm(tmp_path, "11.20.0", "not json at all")
+        lines, log = _run(tmp_path, binv)
+        (w,) = _warnings(lines)
+        assert "not measured" in w, w
+        assert len([ln for ln in log if ln.startswith("install-scripts")]) == 1, log
+
+    def test_a_listing_of_nothing_recognisable(self, tmp_path: Path) -> None:
+        """CR 2474: entries with no name are not a clean pin."""
+        out = json.dumps({"allowScripts": [{"package": "a"}, 7]})
+        binv = _fake_npm(tmp_path, "11.20.0", out)
         lines, _ = _run(tmp_path, binv)
         (w,) = _warnings(lines)
         assert "not measured" in w, w
+
+    def test_npm_json_error_is_quoted_not_its_warning(self, tmp_path: Path) -> None:
+        """CR 2473: npm prints `npm warn` lines before its error — an
+        always-auth .npmrc and EGLOBAL, reproduced on 11.20.0. The --json
+        error on stdout names it; npm is read once."""
+        err = {
+            "error": {
+                "code": "EGLOBAL",
+                "summary": "`npm install-scripts` does not work for global installs",
+                "detail": "",
+            }
+        }
+        binv = _fake_npm(
+            tmp_path,
+            "11.20.0",
+            json.dumps(err),
+            rc=1,
+            stderr='npm warn Unknown user config "always-auth".\n'
+            "npm error code EGLOBAL\n"
+            "npm error `npm install-scripts` does not work for global installs\n",
+        )
+        lines, log = _run(tmp_path, binv)
+        (w,) = _warnings(lines)
+        assert (
+            "EGLOBAL: `npm install-scripts` does not work for global installs" in w
+        ), w
+        assert "always-auth" not in w, w
+        assert len([ln for ln in log if ln.startswith("install-scripts")]) == 1, log
+
+    def test_without_json_the_first_npm_error_line_is_quoted(
+        self, tmp_path: Path
+    ) -> None:
+        """CR 2473: no JSON on stdout — stderr's first `npm error` line, past
+        any `npm warn` ahead of it."""
+        binv = _fake_npm(
+            tmp_path,
+            "11.20.0",
+            "",
+            rc=1,
+            stderr="npm warn something first\nnpm error code EBROKEN\nmore\n",
+        )
+        lines, log = _run(tmp_path, binv)
+        (w,) = _warnings(lines)
+        assert "npm error code EBROKEN" in w and "something first" not in w, w
+        assert len([ln for ln in log if ln.startswith("install-scripts")]) == 1, log
+
+
+@requires_node
+class TestCopyableCommandsQuoteThePin:
+    """CR 2482: a hint is copied whole, and a pin path can hold a space."""
+
+    def test_the_hints_quote_a_pin_with_a_space(self, tmp_path: Path) -> None:
+        binv = _fake_npm(tmp_path, "11.20.0", _listing(PENDING))
+        lines, _ = _run(tmp_path, binv, pin_name="pin with space")
+        pin = tmp_path / "pin with space"
+        hints = "\n".join(ln for ln in lines if "→" in ln)
+        assert f'--prefix "{pin}"' in hints, hints
+        assert f"--prefix {pin}" not in hints, hints
+
+    def test_no_hint_in_preflight_leaves_the_pin_unquoted(self) -> None:
+        body = PREFLIGHT.read_text()
+        loose = [
+            ln.strip()
+            for ln in body.splitlines()
+            if "--prefix $SC_PIN_DIR" in ln or "--prefix ${SC_PIN_DIR" in ln
+        ]
+        assert not loose, loose
 
 
 class TestTheDocSaysIt:
@@ -264,5 +407,15 @@ class TestTheDocSaysIt:
             "npm install-scripts deny --all --prefix",
             "prebuild",
             "#606",
+            "by name",
+            "every re-pin",
         ):
             assert needle in doc, f"host-memory.md does not say {needle!r}"
+
+    def test_the_swap_reading_keeps_its_date(self) -> None:
+        """CR 2475: replicator's 4 G of swap was a reading at #331, and the
+        date is what squares it with co-replicator's no swap (#330)."""
+        text = " ".join(HOST_MEMORY.read_text().split())
+        assert "4 G swap when #331 measured it" in text, (
+            "host-memory.md lost when replicator's swap was measured"
+        )
