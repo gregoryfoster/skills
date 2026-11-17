@@ -146,12 +146,14 @@ tell an ack that cannot match from one that went stale:
 
   `file=` consults the group only on a sweep of that target. That is the scope
   a seam ack's own `PATH ::` cannot give, because that PATH is the *hit's*
-  file. `base=` consults it only on a sweep from that base. On any other sweep
-  the group is historical: listed, never consulted, never stale.
+  file. `base=` consults it on a sweep from that commit or an ancestor of it,
+  since such a sweep spans the run that judged it. On any other sweep the
+  group is historical: listed, never consulted, never stale.
 
-  Stamp what judges one run's interval: moved-title, the source classes, and a
-  doc split's `--file` acks. Leave standing acks (back-references) unstamped,
-  since those recur on every sweep. `@mentions` lines ignore the header.
+  Stamp what judges one run's interval: moved-title, source-moved-title, and a
+  doc split's `--file` acks. Leave back-reference and source-back-reference
+  acks unstamped, because those recur on every sweep that opens their class.
+  `@mentions` lines ignore the header.
   Unstamped entries read exactly as before.
 
 ## Bare digits the count gate passes over (optional, TypeSafe)

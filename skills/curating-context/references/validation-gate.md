@@ -313,11 +313,13 @@ to that run:
 # @run base=<sha> file=<target>      either key, or both; `# @run end` closes
 ```
 
-The group is consulted only on a run whose `--base` starts with `base=`. On any
-other run it is **historical**: listed, never consulted, never stale. The
-report prints the header to paste whenever a line is unaccounted for. A rebased
-run whose base moved fails until its group is re-stamped. To re-verify a merged
-run, pass its branch point: `--base <branch point> --claims`.
+The group is consulted when `--base` is the stamped commit or an ancestor of
+it, because that run spans the one that judged it. On any other run it is
+**historical**: listed, never consulted, never stale. A loss that a group
+stamped at an ancestor would reach needs its own warrant. The report prints
+the header to paste whenever a line is unaccounted for, so a rebased run
+re-stamps with it. To re-verify a merged run, pass its branch point:
+`--base <branch point> --claims`.
 
 ### Phase 6's remaining assertions in full
 
