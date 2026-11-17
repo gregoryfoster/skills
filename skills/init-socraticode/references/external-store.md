@@ -126,8 +126,11 @@ the new names appear in the **local** store, and it holds their index locks
 (host-local, as above). A driver `index` then waits behind those locks until
 `INDEX_TIMEOUT_MS`, and nothing reaches the shared store. It is silent where
 the local containers remain, and loud — the server cannot reach Docker —
-where they are gone. Restart the session. The stray collections are only in
-the local store; a restarted session's remove tools address the shared one.
+where they are gone. Restart the session. Don't clean them up with the remove
+tools: the strays share their names with the shared store's collections, so
+`codebase_remove` and its siblings, run from the restarted session, delete the
+**shared** collections. Either remove them from the local Qdrant itself, or
+leave them.
 
 Trust is checked by its effect because it cannot be read reliably from outside:
 it is inherited from a parent folder, and IDE and SDK sessions skip the prompt.

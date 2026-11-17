@@ -127,3 +127,18 @@ class TestTheFallbackPathWaitsOnAStaleSessionToo:
         trust = _trust()
         assert "keyed on the `projectId`" in trust, trust
         assert "before `mcp-driver.mjs index`" in trust, trust
+
+
+class TestTheStraysAreNotRemovedThroughTheSharedNames:
+    """CR 2466: the strays share their names with the shared store's
+    collections, so the remove tools, run from a restarted session, delete
+    the SHARED collections. The cleanup is a prohibition, not a remark."""
+
+    def test_the_remove_tools_are_ruled_out(self) -> None:
+        trust = _trust()
+        assert "Don't clean them up with the remove tools" in trust, trust
+        assert "delete the **shared** collections" in trust, trust
+
+    def test_the_safe_choices_are_named(self) -> None:
+        trust = _trust()
+        assert "remove them from the local Qdrant itself, or leave them" in trust
