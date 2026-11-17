@@ -170,7 +170,7 @@ leaving the daily health check to find the gap a day later
 this repo is searched from, at the repo root:
 
 ```bash
-mkdir -p <entry> && printf '{"projectId": "%s"}\n' <sibling-id> > <entry>/.socraticode.json
+mkdir -p "<entry>" && printf '{"projectId": "%s"}\n' "<sibling-id>" > "<entry>/.socraticode.json"
 ```
 
 `<entry>` is the link exactly as `linkedProjects` holds it. `<sibling-id>` is

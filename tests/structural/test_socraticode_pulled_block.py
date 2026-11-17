@@ -142,3 +142,15 @@ class TestTheStraysAreNotRemovedThroughTheSharedNames:
     def test_the_safe_choices_are_named(self) -> None:
         trust = _trust()
         assert "remove them from the local Qdrant itself, or leave them" in trust
+
+
+class TestTheStubCommandQuotesItsPlaceholders:
+    """CR 2469: an entry or id substituted unquoted splits on a space or
+    expands a glob, and the stub lands somewhere the link does not name."""
+
+    def test_every_placeholder_is_quoted(self) -> None:
+        command = (
+            'mkdir -p "<entry>" && printf \'{"projectId": "%s"}\\n\' '
+            '"<sibling-id>" > "<entry>/.socraticode.json"'
+        )
+        assert command in EXTERNAL_REF.read_text()
