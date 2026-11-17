@@ -140,7 +140,7 @@ tell an ack that cannot match from one that went stale:
 
   ```
   # @run base=<sha> file=<target>
-  docs/SCHEMA.md :: see AGENTS.md § Schema
+  docs/OPS.md :: The Restart Order section has the steps
   # @run end
   ```
 
