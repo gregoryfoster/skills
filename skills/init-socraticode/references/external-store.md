@@ -80,13 +80,18 @@ session starts, under an index lock that is host-local
 ## Confirm trust before the first index
 
 The `env` block reaches the server only in a session Claude Code started in a
-**trusted** folder after the block was written. Otherwise `QDRANT_MODE` reverts
+**trusted** folder after the block reached this checkout. Otherwise `QDRANT_MODE` reverts
 to managed and `OLLAMA_MODE` to auto, and the server does not report missing
 configuration: it starts a local Docker stack, through the socket if the host
 has one.
 
-So the session that wrote the block cannot index; its server started without
-it. After the block (step 2 above), restart Claude Code in the repo — trusting
+So any session started before the block reached this checkout, whether
+written there or pulled, cannot index; its server started without it. The
+writing session is one. An editor session left open while a branch carrying
+the block is merged and pulled is another — the cohort's usual flow, and one
+Phase 1 never sees unless the skill is re-run in that checkout
+([#626](https://github.com/gregoryfoster/skills/issues/626)). After the block
+(step 2 above), restart Claude Code in the repo — trusting
 the folder if it asks; an already-trusted folder does not — and re-run the
 skill in the new session, which remembers nothing of this one. Phases 1–4 are
 idempotent, so it converges on what is already written, and its Phase 1
@@ -96,10 +101,27 @@ goes on to Phase 5 instead of restarting again.
 
 Run that preflight **bare**. The inline values of a first install would stand
 in for the block and pass the trust line whether or not the session carries
-it. Phase 6 then confirms from the server's side, where nothing stands in:
-`codebase_health` reports `Qdrant mode: external` and the store's endpoint, and
-no container. On the fallback path `mcp-driver.mjs verify` makes that check
-and fails without it.
+it.
+
+**Then ask the server, before the first `codebase_index`.** The preflight ✓ is
+the client's side, read from the session's environment. On the native path,
+Phase 5 first calls `codebase_health`, and goes on only when it reports
+`Qdrant mode: external` and the store's endpoint, and no container — from the
+server that will index, where nothing stands in. Anything else is a session
+that predates the block: restart Claude Code (reload the editor window) and
+ask again. The fallback path needs no extra step: `mcp-driver.mjs index`
+launches its own server, and its `validate-store` guard refuses a process that
+lacks the block or predates it. Phase 6 asks again after the index; on the
+fallback path `mcp-driver.mjs verify` makes that check and fails without it.
+
+**What indexing from a stale session looks like.** Its server runs managed but
+reads the new `projectId` live from `.socraticode.json`, so collections under
+the new names appear in the **local** store, and it holds their index locks
+(host-local, as above). A driver `index` then waits behind those locks until
+`INDEX_TIMEOUT_MS`, and nothing reaches the shared store. It is silent where
+the local containers remain, and loud — the server cannot reach Docker —
+where they are gone. Restart the session. The stray collections are only in
+the local store; a restarted session's remove tools address the shared one.
 
 Trust is checked by its effect because it cannot be read reliably from outside:
 it is inherited from a parent folder, and IDE and SDK sessions skip the prompt.
@@ -132,9 +154,24 @@ it. A stub naming a collection that does not exist yet is skipped by search,
 silently.
 
 **A stub is a host step, not this skill's.** It sits outside the repo, so the
-skill writes none. Name each linked entry whose path does not resolve in the
-completion table's Store config row, beside the `linkedProjects` count — the
-daily health check names them too — and leave the stubs to the operator.
+skill writes none. Instead the completion table's Store config row prints the
+step for each link this run added that does not resolve here, rather than
+leaving the daily health check to find the gap a day later
+([#574](https://github.com/gregoryfoster/skills/issues/574)). On every host
+this repo is searched from, at the repo root:
+
+```bash
+mkdir -p <entry> && printf '{"projectId": "%s"}\n' <sibling-id> > <entry>/.socraticode.json
+```
+
+`<entry>` is the link exactly as `linkedProjects` holds it. `<sibling-id>` is
+the `projectId` the sibling's own repo commits — by this skill's default its
+repo name, but read it there rather than guess. On a managed store a stub does
+not help: it names a collection this host's Qdrant lacks, so the step there is
+to check the sibling out on this host and index it
+([`linked-projects.md`](linked-projects.md)). Any other entry that does not
+resolve is named beside the `linkedProjects` count; the daily health check
+names them too. The stubs themselves are left to the operator.
 
 ## Adopting `projectId` on a repo already in the store
 

@@ -1970,8 +1970,10 @@ class TestTheSkillStatesTheOrder:
         step5 = body[body.index("**Client `env` block**") : body.index("### Phase 4")]
         for phrase in ("trusting the folder", "re-run this skill", "bare"):
             assert phrase in step5, f"{phrase!r} missing from step 5: {step5}"
-        assert "The session that wrote the block cannot index" in step5, (
-            "the session that wrote the block runs a server started without it"
+        # #626: a session that pulled the block is as stale as the one that
+        # wrote it — both started their server without it.
+        assert "whether written there or pulled, cannot index" in step5, (
+            "any session that predates the block runs a server started without it"
         )
         # #287 round 2, CR 33: unconditional, the restart looped — the re-run
         # reached step 5 again and was told to restart again.
