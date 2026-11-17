@@ -30,6 +30,7 @@ Every case that makes the hook louder is paired with the one it must not touch:
 a repo with no manifest hears nothing, however broken its host.
 """
 
+import hashlib
 import json
 import shutil
 import socket
@@ -407,7 +408,37 @@ class TestTheLinkedGapReachesTheReport:
         )
         assert result.returncode == 0, result.stderr
         assert report["linkedProjects"]["configured"] == 1, report
-        assert not any("linkedProjects" in f for f in report["findings"]), report
+        assert not any(
+            "linkedProjects" in f and not f.startswith("note: ")
+            for f in report["findings"]
+        ), report
+
+    @requires_node
+    def test_resolved_links_over_a_populated_store_stay_clean(
+        self, tmp_path: Path
+    ) -> None:
+        """The reachable half (CR 2472): the link's collection is counted, holds
+        points, and nothing is said — not even a note."""
+        from .test_socraticode_linked_findings import _store
+
+        project = _checkouts(tmp_path, "archiver")
+        _config(project, {"linkedProjects": ["../archiver"]})
+        hashed = hashlib.sha256(str(tmp_path / "archiver").encode()).hexdigest()[:12]
+        with _store({f"codebase_{hashed}": 12}) as (port, received):
+            result, report = _health_check(
+                tmp_path,
+                project,
+                self.REPLIES,
+                QDRANT_HOST="127.0.0.1",
+                QDRANT_PORT=str(port),
+            )
+        assert f"/collections/codebase_{hashed}/points/count" in [
+            r["path"] for r in received
+        ], received
+        assert result.returncode == 0, result.stderr
+        assert not any(
+            "linkedProjects" in f or "linked" in f for f in report["findings"]
+        ), report
 
     @requires_node
     def test_the_hook_carries_it_into_the_session(self, tmp_path: Path) -> None:

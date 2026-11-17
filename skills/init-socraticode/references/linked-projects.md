@@ -19,8 +19,11 @@ that does not resolve — from `.socraticode.json`'s `linkedProjects` and from
 `SOCRATICODE_LINKED_PROJECTS` ([#281](https://github.com/gregoryfoster/skills/issues/281)).
 It also counts each resolved link's `codebase_<id>` in the store, and names a
 missing or empty one; on an external store it names a link that is a full
-checkout where a stub would do, with its size, unless that checkout carries
-its own SocratiCode manifest ([#573](https://github.com/gregoryfoster/skills/issues/573)).
+checkout where a stub would do, with its size, unless that checkout's own
+git-ignored `.claude/settings.local.json` declares a store variable — set up
+on this host on purpose, as its home or an opted-out second checkout. A host
+holding the key only in user settings has its home checkout reported
+([#573](https://github.com/gregoryfoster/skills/issues/573)).
 
 ## Write them into `.socraticode.json`, relative to the repo root
 
