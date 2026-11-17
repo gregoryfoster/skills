@@ -180,7 +180,8 @@ not help: it names a collection this host's Qdrant lacks, so the step there is
 to check the sibling out on this host and index it
 ([`linked-projects.md`](linked-projects.md)). Any other entry that does not
 resolve is named beside the `linkedProjects` count; the daily health check
-names them too. The stubs themselves are left to the operator.
+names them too, and also a full clone where a stub would do and a link whose
+collection is missing or empty. The stubs themselves are left to the operator.
 
 ## Adopting `projectId` on a repo already in the store
 
