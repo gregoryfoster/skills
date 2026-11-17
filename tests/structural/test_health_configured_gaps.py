@@ -32,6 +32,7 @@ a repo with no manifest hears nothing, however broken its host.
 
 import json
 import shutil
+import socket
 import subprocess
 from pathlib import Path
 
@@ -255,6 +256,12 @@ def _linked(project: Path, env_value: str | None = None) -> dict:
     return json.loads(result.stdout)
 
 
+def _closed_port() -> int:
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
+
+
 def _checkouts(tmp_path: Path, *names: str) -> Path:
     """A project directory beside sibling checkouts named `names`."""
     project = tmp_path / "project"
@@ -386,9 +393,18 @@ class TestTheLinkedGapReachesTheReport:
 
     @requires_node
     def test_resolved_links_leave_a_clean_check_clean(self, tmp_path: Path) -> None:
+        """Against a store nobody answers on: since #573 a resolved link's
+        collection is counted, and the default port may be this host's real
+        Qdrant. Unreachable is a note, so the check stays clean."""
         project = _checkouts(tmp_path, "archiver")
         _config(project, {"linkedProjects": ["../archiver"]})
-        result, report = _health_check(tmp_path, project, self.REPLIES)
+        result, report = _health_check(
+            tmp_path,
+            project,
+            self.REPLIES,
+            QDRANT_HOST="127.0.0.1",
+            QDRANT_PORT=str(_closed_port()),
+        )
         assert result.returncode == 0, result.stderr
         assert report["linkedProjects"]["configured"] == 1, report
         assert not any("linkedProjects" in f for f in report["findings"]), report

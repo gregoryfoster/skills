@@ -83,6 +83,12 @@ What it reports (to stdout, which Claude Code injects as session context):
     itself a write, and says that nothing past the configuration was measured.
   - Linked projects that break includeLinked search without blocking the
     check: one whose projectId is invalid, or two that share one.
+  - Linked projects that resolve and still add nothing (#573): one whose
+    codebase_<id> collection is missing or empty in the store, counted once
+    per link only where the server checks ran; and, on an external store, one
+    that is a full checkout where a one-file stub would do, named with its
+    size — unless it carries its own SocratiCode manifest, as a repo's home
+    checkout does.
   - A check its own memory cap stopped (#330): said as such, since nothing
     was measured, and never re-run uncapped. So is one the cap throttled past
     MemoryHigh= until it ended unfinished (#527): the kernel slows the job

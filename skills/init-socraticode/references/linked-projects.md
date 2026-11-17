@@ -17,7 +17,10 @@ Links reach `codebase_search` only, and only when a call passes
 server without a word, so the daily health check names every configured link
 that does not resolve — from `.socraticode.json`'s `linkedProjects` and from
 `SOCRATICODE_LINKED_PROJECTS` ([#281](https://github.com/gregoryfoster/skills/issues/281)).
-It cannot see whether a link that *does* resolve was ever indexed.
+It also counts each resolved link's `codebase_<id>` in the store, and names a
+missing or empty one; on an external store it names a link that is a full
+checkout where a stub would do, with its size, unless that checkout carries
+its own SocratiCode manifest ([#573](https://github.com/gregoryfoster/skills/issues/573)).
 
 ## Write them into `.socraticode.json`, relative to the repo root
 

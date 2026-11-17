@@ -394,7 +394,9 @@ def _health_check(
         return _run_health_check(tmp_path, repo, replies, port)
 
 
-def _run_health_check(tmp_path: Path, repo: Path, replies: dict, port: int) -> tuple:
+def _run_health_check(
+    tmp_path: Path, repo: Path, replies: dict, port: int, extra_env: dict | None = None
+) -> tuple:
     stub = tmp_path / "stub-server.mjs"
     stub.write_text(STUB_SERVER)
     reply_file = tmp_path / "replies.json"
@@ -413,6 +415,7 @@ def _run_health_check(tmp_path: Path, repo: Path, replies: dict, port: int) -> t
             HEALTH_TIMEOUT_MS="30000",
             QDRANT_HOST="127.0.0.1",
             QDRANT_PORT=str(port),
+            **(extra_env or {}),
         ),
     )
     try:
