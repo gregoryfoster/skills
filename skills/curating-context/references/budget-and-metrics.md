@@ -206,8 +206,10 @@ Same-file anchors (`[jump](#setup)`) are checked too — a heading rename inside
 long file breaks them exactly as a cross-file rename does. An explicit
 `<a id="…">` or `<a name="…">` outside code is an anchor too, matched
 case-insensitively, since GitHub prefixes and resolves it as it does a heading
-(#624). Setext headings are **not** modelled; a repo using them gets a
-`dead_anchors` entry to judge rather than a silent pass.
+(#624), and a heading slugs on its text without its tags. **Not** modelled:
+setext headings, a tag or code span spanning lines, and an anchor on a list
+item's indented continuation line. Each gets a `dead_anchors` entry to judge
+rather than a silent pass.
 
 **Archival subtrees are scanned as sources.** `docs/plans/` and friends are excluded
 from the doc inventory and never traversed, because a stale *path* inside a dated

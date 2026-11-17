@@ -1473,65 +1473,156 @@ slugs_of() {
   # fence otherwise manufactures an anchor that masks a real miss, and this
   # cohort's docs are dense with bash fences.
   #
-  # Explicit anchors count too (#624): the id or name of every `<a ...>` tag
-  # outside code, with either quote. GitHub renders both as
-  # `user-content-<value>`, as it does a heading's id, and resolves #<value> to
-  # them [measured, `gh api markdown`, 2026-11-16; document mode keeps the
-  # value's case, gfm lowercases it]. Each is emitted as written but lowercased,
-  # because anchor_missing compares lowercased fragments. It is not slugged and
-  # it doesn't take a -1/-2 slot, since the counter is for generated heading
-  # slugs. A code span is cut first, so a doc that names the syntax mints no
-  # anchor. Another element's `id` is prefixed the same way but isn't modelled.
+  # Explicit anchors count too (#624): the id or name of every `<a ...>` tag,
+  # quoted either way or unquoted. GitHub renders both as `user-content-<value>`,
+  # as it does a heading's id, and resolves #<value> to them [measured, `gh api
+  # markdown`, 2026-11-16; document mode keeps the value's case, gfm lowercases
+  # it]. Each is emitted as written but lowercased, because anchor_missing
+  # compares lowercased fragments. It is not slugged and it doesn't take a -1/-2
+  # slot, since the counter is for generated heading slugs. Another element's
+  # `id` is prefixed the same way but isn't modelled.
   #
-  # Not modelled: setext headings (`Title` over `=====`). A repo using them
-  # sees a dead_anchors entry to judge rather than a silent pass, which is why
-  # the miss class is reported separately from `dead` in the first place.
+  # What GitHub renders as no anchor mints none (CR 2365): a code span (a
+  # backtick run closed by a run of the same length) is masked first, an HTML
+  # comment is cut, including one spanning lines, and attributes are read only
+  # at attribute boundaries, so an `id=` inside another attribute's value is
+  # text. A heading slugs on its rendered text (CR 2367), so its tags are cut
+  # before slugging; a code span's content is kept, tags and all.
+  #
+  # Not modelled, each a dead_anchors entry to judge rather than a silent pass
+  # (which is why the miss class is reported separately from `dead`): setext
+  # headings (`Title` over `=====`); a code span or a tag spanning lines; and an
+  # anchor on a list item's indented continuation line, which is skipped as an
+  # indented code block, the same rule headings follow.
   LC_ALL=C awk -v q="'" '
+    function mask(s,   out, n, tick, rest, r2, scanned, found, content, after) {
+      # A code span becomes SO <n> SC, its content kept in span[n].
+      nspan = 0; out = ""
+      while (match(s, /`+/)) {
+        out = out substr(s, 1, RSTART - 1)
+        n = RLENGTH; tick = substr(s, RSTART, n); rest = substr(s, RSTART + n)
+        found = 0; scanned = ""; r2 = rest
+        while (match(r2, /`+/)) {
+          if (RLENGTH == n) {
+            found = 1
+            content = scanned substr(r2, 1, RSTART - 1)
+            after = substr(r2, RSTART + RLENGTH)
+            break
+          }
+          scanned = scanned substr(r2, 1, RSTART + RLENGTH - 1)
+          r2 = substr(r2, RSTART + RLENGTH)
+        }
+        if (found) {
+          # CommonMark trims one space from each end when both are there.
+          if (content ~ /^ .* $/ && content ~ /[^ ]/)
+            content = substr(content, 2, length(content) - 2)
+          span[++nspan] = content; out = out SO nspan SC; s = after
+        } else { out = out tick; s = rest }
+      }
+      return out s
+    }
+    function unmask(s,   k, pre) {
+      while (match(s, ph_re)) {
+        k = substr(s, RSTART + 1, RLENGTH - 2) + 0
+        pre = substr(s, 1, RSTART - 1)
+        s = pre span[k] substr(s, RSTART + RLENGTH)
+      }
+      return s
+    }
+    function uncomment(s,   out, i, j, block) {
+      # A comment opening the line is an HTML block, which only `-->` ends; one
+      # inside a paragraph also ends at a blank line (incomment 2).
+      out = ""; block = (substr(s, 1, 4) == "<!--")
+      while ((i = index(s, "<!--")) > 0) {
+        out = out substr(s, 1, i - 1)
+        s = substr(s, i + 4)
+        j = index(s, "-->")
+        if (!j) { incomment = block ? 1 : 2; return out }
+        s = substr(s, j + 3)
+      }
+      return out s
+    }
+    function anchors(s,   t, name, val, c, e, has) {
+      # Only a tag CommonMark reads as raw HTML is one; then its attributes are
+      # read one at a time from its start.
+      while (match(s, a_re)) {
+        t = substr(s, RSTART + 2, RLENGTH - 2)
+        s = substr(s, RSTART + RLENGTH)
+        while (1) {
+          sub(sep_re, "", t)
+          if (!match(t, name_re)) break
+          name = tolower(substr(t, 1, RLENGTH)); t = substr(t, RLENGTH + 1)
+          has = 0; val = ""
+          if (match(t, /^[ ]*=[ ]*/)) {
+            t = substr(t, RLENGTH + 1)
+            c = substr(t, 1, 1)
+            if (c == "\"" || c == q) {
+              e = index(substr(t, 2), c)
+              val = substr(t, 2, e - 1); t = substr(t, e + 2); has = 1
+            } else if (match(t, unq_re)) {
+              val = substr(t, 1, RLENGTH); t = substr(t, RLENGTH + 1); has = 1
+            }
+          }
+          if (has && (name == "id" || name == "name") && val != "") print tolower(val)
+        }
+      }
+    }
     BEGIN {
-      tag_re = "<[Aa][ \t][^>]*>"
-      attr_re = "[ \t]([Ii][Dd]|[Nn][Aa][Mm][Ee])[ \t]*=[ \t]*(\"[^\"]*\"|" q "[^" q "]*" q ")"
+      SO = sprintf("%c", 1); SC = sprintf("%c", 2)
+      ph_re = SO "[0-9]+" SC
+      # CommonMark raw HTML: `<x attr=...>` or `</x>`. `<relative path, if>`
+      # is text, because a comma cannot be in an attribute name.
+      unq = "[^ \"" q "=<>`]+"
+      attr = "[ ]+[A-Za-z_:][A-Za-z0-9_.:-]*([ ]*=[ ]*(" unq "|" q "[^" q "]*" q "|\"[^\"]*\"))?"
+      a_re = "<[Aa](" attr ")*[ ]*/?>"
+      tag_re = "<[A-Za-z][A-Za-z0-9-]*(" attr ")*[ ]*/?>|</[A-Za-z][A-Za-z0-9-]*[ ]*>"
+      sep_re = "^[ ]+"
+      name_re = "^[A-Za-z_:][A-Za-z0-9_.:-]*"
+      unq_re = "^" unq
     }
     {
       line = $0
       gsub(/\t/, "    ", line)   # a tab is up to four columns of indent
-      indented = line
-      sub(/^ +/, "", line)
-      # Four or more columns of indent is an indented code block, so neither a
-      # heading nor a fence — same reason fenced content is skipped below.
-      if (length(indented) - length(line) > 3) next
-      if (line ~ /^(```|~~~)/) {
-        ch = substr(line, 1, 1)
-        run = 3
-        while (substr(line, run + 1, 1) == ch) run++
-        # The closing fence must repeat the opening character at a run at least
-        # as long (CommonMark), so a ``` example inside a ~~~ block does not
-        # end the block — and a ```bash example nested inside a ````markdown
-        # block does not either (#232). Same rule as the extract_links tracker
-        # above (ffchar/frun), which #223 followed instead of this one.
-        if (!fence) { fence = 1; fchar = ch; frun = run }
-        else if (ch == fchar && run >= frun) { fence = 0 }
-        next
+      cont = 0
+      if (incomment == 2 && line ~ /^ *$/) incomment = 0
+      if (incomment) {
+        j = index(line, "-->")
+        if (!j) next
+        # The rest of the closing line is still raw HTML, never a heading.
+        line = substr(line, j + 3); incomment = 0; cont = 1
       }
-      if (fence) next
-      rest = line
-      gsub(/`[^`]*`/, "", rest)
-      while (match(rest, tag_re)) {
-        tag = substr(rest, RSTART, RLENGTH)
-        rest = substr(rest, RSTART + RLENGTH)
-        while (match(tag, attr_re)) {
-          v = substr(tag, RSTART, RLENGTH)
-          tag = substr(tag, RSTART + RLENGTH)
-          sub(/^[^=]*=[ \t]*/, "", v)
-          v = tolower(substr(v, 2, length(v) - 2))
-          if (v != "") print v
+      if (!cont) {
+        indented = line
+        sub(/^ +/, "", line)
+        # Four or more columns of indent is an indented code block, so neither a
+        # heading nor a fence — same reason fenced content is skipped below.
+        if (length(indented) - length(line) > 3) next
+        if (line ~ /^(```|~~~)/) {
+          ch = substr(line, 1, 1)
+          run = 3
+          while (substr(line, run + 1, 1) == ch) run++
+          # The closing fence must repeat the opening character at a run at least
+          # as long (CommonMark), so a ``` example inside a ~~~ block does not
+          # end the block — and a ```bash example nested inside a ````markdown
+          # block does not either (#232). Same rule as the extract_links tracker
+          # above (ffchar/frun), which #223 followed instead of this one.
+          if (!fence) { fence = 1; fchar = ch; frun = run }
+          else if (ch == fchar && run >= frun) { fence = 0 }
+          next
         }
+        if (fence) next
       }
-      if (line !~ /^#+ /) next
+      line = uncomment(mask(line))
+      prose = line
+      gsub(ph_re, " ", prose)
+      anchors(prose)
+      if (cont || line !~ /^#+ /) next
       sub(/^#+ +/, "", line)
       sub(/ +#+ *$/, "", line)   # closed ATX: `## Heading ##`
       sub(/ +$/, "", line)
       gsub(/\]\([^)]*\)/, "]", line)  # a link in a heading slugs on its text
-      line = tolower(line)
+      gsub(tag_re, "", line)
+      line = tolower(unmask(line))
       gsub(/[^a-z0-9 _-]/, "", line)
       gsub(/ /, "-", line)
       if (line == "") next
@@ -1578,6 +1669,14 @@ anchor_missing() {
   # would be the noise this class exists to avoid.
   frag="$(printf '%s' "$frag" | tr '[:upper:]' '[:lower:]')"
   grep -Fxq -- "$frag" "$TMP/slugs.$idx" && return 1
+  # `#user-content-x` names the rendered element itself: GitHub leaves such an
+  # href as written and gives every heading and explicit anchor that prefix, so
+  # the browser resolves it without GitHub's page script [gh api markdown,
+  # 2026-11-16] (CR 2366). Tried after the fragment as written, which a heading
+  # titled `User content x` mints.
+  case "$frag" in
+    user-content-?*) grep -Fxq -- "${frag#user-content-}" "$TMP/slugs.$idx" && return 1 ;;
+  esac
   return 0
 }
 
