@@ -190,6 +190,21 @@ class TestLossGroups:
         r = _run(PROVE, repo, "--base", "HEAD")
         assert r.returncode == 0, r.stdout + r.stderr
 
+    def test_a_group_target_settles_an_unused_entry_as_stale(self, tmp_path: Path):
+        """CR 2382: `file=` already says what the entry is about, so an entry
+        matching nothing is stale, not "ambiguous — add a PATH scope"."""
+        repo, _ = _loss_repo(tmp_path)
+        _write(
+            repo,
+            LOSS_ACK,
+            f"# @run file=AGENTS.md\n{WARRANT}\n"
+            "retarget :: a line reworded long before this run\n",
+        )
+        r = _run(PROVE, repo, "--base", "HEAD")
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "add a PATH" not in r.stdout, r.stdout
+        assert "1 entry(ies) matched nothing — the line each" in r.stdout, r.stdout
+
     def test_a_malformed_header_warns_and_reads_as_a_comment(self, tmp_path: Path):
         """A `# @run` line was a legal comment before this existed, so it is
         never refused: WARN, then read the entries as if it were not there."""

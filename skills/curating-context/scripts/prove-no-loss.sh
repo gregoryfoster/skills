@@ -1119,6 +1119,12 @@ def parse_ack(path, warrants, unit):
                     historical.append((warrant, content, scope, group["base"],
                                        stamp_kind(group["base"])))
                     continue
+                # A group whose target applies scopes an entry that has no
+                # PATH of its own (CR 2382): it IS about this target, so an
+                # entry matching nothing is stale, never "ambiguous — add a
+                # PATH scope" for a scope the header already gives.
+                if group and group["file"] and scope is None:
+                    scope = group["file"]
                 entries.append((warrant, content, scope))
                 continue
             malformed.append((lineno, raw.strip()[:100], why))
