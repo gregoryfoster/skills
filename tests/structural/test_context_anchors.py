@@ -279,6 +279,85 @@ class TestSlugRules:
         ]
 
 
+class TestExplicitAnchors:
+    """An `<a id>` or `<a name>` target is an anchor GitHub resolves (#624).
+
+    GitHub renders both as `user-content-<value>`, the prefix it gives heading
+    ids, and resolves `#<value>` to them [measured, `gh api markdown`, both
+    modes, 2026-11-16]. A host uses them to address a bolded rule that has no
+    heading, and left unmodelled every link to one read as a dead anchor, so the
+    `links_dead_anchors` gate could never clear there.
+    """
+
+    def _dead(self, tmp_path: Path, guide: str, *fragments: str) -> list[str]:
+        links = "\n".join(f"[l{i}](docs/GUIDE.md#{f})" for i, f in enumerate(fragments))
+        repo = _repo(tmp_path, f"# P\n\n{links}\n")
+        (repo / "docs" / "GUIDE.md").write_text(guide)
+        return _measure(repo)["links"]["dead_anchors"]
+
+    def test_a_link_resolves_against_an_explicit_id(self, tmp_path: Path):
+        guide = '# G\n\n<a id="featured-media"></a>**Rule text.**\n'
+        assert self._dead(tmp_path, guide, "featured-media") == []
+
+    def test_single_quotes_and_other_attributes(self, tmp_path: Path):
+        guide = (
+            '# G\n\n<A class="r" ID=\'rule-7\'>x</A> and <a href="#y" id="z9">y</a>\n'
+        )
+        assert self._dead(tmp_path, guide, "rule-7", "z9") == []
+
+    def test_a_link_resolves_against_an_explicit_name(self, tmp_path: Path):
+        guide = '# G\n\n<a name="legacy-rule"></a>**Rule text.**\n'
+        assert self._dead(tmp_path, guide, "legacy-rule") == []
+
+    def test_an_uppercase_id_matches_as_fragments_do(self, tmp_path: Path):
+        """Fragments are compared lowercased, so the id is emitted lowercased:
+        as written, `Rule-Seven` could never match anything."""
+        guide = '# G\n\n<a id="Rule-Seven"></a>x\n'
+        assert self._dead(tmp_path, guide, "Rule-Seven", "rule-seven") == []
+
+    def test_the_value_is_not_slugged(self, tmp_path: Path):
+        """The author chose the value; a heading's slug rules do not apply to it."""
+        guide = '# G\n\n<a id="a.b"></a>x\n'
+        assert self._dead(tmp_path, guide, "a.b", "ab") == [
+            "AGENTS.md -> docs/GUIDE.md#ab"
+        ]
+
+    def test_a_tag_inside_a_fence_does_not_count(self, tmp_path: Path):
+        guide = '# G\n\n```html\n<a id="in-fence"></a>\n```\n'
+        assert self._dead(tmp_path, guide, "in-fence") == [
+            "AGENTS.md -> docs/GUIDE.md#in-fence"
+        ]
+
+    def test_a_tag_in_an_indented_block_does_not_count(self, tmp_path: Path):
+        guide = '# G\n\ntext:\n\n    <a id="indented"></a>\n'
+        assert self._dead(tmp_path, guide, "indented") == [
+            "AGENTS.md -> docs/GUIDE.md#indented"
+        ]
+
+    def test_a_tag_in_a_code_span_does_not_count(self, tmp_path: Path):
+        """A doc describing the syntax, like this skill's own references, must not
+        mint the anchor it names."""
+        guide = '# G\n\nWrite `<a id="example"></a>` before the rule.\n'
+        assert self._dead(tmp_path, guide, "example") == [
+            "AGENTS.md -> docs/GUIDE.md#example"
+        ]
+
+    def test_other_elements_ids_are_not_modelled(self, tmp_path: Path):
+        guide = '# G\n\n<span id="s1">x</span> <data-a id="d1">\n'
+        assert self._dead(tmp_path, guide, "s1", "d1") == [
+            "AGENTS.md -> docs/GUIDE.md#d1",
+            "AGENTS.md -> docs/GUIDE.md#s1",
+        ]
+
+    def test_an_explicit_id_does_not_advance_the_repeat_counter(self, tmp_path: Path):
+        """`## X` then `<a id="x">` then `## X`: the headings are `x` and `x-1`.
+        The counter belongs to generated heading slugs only."""
+        guide = '# G\n\n## X\n\n<a id="x"></a>y\n\n## X\n'
+        assert self._dead(tmp_path, guide, "x", "x-1", "x-2") == [
+            "AGENTS.md -> docs/GUIDE.md#x-2"
+        ]
+
+
 class TestProseGuardAppliesToFragments:
     """Targets holding `<`, `>`, `*` or a comma-space are prose in link clothing.
     A fragment shaped that way is dropped, and the path around it is still
