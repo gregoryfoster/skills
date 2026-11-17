@@ -108,8 +108,10 @@ Options:
                      # @run base=<sha> file=<target>   either key, or both
                      # @run end                        back to unstamped
                    file= consults the group only on a sweep of that target;
-                   base= only on a sweep from that base — on any other, the
+                   base= only on a sweep from that commit or an ancestor of
+                   it, which spans the run that judged it — on any other, the
                    group is HISTORICAL: listed, not consulted, never stale.
+                   A malformed header is warned about and closes the group.
                    @mentions lines are untouched. An unused entry whose class
                    did not run this sweep — moved-title with nothing moved, a
                    source class with the source sweep shut — is DORMANT, not
@@ -458,11 +460,15 @@ python3 - "$TMP/base_policy" "$REL" "$TMP/docs" "$ACK_FILE" "$TMP/src" \
   "$SWEEP_SOURCE" "$BASE" "$SEAM_INTERVAL" "$DOCS_DIR" "$BASE_SHA" <<'PY' || RC=$?
 import os
 import re
+import subprocess
 import sys
 
 (base_policy_path, policy_rel, docs_list, ack_file, src_list,
  sweep_source, base_ref, seam_interval, docs_dir, base_sha) = sys.argv[1:11]
 base_sha = base_sha.lower()
+# The swept file as a `file=` names it, normalised as prove-no-loss.sh
+# normalises its own (CR 2378).
+run_target = os.path.normpath(policy_rel)
 
 with open(base_policy_path, encoding="utf-8", errors="replace") as fh:
     base_lines = fh.read().splitlines()
@@ -1013,20 +1019,23 @@ def under(path, prefix):
 # interval-class ack read "matched nothing" on every sweep after its run merged
 # (#579 pruned 18 such acks by hand). `file=` holds the group to sweeps of that
 # target — the scope a seam ack's own `PATH ::` cannot give, since that PATH is
-# the HIT's file. `base=` holds it to sweeps from that base; on any other the
-# group is HISTORICAL: not consulted, counted on its own line, never stale.
+# the HIT's file. `base=` holds it to sweeps from that commit or an ancestor of
+# it (stamp_kind()); on any other the group is HISTORICAL: not consulted,
+# counted on its own line, never stale.
 # `@mentions` lines are untouched — they name their swept file and never expire.
 # A comment to every older reader, so an unstamped reading is today's reading;
 # a malformed header is WARNED about and read as the comment it always was. The
 # twin of prove-no-loss.sh's reader: same grammar, same consequences.
-RUN_HEADER = re.compile(r"^#\s*@run\b(.*)$")
+RUN_HEADER = re.compile(r"^#\s*(@run)\b(.*)$", re.IGNORECASE)
 RUN_BASE = re.compile(r"[0-9a-fA-F]{7,40}")
 
 
-def parse_run_header(rest):
+def parse_run_header(word, rest):
     """`# @run` arguments -> ("end", None), ("group", {base, file}), or
-    ("bad", why)."""
-    toks = rest.split()
+    ("bad", why). A trailing `# ...` is a comment on the header (CR 2376)."""
+    if word != "@run":
+        return "bad", f"`{word}` must be written `@run`"
+    toks = re.sub(r"\s#.*$", "", rest).split()
     if toks == ["end"]:
         return "end", None
     if not toks:
@@ -1040,8 +1049,55 @@ def parse_run_header(rest):
             return "bad", f"{k}= given twice"
         if k == "base" and not RUN_BASE.fullmatch(v):
             return "bad", f"base={v} is not 7 to 40 hex digits"
-        group[k] = v.lower() if k == "base" else v
+        group[k] = v.lower() if k == "base" else os.path.normpath(v)
     return "group", group
+
+
+# How a stamp relates to this run's base (CR 2373). A prefix test was the
+# first version, and it re-reported every judged line on a sweep from an OLDER
+# base that spans the run: a weekly sweep whose last ledger row predates it,
+# or a re-verification from further back.
+#
+#   current    the base is the stamp or an ancestor of it: the sweep spans
+#              the run that judged the group, so its judgements apply
+#   past       the stamp is a proper ancestor of the base: that run is behind
+#              this one, and a line its entries reach now is a NEW loss
+#   unrelated  neither, or the stamp names nothing here: another branch's
+#              run, or this one before a rebase rewrote its branch point
+_STAMP_KINDS = {}
+
+
+def _git_rc(*args):
+    r = subprocess.run(["git", *args], capture_output=True, text=True)
+    if r.returncode > 1:
+        print(f"WARN git {' '.join(args)}: {r.stderr.strip()}", file=sys.stderr)
+    return r.returncode, r.stdout.strip()
+
+
+def stamp_kind(stamp):
+    if stamp in _STAMP_KINDS:
+        return _STAMP_KINDS[stamp]
+    if not base_sha:
+        if not _STAMP_KINDS:
+            # CR 2380: a tree, not a commit, has no history to place a stamp in.
+            print("WARN this run's base is not a commit, so no `# @run base=` "
+                  "group can apply: each reads as unrelated", file=sys.stderr)
+        kind = "unrelated"
+    elif base_sha.startswith(stamp):
+        kind = "current"
+    else:
+        rc, full = _git_rc("rev-parse", "--verify", "--quiet",
+                           stamp + "^{commit}")
+        if rc != 0 or not full:
+            kind = "unrelated"
+        elif _git_rc("merge-base", "--is-ancestor", base_sha, full)[0] == 0:
+            kind = "current"
+        elif _git_rc("merge-base", "--is-ancestor", full, base_sha)[0] == 0:
+            kind = "past"
+        else:
+            kind = "unrelated"
+    _STAMP_KINDS[stamp] = kind
+    return kind
 
 
 patterns, groups = [], []
@@ -1056,20 +1112,24 @@ try:
             if raw.startswith("#"):
                 m = RUN_HEADER.match(raw)
                 if m:
-                    kind, val = parse_run_header(m.group(1))
+                    kind, val = parse_run_header(m.group(1), m.group(2))
                     if kind == "bad":
+                        # Closed, not carried (CR 2376), as prove-no-loss.sh.
                         print(f"WARN {ack_file}:{n}: not a `# @run` group "
-                              f"header ({val}) — read as a plain comment",
+                              f"header ({val}) — read as a plain comment, and "
+                              "the group above it is closed: entries below "
+                              "are unstamped until the next header",
                               file=sys.stderr)
+                        run = None
                     else:
                         run = val
                 continue
             if raw.startswith(GROUP_KEY + " ") or raw == GROUP_KEY:
                 groups.append(parse_group(raw, n))
-            elif run and run["file"] and run["file"] not in policy_rel:
+            elif run and run["file"] and run["file"] not in run_target:
                 scoped_out.append((raw, run["file"]))
-            elif run and run["base"] and not base_sha.startswith(run["base"]):
-                historical.append((raw, run["base"]))
+            elif run and run["base"] and stamp_kind(run["base"]) != "current":
+                historical.append((raw, run["base"], stamp_kind(run["base"])))
             else:
                 patterns.append(raw)
 except OSError:
@@ -1121,6 +1181,11 @@ def _is_source_path(p_path):
     """A `PATH ::` that only a source class can hit: not markdown, not the
     docs tree. Anything else keeps today's reading."""
     if p_path.endswith((".md", ".markdown")) or p_path == policy_rel:
+        return False
+    # A seam ack's PATH is a SUBSTRING of the hit's path, so `RUNBOOK` reaches
+    # docs/RUNBOOK.md: a PATH that any doc or the policy file contains can be a
+    # doc hit, and keeps today's reading (CR 2375).
+    if p_path in policy_rel or any(p_path in d for d in docs):
         return False
     root = docs_dir.rstrip("/")
     return not (root and (p_path == root or p_path.startswith(root + "/")))
@@ -1306,13 +1371,23 @@ if scoped_out:
           f"`# @run file=` — not consulted for {policy_rel}:")
     for p, target in scoped_out:
         print(f"  {target} :: {p[:60]}")
-if historical:
-    stamps = ", ".join(sorted({b for _, b in historical}))
-    print(f"\n{len(historical)} entry(ies) stamped for another base ({stamps}) "
-          "— historical: judged\nagainst that run's base, so not consulted "
-          "here and not stale. Prune a group once\nthe run it judged is on "
-          "main, or re-stamp it if this sweep continues that run:")
-    for p, _ in historical:
+# Split by what the stamp is to this base (CR 2373): a PAST group's run is
+# behind this sweep, an UNRELATED one is another branch's or this run's own
+# from before a rebase — and only that one is ever worth re-stamping.
+for kind, how, advice in (
+        ("past", "an ancestor of this one", "that run is behind this base. "
+         "Prune a group once its run is on main:"),
+        ("unrelated", "neither an ancestor nor a descendant of this one, or "
+         "not in this repo", "another branch's run, or this one before a "
+         "rebase. Re-stamp it only if this sweep continues that one:")):
+    sel = [(p, b) for p, b, k in historical if k == kind]
+    if not sel:
+        continue
+    stamps = ", ".join(sorted({b for _, b in sel}))
+    print(f"\n{len(sel)} entry(ies) stamped for another base, {how} "
+          f"({stamps}) —\nhistorical: not consulted here, and not stale. "
+          f"{advice}")
+    for p, _ in sel:
         print(f"  {p[:70]}")
 
 # ABOVE the two counts, which stay the last two lines. The three readers in the

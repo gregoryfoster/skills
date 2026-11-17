@@ -147,13 +147,16 @@ Warranted losses (.skills/context-loss-ok):
     ...entries...
     # @run end                          back to unstamped entries
 
-  A group runs to the next `# @run` line. base= (7+ hex) is consulted only on a
-  run whose --base, as a full commit, starts with it; on any other run its
-  entries are HISTORICAL — listed on their own, never consulted, never stale.
-  file= scopes the whole group the way PATH scopes an entry. When a line is
-  unaccounted for, the report prints the header for this run. A malformed
-  header is warned about and read as the comment it is to older readers, and
-  an unstamped entry reads as it always did. .skills/context-claims-ok and
+  A group runs to the next `# @run` line. base= (7+ hex) is consulted when
+  --base is that commit or an ancestor of it, so the run spans the one that
+  judged the group. When the stamp is an ancestor of --base, that run is
+  behind this one, and a line its entries reach is a new loss; when it is
+  neither, it is another branch's run. Either way its entries are HISTORICAL:
+  listed on their own, never consulted, never stale. file= scopes the whole
+  group the way PATH scopes an entry. When a line is unaccounted for, the
+  report prints the header for this run. A malformed header is warned about,
+  read as a comment, and closes the group above it; an unstamped entry reads
+  as it always did. .skills/context-claims-ok and
   .skills/context-seams-ok take the same header.
 
   WARRANT names WHY, from a closed set — an unrecognised one is refused rather
@@ -547,12 +550,17 @@ python3 - "$TMP/before" "$POLICY" "$TMP/dests.u" "$SHOW_RELOCATED" "$ACK_FILE" \
 import json
 import os
 import re
+import subprocess
 import sys
 from collections import Counter
 
 (before_path, policy, dests_path, show, ack_path, docs_dir, claims_on,
  claims_ack_path, candidates_out, base_sha) = sys.argv[1:11]
 base_sha = base_sha.lower()
+# The target as a `file=` names it: `--file ./AGENTS.md` and `AGENTS.md` are
+# one target, and the header this script prints must be one check-seams.sh
+# reads the same way (CR 2378).
+run_target = os.path.normpath(policy)
 claims_on = claims_on == "1"
 
 # Why an unaccounted line was legitimate. A CLOSED set on purpose: the point of
@@ -942,9 +950,10 @@ def reaches(content, line):
 #   ...entries...
 #   # @run end                          back to unstamped
 #
-# A group runs to the next `# @run` line. `base=` (7+ hex) is consulted only on
-# a run whose --base, as a full commit, starts with it; on any other run the
-# group is HISTORICAL — not consulted, counted on its own line, never stale.
+# A group runs to the next `# @run` line. `base=` (7+ hex) is consulted on a
+# run whose --base is that commit or an ancestor of it — see stamp_kind() —
+# and on any other run the group is HISTORICAL: not consulted, counted on its
+# own line, never stale.
 # `file=` is a PATH scope for every entry in the group, an entry's own PATH
 # still applying too. A comment, so every reader that predates it — an older
 # vendored copy of this script, check-counts.sh, the eval miner — reads the
@@ -952,14 +961,16 @@ def reaches(content, line):
 # like a header and is not one is WARNED about and read as the comment it
 # always was: refusing it would turn a legal ledger into an error. The same
 # grammar is read by check-seams.sh; the two readers are twins.
-RUN_HEADER = re.compile(r"^#\s*@run\b(.*)$")
+RUN_HEADER = re.compile(r"^#\s*(@run)\b(.*)$", re.IGNORECASE)
 RUN_BASE = re.compile(r"[0-9a-fA-F]{7,40}")
 
 
-def parse_run_header(rest):
+def parse_run_header(word, rest):
     """`# @run` arguments -> ("end", None), ("group", {base, file}), or
-    ("bad", why)."""
-    toks = rest.split()
+    ("bad", why). A trailing `# ...` is a comment on the header (CR 2376)."""
+    if word != "@run":
+        return "bad", f"`{word}` must be written `@run`"
+    toks = re.sub(r"\s#.*$", "", rest).split()
     if toks == ["end"]:
         return "end", None
     if not toks:
@@ -973,8 +984,55 @@ def parse_run_header(rest):
             return "bad", f"{k}= given twice"
         if k == "base" and not RUN_BASE.fullmatch(v):
             return "bad", f"base={v} is not 7 to 40 hex digits"
-        group[k] = v.lower() if k == "base" else v
+        group[k] = v.lower() if k == "base" else os.path.normpath(v)
     return "group", group
+
+
+# How a stamp relates to this run's base (CR 2373). A prefix test was the
+# first version, and it re-reported every judged line on a sweep from an OLDER
+# base that spans the run: a weekly sweep whose last ledger row predates it,
+# or a re-verification from further back.
+#
+#   current    the base is the stamp or an ancestor of it: the sweep spans
+#              the run that judged the group, so its judgements apply
+#   past       the stamp is a proper ancestor of the base: that run is behind
+#              this one, and a line its entries reach now is a NEW loss
+#   unrelated  neither, or the stamp names nothing here: another branch's
+#              run, or this one before a rebase rewrote its branch point
+_STAMP_KINDS = {}
+
+
+def _git_rc(*args):
+    r = subprocess.run(["git", *args], capture_output=True, text=True)
+    if r.returncode > 1:
+        print(f"WARN git {' '.join(args)}: {r.stderr.strip()}", file=sys.stderr)
+    return r.returncode, r.stdout.strip()
+
+
+def stamp_kind(stamp):
+    if stamp in _STAMP_KINDS:
+        return _STAMP_KINDS[stamp]
+    if not base_sha:
+        if not _STAMP_KINDS:
+            # CR 2380: a tree, not a commit, has no history to place a stamp in.
+            print("WARN this run's base is not a commit, so no `# @run base=` "
+                  "group can apply: each reads as unrelated", file=sys.stderr)
+        kind = "unrelated"
+    elif base_sha.startswith(stamp):
+        kind = "current"
+    else:
+        rc, full = _git_rc("rev-parse", "--verify", "--quiet",
+                           stamp + "^{commit}")
+        if rc != 0 or not full:
+            kind = "unrelated"
+        elif _git_rc("merge-base", "--is-ancestor", base_sha, full)[0] == 0:
+            kind = "current"
+        elif _git_rc("merge-base", "--is-ancestor", full, base_sha)[0] == 0:
+            kind = "past"
+        else:
+            kind = "unrelated"
+    _STAMP_KINDS[stamp] = kind
+    return kind
 
 
 def parse_ack(path, warrants, unit):
@@ -1015,11 +1073,17 @@ def parse_ack(path, warrants, unit):
             if raw.lstrip().startswith("#"):
                 m = RUN_HEADER.match(raw.strip())
                 if m:
-                    kind, val = parse_run_header(m.group(1))
+                    kind, val = parse_run_header(m.group(1), m.group(2))
                     if kind == "bad":
+                        # Closed, not carried: a header that was meant to end
+                        # or replace the group above must not leave its stamp
+                        # on the entries below it (CR 2376).
                         print(f"WARN {path}:{lineno}: not a `# @run` group "
-                              f"header ({val}) — read as a plain comment",
+                              f"header ({val}) — read as a plain comment, and "
+                              "the group above it is closed: entries below "
+                              "are unstamped until the next header",
                               file=sys.stderr)
+                        group = None
                     else:
                         group = val
                 continue
@@ -1048,11 +1112,12 @@ def parse_ack(path, warrants, unit):
                 # out under that file's name, which is the more useful thing to
                 # say on a run against this one. Its own PATH, when it has one
                 # and the group's target applies, still narrows it.
-                if group and group["file"] and not applies_here(group["file"]):
+                if group and group["file"] and group["file"] not in run_target:
                     scope = group["file"]
-                elif group and group["base"] and not base_sha.startswith(
-                        group["base"]):
-                    historical.append((warrant, content, scope, group["base"]))
+                elif group and group["base"] and stamp_kind(
+                        group["base"]) != "current":
+                    historical.append((warrant, content, scope, group["base"],
+                                       stamp_kind(group["base"])))
                     continue
                 entries.append((warrant, content, scope))
                 continue
@@ -1739,20 +1804,30 @@ if ambiguous:
     for warrant, content, _ in ambiguous:
         print(f"    {warrant} :: {content[:70]}", file=out)
 
+HISTORICAL_KINDS = (
+    ("past", "an ancestor of this one", "that run is behind this base. "
+     "Prune a group once its run is on main:"),
+    ("unrelated", "neither an ancestor nor a descendant of this one, or not "
+     "in this repo", "another branch's run, or this one before a rebase. "
+     "Re-stamp it only if this run continues that one:"),
+)
+
+
 def report_historical(rows, noun, indent="  "):
-    """A `# @run base=` group stamped for another base (#579): that run's
+    """A `# @run base=` group stamped for another base (#579): another run's
     judgements, never consulted here, and never called stale — the line each
     warranted is gone because that run is what removed it."""
-    if not rows:
-        return
-    stamps = ", ".join(sorted({r[3] for r in rows}))
-    print(f"\n{indent}{len(rows)} {noun}(ies) stamped for another base "
-          f"({stamps}) — historical:\n{indent}judged against that run's base, "
-          "so not consulted here and not stale.\n"
-          f"{indent}Prune a group once the run it judged is on main:", file=out)
-    for warrant, content, scope, _ in rows:
-        where = f"{scope} :: " if scope else ""
-        print(f"{indent}  {where}{warrant} :: {content[:60]}", file=out)
+    for kind, how, advice in HISTORICAL_KINDS:
+        sel = [r for r in rows if r[4] == kind]
+        if not sel:
+            continue
+        stamps = ", ".join(sorted({r[3] for r in sel}))
+        print(f"\n{indent}{len(sel)} {noun}(ies) stamped for another base, "
+              f"{how} ({stamps}) —\n{indent}historical: not consulted here, "
+              f"and not stale. {advice}", file=out)
+        for warrant, content, scope, _, _ in sel:
+            where = f"{scope} :: " if scope else ""
+            print(f"{indent}  {where}{warrant} :: {content[:60]}", file=out)
 
 
 # Said out loud rather than silently skipped. An entry this run never consulted
@@ -1867,18 +1942,27 @@ else:
     print("\nOK — every line is either still inline or relocated verbatim.",
           file=out)
 
-# A rebase moves a run's base, and its own stamped group then sits out as
-# historical: the run fails rather than passes, which is the safe direction,
-# but the report must say why the warrants it wrote stopped counting.
-if (unwarranted and historical) or (claims_unwarranted and claim_historical):
-    print("\nSome entries above are stamped for another base and were not "
-          "consulted. If this\nrun continues that one — a rebase moved its "
-          "base — re-stamp the group:\nbase=" + (base_sha[:12] or "<this base>")
+# Why a stamped warrant stopped counting, by what the stamp is to this base.
+# PAST is the hazard the stamp exists for: a later run losing a line an older
+# run's entry reaches. Advising a re-stamp there would wave the loss through
+# on that older judgement, so it gets its own warrant instead (CR 2374). Only
+# an UNRELATED stamp can be this run's own group from before a rebase.
+_failed = ((historical if unwarranted else [])
+           + (claim_historical if claims_unwarranted else []))
+if any(r[4] == "past" for r in _failed):
+    print("\nEntries stamped at an ancestor of this base were not consulted: "
+          "the run that judged\nthem is behind this one, so a line one of "
+          "them reaches is a new loss here and\nneeds its own warrant.",
+          file=out)
+if any(r[4] == "unrelated" for r in _failed):
+    print("\nEntries stamped for an unrelated base were not consulted. If "
+          "this run continues\nthat one — a rebase rewrote its branch point "
+          "— re-stamp the group: base=" + (base_sha[:12] or "<this base>")
           + ".", file=out)
 # The header for this run's own entries, so stamping costs nothing to work out.
 if base_sha and (lost or (claims_on and dropped_atoms)):
     print(f"\nStamp this run's new entries with:\n  # @run base={base_sha[:12]} "
-          f"file={policy}", file=out)
+          f"file={run_target}", file=out)
 
 print(f"\nduplicated: {len(duplicated)}", file=out)
 print(f"loss_warranted: {len(warranted)}", file=out)

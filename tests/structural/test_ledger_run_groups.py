@@ -164,7 +164,10 @@ class TestLossGroups:
         r = _run(PROVE, repo, "--base", "HEAD")
         assert r.returncode == 3, r.stdout + r.stderr
         assert "LOST" in r.stdout
-        assert "re-stamp" in r.stdout, r.stdout
+        # Re-stamping to this base is exactly what would wave the loss
+        # through, so the advice for a PAST stamp is its own warrant (CR 2374).
+        assert "re-stamp" not in r.stdout, r.stdout
+        assert "own warrant" in r.stdout, r.stdout
 
     def test_run_end_returns_to_unstamped(self, tmp_path: Path):
         repo, _ = _loss_repo(tmp_path)
@@ -269,15 +272,22 @@ class TestAnOlderReaderSeesAComment:
 # --- the seam ledger ---------------------------------------------------------
 
 
-def _seam_repo(tmp_path: Path) -> Path:
+BUS_LINE = "The workers connect to the message bus directly at startup."
+
+
+def _seam_repo(tmp_path: Path, relocate: bool = False) -> Path:
     """Two standing back-references and one tracked source mention. Nothing
-    leaves the policy file, so the source classes cannot run."""
+    leaves the policy file, so the source classes cannot run — unless
+    RELOCATE demotes a body line into the docs tree, which opens them."""
     repo = _init(tmp_path, "seams")
-    _write(repo, "AGENTS.md", "# Guide\n\n## Build\n\nrun make\n")
+    _write(repo, "AGENTS.md", f"# Guide\n\n## Build\n\nrun make\n\n{BUS_LINE}\n")
     _write(repo, "docs/A.md", "# A\n\nSee AGENTS.md for the build.\n")
     _write(repo, "docs/B.md", "# B\n\nAlso AGENTS.md covers the rest.\n")
     _write(repo, "src/app.py", '"""Reads AGENTS.md at startup."""\n')
     _commit(repo, "base")
+    if relocate:
+        _write(repo, "AGENTS.md", "# Guide\n\n## Build\n\nrun make\n")
+        _write(repo, "docs/BUS.md", f"# Bus\n\n{BUS_LINE}\n")
     return repo
 
 
@@ -328,7 +338,7 @@ class TestSeamGroups:
     def test_a_mentions_group_is_untouched_by_a_run_header(self, tmp_path: Path):
         """`@mentions` already names its swept file and never expires; a
         stamp around it must not retire it."""
-        repo = _seam_repo(tmp_path)
+        repo = _seam_repo(tmp_path, relocate=True)
         _write(
             repo,
             SEAM_ACK,
@@ -336,6 +346,9 @@ class TestSeamGroups:
             "@mentions AGENTS.md src :: the app reads the policy file\n",
         )
         r = _run(SEAMS, repo, "--base", "HEAD")
+        # The sweep must have opened, or the group had nothing to cover and
+        # the test would pass with the exemption removed (CR 2379).
+        assert "1 filename mention(s) acknowledged by group" in r.stdout, r.stdout
         assert r.returncode == 0, r.stdout + r.stderr
 
 
@@ -376,6 +389,151 @@ class TestDormantSeamAcks:
         ack whose line changed is the expiry the file promises."""
         repo = _seam_repo(tmp_path)
         _write(repo, SEAM_ACK, f"{BOTH_ACKS}docs/A.md :: a line long since gone\n")
+        r = _run(SEAMS, repo, "--base", "HEAD")
+        assert "1 entry(ies) matched nothing" in r.stdout, r.stdout
+        assert "dormant" not in r.stdout
+
+
+# --- review round (CR 2373-2380) --------------------------------------------
+
+
+def _spanning_repo(tmp_path: Path) -> tuple[Path, str, str]:
+    """A0 -> A: the run that judged LOST stamped A, its branch point. A sweep
+    from A0 spans that run, as a weekly --base-ledger sweep whose last row
+    predates it does, or a re-verification from an older point."""
+    repo = _init(tmp_path)
+    _write(repo, "AGENTS.md", f"# Guide\n\n{KEPT}\n\n{LOST}\n")
+    a0 = _commit(repo, "older")
+    _write(repo, "README.md", "between\n")
+    a = _commit(repo, "the run's branch point")
+    _write(repo, "AGENTS.md", f"# Guide\n\n{KEPT}\n")
+    return repo, a0, a
+
+
+class TestStampAncestry:
+    """CR 2373: a group was consulted only when the base STARTED WITH its
+    stamp, so a sweep from an older base that spans the run re-reported every
+    judged line, where bd6aaa2c passed."""
+
+    def test_a_base_older_than_the_stamp_consults_the_group(self, tmp_path: Path):
+        repo, a0, a = _spanning_repo(tmp_path)
+        _write(repo, LOSS_ACK, f"# @run base={a[:12]}\n{WARRANT}\n")
+        r = _run(PROVE, repo, "--base", a0)
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "loss_warranted: 1" in r.stdout
+
+    def test_a_seam_sweep_older_than_the_stamp_consults_the_group(self, tmp_path: Path):
+        repo = _seam_repo(tmp_path)
+        older = _git(repo, "rev-parse", "HEAD")
+        _write(repo, "README.md", "between\n")
+        stamp = _commit(repo, "the run's branch point")
+        _write(repo, SEAM_ACK, f"# @run base={stamp}\n{BOTH_ACKS}")
+        r = _run(SEAMS, repo, "--base", older)
+        assert r.returncode == 0, r.stdout + r.stderr
+
+    def test_a_base_ledger_sweep_resolves_the_base_for_stamps(self, tmp_path: Path):
+        repo = _seam_repo(tmp_path)
+        head = _git(repo, "rev-parse", "HEAD")
+        _write(repo, ".skills/ledger.jsonl", f'{{"repo_commit": "{head}"}}\n')
+        _write(repo, SEAM_ACK, f"# @run base={head[:10]}\n{BOTH_ACKS}")
+        r = _run(SEAMS, repo, "--base-ledger", ".skills/ledger.jsonl")
+        assert r.returncode == 0, r.stdout + r.stderr
+
+    def test_uppercase_hex_matches(self, tmp_path: Path):
+        repo, base = _loss_repo(tmp_path)
+        _write(repo, LOSS_ACK, f"# @run base={base[:10].upper()}\n{WARRANT}\n")
+        r = _run(PROVE, repo, "--base", "HEAD")
+        assert r.returncode == 0, r.stdout + r.stderr
+
+    def test_an_unrelated_stamp_is_told_to_re_stamp(self, tmp_path: Path):
+        """A stamp this base neither descends from nor precedes: another
+        branch's run, or this run before a rebase rewrote its branch point."""
+        repo, base = _loss_repo(tmp_path)
+        _git(repo, "checkout", "-q", "--orphan", "other")
+        _write(repo, "OTHER.md", "x\n")
+        _git(repo, "add", "OTHER.md")
+        _git(repo, "commit", "-qm", "unrelated root")
+        side = _git(repo, "rev-parse", "HEAD")
+        _git(repo, "checkout", "-q", "-f", base)
+        _write(repo, "AGENTS.md", f"# Guide\n\n{KEPT}\n")
+        _write(repo, LOSS_ACK, f"# @run base={side[:12]}\n{WARRANT}\n")
+        r = _run(PROVE, repo, "--base", base)
+        assert r.returncode == 3, r.stdout + r.stderr
+        assert "re-stamp" in r.stdout, r.stdout
+
+    def test_a_tree_as_base_warns_that_stamps_cannot_apply(self, tmp_path: Path):
+        """CR 2380: a tree has no commit to compare a stamp with."""
+        repo, base = _loss_repo(tmp_path)
+        tree = _git(repo, "rev-parse", "HEAD^{tree}")
+        _write(repo, LOSS_ACK, f"# @run base={base}\n{WARRANT}\n")
+        r = _run(PROVE, repo, "--base", tree)
+        assert "WARN" in r.stderr and "not a commit" in r.stderr, r.stderr
+
+
+class TestHeaderEdges:
+    """CR 2376: a header that was not one left the previous group open, while
+    the WARN said it was read as a plain comment."""
+
+    def test_a_malformed_header_closes_the_open_group(self, tmp_path: Path):
+        repo, _ = _loss_repo(tmp_path)
+        _write(
+            repo,
+            LOSS_ACK,
+            f"# @run base=0000000\n# @run base=abc1234 note=pr42\n{WARRANT}\n",
+        )
+        r = _run(PROVE, repo, "--base", "HEAD")
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "WARN" in r.stderr and "unstamped" in r.stderr, r.stderr
+
+    def test_a_miscased_header_warns_and_closes(self, tmp_path: Path):
+        repo, _ = _loss_repo(tmp_path)
+        _write(repo, LOSS_ACK, f"# @run base=0000000\n# @RUN end\n{WARRANT}\n")
+        r = _run(PROVE, repo, "--base", "HEAD")
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "WARN" in r.stderr and "@RUN" in r.stderr, r.stderr
+
+    def test_a_trailing_comment_on_a_header_is_tolerated(self, tmp_path: Path):
+        repo, _ = _loss_repo(tmp_path)
+        _write(
+            repo,
+            LOSS_ACK,
+            f"# @run base=0000000\n# @run end  # closes the PR 41 group\n{WARRANT}\n",
+        )
+        r = _run(PROVE, repo, "--base", "HEAD")
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "WARN" not in r.stderr, r.stderr
+
+    def test_a_header_after_an_open_group_replaces_it(self, tmp_path: Path):
+        """Keys do not carry over: a file-only header after a base group
+        leaves its entries unstamped by base."""
+        repo, _ = _loss_repo(tmp_path)
+        _write(
+            repo,
+            LOSS_ACK,
+            f"# @run base=0000000\n# @run file=AGENTS.md\n{WARRANT}\n",
+        )
+        r = _run(PROVE, repo, "--base", "HEAD")
+        assert r.returncode == 0, r.stdout + r.stderr
+
+    def test_the_stamp_names_a_normalised_target(self, tmp_path: Path):
+        """CR 2378: `--file ./AGENTS.md` printed `file=./AGENTS.md`."""
+        repo, base = _loss_repo(tmp_path)
+        r = _run(PROVE, repo, "--base", "HEAD", "--file", "./AGENTS.md")
+        assert f"# @run base={base[:12]} file=AGENTS.md" in r.stdout, r.stdout
+        _write(repo, LOSS_ACK, f"# @run file=AGENTS.md\n{WARRANT}\n")
+        r = _run(PROVE, repo, "--base", "HEAD", "--file", "./AGENTS.md")
+        assert r.returncode == 0, r.stdout + r.stderr
+
+
+class TestDormantNeedsASourcePath:
+    def test_an_extension_less_path_naming_a_doc_is_not_dormant(self, tmp_path: Path):
+        """CR 2375: a seam ack's PATH is a substring of the hit's path, so
+        `RUNBOOK` reaches docs/RUNBOOK.md. A stale ack for it was called
+        dormant and kept; it is stale, and bd6aaa2c said so."""
+        repo = _seam_repo(tmp_path)
+        _write(repo, "docs/RUNBOOK.md", "# Runbook\n\nNothing here.\n")
+        _commit(repo, "runbook")
+        _write(repo, SEAM_ACK, f"{BOTH_ACKS}RUNBOOK :: a line long since gone\n")
         r = _run(SEAMS, repo, "--base", "HEAD")
         assert "1 entry(ies) matched nothing" in r.stdout, r.stdout
         assert "dormant" not in r.stdout
