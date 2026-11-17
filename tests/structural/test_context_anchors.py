@@ -357,6 +357,94 @@ class TestExplicitAnchors:
             "AGENTS.md -> docs/GUIDE.md#x-2"
         ]
 
+    # CR 2365: text GitHub renders as no anchor must mint none. Each case was
+    # checked against `gh api markdown` (document mode, 2026-11-16).
+
+    def test_a_tag_in_a_double_backtick_span_does_not_count(self, tmp_path: Path):
+        guide = '# G\n\nWrite `` <a id="dbl"></a> `` to name it.\n'
+        assert self._dead(tmp_path, guide, "dbl") == ["AGENTS.md -> docs/GUIDE.md#dbl"]
+
+    def test_a_tag_in_an_html_comment_does_not_count(self, tmp_path: Path):
+        guide = '# G\n\n<!-- <a id="cmt"></a> -->\n\n<!--\n<a id="cmt2"></a>\n## Hidden\n-->\n'
+        assert self._dead(tmp_path, guide, "cmt", "cmt2", "hidden") == [
+            "AGENTS.md -> docs/GUIDE.md#cmt",
+            "AGENTS.md -> docs/GUIDE.md#cmt2",
+            "AGENTS.md -> docs/GUIDE.md#hidden",
+        ]
+
+    def test_a_comment_opener_in_a_code_span_opens_nothing(self, tmp_path: Path):
+        guide = "# G\n\nWrite `<!--` to start one.\n\n## Real\n"
+        assert self._dead(tmp_path, guide, "real") == []
+
+    def test_an_id_inside_another_attributes_value_does_not_count(self, tmp_path: Path):
+        guide = '# G\n\n<a href="#x" title=" id=\'inattr\'">z</a>\n'
+        assert self._dead(tmp_path, guide, "inattr") == [
+            "AGENTS.md -> docs/GUIDE.md#inattr"
+        ]
+
+    def test_a_gt_inside_a_quoted_value_does_not_end_the_tag(self, tmp_path: Path):
+        guide = '# G\n\n<a title="a>b" id="gt">z</a>\n'
+        assert self._dead(tmp_path, guide, "gt") == []
+
+    # CR 2366: anchors GitHub does mint.
+
+    def test_unquoted_and_spaced_values_count(self, tmp_path: Path):
+        guide = '# G\n\n<a id=unq>u</a> <a ID = "spaced">s</a>\n'
+        assert self._dead(tmp_path, guide, "unq", "spaced") == []
+
+    def test_a_user_content_fragment_resolves(self, tmp_path: Path):
+        """GitHub leaves `href="#user-content-plain"` as written, and the
+        element's id IS `user-content-plain`, so the browser resolves it without
+        GitHub's page script [gh api markdown, 2026-11-16]. A heading's id has
+        the same prefix."""
+        guide = '# G\n\n<a id="plain"></a>p\n\n## Setup\n\n## User content x\n'
+        assert self._dead(
+            tmp_path,
+            guide,
+            "user-content-plain",
+            "user-content-setup",
+            "user-content-x",
+            "user-content-gone",
+        ) == ["AGENTS.md -> docs/GUIDE.md#user-content-gone"]
+
+
+class TestHeadingsWithHtml:
+    """CR 2367: GitHub slugs a heading on its rendered text, so a tag in it adds
+    nothing to the slug. Each expected slug is GitHub's own [gh api markdown,
+    document mode, 2026-11-16]."""
+
+    def _dead(self, tmp_path: Path, heading: str, *fragments: str) -> list[str]:
+        links = "\n".join(f"[l{i}](docs/GUIDE.md#{f})" for i, f in enumerate(fragments))
+        repo = _repo(tmp_path, f"# P\n\n{links}\n")
+        (repo / "docs" / "GUIDE.md").write_text(f"# G\n\n{heading}\n\nx\n")
+        return _measure(repo)["links"]["dead_anchors"]
+
+    def test_an_anchor_in_a_heading_leaves_the_title_slug(self, tmp_path: Path):
+        heading = '## <a id="hd"></a>Title'
+        assert self._dead(tmp_path, heading, "title", "hd", "a-idhdatitle") == [
+            "AGENTS.md -> docs/GUIDE.md#a-idhdatitle"
+        ]
+
+    @pytest.mark.parametrize(
+        ("heading", "slug"),
+        [
+            ("## Mixed <code>code</code> and <em>em</em>", "mixed-code-and-em"),
+            ('## Br<br/>eak <span class="x">in</span> it', "break-in-it"),
+            ("## Note <!-- hidden --> shown", "note--shown"),
+            ("## The `<a id>` tag", "the-a-id-tag"),
+            ("## See <https://example.com>", "see-httpsexamplecom"),
+            ("## a < b > c", "a--b--c"),
+            ("## Use `` ` `` here", "use--here"),
+            # Not raw HTML: a comma cannot be in an attribute name, so it's text.
+            (
+                "## supersedes: <relative path to prior plan, if this replaces one>",
+                "supersedes-relative-path-to-prior-plan-if-this-replaces-one",
+            ),
+        ],
+    )
+    def test_the_slug_is_githubs(self, tmp_path: Path, heading: str, slug: str):
+        assert self._dead(tmp_path, heading, slug) == []
+
 
 class TestProseGuardAppliesToFragments:
     """Targets holding `<`, `>`, `*` or a comma-space are prose in link clothing.
