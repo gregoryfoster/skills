@@ -134,7 +134,8 @@ tell an ack that cannot match from one that went stale:
   this sweep is listed as dormant, with the reason. Examples: moved-title when
   nothing moved, or a source class with the source sweep shut. The class is
   known from a plain entry that starts with its name, or from a `PATH ::` entry
-  whose PATH is neither markdown nor under the docs root.
+  whose PATH is neither markdown nor under the docs root, and is part of no
+  doc's path or the policy file's: `RUNBOOK ::` can hit `docs/RUNBOOK.md`.
 - **Historical, by a group header.** It is the grammar `prove-no-loss.sh`
   reads:
 

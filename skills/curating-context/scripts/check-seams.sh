@@ -117,7 +117,8 @@ Options:
                    source class with the source sweep shut — is DORMANT, not
                    stale. The class is known from a plain entry that starts
                    with it, or a PATH :: entry whose PATH is neither markdown
-                   nor under the docs root.
+                   nor under the docs root, and is part of no doc's path or
+                   the policy file's (`RUNBOOK ::` can hit docs/RUNBOOK.md).
   -h, --help       Show this help and exit 0.
 
 What it reports, in four classes:
