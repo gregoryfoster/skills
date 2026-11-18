@@ -933,6 +933,35 @@ def test_an_expired_narrower_not_restarter_glob_doesnt_shadow_a_live_broader_one
     assert (f["exception_line"], f["review_by"]) == (2, "2099-01-01")
 
 
+def test_a_restarter_finding_describes_the_way_its_exception_key_came_from(host):
+    # CR 2525: job.service is found two ways, through an OnFailure= target the
+    # scan can't read (a binary) and through its timer's script, which the
+    # scan matched calling systemctl restart. not-restarter:* covers the
+    # unread target but not the matched line, so the finding asks for an
+    # exact line for the script: its message must show that line, not the
+    # binary it was first found through.
+    host.write(
+        "etc/systemd/system/job.timer",
+        "[Timer]\nOnCalendar=hourly\nUnit=job.service\n",
+    )
+    host.write(
+        "etc/systemd/system/job.service",
+        "[Unit]\nOnFailure=notify.service\n"
+        "[Service]\nType=oneshot\nExecStart=/usr/local/bin/job.sh\n",
+    )
+    host.write(
+        "etc/systemd/system/notify.service",
+        "[Service]\nExecStart=/usr/local/bin/notify\n",
+    )
+    host.write("usr/local/bin/notify", b"\x7fELF\x00\x00")
+    host.write("usr/local/bin/job.sh", "#!/bin/sh\nsystemctl restart postgresql\n")
+    host.knob("posture scheduled\nexception not-restarter:* 2099-01-01 jobs\n")
+    f = _finding(host.run(), "restarter:job.service")
+    assert f["exception_what"] == "not-restarter:job.service"
+    assert "systemctl restart postgresql" in f["message"]
+    assert "a binary" not in f["message"]
+
+
 def test_a_not_restarter_glob_covers_an_onfailure_targets_key(host):
     # The key is the target's template, so a glob reaches it too.
     _hooked(host, ("app.service",), "unit-failure@%n.service")

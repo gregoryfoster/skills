@@ -3993,7 +3993,7 @@ read_restarters() {
   # away, a line each: unit, way, the exception's key, whether the scan
   # matched a line (m) or couldn't read what it runs (u), and that line or
   # why.
-  local key what kind detail hard="" of_hard="" covered soft="" x
+  local key what kind detail way hard="" of_hard="" covered soft="" x
   local -a tok=() s=()
   R_RESTARTERS="" R_RESTARTERS_READ="" R_EXACT_IDS=""
   for f in "$P_ROOT"/etc/systemd/system/*.service "$P_ROOT"/etc/systemd/system/*.service.d/*.conf; do
@@ -4089,8 +4089,10 @@ read_restarters() {
     done
     # The exception it can take: the first of its keys no live exception
     # covers, or, when each is covered, the first, which lands it in
-    # excepted and off the list. detail is what the way that named it read.
-    what="" kind="" covered=0 detail=""
+    # excepted and off the list. detail is what the way that named it read,
+    # or, where a key is left uncovered, what that key's way read, so the
+    # finding shows the line its exception would answer for (CR 2525).
+    what="" kind="" covered=0 detail="" way=${f#*:}
     while IFS=$KNOB_US read -r -a s; do
       if [ "${#s[@]}" -ne 5 ] || [ "${s[0]}" != "$u" ]; then continue; fi
       if [ -z "$detail" ] && [ "${s[1]}" = "${f#*:}" ]; then detail=${s[3]}${s[4]}; fi
@@ -4099,7 +4101,7 @@ read_restarters() {
       x=""
       [ "${s[3]}" != m ] || x=exact
       if [ "$covered" -eq 1 ] && ! { exception_for "not-restarter:${s[2]}" ${x:+"$x"} && [ "$EX_EXPIRED" = 0 ]; }; then
-        what=${s[2]} kind=${s[3]} covered=0
+        what=${s[2]} kind=${s[3]} covered=0 way=${s[1]} detail=${s[3]}${s[4]}
       fi
     done <<<"$soft"
     if [ "$declared" -eq 1 ] || [ "$covered" -eq 0 ]; then
@@ -4111,9 +4113,9 @@ read_restarters() {
     fi
     if [ "$declared" -eq 0 ]; then
       how="an Exec line runs systemctl restart"
-      if [ "${f#*:}" = script ]; then how="what its timer runs starts or restarts one"; fi
-      if [ "${f#*:}" = on-failure ]; then how="its OnFailure= target starts or restarts one"; fi
-      if [ "${f#*:}" = on-failure ] && in_words "$u" "$of_hard"; then
+      if [ "$way" = script ]; then how="what its timer runs starts or restarts one"; fi
+      if [ "$way" = on-failure ]; then how="its OnFailure= target starts or restarts one"; fi
+      if [ "$way" = on-failure ] && in_words "$u" "$of_hard"; then
         :
       elif [ "${detail:0:1}" = m ]; then
         detail=${detail:1}
