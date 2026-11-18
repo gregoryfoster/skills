@@ -1031,6 +1031,8 @@ gate_step_span() {
   if [ "$rc" -ne 1 ]; then
     x=$((x + CHAIN_SPAN))
     w=", and the reboot"
+    # A refusal says when the reboot was due before the bulk (CR 2520).
+    [ "$due" -eq 0 ] || w="$w, already due"
   fi
   jaddn o run_seconds "$x"
   jadd J_GATE run_span "{$o}"

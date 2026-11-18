@@ -872,6 +872,24 @@ def test_a_reboot_already_due_before_the_bulk_is_in_its_span(
     assert out["gate"]["span"]["expected_seconds"] == r["run_seconds"]
 
 
+def test_a_window_refusal_says_the_reboot_was_already_due(host):
+    # CR 2520: from 20:20 the bulk alone ends at 20:52, inside the window
+    # closing at 21:00, and its due reboot's chain takes the run to 21:05.
+    (host.dry / "dry-run.log").write_text(
+        "Packages that will be upgraded: libxml2 tzdata\n"
+    )
+    host.pid1_maps.write_text(MAPS + _deleted(*GONE))
+    _step4(_owners(host), QUIET)
+    host.clock = TUE_1530 + 4 * 3600 + 50 * MIN
+    out = host.run(rc=3)
+    [r] = [r for r in out["refused"] if "window" in r]
+    assert r.startswith(
+        "the run's span (the bulk at 3 times its dry run, and the reboot, already due)"
+    ), r
+    assert "2026-09-29T20:20:00Z to 2026-09-29T21:05:00Z" in r
+    assert _changed(host) == []
+
+
 @pytest.mark.parametrize(
     "units",
     [
