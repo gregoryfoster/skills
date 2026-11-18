@@ -780,7 +780,10 @@ reboot_pids() {  # <var> <unit>: VAR := its PIDs, space-separated
 # 0, a path ending " (deleted)", and none of the default blacklist_mappings
 # in /etc/needrestart/needrestart.conf, matched on the path with that
 # suffix still on, as it matches them. RB_SKIP is that list, each Perl
-# pattern in POSIX ERE.
+# pattern in POSIX ERE. needrestart's other test isn't read here: a mapping
+# whose file was replaced without the marker, which it finds by comparing
+# map_files' inodes. dpkg replaces a library by rename, which shows as
+# "(deleted)", so that case is rare (CR 2526).
 RB_DUE=""
 RB_SKIP=(
   '^/(SYSV00000000( \(deleted\))?|drm([[:space:]]|$)|dev/)'
