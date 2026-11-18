@@ -1617,8 +1617,9 @@ def test_an_exact_database_exception_beats_a_glob(host):
     assert _finding(out, "database:app_test_gw0", "excepted")["exception_line"] == 3
 
 
-def test_a_glob_excepts_nothing_but_a_database(host):
-    # A held:<package> names one thing: a glob there would over-cover.
+def test_a_glob_excepts_no_held_package(host):
+    # A held:<package> names one thing: a glob there would over-cover. Only
+    # database: and not-restarter: (#656) take one.
     host.on("apt-mark", "showhold", "libxml2\n")
     host.on(
         "apt-cache",
