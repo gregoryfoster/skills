@@ -419,13 +419,16 @@ NOT_READ=""
 not_read() { jpushs NOT_READ "$1"; }
 
 # A database:<what> may be a glob, * and ? as [host <glob>] takes them, so a
-# test suite's per-worker databases need one line (#455). An exact <what>
-# wins over any glob, and of two globs the more specific, by its count of
-# characters that aren't * or ?, as [host]'s precedence reads it; the first
-# in the knob on a tie. No other kind takes one: a held:<package> or a
-# keep:<component> names one thing, and a glob there would over-cover.
+# test suite's per-worker databases need one line (#455), and so may a
+# not-restarter:<what>, so a repo's family of timer services does (#656).
+# An exact <what> wins over any glob, and of two globs the more specific, by
+# its count of characters that aren't * or ?, as [host]'s precedence reads
+# it; the first in the knob on a tie. The finding a glob covers still names
+# its own <what>, so excepted lists each service it matched. No other kind
+# takes one: a held:<package> or a keep:<component> names one thing, and a
+# glob there would over-cover.
 exception_for() {  # <what>: sets EX_*; returns 1 when the knob declares none
-  local _r _g _s _best=-1
+  local _r _g _s _k _best=-1
   local -a _f=() _hit=()
   EX_LINE="" EX_REVIEW="" EX_REASON="" EX_EXPIRED=""
   for _r in ${KNOB_EXCEPTION[@]+"${KNOB_EXCEPTION[@]}"}; do
@@ -435,14 +438,14 @@ exception_for() {  # <what>: sets EX_*; returns 1 when the knob declares none
       return 0
     fi
   done
-  case $1 in database:*) ;; *) return 1 ;; esac
+  case $1 in database:* | not-restarter:*) _k=${1%%:*}: ;; *) return 1 ;; esac
   for _r in ${KNOB_EXCEPTION[@]+"${KNOB_EXCEPTION[@]}"}; do
     IFS=$KNOB_US read -r -a _f <<<"$_r"
-    case ${_f[0]} in database:*[*?]*) ;; *) continue ;; esac
-    _g=${_f[0]#database:}
+    case ${_f[0]} in "$_k"*[*?]*) ;; *) continue ;; esac
+    _g=${_f[0]#"$_k"}
     # The exception's glob is a pattern on purpose.
     # shellcheck disable=SC2254
-    case ${1#database:} in $_g) ;; *) continue ;; esac
+    case ${1#"$_k"} in $_g) ;; *) continue ;; esac
     _s=${_g//[*?]/}
     if [ "${#_s}" -gt "$_best" ]; then _best=${#_s} _hit=("${_f[@]}"); fi
   done

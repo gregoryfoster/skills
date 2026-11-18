@@ -823,6 +823,79 @@ def test_a_home_working_directory_is_read_through_the_units_user(host):
     assert "restarter:cache-sweep.service" in _ids(out)
 
 
+def _uv_jobs(host, *names: str) -> None:
+    """Timer services the scan can't follow, as a `uv run` job's binary is."""
+    for name in names:
+        host.write(
+            f"etc/systemd/system/{name}.timer",
+            f"[Timer]\nOnCalendar=daily\nUnit={name}.service\n",
+        )
+        host.write(
+            f"etc/systemd/system/{name}.service",
+            f"[Service]\nType=oneshot\nExecStart=/usr/local/bin/{name}\n",
+        )
+        host.write(f"usr/local/bin/{name}", b"\x7fELF\x00\x00")
+
+
+def test_a_not_restarter_exception_takes_a_glob_and_names_each_service(host):
+    # #656: power-map 2026-11-14 needed 12 near-identical lines, archiver 5,
+    # one per timer service the scan couldn't follow.
+    _uv_jobs(host, "pm-fetch", "pm-build", "other-job")
+    host.knob(
+        "posture scheduled\n"
+        "exception not-restarter:pm-*.service 2099-01-01 uv run jobs, none restarts\n"
+    )
+    out = host.run()
+    for svc in ("pm-fetch.service", "pm-build.service"):
+        assert f"restarters:unread:{svc}" not in _ids(out)
+        # Each service the glob matched is still named, with the glob's line.
+        f = _finding(out, f"restarters:unread:{svc}", "excepted")
+        assert f["exception_what"] == f"not-restarter:{svc}"
+        assert (f["exception_line"], f["review_by"]) == (2, "2099-01-01")
+    # One it doesn't match stays open, and the list with it.
+    assert "restarters:unread:other-job.service" in _ids(out)
+    assert out["impact"]["restarters_complete"] is False
+
+
+def test_an_exact_not_restarter_exception_beats_a_glob_and_an_expired_glob_covers_nothing(
+    host,
+):
+    _uv_jobs(host, "pm-fetch", "pm-build")
+    host.knob(
+        "posture scheduled\n"
+        "exception not-restarter:pm-*.service 2099-01-01 uv run jobs\n"
+        "exception not-restarter:pm-build.service 2099-02-01 its own reason\n"
+    )
+    out = host.run()
+    f = _finding(out, "restarters:unread:pm-build.service", "excepted")
+    assert (f["exception_line"], f["review_by"]) == (3, "2099-02-01")
+    f = _finding(out, "restarters:unread:pm-fetch.service", "excepted")
+    assert f["exception_line"] == 2
+    assert out["impact"]["restarters_complete"] is True
+    host.knob(
+        "posture scheduled\nexception not-restarter:pm-*.service 2000-01-01 uv run jobs\n"
+    )
+    out = host.run()
+    assert {
+        "restarters:unread:pm-fetch.service",
+        "restarters:unread:pm-build.service",
+    } <= set(_ids(out))
+
+
+def test_a_not_restarter_glob_covers_an_onfailure_targets_key(host):
+    # The key is the target's template, so a glob reaches it too.
+    _hooked(host, ("app.service",), "unit-failure@%n.service")
+    host.write("etc/systemd/system/unit-failure@.service", UNIT_FAILURE)
+    host.write("usr/local/bin/notify-unit-failure", b"\x7fELF\x00\x00")
+    host.knob(
+        "posture scheduled\nexception not-restarter:unit-*@.service 2099-01-01 notify only\n"
+    )
+    out = host.run()
+    f = _finding(out, "restarter:app.service", "excepted")
+    assert f["exception_what"] == "not-restarter:unit-failure@.service"
+    assert f["exception_line"] == 2
+
+
 def test_an_exception_clears_a_timers_service_the_scan_cant_follow(host):
     host.write("etc/systemd/system/store-cert.timer", RENEW_TIMER)
     host.write("etc/systemd/system/store-renew.service", RENEW_UNIT)
