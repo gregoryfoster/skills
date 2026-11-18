@@ -124,7 +124,9 @@ times it) plus --health-within where the
 knob has health lines, each held step its selection reaches, and the
 reboot chain's 780 s wherever a kernel, or a package owning a file mapped
 by PID 1, dbus, logind, a user@ or a datastore unit's processes, makes a
-reboot certain, or one of those maps can't be read; so the bulk also
+reboot certain, or one of those maps can't be read, or a reboot is
+already due: one of those processes maps a deleted file, or
+/run/reboot-required is there; so the bulk also
 refuses when the dry run left no dry-run.log); while an
 automatic apt run is in progress, or apt-daily-upgrade.timer could start
 one inside the span (apt-daily.timer isn't read: on noble its 12-hour
@@ -717,9 +719,11 @@ DRY_SEL=""
 # post-boot checks.
 CHAIN_SPAN=780
 # Where processes and the units' cgroups are read; a test points them at a
-# fixture.
+# fixture. So is the flag an earlier upgrade leaves for a reboot (/var/run
+# is a link to /run).
 PROC_DIR=/proc
 CGROUP_DIR=/sys/fs/cgroup
+REBOOT_REQUIRED=/run/reboot-required
 
 # The processes a unit runs: every one in its cgroup and the cgroups below
 # it, where a user manager's sit (init.scope, app.slice). MainPID alone
@@ -763,9 +767,13 @@ reboot_pids() {  # <var> <unit>: VAR := its PIDs, space-separated
 # with REBOOT_WHY naming it and WHO, 1 not, 2 with RB_WHY where a map that
 # could have decided it can't be read. Each map is read as root, since
 # another user's is "Permission denied" otherwise. A process that exited
-# since its cgroup was read maps nothing.
+# since its cgroup was read maps nothing. The first WHO found mapping a
+# deleted file sets RB_DUE (#655): a reboot already due, whatever the
+# selection. A memfd, SysV shared memory or a /dev node is no file an
+# upgrade replaced, and needrestart passes them over too.
+RB_DUE=""
 reboot_maps() {  # <the selection> <who> <pid>...
-  local _rm_sel=$1 _rm_who=$2 _rm_pid _rm_maps _rm_out _rm_line _rm_p _rm_owners="" _rm_paths="" _rm_unk="" _rm_v=maps _rm_rc
+  local _rm_sel=$1 _rm_who=$2 _rm_pid _rm_maps _rm_out _rm_line _rm_p _rm_owners="" _rm_paths="" _rm_unk="" _rm_v=maps _rm_rc _rm_x _rm_del=""
   local -a _rm_ps=()
   # "PID 1 maps", "dbus.service's processes map".
   case $_rm_who in *s) _rm_v=map ;; esac
@@ -785,10 +793,19 @@ reboot_maps() {  # <the selection> <who> <pid>...
       [ -n "$_rm_unk" ] || _rm_unk="$PROC_DIR/$_rm_pid/maps ($_rm_who) couldn't be read as root"
       continue
     fi
-    while read -r _ _ _ _ _ _rm_p _; do
+    while read -r _ _ _ _ _ _rm_p _rm_x; do
       case $_rm_p in /*) in_words "$_rm_p" "$_rm_paths" || _rm_paths="$_rm_paths $_rm_p" ;; esac
+      case $_rm_x in "(deleted)") ;; *) continue ;; esac
+      case $_rm_p in /memfd:* | /SYSV* | /dev/* | /drm* | /dmabuf* | "/[aio]"*) continue ;; esac
+      in_words "$_rm_p" "$_rm_del" || _rm_del="$_rm_del $_rm_p"
     done <<<"$_rm_maps"
   done
+  if [ -n "$_rm_del" ] && [ -z "$RB_DUE" ]; then
+    read -r -a _rm_ps <<<"$_rm_del"
+    _rm_x="files"
+    [ "${#_rm_ps[@]}" -ne 1 ] || _rm_x="file"
+    RB_DUE="$_rm_who $_rm_v ${#_rm_ps[@]} deleted $_rm_x, ${_rm_ps[0]} among them"
+  fi
   read -r -a _rm_ps <<<"$_rm_paths" || true
   if [ "${#_rm_ps[@]}" -gt 0 ]; then
     # Exit 1 means some path has no package: the others still print.
@@ -828,7 +845,7 @@ reboot_maps() {  # <the selection> <who> <pid>...
 predict_reboot() {  # <the selection, space-separated>
   local p r u k kinds pids list unknown="" rc
   local -a units=(dbus.service systemd-logind.service) f=()
-  REBOOT_WHY=""
+  REBOOT_WHY="" RB_DUE=""
   for p in $1; do
     case $p in linux-image-*)
       REBOOT_WHY="$p, a kernel"
@@ -888,11 +905,11 @@ predict_reboot() {  # <the selection, space-separated>
 # The step's span: the dry run's wall time, plus the time the health checks
 # may take. The bulk's is the rest of the run (#362): itself at BULK_FACTOR
 # times its dry run, each held step its selection reaches, and, where the
-# selection makes a reboot certain or that can't be read, the reboot chain.
-# Otherwise a late bulk leaves the reboot no room, and the host runs on
-# deleted libraries until the next window.
+# selection makes a reboot certain or that can't be read, or one is already
+# due (#655), the reboot chain. Otherwise a late bulk leaves the reboot no
+# room, and the host runs on deleted libraries until the next window.
 gate_step_span() {
-  local x="" h=0 hh line sel="" p r g groups="" o="" w rc=0
+  local x="" h=0 hh line sel="" p r g groups="" o="" w rc=0 due
   local -a f=()
   if [ "${#KNOB_HEALTH[@]}" -gt 0 ]; then h=$health_within; fi
   # A held step that restarts a Qdrant asks its counts for up to as long
@@ -946,12 +963,27 @@ gate_step_span() {
   takes_nothing_note w "$BS_TAKE" "$BS_STEPS"
   jaddsn o takes_nothing "$w"
   predict_reboot "$sel" || rc=$?
+  # A reboot already due before the bulk is the run's too (#655): PID 1, or
+  # another process step 4 reboots for, mapping a file an earlier upgrade
+  # deleted, as the security lane leaves them between attended runs; or an
+  # earlier upgrade's reboot-required. predict_reboot read every map unless
+  # the selection decided it first.
+  due=0
+  if [ "$rc" -ne 0 ]; then
+    if [ -e "$REBOOT_REQUIRED" ]; then
+      due=1 REBOOT_WHY="already due before the bulk: /run/reboot-required is there, from an earlier upgrade"
+    elif [ -n "$RB_DUE" ]; then
+      due=1 REBOOT_WHY="already due before the bulk: $RB_DUE"
+    fi
+    [ "$due" -eq 0 ] || rc=0
+  fi
   case $rc in
     0) jadd o reboot true ;;
     1) jadd o reboot false ;;
     *) jadd o reboot null ;;
   esac
   jaddsn o reboot_why "$REBOOT_WHY"
+  jaddb o reboot_due "$due"
   w=""
   if [ "$rc" -ne 1 ]; then
     x=$((x + CHAIN_SPAN))

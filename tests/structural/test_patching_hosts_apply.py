@@ -177,6 +177,10 @@ class Host(RigHost):
         for line, path in (
             ("PROC_DIR=/proc", self.root / "proc"),
             ("CGROUP_DIR=/sys/fs/cgroup", self.root / "sys" / "fs" / "cgroup"),
+            (
+                "REBOOT_REQUIRED=/run/reboot-required",
+                self.root / "run" / "reboot-required",
+            ),
         ):
             assert text.count(f"\n{line}\n") == 1
             text = text.replace(f"\n{line}\n", f"\n{line.split('=')[0]}='{path}'\n")
@@ -697,6 +701,114 @@ def test_the_bulk_predicts_a_reboot_from_what_step_4_reboots_for(
     if why:
         assert why in r["reboot_why"]
     assert r["run_seconds"] == (BULK_ONLY if reboot is False else BULK_AND_CHAIN)
+
+
+def _deleted(*paths: str) -> str:
+    """Rows of a /proc/<pid>/maps for PATHS, each deleted since it was mapped."""
+    return "".join(
+        f"7f3{i}-7f4{i} r-xp 00000000 fd:01 456{i} {p} (deleted)\n"
+        for i, p in enumerate(paths)
+    )
+
+
+# Five libraries the security lane replaced on earlier days, still mapped:
+# co-processor's PID 1 before its 2026-11-10 bulk (#620).
+GONE = [f"/usr/lib/x86_64-linux-gnu/libgone{i}.so.1" for i in range(5)]
+
+
+@pytest.mark.parametrize(
+    "pid1, units, required, reboot, due, why",
+    [
+        # #655: PID 1 maps 5 deleted files before the bulk, and the
+        # selection holds no kernel and nothing a step-4 process maps.
+        (
+            MAPS + _deleted(*GONE),
+            {},
+            False,
+            True,
+            True,
+            "already due before the bulk: PID 1 maps 5 deleted files",
+        ),
+        # A data store's backend maps a deleted file.
+        (
+            MAPS,
+            {PG_UNIT: (PG_CGROUP, {813: MAPS + _deleted(GONE[0])})},
+            False,
+            True,
+            True,
+            f"already due before the bulk: {PG_UNIT}'s processes map 1 deleted file",
+        ),
+        # An earlier upgrade left /run/reboot-required.
+        (
+            MAPS,
+            {},
+            True,
+            True,
+            True,
+            "already due before the bulk: /run/reboot-required",
+        ),
+        # A memfd, SysV shared memory and a deleted /dev node are no
+        # library: needrestart passes them over, and so does the span.
+        (
+            MAPS + _deleted("/memfd:systemd-journald", "/SYSV00000000", "/dev/zero"),
+            {},
+            False,
+            False,
+            False,
+            None,
+        ),
+        # A due reboot outweighs a map that can't be read.
+        (
+            MAPS + _deleted(*GONE),
+            {USER_UNIT: (USER_CGROUP, {1500: None})},
+            False,
+            True,
+            True,
+            "already due before the bulk",
+        ),
+        # The selection's own reboot is named first; it isn't due before.
+        (
+            MAPS + _deleted(*GONE),
+            {PG_UNIT: (PG_CGROUP, {813: _maps(LIBXML2)})},
+            True,
+            True,
+            False,
+            f"libxml2, which owns a file {PG_UNIT}'s processes map",
+        ),
+    ],
+    ids=[
+        "pid-1-deleted",
+        "datastore-deleted",
+        "reboot-required",
+        "pseudo-files",
+        "due-over-unknown",
+        "predicted-first",
+    ],
+)
+def test_a_reboot_already_due_before_the_bulk_is_in_its_span(
+    host, pid1, units, required, reboot, due, why
+):
+    # #655: the span counted the chain only where the bulk's selection made
+    # a reboot certain, so on a host whose security lane ran between
+    # attended runs, a window sized to the bulk refused the chain after it.
+    host.knob(KNOB + "datastore postgres postgresql@16-main app\n")
+    _recovery(host, f"dump postgres {PG_UNIT} app {SHA_A} /var/backups/app-1.dump")
+    (host.dry / "dry-run.log").write_text(
+        "Packages that will be upgraded: libxml2 tzdata\n"
+    )
+    host.pid1_maps.write_text(pid1)
+    if required:
+        host.write("run/reboot-required", "*** System restart required ***\n")
+    _step4(_owners(host), {**QUIET, PG_UNIT: ("", {}), **units})
+    host.clock = TUE_1530 - 30 * MIN
+    out = host.run("--offnode-sha256", SHA_A)
+    r = out["gate"]["run_span"]
+    assert r["reboot"] is reboot, r["reboot_why"]
+    assert r["reboot_due"] is due, r["reboot_why"]
+    if why:
+        assert why in r["reboot_why"]
+    assert r["run_seconds"] == (BULK_AND_CHAIN if reboot else BULK_ONLY)
+    assert out["gate"]["span"]["expected_seconds"] == r["run_seconds"]
 
 
 @pytest.mark.parametrize(
