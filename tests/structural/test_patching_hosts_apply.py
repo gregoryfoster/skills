@@ -775,6 +775,22 @@ GONE = [f"/usr/lib/x86_64-linux-gnu/libgone{i}.so.1" for i in range(5)]
             False,
             f"libxml2, which owns a file {PG_UNIT}'s processes map",
         ),
+        # CR 2516: a path holding a space is still read whole, so its
+        # "(deleted)" isn't lost.
+        (
+            MAPS,
+            {
+                "dbus.service": (
+                    "/system.slice/dbus.service",
+                    {600: MAPS + _deleted("/opt/vendor app/lib/libvendor.so.2")},
+                )
+            },
+            False,
+            True,
+            True,
+            "dbus.service's processes map 1 deleted file, "
+            "/opt/vendor app/lib/libvendor.so.2 among them",
+        ),
     ],
     ids=[
         "pid-1-deleted",
@@ -783,6 +799,7 @@ GONE = [f"/usr/lib/x86_64-linux-gnu/libgone{i}.so.1" for i in range(5)]
         "pseudo-files",
         "due-over-unknown",
         "predicted-first",
+        "path-with-a-space",
     ],
 )
 def test_a_reboot_already_due_before_the_bulk_is_in_its_span(

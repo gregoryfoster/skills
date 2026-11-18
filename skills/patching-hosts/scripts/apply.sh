@@ -773,7 +773,10 @@ reboot_pids() {  # <var> <unit>: VAR := its PIDs, space-separated
 # upgrade replaced, and needrestart passes them over too.
 RB_DUE=""
 reboot_maps() {  # <the selection> <who> <pid>...
-  local _rm_sel=$1 _rm_who=$2 _rm_pid _rm_maps _rm_out _rm_line _rm_p _rm_owners="" _rm_paths="" _rm_unk="" _rm_v=maps _rm_rc _rm_x _rm_del=""
+  local _rm_sel=$1 _rm_who=$2 _rm_pid _rm_maps _rm_out _rm_line _rm_p _rm_owners="" _rm_paths="" _rm_unk="" _rm_v=maps _rm_rc _rm_x _rm_del="" _rm_n=0 _rm_first=""
+  # A maps line: address, perms, offset, dev, inode, then the path, which
+  # may hold a space (CR 2516), so it's the rest of the line.
+  local _rm_re='^[^ ]+ +[^ ]+ +[^ ]+ +[^ ]+ +[^ ]+( +(.*))?$'
   local -a _rm_ps=()
   # "PID 1 maps", "dbus.service's processes map".
   case $_rm_who in *s) _rm_v=map ;; esac
@@ -793,18 +796,24 @@ reboot_maps() {  # <the selection> <who> <pid>...
       [ -n "$_rm_unk" ] || _rm_unk="$PROC_DIR/$_rm_pid/maps ($_rm_who) couldn't be read as root"
       continue
     fi
-    while read -r _ _ _ _ _ _rm_p _rm_x; do
+    while IFS= read -r _rm_line; do
+      [[ $_rm_line =~ $_rm_re ]] || continue
+      _rm_x=${BASH_REMATCH[2]}
+      _rm_p=${_rm_x%% *}
       case $_rm_p in /*) in_words "$_rm_p" "$_rm_paths" || _rm_paths="$_rm_paths $_rm_p" ;; esac
-      case $_rm_x in "(deleted)") ;; *) continue ;; esac
-      case $_rm_p in /memfd:* | /SYSV* | /dev/* | /drm* | /dmabuf* | "/[aio]"*) continue ;; esac
-      in_words "$_rm_p" "$_rm_del" || _rm_del="$_rm_del $_rm_p"
+      case $_rm_x in *" (deleted)") _rm_x=${_rm_x% (deleted)} ;; *) continue ;; esac
+      case $_rm_x in /memfd:* | /SYSV* | /dev/* | /drm* | /dmabuf* | "/[aio]"*) continue ;; esac
+      # A file maps a segment a line: count it once.
+      case $'\n'$_rm_del in *$'\n'"$_rm_x"$'\n'*) continue ;; esac
+      _rm_del="$_rm_del$_rm_x"$'\n'
+      _rm_n=$((_rm_n + 1))
+      [ -n "$_rm_first" ] || _rm_first=$_rm_x
     done <<<"$_rm_maps"
   done
-  if [ -n "$_rm_del" ] && [ -z "$RB_DUE" ]; then
-    read -r -a _rm_ps <<<"$_rm_del"
+  if [ "$_rm_n" -gt 0 ] && [ -z "$RB_DUE" ]; then
     _rm_x="files"
-    [ "${#_rm_ps[@]}" -ne 1 ] || _rm_x="file"
-    RB_DUE="$_rm_who $_rm_v ${#_rm_ps[@]} deleted $_rm_x, ${_rm_ps[0]} among them"
+    [ "$_rm_n" -ne 1 ] || _rm_x="file"
+    RB_DUE="$_rm_who $_rm_v $_rm_n deleted $_rm_x, $_rm_first among them"
   fi
   read -r -a _rm_ps <<<"$_rm_paths" || true
   if [ "${#_rm_ps[@]}" -gt 0 ]; then
