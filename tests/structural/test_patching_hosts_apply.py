@@ -711,6 +711,27 @@ def _deleted(*paths: str) -> str:
     )
 
 
+# What needrestart 3.6 doesn't count as a deleted mapping (noble's
+# 3.6-7ubuntu4.6, its default blacklist_mappings, CR 2515): each pattern
+# once, a /tmp file, a JNA temp, a mapping without x and one with inode 0.
+PASSED_OVER = (
+    _deleted(
+        "/SYSV00000000",
+        "/dev/zero",
+        "/memfd:systemd-journald",
+        "/[aio]",
+        "/usr/lib/x86_64-linux-gnu/orcexec.AbC12",
+        "/usr/lib/plasma/#123",
+        "/var/cache/app/jna4711.tmp",
+        "/tmp/ffiXyZ12",
+        "/var/tmp/build.so",
+        "/run/user/1000/lib.so",
+    )
+    + "7f60-7f61 r--p 00000000 fd:01 4580 /usr/lib/x86_64-linux-gnu/libz.so.1 (deleted)\n"
+    + "7f62-7f63 r-xp 00000000 00:00 0 /usr/lib/x86_64-linux-gnu/libanon.so.1 (deleted)\n"
+    + "7f64-7f65 r-xp 00000000 00:05 4590 /drm mm object (deleted)\n"
+)
+
 # Five libraries the security lane replaced on earlier days, still mapped:
 # co-processor's PID 1 before its 2026-11-10 bulk (#620).
 GONE = [f"/usr/lib/x86_64-linux-gnu/libgone{i}.so.1" for i in range(5)]
@@ -747,15 +768,36 @@ GONE = [f"/usr/lib/x86_64-linux-gnu/libgone{i}.so.1" for i in range(5)]
             True,
             "already due before the bulk: /run/reboot-required",
         ),
-        # A memfd, SysV shared memory and a deleted /dev node are no
-        # library: needrestart passes them over, and so does the span.
+        # CR 2515: what needrestart 3.6's default blacklist_mappings pass
+        # over, a mapping that isn't executable, and one with no inode,
+        # mapped by dbus: step 4 reboots for dbus only when needrestart
+        # lists it, so none is a reboot already due.
         (
-            MAPS + _deleted("/memfd:systemd-journald", "/SYSV00000000", "/dev/zero"),
-            {},
+            MAPS,
+            {"dbus.service": ("/system.slice/dbus.service", {600: MAPS + PASSED_OVER})},
             False,
             False,
             False,
             None,
+        ),
+        # CR 2515: PID 1 is read raw, as step 4's grep -c '(deleted)' reads
+        # it, so the memfd dbus may map counts on PID 1.
+        (
+            MAPS + _deleted("/memfd:systemd-journald"),
+            {},
+            False,
+            True,
+            True,
+            "PID 1 maps 1 deleted file, /memfd:systemd-journald among them",
+        ),
+        # So does a deleted mapping that isn't executable.
+        (
+            MAPS + "7f50-7f51 r--p 00000000 fd:01 4570 /etc/ld.so.cache (deleted)\n",
+            {},
+            False,
+            True,
+            True,
+            "PID 1 maps 1 deleted file, /etc/ld.so.cache among them",
         ),
         # A due reboot outweighs a map that can't be read.
         (
@@ -796,7 +838,9 @@ GONE = [f"/usr/lib/x86_64-linux-gnu/libgone{i}.so.1" for i in range(5)]
         "pid-1-deleted",
         "datastore-deleted",
         "reboot-required",
-        "pseudo-files",
+        "needrestart-passes-over",
+        "pid-1-raw",
+        "pid-1-not-executable",
         "due-over-unknown",
         "predicted-first",
         "path-with-a-space",

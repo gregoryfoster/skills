@@ -769,14 +769,34 @@ reboot_pids() {  # <var> <unit>: VAR := its PIDs, space-separated
 # another user's is "Permission denied" otherwise. A process that exited
 # since its cgroup was read maps nothing. The first WHO found mapping a
 # deleted file sets RB_DUE (#655): a reboot already due, whatever the
-# selection. A memfd, SysV shared memory or a /dev node is no file an
-# upgrade replaced, and needrestart passes them over too.
+# selection.
+#
+# The span holds the reboot step 4 will decide on, so each map is read as
+# step 4 reads it (CR 2515). PID 1's is raw, as step 4's sudo grep -c
+# '(deleted)' /proc/1/maps counts it: any line naming "(deleted)". Every
+# other process step 4 reboots for is one needrestart lists, so its map is
+# read as needrestart 3.6 reads it (noble's 3.6-7ubuntu4.6, measured
+# 2026-11-18): an executable mapping (perms holding x), an inode that isn't
+# 0, a path ending " (deleted)", and none of the default blacklist_mappings
+# in /etc/needrestart/needrestart.conf, matched on the path with that
+# suffix still on, as it matches them. RB_SKIP is that list, each Perl
+# pattern in POSIX ERE.
 RB_DUE=""
+RB_SKIP=(
+  '^/(SYSV00000000( \(deleted\))?|drm([[:space:]]|$)|dev/)'
+  '^/memfd:'
+  '^/\[aio\]'
+  '/orcexec\.[[:alnum:]_]+( \(deleted\))?$'
+  '/#[0-9]+( \(deleted\))?$'
+  '/jna[0-9]+\.tmp( \(deleted\))?$'
+  '^(/var)?/tmp/'
+  '^(/var)?/run/'
+)
 reboot_maps() {  # <the selection> <who> <pid>...
-  local _rm_sel=$1 _rm_who=$2 _rm_pid _rm_maps _rm_out _rm_line _rm_p _rm_owners="" _rm_paths="" _rm_unk="" _rm_v=maps _rm_rc _rm_x _rm_del="" _rm_n=0 _rm_first=""
+  local _rm_sel=$1 _rm_who=$2 _rm_pid _rm_maps _rm_out _rm_line _rm_p _rm_owners="" _rm_paths="" _rm_unk="" _rm_v=maps _rm_rc _rm_x _rm_del="" _rm_n=0 _rm_first="" _rm_s _rm_k
   # A maps line: address, perms, offset, dev, inode, then the path, which
   # may hold a space (CR 2516), so it's the rest of the line.
-  local _rm_re='^[^ ]+ +[^ ]+ +[^ ]+ +[^ ]+ +[^ ]+( +(.*))?$'
+  local _rm_re='^[^ ]+ +([^ ]+) +[^ ]+ +[^ ]+ +([^ ]+)( +(.*))?$'
   local -a _rm_ps=()
   # "PID 1 maps", "dbus.service's processes map".
   case $_rm_who in *s) _rm_v=map ;; esac
@@ -798,11 +818,25 @@ reboot_maps() {  # <the selection> <who> <pid>...
     fi
     while IFS= read -r _rm_line; do
       [[ $_rm_line =~ $_rm_re ]] || continue
-      _rm_x=${BASH_REMATCH[2]}
+      _rm_x=${BASH_REMATCH[4]}
       _rm_p=${_rm_x%% *}
       case $_rm_p in /*) in_words "$_rm_p" "$_rm_paths" || _rm_paths="$_rm_paths $_rm_p" ;; esac
-      case $_rm_x in *" (deleted)") _rm_x=${_rm_x% (deleted)} ;; *) continue ;; esac
-      case $_rm_x in /memfd:* | /SYSV* | /dev/* | /drm* | /dmabuf* | "/[aio]"*) continue ;; esac
+      if [ "$_rm_who" = "PID 1" ]; then
+        case $_rm_line in *"(deleted)"*) ;; *) continue ;; esac
+      else
+        case ${BASH_REMATCH[1]} in *x*) ;; *) continue ;; esac
+        [ "${BASH_REMATCH[2]}" != 0 ] || continue
+        case $_rm_x in *" (deleted)") ;; *) continue ;; esac
+        _rm_k=0
+        for _rm_s in "${RB_SKIP[@]}"; do
+          if [[ $_rm_x =~ $_rm_s ]]; then
+            _rm_k=1
+            break
+          fi
+        done
+        [ "$_rm_k" -eq 0 ] || continue
+      fi
+      _rm_x=${_rm_x% (deleted)}
       # A file maps a segment a line: count it once.
       case $'\n'$_rm_del in *$'\n'"$_rm_x"$'\n'*) continue ;; esac
       _rm_del="$_rm_del$_rm_x"$'\n'
