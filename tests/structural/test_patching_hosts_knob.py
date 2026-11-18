@@ -650,6 +650,17 @@ def test_a_dated_windows_comment_or_repo_ref_is_no_finding(tmp_path, line):
     assert out["findings"] == []
 
 
+def test_a_cut_reason_is_reported_only_for_a_host_its_window_applies_to(tmp_path):
+    # CR 2518: as past-window, so a repo whose knob test reads every host
+    # goes red only for the host the line is for.
+    text = (
+        "posture scheduled\n[host co-worker-*]\n"
+        "window 2026-11-10 14:10-18:10 #113-out-of-window\n"
+    )
+    assert _kinds(_read(tmp_path, text, host="co-worker-1")) == ["window-reason-cut"]
+    assert _read(tmp_path, text, host="web-1")["findings"] == []
+
+
 def test_a_past_dated_window_is_a_finding_but_not_report_only(tmp_path):
     text = "posture scheduled\nwindow Tue 15:00-21:00\nwindow 2026-09-29 13:55-15:55 TS-1\n"
     on_the_day = _read(tmp_path, text, today="2026-09-29")
