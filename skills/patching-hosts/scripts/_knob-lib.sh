@@ -106,6 +106,9 @@ knob_reset() {
   # Sections: header glob, header line, exact (no * or ?), and rank for this host.
   _KS_GLOB=() _KS_LINE=() _KS_EXACT=() _KS_RANK=()
   _KNOB_MALFORMED=0 _KNOB_AMBIGUOUS=0
+  # Dated windows' lines whose reason a '#' cut, reported only where the
+  # line applies to the host, as past-window is (#656, CR 2518).
+  _KNOB_CUT_LINES=" "
 }
 
 _knob_finding() {  # <line-or-empty> <kind> <message>
@@ -244,10 +247,10 @@ _knob_directive() {  # <line> <sec> <text>
         _knob_record "$n" "$sec" "$wdir" "" "$wd$u$_KT_START$u$_KT_END$u$_KT_WRAPS$u$n$u$wn$u$wdate$u${tok[*]:2}"
         # #656: '#113' after the range, or part-way through the reason, opens
         # a comment, so the run's record of why it ran loses that much with
-        # nothing to say so. '# text' is a comment written as one.
-        case ${wdate:+$_KNOB_CUT} in "#"[![:space:]]*)
-          _knob_finding "$n" window-reason-cut \
-            "window $wdate ${tok[1]}: its reason stops at a '#' that starts a word, which opens a comment, so the reason drops what follows. Name an issue as <repo>#N, which holds its '#' inside a word" ;;
+        # nothing to say so. '# text' and '##' are comments written as one.
+        case ${wdate:+$_KNOB_CUT} in
+          "##"*) ;;
+          "#"[![:space:]]*) _KNOB_CUT_LINES="$_KNOB_CUT_LINES$n " ;;
         esac
       else
         _knob_malformed "$n" "window takes <weekday> <HH:MM-HH:MM>, <weekday>#<week of the month, 1 to 5> <HH:MM-HH:MM>, or <YYYY-MM-DD> <HH:MM-HH:MM> [<reason>], with a weekday Mon to Sun, a date on the calendar, and an end that differs from the start"
@@ -599,6 +602,10 @@ _knob_resolve() {
         _knob_rank_of "$i"
         [ "$_KR" -gt 0 ] || continue
         IFS=$u read -r -a f <<<"${_KP_VAL[$i]}"
+        case $_KNOB_CUT_LINES in *" ${f[4]} "*)
+          _knob_finding "${f[4]}" window-reason-cut \
+            "window ${f[6]} ${f[1]}-${f[2]}: its reason stops at a '#' that starts a word, which opens a comment, so the reason drops what follows. Name an issue as <repo>#N, which holds its '#' inside a word" ;;
+        esac
         knob_epoch_day wdd "${f[6]}"
         # Passed once the day it closes on has: the day itself still counts.
         if [ "$wtoday" -gt "$((wdd + f[3]))" ]; then

@@ -423,11 +423,15 @@ not_read() { jpushs NOT_READ "$1"; }
 # not-restarter:<what>, so a repo's family of timer services does (#656).
 # An exact <what> wins over any glob, and of two globs the more specific, by
 # its count of characters that aren't * or ?, as [host]'s precedence reads
-# it; the first in the knob on a tie. The finding a glob covers still names
+# it; the first in the knob on a tie. An expired glob is passed over, so it
+# can't shadow a live broader one (CR 2519); an expired exact line still
+# answers, expired. A not-restarter: glob covers only what the scan
+# couldn't read: a caller passes exact for a script line it matched, which
+# a glob would silence unread (CR 2514). The finding a glob covers still names
 # its own <what>, so excepted lists each service it matched. No other kind
 # takes one: a held:<package> or a keep:<component> names one thing, and a
 # glob there would over-cover.
-exception_for() {  # <what>: sets EX_*; returns 1 when the knob declares none
+exception_for() {  # <what> [exact]: sets EX_*; returns 1 when the knob declares none
   local _r _g _s _k _best=-1
   local -a _f=() _hit=()
   EX_LINE="" EX_REVIEW="" EX_REASON="" EX_EXPIRED=""
@@ -438,6 +442,7 @@ exception_for() {  # <what>: sets EX_*; returns 1 when the knob declares none
       return 0
     fi
   done
+  [ "${2:-}" != exact ] || return 1
   case $1 in database:* | not-restarter:*) _k=${1%%:*}: ;; *) return 1 ;; esac
   for _r in ${KNOB_EXCEPTION[@]+"${KNOB_EXCEPTION[@]}"}; do
     IFS=$KNOB_US read -r -a _f <<<"$_r"
@@ -446,6 +451,7 @@ exception_for() {  # <what>: sets EX_*; returns 1 when the knob declares none
     # The exception's glob is a pattern on purpose.
     # shellcheck disable=SC2254
     case ${1#"$_k"} in $_g) ;; *) continue ;; esac
+    [ "${_f[3]}" = 0 ] || continue
     _s=${_g//[*?]/}
     if [ "${#_s}" -gt "$_best" ]; then _best=${#_s} _hit=("${_f[@]}"); fi
   done
@@ -3987,9 +3993,9 @@ read_restarters() {
   # away, a line each: unit, way, the exception's key, whether the scan
   # matched a line (m) or couldn't read what it runs (u), and that line or
   # why.
-  local key what kind detail hard="" of_hard="" covered soft=""
+  local key what kind detail hard="" of_hard="" covered soft="" x
   local -a tok=() s=()
-  R_RESTARTERS="" R_RESTARTERS_READ=""
+  R_RESTARTERS="" R_RESTARTERS_READ="" R_EXACT_IDS=""
   for f in "$P_ROOT"/etc/systemd/system/*.service "$P_ROOT"/etc/systemd/system/*.service.d/*.conf; do
     [ -f "$f" ] || continue
     case $f in
@@ -4090,7 +4096,9 @@ read_restarters() {
       if [ -z "$detail" ] && [ "${s[1]}" = "${f#*:}" ]; then detail=${s[3]}${s[4]}; fi
       if in_words "$u" "$hard"; then continue; fi
       [ -n "$what" ] || what=${s[2]} kind=${s[3]} covered=1
-      if [ "$covered" -eq 1 ] && ! { exception_for "not-restarter:${s[2]}" && [ "$EX_EXPIRED" = 0 ]; }; then
+      x=""
+      [ "${s[3]}" != m ] || x=exact
+      if [ "$covered" -eq 1 ] && ! { exception_for "not-restarter:${s[2]}" ${x:+"$x"} && [ "$EX_EXPIRED" = 0 ]; }; then
         what=${s[2]} kind=${s[3]} covered=0
       fi
     done <<<"$soft"
@@ -4115,7 +4123,9 @@ read_restarters() {
       fi
       case $kind in
         u) finding knob "restarter:$u" "not-restarter:$what" "$u can restart a service ($how), and no restarter line names it or its timer, so a data-store step wouldn't stop it. If it can start or restart a service, declare it; if it can't, declare exception not-restarter:$what <review-by> <reason> (knob.md)." ;;
-        m) finding knob "restarter:$u" "not-restarter:$what" "$u can restart a service ($how), and no restarter line names it or its timer, so a data-store step wouldn't stop it. Declare it; if none of the lines it matched is a call, declare exception not-restarter:$what <review-by> <reason> (knob.md)." ;;
+        m)
+          R_EXACT_IDS="$R_EXACT_IDS restarter:$u"
+          finding knob "restarter:$u" "not-restarter:$what" "$u can restart a service ($how), and no restarter line names it or its timer, so a data-store step wouldn't stop it. Declare it; if none of the lines it matched is a call, declare exception not-restarter:$what <review-by> <reason> (knob.md)." ;;
         *) finding knob "restarter:$u" "" "$u can restart a service ($how), and no restarter line names it or its timer, so a data-store step wouldn't stop it. Declare it (knob.md)." ;;
       esac
     fi
@@ -5461,7 +5471,9 @@ for _i in ${F_ID[@]+"${!F_ID[@]}"}; do
   jadds _e id "${F_ID[$_i]}"
   jaddsn _e exception_what "${F_WHAT[$_i]}"
   jadds _e message "${F_MSG[$_i]}"
-  if [ -n "${F_WHAT[$_i]}" ] && exception_for "${F_WHAT[$_i]}" && [ "$EX_EXPIRED" = 0 ]; then
+  _x=""
+  if in_words "${F_ID[$_i]}" "${R_EXACT_IDS:-}"; then _x=exact; fi
+  if [ -n "${F_WHAT[$_i]}" ] && exception_for "${F_WHAT[$_i]}" ${_x:+"$_x"} && [ "$EX_EXPIRED" = 0 ]; then
     jaddn _e exception_line "$EX_LINE"
     jadds _e review_by "$EX_REVIEW"
     jadds _e reason "$EX_REASON"

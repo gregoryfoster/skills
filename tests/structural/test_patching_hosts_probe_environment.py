@@ -857,6 +857,41 @@ def test_a_not_restarter_exception_takes_a_glob_and_names_each_service(host):
     assert out["impact"]["restarters_complete"] is False
 
 
+def test_a_not_restarter_glob_covers_nothing_the_scan_read(host):
+    # CR 2514: a sibling whose script the scan matched, a real restart call,
+    # was excepted by the family's glob, and the list read complete and
+    # empty. A glob covers only what the scan couldn't read.
+    _uv_jobs(host, "pm-fetch")
+    host.write(
+        "etc/systemd/system/pm-watchdog.timer",
+        "[Timer]\nOnCalendar=hourly\nUnit=pm-watchdog.service\n",
+    )
+    host.write(
+        "etc/systemd/system/pm-watchdog.service",
+        "[Service]\nType=oneshot\nExecStart=/usr/local/bin/pm-watchdog.sh\n",
+    )
+    host.write(
+        "usr/local/bin/pm-watchdog.sh",
+        "#!/bin/sh\ncurl -fs localhost || systemctl restart postgresql\n",
+    )
+    for glob in ("pm-*.service", "*"):
+        host.knob(
+            f"posture scheduled\nexception not-restarter:{glob} 2099-01-01 uv run jobs\n"
+        )
+        out = host.run()
+        assert "restarters:unread:pm-fetch.service" in _ids(out, "excepted")
+        f = _finding(out, "restarter:pm-watchdog.service")
+        assert f["exception_what"] == "not-restarter:pm-watchdog.service"
+        assert "restarter:pm-watchdog.service" not in _ids(out, "excepted")
+        assert "pm-watchdog.service" in {r["unit"] for r in out["impact"]["restarters"]}
+    # A matched line that isn't a call still takes an exact one.
+    host.knob(
+        "posture scheduled\n"
+        "exception not-restarter:pm-watchdog.service 2099-01-01 a docstring\n"
+    )
+    assert "restarter:pm-watchdog.service" in _ids(host.run(), "excepted")
+
+
 def test_an_exact_not_restarter_exception_beats_a_glob_and_an_expired_glob_covers_nothing(
     host,
 ):
@@ -880,6 +915,22 @@ def test_an_exact_not_restarter_exception_beats_a_glob_and_an_expired_glob_cover
         "restarters:unread:pm-fetch.service",
         "restarters:unread:pm-build.service",
     } <= set(_ids(out))
+
+
+def test_an_expired_narrower_not_restarter_glob_doesnt_shadow_a_live_broader_one(
+    host,
+):
+    # CR 2519: the expired glob won the ranking, and covered nothing.
+    _uv_jobs(host, "pm-fetch")
+    host.knob(
+        "posture scheduled\n"
+        "exception not-restarter:pm-*.service 2099-01-01 uv run jobs\n"
+        "exception not-restarter:pm-f*.service 2000-01-01 the fetchers, lapsed\n"
+    )
+    out = host.run()
+    assert "restarters:unread:pm-fetch.service" not in _ids(out)
+    f = _finding(out, "restarters:unread:pm-fetch.service", "excepted")
+    assert (f["exception_line"], f["review_by"]) == (2, "2099-01-01")
 
 
 def test_a_not_restarter_glob_covers_an_onfailure_targets_key(host):

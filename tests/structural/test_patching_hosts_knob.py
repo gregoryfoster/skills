@@ -636,6 +636,9 @@ def test_a_dated_windows_reason_cut_by_a_hash_is_a_finding(tmp_path, tail, reaso
         # A comment written as one: '#' and a space.
         "window 2026-11-10 14:10-18:10 # the owner's one-off\n",
         "window 2026-11-10 14:10-18:10 TS-2026-013 # kernel fix\n",
+        # A doubled '#' is a comment written as one too (CR 2517).
+        "window 2026-11-10 14:10-18:10 TS-2026-013 ## the owner's note\n",
+        "window 2026-11-10 14:10-18:10 ##one-off\n",
         # <repo>#N holds its '#' inside a word, so nothing is cut.
         "window 2026-11-10 14:10-18:10 app#113-out-of-window\n",
         # A weekday line takes no reason, so a comment there loses nothing.
@@ -645,6 +648,17 @@ def test_a_dated_windows_reason_cut_by_a_hash_is_a_finding(tmp_path, tail, reaso
 def test_a_dated_windows_comment_or_repo_ref_is_no_finding(tmp_path, line):
     out = _read(tmp_path, f"posture scheduled\n{line}", today="2026-11-10")
     assert out["findings"] == []
+
+
+def test_a_cut_reason_is_reported_only_for_a_host_its_window_applies_to(tmp_path):
+    # CR 2518: as past-window, so a repo whose knob test reads every host
+    # goes red only for the host the line is for.
+    text = (
+        "posture scheduled\n[host co-worker-*]\n"
+        "window 2026-11-10 14:10-18:10 #113-out-of-window\n"
+    )
+    assert _kinds(_read(tmp_path, text, host="co-worker-1")) == ["window-reason-cut"]
+    assert _read(tmp_path, text, host="web-1")["findings"] == []
 
 
 def test_a_past_dated_window_is_a_finding_but_not_report_only(tmp_path):
