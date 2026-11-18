@@ -636,6 +636,9 @@ def test_a_dated_windows_reason_cut_by_a_hash_is_a_finding(tmp_path, tail, reaso
         # A comment written as one: '#' and a space.
         "window 2026-11-10 14:10-18:10 # the owner's one-off\n",
         "window 2026-11-10 14:10-18:10 TS-2026-013 # kernel fix\n",
+        # A doubled '#' is a comment written as one too (CR 2517).
+        "window 2026-11-10 14:10-18:10 TS-2026-013 ## the owner's note\n",
+        "window 2026-11-10 14:10-18:10 ##one-off\n",
         # <repo>#N holds its '#' inside a word, so nothing is cut.
         "window 2026-11-10 14:10-18:10 app#113-out-of-window\n",
         # A weekday line takes no reason, so a comment there loses nothing.
