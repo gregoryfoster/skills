@@ -1617,6 +1617,20 @@ def test_an_exact_database_exception_beats_a_glob(host):
     assert _finding(out, "database:app_test_gw0", "excepted")["exception_line"] == 3
 
 
+def test_an_expired_narrower_database_glob_doesnt_shadow_a_live_broader_one(host):
+    # CR 2519: the expired glob won the ranking, and covered nothing.
+    _postgres(host, _WORKERS)
+    host.knob(
+        "posture scheduled\ndatastore postgres postgresql@16-main app\n"
+        "exception database:app_test* 2099-01-01 the test suite's\n"
+        "exception database:app_test_gw* 2000-01-01 the workers', lapsed\n"
+    )
+    out = host.run()
+    for db in ("app_test_gw0", "app_test_gw1"):
+        assert f"database:{db}" not in _ids(out)
+        assert _finding(out, f"database:{db}", "excepted")["exception_line"] == 3
+
+
 def test_a_glob_excepts_no_held_package(host):
     # A held:<package> names one thing: a glob there would over-cover. Only
     # database: and not-restarter: (#656) take one.

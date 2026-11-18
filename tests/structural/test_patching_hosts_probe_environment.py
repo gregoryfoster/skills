@@ -882,6 +882,22 @@ def test_an_exact_not_restarter_exception_beats_a_glob_and_an_expired_glob_cover
     } <= set(_ids(out))
 
 
+def test_an_expired_narrower_not_restarter_glob_doesnt_shadow_a_live_broader_one(
+    host,
+):
+    # CR 2519: the expired glob won the ranking, and covered nothing.
+    _uv_jobs(host, "pm-fetch")
+    host.knob(
+        "posture scheduled\n"
+        "exception not-restarter:pm-*.service 2099-01-01 uv run jobs\n"
+        "exception not-restarter:pm-f*.service 2000-01-01 the fetchers, lapsed\n"
+    )
+    out = host.run()
+    assert "restarters:unread:pm-fetch.service" not in _ids(out)
+    f = _finding(out, "restarters:unread:pm-fetch.service", "excepted")
+    assert (f["exception_line"], f["review_by"]) == (2, "2099-01-01")
+
+
 def test_a_not_restarter_glob_covers_an_onfailure_targets_key(host):
     # The key is the target's template, so a glob reaches it too.
     _hooked(host, ("app.service",), "unit-failure@%n.service")

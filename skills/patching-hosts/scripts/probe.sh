@@ -423,7 +423,9 @@ not_read() { jpushs NOT_READ "$1"; }
 # not-restarter:<what>, so a repo's family of timer services does (#656).
 # An exact <what> wins over any glob, and of two globs the more specific, by
 # its count of characters that aren't * or ?, as [host]'s precedence reads
-# it; the first in the knob on a tie. The finding a glob covers still names
+# it; the first in the knob on a tie. An expired glob is passed over, so it
+# can't shadow a live broader one (CR 2519); an expired exact line still
+# answers, expired. The finding a glob covers still names
 # its own <what>, so excepted lists each service it matched. No other kind
 # takes one: a held:<package> or a keep:<component> names one thing, and a
 # glob there would over-cover.
@@ -446,6 +448,7 @@ exception_for() {  # <what>: sets EX_*; returns 1 when the knob declares none
     # The exception's glob is a pattern on purpose.
     # shellcheck disable=SC2254
     case ${1#"$_k"} in $_g) ;; *) continue ;; esac
+    [ "${_f[3]}" = 0 ] || continue
     _s=${_g//[*?]/}
     if [ "${#_s}" -gt "$_best" ]; then _best=${#_s} _hit=("${_f[@]}"); fi
   done
