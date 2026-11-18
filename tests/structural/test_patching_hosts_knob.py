@@ -24,6 +24,8 @@ What this file pins, against references/knob.md:
 - a window may name a week of the month (`Sun#2`) or a date, with a reason; a
   dated line is never replaced by a more specific scope's windows, and one
   whose close has passed is a finding, not a reason to go report-only (#421);
+- a dated line's reason cut by a `#` that starts a word is a finding,
+  `window-reason-cut`; `# text` and `<repo>#N` aren't (#656);
 - the example in knob.md parses clean, and every directive in its table parses;
 - the example's inflight line counts a running oneshot, which is activating
   (#359);
@@ -600,6 +602,49 @@ def test_a_dated_windows_reason_is_optional(tmp_path):
     assert out["findings"] == []
     [w] = out["window"]
     assert (w["date"], w["weekday"], w["reason"]) == ("2028-02-29", "Tue", None)
+
+
+@pytest.mark.parametrize(
+    "tail, reason",
+    [
+        # co-processor 2026-11-10 (#620) and co-index 2026-11-03 (#569): an
+        # issue named as #N right after the range opened a comment, and the
+        # reason read null with nothing to say so (#656).
+        ("#113-out-of-window", None),
+        ("#31, a bulletin's kernel", None),
+        # The same cut part-way through: the rest of the reason is lost.
+        ("out of window, per #113", "out of window, per"),
+    ],
+)
+def test_a_dated_windows_reason_cut_by_a_hash_is_a_finding(tmp_path, tail, reason):
+    out = _read(tmp_path, f"posture scheduled\nwindow 2026-11-10 14:10-18:10 {tail}\n")
+    assert out["window"][0]["reason"] == reason
+    assert _kinds(out) == ["window-reason-cut"]
+    f = out["findings"][0]
+    assert f["line"] == 2
+    assert "window 2026-11-10 14:10-18:10" in f["message"]
+    assert "<repo>#N" in f["message"]
+    # The comment isn't echoed, as no line's text is.
+    assert "113" not in f["message"] and "31," not in f["message"]
+    # The run's record is short, not the knob untrustworthy.
+    assert out["report_only"] is False
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        # A comment written as one: '#' and a space.
+        "window 2026-11-10 14:10-18:10 # the owner's one-off\n",
+        "window 2026-11-10 14:10-18:10 TS-2026-013 # kernel fix\n",
+        # <repo>#N holds its '#' inside a word, so nothing is cut.
+        "window 2026-11-10 14:10-18:10 app#113-out-of-window\n",
+        # A weekday line takes no reason, so a comment there loses nothing.
+        "window Mon 14:10-18:10 #113\n",
+    ],
+)
+def test_a_dated_windows_comment_or_repo_ref_is_no_finding(tmp_path, line):
+    out = _read(tmp_path, f"posture scheduled\n{line}", today="2026-11-10")
+    assert out["findings"] == []
 
 
 def test_a_past_dated_window_is_a_finding_but_not_report_only(tmp_path):

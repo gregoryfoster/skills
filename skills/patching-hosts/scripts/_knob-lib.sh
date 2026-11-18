@@ -242,6 +242,13 @@ _knob_directive() {  # <line> <sec> <text>
       if [ -n "$wd" ] && [ "$nt" -ge 2 ] && { [ "$nt" -eq 2 ] || [ -n "$wdate" ]; } &&
         _knob_is_time_range "${tok[1]}"; then
         _knob_record "$n" "$sec" "$wdir" "" "$wd$u$_KT_START$u$_KT_END$u$_KT_WRAPS$u$n$u$wn$u$wdate$u${tok[*]:2}"
+        # #656: '#113' after the range, or part-way through the reason, opens
+        # a comment, so the run's record of why it ran loses that much with
+        # nothing to say so. '# text' is a comment written as one.
+        case ${wdate:+$_KNOB_CUT} in "#"[![:space:]]*)
+          _knob_finding "$n" window-reason-cut \
+            "window $wdate ${tok[1]}: its reason stops at a '#' that starts a word, which opens a comment, so the reason drops what follows. Name an issue as <repo>#N, which holds its '#' inside a word" ;;
+        esac
       else
         _knob_malformed "$n" "window takes <weekday> <HH:MM-HH:MM>, <weekday>#<week of the month, 1 to 5> <HH:MM-HH:MM>, or <YYYY-MM-DD> <HH:MM-HH:MM> [<reason>], with a weekday Mon to Sun, a date on the calendar, and an end that differs from the start"
       fi ;;
@@ -398,7 +405,7 @@ _knob_directive() {  # <line> <sec> <text>
 }
 
 _knob_parse_file() {
-  local n=0 sec=-1 line s t j glob hre
+  local n=0 sec=-1 line s t j glob hre _KNOB_CUT=""
   hre='^\[host[[:space:]]+([^][:space:]]+)[[:space:]]*\]$'
   while IFS= read -r line || [ -n "$line" ]; do
     n=$((n + 1))
@@ -414,6 +421,9 @@ _knob_parse_file() {
     # a command can hold a URL fragment. %% cuts from the first such '#'.
     s=" $line"
     s=${s%%[[:space:]]#*}
+    # What was cut, from its '#', for a dated window's reason (#656).
+    _knob_trim "${line:$((${#s} - 1))}"
+    _KNOB_CUT=$_KR
     _knob_trim "$s"
     s=$_KR
     [ -n "$s" ] || continue
