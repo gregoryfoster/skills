@@ -684,7 +684,7 @@ _knob_resolve() {
                   "exception ${f[0]} passed its review-by date, ${f[1]}: its soak ended, and $next" ;;
               *)
                 _knob_finding "${_KP_LINE[$i]}" expired-exception \
-                  "exception ${f[0]} passed its review-by date, ${f[1]}; the deviation it covered is a finding again" ;;
+                  "exception ${f[0]} passed its review-by date, ${f[1]}; it no longer covers its deviation, which is a finding again unless another line covers it" ;;
             esac
           else
             KNOB_EXCEPTION+=("$val${u}0$u${_KP_LINE[$i]}")

@@ -266,6 +266,11 @@ def test_an_exception_expires_the_day_after_its_review_by_date(tmp_path):
     after = _read(tmp_path, text, today="2026-10-01")
     assert after["exception"][0]["expired"] is True
     assert _kinds(after) == ["expired-exception"]
+    # CR 2524: since CR 2519 a live broader glob can still cover what an
+    # expired line did, so the message claims no more than the line itself.
+    [f] = after["findings"]
+    assert "no longer covers" in f["message"]
+    assert "unless another line covers it" in f["message"]
     # An expired exception is a deviation to report, not a reason to distrust
     # the knob.
     assert after["report_only"] is False
