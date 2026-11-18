@@ -833,6 +833,25 @@ GONE = [f"/usr/lib/x86_64-linux-gnu/libgone{i}.so.1" for i in range(5)]
             "dbus.service's processes map 1 deleted file, "
             "/opt/vendor app/lib/libvendor.so.2 among them",
         ),
+        # CR 2522: reboot-required beside a map root can't read, the
+        # unknown path (predict_reboot's 2): due, for reboot-required.
+        (
+            MAPS,
+            {USER_UNIT: (USER_CGROUP, {1500: None})},
+            True,
+            True,
+            True,
+            "already due before the bulk: /run/reboot-required",
+        ),
+        # CR 2522: a user@ process mapping a deleted library.
+        (
+            MAPS,
+            {USER_UNIT: (USER_CGROUP, {1500: MAPS + _deleted(GONE[1])})},
+            False,
+            True,
+            True,
+            f"already due before the bulk: {USER_UNIT}'s processes map 1 deleted file",
+        ),
     ],
     ids=[
         "pid-1-deleted",
@@ -844,6 +863,8 @@ GONE = [f"/usr/lib/x86_64-linux-gnu/libgone{i}.so.1" for i in range(5)]
         "due-over-unknown",
         "predicted-first",
         "path-with-a-space",
+        "reboot-required-over-unknown",
+        "user-deleted",
     ],
 )
 def test_a_reboot_already_due_before_the_bulk_is_in_its_span(
