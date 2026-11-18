@@ -703,6 +703,33 @@ def test_the_bulk_predicts_a_reboot_from_what_step_4_reboots_for(
     assert r["run_seconds"] == (BULK_ONLY if reboot is False else BULK_AND_CHAIN)
 
 
+def test_a_mapped_path_holding_a_space_is_looked_up_whole(host):
+    # CR 2523: the owner lookup cut a mapped path at its first space, so
+    # dpkg-query -S was asked about /opt/vendor, and the package that owns
+    # the library PID 1 maps went unseen: no reboot, and no room for one.
+    lib = "/opt/vendor app/lib/libvendor.so.2"
+    host.knob(KNOB)
+    (host.dry / "dry-run.log").write_text(
+        "Packages that will be upgraded: vendorlib tzdata\n"
+    )
+    host.pid1_maps.write_text(MAPS + f"7f30-7f40 r-xp 00000000 fd:01 4560 {lib}\n")
+    host.on(
+        "dpkg-query",
+        "-S *",
+        script=(
+            "shift; rc=0; for f; do case $f in "
+            f'"{lib}") echo "vendorlib:amd64: $f" ;; '
+            '*) echo "dpkg-query: no path found matching pattern $f" >&2; rc=1 ;; '
+            "esac; done; exit $rc"
+        ),
+    )
+    _step4(host, QUIET)
+    host.clock = TUE_1530 - 30 * MIN
+    r = host.run()["gate"]["run_span"]
+    assert r["reboot"] is True, r["reboot_why"]
+    assert r["reboot_why"] == "vendorlib, which owns a file PID 1 maps"
+
+
 def _deleted(*paths: str) -> str:
     """Rows of a /proc/<pid>/maps for PATHS, each deleted since it was mapped."""
     return "".join(

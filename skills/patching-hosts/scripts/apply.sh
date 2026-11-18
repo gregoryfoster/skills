@@ -819,8 +819,12 @@ reboot_maps() {  # <the selection> <who> <pid>...
     while IFS= read -r _rm_line; do
       [[ $_rm_line =~ $_rm_re ]] || continue
       _rm_x=${BASH_REMATCH[4]}
-      _rm_p=${_rm_x%% *}
-      case $_rm_p in /*) in_words "$_rm_p" "$_rm_paths" || _rm_paths="$_rm_paths $_rm_p" ;; esac
+      # The whole path, a space included, less the deleted marker (CR 2523):
+      # one per line, so dpkg-query -S is asked about the file itself.
+      _rm_p=${_rm_x% (deleted)}
+      case $_rm_p in
+        /*) case $'\n'$_rm_paths in *$'\n'"$_rm_p"$'\n'*) ;; *) _rm_paths="$_rm_paths$_rm_p"$'\n' ;; esac ;;
+      esac
       if [ "$_rm_who" = "PID 1" ]; then
         case $_rm_line in *"(deleted)"*) ;; *) continue ;; esac
       else
@@ -849,7 +853,9 @@ reboot_maps() {  # <the selection> <who> <pid>...
     [ "$_rm_n" -ne 1 ] || _rm_x="file"
     RB_DUE="$_rm_who $_rm_v $_rm_n deleted $_rm_x, $_rm_first among them"
   fi
-  read -r -a _rm_ps <<<"$_rm_paths" || true
+  while IFS= read -r _rm_p; do
+    [ -z "$_rm_p" ] || _rm_ps+=("$_rm_p")
+  done <<<"$_rm_paths"
   if [ "${#_rm_ps[@]}" -gt 0 ]; then
     # Exit 1 means some path has no package: the others still print.
     capture _rm_out dpkg-query -S "${_rm_ps[@]}"
