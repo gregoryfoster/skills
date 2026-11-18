@@ -711,6 +711,27 @@ def _deleted(*paths: str) -> str:
     )
 
 
+# What needrestart 3.6 doesn't count as a deleted mapping (noble's
+# 3.6-7ubuntu4.6, its default blacklist_mappings, CR 2515): each pattern
+# once, a /tmp file, a JNA temp, a mapping without x and one with inode 0.
+PASSED_OVER = (
+    _deleted(
+        "/SYSV00000000",
+        "/dev/zero",
+        "/memfd:systemd-journald",
+        "/[aio]",
+        "/usr/lib/x86_64-linux-gnu/orcexec.AbC12",
+        "/usr/lib/plasma/#123",
+        "/var/cache/app/jna4711.tmp",
+        "/tmp/ffiXyZ12",
+        "/var/tmp/build.so",
+        "/run/user/1000/lib.so",
+    )
+    + "7f60-7f61 r--p 00000000 fd:01 4580 /usr/lib/x86_64-linux-gnu/libz.so.1 (deleted)\n"
+    + "7f62-7f63 r-xp 00000000 00:00 0 /usr/lib/x86_64-linux-gnu/libanon.so.1 (deleted)\n"
+    + "7f64-7f65 r-xp 00000000 00:05 4590 /drm mm object (deleted)\n"
+)
+
 # Five libraries the security lane replaced on earlier days, still mapped:
 # co-processor's PID 1 before its 2026-11-10 bulk (#620).
 GONE = [f"/usr/lib/x86_64-linux-gnu/libgone{i}.so.1" for i in range(5)]
@@ -747,15 +768,36 @@ GONE = [f"/usr/lib/x86_64-linux-gnu/libgone{i}.so.1" for i in range(5)]
             True,
             "already due before the bulk: /run/reboot-required",
         ),
-        # A memfd, SysV shared memory and a deleted /dev node are no
-        # library: needrestart passes them over, and so does the span.
+        # CR 2515: what needrestart 3.6's default blacklist_mappings pass
+        # over, a mapping that isn't executable, and one with no inode,
+        # mapped by dbus: step 4 reboots for dbus only when needrestart
+        # lists it, so none is a reboot already due.
         (
-            MAPS + _deleted("/memfd:systemd-journald", "/SYSV00000000", "/dev/zero"),
-            {},
+            MAPS,
+            {"dbus.service": ("/system.slice/dbus.service", {600: MAPS + PASSED_OVER})},
             False,
             False,
             False,
             None,
+        ),
+        # CR 2515: PID 1 is read raw, as step 4's grep -c '(deleted)' reads
+        # it, so the memfd dbus may map counts on PID 1.
+        (
+            MAPS + _deleted("/memfd:systemd-journald"),
+            {},
+            False,
+            True,
+            True,
+            "PID 1 maps 1 deleted file, /memfd:systemd-journald among them",
+        ),
+        # So does a deleted mapping that isn't executable.
+        (
+            MAPS + "7f50-7f51 r--p 00000000 fd:01 4570 /etc/ld.so.cache (deleted)\n",
+            {},
+            False,
+            True,
+            True,
+            "PID 1 maps 1 deleted file, /etc/ld.so.cache among them",
         ),
         # A due reboot outweighs a map that can't be read.
         (
@@ -775,14 +817,54 @@ GONE = [f"/usr/lib/x86_64-linux-gnu/libgone{i}.so.1" for i in range(5)]
             False,
             f"libxml2, which owns a file {PG_UNIT}'s processes map",
         ),
+        # CR 2516: a path holding a space is still read whole, so its
+        # "(deleted)" isn't lost.
+        (
+            MAPS,
+            {
+                "dbus.service": (
+                    "/system.slice/dbus.service",
+                    {600: MAPS + _deleted("/opt/vendor app/lib/libvendor.so.2")},
+                )
+            },
+            False,
+            True,
+            True,
+            "dbus.service's processes map 1 deleted file, "
+            "/opt/vendor app/lib/libvendor.so.2 among them",
+        ),
+        # CR 2522: reboot-required beside a map root can't read, the
+        # unknown path (predict_reboot's 2): due, for reboot-required.
+        (
+            MAPS,
+            {USER_UNIT: (USER_CGROUP, {1500: None})},
+            True,
+            True,
+            True,
+            "already due before the bulk: /run/reboot-required",
+        ),
+        # CR 2522: a user@ process mapping a deleted library.
+        (
+            MAPS,
+            {USER_UNIT: (USER_CGROUP, {1500: MAPS + _deleted(GONE[1])})},
+            False,
+            True,
+            True,
+            f"already due before the bulk: {USER_UNIT}'s processes map 1 deleted file",
+        ),
     ],
     ids=[
         "pid-1-deleted",
         "datastore-deleted",
         "reboot-required",
-        "pseudo-files",
+        "needrestart-passes-over",
+        "pid-1-raw",
+        "pid-1-not-executable",
         "due-over-unknown",
         "predicted-first",
+        "path-with-a-space",
+        "reboot-required-over-unknown",
+        "user-deleted",
     ],
 )
 def test_a_reboot_already_due_before_the_bulk_is_in_its_span(
@@ -809,6 +891,24 @@ def test_a_reboot_already_due_before_the_bulk_is_in_its_span(
         assert why in r["reboot_why"]
     assert r["run_seconds"] == (BULK_AND_CHAIN if reboot else BULK_ONLY)
     assert out["gate"]["span"]["expected_seconds"] == r["run_seconds"]
+
+
+def test_a_window_refusal_says_the_reboot_was_already_due(host):
+    # CR 2520: from 20:20 the bulk alone ends at 20:52, inside the window
+    # closing at 21:00, and its due reboot's chain takes the run to 21:05.
+    (host.dry / "dry-run.log").write_text(
+        "Packages that will be upgraded: libxml2 tzdata\n"
+    )
+    host.pid1_maps.write_text(MAPS + _deleted(*GONE))
+    _step4(_owners(host), QUIET)
+    host.clock = TUE_1530 + 4 * 3600 + 50 * MIN
+    out = host.run(rc=3)
+    [r] = [r for r in out["refused"] if "window" in r]
+    assert r.startswith(
+        "the run's span (the bulk at 3 times its dry run, and the reboot, already due)"
+    ), r
+    assert "2026-09-29T20:20:00Z to 2026-09-29T21:05:00Z" in r
+    assert _changed(host) == []
 
 
 @pytest.mark.parametrize(

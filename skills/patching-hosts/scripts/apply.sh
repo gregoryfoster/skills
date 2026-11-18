@@ -769,11 +769,34 @@ reboot_pids() {  # <var> <unit>: VAR := its PIDs, space-separated
 # another user's is "Permission denied" otherwise. A process that exited
 # since its cgroup was read maps nothing. The first WHO found mapping a
 # deleted file sets RB_DUE (#655): a reboot already due, whatever the
-# selection. A memfd, SysV shared memory or a /dev node is no file an
-# upgrade replaced, and needrestart passes them over too.
+# selection.
+#
+# The span holds the reboot step 4 will decide on, so each map is read as
+# step 4 reads it (CR 2515). PID 1's is raw, as step 4's sudo grep -c
+# '(deleted)' /proc/1/maps counts it: any line naming "(deleted)". Every
+# other process step 4 reboots for is one needrestart lists, so its map is
+# read as needrestart 3.6 reads it (noble's 3.6-7ubuntu4.6, measured
+# 2026-11-18): an executable mapping (perms holding x), an inode that isn't
+# 0, a path ending " (deleted)", and none of the default blacklist_mappings
+# in /etc/needrestart/needrestart.conf, matched on the path with that
+# suffix still on, as it matches them. RB_SKIP is that list, each Perl
+# pattern in POSIX ERE.
 RB_DUE=""
+RB_SKIP=(
+  '^/(SYSV00000000( \(deleted\))?|drm([[:space:]]|$)|dev/)'
+  '^/memfd:'
+  '^/\[aio\]'
+  '/orcexec\.[[:alnum:]_]+( \(deleted\))?$'
+  '/#[0-9]+( \(deleted\))?$'
+  '/jna[0-9]+\.tmp( \(deleted\))?$'
+  '^(/var)?/tmp/'
+  '^(/var)?/run/'
+)
 reboot_maps() {  # <the selection> <who> <pid>...
-  local _rm_sel=$1 _rm_who=$2 _rm_pid _rm_maps _rm_out _rm_line _rm_p _rm_owners="" _rm_paths="" _rm_unk="" _rm_v=maps _rm_rc _rm_x _rm_del=""
+  local _rm_sel=$1 _rm_who=$2 _rm_pid _rm_maps _rm_out _rm_line _rm_p _rm_owners="" _rm_paths="" _rm_unk="" _rm_v=maps _rm_rc _rm_x _rm_del="" _rm_n=0 _rm_first="" _rm_s _rm_k
+  # A maps line: address, perms, offset, dev, inode, then the path, which
+  # may hold a space (CR 2516), so it's the rest of the line.
+  local _rm_re='^[^ ]+ +([^ ]+) +[^ ]+ +[^ ]+ +([^ ]+)( +(.*))?$'
   local -a _rm_ps=()
   # "PID 1 maps", "dbus.service's processes map".
   case $_rm_who in *s) _rm_v=map ;; esac
@@ -793,18 +816,38 @@ reboot_maps() {  # <the selection> <who> <pid>...
       [ -n "$_rm_unk" ] || _rm_unk="$PROC_DIR/$_rm_pid/maps ($_rm_who) couldn't be read as root"
       continue
     fi
-    while read -r _ _ _ _ _ _rm_p _rm_x; do
+    while IFS= read -r _rm_line; do
+      [[ $_rm_line =~ $_rm_re ]] || continue
+      _rm_x=${BASH_REMATCH[4]}
+      _rm_p=${_rm_x%% *}
       case $_rm_p in /*) in_words "$_rm_p" "$_rm_paths" || _rm_paths="$_rm_paths $_rm_p" ;; esac
-      case $_rm_x in "(deleted)") ;; *) continue ;; esac
-      case $_rm_p in /memfd:* | /SYSV* | /dev/* | /drm* | /dmabuf* | "/[aio]"*) continue ;; esac
-      in_words "$_rm_p" "$_rm_del" || _rm_del="$_rm_del $_rm_p"
+      if [ "$_rm_who" = "PID 1" ]; then
+        case $_rm_line in *"(deleted)"*) ;; *) continue ;; esac
+      else
+        case ${BASH_REMATCH[1]} in *x*) ;; *) continue ;; esac
+        [ "${BASH_REMATCH[2]}" != 0 ] || continue
+        case $_rm_x in *" (deleted)") ;; *) continue ;; esac
+        _rm_k=0
+        for _rm_s in "${RB_SKIP[@]}"; do
+          if [[ $_rm_x =~ $_rm_s ]]; then
+            _rm_k=1
+            break
+          fi
+        done
+        [ "$_rm_k" -eq 0 ] || continue
+      fi
+      _rm_x=${_rm_x% (deleted)}
+      # A file maps a segment a line: count it once.
+      case $'\n'$_rm_del in *$'\n'"$_rm_x"$'\n'*) continue ;; esac
+      _rm_del="$_rm_del$_rm_x"$'\n'
+      _rm_n=$((_rm_n + 1))
+      [ -n "$_rm_first" ] || _rm_first=$_rm_x
     done <<<"$_rm_maps"
   done
-  if [ -n "$_rm_del" ] && [ -z "$RB_DUE" ]; then
-    read -r -a _rm_ps <<<"$_rm_del"
+  if [ "$_rm_n" -gt 0 ] && [ -z "$RB_DUE" ]; then
     _rm_x="files"
-    [ "${#_rm_ps[@]}" -ne 1 ] || _rm_x="file"
-    RB_DUE="$_rm_who $_rm_v ${#_rm_ps[@]} deleted $_rm_x, ${_rm_ps[0]} among them"
+    [ "$_rm_n" -ne 1 ] || _rm_x="file"
+    RB_DUE="$_rm_who $_rm_v $_rm_n deleted $_rm_x, $_rm_first among them"
   fi
   read -r -a _rm_ps <<<"$_rm_paths" || true
   if [ "${#_rm_ps[@]}" -gt 0 ]; then
@@ -988,6 +1031,8 @@ gate_step_span() {
   if [ "$rc" -ne 1 ]; then
     x=$((x + CHAIN_SPAN))
     w=", and the reboot"
+    # A refusal says when the reboot was due before the bulk (CR 2520).
+    [ "$due" -eq 0 ] || w="$w, already due"
   fi
   jaddn o run_seconds "$x"
   jadd J_GATE run_span "{$o}"
