@@ -104,7 +104,7 @@ The coordinator decides #627's disposition at verification.
 ## Tradeoffs / alternatives
 
 - **Leave the envelope to the executor, and only document it in the skill.** Rejected: the rules are the gate's own readings, and two implementations drift. This repo can test the skill's.
-- **A standalone `check-plan.sh`.** Rejected: it would duplicate `apply.sh`'s selection, held-step and reboot code, or move them out of a 2,210-line script for one caller. The gate already reports without `--approve`.
+- **A standalone `check-plan.sh`.** Rejected: it would duplicate `apply.sh`'s selection, held-step and reboot code, or move them out of a 2,287-line script for one caller. The gate already reports without `--approve`.
 - **`--plan` implies approval, with no `--approve`.** Rejected: `--approve` stays the act and `--plan` its evidence, so every caller and record reads the same way.
 - **A `[rebuild]` section header.** Rejected, as above.
 - **Rebuild steps for dependents declared in the rebuilt host's knob.** Rejected: its owner would be declaring commands that run on someone else's host.
@@ -121,7 +121,7 @@ Chain B, after #655, unless noted:
 2. **The code:** `--plan FILE` in `apply.sh`, `recovery-point.sh` and `reboot-chain.sh`; `gate.plan`; the `approval` object. Their `--approve` help and refusals name both forms.
 3. **The docs:**
    - the Iron Law's line 1;
-   - `run.md`'s opening and its Approvals, one sentence pointing to `executor.md` (`run.md` is 9,235 of 10,000);
+   - `run.md`'s opening and its Approvals, one sentence pointing to `executor.md` (`run.md` is 9,309 of 10,000 after #655);
    - `policy.md:31`;
    - a new `references/executor.md` (the plan file, the envelope, what is recorded), linked from `SKILL.md`;
    - a rationalization row: "the plan was approved, so a host that moved since is covered".
