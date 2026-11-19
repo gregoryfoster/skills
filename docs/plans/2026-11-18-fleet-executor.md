@@ -32,7 +32,7 @@ NO APPLY, RESTART OR REBOOT WITHOUT THE OWNER'S APPROVAL: IN THE HOST'S OWN SESS
   - The skill hashes the file's bytes itself (SHA-256), so the record binds the exact plan.
   - Each step's JSON and the run record carry `approval: {by: "plan", plan, sha256, approved_at, approved_by}`. The last two are copied from the file and marked as stated, not verified.
   - Without `--plan`, the same object reads `{by: "session"}`. The `approved` boolean stays, so existing readers don't change.
-- **The plan file** is a JSON shape the skill defines in a new `references/executor.md`, in its own terms:
+- **The plan file** is a line file in the knob's own grammar (directives, `#` comments, `[host <name>]` sections with exact names), defined in a new `references/executor.md` in the skill's own terms. It isn't JSON: the scripts carry no JSON reader and add no `jq` or `python3` dependency on a host (revised at build, 2026-11-19). It holds:
   - `version`, `id`, `approved_at`, `approved_by` and `not_after`;
   - per host: `host`, the knob's commit, the lane, the packages (name, version, class, origin), the held steps, the data-store units those steps restart, `reboot` (true or false), and the window.
 
