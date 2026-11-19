@@ -1,7 +1,7 @@
 ---
 title: patching-hosts — let a fleet executor run approved plans (#673 items 1, 3, 4)
 date: 2026-11-18
-status: draft
+status: approved
 ---
 
 # patching-hosts: a fleet executor runs approved plans
@@ -132,6 +132,15 @@ Chain B, after #655, unless noted:
    - exact tokens for each edited doc;
    - Linux patching-hosts tests;
    - `read-knob.sh` against cohort knobs (read-only).
+
+## Decisions at review (operator, 2026-11-19, #673)
+
+- **Item 4 is built in this set,** not only specified. So the Iron Law's first line takes all three clauses at once, and step 5 runs.
+- **The Iron Law stays a required fragment, and a test pins its text,** so any later change to it is a deliberate edit that the test names.
+- **`rebuild-step` and `rebuild-undo` are keyed by host,** the rebuilt host's name.
+- **A plan's `not_after` is the executor's statement,** taken as given.
+
+The envelope in `apply.sh`'s gate and the `rebuild-*` directives stand as written.
 
 ## Open questions / risks
 
