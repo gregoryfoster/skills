@@ -33,6 +33,7 @@ into a guess. No API calls required.
 """
 
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -329,18 +330,27 @@ class TestProbeOverDocs:
         )
 
 
-def _census(tmp_path, rows: list[dict], *args) -> subprocess.CompletedProcess:
+def _census(
+    tmp_path, rows: list[dict], *args, visibility=None, as_json=True
+) -> subprocess.CompletedProcess:
     """Run the census against a synthetic cache — no network, no gh.
 
     `--cache` exists so a re-classification does not refetch; the same door is
     what makes the billing arithmetic testable offline. A prose claim about how
     a skipped job is handled is worth much less than a run that proves it.
+
+    `visibility` is what a fetch records in the meta record (#597); None writes
+    the meta a cache from before that change carries.
     """
     cache = tmp_path / "census.ndjson"
     meta = {"meta": {"repo": "o/r", "since": "2026-08-01", "days": 30}}
+    if visibility is not None:
+        meta["meta"]["visibility"] = visibility
     cache.write_text("\n".join(json.dumps(r) for r in [meta, *rows]) + "\n")
     return subprocess.run(
-        ["bash", str(CENSUS), "--cache", str(cache), "--json", *args],
+        ["bash", str(CENSUS), "--cache", str(cache)]
+        + (["--json"] if as_json else [])
+        + list(args),
         capture_output=True,
         text=True,
         timeout=60,
@@ -358,6 +368,8 @@ def _job(started: str, completed: str, conclusion: str = "success", **kw) -> dic
         "branch": "main",
         "event": kw.get("event", "push"),
         "run_id": kw.get("run_id", 1),
+        # What a fetch records per job since #597; a pre-#597 cache has neither.
+        **{k: kw[k] for k in ("runner_group_id", "runner_group", "labels") if k in kw},
     }
 
 
@@ -678,3 +690,262 @@ class TestTheCensusRefusesBadInput:
         assert result.returncode == 1, (
             f"{' '.join(args)} should be a usage error, got {result.returncode}"
         )
+
+
+def _standard(day: int, n: int, **kw) -> dict:
+    """A 30-second job on GitHub's standard pool: runner group 0, as measured."""
+    return _job(
+        f"2026-08-{day:02d}T10:0{n}:00Z",
+        f"2026-08-{day:02d}T10:0{n}:30Z",
+        runner_group_id=0,
+        runner_group="GitHub Actions",
+        labels=["ubuntu-latest"],
+        **kw,
+    )
+
+
+def _week(**kw) -> list[dict]:
+    return [_standard(d, n, **kw) for d in range(2, 8) for n in range(3)]
+
+
+@pytest.mark.skipif(shutil.which("jq") is None, reason="jq not installed")
+class TestBillingFollowsVisibility:
+    """#597: on a public repo, GitHub's standard runners bill nothing.
+
+    CannObserv/power-map is public. Its census reported 65 billed minutes over
+    54 jobs (50 of them Dependabot's own), and the lever text ranked cuts by
+    minutes saved. None of it was billed, so every cut saved nothing, and the
+    path filter the census invited would have caused 3 false skips out of 3.
+
+    What tells a standard runner from another is the job's runner group, not its
+    labels. Measured 2026-11-20: standard jobs carry `runner_group_id` 0
+    ("GitHub Actions") in power-map, rust-lang/rust and denoland/deno; deno's
+    `-xl` larger-runner jobs carry group 3 and rust-lang's EC2 self-hosted jobs
+    group 8, and neither one's `labels` says which kind it is.
+    """
+
+    def test_a_public_repo_on_standard_runners_is_not_billed(self, tmp_path):
+        result = _census(tmp_path, _week(), visibility="public")
+        assert result.returncode == 0, result.stderr
+        billing = json.loads(result.stdout)["billing"]
+        assert billing["visibility"] == "public"
+        assert billing["reading"] == "not billed", billing
+
+    def test_its_text_heads_the_figure_as_not_billed(self, tmp_path):
+        text = _census(tmp_path, _week(), visibility="public", as_json=False).stdout
+        head = text.splitlines()[2]
+        assert head.startswith("BILLING") and "NOT BILLED" in head, text
+        assert "public repo, standard runners" in text
+        assert "billed min" not in text, (
+            "a public repo on standard runners bills nothing, so no line may "
+            f"call its minutes billed:\n{text}"
+        )
+        assert "runner min" in text
+
+    def test_its_prescription_moves_to_what_costs_there(self, tmp_path):
+        text = _census(tmp_path, _week(), visibility="public", as_json=False).stdout
+        normalised = " ".join(text.split())
+        for cost in ("latency", "concurrent-job limit", "Dependabot"):
+            assert cost in normalised, f"the public branch must name {cost!r}:\n{text}"
+        assert "Delete and MERGE jobs" not in text, (
+            "the job-count spend lever must not be prescribed where no minute is billed"
+        )
+
+    def test_an_off_standard_job_makes_a_public_repo_partly_billed(self, tmp_path):
+        rows = _week() + [
+            _job(
+                "2026-08-03T11:00:00Z",
+                "2026-08-03T11:04:10Z",
+                job="build",
+                runner_group_id=3,
+                runner_group="custom managed runners",
+                labels=["windows-2022-xl"],
+            )
+        ]
+        result = _census(tmp_path, rows, visibility="public")
+        billing = json.loads(result.stdout)["billing"]
+        assert billing["reading"] == "partly billed", billing
+        assert billing["runners"]["off_standard"] == 1
+        assert billing["off_standard_billed_minutes"] == 5
+        [row] = billing["off_standard"]
+        assert row["job"] == "W / build"
+        assert row["labels"] == ["windows-2022-xl"]
+        text = _census(tmp_path, rows, visibility="public", as_json=False).stdout
+        assert "PARTLY BILLED" in text and "self-hosted" in text, text
+
+    def test_a_private_repo_is_billed_as_before(self, tmp_path):
+        result = _census(tmp_path, _week(), visibility="private")
+        report = json.loads(result.stdout)
+        assert report["billing"]["reading"] == "billed"
+        assert report["raw"]["billed_minutes"] == 18
+        text = _census(tmp_path, _week(), visibility="private", as_json=False).stdout
+        assert "billed min over" in text and "Delete and MERGE jobs" in text, text
+        assert "runner min" not in text
+
+    def test_an_internal_repo_bills_like_a_private_one(self, tmp_path):
+        result = _census(tmp_path, _week(), visibility="internal")
+        assert json.loads(result.stdout)["billing"]["reading"] == "billed"
+
+    def test_a_private_repo_names_its_off_standard_jobs(self, tmp_path):
+        """Self-hosted minutes were never billed; the census can't say which."""
+        rows = _week() + [
+            _standard(3, 5, job="hosted-elsewhere")
+            | {
+                "runner_group_id": 8,
+                "runner_group": "gha-self-hosted",
+                "labels": ["ec2-x86_64ami-c8a.8xlarge-x64-linux-1-1"],
+            }
+        ]
+        text = _census(tmp_path, rows, visibility="private", as_json=False).stdout
+        assert "off GitHub's standard runners" in text, text
+
+    def test_a_cache_from_before_the_reading_says_unknown(self, tmp_path):
+        """No API call on reuse, so the reading stays unknown, never a guess."""
+        rows = [_job("2026-08-02T10:00:00Z", "2026-08-02T10:00:30Z")]
+        result = _census(tmp_path, rows)
+        assert result.returncode == 0, result.stderr
+        assert json.loads(result.stdout)["billing"]["reading"] == "unknown"
+        text = _census(tmp_path, rows, as_json=False).stdout
+        assert "re-fetch" in text.lower(), text
+
+    def test_a_job_no_runner_picked_up_does_not_make_it_billed(self, tmp_path):
+        """`runner_group_id: null` — cancelled before pickup — ran nowhere."""
+        rows = _week() + [
+            _job(
+                "2026-08-04T12:00:00Z",
+                "2026-08-04T12:00:20Z",
+                "cancelled",
+                job="never-ran",
+                runner_group_id=None,
+            )
+        ]
+        result = _census(tmp_path, rows, visibility="public")
+        billing = json.loads(result.stdout)["billing"]
+        assert billing["reading"] == "not billed", billing
+        assert billing["runners"]["unassigned"] == 1
+
+
+class TestVisibilityIsInTheProcedure:
+    """#597 in prose: the census reads visibility, and the procedure acts on it."""
+
+    def test_the_billing_model_names_where_it_does_not_bill(self, body):
+        normalised = " ".join(body.split())
+        assert "bill nothing" in normalised and "public" in normalised, (
+            "SKILL.md must say a public repo's standard-runner jobs bill nothing: "
+            "the formula is the bill only where GitHub bills at all"
+        )
+
+    def test_phase_2_branches_on_not_billed(self, body):
+        normalised = " ".join(body.split())
+        assert "cutting minutes is not a lever by itself" in normalised, (
+            "Phase 2 must say what a `not billed` reading changes: the levers "
+            "are weighed by latency, concurrency and Dependabot fan-out"
+        )
+
+    def test_non_levers_carries_the_public_row(self):
+        text = (SKILL_DIR / "references" / "non-levers.md").read_text()
+        assert "Cutting minutes on a public repo" in text, (
+            "non-levers.md must record #597's row so the next audit of a public "
+            "repo doesn't re-derive minute cuts that save nothing"
+        )
+
+    def test_the_runner_group_decides_not_the_labels(self):
+        text = " ".join(_all_text().split())
+        assert "runner_group_id" in text and "runner group" in text, (
+            "the skill must say the runner group decides the pool: a job's labels "
+            "are what its runs-on asked for, measured not to say which pool it ran on"
+        )
+
+
+_FAKE_GH = r"""#!/usr/bin/env bash
+# A stand-in for gh: answers the three calls the census makes from canned JSON.
+set -euo pipefail
+here=$(cd "$(dirname "$0")" && pwd)
+echo "$*" >>"$here/calls.log"
+q=""; prev=""
+for a in "$@"; do [ "$prev" = "-q" ] && q="$a"; prev="$a"; done
+case "$1 $2" in
+  "repo view") cat "$here/visibility" ;;
+  api\ *) case "$2" in
+      */jobs*) jq -c "$q" "$here/jobs.json" ;;
+      *) jq -c "$q" "$here/runs.json" ;;
+    esac ;;
+esac
+"""
+
+
+@pytest.mark.skipif(shutil.which("jq") is None, reason="jq not installed")
+class TestTheFetchRecordsWhatTheReadingNeeds:
+    """The cache tests above write the fields by hand. This runs the real fetch.
+
+    A fake `gh` serves one run and its jobs, so a fetch that forgot to record
+    visibility in the meta record, or a job's runner group, fails here instead
+    of reporting `unknown` on every live census.
+    """
+
+    def test_a_fetch_writes_visibility_and_runner_groups(self, tmp_path):
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        gh = bin_dir / "gh"
+        gh.write_text(_FAKE_GH)
+        gh.chmod(0o755)
+        (bin_dir / "visibility").write_text("PUBLIC\n")
+        (bin_dir / "runs.json").write_text(
+            json.dumps({"workflow_runs": [{"id": 7, "event": "pull_request"}]})
+        )
+        job = {
+            "name": "gate",
+            "workflow_name": "CI",
+            "run_attempt": 1,
+            "conclusion": "success",
+            "started_at": "2026-08-02T10:00:00Z",
+            "completed_at": "2026-08-02T10:00:40Z",
+            "head_branch": "b",
+            "labels": ["ubuntu-24.04"],
+            "runner_group_id": 0,
+            "runner_group_name": "GitHub Actions",
+        }
+        (bin_dir / "jobs.json").write_text(json.dumps({"jobs": [job]}))
+        cache = tmp_path / "c.ndjson"
+        env = {**os.environ, "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}"}
+        result = subprocess.run(
+            [
+                "bash",
+                str(CENSUS),
+                "--repo",
+                "o/r",
+                "--days",
+                "3",
+                "--cache",
+                str(cache),
+                "--json",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            env=env,
+        )
+        assert result.returncode == 0, result.stderr
+        lines = [json.loads(x) for x in cache.read_text().splitlines()]
+        assert lines[0]["meta"]["visibility"] == "public", lines[0]
+        assert lines[1]["runner_group_id"] == 0, lines[1]
+        assert lines[1]["labels"] == ["ubuntu-24.04"], lines[1]
+        assert json.loads(result.stdout)["billing"]["reading"] == "not billed"
+        assert "repo view o/r" in (bin_dir / "calls.log").read_text()
+
+    def test_a_failed_visibility_read_is_fatal(self, tmp_path):
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        gh = bin_dir / "gh"
+        gh.write_text('#!/usr/bin/env bash\n[ "$1" = repo ] && exit 1\nexit 0\n')
+        gh.chmod(0o755)
+        env = {**os.environ, "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}"}
+        result = subprocess.run(
+            ["bash", str(CENSUS), "--repo", "o/r"],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            env=env,
+        )
+        assert result.returncode == 2, (result.stdout, result.stderr)
+        assert "visibility" in result.stderr

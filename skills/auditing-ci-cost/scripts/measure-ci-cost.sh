@@ -2,7 +2,10 @@
 # measure-ci-cost.sh — per-job billed-minute census for a GitHub Actions repo.
 #
 # GitHub bills Actions per JOB, rounded UP to the minute, with a one-minute
-# floor. No API returns that number: `/actions/runs/{id}/timing` exposes a
+# floor — on a private repo, or on a larger runner. A public repo's jobs on
+# GitHub's standard runners bill nothing, so the census reads the repo's
+# visibility and each job's runner group before it calls a minute billed
+# (#597). No API returns the billed number: `/actions/runs/{id}/timing` exposes a
 # `billable` block whose `total_ms` reads 0 on every repo measured here, public
 # and private alike, while the same runs took 35-99 seconds. So the census is
 # computed from job timestamps, which is what this script does.
@@ -65,6 +68,19 @@ Billing model:
   is null, so no duration exists to bill yet; they are reported as "still
   running" rather than guessed at.
 
+Billed at all (the BILLING line, and `billing` in --json):
+  A public repo's jobs on GitHub's standard runners bill nothing; there the
+  minutes are runner time, not spend. A job's runner group says which pool
+  it ran on: 0 is the standard pool. Any other group is a larger runner
+  (billed at its own rate, public or not) or a self-hosted one (no Actions
+  minutes), and the API can't tell those two apart. A job's `labels` are
+  what its runs-on asked for, so they can't decide it.
+    not billed     public, every job that ran did so on a standard runner
+    partly billed  public, and some jobs ran off the standard pool
+    billed         private or internal
+    unknown        a cache written before the reading existed: re-fetch
+  Visibility is read once per fetch and kept in the cache's meta record.
+
 Exit codes:
   0  census produced
   1  usage error
@@ -97,13 +113,15 @@ printf '%s' "$ANOMALY_FACTOR" | jq -e 'type == "number" and . > 0' >/dev/null 2>
 }
 
 SINCE=""
+VISIBILITY=""
 JOBS_NDJSON="$CACHE"
 if [ -n "$CACHE" ] && [ -s "$CACHE" ]; then
   echo "Reusing cached job census at $CACHE (no API calls)" >&2
   # The cache's first record states what window it covers, so a re-classified
   # report can never quote a baseline whose provenance it has forgotten.
   META=$(head -n 1 "$CACHE" | jq -r 'if has("meta") then
-           "\(.meta.repo)\t\(.meta.since)\t\(.meta.days)" else "" end') || META=""
+           "\(.meta.repo)\t\(.meta.since)\t\(.meta.days)\t\(.meta.visibility // "")"
+           else "" end') || META=""
   if [ -z "$META" ]; then
     echo "ERROR: $CACHE has no meta record — it was not written by this script" >&2
     exit 2
@@ -111,6 +129,8 @@ if [ -n "$CACHE" ] && [ -s "$CACHE" ]; then
   CACHED_REPO=$(printf '%s' "$META" | cut -f1)
   CACHED_SINCE=$(printf '%s' "$META" | cut -f2)
   CACHED_DAYS=$(printf '%s' "$META" | cut -f3)
+  # Empty in a cache written before #597: the reading is then `unknown`.
+  VISIBILITY=$(printf '%s' "$META" | cut -f4)
   # A cache answers for the repo and window it was fetched against, so an
   # explicit --repo/--days cannot be honoured here. Say so rather than
   # silently answering a different question than the one asked — a census
@@ -138,6 +158,20 @@ else
       exit 2
     }
   fi
+
+  # Before any minute is called billed: a public repo's standard-runner jobs
+  # bill nothing (#597). Read once and kept in the cache's meta record, so a
+  # re-classification answers the same question without an API call.
+  VISIBILITY=$(gh repo view "$REPO" --json visibility -q .visibility) || {
+    echo "ERROR: reading $REPO's visibility failed — without it the census" \
+         "can't say whether its minutes are billed" >&2
+    exit 2
+  }
+  VISIBILITY=$(printf '%s' "$VISIBILITY" | tr '[:upper:]' '[:lower:]')
+  case "$VISIBILITY" in
+    public|private|internal) ;;
+    *) echo "ERROR: unrecognised visibility '$VISIBILITY' for $REPO" >&2; exit 2 ;;
+  esac
 
   # BSD date (macOS) and GNU date disagree on relative-date syntax; try both.
   SINCE=$(date -u -v-"${DAYS}"d +%Y-%m-%d 2>/dev/null \
@@ -177,7 +211,9 @@ else
   echo "  $RUN_COUNT runs; fetching jobs ..." >&2
 
   jq -nc --arg repo "$REPO" --arg since "$SINCE" --argjson days "$DAYS" \
-    '{meta: {repo: $repo, since: $since, days: $days}}' >"$JOBS_NDJSON" \
+    --arg visibility "$VISIBILITY" \
+    '{meta: {repo: $repo, since: $since, days: $days, visibility: $visibility}}' \
+    >"$JOBS_NDJSON" \
     || { echo "ERROR: cannot write $JOBS_NDJSON" >&2; exit 2; }
   i=0
   while IFS= read -r run; do
@@ -190,7 +226,9 @@ else
     gh api "repos/$REPO/actions/runs/$run_id/jobs?filter=all&per_page=100" --paginate \
       -q '.jobs[] | {job: .name, workflow: .workflow_name, attempt: .run_attempt,
                      conclusion: .conclusion, started: .started_at,
-                     completed: .completed_at, branch: .head_branch}' \
+                     completed: .completed_at, branch: .head_branch,
+                     labels: .labels, runner_group_id: .runner_group_id,
+                     runner_group: .runner_group_name}' \
       | jq -c --argjson run "$run" '. + {event: $run.event, run_id: $run.run_id}' \
       >>"$JOBS_NDJSON" || JOBS_RC=$?
     if [ "$JOBS_RC" -ne 0 ]; then
@@ -218,7 +256,7 @@ fi
 
 REPORT_RC=0
 REPORT=$(jq -s --argjson factor "$ANOMALY_FACTOR" --arg repo "$REPO" \
-  --arg since "$SINCE" --argjson days "$DAYS" '
+  --arg since "$SINCE" --argjson days "$DAYS" --arg visibility "$VISIBILITY" '
   def ceil_min: if . <= 0 then 0 else ((. + 59) / 60 | floor) end;
   def pct($p): if length == 0 then 0 else sort | .[((length - 1) * $p / 100) | floor] end;
   def median: if length == 0 then 0 else sort | .[(length / 2) | floor] end;
@@ -237,7 +275,15 @@ REPORT=$(jq -s --argjson factor "$ANOMALY_FACTOR" --arg repo "$REPO" \
   | ($timed | map(. + {secs: ((.completed | fromdateiso8601)
                              - (.started | fromdateiso8601))}))
   | map(. + {billed: (if .conclusion == "skipped" then 0 else (.secs | ceil_min) end),
-             day: .started[0:10]})
+             day: .started[0:10],
+             # Which pool the job ran on (#597). Group 0 is the GitHub standard
+             # pool; any other is a larger runner or a self-hosted one, which
+             # the API cannot tell apart; null means no runner picked it up.
+             # A row from a cache older than the reading has no field at all.
+             runner: (if has("runner_group_id") | not then "unread"
+                      elif .runner_group_id == null then "unassigned"
+                      elif .runner_group_id == 0 then "standard"
+                      else "off_standard" end)})
   | . as $all
   | ($all | map(select(.billed > 0))) as $billable
   | ($all | map(select(.conclusion == "skipped")) | length) as $skipped
@@ -269,8 +315,30 @@ REPORT=$(jq -s --argjson factor "$ANOMALY_FACTOR" --arg repo "$REPO" \
   # repo where duration has no lever. The raw p99 is still reported — beside the
   # anomaly, where it is evidence of the incident rather than of the baseline.
   | ($structural | map(.secs)) as $secs
+  | ($billable | map(select(.runner == "off_standard"))) as $off
+  | ($billable | map(.runner)) as $runners
   | {
     repo: $repo, since: $since, days: $days,
+    # On a public repo, GitHub bills nothing for its standard runners (#597):
+    # the minutes below are then runner time, not spend.
+    billing: {
+      visibility: (if $visibility == "" then null else $visibility end),
+      reading: (if $visibility == "" then "unknown"
+                elif $visibility != "public" then "billed"
+                elif any($runners[]; . == "unread") then "unknown"
+                elif ($off | length) > 0 then "partly billed"
+                else "not billed" end),
+      runners: {standard: ($runners | map(select(. == "standard")) | length),
+                off_standard: ($off | length),
+                unassigned: ($runners | map(select(. == "unassigned")) | length),
+                unread: ($runners | map(select(. == "unread")) | length)},
+      off_standard_billed_minutes: ($off | map(.billed) | add // 0),
+      off_standard: ($off | group_by(.workflow + " / " + .job)
+        | map({job: (.[0].workflow + " / " + .[0].job), runs: length,
+               billed: (map(.billed) | add), labels: .[0].labels,
+               runner_group: .[0].runner_group})
+        | sort_by(-.billed))
+    },
     raw: {jobs: ($billable | length), billed_minutes: ($billable | map(.billed) | add // 0),
           p99_seconds: ($billable | map(.secs) | pct(99))},
     excluded: {skipped_jobs: $skipped, zero_or_negative_duration_jobs: $zero,
@@ -319,9 +387,37 @@ fi
 
 printf '%s' "$REPORT" | jq -r '
   def pad($n): tostring | . + (" " * ($n - length));
+  # Where no minute is billed for certain, none is called billed (#597).
+  def free: .billing.reading == "not billed" or .billing.reading == "partly billed";
+  def unit: if free then "runner min" else "billed min" end;
+  def offlist: .billing.off_standard[:5][]
+    | "                   \(.billed) min  \(.runs) runs  \(.job)  \(.labels // [] | tojson)";
   "CI cost census — \(.repo), \(.days)d since \(.since)",
   "",
-  "RAW              \(.raw.billed_minutes) billed min over \(.raw.jobs) jobs",
+  (if .billing.reading == "not billed" then
+     "BILLING          NOT BILLED — public repo, standard runners. Every minute",
+     "                 below is runner time, not spend."
+   elif .billing.reading == "partly billed" then
+     "BILLING          PARTLY BILLED — public repo, but \(.billing.runners.off_standard) jobs " +
+       "(\(.billing.off_standard_billed_minutes) min) ran",
+     "                 off GitHub'"'"'s standard runners: larger (billed at its own rate)",
+     "                 or self-hosted (no Actions minutes). The census can'"'"'t tell which.",
+     offlist,
+     "                 Their minutes are the most that bills; the rest is runner time."
+   elif .billing.reading == "billed" then
+     "BILLING          billed — \(.billing.visibility) repo",
+     (if .billing.runners.off_standard > 0 then
+        "                 \(.billing.runners.off_standard) jobs " +
+          "(\(.billing.off_standard_billed_minutes) min) ran off GitHub'"'"'s standard runners:",
+        "                 a larger runner bills at its own rate, a self-hosted one bills",
+        "                 no Actions minutes. Both are counted below as billed minutes.",
+        offlist
+      else empty end)
+   else
+     "BILLING          unknown — this cache predates the visibility reading (#597).",
+     "                 Re-fetch (delete the cache, or drop --cache) to read it."
+   end),
+  "RAW              \(.raw.billed_minutes) \(unit) over \(.raw.jobs) jobs",
   (if (.anomaly_days | length) > 0 then
      "ANOMALY DAYS     \(.anomaly_days | map(.day + " (" + (.billed|tostring) + " min, "
                           + (.mean_billed|tostring) + " min/job)") | join(", "))",
@@ -333,7 +429,7 @@ printf '%s' "$REPORT" | jq -r '
      "                 the GitHub status history before excluding it."
    else "ANOMALY DAYS     none — no day is both >\(.median_day_billed) min and above " +
         "\(.median_day_mean_billed) min/job by the factor" end),
-  "STRUCTURAL       \(.structural.billed_minutes) billed min over \(.structural.jobs) jobs" +
+  "STRUCTURAL       \(.structural.billed_minutes) \(unit) over \(.structural.jobs) jobs" +
     " (\(.structural.actual_minutes) min actually ran)",
   "EXCLUDED         \(.excluded.skipped_jobs) skipped, " +
     "\(.excluded.zero_or_negative_duration_jobs) zero/negative-duration, " +
@@ -342,12 +438,18 @@ printf '%s' "$REPORT" | jq -r '
   "BUSIEST DAYS     \(.busiest_days | map(.day + " " + (.billed|tostring) + "m/"
                        + (.mean_billed|tostring) + "pj") | join("  "))",
   "",
-  "mean billed/job  \(.structural.mean_billed_per_job)",
+  (if free then "mean min/job     " else "mean billed/job  " end) +
+    "\(.structural.mean_billed_per_job)",
   "p50/p90/p99 s    \(.structural.p50_seconds) / \(.structural.p90_seconds) / \(.structural.p99_seconds)",
   "under 60s        \(.structural.under_the_floor)% of jobs",
   "",
   "COST SHAPE       \(.cost_shape | ascii_upcase)",
-  (if .cost_shape == "job-count" then
+  (if .billing.reading == "not billed" then
+     "  No minute here is billed, so cutting minutes saves no money by itself.",
+     "  What costs on a public repo: PR latency (wall-clock to green), the",
+     "  owner'"'"'s concurrent-job limit (shared across its repos), and Dependabot",
+     "  fan-out. Weigh each lever by those; the shape says where runner time goes."
+   elif .cost_shape == "job-count" then
      "  Every job sits inside the one-minute floor. Duration tuning has NO lever.",
      "  Delete and MERGE jobs. Never split a workflow — a split adds a whole",
      "  billed minute per new job and saves nothing."
@@ -359,9 +461,14 @@ printf '%s' "$REPORT" | jq -r '
      "  Neither lever dominates. Read by_job below: treat rows whose",
      "  median_seconds < 60 as job-count and the rest as duration."
    else "  No billable jobs in the window." end),
+  (if .billing.reading == "partly billed" then
+     "  Only the off-standard jobs can bill: size each saving against their",
+     "  \(.billing.off_standard_billed_minutes) min, not against the total."
+   else empty end),
   "",
-  "TOP JOBS BY BILLED MINUTES (structural)",
-  "  \("billed" | pad(8))\("runs" | pad(6))\("med s" | pad(7))job",
+  (if free then "TOP JOBS BY RUNNER MINUTES (structural)"
+   else "TOP JOBS BY BILLED MINUTES (structural)" end),
+  "  \((if free then "min" else "billed" end) | pad(8))\("runs" | pad(6))\("med s" | pad(7))job",
   (.by_job[:12][] | "  \(.billed | pad(8))\(.runs | pad(6))\(.median_seconds | pad(7))\(.job)"),
   "",
   "BY EVENT",
