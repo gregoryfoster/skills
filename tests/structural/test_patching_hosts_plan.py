@@ -588,3 +588,20 @@ def test_an_empty_plan_is_a_usage_error_not_a_session(script, args):
     )
     assert r.returncode == 2
     assert "--plan takes a file" in r.stderr
+
+
+# --- CR 2535: the next commands carry the approval ---------------------------------
+
+
+def test_the_bulks_next_held_step_carries_its_plan(host):
+    p = _plan(host, HEAD + _section())
+    out = host.run("--plan", str(p))
+    [n] = [x for x in out["next"] if "--step postgres" in x]
+    assert f'--plan "{p}"' in n
+
+
+def test_the_recovery_points_next_bulk_carries_its_plan(recovery):
+    p = _plan(recovery, HEAD + _section())
+    out = recovery.recover("--plan", str(p))
+    [n] = [x for x in out["next"] if "--step bulk" in x]
+    assert f'--plan "{p}"' in n

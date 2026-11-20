@@ -300,3 +300,17 @@ def test_the_recovery_point_reads_a_standing_lines_expiry_from_the_clock(recover
     )
     out = recovery.recover("--standing", "--today", "2026-09-01", rc=3)
     assert any("passed its review-by date" in r for r in out["refused"])
+
+
+def test_the_bulks_next_held_step_carries_standing(host):
+    _standing(host)
+    out = host.run("--standing")
+    [n] = [x for x in out["next"] if "--step postgres" in x]
+    assert "--standing" in n
+
+
+def test_the_recovery_points_next_bulk_carries_standing(recovery):
+    recovery.knob(recovery.knob_path.read_text() + STANDING.format(limits=""))
+    out = recovery.recover("--standing")
+    [n] = [x for x in out["next"] if "--step bulk" in x]
+    assert "--standing" in n

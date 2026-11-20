@@ -1204,7 +1204,9 @@ if [ "${#FAILED[@]}" -eq 0 ]; then
     [ "$_p" = aof ] || continue
     NEXT+=("$_u runs appendonly yes: it loads its AOF at start and ignores dump.rdb, so a restore from this RDB file means staging it as the AOF's base, not copying it over dump.rdb (run.md section 2), or the host's own restore procedure.")
   done
-  NEXT+=("bash \"$_libdir/apply.sh\" --approve --step bulk --run \"$run\" --dry-run <DIR>: approval 2")
+  _aa=""
+  approval_args _aa "$planf" "$standing"
+  NEXT+=("bash \"$_libdir/apply.sh\" --approve$_aa --step bulk --run \"$run\" --dry-run <DIR>: approval 2")
   NEXT+=("Delete every file in $run on $retain, the retention stated here.")
 fi
 emit

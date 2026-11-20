@@ -38,6 +38,8 @@ name.
   plan_gate_record APPROVE FILE HOST REBOOT  gate.plan for recovery-point.sh
                             and reboot-chain.sh
   plan_approval VAR APPROVE FILE STANDING  the step's approval record
+  approval_args VAR FILE STANDING  the --plan or --standing a next command
+                            carries
   standing_for LANE         the knob's standing line for LANE into ST_*: 1
                             with ST_WHY when none approves
   standing_any              the same, for any lane: the security lane's first
@@ -483,4 +485,12 @@ standing_gate_record() {  # <approve 0|1> <standing 0|1> <run dir, or empty for 
     jadd _sg why null
   fi
   jadd J_GATE standing "{$_sg}"
+}
+
+# The approval a suggested next command carries, as given here (CR 2535).
+approval_args() {  # <var> <plan file, or empty> <standing 0|1>
+  local _apa_s=""
+  if [ -n "$2" ]; then _apa_s=" --plan \"$2\""; fi
+  if [ "$3" -eq 1 ]; then _apa_s=" --standing"; fi
+  printf -v "$1" '%s' "$_apa_s"
 }

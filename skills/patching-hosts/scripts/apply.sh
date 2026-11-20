@@ -2084,7 +2084,7 @@ holds_left() {  # <var>: JSON array
 
 STOPPED=""
 finish() {
-  local o="" a="" r rc=0 out result=ok ok=1 left u i err=""
+  local o="" a="" r rc=0 out result=ok ok=1 left u i err="" aa
   if [ "${#FAILED[@]}" -gt 0 ]; then result=failed; fi
   if [ "$STARTED" -eq 1 ]; then
     printf '%s\t%s\t%s\t%s\t%s\n' "$step" "$result" "$P_NOW" "${UU_WALL:-}" "${UU_RSS:-}" | root_append "$run/steps" ||
@@ -2142,7 +2142,8 @@ finish() {
       in_words "$u" "$RELEASED" && continue
       for i in ${RUN_HOLD_STEP[@]+"${!RUN_HOLD_STEP[@]}"}; do
         [ "${RUN_HOLD_STEP[$i]}" = "$u" ] || continue
-        NEXT+=("bash \"$_libdir/apply.sh\" --approve --step $u --run \"$run\": approval 3(a), a restart")
+        approval_args aa "$planf" "$standing"
+        NEXT+=("bash \"$_libdir/apply.sh\" --approve$aa --step $u --run \"$run\": approval 3(a), a restart")
         break
       done
     done
