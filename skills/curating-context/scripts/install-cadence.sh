@@ -1633,19 +1633,26 @@ pr_read_step() {
       # dispatch read it alike, and unread is a refusal. It binds this file as
       # rendered: a branch that edits its own workflow is past it, as anyone
       # with write access already is. `direct` is not held: its row lands on
-      # the dispatched branch itself, reviewed in that branch's own PR.
+      # the dispatched branch itself, reviewed in that branch's own PR. The
+      # full GITHUB_REF, not GITHUB_REF_NAME (CR 2565): a dispatch on a tag
+      # named like the default branch has the same short name. Without it
+      # (a run outside Actions) the checked-out branch answers.
       - name: Hold the run to the default branch
         run: |
           [ "${MERGE_MODE:-}" = pr ] || { echo "merge mode ${MERGE_MODE:-unset}: the row goes to the branch the run is on"; exit 0; }
-          BRANCH="${GITHUB_REF_NAME:-$(git branch --show-current)}"
           HEAD_REF=$(git ls-remote --symref origin HEAD) || HEAD_REF=''
           DEFAULT=$(awk '$1 == "ref:" && $3 == "HEAD" { sub("^refs/heads/", "", $2); print $2; exit }' <<<"$HEAD_REF")
           if [ -z "$DEFAULT" ]; then
-            echo "::error::could not read origin's default branch, so whether ${BRANCH:-this branch} is it is unknown — nothing was measured."
+            echo "::error::could not read origin's default branch, so whether this run is on it is unknown — nothing was measured."
             exit 1
           fi
-          if [ "$BRANCH" != "$DEFAULT" ]; then
-            echo "::error::this run is on ${BRANCH:-a detached HEAD}, not the default branch $DEFAULT. In pr mode a run merges the measurement branch into the branch it is on and pushes the result, so that branch's commits would reach the measurement PR into $DEFAULT unreviewed (#683). Nothing was measured: dispatch the workflow on $DEFAULT."
+          if [ -n "${GITHUB_REF:-}" ]; then
+            ON=$GITHUB_REF WANT=refs/heads/$DEFAULT
+          else
+            ON=$(git branch --show-current) WANT=$DEFAULT
+          fi
+          if [ "$ON" != "$WANT" ]; then
+            echo "::error::this run is on ${ON:-a detached HEAD}, not the default branch $DEFAULT. In pr mode a run merges the measurement branch into the branch it is on and pushes the result, so that branch's commits would reach the measurement PR into $DEFAULT unreviewed (#683). Nothing was measured: dispatch the workflow on $DEFAULT."
             exit 1
           fi
           echo "on $DEFAULT, the default branch"
@@ -1759,11 +1766,22 @@ YAML
               # branch reopens those rows in a new PR whose merge base is the
               # old default tip, showing its merged rows again. Rebuilding the row on
               # the new tip means replaying the calibration files' merge too, so
-              # the row is refused instead, and a re-run measures after them.
+              # the row is refused instead, and a fresh run measures after them.
+              # Not GitHub's "Re-run jobs" (CR 2564): it reuses GITHUB_SHA, so
+              # checkout gives it the commit from before the merge again. Unless
+              # the PR merged with a merge commit (CR 2567): then the tip is in
+              # $BRANCH's history, a PR from ROW has it as its merge base and
+              # shows this row alone, and the restart below is right. A fetch
+              # that fails can't say so, and refuses.
               if [ -n "${TAKEN:-}" ] && [ -z "$KEEP" ]; then
                 ENDED_WHAT=${TAKEN_PR:+PR #$TAKEN_PR}
-                echo "::error::${ENDED_WHAT:-$PR_BRANCH} ended during this run (merged, closed or deleted), after its rows were taken in at ${TAKEN:0:12}. Pushed now, this row would reopen them in a new PR. The row was not pushed: re-run this workflow, or let the next run measure after them."
-                exit 1
+                if git fetch -q origin "+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH" \
+                  && git merge-base --is-ancestor "$TAKEN" "origin/$BRANCH"; then
+                  echo "${ENDED_WHAT:-$PR_BRANCH} merged into $BRANCH during this run, its rows with it: the branch restarts at this row"
+                else
+                  echo "::error::${ENDED_WHAT:-$PR_BRANCH} ended during this run (merged, closed or deleted), after its rows were taken in at ${TAKEN:0:12}. Pushed now, this row would reopen them in a new PR. The row was not pushed: dispatch the workflow again (gh workflow run context-cadence.yml) or let the next scheduled run measure after them, not Re-run jobs, which reuses this run's commit, from before the merge."
+                  exit 1
+                fi
               fi
               if [ -n "$KEEP" ]; then
                 # The branch carries rows no finished PR took: an open PR's, or

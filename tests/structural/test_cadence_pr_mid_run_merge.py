@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from tests.structural.test_cadence_merge_mode import PR_BRANCH, Rig, _git
+from tests.structural.test_cadence_merge_mode import LEDGER, PR_BRANCH, Rig, _git
 
 
 def _creates(rig: Rig) -> int:
@@ -56,7 +56,6 @@ class TestAPrMergedMidRunIsNotReopened:
         assert "measuring after the rows" in rig.take.stdout, "fixture: rows taken in"
         assert r.returncode != 0, r.stdout
         assert "::error::" in r.stdout and "#7" in r.stdout
-        assert "re-run" in r.stdout
         assert not rig.has_branch(PR_BRANCH), "the branch was recreated with #7's rows"
         assert _creates(rig) == 1, "a PR was opened over the merged rows"
 
@@ -65,6 +64,17 @@ class TestAPrMergedMidRunIsNotReopened:
         assert r.returncode != 0, r.stdout
         assert "::error::" in r.stdout and "#7" in r.stdout
         assert _creates(rig) == 1
+
+    def test_the_refusal_names_a_dispatch_not_a_re_run(self, tmp_path: Path):
+        """CR 2564: GitHub's "Re-run jobs" reuses the run's GITHUB_SHA, and
+        checkout gives it the commit before the merge, so a re-run measures
+        before the merged rows again. A dispatch, or the next scheduled run,
+        checks out the default branch's tip."""
+        rig, r = self._two_runs(tmp_path, delete=True)
+        assert r.returncode != 0, r.stdout
+        assert "gh workflow run context-cadence.yml" in r.stdout
+        assert "not Re-run" in r.stdout, "the error must steer off Re-run jobs"
+        assert "re-run this workflow" not in r.stdout
 
     def test_the_next_run_measures_after_the_merged_rows(self, tmp_path: Path):
         rig, _ = self._two_runs(tmp_path, delete=True)
@@ -84,3 +94,54 @@ class TestAPrMergedMidRunIsNotReopened:
         r = rig.run("2026-10-15")
         assert r.returncode == 0, r.stdout + r.stderr
         assert "updated PR #7" in r.stdout
+
+
+def _merge_commit_mid_run(rig: Rig, number: int):
+    """The same PR merged with a merge commit, its branch deleted: its tip
+    is now in the default branch's history."""
+
+    def act() -> None:
+        human = rig.clone(f"merge{rig.runs}")
+        _git(human, "fetch", "-q", "origin", PR_BRANCH)
+        tip = _git(human, "rev-parse", "FETCH_HEAD")
+        _git(human, "merge", "-q", "--no-ff", "-m", f"Merge PR #{number}", "FETCH_HEAD")
+        _git(human, "push", "-q", "origin", "HEAD:main")
+        _git(human, "push", "-q", "origin", f":refs/heads/{PR_BRANCH}")
+        (rig.gh / "prs").write_text(f"{number} MERGED {tip}\n")
+
+    return act
+
+
+class TestAMergeCommitKeepsTheRow:
+    """CR 2567: the refusal fired whenever the taken-in PR ended, so a PR
+    merged with a real merge commit lost the week's row for nothing: its tip
+    is in the default branch's history, and restarting at the row is right.
+    The squash merge above still refuses."""
+
+    def test_merged_with_a_merge_commit_the_row_restarts_the_branch(
+        self, tmp_path: Path
+    ):
+        rig = Rig(tmp_path, knob="pr\n")
+        assert rig.run("2026-10-08").returncode == 0
+        r = rig.run("2026-10-15", between=_merge_commit_mid_run(rig, 7))
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "::error::" not in r.stdout
+        assert "merged into main during this run" in r.stdout
+        assert rig.show(PR_BRANCH) == ["2026-10-01", "2026-10-08", "2026-10-15"]
+        added = [
+            ln
+            for ln in _git(
+                rig.origin, "diff", f"main...{PR_BRANCH}", "--", LEDGER
+            ).splitlines()
+            if ln.startswith("+{")
+        ]
+        assert len(added) == 1 and "2026-10-15" in added[0], added
+        assert _creates(rig) == 2, "the restarted branch gets its PR"
+
+    def test_squashed_the_row_is_still_refused(self, tmp_path: Path):
+        rig = Rig(tmp_path, knob="pr\n")
+        assert rig.run("2026-10-08").returncode == 0
+        r = rig.run("2026-10-15", between=_squash_mid_run(rig, 7, delete=True))
+        assert r.returncode != 0, r.stdout
+        assert "::error::" in r.stdout and "#7" in r.stdout
+        assert _creates(rig) == 1

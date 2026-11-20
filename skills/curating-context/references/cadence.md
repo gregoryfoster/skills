@@ -326,7 +326,9 @@ ship is refused too, so a repo that needs one needs the other.
   `feature/x` ([#683](https://github.com/gregoryfoster/skills/issues/683)).
   So a `pr` run stops before the credential is spent unless it is on the
   default branch, read from `origin` (`git ls-remote --symref origin HEAD`)
-  rather than the event, and unread is a refusal. It binds the workflow as
+  rather than the event, and unread is a refusal. The run's full
+  `GITHUB_REF` is compared with `refs/heads/<default>`, so a tag named like
+  the default branch doesn't pass. It binds the workflow as
   rendered: a branch that edits its own copy is past it, as anyone with
   write access already is. `direct` is not held. Its row lands on the
   dispatched branch itself and is reviewed in that branch's own PR; no
@@ -355,11 +357,17 @@ ship is refused too, so a repo that needs one needs the other.
   that branch keeps even after a squash merge, and the commit step records
   the merge with the row. The push decides again, since a PR can merge
   mid-run. When the PR it took in has ended by then (squash-merged, with
-  or without its branch deleted, or closed), the row is refused. Pushed,
+  or without its branch deleted, or closed), the row is refused. A PR
+  merged with a merge commit is the exception: its tip is in the default
+  branch's history, so the branch restarts at the row as it would after
+  any merge. Pushed,
   it would have reopened those rows in a new PR whose merge base is the old
   default tip, the squash's rows shown again; reproduced on
-  [#683](https://github.com/gregoryfoster/skills/issues/683). A re-run
-  measures after them. `record-telemetry.sh --repair` after the fact was the other way,
+  [#683](https://github.com/gregoryfoster/skills/issues/683). A fresh
+  run measures after them: dispatch it (`gh workflow run
+  context-cadence.yml`) or let the next scheduled run, never GitHub's
+  *Re-run jobs*, which reuses the run's `GITHUB_SHA`, so checkout gives it
+  the commit from before the merge again. `record-telemetry.sh --repair` after the fact was the other way,
   and it can't do this: it rewrites deltas, never the observed `seams`.
 - **A refused push is reported once.** On the PR's branch a refusal is a
   rule or a concurrent push, not a race a rebase fixes. A `GH013` or
