@@ -1624,12 +1624,20 @@ YAML
               # the PR merged with a merge commit (CR 2567): then the tip is in
               # $BRANCH's history, a PR from ROW has it as its merge base and
               # shows this row alone, and the restart below is right. A fetch
-              # that fails can't say so, and refuses.
+              # that fails can't say so, and refuses. $BRANCH's new tip is
+              # merged into the row first (CR 2571): the row's other parent is
+              # this run's checkout, which the taken-in tip lacks whenever
+              # $BRANCH moved between runs, and two merge bases put the
+              # merged rows back in the PR's diff.
               if [ -n "${TAKEN:-}" ] && [ -z "$KEEP" ]; then
                 ENDED_WHAT=${TAKEN_PR:+PR #$TAKEN_PR}
                 if git fetch -q origin "+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH" \
                   && git merge-base --is-ancestor "$TAKEN" "origin/$BRANCH"; then
                   echo "${ENDED_WHAT:-$PR_BRANCH} merged into $BRANCH during this run, its rows with it: the branch restarts at this row"
+                  git merge -q --no-edit -m "chore: weekly context measurement" "origin/$BRANCH" || {
+                    echo "::error::merging $BRANCH's new tip into the row failed — the row was not pushed."
+                    git diff --name-only --diff-filter=U | sed 's/^/::error::  conflicted: /'
+                    exit 1; }
                 else
                   echo "::error::${ENDED_WHAT:-$PR_BRANCH} ended during this run (merged, closed or deleted), after its rows were taken in at ${TAKEN:0:12}. Pushed now, this row would reopen them in a new PR. The row was not pushed: dispatch the workflow again (gh workflow run context-cadence.yml) or let the next scheduled run measure after them, not Re-run jobs, which reuses this run's commit, from before the merge."
                   exit 1
