@@ -23,12 +23,13 @@ Options:
 Output keys: knob, host, sections, class, posture, cadence, bulk_factor,
 report_only, report_only_reasons, window, quiet, inflight, health, recovery, restarter, service,
 backup, caller, depends, datastore, hold, owner, image_owner, origin,
-exception, records, rebuild, findings. A window carries weekday, week (of the
+exception, standing, records, rebuild, findings. A window carries weekday, week (of the
 month, or null), date (a dated line's, or null), start, end, wraps, reason,
 expired and line. rebuild is null where no rebuild-* line applies to the
 host, or image, install and restore (each a value and its line), check,
 secret (paths: the reader never opens one) and step (host, name, run, line,
-undo, undo_line). Every value from the knob carries its line number, but a
+undo, undo_line). A standing approval carries lane, no_reboot, no_datastore,
+no_held, review_by, reason, expired and line. Every value from the knob carries its line number, but a
 datastore's databases, merged per unit, carry the line that first names the
 unit; sections are the matching headers' globs, with no line. A default
 carries line null. The grammar: references/knob.md.
@@ -194,6 +195,10 @@ o_backup() {
 }
 o_origin() { printf '{"origin": %s, "policy": %s, "value": %s, "line": %s}' "$(js "$1")" "$(js "$2")" "$(js_or_null "$3")" "$4"; }
 o_exception() { printf '{"what": %s, "review_by": %s, "reason": %s, "expired": %s, "line": %s}' "$(js "$1")" "$(js "$2")" "$(js "$3")" "$(js_bool "$4")" "$5"; }
+o_standing() {
+  printf '{"lane": %s, "no_reboot": %s, "no_datastore": %s, "no_held": %s, "review_by": %s, "reason": %s, "expired": %s, "line": %s}' \
+    "$(js "$1")" "$(js_bool "$2")" "$(js_bool "$3")" "$(js_bool "$4")" "$(js "$5")" "$(js "$6")" "$(js_bool "$7")" "$8"
+}
 o_check() { printf '{"command": %s, "line": %s}' "$(js "$1")" "$2"; }
 o_secret() { printf '{"path": %s, "line": %s}' "$(js "$1")" "$2"; }
 o_step() {
@@ -243,6 +248,7 @@ emit_records owner o_owner , ${KNOB_OWNER[@]+"${KNOB_OWNER[@]}"}
 printf '  "image_owner": {"value": %s, "line": %s},\n' "$(js_or_null "$KNOB_IMAGE_OWNER")" "$(num_or_null "$KNOB_IMAGE_OWNER_LINE")"
 emit_records origin o_origin , ${KNOB_ORIGIN[@]+"${KNOB_ORIGIN[@]}"}
 emit_records exception o_exception , ${KNOB_EXCEPTION[@]+"${KNOB_EXCEPTION[@]}"}
+emit_records standing o_standing , ${KNOB_STANDING[@]+"${KNOB_STANDING[@]}"}
 printf '  "records": {"value": %s, "line": %s},\n' "$(js_or_null "$KNOB_RECORDS")" "$(num_or_null "$KNOB_RECORDS_LINE")"
 # #673: what an executor reads to rebuild the host, or null.
 if [ "$KNOB_REBUILD" -eq 1 ]; then

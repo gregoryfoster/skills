@@ -84,6 +84,11 @@ esac
 #   KNOB_ORIGIN     origin policy value line
 #   KNOB_EXCEPTION  what review-by reason expired(0|1) line
 #   KNOB_FINDING    line-or-empty kind message
+#   KNOB_STANDING   lane no-reboot(0|1) no-datastore(0|1) no-held(0|1)
+#                   review-by reason expired(0|1) line; one per lane, the
+#                   lane security, maintenance or origin:<origin> as
+#                   apply.sh's --lane names it (#673). An expired one
+#                   approves nothing.
 #
 # The rebuild section (#673), what an executor reads to rebuild the host onto
 # a new VM; no script here runs or opens any of it. KNOB_REBUILD is 1 when
@@ -109,7 +114,7 @@ knob_reset() {
   KNOB_WINDOW=() KNOB_QUIET=() KNOB_INFLIGHT=() KNOB_HEALTH=() KNOB_RECOVERY=()
   KNOB_RESTARTER=() KNOB_SERVICE=() KNOB_BACKUP=() KNOB_CALLER=() KNOB_DEPENDS=()
   KNOB_DATASTORE=() KNOB_HOLD=() KNOB_OWNER=() KNOB_ORIGIN=()
-  KNOB_EXCEPTION=() KNOB_FINDING=()
+  KNOB_EXCEPTION=() KNOB_FINDING=() KNOB_STANDING=()
   KNOB_REBUILD=0 KNOB_REBUILD_IMAGE="" KNOB_REBUILD_IMAGE_LINE=""
   KNOB_REBUILD_INSTALL="" KNOB_REBUILD_INSTALL_LINE=""
   KNOB_REBUILD_RESTORE="" KNOB_REBUILD_RESTORE_LINE=""
@@ -410,6 +415,28 @@ _knob_directive() {  # <line> <sec> <text>
         _knob_record "$n" "$sec" exception "${tok[0]}" "${tok[0]}$u${tok[1]}$u${tok[*]:2}"
       else
         _knob_malformed "$n" "exception takes <what> <review-by YYYY-MM-DD> <reason>"
+      fi ;;
+    # #673: the owner's standing approval of one lane, within its limits.
+    standing)
+      local sl=${tok[0]:-} si=1 snr=0 snd=0 snh=0 sok=1
+      local slre='^origin:[A-Za-z0-9][A-Za-z0-9._-]*$'
+      case $sl in
+        security | maintenance) ;;
+        *) [[ $sl =~ $slre ]] || sok=0 ;;
+      esac
+      while [ "$si" -lt "$nt" ]; do
+        case ${tok[$si]} in
+          no-reboot) snr=1 ;;
+          no-datastore) snd=1 ;;
+          no-held) snh=1 ;;
+          *) break ;;
+        esac
+        si=$((si + 1))
+      done
+      if [ "$sok" -eq 1 ] && [ "$nt" -ge $((si + 2)) ] && _knob_is_date "${tok[$si]}"; then
+        _knob_record "$n" "$sec" standing "$sl" "$sl$u$snr$u$snd$u$snh$u${tok[$si]}$u${tok[*]:$((si + 1))}"
+      else
+        _knob_malformed "$n" "standing takes <lane: security, maintenance or origin:<origin>> [no-reboot] [no-datastore] [no-held] <review-by YYYY-MM-DD> <reason>"
       fi ;;
     # #673: how the host is rebuilt onto a new VM, for an executor to run.
     # The commands take the rest of the line, as health's does.
@@ -737,6 +764,29 @@ _knob_resolve() {
           fi ;;
       esac
     done
+  done
+
+  # Standing approvals, one per lane (#673). Past its review-by date one
+  # approves nothing, as an expired exception covers nothing.
+  local o followed
+  _knob_select standing keyed
+  for i in ${_KSEL[@]+"${_KSEL[@]}"}; do
+    IFS=$u read -r -a f <<<"${_KP_VAL[$i]}"
+    if [[ $KNOB_TODAY > ${f[4]} ]]; then
+      KNOB_STANDING+=("${_KP_VAL[$i]}${u}1$u${_KP_LINE[$i]}")
+      _knob_finding "${_KP_LINE[$i]}" expired-standing \
+        "standing ${f[0]} passed its review-by date, ${f[4]}; it approves nothing until it's renewed, so each step needs the owner's approval in the host's own session, or a plan"
+    else
+      KNOB_STANDING+=("${_KP_VAL[$i]}${u}0$u${_KP_LINE[$i]}")
+    fi
+    case ${f[0]} in origin:*)
+      o=${f[0]#origin:} followed=0
+      for k in ${KNOB_ORIGIN[@]+"${KNOB_ORIGIN[@]}"}; do
+        case $k in "$o${u}follow$u"*) followed=1 ;; esac
+      done
+      [ "$followed" -eq 1 ] || _knob_finding "${_KP_LINE[$i]}" standing-origin \
+        "standing ${f[0]} names an origin the knob doesn't follow, so apply.sh refuses its lane and the line approves nothing: declare origin $o follow, or remove the line" ;;
+    esac
   done
 
   _knob_resolve_rebuild
