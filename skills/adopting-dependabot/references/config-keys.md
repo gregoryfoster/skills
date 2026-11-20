@@ -54,13 +54,13 @@ derives from version groups only: security PRs have their own limit of 10.
 
 Set `SECURITY_GROUPED = True` in the guard's ADAPT block to hold every block
 to a catch-all: `patterns` holds `*`, and no `exclude-patterns`,
-`dependency-type` or `update-types` narrows it. The guard can't see whether security updates are
-on, which is a repository setting: `check-dependabot.sh`'s `security-updates`
-check reads it.
+`dependency-type` or `update-types` narrows it. The guard can't see whether
+security updates are on, which is a repository setting:
+`check-dependabot.sh`'s `security-updates` check reads it.
 
-**Not yet observed:** the grouped PR itself. power-map's config carries the
-group, and no advisory had fired against it when gregoryfoster/skills#599 was
-filed; its first one is the verification.
+**Not yet observed:** the grouped PR itself. power-map's `uv` and `npm` blocks
+carry the group (read 2026-11-20), and no advisory had fired against them when
+gregoryfoster/skills#599 was filed; the first one is the verification.
 
 ## A starting config
 
