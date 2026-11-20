@@ -1793,6 +1793,12 @@ pr_push_block() {
 YAML
   pr_discover "              "
   cat <<'YAML'
+              # An OPEN the branch wasn't kept for is stale (CR 2575): gh pr
+              # list runs before ls-remote, and a PR merged with its branch
+              # deleted between the two left OPEN set and no branch. Deleting a
+              # PR's head branch closes it, so the restart path opens a PR
+              # rather than reporting "updated" on one that ended.
+              [ -n "$KEEP" ] || OPEN=''
               # The take-in step merged a tip in (TAKEN) because the branch was
               # to be kept. Not kept now, its PR merged or closed mid-run
               # (#683), and ROW has that tip as a parent: restarted at ROW, the

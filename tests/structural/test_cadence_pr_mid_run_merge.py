@@ -221,3 +221,41 @@ class TestAMergeCommitKeepsTheRow:
         assert r.returncode != 0, r.stdout
         assert "::error::" in r.stdout and "#7" in r.stdout
         assert _creates(rig) == 1
+
+
+class TestAStaleOpenPrIsNotUpdated:
+    """CR 2575: `gh pr list` runs before `git ls-remote` reads the tip. A PR
+    merged and its branch deleted between those two reads left OPEN set with
+    no branch: the run restarted the branch, said "updated PR #7" and opened
+    no PR, so the row waited a week without one. An OPEN the branch wasn't
+    kept for is stale; deleting a PR's head branch closes it."""
+
+    def test_merged_mid_run_with_gh_still_saying_open_a_pr_is_opened(
+        self, tmp_path: Path
+    ):
+        rig = Rig(tmp_path, knob="pr\n")
+        assert rig.run("2026-10-08").returncode == 0
+        tip = _git(rig.origin, "rev-parse", PR_BRANCH)
+        merge = _merge_commit_mid_run(rig, 7)
+
+        def merge_but_gh_lags() -> None:
+            merge()
+            (rig.gh / "prs").write_text(f"7 OPEN {tip}\n")
+
+        r = rig.run("2026-10-15", between=merge_but_gh_lags)
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "updated PR" not in r.stdout
+        assert _creates(rig) == 2, "the restarted branch got no PR"
+
+    def test_the_plain_restart_path_opens_a_pr_too(self, tmp_path: Path):
+        """No row taken in: the branch was already gone when the run began."""
+        rig = Rig(tmp_path, knob="pr\n")
+        assert rig.run("2026-10-08").returncode == 0
+        tip = _git(rig.origin, "rev-parse", PR_BRANCH)
+        _git(rig.origin, "update-ref", "-d", f"refs/heads/{PR_BRANCH}")
+        (rig.gh / "prs").write_text(f"7 OPEN {tip}\n")
+        r = rig.run("2026-10-15")
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "updated PR" not in r.stdout
+        assert _creates(rig) == 2
+        assert rig.show(PR_BRANCH) == ["2026-10-01", "2026-10-15"]
