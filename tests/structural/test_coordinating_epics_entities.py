@@ -230,6 +230,19 @@ def test_671_an_entity_inside_an_issue_urls_path_is_an_accepted_under_read(line)
     assert ee.refs_in([line], REPO) == set()
 
 
+@pytest.mark.parametrize(
+    "line", ["see foo&#47;#15", "see foo&sol;#15", "see foo&#x2f;#15"]
+)
+def test_cr2418_a_slash_an_entity_spells_reads_as_a_slash_does(line):
+    """CR 2418, an accepted limit. GitHub links #15 here, as it links the
+    plain "foo/#15" [measured]. The readers skip a ref after a "/", which is
+    right inside a URL and an under-read outside one. That gap is older than
+    #671 and is its own issue to file. At the base the entity form was read,
+    by accident: the ";" stood before the "#". Decoded, it reads as the plain
+    form does, so --account can now call #15 unlisted."""
+    assert ee.refs_in([line], REPO) == ee.refs_in(["see foo/#15"], REPO) == set()
+
+
 # ---------------------------------------------------------------- leads
 
 
@@ -298,6 +311,22 @@ def test_671_the_lint_reads_a_bare_ref_an_entity_spells():
     )
     assert any("bare #6 after acme/gadgets#" in p for p in problems), problems
     assert any("short ref name#5 links nowhere" in p for p in problems), problems
+
+
+def test_cr2417_the_lints_own_refusals_apply_to_what_an_entity_spells(tmp_path):
+    """CR 2417, kept on purpose. The lint reads the line as GitHub renders it,
+    so its standing refusals reach a ref an entity spells: here "&amp;" is an
+    "&", and GitHub links the bare #11 after cli/cli#5 as this repo's. The
+    base accepted the line and wrote that wrong link. It is this set's second
+    refusal that is new, with --account's, and for the same reason."""
+    r = Rig(tmp_path)
+    r.issue(REPO, EPIC, body=BODY.format(sha="0000000"))
+    r.issue(REPO, 11)
+    assert r.edit(REPO, EPIC, [], "--adopt-live").returncode == 0
+    ops = [{"op": "log", "text": "{today}: cli/cli#5 &amp; #11 closed."}]
+    res = r.edit(REPO, EPIC, ops, "--no-link-check")
+    assert res.returncode == 3, res.stderr
+    assert "bare #11 after cli/cli# reads as this repo's" in res.stderr
 
 
 # ---------------------------------------------------------------- epic-edit.sh
