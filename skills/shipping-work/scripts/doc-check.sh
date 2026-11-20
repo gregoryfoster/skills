@@ -392,32 +392,117 @@ fi
 # renderer is looked for where the workflow looks.
 RENDER_WF=".github/workflows/context-cadence.yml"
 RENDER_NOTE=0
-if grep -qxF ".skills/merge_mode" <<<"$CHANGED" && [[ -f "$RENDER_WF" ]]; then
-  RENDER_NOTE=1
-fi
 # committed_merge_mode: the branch's committed .skills/merge_mode, in
 # merge-mode.sh's grammar (one word, `pr` or `direct`; blank lines and
-# whole-line `#` comments ignored; absent is `direct`). Sets CM_MODE, or
-# CM_ERR when the committed file is unusable or git can't read it. HEAD's
-# tree, not the working file: the job reads what is committed.
+# whole-line `#` comments ignored; absent is `direct`). Sets CM_MODE; or
+# CM_ERR when the committed file is unusable, as the job's read step would
+# find it; or CM_UNREAD when this can't tell (git failing included). HEAD's tree, not the working
+# file: the job reads what is committed.
+#
+# The job reads with `[ -f ]`, which follows links (CR 2568). So does this,
+# one in-tree hop for .skills and one for the knob, each target relative to
+# the link's own directory. Anything further (a target outside the tree, a
+# link to a link, a path through another link) is CM_UNREAD: said, and left
+# to a person, never guessed.
+TE_MODE="" TE_SHA=""
+tree_entry() {
+  local out
+  TE_MODE="" TE_SHA=""
+  out=$(git ls-tree HEAD -- "$1") || return 1
+  [[ -n "$out" ]] || return 0
+  TE_MODE=${out%% *}
+  out=${out#* }
+  out=${out#* }
+  TE_SHA=${out%%$'\t'*}
+}
+# The repo-relative path a link in <dir> to <target> names, normalised.
+# Fails for an absolute target or one that climbs out of the tree.
+link_target_path() {
+  local dir=$1 target=$2 part
+  local -a parts out=()
+  [[ $target != /* ]] || return 1
+  IFS=/ read -r -a parts <<<"${dir:+$dir/}$target"
+  for part in "${parts[@]}"; do
+    case $part in
+      '' | .) ;;
+      ..)
+        [[ ${#out[@]} -gt 0 ]] || return 1
+        out=("${out[@]:0:${#out[@]}-1}")
+        ;;
+      *) out+=("$part") ;;
+    esac
+  done
+  [[ ${#out[@]} -gt 0 ]] || return 1
+  (IFS=/ && printf '%s\n' "${out[*]}")
+}
+# Whether any directory on the way to <path> is a link in HEAD's tree:
+# ls-tree finds nothing past one, so "absent" there means "unread".
+through_a_link() {
+  local path=$1 prefix=""
+  local -a parts
+  IFS=/ read -r -a parts <<<"$path"
+  local i
+  for ((i = 0; i < ${#parts[@]} - 1; i++)); do
+    prefix=${prefix:+$prefix/}${parts[i]}
+    tree_entry "$prefix" || return 0
+    [[ $TE_MODE != 120000 ]] || return 0
+  done
+  return 1
+}
 committed_merge_mode() {
-  local entry blob line word="" count=0
+  local dir=.skills knob target blob line word="" count=0
   local -a words
-  CM_MODE="" CM_ERR=""
-  if ! entry=$(git ls-tree HEAD -- .skills/merge_mode 2>&1); then
-    CM_ERR="git ls-tree HEAD failed: $entry"
+  CM_MODE="" CM_ERR="" CM_UNREAD="" CM_PATH=""
+  if ! tree_entry .skills; then
+    CM_UNREAD="git ls-tree HEAD failed"
     return 0
   fi
-  if [[ -z "$entry" ]]; then
+  if [[ $TE_MODE == 120000 ]]; then
+    target=$(git cat-file blob "$TE_SHA") || { CM_UNREAD="git cat-file failed"; return 0; }
+    if ! dir=$(link_target_path "" "$target"); then
+      CM_UNREAD=".skills is a link out of the tree, to $target"
+      return 0
+    fi
+    tree_entry "$dir" || { CM_UNREAD="git ls-tree HEAD failed"; return 0; }
+    if [[ $TE_MODE == 120000 ]] || through_a_link "$dir"; then
+      CM_UNREAD=".skills is a link to $target, which doc-check doesn't follow further"
+      return 0
+    fi
+    if [[ -z $TE_MODE ]]; then
+      # Dangling: the job finds no .skills/merge_mode, which is `direct`.
+      CM_MODE="direct"
+      return 0
+    fi
+  fi
+  knob=$dir/merge_mode
+  CM_PATH=$knob
+  tree_entry "$knob" || { CM_UNREAD="git ls-tree HEAD failed"; return 0; }
+  if [[ $TE_MODE == 120000 ]]; then
+    target=$(git cat-file blob "$TE_SHA") || { CM_UNREAD="git cat-file failed"; return 0; }
+    if ! knob=$(link_target_path "$dir" "$target"); then
+      CM_UNREAD="it is a link out of the tree, to $target"
+      return 0
+    fi
+    CM_PATH=$knob
+    tree_entry "$knob" || { CM_UNREAD="git ls-tree HEAD failed"; return 0; }
+    if [[ $TE_MODE == 120000 ]] || { [[ -z $TE_MODE ]] && through_a_link "$knob"; }; then
+      CM_UNREAD="it is a link to $target, which doc-check doesn't follow further"
+      return 0
+    fi
+    if [[ -z $TE_MODE ]]; then
+      CM_ERR="it is a link to $target, which isn't in the tree"
+      return 0
+    fi
+  elif [[ -z $TE_MODE ]]; then
     CM_MODE="direct"
     return 0
   fi
-  if [[ "$entry" != 100* ]]; then
+  if [[ $TE_MODE != 100* ]]; then
     CM_ERR="it is committed as something other than a regular file"
     return 0
   fi
-  if ! blob=$(git cat-file blob HEAD:.skills/merge_mode 2>&1); then
-    CM_ERR="git cat-file failed: $blob"
+  if ! blob=$(git cat-file blob "$TE_SHA" 2>&1); then
+    CM_UNREAD="git cat-file failed: $blob"
     return 0
   fi
   while IFS= read -r line || [[ -n "$line" ]]; do
@@ -439,6 +524,15 @@ committed_merge_mode() {
     esac
   fi
 }
+# The hit: the knob changes on this branch while the workflow is installed.
+# Through a link the diff names the link or its target, never the knob's own
+# path, so all three count (CR 2568). Read once, here.
+if [[ -f "$RENDER_WF" ]]; then
+  committed_merge_mode
+  if grep -qxF -e ".skills/merge_mode" -e ".skills" ${CM_PATH:+-e "$CM_PATH"} <<<"$CHANGED"; then
+    RENDER_NOTE=1
+  fi
+fi
 print_render_note() {
   local d renderer="" out rc=0
   for d in scripts .claude/skills/curating-context/scripts skills/curating-context/scripts; do
@@ -450,11 +544,15 @@ print_render_note() {
   echo ""
   echo "Knob-rendered artifact: .skills/merge_mode changes on this branch, and"
   echo "$RENDER_WF is rendered by it."
-  committed_merge_mode
+  if [[ -n "$CM_UNREAD" ]]; then
+    echo "  doc-check can't read this branch's committed .skills/merge_mode:"
+    echo "  $CM_UNREAD. So check it by hand, and re-render for the mode it names."
+    return 0
+  fi
   if [[ -n "$CM_ERR" ]]; then
     echo "  This branch's committed .skills/merge_mode is unusable: $CM_ERR."
     echo "  Fix it (one word, 'pr' or 'direct', or delete the file for 'direct')"
-    echo "  before re-rendering; the job refuses it too."
+    echo "  before re-rendering; the job's read step refuses it too."
     return 0
   fi
   if [[ -z "$renderer" ]]; then
@@ -470,11 +568,24 @@ print_render_note() {
     printf '%s\n' "$out" | sed 's/^/    /'
     return 0
   fi
-  if grep -q '^re-render: *none' <<<"$out"; then
+  # --check reads the working file, and Step 1.5 runs before the commit, so
+  # a render in this tree is the branch's only once HEAD has it (CR 2570).
+  # What --check prints after the merge: no merge mode line at all for a
+  # direct knob, the pr line for pr.
+  local after="'re-render: none'"
+  [[ $CM_MODE != pr ]] || after="$after and 'merge mode: pr'"
+  if grep -q '^re-render: *none' <<<"$out" &&
+    git ls-files --error-unmatch -- "$RENDER_WF" >/dev/null 2>&1 &&
+    git diff --quiet HEAD -- "$RENDER_WF"; then
     echo "This branch already carries its $CM_MODE render, so nothing is left to"
     echo "re-render. After the merge, from the primary checkout:"
     echo "  bash $renderer --check"
-    echo "should read 're-render: none' and merge mode $CM_MODE."
+    echo "should read $after."
+  elif grep -q '^re-render: *none' <<<"$out"; then
+    echo "This tree carries the $CM_MODE render, but $RENDER_WF"
+    echo "is not committed as it reads: commit it with the knob, so the branch"
+    echo "carries it. After the merge, --check from the primary should read"
+    echo "$after."
   else
     echo "Re-render it on this branch, so the knob and its render land together:"
     echo "  bash $renderer --merge-mode $CM_MODE"

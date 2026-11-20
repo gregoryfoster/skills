@@ -174,6 +174,14 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+# --uninstall renders nothing, so a mode for it is a mistake, not a no-op
+# (CR 2570).
+if [ -n "$MERGE_MODE_ARG" ] && [ "$MODE" = uninstall ]; then
+  echo "ERROR --merge-mode names what renders, and --uninstall renders nothing" >&2
+  usage >&2
+  exit 1
+fi
+
 # `derived` is the one word --cron takes: it asks for the derived slot over an
 # installed schedule a plain re-run would keep (#664).
 [ "$CRON_ARG" = derived ] || CRON="$CRON_ARG"
@@ -546,6 +554,23 @@ case "$KNOB_MODE" in
   unusable) KNOB_READS="unusable: $KNOB_ERR" ;;
   *) KNOB_READS="$KNOB_MODE" ;;
 esac
+# What the job does with the knob under the flag, said wherever the two
+# disagree: in the stderr note and under --check's merge mode line. Only the
+# pr render reads the knob at run time; the direct render has no step that
+# does (CR 2570). It never says to commit: on the knob-flip branch the knob
+# may be committed already, and this reads the primary, not the branch.
+flag_knob_note() {
+  if [ "$MERGE_MODE_ARG" = pr ]; then
+    echo "The job reads .skills/merge_mode as committed on the branch it runs"
+    echo "on, never this flag, so it must say pr there. --check without the"
+    echo "flag agrees once the default branch's knob does (#674)."
+  else
+    echo "The direct render reads no knob at run time: it pushes to the"
+    echo "default branch whatever .skills/merge_mode says. --check without the"
+    echo "flag agrees once the default branch's knob is absent or says direct"
+    echo "(#674)."
+  fi
+}
 KNOB_AGREES=1
 if [ -n "$MERGE_MODE_ARG" ]; then
   RENDER_MODE="$MERGE_MODE_ARG"
@@ -956,33 +981,41 @@ if [ "$MODE" = "check" ]; then
   # With --merge-mode (#674) the installed workflow is judged against the
   # flag, as the render was, and the knob the primary reads is named under
   # it: on the knob-flip branch they differ, and that is the point.
+  # No installed workflow is MISSING above, and there is no render to judge
+  # against the flag (CR 2570); an unusable knob is still said, as without it.
+  # The knob counts toward the exit only under pr: the pr render's read step
+  # refuses an unusable one, and nothing the direct render runs reads it.
   if [ -n "$MERGE_MODE_ARG" ]; then
-    case "$MERGE_MODE_ARG:$INSTALLED_MODE" in
-      pr:direct)
-        echo "merge mode:         STALE — --merge-mode pr, but the installed workflow"
-        echo "                    pushes to the default branch, which a PR-only"
-        echo "                    ruleset refuses. Re-run install-cadence.sh --merge-mode pr."
-        rc=3 ;;
-      pr:*)
-        echo "merge mode:         pr, as --merge-mode pr gave it (one standing PR from"
-        echo "                    context/weekly-measurement)" ;;
-      direct:pr)
-        echo "merge mode:         direct, as --merge-mode direct gave it, under a"
-        echo "                    workflow rendered for pr. Re-run install-cadence.sh"
-        echo "                    --merge-mode direct to drop pull-requests: write." ;;
-      *)
-        echo "merge mode:         direct, as --merge-mode direct gave it" ;;
-    esac
-    echo "                    The primary checkout's .skills/merge_mode reads $KNOB_READS."
-    if [ "$KNOB_AGREES" = 0 ]; then
-      echo "                    The job reads the knob committed on the branch it"
-      echo "                    runs on, so commit .skills/merge_mode saying"
-      echo "                    $MERGE_MODE_ARG with this workflow; after the merge,"
-      echo "                    --check without the flag reads the same (#674)."
+    if [ "$INSTALLED_MODE" = none ]; then
+      if [ "$KNOB_MODE" = unusable ]; then
+        echo "merge mode:         UNUSABLE — $KNOB_ERR"
+        [ "$MERGE_MODE_ARG" != pr ] || rc=3
+      fi
+    else
+      case "$MERGE_MODE_ARG:$INSTALLED_MODE" in
+        pr:direct)
+          echo "merge mode:         STALE — --merge-mode pr, but the installed workflow"
+          echo "                    pushes to the default branch, which a PR-only"
+          echo "                    ruleset refuses. Re-run install-cadence.sh --merge-mode pr."
+          rc=3 ;;
+        pr:*)
+          echo "merge mode:         pr, as --merge-mode pr gave it (one standing PR from"
+          echo "                    context/weekly-measurement)" ;;
+        direct:pr)
+          echo "merge mode:         direct, as --merge-mode direct gave it, under a"
+          echo "                    workflow rendered for pr. Re-run install-cadence.sh"
+          echo "                    --merge-mode direct to drop pull-requests: write." ;;
+        *)
+          echo "merge mode:         direct, as --merge-mode direct gave it" ;;
+      esac
+      echo "                    The primary checkout's .skills/merge_mode reads $KNOB_READS."
+      if [ "$KNOB_AGREES" = 0 ]; then
+        flag_knob_note | sed 's/^/                    /'
+      fi
+      if [ "$KNOB_MODE" = unusable ] && [ "$MERGE_MODE_ARG" = pr ]; then
+        rc=3
+      fi
     fi
-    # The primary's knob is broken whatever the flag says, and the job
-    # will read one: still a reason to look.
-    [ "$KNOB_MODE" != unusable ] || rc=3
   else
   case "$KNOB_MODE:$INSTALLED_MODE" in
     unusable:*)
@@ -1877,13 +1910,14 @@ render() {
 # knob-flip branch the disagreement is the expected case, not an error. An
 # unusable knob is not refused under the flag: the refusal below exists so an
 # unreadable knob is never read as `direct`, and with the flag nothing is
-# read from it. It is still named, since the job will read it. stderr, so
-# --print's stdout stays the workflow.
+# read from it. It is still named, with what the job does with it (CR 2570).
+# stderr, so --print's stdout stays the workflow.
 if [ -n "$MERGE_MODE_ARG" ] && [ "$KNOB_AGREES" = 0 ] && [ -z "${INSTALL_CADENCE_QUIET_FLAG:-}" ]; then
-  echo "note: rendering for --merge-mode $MERGE_MODE_ARG; the primary checkout's" >&2
-  echo "      .skills/merge_mode reads $KNOB_READS (#674). The job reads the knob" >&2
-  echo "      committed on the branch it runs on, so commit .skills/merge_mode" >&2
-  echo "      saying $MERGE_MODE_ARG with this workflow." >&2
+  {
+    echo "note: rendering for --merge-mode $MERGE_MODE_ARG; the primary checkout's"
+    echo "      .skills/merge_mode reads $KNOB_READS."
+    flag_knob_note | sed 's/^/      /'
+  } >&2
 fi
 
 # An unusable knob renders nothing and writes nothing. Here, after --check and

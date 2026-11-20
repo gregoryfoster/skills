@@ -138,7 +138,7 @@ class TestTheFlagPicksTheRender:
         err = " ".join(r.stderr.split())
         assert f"--merge-mode {flag}" in err, r.stderr
         assert f"reads {reads}" in err, r.stderr
-        assert "commit .skills/merge_mode" in err, r.stderr
+        assert f"must say {flag}" in err or "reads no knob" in err, r.stderr
 
     @pytest.mark.parametrize(("knob", "flag"), [(None, "direct"), ("pr\n", "pr")])
     def test_a_flag_the_knob_agrees_with_says_nothing(self, tmp_path, knob, flag):
@@ -274,3 +274,78 @@ class TestCheckWithoutTheFlagIsUnchanged:
             assert _run(repo, *CRON).returncode == 0
             plain = _run(repo, *CRON, "--check")
             assert "--merge-mode" not in plain.stdout
+
+
+class TestCr2570:
+    """Review findings on the flag (CR 2570, #674)."""
+
+    def _installed(self, tmp_path: Path, knob: str | None, *flag: str) -> Path:
+        repo = _repo(tmp_path / "r")
+        _knob(repo, knob)
+        r = _run(repo, *CRON, *flag)
+        assert r.returncode == 0, r.stderr
+        return repo
+
+    def test_a_direct_render_is_never_said_to_read_a_knob(self, tmp_path: Path):
+        """a) The direct render has no read step: it pushes whatever the knob
+        says, so neither the note nor --check may say the job reads it."""
+        repo = self._installed(tmp_path, "pr\n", "--merge-mode", "direct")
+        note = " ".join(_print(repo, "--merge-mode", "direct").stderr.split())
+        chk = _run(repo, *CRON, "--check", "--merge-mode", "direct")
+        mm = _line(chk.stdout, "merge mode:")
+        for text in (note, mm):
+            assert "reads no knob" in text, text
+            assert "job reads" not in text, text
+
+    def test_an_unusable_knob_under_direct_is_named_but_not_exit_3(self, tmp_path):
+        """a) Nothing the direct render runs reads the knob, so it is named
+        and is not a failed guarantee of this install."""
+        repo = self._installed(tmp_path, None, "--merge-mode", "direct")
+        _knob(repo, "PR\n")
+        chk = _run(repo, *CRON, "--check", "--merge-mode", "direct")
+        assert chk.returncode == 0, chk.stdout
+        assert "unusable" in _line(chk.stdout, "merge mode:"), chk.stdout
+
+    def test_an_unusable_knob_under_pr_is_still_exit_3(self, tmp_path: Path):
+        """a) The pr render's read step refuses an unusable committed knob."""
+        repo = self._installed(tmp_path, None, "--merge-mode", "pr")
+        _knob(repo, "PR\n")
+        chk = _run(repo, *CRON, "--check", "--merge-mode", "pr")
+        assert chk.returncode == 3, chk.stdout
+        assert "unusable" in _line(chk.stdout, "merge mode:"), chk.stdout
+
+    def test_check_under_the_flag_does_not_tell_a_committed_branch_to_commit(
+        self, tmp_path: Path
+    ):
+        """c) On a knob-flip branch whose knob is committed, --check may not
+        say to commit it: it can't see the branch's commit from the primary."""
+        primary = _repo(tmp_path / "primary")
+        assert _run(primary, *CRON).returncode == 0
+        _git(primary, "add", "-A")
+        _git(primary, "commit", "-qm", "cadence")
+        wt = tmp_path / "wt"
+        _git(primary, "worktree", "add", "-q", "-b", "flip", str(wt))
+        _knob(wt, "pr\n")
+        assert _run(wt, *CRON, "--merge-mode", "pr").returncode == 0
+        _git(wt, "add", "-A")
+        _git(wt, "commit", "-qm", "flip")
+        chk = _run(wt, *CRON, "--check", "--merge-mode", "pr")
+        assert "commit .skills/merge_mode" not in " ".join(chk.stdout.split())
+        assert "not committed" not in chk.stdout, chk.stdout
+
+    @pytest.mark.parametrize("flag", ["pr", "direct"])
+    def test_a_missing_workflow_gets_no_merge_mode_verdict(self, tmp_path, flag):
+        """d) As without the flag for a direct knob: MISSING says it all."""
+        repo = _repo(tmp_path / "r")
+        chk = _run(repo, *CRON, "--check", "--merge-mode", flag)
+        assert chk.returncode == 3, chk.stdout
+        assert "workflow:           MISSING" in chk.stdout
+        assert "merge mode:" not in chk.stdout, chk.stdout
+
+    def test_uninstall_refuses_the_flag(self, tmp_path: Path):
+        """e) --uninstall renders nothing, so a flag there is a mistake."""
+        repo = self._installed(tmp_path, None)
+        r = _run(repo, "--uninstall", "--merge-mode", "pr")
+        assert r.returncode == 1, r.stdout + r.stderr
+        assert "--merge-mode" in r.stderr and "--uninstall" in r.stderr
+        assert (repo / WF).exists(), "nothing was removed"
