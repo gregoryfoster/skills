@@ -23,9 +23,12 @@ Options:
 Output keys: knob, host, sections, class, posture, cadence, bulk_factor,
 report_only, report_only_reasons, window, quiet, inflight, health, recovery, restarter, service,
 backup, caller, depends, datastore, hold, owner, image_owner, origin,
-exception, records, findings. A window carries weekday, week (of the month,
-or null), date (a dated line's, or null), start, end, wraps, reason, expired
-and line. Every value from the knob carries its line number, but a
+exception, records, rebuild, findings. A window carries weekday, week (of the
+month, or null), date (a dated line's, or null), start, end, wraps, reason,
+expired and line. rebuild is null where no rebuild-* line applies to the
+host, or image, install and restore (each a value and its line), check,
+secret (paths: the reader never opens one) and step (host, name, run, line,
+undo, undo_line). Every value from the knob carries its line number, but a
 datastore's databases, merged per unit, carry the line that first names the
 unit; sections are the matching headers' globs, with no line. A default
 carries line null. The grammar: references/knob.md.
@@ -191,6 +194,26 @@ o_backup() {
 }
 o_origin() { printf '{"origin": %s, "policy": %s, "value": %s, "line": %s}' "$(js "$1")" "$(js "$2")" "$(js_or_null "$3")" "$4"; }
 o_exception() { printf '{"what": %s, "review_by": %s, "reason": %s, "expired": %s, "line": %s}' "$(js "$1")" "$(js "$2")" "$(js "$3")" "$(js_bool "$4")" "$5"; }
+o_check() { printf '{"command": %s, "line": %s}' "$(js "$1")" "$2"; }
+o_secret() { printf '{"path": %s, "line": %s}' "$(js "$1")" "$2"; }
+o_step() {
+  printf '{"host": %s, "name": %s, "run": %s, "line": %s, "undo": %s, "undo_line": %s}' \
+    "$(js "$1")" "$(js "$2")" "$(js "$3")" "$4" "$(js_or_null "${5:-}")" "$(num_or_null "${6:-}")"
+}
+# One key holding an inline array of objects, one record each, built by <fn>.
+js_records() {  # <fn> <records>...
+  local fn=$1 rec first=1
+  local -a f=()
+  shift
+  printf '['
+  for rec in "$@"; do
+    [ "$first" -eq 1 ] || printf ', '
+    first=0
+    IFS=$KNOB_US read -r -a f <<<"$rec"
+    "$fn" ${f[@]+"${f[@]}"}
+  done
+  printf ']'
+}
 o_finding() { printf '{"line": %s, "kind": %s, "message": %s}' "$(num_or_null "$1")" "$(js "$2")" "$(js "$3")"; }
 
 printf '{\n'
@@ -221,5 +244,18 @@ printf '  "image_owner": {"value": %s, "line": %s},\n' "$(js_or_null "$KNOB_IMAG
 emit_records origin o_origin , ${KNOB_ORIGIN[@]+"${KNOB_ORIGIN[@]}"}
 emit_records exception o_exception , ${KNOB_EXCEPTION[@]+"${KNOB_EXCEPTION[@]}"}
 printf '  "records": {"value": %s, "line": %s},\n' "$(js_or_null "$KNOB_RECORDS")" "$(num_or_null "$KNOB_RECORDS_LINE")"
+# #673: what an executor reads to rebuild the host, or null.
+if [ "$KNOB_REBUILD" -eq 1 ]; then
+  printf '  "rebuild": {\n'
+  printf '    "image": {"value": %s, "line": %s},\n' "$(js_or_null "$KNOB_REBUILD_IMAGE")" "$(num_or_null "$KNOB_REBUILD_IMAGE_LINE")"
+  printf '    "install": {"value": %s, "line": %s},\n' "$(js_or_null "$KNOB_REBUILD_INSTALL")" "$(num_or_null "$KNOB_REBUILD_INSTALL_LINE")"
+  printf '    "restore": {"value": %s, "line": %s},\n' "$(js_or_null "$KNOB_REBUILD_RESTORE")" "$(num_or_null "$KNOB_REBUILD_RESTORE_LINE")"
+  printf '    "check": %s,\n' "$(js_records o_check ${KNOB_REBUILD_CHECK[@]+"${KNOB_REBUILD_CHECK[@]}"})"
+  printf '    "secret": %s,\n' "$(js_records o_secret ${KNOB_REBUILD_SECRET[@]+"${KNOB_REBUILD_SECRET[@]}"})"
+  printf '    "step": %s\n' "$(js_records o_step ${KNOB_REBUILD_STEP[@]+"${KNOB_REBUILD_STEP[@]}"})"
+  printf '  },\n'
+else
+  printf '  "rebuild": null,\n'
+fi
 emit_records findings o_finding "" ${KNOB_FINDING[@]+"${KNOB_FINDING[@]}"}
 printf '}\n'
