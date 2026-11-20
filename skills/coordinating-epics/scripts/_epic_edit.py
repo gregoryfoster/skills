@@ -70,7 +70,8 @@ operations (a JSON array, from --ops FILE or --ops - for stdin):
   {"op": "log", "text": "{today}: #12 closed. No new issues. Next: #13."}
                                               append "- text" to the Log section;
                                               a text's own leading "- " is taken
-                                              off, so it isn't doubled
+                                              off, so it isn't doubled, unless
+                                              a ref or a box follows it
   {"op": "log-comment", "text": "{today}: #12 closed. Next: #13."}
                                               post the text as a comment on the
                                               epic, first line "**Check-in log,
@@ -1532,7 +1533,18 @@ def apply_ops(
                 # The op writes the "- " itself, so a text that brings its own,
                 # as a line copied from the Log does, doesn't get a second
                 # (CannObserv/processor#84 F8, #670). One is taken, no more.
-                text = re.sub(r"^-\s+", "", text, count=1)
+                # Not where that would make the entry a line led by a ref, or
+                # a checkbox: doubled, it was neither and was accepted, and
+                # single, the lead and count guards may refuse it (CR 2415).
+                bare = re.sub(r"^-\s+", "", text, count=1)
+                if bare != text:
+                    if line_ref("- " + bare, host) or box_state("- " + bare):
+                        notes.append(
+                            f'{where}: the text\'s own "- " is kept: without it'
+                            " the entry would be a line led by a ref, or a checkbox"
+                        )
+                    else:
+                        text = bare
                 if not text or "\n" in text:
                     raise Refused("log text must be one non-empty line")
                 start, end = section_span(lines, "Log")

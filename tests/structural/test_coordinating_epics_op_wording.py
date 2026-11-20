@@ -94,6 +94,34 @@ def test_670_f8_only_one_bullet_is_taken(adopted):
     assert "\n- - 2026-10-02: x.\n" in adopted.body(REPO, EPIC) + "\n"
 
 
+@pytest.mark.parametrize(
+    "texts, kept",
+    [
+        (
+            ["- #11 closed.", "- #11 reopened."],
+            ["- - #11 closed.", "- - #11 reopened."],
+        ),
+        (["- [ ] #14 a follow-up"], ["- - [ ] #14 a follow-up"]),
+        (["- [x] done by hand"], ["- - [x] done by hand"]),
+        (["- **#12** verified."], ["- - **#12** verified."]),
+    ],
+    ids=["a-ref-twice", "a-box-and-a-ref", "a-box", "a-bold-ref"],
+)
+def test_cr2415_a_bullet_before_a_ref_or_a_box_is_kept_as_it_was(adopted, texts, kept):
+    """CR 2415: without its own "- " such a text is a line led by a ref, or a
+    checkbox, and the editor's other guards refuse it: two bullets led by one
+    ref, a box the counts don't expect. Written doubled, as before F8, each
+    was accepted, so each still is, and the summary says why."""
+    ops = [{"op": "log", "text": text} for text in texts]
+    res = adopted.edit(REPO, EPIC, ops)
+    assert res.returncode == 0, res.stderr
+    body = adopted.body(REPO, EPIC)
+    for line in kept:
+        assert f"\n{line}\n" in body + "\n", body
+    notes = [n for n in summary(res)["notes"] if 'own "- "' in n]
+    assert len(notes) == len(texts), summary(res)["notes"]
+
+
 # ---------------------------------------------------------------- F9: set-line
 
 
