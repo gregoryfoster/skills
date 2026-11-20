@@ -330,6 +330,35 @@ class TestProbeOverDocs:
         )
 
 
+class TestTheTrapCountStaysTrue:
+    """SKILL.md and traps.md each say how many traps there are (#600 added one).
+
+    A count that lags the list tells the reader a trap doesn't exist; this
+    derives the number from traps.md's own numbered headings.
+    """
+
+    WORDS = "zero one two three four five six seven eight nine ten eleven twelve"
+
+    def test_both_counts_match_the_numbered_traps(self, body):
+        traps = (SKILL_DIR / "references" / "traps.md").read_text()
+        n = len(re.findall(r"^## \d+\. ", traps, re.M))
+        word = self.WORDS.split()[n]
+        assert f"The {word} that already bit" in " ".join(body.split()), (
+            f"traps.md numbers {n} traps; SKILL.md's Phase 5 must say "
+            f"'The {word} that already bit'"
+        )
+        assert f"of the {word} above" in " ".join(traps.split()), (
+            f"traps.md's general form must count {n} traps ('of the {word} above')"
+        )
+
+    def test_the_shallow_submodule_trap_is_recorded(self):
+        traps = " ".join((SKILL_DIR / "references" / "traps.md").read_text().split())
+        assert "fetch-depth: 0" in traps and "skip" in traps, (
+            "trap 9 (#600): a shallow submodule checkout turns ancestry tests into "
+            "skips that read green; its fix is `fetch-depth: 0` with a guard test"
+        )
+
+
 def _census(
     tmp_path, rows: list[dict], *args, visibility=None, as_json=True
 ) -> subprocess.CompletedProcess:
