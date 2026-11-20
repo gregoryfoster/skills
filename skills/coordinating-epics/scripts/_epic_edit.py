@@ -63,7 +63,9 @@ operations (a JSON array, from --ops FILE or --ops - for stdin):
   {"op": "header", "field": "Last check-in", "value": "{checked}"}
                                               set a "- **Field:** value" line
   {"op": "log", "text": "{today}: #12 closed. No new issues. Next: #13."}
-                                              append "- text" to the Log section
+                                              append "- text" to the Log section;
+                                              a text's own leading "- " is taken
+                                              off, so it isn't doubled
   {"op": "log-comment", "text": "{today}: #12 closed. Next: #13."}
                                               post the text as a comment on the
                                               epic, first line "**Check-in log,
@@ -1419,6 +1421,10 @@ def apply_ops(
                 lines[hits[0]] = new
             elif kind == "log":
                 text = inject(op["text"], now, scan).strip()
+                # The op writes the "- " itself, so a text that brings its own,
+                # as a line copied from the Log does, doesn't get a second
+                # (CannObserv/processor#84 F8, #670). One is taken, no more.
+                text = re.sub(r"^-\s+", "", text, count=1)
                 if not text or "\n" in text:
                     raise Refused("log text must be one non-empty line")
                 start, end = section_span(lines, "Log")
