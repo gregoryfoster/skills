@@ -216,8 +216,8 @@ class TestSlugsOfDoesNotSpeakOverItsOwnDiagnosis:
         is quoted inside the diagnosis rather than dropped.
 
         What is asserted is that awk's own sentence is quoted, not how one awk
-        words it (#672). Each awk names the file it could not open, and no
-        two word the rest alike [measured 2026-11-20]:
+        words it (#672). Each awk opens with its name and names the file it
+        could not open, and no two word the rest alike [measured 2026-11-20]:
           BSD awk 20200816  awk: can't open file docs/D.md source line number 21
           mawk 1.3.4        awk: cannot open "docs/D.md" (Permission denied)
           gawk 5.2.1        awk: fatal: cannot open file `docs/D.md' for
@@ -237,7 +237,9 @@ class TestSlugsOfDoesNotSpeakOverItsOwnDiagnosis:
         )
         assert quoted, warn[0]
         cause = quoted.group("cause")
-        assert "docs/D.md" in cause, (
+        # "awk:" ties the cause to awk and not to a sentence of the script's
+        # own (CR 2420); the path, to this file.
+        assert cause.startswith("awk:") and "docs/D.md" in cause, (
             f"the WARN quotes no cause from awk naming the file: {warn[0]}"
         )
 

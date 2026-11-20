@@ -62,15 +62,16 @@ operations (a JSON array, from --ops FILE or --ops - for stdin):
                                               line for a ref that has one.
                                               section is a heading, or the
                                               start of exactly one, up to a
-                                              word's end: "Tier 2" for "Tier 2
-                                              — bugs". Every other op takes a
-                                              heading in full
+                                              space or a colon: "Tier 2" for
+                                              "Tier 2 — bugs". Every other op
+                                              takes a heading in full
   {"op": "header", "field": "Last check-in", "value": "{checked}"}
                                               set a "- **Field:** value" line
   {"op": "log", "text": "{today}: #12 closed. No new issues. Next: #13."}
                                               append "- text" to the Log section;
                                               a text's own leading "- " is taken
-                                              off, so it isn't doubled
+                                              off, so it isn't doubled, unless
+                                              a ref or a box follows it
   {"op": "log-comment", "text": "{today}: #12 closed. Next: #13."}
                                               post the text as a comment on the
                                               epic, first line "**Check-in log,
@@ -258,9 +259,15 @@ REF_RE = re.compile(REF_PAT)
 # nothing (#415), so a code-led line is no item, bullet or row (#403).
 MARKUP = r"(?:~~|\*\*|\[)*"
 LEAD = MARKUP + r"(?:[0-9]{1,9}[.)]\s+)?" + MARKUP
-ITEM_RE = re.compile(r"^\s*" + MARKER + r" \[[ xX]\] " + LEAD + REF_PAT)
-BULLET_RE = re.compile(r"^\s*[-*+] " + LEAD + REF_PAT)
-ROW_RE = re.compile(r"^\|\s*" + LEAD + REF_PAT)
+# A lead is a line's structure, then its ref. The structure is read on the
+# line as written and only what follows is decoded: a marker, a box or a pipe
+# that an entity spells is text on GitHub, never markup (CR 2414).
+LEAD_STARTS = (
+    ("item", re.compile(r"^\s*" + MARKER + r" \[[ xX]\] ")),
+    ("bullet", re.compile(r"^\s*[-*+] ")),
+    ("row", re.compile(r"^\|\s*")),
+)
+LEAD_REF_RE = re.compile(LEAD + REF_PAT)
 UNESCAPED_PIPE_RE = re.compile(r"(?<!\\)\|")
 # A closing #-sequence needs whitespace before it, as in CommonMark, so
 # "## Notes on C#" keeps its "#" (CR 255).
@@ -686,7 +693,8 @@ def ref_text(line: str, entities: bool = True) -> str:
     text reads as plain text. A bare or <angled> issue URL is its ref (CR 288).
 
     Entities are decoded last (#671). A decoded character is text, never
-    markup: "&#91;#57&#93;(url)" makes no link, and #57 is linked. A URL is
+    markup: "&#91;#57&#93;(url)" makes no link, and #57 is linked. For the
+    same reason line_subjects reads a line's marker before it decodes. A URL is
     read as written, since GitHub leaves an entity in a bare one alone. It
     does decode one inside a link target or an <angled> URL, which this
     doesn't: an under-read, accepted. entities=False is for text GitHub
@@ -710,9 +718,10 @@ def ref_text(line: str, entities: bool = True) -> str:
 
 # Each ref after a line's lead that continues its subject (#662): a "+", ",",
 # "&" or "and", with markup closing the ref before and opening the next, as in
-# "**#46** + **#47**". Text of any other kind ends the run. The line is read
-# through ref_text, so an entity is already its character: "&amp;" is the "&"
-# joiner, and "&#183;" is a "·", which joins nothing (CR 2314, #671).
+# "**#46** + **#47**". Text of any other kind ends the run. What follows a
+# line's marker is decoded first, so an entity is already its character:
+# "&amp;" is the "&" joiner, and "&#183;" is a "·", which joins nothing
+# (CR 2314, #671).
 SUBJECT_NEXT_RE = re.compile(
     r"(?:~~|\*\*|\])*\s*(?:\+|,|&|\band\b)\s*" + MARKUP + REF_PAT
 )
@@ -725,13 +734,17 @@ def line_subjects(line: str, host: str) -> tuple[str, list[str]] | None:
     "- [x] #46 + #47 title" has two, and refs later in the line are mentions
     (#662, decided 2026-11-15). The first is the lead every op finds it by.
     """
-    line = ref_text(line)
-    for kind, rx in (("item", ITEM_RE), ("bullet", BULLET_RE), ("row", ROW_RE)):
-        m = rx.match(line)
+    line = ref_text(line, entities=False)
+    for kind, start in LEAD_STARTS:
+        s = start.match(line)
+        if not s:
+            continue
+        rest = decode_entities(line[s.end() :])
+        m = LEAD_REF_RE.match(rest)
         if m:
             out = [key(m.group("repo"), m.group("num"), host)]
             pos = m.end()
-            while n := SUBJECT_NEXT_RE.match(line, pos):
+            while n := SUBJECT_NEXT_RE.match(rest, pos):
                 out.append(key(n.group("repo"), n.group("num"), host))
                 pos = n.end()
             # "#46 + #47 + #46" names #46 once (CR 2317).
@@ -873,9 +886,10 @@ def section_level(lines: list[str]) -> int:
 
 
 def heading_by_prefix(lines: list[str], heading: str) -> str | None:
-    """The one heading that starts with `heading` and goes on past a word
-    boundary, when no heading is `heading` itself: "Tier 2" finds
-    "Tier 2 — bugs", never "Tier 20", and "Log" never finds "Logistics".
+    """The one heading that starts with `heading` and goes on after white
+    space or a colon, when no heading is `heading` itself: "Tier 2" finds
+    "Tier 2 — bugs" or "Tier 2: bugs", never "Tier 20" or "Tier 2.5"
+    (CR 2416), and "Log" never finds "Logistics".
 
     For add-line's section alone (CannObserv/processor#84 F10, #670): there a
     wrong guess adds one line. In section_span it would let the log op write
@@ -890,7 +904,7 @@ def heading_by_prefix(lines: list[str], heading: str) -> str | None:
         for t in texts
         if t.lower().startswith(want)
         and len(t) > len(want)
-        and not t[len(want)].isalnum()
+        and (t[len(want)].isspace() or t[len(want)] == ":")
     ]
     return found[0] if len(found) == 1 else None
 
@@ -1382,7 +1396,8 @@ def apply_ops(
                 if not text or "\n" in text:
                     raise Refused("note text must be one non-empty line")
                 head, close = lines[i].rstrip(), ""
-                row = bool(ROW_RE.match(ref_text(head)))
+                # The line was found by its lead, so it has one (CR 2414).
+                row = line_ref(head, host)[0] == "row"
                 if row:
                     # Inside the last cell: GFM drops a cell past the header's
                     # count, so text after the closing pipe never shows (CR 286).
@@ -1519,7 +1534,18 @@ def apply_ops(
                 # The op writes the "- " itself, so a text that brings its own,
                 # as a line copied from the Log does, doesn't get a second
                 # (CannObserv/processor#84 F8, #670). One is taken, no more.
-                text = re.sub(r"^-\s+", "", text, count=1)
+                # Not where that would make the entry a line led by a ref, or
+                # a checkbox: doubled, it was neither and was accepted, and
+                # single, the lead and count guards may refuse it (CR 2415).
+                bare = re.sub(r"^-\s+", "", text, count=1)
+                if bare != text:
+                    if line_ref("- " + bare, host) or box_state("- " + bare):
+                        notes.append(
+                            f'{where}: the text\'s own "- " is kept: without it'
+                            " the entry would be a line led by a ref, or a checkbox"
+                        )
+                    else:
+                        text = bare
                 if not text or "\n" in text:
                     raise Refused("log text must be one non-empty line")
                 start, end = section_span(lines, "Log")

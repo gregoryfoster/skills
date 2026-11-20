@@ -94,6 +94,34 @@ def test_670_f8_only_one_bullet_is_taken(adopted):
     assert "\n- - 2026-10-02: x.\n" in adopted.body(REPO, EPIC) + "\n"
 
 
+@pytest.mark.parametrize(
+    "texts, kept",
+    [
+        (
+            ["- #11 closed.", "- #11 reopened."],
+            ["- - #11 closed.", "- - #11 reopened."],
+        ),
+        (["- [ ] #14 a follow-up"], ["- - [ ] #14 a follow-up"]),
+        (["- [x] done by hand"], ["- - [x] done by hand"]),
+        (["- **#12** verified."], ["- - **#12** verified."]),
+    ],
+    ids=["a-ref-twice", "a-box-and-a-ref", "a-box", "a-bold-ref"],
+)
+def test_cr2415_a_bullet_before_a_ref_or_a_box_is_kept_as_it_was(adopted, texts, kept):
+    """CR 2415: without its own "- " such a text is a line led by a ref, or a
+    checkbox, and the editor's other guards refuse it: two bullets led by one
+    ref, a box the counts don't expect. Written doubled, as before F8, each
+    was accepted, so each still is, and the summary says why."""
+    ops = [{"op": "log", "text": text} for text in texts]
+    res = adopted.edit(REPO, EPIC, ops)
+    assert res.returncode == 0, res.stderr
+    body = adopted.body(REPO, EPIC)
+    for line in kept:
+        assert f"\n{line}\n" in body + "\n", body
+    notes = [n for n in summary(res)["notes"] if 'own "- "' in n]
+    assert len(notes) == len(texts), summary(res)["notes"]
+
+
 # ---------------------------------------------------------------- F9: set-line
 
 
@@ -263,3 +291,30 @@ def test_670_f10_the_log_op_never_writes_into_a_section_log_only_starts(tmp_path
     assert res.returncode == 3, res.stderr
     assert "no section headed 'Log'" in res.stderr and "'Logistics'" in res.stderr
     assert "a check-in" not in r.body(REPO, EPIC)
+
+
+@pytest.mark.parametrize(
+    "heading, taken",
+    [
+        ("Tier 2.5 — later", False),
+        ("Tier 2-b — later", False),
+        ("Tier 2/3 — later", False),
+        ("Tier 2 — later", True),
+        ("Tier 2: later", True),
+        ("Tier 2\t(later)", True),
+    ],
+    ids=["a-decimal", "a-hyphen", "a-slash", "a-space", "a-colon", "a-tab"],
+)
+def test_cr2416_a_prefix_ends_at_white_space_or_a_colon(tmp_path, heading, taken):
+    """CR 2416: the boundary was "not a letter or digit", so "Tier 2" took
+    "Tier 2.5 — later" and wrote the line there."""
+    r = Rig(tmp_path)
+    r.issue(REPO, EPIC, body=BODY.replace("Tier 10 — later", heading))
+    r.issue(REPO, 14)
+    assert r.edit(REPO, EPIC, [], "--adopt-live").returncode == 0
+    ops = [{"op": "add-line", "section": "Tier 2", "line": "- [ ] #14 a follow-up"}]
+    res = r.edit(REPO, EPIC, ops)
+    assert (res.returncode == 0) is taken, res.stderr
+    assert ("a follow-up" in r.body(REPO, EPIC)) is taken
+    if not taken:
+        assert "no section headed 'Tier 2'" in res.stderr and heading in res.stderr
