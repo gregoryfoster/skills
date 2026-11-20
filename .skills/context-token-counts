@@ -197,12 +197,13 @@
 5010 1729 skills/orchestrating-issue-backlog/references/recovery.md
 5751 2169 skills/orchestrating-issue-backlog/references/shared-backing-services.md
 4771 1596 skills/orchestrating-issue-backlog/references/shared-files.md
-11755 4356 skills/patching-hosts/SKILL.md
+12422 4593 skills/patching-hosts/SKILL.md
 6828 2494 skills/patching-hosts/references/datastores.md
 22348 8962 skills/patching-hosts/references/environments/exe-dev-exeuntu.md
 4496 1769 skills/patching-hosts/references/environments/exe-dev-tailscale.md
-18919 6774 skills/patching-hosts/references/knob.md
-22195 8013 skills/patching-hosts/references/policy.md
+11059 3946 skills/patching-hosts/references/executor.md
+20799 7492 skills/patching-hosts/references/knob.md
+22259 8037 skills/patching-hosts/references/policy.md
 10680 4194 skills/patching-hosts/references/process-log.md
 1415 482 skills/patching-hosts/references/process-log/2026/2026-09-21-broker.md
 1191 415 skills/patching-hosts/references/process-log/2026/2026-09-22-archiver.md
@@ -250,7 +251,7 @@
 12748 4488 skills/patching-hosts/references/pruning.md
 23564 8573 skills/patching-hosts/references/readings.md
 9390 3546 skills/patching-hosts/references/reboot-and-record.md
-25342 9309 skills/patching-hosts/references/run.md
+25588 9405 skills/patching-hosts/references/run.md
 14601 5155 skills/reviewing-architecture/SKILL.md
 14138 4667 skills/reviewing-architecture/references/dimensions.md
 13021 4814 skills/reviewing-code-php/SKILL.md
