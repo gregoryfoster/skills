@@ -1,0 +1,86 @@
+"""A PR merged mid-run is not reopened with its rows (#683, finding 2).
+
+The take-in step merges the open PR's tip `T` into the checkout with
+`--no-commit`, and the commit step records the row with parents `M0` and `T`.
+A human squash-merging that PR in between (with or without
+`delete_branch_on_merge`) left the commit step on its restart path: it pushed
+the branch at the row, which still had `T` as a parent, and opened a new PR
+whose merge base with the default branch was `M0`, not the squash, so its
+diff showed the merged PR's rows again. Reproduced here before the fix
+(raised as `[review]` on CannObserv/watcher#445). The take-in step now exports
+what it took in, and the commit step refuses to push it once that PR has
+ended: a re-run measures after the merged rows.
+
+Uses `test_cadence_merge_mode`'s rig: a bare origin, fresh runner clones and a
+fake `gh`. No API calls.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from tests.structural.test_cadence_merge_mode import PR_BRANCH, Rig, _git
+
+
+def _creates(rig: Rig) -> int:
+    return len([c for c in rig.calls() if c.startswith("pr create")])
+
+
+def _squash_mid_run(rig: Rig, number: int, delete: bool):
+    """A human squash-merges the open PR during the run; with `delete`, the
+    branch goes with it, as delete_branch_on_merge does."""
+
+    def act() -> None:
+        human = rig.clone(f"squash{rig.runs}")
+        _git(human, "fetch", "-q", "origin", PR_BRANCH)
+        tip = _git(human, "rev-parse", "FETCH_HEAD")
+        _git(human, "merge", "-q", "--squash", "FETCH_HEAD")
+        _git(human, "commit", "-qm", f"chore: weekly context measurement (#{number})")
+        _git(human, "push", "-q", "origin", "HEAD:main")
+        if delete:
+            _git(human, "push", "-q", "origin", f":refs/heads/{PR_BRANCH}")
+        (rig.gh / "prs").write_text(f"{number} MERGED {tip}\n")
+
+    return act
+
+
+class TestAPrMergedMidRunIsNotReopened:
+    def _two_runs(self, tmp_path: Path, delete: bool):
+        rig = Rig(tmp_path, knob="pr\n")
+        assert rig.run("2026-10-08").returncode == 0
+        r = rig.run("2026-10-15", between=_squash_mid_run(rig, 7, delete))
+        return rig, r
+
+    def test_squashed_and_deleted_the_row_is_not_pushed(self, tmp_path: Path):
+        rig, r = self._two_runs(tmp_path, delete=True)
+        assert "measuring after the rows" in rig.take.stdout, "fixture: rows taken in"
+        assert r.returncode != 0, r.stdout
+        assert "::error::" in r.stdout and "#7" in r.stdout
+        assert "re-run" in r.stdout
+        assert not rig.has_branch(PR_BRANCH), "the branch was recreated with #7's rows"
+        assert _creates(rig) == 1, "a PR was opened over the merged rows"
+
+    def test_squashed_and_kept_the_row_is_not_pushed(self, tmp_path: Path):
+        rig, r = self._two_runs(tmp_path, delete=False)
+        assert r.returncode != 0, r.stdout
+        assert "::error::" in r.stdout and "#7" in r.stdout
+        assert _creates(rig) == 1
+
+    def test_the_next_run_measures_after_the_merged_rows(self, tmp_path: Path):
+        rig, _ = self._two_runs(tmp_path, delete=True)
+        r = rig.run("2026-10-16")
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert rig.show(PR_BRANCH) == ["2026-10-01", "2026-10-08", "2026-10-16"]
+        assert _git(rig.origin, "rev-parse", f"{PR_BRANCH}~1") == _git(
+            rig.origin, "rev-parse", "main"
+        ), "the branch restarts at the default branch plus this row"
+
+    def test_an_open_pr_still_takes_the_row(self, tmp_path: Path):
+        """The guard reads only an ended PR: an open one is updated."""
+        rig = Rig(tmp_path, knob="pr\n")
+        assert rig.run("2026-10-08").returncode == 0
+        tip = _git(rig.origin, "rev-parse", PR_BRANCH)
+        (rig.gh / "prs").write_text(f"7 OPEN {tip}\n")
+        r = rig.run("2026-10-15")
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "updated PR #7" in r.stdout

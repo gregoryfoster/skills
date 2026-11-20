@@ -314,7 +314,12 @@ ship is refused too, so a repo that needs one needs the other.
   stays the default branch's tip, so the row's `repo_commit` is a commit
   that branch keeps even after a squash merge, and the commit step records
   the merge with the row. The push decides again, since a PR can merge
-  mid-run. `record-telemetry.sh --repair` after the fact was the other way,
+  mid-run. When the PR it took in has ended by then (squash-merged, with
+  or without its branch deleted, or closed), the row is refused. Pushed,
+  it would have reopened those rows in a new PR whose merge base is the old
+  default tip, the squash's rows shown again; reproduced on
+  [#683](https://github.com/gregoryfoster/skills/issues/683). A re-run
+  measures after them. `record-telemetry.sh --repair` after the fact was the other way,
   and it can't do this: it rewrites deltas, never the observed `seams`.
 - **A refused push is reported once.** On the PR's branch a refusal is a
   rule or a concurrent push, not a race a rebase fixes. A `GH013` or

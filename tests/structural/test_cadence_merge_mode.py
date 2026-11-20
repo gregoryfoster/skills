@@ -282,6 +282,7 @@ class Rig:
         mode_env: str | None = None,
         tokens: int | None = None,
         ref: str = "main",
+        between=None,
     ) -> subprocess.CompletedProcess:
         """One scheduled run: a fresh clone of main, the knob read and the
         PR's rows taken in (when the render has those steps), one row
@@ -290,7 +291,8 @@ class Rig:
         the workflow orders them; without, it is appended by hand.
 
         `ref` is the branch the run is on, checked out as a dispatch on it
-        checks it out (#683)."""
+        checks it out (#683). `between` runs after the take-in step and
+        before the commit step: whatever a human does mid-run."""
         self.runs += 1
         steps = _steps(self.rendered)
         runner = self.clone(f"runner{self.runs}")
@@ -320,10 +322,17 @@ class Rig:
             env["MERGE_MODE"] = mode_env
         self.take = None
         if TAKE_STEP in steps:
+            seen = len(gh_env.read_text())
             self.take = self.step(TAKE_STEP, runner, env)
             if self.take.returncode:
                 return self.take
+            # Only what the take-in step exported: a mode_env set above stands.
+            for line in gh_env.read_text()[seen:].splitlines():
+                k, _, v = line.partition("=")
+                env[k] = v
         self.runner = runner
+        if between is not None:
+            between()
         if tokens is None:
             led = runner / LEDGER
             led.write_text(led.read_text() + self.row(ts) + "\n")

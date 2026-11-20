@@ -1553,7 +1553,8 @@ pr_take_step() {
       # --no-commit: HEAD stays the default branch's tip, so the row's
       # repo_commit is a commit that branch keeps, and the commit step
       # records the merge with the row. Which PR is decided as the push
-      # decides it, and the push decides again: a PR can merge mid-run.
+      # decides it, and the push decides again: a PR can merge mid-run. What
+      # was taken in goes to the commit step as TAKEN and TAKEN_PR (#683).
       - name: Take in the measurement PR's rows
         env:
           GH_TOKEN: ${{ github.token }}
@@ -1575,6 +1576,7 @@ YAML
               echo "::error::could not merge $PR_BRANCH in — nothing was measured."
               git diff --name-only --diff-filter=U | sed 's/^/::error::  conflicted: /'
               exit 1; }
+            { echo "TAKEN=$TIP"; echo "TAKEN_PR=$OPEN"; } >>"$GITHUB_ENV"
             echo "measuring after the rows on $PR_BRANCH${OPEN:+ (PR #$OPEN)}"
           else
             echo "no rows on $PR_BRANCH to take in: the row is measured after $BRANCH's"
@@ -1603,6 +1605,18 @@ pr_push_block() {
 YAML
   pr_discover "              "
   cat <<'YAML'
+              # The take-in step merged a tip in (TAKEN) because the branch was
+              # to be kept. Not kept now, its PR merged or closed mid-run
+              # (#683), and ROW has that tip as a parent: restarted at ROW, the
+              # branch reopens those rows in a new PR whose merge base is the
+              # old default tip, showing its merged rows again. Rebuilding the row on
+              # the new tip means replaying the calibration files' merge too, so
+              # the row is refused instead, and a re-run measures after them.
+              if [ -n "${TAKEN:-}" ] && [ -z "$KEEP" ]; then
+                ENDED_WHAT=${TAKEN_PR:+PR #$TAKEN_PR}
+                echo "::error::${ENDED_WHAT:-$PR_BRANCH} ended during this run (merged, closed or deleted), after its rows were taken in at ${TAKEN:0:12}. Pushed now, this row would reopen them in a new PR. The row was not pushed: re-run this workflow, or let the next run measure after them."
+                exit 1
+              fi
               if [ -n "$KEEP" ]; then
                 # The branch carries rows no finished PR took: an open PR's, or
                 # a run's whose PR was never opened. Merge the row INTO it, so
