@@ -258,8 +258,9 @@ plan_load() {  # <file> <host>
         fi
         if [ "$mine" -eq 1 ]; then PLAN_HELD="$PLAN_HELD ${tok[1]}"; fi ;;
     esac
-    # A section's lane and reboot are checked once the next one starts, or
-    # the file ends: below.
+    # Only this host's own section must name its lane and reboot, checked
+    # once the file ends, below; another host's section is checked only for
+    # its form.
     if [ "$mine" -eq 1 ]; then PLAN_LANE=$mine_lane PLAN_REBOOT=$mine_reboot; fi
   done <"$copy"
   if [ -z "$PLAN_ID" ] || [ -z "$PLAN_APPROVED_AT" ] || [ -z "$PLAN_NOT_AFTER" ]; then

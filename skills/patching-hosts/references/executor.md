@@ -24,7 +24,7 @@ The skill can't tell an executor's bare `--approve` from a session's. **An execu
 
 ## The plan file
 
-The knob's grammar ([knob.md](knob.md)): one directive a line, `#` a comment at the start of a line or after whitespace, and `[host <name>]` sections. Each section names one host exactly: no glob. It's a line file, not JSON: the scripts read no JSON, and a host needs no `jq` or `python3` for it.
+The knob's grammar ([knob.md](knob.md)): one directive a line, `#` a comment at the start of a line or after whitespace, and `[host <name>]` sections. Each section names one host exactly: no glob. Lines end in LF, and words are separated by spaces: unlike the knob, a CR or a tab makes the plan malformed. It's a line file, not JSON: the scripts read no JSON, and a host needs no `jq` or `python3` for it.
 
 | Directive | Where | Meaning |
 |---|---|---|
@@ -57,7 +57,7 @@ package postgresql-16 16.11-0ubuntu0.24.04.1 security
 |---|---|
 | `recovery-point.sh --approve --plan FILE` | the plan covers the host, and hasn't passed its `not-after` |
 | `apply.sh --approve --plan FILE --step bulk` | that, the plan's `lane` is the bulk's, and the bulk's reading is inside the envelope. Then again against the lists the bulk refreshes, before it holds anything: each package it will install, its own or one held for a step the plan approves, at the plan's version or a newer one; an unplanned one held for an approved step stops it |
-| `apply.sh --approve --plan FILE --step <held step>` | that, a `held` line names the step, the run's bulk ran under this plan, and each package the step releases is one the plan lists, at its version or a newer one |
+| `apply.sh --approve --plan FILE --step <held step>` | that, the plan's `lane` is the one its bulk ran in, a `held` line names the step, the run's bulk ran under this plan, and each package the step releases is one the plan lists, at its version or a newer one |
 | `reboot-chain.sh --approve --plan FILE` | that, the plan says `reboot yes`, and the run's bulk ran under it |
 
 The bulk records which approval it ran under in the run's `approval` file, the plan by its sha256, so a held step or a reboot under another plan is refused. **One gap stays:** a package the dry run didn't select and no group holds, published in the lane between the dry run and the bulk, looks like one outside the lane, so the bulk can't hold it to the plan. Count shortly before the run.

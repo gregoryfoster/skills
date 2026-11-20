@@ -183,12 +183,18 @@ if ! [[ $retain =~ $date_re ]]; then
   echo "ERROR --retain-until takes a date, YYYY-MM-DD" >&2
   exit 2
 fi
-for _v in "$run" "$config" "$planf" ${personal[@]+"${personal[@]}"}; do
+for _v in "$run" "$config" ${personal[@]+"${personal[@]}"}; do
   case $_v in *[[:cntrl:]]* | *[[:space:]]*)
     echo "ERROR an argument holds a space or a control character" >&2
     exit 2 ;;
   esac
 done
+# A plan's path may hold a space, as apply.sh and reboot-chain.sh take it
+# (CR 2541); never a control character.
+case $planf in *[[:cntrl:]]*)
+  echo "ERROR an argument holds a control character" >&2
+  exit 2 ;;
+esac
 case $run in
   "" | /*) ;;
   *) echo "ERROR --run takes an absolute path" >&2; exit 2 ;;

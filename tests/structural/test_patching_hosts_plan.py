@@ -667,3 +667,12 @@ def test_a_plan_is_refused_when_the_clock_cant_be_read(tmp_path):
     )
     assert "stood" not in r.stdout, r.stderr
     assert "clock can't be read" in r.stdout, (r.stdout, r.stderr)
+
+
+def test_a_plan_path_holding_a_space_is_read_by_the_recovery_point_too(recovery):
+    # CR 2541: recovery-point.sh refused one that apply.sh and
+    # reboot-chain.sh take.
+    p = recovery.tmp / "cycle plan"
+    p.write_text(HEAD + _section())
+    out = recovery.recover("--plan", str(p))
+    assert out["recovery_point"]["approval"]["by"] == "plan"
