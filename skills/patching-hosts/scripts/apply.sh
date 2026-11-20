@@ -1209,7 +1209,8 @@ plan_envelope() {
 
 # The bulk, against the lists it just refreshed (CR 2530): each package it
 # will install under the plan, its own selection's and those it holds for a
-# step the plan approves, at the candidate those lists offer. A planned one
+# step the plan approves, at the candidate those lists offer; and none it
+# would hold for a step the plan doesn't name (CR 2554). A planned one
 # must be at its planned version or a newer one; an unplanned one held for
 # an approved step is outside, since that step would install it and restart
 # its data store, whether or not the dry run selected it (CR 2545). One of
@@ -1225,7 +1226,13 @@ plan_recheck_bulk() {  # <the refreshed simulation>
     for i in ${RUN_HOLD_PKG[@]+"${!RUN_HOLD_PKG[@]}"}; do
       if [ "${RUN_HOLD_PKG[$i]}" = "$p" ]; then held=${RUN_HOLD_STEP[$i]}; fi
     done
-    if [ -n "$held" ] && ! in_words "$held" "$PLAN_HELD"; then continue; fi
+    # Held for a step the plan doesn't name: that step can never run under
+    # it, so the package would stay held (CR 2554).
+    if [ -n "$held" ] && ! in_words "$held" "$PLAN_HELD"; then
+      sim_candidate c "$p" "$1"
+      RECHECK_WHY="$RECHECK_WHY; $p ${c:-}, which the bulk would hold for $held, a held step the plan doesn't name"
+      continue
+    fi
     sim_candidate c "$p" "$1"
     [ -n "$c" ] || continue
     pv=""
