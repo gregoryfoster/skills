@@ -213,7 +213,16 @@ class TestSlugsOfDoesNotSpeakOverItsOwnDiagnosis:
     def test_the_warn_still_fires_and_carries_the_cause(self, tmp_path: Path):
         """Suppressing awk's stderr must not also discard it. #157's rule: the
         text bash or awk produced is the truest description of the cause, so it
-        is quoted inside the diagnosis rather than dropped."""
+        is quoted inside the diagnosis rather than dropped.
+
+        What is asserted is that awk's own sentence is quoted, not how one awk
+        words it (#672). Each awk names the file it could not open, and no
+        two word the rest alike [measured 2026-11-20]:
+          BSD awk 20200816  awk: can't open file docs/D.md source line number 21
+          mawk 1.3.4        awk: cannot open "docs/D.md" (Permission denied)
+          gawk 5.2.1        awk: fatal: cannot open file `docs/D.md' for
+                            reading: Permission denied
+        """
         result = _measure(self._repo(tmp_path))
         warn = [
             line
@@ -221,7 +230,16 @@ class TestSlugsOfDoesNotSpeakOverItsOwnDiagnosis:
             if line.startswith("WARN could not read headings from docs/D.md")
         ]
         assert len(warn) == 1, result.stderr
-        assert "can't open file" in warn[0], warn[0]
+        quoted = re.fullmatch(
+            r"WARN could not read headings from docs/D\.md \((?P<cause>.*)\);"
+            r" its anchors will read as missing",
+            warn[0],
+        )
+        assert quoted, warn[0]
+        cause = quoted.group("cause")
+        assert "docs/D.md" in cause, (
+            f"the WARN quotes no cause from awk naming the file: {warn[0]}"
+        )
 
 
 class TestEstTokensReadIsChecked:
