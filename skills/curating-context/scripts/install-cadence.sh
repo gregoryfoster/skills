@@ -1620,11 +1620,20 @@ YAML
               # the new tip means replaying the calibration files' merge too, so
               # the row is refused instead, and a fresh run measures after them.
               # Not GitHub's "Re-run jobs" (CR 2564): it reuses GITHUB_SHA, so
-              # checkout gives it the commit from before the merge again.
+              # checkout gives it the commit from before the merge again. Unless
+              # the PR merged with a merge commit (CR 2567): then the tip is in
+              # $BRANCH's history, a PR from ROW has it as its merge base and
+              # shows this row alone, and the restart below is right. A fetch
+              # that fails can't say so, and refuses.
               if [ -n "${TAKEN:-}" ] && [ -z "$KEEP" ]; then
                 ENDED_WHAT=${TAKEN_PR:+PR #$TAKEN_PR}
-                echo "::error::${ENDED_WHAT:-$PR_BRANCH} ended during this run (merged, closed or deleted), after its rows were taken in at ${TAKEN:0:12}. Pushed now, this row would reopen them in a new PR. The row was not pushed: dispatch the workflow again (gh workflow run context-cadence.yml) or let the next scheduled run measure after them, not Re-run jobs, which reuses this run's commit, from before the merge."
-                exit 1
+                if git fetch -q origin "+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH" \
+                  && git merge-base --is-ancestor "$TAKEN" "origin/$BRANCH"; then
+                  echo "${ENDED_WHAT:-$PR_BRANCH} merged into $BRANCH during this run, its rows with it: the branch restarts at this row"
+                else
+                  echo "::error::${ENDED_WHAT:-$PR_BRANCH} ended during this run (merged, closed or deleted), after its rows were taken in at ${TAKEN:0:12}. Pushed now, this row would reopen them in a new PR. The row was not pushed: dispatch the workflow again (gh workflow run context-cadence.yml) or let the next scheduled run measure after them, not Re-run jobs, which reuses this run's commit, from before the merge."
+                  exit 1
+                fi
               fi
               if [ -n "$KEEP" ]; then
                 # The branch carries rows no finished PR took: an open PR's, or

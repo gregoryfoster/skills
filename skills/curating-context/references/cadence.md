@@ -317,7 +317,10 @@ ship is refused too, so a repo that needs one needs the other.
   that branch keeps even after a squash merge, and the commit step records
   the merge with the row. The push decides again, since a PR can merge
   mid-run. When the PR it took in has ended by then (squash-merged, with
-  or without its branch deleted, or closed), the row is refused. Pushed,
+  or without its branch deleted, or closed), the row is refused. A PR
+  merged with a merge commit is the exception: its tip is in the default
+  branch's history, so the branch restarts at the row as it would after
+  any merge. Pushed,
   it would have reopened those rows in a new PR whose merge base is the old
   default tip, the squash's rows shown again; reproduced on
   [#683](https://github.com/gregoryfoster/skills/issues/683). A fresh
