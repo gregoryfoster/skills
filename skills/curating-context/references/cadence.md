@@ -273,10 +273,24 @@ ship is refused too, so a repo that needs one needs the other.
 - **`pr`: the same workflow plus five insertions,** none removed or
   rewritten. `pull-requests: write`; a `Read the merge mode` step before the
   credential preflight, which reads the committed knob with `merge-mode.sh`'s
-  grammar and fails on an unusable one; a `Take in the measurement PR's
+  grammar and fails on an unusable one, and a `Hold the run to the default
+  branch` step after it (below); a `Take in the measurement PR's
   rows` step after the preflight (below); `GH_TOKEN` on the commit step; and,
   after `# --- push ---`, a path that pushes `context/weekly-measurement` and
-  opens or updates one PR into the branch the run is on.
+  opens or updates one PR into the default branch.
+- **Only on the default branch.** The PR path merges the measurement
+  branch into the branch the run is on and pushes the result, and
+  `workflow_dispatch:` can name any branch. Dispatched on `feature/x`, the
+  row carried `feature/x`'s commits into the open PR into the default
+  branch, unreviewed under a bot's title, and opened a second PR into
+  `feature/x` ([#683](https://github.com/gregoryfoster/skills/issues/683)).
+  So a `pr` run stops before the credential is spent unless it is on the
+  default branch, read from `origin` (`git ls-remote --symref origin HEAD`)
+  rather than the event, and unread is a refusal. It binds the workflow as
+  rendered: a branch that edits its own copy is past it, as anyone with
+  write access already is. `direct` is not held. Its row lands on the
+  dispatched branch itself and is reviewed in that branch's own PR; no
+  branch's commits reach another's.
 - **One PR, not one a week.** While the branch carries rows no finished PR
   took (an open PR's, or a run's whose PR was never opened), each run merges
   its row *into* that branch. Those rows stay first and in order, the default
@@ -295,7 +309,8 @@ ship is refused too, so a repo that needs one needs the other.
   [the delta check](#the-delta-check) warned on every run while the PR was
   open, and the merge landed the wrong deltas. So when the push would keep
   the branch, the take-in step merges it in before the sweep, deciding
-  which PR exactly as the push does. It merges with `--no-commit`: `HEAD`
+  which PR with the fragment the push runs, written once in the installer
+  ([#683](https://github.com/gregoryfoster/skills/issues/683)). It merges with `--no-commit`: `HEAD`
   stays the default branch's tip, so the row's `repo_commit` is a commit
   that branch keeps even after a squash merge, and the commit step records
   the merge with the row. The push decides again, since a PR can merge
