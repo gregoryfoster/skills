@@ -417,6 +417,7 @@ NARROWED = {
     "some-patterns": ('patterns: ["*"]', 'patterns: ["actions/*"]'),
     "update-types": ('["*"]\n', '["*"]\n        update-types: ["patch"]\n'),
     "excluded": ('["*"]\n', '["*"]\n        exclude-patterns: ["astral-sh/*"]\n'),
+    "dev-only": ('["*"]\n', '["*"]\n        dependency-type: "development"\n'),
 }
 
 
