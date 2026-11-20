@@ -116,8 +116,8 @@ guess. A `null` group means no runner picked the job up.
 | Reading | When |
 |---|---|
 | `not billed` | public, and every job that ran did so in group `0` |
-| `partly billed` | public, and some jobs ran in another group: their minutes are the most that bills |
-| `billed` | private or internal: the census is the bill, apart from any jobs it lists as off the standard pool |
+| `partly billed` | public, and some jobs ran in another group: their minutes are the most that bills, and their own shape (`off_standard_shape`) decides the levers |
+| `billed` | private or internal: the census is the billable-minute count, apart from any jobs it lists as off the standard pool. Not the invoice: the plan's included minutes come off first, and Windows and macOS runners bill at a multiple of the Linux rate |
 | `unknown` | a cache written before the reading: re-fetch to read it |
 
 Not measured here: a GitHub larger runner in a repo we own (the CannObserv org

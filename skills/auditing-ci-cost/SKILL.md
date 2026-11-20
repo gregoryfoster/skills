@@ -135,7 +135,8 @@ error as the raw total, one level down, and harder to notice.
 
 ### Phase 2 — Classify: job-count or duration
 
-Read `mean billed/job` from the census.
+Read `mean billed/job` from the census (`mean min/job` where nothing is
+billed: the same floor-rounded number).
 
 | mean billed/job | shape | prescribe | never |
 |---|---|---|---|
@@ -151,7 +152,8 @@ still says where runner time goes. Weigh each lever by what does cost on a
 public repo: PR latency (wall-clock to green), the owner's concurrent-job
 limit, shared across its repos, and Dependabot's fan-out. State savings in
 runner minutes, never billed ones. On `partly billed`, only the off-standard
-jobs' minutes can bill, so size savings against those.
+jobs' minutes can bill, so the census classifies them on their own
+(`off_standard_shape`) and prescribes from that shape, not the repo's.
 
 ### Phase 3 — Attribute
 
@@ -210,8 +212,8 @@ pattern, with the inputs discovered from disk.
 
 ```
 Repo · window · raw total · anomaly days (attributed) · structural baseline
-Billing:    <visibility> · <not billed | partly billed | billed>
-Cost shape: <shape> at <mean> billed min/job (p50/p90 <s>/<s>)
+Billing:    <visibility> · <not billed | partly billed | billed | unknown>
+Cost shape: <shape> at <mean> min/job (p50/p90 <s>/<s>)
 Findings:   N numbered, each with severity, saving, and measured|estimated
 Non-levers: M rejected, each with reason
 Graduated:  <contract> via enforcing-architecture

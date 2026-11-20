@@ -260,6 +260,11 @@ REPORT=$(jq -s --argjson factor "$ANOMALY_FACTOR" --arg repo "$REPO" \
   def ceil_min: if . <= 0 then 0 else ((. + 59) / 60 | floor) end;
   def pct($p): if length == 0 then 0 else sort | .[((length - 1) * $p / 100) | floor] end;
   def median: if length == 0 then 0 else sort | .[(length / 2) | floor] end;
+  def mean_billed: if length == 0 then 0
+    else ((map(.billed) | add) * 100 / length | round / 100) end;
+  def shape: (map(.billed) | add // 0) as $b | length as $n
+    | if $n == 0 then "unknown" elif ($b / $n) <= 1.10 then "job-count"
+      elif ($b / $n) >= 1.40 then "duration" else "mixed" end;
 
   # A job belonging to a run still in flight has completed_at: null, and the
   # runs listing carries no status filter, so every census of an active repo
@@ -333,6 +338,10 @@ REPORT=$(jq -s --argjson factor "$ANOMALY_FACTOR" --arg repo "$REPO" \
                 unassigned: ($runners | map(select(. == "unassigned")) | length),
                 unread: ($runners | map(select(. == "unread")) | length)},
       off_standard_billed_minutes: ($off | map(.billed) | add // 0),
+      # On `partly billed` these jobs are all that can bill, so their own shape,
+      # not the whole repo'"'"'s, decides which levers save money (CR 2614).
+      off_standard_mean_billed: ($off | mean_billed),
+      off_standard_shape: ($off | shape),
       off_standard: ($off | group_by(.workflow + " / " + .job)
         | map({job: (.[0].workflow + " / " + .[0].job), runs: length,
                billed: (map(.billed) | add), labels: .[0].labels,
@@ -389,6 +398,19 @@ printf '%s' "$REPORT" | jq -r '
   def pad($n): tostring | . + (" " * ($n - length));
   # Where no minute is billed for certain, none is called billed (#597).
   def free: .billing.reading == "not billed" or .billing.reading == "partly billed";
+  def advice($shape):
+    if $shape == "job-count" then
+      "  Every job sits inside the one-minute floor. Duration tuning has NO lever.",
+      "  Delete and MERGE jobs. Never split a workflow — a split adds a whole",
+      "  billed minute per new job and saves nothing."
+    elif $shape == "duration" then
+      "  Jobs are billed well above the floor, so seconds convert to minutes.",
+      "  Cache, narrow, and split. Look for jobs just over a minute boundary.",
+      "  Merging jobs here buys little and costs parallelism."
+    elif $shape == "mixed" then
+      "  Neither lever dominates. Read by_job below: treat rows whose",
+      "  median_seconds < 60 as job-count and the rest as duration."
+    else "  No billable jobs in the window." end;
   def unit: if free then "runner min" else "billed min" end;
   def offlist: .billing.off_standard[:5][]
     | "                   \(.billed) min  \(.runs) runs  \(.job)  \(.labels // [] | tojson)";
@@ -449,22 +471,14 @@ printf '%s' "$REPORT" | jq -r '
      "  What costs on a public repo: PR latency (wall-clock to green), the",
      "  owner'"'"'s concurrent-job limit (shared across its repos), and Dependabot",
      "  fan-out. Weigh each lever by those; the shape says where runner time goes."
-   elif .cost_shape == "job-count" then
-     "  Every job sits inside the one-minute floor. Duration tuning has NO lever.",
-     "  Delete and MERGE jobs. Never split a workflow — a split adds a whole",
-     "  billed minute per new job and saves nothing."
-   elif .cost_shape == "duration" then
-     "  Jobs are billed well above the floor, so seconds convert to minutes.",
-     "  Cache, narrow, and split. Look for jobs just over a minute boundary.",
-     "  Merging jobs here buys little and costs parallelism."
-   elif .cost_shape == "mixed" then
-     "  Neither lever dominates. Read by_job below: treat rows whose",
-     "  median_seconds < 60 as job-count and the rest as duration."
-   else "  No billable jobs in the window." end),
-  (if .billing.reading == "partly billed" then
-     "  Only the off-standard jobs can bill: size each saving against their",
-     "  \(.billing.off_standard_billed_minutes) min, not against the total."
-   else empty end),
+   elif .billing.reading == "partly billed" then
+     "  Only the off-standard jobs can bill, and their own shape is " +
+       "\(.billing.off_standard_shape | ascii_upcase)",
+     "  at \(.billing.off_standard_mean_billed) min/job. For those jobs:",
+     advice(.billing.off_standard_shape),
+     "  The rest is runner time: weigh it by PR latency, the owner'"'"'s",
+     "  concurrent-job limit and Dependabot fan-out, not by minutes."
+   else advice(.cost_shape) end),
   "",
   (if free then "TOP JOBS BY RUNNER MINUTES (structural)"
    else "TOP JOBS BY BILLED MINUTES (structural)" end),
