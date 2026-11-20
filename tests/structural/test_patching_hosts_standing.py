@@ -526,3 +526,43 @@ def test_the_reboot_runs_only_under_its_bulks_standing_line(chain):
     assert any(
         "isn't a standing approval for the security lane" in r for r in out["refused"]
     ), out["refused"]
+
+
+# --- CR 2552: each held package's class, from the refreshed lists --------------------
+
+
+def _refreshed(host, sim: str) -> None:
+    host.cases["apt-get"] = [c for c in host.cases["apt-get"] if c[0] != SIM_ARGS]
+    host.on("apt-get", SIM_ARGS, sim)
+
+
+def test_a_standing_bulk_records_each_held_packages_class_from_the_refreshed_lists(
+    host,
+):
+    # The dry run reaches no group; the refreshed lists offer the postgres
+    # and redis groups' packages, which it holds. Their class comes from
+    # those lists, so the held step can read it.
+    _standing(host)
+    _quiet(host)
+    _refreshed(host, SIMULATION)
+    host.run("--standing")
+    hv = host.record("hold-versions")
+    assert "postgresql-16 16.10-0ubuntu0.24.04.1 security\n" in hv
+    assert " ?\n" not in hv
+
+
+def test_a_standing_bulk_that_would_hold_outside_its_lane_stops_first(host):
+    # The host's origins are wider than security, and the refreshed lists
+    # offer an -updates redis-tools for the redis group: the security lane's
+    # line doesn't take it, so its held step would be refused.
+    _standing(host)
+    _quiet(host)
+    _summary(host, QUIET_SEL, 0)
+    _refreshed(
+        host,
+        SIMULATION + "Inst redis-tools [5:7.0.15-1build2] (5:7.0.15-1ubuntu0.24.04.2 "
+        "Ubuntu:24.04/noble-updates [arm64])\n",
+    )
+    out = host.run("--standing", rc=1)
+    assert "redis-tools" in json.dumps(out)
+    assert host.holds() == []

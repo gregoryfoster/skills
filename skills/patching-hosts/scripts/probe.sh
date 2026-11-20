@@ -1318,9 +1318,6 @@ read_sources() {
 # in arrays: split unquoted, a '*' in one would expand against the current
 # directory.
 THIRD_PARTY=()
-# The origins that are Ubuntu's or Canonical's own: they need no knob
-# policy, and carry no exposure (CR 1959).
-FIRST_PARTY_ORIGINS="Ubuntu UbuntuESM UbuntuESMApps Canonical"
 read_origins() {
   local out line v os="" oa="" osite third po seen="" third_seen=""
   local -a kv=()
@@ -1983,40 +1980,6 @@ pk_class() {  # <package>: PK_C := its class
       return 0
     fi
   done
-}
-
-class_of() {  # <var> <origins, ", "-separated>
-  local _c_o _c_rest=$2 _c_origin _c_archive _c_sec=0 _c_esm=0 _c_upd=0 _c_ubu=0 _c_third=""
-  while [ -n "$_c_rest" ]; do
-    _c_o=${_c_rest%%, *}
-    if [ "$_c_o" = "$_c_rest" ]; then _c_rest=""; else _c_rest=${_c_rest#*, }; fi
-    _c_origin=${_c_o%%:*}
-    _c_archive=${_c_o##*/}
-    case $_c_origin in
-      UbuntuESM | UbuntuESMApps) _c_esm=1 ;;
-      Ubuntu)
-        _c_ubu=1
-        case $_c_archive in *-security) _c_sec=1 ;; *-updates) _c_upd=1 ;; esac ;;
-      *)
-        # Canonical's own origin is first party, as read_origins and the
-        # exposure check read it, so it's never third-party: (#609). No lane
-        # takes it and no knob line names it, so it's ubuntu-other, with
-        # Ubuntu's release, backports and proposed pockets, whatever its
-        # archive: the Ubuntu Cloud Archive's is jammy-updates (its Release
-        # file, read 2026-11-14), and the maintenance lane takes o=Ubuntu's.
-        if in_words "$_c_origin" "$FIRST_PARTY_ORIGINS"; then
-          _c_ubu=1
-        else
-          _c_third=${_c_third:-$_c_origin}
-        fi ;;
-    esac
-  done
-  if [ "$_c_esm" -eq 1 ]; then printf -v "$1" esm
-  elif [ "$_c_sec" -eq 1 ]; then printf -v "$1" security
-  elif [ "$_c_upd" -eq 1 ]; then printf -v "$1" updates
-  elif [ -n "$_c_third" ] && [ "$_c_ubu" -eq 0 ]; then printf -v "$1" 'third-party:%s' "${_c_third// /_}"
-  else printf -v "$1" ubuntu-other
-  fi
 }
 
 # The lists' age from their fetch, not the archive's (#493). apt sets an

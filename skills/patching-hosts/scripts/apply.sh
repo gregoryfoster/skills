@@ -2227,7 +2227,7 @@ STARTED=0
 LANE_KEEP=""
 do_bulk() {
   local out pend="" p i r s g o="" a="" names="" e kw rest pol onames oskip sim bv dv="" dseen=0 c d line vout="" va="" outside="" bver=""
-  local btake hsteps=""
+  local btake hsteps="" cl
   local -a f=() w=()
   if ! root_has "$run" && ! as_root mkdir -p -m 700 -- "$run"; then
     fail "$run couldn't be made"
@@ -2356,10 +2356,11 @@ do_bulk() {
     p=${RUN_HOLD_PKG[$i]}
     version_in c "$bv" "$p"
     version_in d "$dv" "$p"
-    # Its class as the dry run read it, or ? (CR 2543): a held step under a
-    # standing line takes only its lane's.
-    sel_of "$p"
-    vout="$vout$p $c ${SC:-?}"$'\n'
+    # Its class, from the lists just refreshed, or ? where they don't list
+    # it (CR 2543, CR 2552): a held step under a standing line takes only its
+    # lane's.
+    sim_class cl "$p" "$sim"
+    vout="$vout$p $c ${cl:-?}"$'\n'
     e=""
     jadds e package "$p"
     jadds e step "${RUN_HOLD_STEP[$i]}"
@@ -2384,6 +2385,22 @@ do_bulk() {
     plan_recheck_bulk "$sim"
     if [ -n "$RECHECK_WHY" ]; then
       fail "outside the plan $PLAN_ID against the refreshed lists: ${RECHECK_WHY#; }. Nothing was held or upgraded"
+      return 0
+    fi
+  fi
+  # Under a standing line, each package the bulk holds is of a class its
+  # lane takes, as the refreshed lists read it (CR 2552): one that isn't, or
+  # can't be read, would leave its held step refused and the package held.
+  if [ "$standing" -eq 1 ]; then
+    PLAN_DIFFS="" PLAN_OUTSIDE=()
+    while read -r p c cl; do
+      [ -n "$p" ] || continue
+      standing_scope "$p" "$c" "$cl" "$DRY_SECURITY_ONLY"
+    done <<<"$vout"
+    if [ "${#PLAN_OUTSIDE[@]}" -gt 0 ]; then
+      r=""
+      for i in "${PLAN_OUTSIDE[@]}"; do r="$r; $i"; done
+      fail "outside the standing approval for the $LANE lane (knob line $ST_LINE) against the refreshed lists: ${r#; }. Nothing was held or upgraded"
       return 0
     fi
   fi
