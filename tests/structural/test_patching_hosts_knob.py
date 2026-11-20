@@ -1365,6 +1365,25 @@ def test_a_rebuild_line_that_doesnt_parse_is_malformed(tmp_path, line):
     assert out["report_only"] is True
 
 
+@pytest.mark.parametrize(
+    "line, fault",
+    [
+        ("rebuild-step db-* stop systemctl stop x", "one host's name"),
+        ("rebuild-undo app/db stop systemctl start x", "one host's name"),
+        ("rebuild-step app-db Stop_It true", "lowercase letters"),
+        ("rebuild-step app-db", "<host> <name> <command>"),
+    ],
+)
+def test_a_malformed_rebuild_step_names_its_fault(tmp_path, line, fault):
+    # CR 2540: a host glob was blamed on the step's name.
+    out = _read(tmp_path, f"posture scheduled\n{line}\n")
+    [f] = out["findings"]
+    assert f["kind"] == "malformed"
+    assert fault in f["message"], f["message"]
+    if fault == "one host's name":
+        assert "lowercase" not in f["message"]
+
+
 # --- standing (#673 item 4) ----------------------------------------------------
 
 
