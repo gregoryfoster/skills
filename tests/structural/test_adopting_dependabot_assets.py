@@ -389,6 +389,46 @@ def test_a_security_group_is_not_a_dev_group(tmp_path):
     assert "test_dev_churn_is_grouped" in proc.stdout
 
 
+def _security_grouped(
+    tmp_path: Path, config: str, *, on: bool = True
+) -> subprocess.CompletedProcess:
+    root = _dependabot_repo(tmp_path, config)
+    test = root / "tests/ci/test_dependabot.py"
+    test.write_text(_adapt(test.read_text(), SECURITY_GROUPED=str(on)))
+    return _pytest(root, "tests/ci/test_dependabot.py")
+
+
+def test_a_missing_security_group_fails_only_when_security_grouped_is_on(tmp_path):
+    """#599: the file can't show whether security updates are on, so the adopter
+    declares the policy; off, the guard says nothing about security groups."""
+    proc = _security_grouped(tmp_path, ACTIONS_WITH_COMPOSITE)
+    assert proc.returncode == 1, proc.stdout
+    assert "no catch-all security group" in proc.stdout, proc.stdout
+    off = _security_grouped(tmp_path / "off", ACTIONS_WITH_COMPOSITE, on=False)
+    assert off.returncode == 0, off.stdout
+    grouped = ACTIONS_WITH_COMPOSITE + SECURITY_GROUP
+    proc = _security_grouped(tmp_path / "grouped", grouped)
+    assert proc.returncode == 0, proc.stdout
+
+
+# Each leaves some advisory to a PR of its own, so none is the catch-all.
+NARROWED = {
+    "version-group": ("applies-to: security-updates", "applies-to: version-updates"),
+    "some-patterns": ('patterns: ["*"]', 'patterns: ["actions/*"]'),
+    "update-types": ('["*"]\n', '["*"]\n        update-types: ["patch"]\n'),
+    "excluded": ('["*"]\n', '["*"]\n        exclude-patterns: ["astral-sh/*"]\n'),
+}
+
+
+@pytest.mark.parametrize("narrowing", list(NARROWED))
+def test_a_narrowed_security_group_is_not_the_catch_all(tmp_path, narrowing):
+    old, new = NARROWED[narrowing]
+    config = ACTIONS_WITH_COMPOSITE + SECURITY_GROUP.replace(old, new)
+    proc = _security_grouped(tmp_path, config)
+    assert proc.returncode == 1, f"{narrowing} passed as catch-all:\n{proc.stdout}"
+    assert "no catch-all security group" in proc.stdout, proc.stdout
+
+
 PIP_BLOCK = UV_BLOCK.replace('"uv"', '"pip"').replace('      - "/clients/python"\n', "")
 
 

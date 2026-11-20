@@ -48,6 +48,11 @@ COMMIT_TYPES = {"feat", "fix", "refactor", "docs", "test", "chore", "ci"}
 # moves both. A major-form pin (`@v5`) stops being proposed once upstream
 # stops floating major tags (astral-sh/setup-uv from v8 on).
 SHA_PINS = False
+# Every block carries one catch-all security group (`applies-to: security-updates`,
+# `patterns: ["*"]`), so an advisory round opens one PR per block, not one per
+# advisory. Whether security updates are on is a repo setting this file can't
+# show: check-dependabot.sh reads it.
+SECURITY_GROUPED = False
 # -----------------------------------------------------------------------------
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -441,6 +446,36 @@ def test_package_open_pr_limit_outlasts_a_full_backlog(block: dict) -> None:
     assert limit > runtime + grouped, (
         f"limit {limit} can be filled by {runtime} runtime PRs and {grouped} group PRs; "
         "raise open-pull-requests-limit"
+    )
+
+
+_NARROWING = {"exclude-patterns", "dependency-type", "update-types"}
+
+
+def _catches_every_advisory(group: dict) -> bool:
+    """A security group no pattern, type or update kind narrows."""
+    return (
+        group.get("applies-to") == "security-updates"
+        and "*" in group.get("patterns", ["*"])
+        and not group.keys() & _NARROWING
+    )
+
+
+def _ecosystem(block: dict) -> str:
+    return str(block.get("package-ecosystem"))
+
+
+@pytest.mark.parametrize("block", _updates(), ids=_ecosystem)
+def test_security_updates_are_one_pr_per_block(block: dict) -> None:
+    """Ungrouped, each advisory is its own PR: three rounds opened 16 security
+    PRs in 6 days on CannObserv/power-map. A group is per block, so a round
+    opens one PR per block."""
+    if not SECURITY_GROUPED:
+        pytest.skip("SECURITY_GROUPED is off")
+    groups = (block.get("groups") or {}).values()
+    assert any(_catches_every_advisory(g or {}) for g in groups), (
+        "no catch-all security group: add one with `applies-to: security-updates`"
+        ' and `patterns: ["*"]`, nothing narrowing it'
     )
 
 
