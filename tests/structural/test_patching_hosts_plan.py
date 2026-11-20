@@ -605,3 +605,12 @@ def test_the_recovery_points_next_bulk_carries_its_plan(recovery):
     out = recovery.recover("--plan", str(p))
     [n] = [x for x in out["next"] if "--step bulk" in x]
     assert f'--plan "{p}"' in n
+
+
+def test_a_package_named_twice_in_a_section_is_malformed(host):
+    # CR 2536: "package libc6 0 security" beside the real line made any
+    # candidate newer than planned, so inside.
+    p = _plan(host, HEAD + _section() + "package libc6 0 security\n")
+    out = host.run("--plan", str(p), rc=3)
+    [r] = [r for r in out["refused"] if r.startswith("the plan is malformed")]
+    assert "package libc6 appears twice in [host web-1]" in r

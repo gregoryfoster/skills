@@ -104,7 +104,7 @@ plan_sha() {  # <var> <file>
 # section for HOST; 1 with PLAN_WHY when it can't be read, or doesn't parse.
 plan_load() {  # <file> <host>
   local f=$1 h=$2 text line s n=0 sec="" seen_secs=" " d nt mine=0 hre copy
-  local mine_lane="" mine_reboot="" seen_lane="" seen_reboot=""
+  local mine_lane="" mine_reboot="" seen_lane="" seen_reboot="" seen_pkgs=" "
   local id_re='^[A-Za-z0-9][A-Za-z0-9._:-]*$' step_re='^[a-z0-9][a-z0-9-]*$'
   local class_re='^(security|updates|esm|ubuntu-other|third-party:[^[:space:]]+)$'
   local -a tok=()
@@ -160,7 +160,7 @@ plan_load() {  # <file> <host>
         return 1 ;;
       esac
       seen_secs="$seen_secs$sec "
-      seen_lane="" seen_reboot=""
+      seen_lane="" seen_reboot="" seen_pkgs=" "
       mine=0
       if [ "$sec" = "$h" ]; then mine=1 PLAN_COVERS=1; fi
       continue
@@ -236,6 +236,13 @@ plan_load() {  # <file> <host>
           PLAN_WHY="line $n: package takes <name> <version> <class>, the class one of security, updates, esm, ubuntu-other or third-party:<origin>"
           return 1
         fi
+        # One line a package (CR 2536): a second, at any version, would
+        # stand beside the first.
+        case $seen_pkgs in *" ${tok[1]} "*)
+          PLAN_WHY="line $n: package ${tok[1]} appears twice in [host $sec]"
+          return 1 ;;
+        esac
+        seen_pkgs="$seen_pkgs${tok[1]} "
         if [ "$mine" -eq 1 ]; then
           PLAN_PKG_NAME+=("${tok[1]}") PLAN_PKG_VERSION+=("${tok[2]}") PLAN_PKG_CLASS+=("${tok[3]}")
           case ${tok[3]} in third-party:*)
