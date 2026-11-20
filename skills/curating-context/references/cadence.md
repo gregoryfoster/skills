@@ -218,7 +218,7 @@ the warning.
 `--check` reports a workflow rendered before this as `delta check: STALE` and
 exits 3, the same marker the drift report carries.
 
-## A SHA-pinned checkout, and a re-render keeps a newer one
+## A SHA-pinned checkout, and what a re-render keeps
 
 The job holds `contents: write` and `ANTHROPIC_API_KEY`, and `pull-requests:
 write` under `pr`, so the template renders `actions/checkout` as a full commit
@@ -230,13 +230,18 @@ refs/tags/v<version>`, not copied.
 Dependabot's `github-actions` ecosystem bumps every `uses:` under
 `.github/workflows/`, this generated file included, and a re-render used to
 write the template's pin back over the bump without a word
-([#373](https://github.com/gregoryfoster/skills/issues/373)). The template's
-pin is a floor, so a re-render:
+([#373](https://github.com/gregoryfoster/skills/issues/373)). So a
+re-render:
 - keeps an installed SHA pin verbatim, with its comment;
 - keeps an installed tag above the template's version (`@v8`, `@v7.1`), since
   the pin would be a downgrade;
 - pins an installed tag at or below it (`@v7` reads as 7.0.0), with a
-  `pinned:` line;
+  `pinned:` line. This one can step back. A bare `@v7` runs the newest v7
+  release, so once checkout ships one past the template's pin, pinning moves
+  the job to an older commit until Dependabot or the next skills bump moves
+  the pin. Both lines say so. The trade is taken because the moving tag is
+  the hazard #675 removes, and a known commit that is a release behind is
+  safer than one whoever controls the tag can swap;
 - replaces a ref that is neither (a branch, a pre-release tag), with a
   `replaced:` line on stderr.
 

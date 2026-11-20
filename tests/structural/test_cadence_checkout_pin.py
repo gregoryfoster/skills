@@ -286,3 +286,25 @@ def test_check_names_a_sha_pin_that_is_not_the_templates_commit(tmp_path):
         "is not the template's"
         not in _run(_installed(tmp_path / "x", SHA_LINE), "--check").stdout
     )
+
+
+def test_pinning_a_bare_major_tag_says_it_may_step_back(tmp_path):
+    """CR 2566. `@v7` follows the newest v7 release, so once checkout ships
+    one past the template's pin, pinning it steps the job back to an older
+    commit until Dependabot or the next skills bump moves the pin. The trade
+    is kept (the moving tag is what #675 removes), but both paths say so,
+    and a full `@vX.Y.Z` tag, which can't run anything newer, doesn't."""
+    v = _template_vars()
+    major = v["TEMPLATE_CHECKOUT_VERSION"].split(".")[0]
+    repo = _installed(tmp_path, f"      - uses: actions/checkout@v{major}")
+    says = "may be older than what it runs now"
+    assert says in _run(repo, "--check").stdout
+    r = _run(repo)
+    assert r.returncode == 0, r.stderr
+    assert says in r.stdout, r.stdout
+    full = _installed(
+        tmp_path / "full",
+        f"      - uses: actions/checkout@v{v['TEMPLATE_CHECKOUT_VERSION']}",
+    )
+    assert says not in _run(full, "--check").stdout
+    assert says not in _run(full).stdout
