@@ -26,7 +26,7 @@ After a bump that moves the vendored tree, the hook runs each installed renderer
 
 The check runs before the content goes back to main's pointer, while the bumped tree is the one checked out. After that the checkout holds main's template again, so a re-render now would write the old one. The report says to re-render once the pull request merges and main is pulled.
 
-`shipping-work`'s doc-check gives the same advice for a branch that changes `.skills/merge_mode`. The renderer reads the knob from the primary checkout, so a re-render on that branch renders the old mode.
+`shipping-work`'s doc-check reads `re-render:` too, on a branch that changes `.skills/merge_mode`, but there the re-render belongs on the branch: `install-cadence.sh --merge-mode <mode>` renders the branch's mode, where a plain re-render reads the primary's knob, the old one ([#674](https://github.com/gregoryfoster/skills/issues/674)).
 
 ## Known limits
 
