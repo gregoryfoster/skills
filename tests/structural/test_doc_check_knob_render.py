@@ -274,6 +274,9 @@ def test_a_dangling_knob_link_is_unusable_as_the_job_finds_it(tmp_path):
     _commit_link(repo, ".skills/merge_mode", "nowhere", {})
     text = " ".join(run_doc_check(repo).stdout.split())
     assert "unusable" in text and "--merge-mode" not in text, text
+    # CR 2573 a: the reason, not only the verdict.
+    assert "isn't in the tree" in text, text
+    assert "other than a regular file" not in text, text
 
 
 @pytest.mark.parametrize(
@@ -317,7 +320,8 @@ def test_carrying_a_pr_render_names_the_line_check_prints(tmp_path):
     _flip_knob(repo)
     _render_on_branch(repo, "pr")
     text = " ".join(run_doc_check(repo).stdout.split())
-    assert "'merge mode: pr" in text, text
+    # Described, not quoted: --check pads the line (CR 2570 b, CR 2573).
+    assert "pr on its merge mode: line" in text, text
 
 
 def test_an_uncommitted_render_is_not_called_carried(tmp_path):
@@ -338,3 +342,38 @@ def test_an_uncommitted_render_is_not_called_carried(tmp_path):
     text = " ".join(run_doc_check(repo).stdout.split())
     assert "already carries" not in text, text
     assert "not committed" in text, text
+
+
+# --- CR 2572, 2573: a retargeted link under a linked .skills; a target under a file
+
+
+def test_a_knob_link_retargeted_under_a_linked_skills_dir_is_a_hit(tmp_path):
+    """CR 2572: `.skills -> cfg`, and `cfg/merge_mode` moves from `other`
+    (direct) to `real` (pr). The diff names only cfg/merge_mode, the link's
+    own path, which the trigger must still match."""
+    repo = make_repo(tmp_path, CLICK_LIVE_TREE, ["docs/notes.md"])
+    run_git(repo, "checkout", "-q", "main")
+    (repo / "cfg").mkdir()
+    (repo / "cfg" / "real").write_text("pr\n")
+    (repo / "cfg" / "other").write_text("direct\n")
+    (repo / ".skills").symlink_to("cfg")
+    (repo / "cfg" / "merge_mode").symlink_to("other")
+    _with_cadence(repo)
+    _commit_link(repo, "cfg/merge_mode", "real", {})
+    changed = run_git(repo, "diff", "--name-only", "main...HEAD").stdout.split()
+    knobbish = [p for p in changed if p.startswith((".skills", "cfg/"))]
+    assert knobbish == ["cfg/merge_mode"], changed
+    r = run_doc_check(repo)
+    assert r.returncode == 1, r.stdout + r.stderr
+    assert f"bash {RENDERER} --merge-mode pr" in " ".join(r.stdout.split()), r.stdout
+
+
+def test_a_knob_link_through_a_regular_file_is_unusable(tmp_path):
+    """CR 2573 b: `.skills/merge_mode -> ../conf/x` with `conf` a FILE saying
+    pr. The job's read step refuses it (-L, not -f); conf is not the knob."""
+    repo = make_repo(tmp_path, CLICK_LIVE_TREE, ["docs/notes.md"])
+    _with_cadence(repo)
+    _commit_link(repo, ".skills/merge_mode", "../conf/x", {"conf": "pr\n"})
+    text = " ".join(run_doc_check(repo).stdout.split())
+    assert "unusable" in text, text
+    assert "--merge-mode" not in text, text

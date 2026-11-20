@@ -436,23 +436,28 @@ link_target_path() {
   (IFS=/ && printf '%s\n' "${out[*]}")
 }
 # Whether any directory on the way to <path> is a link in HEAD's tree:
-# ls-tree finds nothing past one, so "absent" there means "unread".
+# ls-tree finds nothing past one, so "absent" there means "unread". It asks
+# tree_entry about each parent, so it puts back the caller's TE_MODE and
+# TE_SHA: left as the last parent's, an absent target read as that parent,
+# and a path under a regular file read the file as the knob (CR 2573).
 through_a_link() {
-  local path=$1 prefix=""
+  local path=$1 prefix="" mode=$TE_MODE sha=$TE_SHA rc=1 i
   local -a parts
   IFS=/ read -r -a parts <<<"$path"
-  local i
   for ((i = 0; i < ${#parts[@]} - 1; i++)); do
     prefix=${prefix:+$prefix/}${parts[i]}
-    tree_entry "$prefix" || return 0
-    [[ $TE_MODE != 120000 ]] || return 0
+    if ! tree_entry "$prefix" || [[ $TE_MODE == 120000 ]]; then
+      rc=0
+      break
+    fi
   done
-  return 1
+  TE_MODE=$mode TE_SHA=$sha
+  return "$rc"
 }
 committed_merge_mode() {
   local dir=.skills knob target blob line word="" count=0
   local -a words
-  CM_MODE="" CM_ERR="" CM_UNREAD="" CM_PATH=""
+  CM_MODE="" CM_ERR="" CM_UNREAD="" CM_PATH="" CM_LINK=""
   if ! tree_entry .skills; then
     CM_UNREAD="git ls-tree HEAD failed"
     return 0
@@ -478,6 +483,9 @@ committed_merge_mode() {
   CM_PATH=$knob
   tree_entry "$knob" || { CM_UNREAD="git ls-tree HEAD failed"; return 0; }
   if [[ $TE_MODE == 120000 ]]; then
+    # The link's own path stays a trigger: retargeting it changes only that
+    # path, which isn't .skills/merge_mode when .skills is a link (CR 2572).
+    CM_LINK=$knob
     target=$(git cat-file blob "$TE_SHA") || { CM_UNREAD="git cat-file failed"; return 0; }
     if ! knob=$(link_target_path "$dir" "$target"); then
       CM_UNREAD="it is a link out of the tree, to $target"
@@ -526,10 +534,12 @@ committed_merge_mode() {
 }
 # The hit: the knob changes on this branch while the workflow is installed.
 # Through a link the diff names the link or its target, never the knob's own
-# path, so all three count (CR 2568). Read once, here.
+# path: the link itself, the knob's link and its target all count (CR 2568,
+# CR 2572). Read once, here.
 if [[ -f "$RENDER_WF" ]]; then
   committed_merge_mode
-  if grep -qxF -e ".skills/merge_mode" -e ".skills" ${CM_PATH:+-e "$CM_PATH"} <<<"$CHANGED"; then
+  if grep -qxF -e ".skills/merge_mode" -e ".skills" ${CM_LINK:+-e "$CM_LINK"} \
+    ${CM_PATH:+-e "$CM_PATH"} <<<"$CHANGED"; then
     RENDER_NOTE=1
   fi
 fi
@@ -572,19 +582,21 @@ print_render_note() {
   # a render in this tree is the branch's only once HEAD has it (CR 2570).
   # What --check prints after the merge: no merge mode line at all for a
   # direct knob, the pr line for pr.
-  local after="'re-render: none'"
-  [[ $CM_MODE != pr ]] || after="$after and 'merge mode: pr'"
+  # Described, not quoted: --check pads its labels, so a quoted
+  # 'merge mode: pr' is a line it never prints.
+  local after="none on its re-render: line"
+  [[ $CM_MODE != pr ]] || after="$after, and pr on its merge mode: line"
   if grep -q '^re-render: *none' <<<"$out" &&
     git ls-files --error-unmatch -- "$RENDER_WF" >/dev/null 2>&1 &&
     git diff --quiet HEAD -- "$RENDER_WF"; then
     echo "This branch already carries its $CM_MODE render, so nothing is left to"
     echo "re-render. After the merge, from the primary checkout:"
     echo "  bash $renderer --check"
-    echo "should read $after."
+    echo "should say $after."
   elif grep -q '^re-render: *none' <<<"$out"; then
     echo "This tree carries the $CM_MODE render, but $RENDER_WF"
     echo "is not committed as it reads: commit it with the knob, so the branch"
-    echo "carries it. After the merge, --check from the primary should read"
+    echo "carries it. After the merge, --check from the primary should say"
     echo "$after."
   else
     echo "Re-render it on this branch, so the knob and its render land together:"
