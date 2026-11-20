@@ -1365,6 +1365,25 @@ def test_a_rebuild_line_that_doesnt_parse_is_malformed(tmp_path, line):
     assert out["report_only"] is True
 
 
+@pytest.mark.parametrize(
+    "line, fault",
+    [
+        ("rebuild-step db-* stop systemctl stop x", "one host's name"),
+        ("rebuild-undo app/db stop systemctl start x", "one host's name"),
+        ("rebuild-step app-db Stop_It true", "lowercase letters"),
+        ("rebuild-step app-db", "<host> <name> <command>"),
+    ],
+)
+def test_a_malformed_rebuild_step_names_its_fault(tmp_path, line, fault):
+    # CR 2540: a host glob was blamed on the step's name.
+    out = _read(tmp_path, f"posture scheduled\n{line}\n")
+    [f] = out["findings"]
+    assert f["kind"] == "malformed"
+    assert fault in f["message"], f["message"]
+    if fault == "one host's name":
+        assert "lowercase" not in f["message"]
+
+
 # --- standing (#673 item 4) ----------------------------------------------------
 
 
@@ -1470,6 +1489,10 @@ def test_a_standing_origin_the_knob_doesnt_follow_is_a_finding(tmp_path):
         "standing security no-restart 2026-12-31 an unknown limit",
         "standing security no-reboot 2026-13-01 a date that isn't one",
         "standing security no-reboot no-reboot-please 2026-12-31 typo",
+        # CR 2534: a limit after the date would read as reason, so the line
+        # would approve more than the owner wrote.
+        "standing security 2026-12-01 no-reboot no-held nightly fixes",
+        "standing maintenance no-held 2026-12-31 then no-datastore too",
     ],
 )
 def test_a_standing_line_that_doesnt_parse_is_malformed(tmp_path, line):

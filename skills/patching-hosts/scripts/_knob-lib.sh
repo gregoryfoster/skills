@@ -433,10 +433,16 @@ _knob_directive() {  # <line> <sec> <text>
         esac
         si=$((si + 1))
       done
+      # A limit after the date would read as reason, so the line would
+      # approve more than the owner wrote (CR 2534).
+      local sw
+      for sw in "${tok[@]:$((si + 1))}"; do
+        case $sw in no-reboot | no-datastore | no-held) sok=0 ;; esac
+      done
       if [ "$sok" -eq 1 ] && [ "$nt" -ge $((si + 2)) ] && _knob_is_date "${tok[$si]}"; then
         _knob_record "$n" "$sec" standing "$sl" "$sl$u$snr$u$snd$u$snh$u${tok[$si]}$u${tok[*]:$((si + 1))}"
       else
-        _knob_malformed "$n" "standing takes <lane: security, maintenance or origin:<origin>> [no-reboot] [no-datastore] [no-held] <review-by YYYY-MM-DD> <reason>"
+        _knob_malformed "$n" "standing takes <lane: security, maintenance or origin:<origin>> [no-reboot] [no-datastore] [no-held] <review-by YYYY-MM-DD> <reason>, each limit before the date and none in the reason"
       fi ;;
     # #673: how the host is rebuilt onto a new VM, for an executor to run.
     # The commands take the rest of the line, as health's does.
@@ -462,13 +468,18 @@ _knob_directive() {  # <line> <sec> <text>
     # by host and name.
     rebuild-step | rebuild-undo)
       local rsre='^[a-z0-9][a-z0-9-]*$' rcmd
-      if [ "$nt" -ge 3 ] && _knob_is_host "${tok[0]}" && [[ ${tok[1]} =~ $rsre ]]; then
+      # Each fault named as itself (CR 2540).
+      if [ "$nt" -lt 3 ]; then
+        _knob_malformed "$n" "$dir takes <host> <name> <command>"
+      elif ! _knob_is_host "${tok[0]}"; then
+        _knob_malformed "$n" "$dir's <host> is one host's name, the host it steps around: letters, digits, '.', '-' and '_', and no glob"
+      elif ! [[ ${tok[1]} =~ $rsre ]]; then
+        _knob_malformed "$n" "$dir's <name> is lowercase letters, digits and hyphens"
+      else
         _knob_trim "${rest#"${tok[0]}"}"
         _knob_trim "${_KR#"${tok[1]}"}"
         rcmd=$_KR
         _knob_record "$n" "$sec" "$dir" "${tok[0]} ${tok[1]}" "${tok[0]}$u${tok[1]}$u$rcmd"
-      else
-        _knob_malformed "$n" "$dir takes <host> <name> <command>, with a step name of lowercase letters, digits and hyphens"
       fi ;;
     records)
       if [ "$nt" -eq 1 ]; then
