@@ -157,7 +157,9 @@ def test_plan_and_standing_are_exclusive(host):
             "no-datastore ",
             "datastore postgres postgresql@16-main app\n",
             False,
-            [("datastore", "postgres", False)],
+            # ...and, the cluster declared, a run whose reboot (unknown here)
+            # the chain would stop it for (CR 2553).
+            [("datastore", "postgres", False), ("datastore", "host", False)],
         ),
         # ...and so does one the knob doesn't declare: no-datastore refuses
         # every held step (CR 2544, CR 2547).
@@ -566,3 +568,16 @@ def test_a_standing_bulk_that_would_hold_outside_its_lane_stops_first(host):
     out = host.run("--standing", rc=1)
     assert "redis-tools" in json.dumps(out)
     assert host.holds() == []
+
+
+# --- CR 2553: no-datastore, and the bulk's reboot ------------------------------------
+
+
+def test_a_bulk_whose_run_reboots_under_no_datastore_with_a_data_store_is_refused(host):
+    # The chain stops each declared data store, and its reboot is due
+    # (#655): reboot-chain.sh would refuse it, so the bulk is refused first.
+    _standing(host, "no-datastore ", "datastore postgres postgresql@16-main app\n")
+    _quiet(host)
+    host.write("run/reboot-required", "*** System restart required ***\n")
+    out = host.run("--standing", rc=3)
+    assert ("datastore", "host", False) in _kinds(out)

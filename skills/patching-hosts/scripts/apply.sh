@@ -1436,6 +1436,14 @@ standing_envelope() {
     standing_scope "$p" "$SV" "$SC" "$DRY_SECURITY_ONLY"
   done
   for g in $SPAN_GROUPS; do standing_held "$g"; done
+  # no-datastore where the knob declares one: the reboot chain stops each,
+  # so a run that reboots, certain, due or unknown, is outside it, as
+  # reboot-chain.sh refuses it (CR 2542, CR 2553).
+  if [ "$ST_NO_DS" = 1 ] && [ "${#KNOB_DATASTORE[@]}" -gt 0 ] && [ "$SPAN_RC" -ne 1 ]; then
+    g=$REBOOT_WHY
+    [ -n "$g" ] || g="whether it does can't be read"
+    plan_diff 0 datastore host "the standing line says no-datastore, the knob declares a data store, which the reboot chain stops, and the run may reboot: $g"
+  fi
   if [ "$ST_NO_REBOOT" = 1 ] && [ "$SPAN_RC" -ne 1 ]; then
     if [ "$SPAN_RC" -eq 0 ]; then
       plan_diff 0 reboot host "the standing line says no-reboot, and the run reboots: $REBOOT_WHY"
