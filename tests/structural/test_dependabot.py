@@ -49,8 +49,9 @@ IGNORED: dict[str, str] = {
 COMMIT_TYPES = {"feat", "fix", "refactor", "docs", "test", "chore", "ci"}
 # Every `uses:` pinned as `owner/action@<40-hex sha> # vX.Y.Z`. Dependabot
 # moves both. A major-form pin (`@v5`) stops being proposed once upstream
-# stops floating major tags (astral-sh/setup-uv from v8 on).
-SHA_PINS = False
+# stops floating major tags (astral-sh/setup-uv from v8 on). On here since
+# #675: both workflows run with ANTHROPIC_API_KEY, and a tag can be moved.
+SHA_PINS = True
 # -----------------------------------------------------------------------------
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
