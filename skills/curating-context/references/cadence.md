@@ -274,9 +274,23 @@ a custom `--cron`: a plain re-run keeps the installed schedule too (#664), so
 consumers' CI may call `--check` and a newer template is not a broken install.
 `managing-skills`' refresh hook reads `behind` after a bump, and
 `shipping-work`'s doc-check does too on a branch that changes
-`.skills/merge_mode`. Each says to re-render, and neither re-renders. Because
-the knob is read from the primary checkout, re-rendering on the branch that
-flips it renders the old mode, so the re-render comes after the merge.
+`.skills/merge_mode`. Each says to re-render, and neither re-renders.
+
+The knob is read from the primary checkout (#612), so a plain re-render on
+the branch that flips it renders the old mode. `--merge-mode pr|direct`
+renders for the mode named instead
+([#674](https://github.com/gregoryfoster/skills/issues/674)), so that branch
+carries its own re-render and the knob and its render land in one PR: commit
+the knob, run `install-cadence.sh --merge-mode <mode>` there, and `--check
+--merge-mode <mode>` reads `re-render: none`. The knob is still read: `--check`
+judges the workflow against the flag and names what the primary reads under
+its `merge mode:` line, and an install or `--print` says so on stderr when
+the two differ. An unusable knob isn't refused under the flag, which reads
+nothing from it. The doc-check reads the knob as the branch commits it and
+runs that `--check`, so it says when the branch already carries the render.
+Re-rendering after the merge still works, but until it lands the default
+branch holds a knob its workflow wasn't rendered for: under `pr`, a scheduled
+run in that window pushes directly, and a PR-only ruleset refuses it.
 
 ## Under a PR-only ruleset: `merge_mode` `pr`
 
