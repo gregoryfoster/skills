@@ -175,3 +175,91 @@ def test_670_f9_add_line_notes_nothing_for_any_other_line(adopted, line):
     res = adopted.edit(REPO, EPIC, ops)
     assert res.returncode == 0, res.stderr
     assert not [n for n in summary(res)["notes"] if "added as text" in n]
+
+
+# ---------------------------------------------------------------- F10: sections
+
+
+def test_670_f10_add_line_takes_the_one_heading_its_section_starts(adopted):
+    """--help's own example is "section": "Tier 2", and the template's heading
+    is "## Tier 2 — <name>". "Tier 1" is "Tier 1 — bugs", never "Tier 10"."""
+    ops = [{"op": "add-line", "section": "Tier 1", "line": "- [ ] #14 a follow-up"}]
+    res = adopted.edit(REPO, EPIC, ops)
+    assert res.returncode == 0, res.stderr
+    body = adopted.body(REPO, EPIC)
+    assert "- [ ] #12 second thing\n- [ ] #14 a follow-up\n\n## Tier 10" in body
+    notes = [n for n in summary(res)["notes"] if "Tier 1 — bugs" in n]
+    assert len(notes) == 1 and "'Tier 1'" in notes[0], summary(res)["notes"]
+
+
+def test_670_f10_a_heading_given_in_full_is_taken_with_no_note(adopted):
+    ops = [
+        {"op": "add-line", "section": "Tier 1 — bugs", "line": "- [ ] #14 follow-up"}
+    ]
+    res = adopted.edit(REPO, EPIC, ops)
+    assert res.returncode == 0, res.stderr
+    assert not [n for n in summary(res)["notes"] if "heading" in n]
+
+
+def test_670_f10_the_heading_itself_outranks_one_it_starts(adopted):
+    """ "Log" is the Log section, though "Logistics" starts with it."""
+    ops = [{"op": "add-line", "section": "Log", "line": "- 2026-10-02: by hand."}]
+    res = adopted.edit(REPO, EPIC, ops)
+    assert res.returncode == 0, res.stderr
+    assert adopted.body(REPO, EPIC).rstrip().endswith("- 2026-10-02: by hand.")
+
+
+@pytest.mark.parametrize(
+    "section, named, unnamed",
+    [
+        ("Tier", ["'Tier 1 — bugs'", "'Tier 10 — later'"], ["'Logistics'"]),
+        ("Logi", ["'Logistics'"], ["'Tier 1 — bugs'"]),
+        ("Parked", ["'Tier 1 — bugs'", "'Logistics'", "'Log'"], []),
+    ],
+    ids=["two-start-with-it", "one-starts-with-it-mid-word", "none-starts-with-it"],
+)
+def test_670_f10_a_section_refusal_names_the_headings(adopted, section, named, unnamed):
+    """Two candidates, or one that only shares a word's first letters, is a
+    guess the op doesn't make. The refusal lists what there is to choose."""
+    ops = [{"op": "add-line", "section": section, "line": "- [ ] #14 a follow-up"}]
+    res = adopted.edit(REPO, EPIC, ops)
+    assert res.returncode == 3, res.stderr
+    assert f"no section headed {section!r}" in res.stderr
+    for heading in named:
+        assert heading in res.stderr, res.stderr
+    for heading in unnamed:
+        assert heading not in res.stderr, res.stderr
+    assert "#14" not in adopted.body(REPO, EPIC).split("## Tier 1")[1]
+
+
+@pytest.mark.parametrize(
+    "op",
+    [
+        {"op": "replace-section", "heading": "Tier 1", "text": "- [ ] #11 only"},
+        {"op": "rename-section", "heading": "Tier 1", "to": "Tier 1 — now"},
+        {"op": "add-section", "heading": "New", "text": "x", "before": "Tier 1"},
+    ],
+    ids=["replace-section", "rename-section", "add-section-before"],
+)
+def test_670_f10_only_add_lines_section_takes_a_prefix(adopted, op):
+    """A prefix in section_span itself would let replace-section replace a
+    section the op didn't name. Every other op wants the heading in full, and
+    its refusal now names the one meant."""
+    before = adopted.body(REPO, EPIC)
+    res = adopted.edit(REPO, EPIC, [op])
+    assert res.returncode == 3, res.stderr
+    assert "no section headed 'Tier 1'" in res.stderr
+    assert "'Tier 1 — bugs'" in res.stderr
+    assert adopted.body(REPO, EPIC) == before
+
+
+def test_670_f10_the_log_op_never_writes_into_a_section_log_only_starts(tmp_path):
+    r = Rig(tmp_path)
+    no_log = BODY.replace("\n## Log\n\n- 2026-10-01: created.\n", "")
+    assert "## Log\n" not in no_log and "## Logistics\n" in no_log
+    r.issue(REPO, EPIC, body=no_log)
+    assert r.edit(REPO, EPIC, [], "--adopt-live").returncode == 0
+    res = r.edit(REPO, EPIC, [{"op": "log", "text": "2026-10-02: a check-in."}])
+    assert res.returncode == 3, res.stderr
+    assert "no section headed 'Log'" in res.stderr and "'Logistics'" in res.stderr
+    assert "a check-in" not in r.body(REPO, EPIC)

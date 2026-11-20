@@ -59,7 +59,12 @@ operations (a JSON array, from --ops FILE or --ops - for stdin):
   {"op": "add-line", "line": "- [ ] #44 ...", "after_ref": "#43"}
   {"op": "add-line", "line": "- [ ] #44 ...", "section": "Tier 2"}
                                               insert, once; refuses a second
-                                              line for a ref that has one
+                                              line for a ref that has one.
+                                              section is a heading, or the
+                                              start of exactly one, up to a
+                                              word's end: "Tier 2" for "Tier 2
+                                              — bugs". Every other op takes a
+                                              heading in full
   {"op": "header", "field": "Last check-in", "value": "{checked}"}
                                               set a "- **Field:** value" line
   {"op": "log", "text": "{today}: #12 closed. No new issues. Next: #13."}
@@ -867,13 +872,50 @@ def section_level(lines: list[str]) -> int:
     return min((lvl for _, lvl, _ in section_headings(lines)), default=2)
 
 
+def heading_by_prefix(lines: list[str], heading: str) -> str | None:
+    """The one heading that starts with `heading` and goes on past a word
+    boundary, when no heading is `heading` itself: "Tier 2" finds
+    "Tier 2 — bugs", never "Tier 20", and "Log" never finds "Logistics".
+
+    For add-line's section alone (CannObserv/processor#84 F10, #670): there a
+    wrong guess adds one line. In section_span it would let the log op write
+    into another section, and replace-section replace one the op didn't name.
+    """
+    want = heading.strip().lower()
+    texts = [t for _, _, t in headings(lines)]
+    if not want or any(t.lower() == want for t in texts):
+        return None
+    found = [
+        t
+        for t in texts
+        if t.lower().startswith(want)
+        and len(t) > len(want)
+        and not t[len(want)].isalnum()
+    ]
+    return found[0] if len(found) == 1 else None
+
+
 def section_span(lines: list[str], heading: str) -> tuple[int, int]:
     """(index of the heading line, index one past the section's last line)."""
     hs = headings(lines)
     want = heading.strip().lower()
     found = [(i, lvl) for i, lvl, text in hs if text.lower() == want]
     if not found:
-        raise Refused(f"no section headed {heading!r}")
+        # The refusal names what there is to choose from (F10): the headings
+        # that start with the text given, or with none, all of them.
+        texts = [t for _, _, t in hs]
+        near = [t for t in texts if want and t.lower().startswith(want)]
+        if near:
+            hint = ". Headings that start with it: "
+        elif texts:
+            hint = ". The headings are: "
+        else:
+            hint = "; the body has no headings"
+        raise Refused(
+            f"no section headed {heading!r}"
+            + hint
+            + ", ".join(repr(t) for t in near or texts)
+        )
     if len(found) > 1:
         raise Refused(f"{len(found)} sections headed {heading!r}; ambiguous")
     start, level = found[0]
@@ -1415,7 +1457,16 @@ def apply_ops(
                     )
                     pos = after_block(lines, anchor)
                 elif "section" in op:
-                    start, end = section_span(lines, op["section"])
+                    section = op["section"]
+                    took = heading_by_prefix(lines, section)
+                    if took:
+                        notes.append(
+                            f"{where}: no section is headed {section!r}; the line"
+                            f" goes under {took!r}, the one heading that starts"
+                            " with it"
+                        )
+                        section = took
+                    start, end = section_span(lines, section)
                     pos = section_tail(lines, start, end)
                 else:
                     raise Refused("add-line needs after_ref or section")
