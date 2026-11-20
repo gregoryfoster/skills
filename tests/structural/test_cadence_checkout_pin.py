@@ -338,3 +338,24 @@ def test_the_templates_sha_is_never_below_itself(tmp_path):
     line = f"      - uses: actions/checkout@{v['TEMPLATE_CHECKOUT_SHA']} # v4.0.0"
     out = _run(_installed(tmp_path, line), "--check").stdout
     assert "kept (SHA-pinned" in out and "below the template's" not in out, out
+
+
+def test_an_uppercase_hex_sha_pin_is_a_sha_pin(tmp_path):
+    """A SHA in uppercase hex names the same commit; it read as neither form,
+    so `--check` said DOWNGRADE and a re-render replaced it."""
+    v = _template_vars()
+    upper = "      - uses: actions/checkout@" + "AB" * 20 + " # v99.0.1"
+    repo = _installed(tmp_path, upper)
+    assert "kept (SHA-pinned" in _check_line(repo)
+    r = _run(repo)
+    assert r.returncode == 0, r.stderr
+    assert _checkout(repo) == upper
+    assert "replaced:" not in r.stderr
+    # The template's own commit, upper-cased, is still never below itself.
+    own = (
+        "      - uses: actions/checkout@"
+        + v["TEMPLATE_CHECKOUT_SHA"].upper()
+        + " # v4.0.0"
+    )
+    out = _run(_installed(tmp_path / "own", own), "--check").stdout
+    assert "kept (SHA-pinned" in out and "below the template's" not in out, out

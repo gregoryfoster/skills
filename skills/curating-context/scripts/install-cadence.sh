@@ -334,14 +334,16 @@ if [ -f "$WF" ]; then
     INSTALLED_CHECKOUT_REF="${INSTALLED_CHECKOUT_REF%%[[:space:]]*}"
     if [ "$installed_checkout" = "$TEMPLATE_CHECKOUT_LINE" ]; then
       CHECKOUT_PIN="template"
-    elif [[ "$INSTALLED_CHECKOUT_REF" =~ ^[0-9a-f]{40}$ ]]; then
+    elif [[ "$INSTALLED_CHECKOUT_REF" =~ ^[0-9a-fA-F]{40}$ ]]; then
+      # Either case of hex names the same commit, and is kept as written.
       CHECKOUT_PIN="sha"
+      installed_sha=$(printf '%s' "$INSTALLED_CHECKOUT_REF" | tr 'A-F' 'a-f')
       # Kept whatever it pins, but --check names a comment below the
       # template's version (verbatim must not quietly mean "below v4"), and
       # one that claims the template's exact version over another commit.
       # A comment is compared only as far as it goes (`# v7` is not below
       # 7.0.1), and the template's own commit is never below itself.
-      if [ "$INSTALLED_CHECKOUT_REF" != "$TEMPLATE_CHECKOUT_SHA" ] \
+      if [ "$installed_sha" != "$TEMPLATE_CHECKOUT_SHA" ] \
         && [[ "$installed_checkout" =~ \#[[:space:]]*v([0-9]+(\.[0-9]+)*) ]]; then
         if [ "$(version_cmp "${BASH_REMATCH[1]}" "$TEMPLATE_CHECKOUT_VERSION" prefix)" = -1 ]; then
           CHECKOUT_SHA_BELOW="v${BASH_REMATCH[1]}"
