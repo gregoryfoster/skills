@@ -56,7 +56,6 @@ class TestAPrMergedMidRunIsNotReopened:
         assert "measuring after the rows" in rig.take.stdout, "fixture: rows taken in"
         assert r.returncode != 0, r.stdout
         assert "::error::" in r.stdout and "#7" in r.stdout
-        assert "re-run" in r.stdout
         assert not rig.has_branch(PR_BRANCH), "the branch was recreated with #7's rows"
         assert _creates(rig) == 1, "a PR was opened over the merged rows"
 
@@ -65,6 +64,17 @@ class TestAPrMergedMidRunIsNotReopened:
         assert r.returncode != 0, r.stdout
         assert "::error::" in r.stdout and "#7" in r.stdout
         assert _creates(rig) == 1
+
+    def test_the_refusal_names_a_dispatch_not_a_re_run(self, tmp_path: Path):
+        """CR 2564: GitHub's "Re-run jobs" reuses the run's GITHUB_SHA, and
+        checkout gives it the commit before the merge, so a re-run measures
+        before the merged rows again. A dispatch, or the next scheduled run,
+        checks out the default branch's tip."""
+        rig, r = self._two_runs(tmp_path, delete=True)
+        assert r.returncode != 0, r.stdout
+        assert "gh workflow run context-cadence.yml" in r.stdout
+        assert "not Re-run" in r.stdout, "the error must steer off Re-run jobs"
+        assert "re-run this workflow" not in r.stdout
 
     def test_the_next_run_measures_after_the_merged_rows(self, tmp_path: Path):
         rig, _ = self._two_runs(tmp_path, delete=True)

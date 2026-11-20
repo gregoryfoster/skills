@@ -318,8 +318,11 @@ ship is refused too, so a repo that needs one needs the other.
   or without its branch deleted, or closed), the row is refused. Pushed,
   it would have reopened those rows in a new PR whose merge base is the old
   default tip, the squash's rows shown again; reproduced on
-  [#683](https://github.com/gregoryfoster/skills/issues/683). A re-run
-  measures after them. `record-telemetry.sh --repair` after the fact was the other way,
+  [#683](https://github.com/gregoryfoster/skills/issues/683). A fresh
+  run measures after them: dispatch it (`gh workflow run
+  context-cadence.yml`) or let the next scheduled run, never GitHub's
+  *Re-run jobs*, which reuses the run's `GITHUB_SHA`, so checkout gives it
+  the commit from before the merge again. `record-telemetry.sh --repair` after the fact was the other way,
   and it can't do this: it rewrites deltas, never the observed `seams`.
 - **A refused push is reported once.** On the PR's branch a refusal is a
   rule or a concurrent push, not a race a rebase fixes. A `GH013` or

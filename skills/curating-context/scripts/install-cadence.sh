@@ -1611,10 +1611,12 @@ YAML
               # branch reopens those rows in a new PR whose merge base is the
               # old default tip, showing its merged rows again. Rebuilding the row on
               # the new tip means replaying the calibration files' merge too, so
-              # the row is refused instead, and a re-run measures after them.
+              # the row is refused instead, and a fresh run measures after them.
+              # Not GitHub's "Re-run jobs" (CR 2564): it reuses GITHUB_SHA, so
+              # checkout gives it the commit from before the merge again.
               if [ -n "${TAKEN:-}" ] && [ -z "$KEEP" ]; then
                 ENDED_WHAT=${TAKEN_PR:+PR #$TAKEN_PR}
-                echo "::error::${ENDED_WHAT:-$PR_BRANCH} ended during this run (merged, closed or deleted), after its rows were taken in at ${TAKEN:0:12}. Pushed now, this row would reopen them in a new PR. The row was not pushed: re-run this workflow, or let the next run measure after them."
+                echo "::error::${ENDED_WHAT:-$PR_BRANCH} ended during this run (merged, closed or deleted), after its rows were taken in at ${TAKEN:0:12}. Pushed now, this row would reopen them in a new PR. The row was not pushed: dispatch the workflow again (gh workflow run context-cadence.yml) or let the next scheduled run measure after them, not Re-run jobs, which reuses this run's commit, from before the merge."
                 exit 1
               fi
               if [ -n "$KEEP" ]; then
