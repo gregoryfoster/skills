@@ -143,8 +143,9 @@ def test_plan_and_standing_are_exclusive(host):
             False,
             [("datastore", "postgres", False)],
         ),
-        # ...but with no data store declared, it restarts none.
-        ("no-datastore ", "", False, []),
+        # ...and so does one the knob doesn't declare: no-datastore refuses
+        # every held step (CR 2544, CR 2547).
+        ("no-datastore ", "", False, [("datastore", "postgres", False)]),
     ],
     ids=[
         "no-reboot-unknown",
@@ -368,3 +369,37 @@ def test_the_reboot_is_refused_under_no_datastore_with_a_data_store(chain):
         for r in out["refused"]
     ), out["refused"]
     assert not any(n == "systemd-run" for n, _, _ in chain.calls())
+
+
+# --- CR 2544, CR 2547: no-datastore refuses every held step --------------------------
+
+
+def _held(host, step: str) -> None:
+    host.run_dir.mkdir()
+    host.run_dir.chmod(0o700)
+    (host.run_dir / "dry-run").write_text("lane=security\nsecurity_only=1\n")
+    (host.run_dir / "approval").write_text("standing security\n")
+
+
+@pytest.mark.parametrize(
+    "extra, step",
+    [
+        # A knob hold line that replaces the default postgres group, taking
+        # redis-server, with a Redis declared: the name says postgres.
+        (
+            "hold postgresql-* libpq5 redis-server postgres\n"
+            "datastore redis redis-server\n",
+            "postgres",
+        ),
+        # An engine the knob doesn't declare.
+        ("", "postgres"),
+        # docker: containerd's restart restarts every container.
+        ("", "docker"),
+    ],
+    ids=["replaced-default", "undeclared-engine", "docker"],
+)
+def test_no_datastore_refuses_every_held_step(host, extra, step):
+    _standing(host, "no-datastore ", extra)
+    _held(host, step)
+    out = host.run("--standing", step=step, rc=3)
+    assert ("datastore", step, False) in _kinds(out)

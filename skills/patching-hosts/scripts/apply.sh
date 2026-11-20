@@ -1330,30 +1330,14 @@ gate_plan() {
 #   no-reboot: the run's reboot must read "no": certain, due (#655) or
 #     unknown refuses;
 #   no-held: no held step, in the selection or run on its own;
-#   no-datastore: no held step that restarts a declared data store. The
-#     default groups map to their engines (postgres, redis, and docker to a
-#     Qdrant's container); a knob's own group may restart anything, so it's
-#     refused wherever a data store is declared;
+#   no-datastore: no held step at all, and no reboot where the knob declares
+#     a data store (CR 2542, CR 2544, CR 2547). A hold group exists to
+#     restart a data store or a container, default or the knob's own,
+#     declared or not, and a group's name doesn't say which: fail closed;
 # and the selection may hold only what the lane takes, by each package's
 # class: the security lane, security (or a dry run whose origins are
 # security alone); the maintenance lane, those plus -updates and the
 # followed origins. An unread class refuses. Reported in gate.plan's shape.
-step_restarts_datastore() {  # <held step>: 0 when it may restart a declared data store
-  local _sd_k _sd_r
-  local -a _sd_f=()
-  case $1 in
-    postgres) _sd_k=postgres ;;
-    redis) _sd_k=redis ;;
-    docker) _sd_k=qdrant ;;
-    *) _sd_k="" ;;
-  esac
-  for _sd_r in ${KNOB_DATASTORE[@]+"${KNOB_DATASTORE[@]}"}; do
-    IFS=$KNOB_US read -r -a _sd_f <<<"$_sd_r"
-    if [ -z "$_sd_k" ] || [ "${_sd_f[0]}" = "$_sd_k" ]; then return 0; fi
-  done
-  return 1
-}
-
 # A followed origin may be declared by its o= name or by its site
 # (knob.md), which apt-cache policy maps to its o= names, as the lanes read
 # it (CR 2548). The policy is read once, and unread, a site matches nothing.
@@ -1386,8 +1370,8 @@ followed_class() {  # <class>: 0 when it's third-party:<an origin the knob follo
 standing_held() {  # <held step>
   if [ "$ST_NO_HELD" = 1 ]; then
     plan_diff 0 held-step "$1" "the standing line says no-held, and the run reaches the held step $1"
-  elif [ "$ST_NO_DS" = 1 ] && step_restarts_datastore "$1"; then
-    plan_diff 0 datastore "$1" "the standing line says no-datastore, and the held step $1 may restart a declared data store"
+  elif [ "$ST_NO_DS" = 1 ]; then
+    plan_diff 0 datastore "$1" "the standing line says no-datastore, and every held step may restart a data store or a container, declared or not: $1 is one"
   fi
 }
 

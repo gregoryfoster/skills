@@ -106,7 +106,7 @@ With `--approve`, each outside difference is a refusal: the host stops for this 
 |---|---|
 | `reboot` | `no-reboot`, and the run reboots: certain, already due (#655), or unknown |
 | `held-step` | `no-held`, and the selection reaches a held group, or the step is one |
-| `datastore` | `no-datastore`, and a held step may restart a declared data store. The default groups map to their engines: `postgres`, `redis`, and `docker` to a Qdrant's container. A knob's own group may restart anything, so it's refused wherever any data store is declared. A group whose engine isn't declared restarts none, and passes |
+| `datastore` | `no-datastore`, and the run reaches a held step, or is one: a hold group exists to restart a data store or a container, the knob's own or a default, declared or not, and its name doesn't say which, so every one is refused. The reboot is refused too, where the knob declares a data store. An undeclared data store is a probe finding already |
 | `lane-scope` | the selection holds what the lane doesn't take: in the security lane, anything but security, unless the dry run's origins are security alone; in the maintenance lane, anything but security, `-updates` and followed origins |
 | `unread` | the selection, a package's class or the reboot couldn't be read |
 
