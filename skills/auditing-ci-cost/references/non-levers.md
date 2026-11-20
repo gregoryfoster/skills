@@ -16,9 +16,10 @@ Two rules:
 
 ## The catalogue so far
 
-Carried forward from the two audits. Each row names the cost shape it was
-rejected *under* — the same lever can be live in the other shape, which is the
-whole reason Phase 2 exists.
+Carried forward from the two source audits and the field runs since. Each row
+names the cost shape it was rejected *under* — the same lever can be live in
+the other shape, which is the whole reason Phase 2 exists. A row rejected on a
+public repo names that instead, since there no shape makes minutes cost money.
 
 | Non-lever | Rejected under | Reason |
 |---|---|---|
@@ -26,12 +27,13 @@ whole reason Phase 2 exists.
 | Splitting a workflow by path | `job-count` | A split **adds** billed minutes: each new job pays the floor on every run where both halves fire. Worth ~208 min/mo in the duration-shaped repo and negative in the count-shaped one. |
 | Adding a dependency cache | `job-count` | Cache restore is itself several seconds and the job still bills one minute. Live in `duration` — a cold Pint cache was worth ~60 min/mo in `wp#726`. |
 | Merging jobs to cut count | `duration` | Merging serialises work that was parallel, and the merged job bills the sum of the parts rounded once. Saves at most one floor-minute per run and costs wall-clock on every run. |
-| Larger / faster runners | either | Billed at a multiplier that is at least as large as the speedup, and the floor still applies. Never a cost lever; sometimes a latency one, which is a different audit. |
+| Larger / faster runners | either | Billed at a multiplier that is at least as large as the speedup, and the floor still applies. On a public repo it also turns unbilled minutes into billed ones: a larger runner bills there too. Never a cost lever; sometimes a latency one, which is a different audit. |
 | `concurrency:` cancel-in-progress | either | A real lever on re-push-heavy repos, but it is an **attribution** finding, not a duration or count one — measure re-push frequency in Phase 3 first. Rejected as a blanket recommendation, not on its merits. |
 | Dropping a matrix leg | either | Cuts cost proportionally and cuts coverage proportionally. Not a cost finding unless the leg is provably redundant; that argument belongs to the test suite, not the audit. |
 | `/timing` as the measurement | either | `billable.<OS>.total_ms` reads 0 on every repo probed, public and private. See [measurement.md](measurement.md). |
 | Blanket `**.md` in `paths-ignore` | either | Package metadata can make a README a build input. See trap 4 in [traps.md](traps.md). |
 | Reading GitHub's glob docs instead of probing | either | The implementation is more lenient than the prose. See trap 6. |
+| Cutting minutes on a public repo | public, standard runners | No minute is billed, so a cut saves no money by itself ([#597](https://github.com/gregoryfoster/skills/issues/597)). CannObserv/power-map's census read 65 min over 54 jobs, 50 of them Dependabot's own (event `dynamic`), and invited a path filter whose replay showed 3 false skips out of 3: risk, for nothing. What costs there is PR latency, the owner's concurrent-job limit, shared across its repos, and Dependabot's fan-out. A cut is a lever only through one of those. |
 
 ## Writing a new row
 

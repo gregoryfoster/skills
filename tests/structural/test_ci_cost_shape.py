@@ -825,6 +825,38 @@ class TestBillingFollowsVisibility:
         assert billing["runners"]["unassigned"] == 1
 
 
+class TestVisibilityIsInTheProcedure:
+    """#597 in prose: the census reads visibility, and the procedure acts on it."""
+
+    def test_the_billing_model_names_where_it_does_not_bill(self, body):
+        normalised = " ".join(body.split())
+        assert "bill nothing" in normalised and "public" in normalised, (
+            "SKILL.md must say a public repo's standard-runner jobs bill nothing: "
+            "the formula is the bill only where GitHub bills at all"
+        )
+
+    def test_phase_2_branches_on_not_billed(self, body):
+        normalised = " ".join(body.split())
+        assert "cutting minutes is not a lever by itself" in normalised, (
+            "Phase 2 must say what a `not billed` reading changes: the levers "
+            "are weighed by latency, concurrency and Dependabot fan-out"
+        )
+
+    def test_non_levers_carries_the_public_row(self):
+        text = (SKILL_DIR / "references" / "non-levers.md").read_text()
+        assert "Cutting minutes on a public repo" in text, (
+            "non-levers.md must record #597's row so the next audit of a public "
+            "repo doesn't re-derive minute cuts that save nothing"
+        )
+
+    def test_the_runner_group_decides_not_the_labels(self):
+        text = " ".join(_all_text().split())
+        assert "runner_group_id" in text and "runner group" in text, (
+            "the skill must say the runner group decides the pool: a job's labels "
+            "are what its runs-on asked for, measured not to say which pool it ran on"
+        )
+
+
 _FAKE_GH = r"""#!/usr/bin/env bash
 # A stand-in for gh: answers the three calls the census makes from canned JSON.
 set -euo pipefail

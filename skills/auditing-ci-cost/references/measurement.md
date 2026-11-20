@@ -85,6 +85,45 @@ Retention is the reason the window is ~30 days in practice. Both source audits
 used 30, which is enough to see a trend and not enough to see a seasonal one —
 an acknowledged limit, not a resolved question.
 
+## Billed at all: visibility and the runner group
+
+The formula is the bill only where GitHub bills: a private (or internal) repo,
+or a larger runner on any repo. A public repo's jobs on GitHub's standard
+runners bill nothing
+([#597](https://github.com/gregoryfoster/skills/issues/597)). CannObserv/power-map
+is public, and its census read 65 billed minutes, every one of them free.
+
+So a fetch reads the repo's visibility (`gh repo view --json visibility`) once,
+writes it into the cache's meta record, and records each job's `labels`,
+`runner_group_id` and `runner_group_name`. What decides the pool is the
+**runner group**, not the labels. Measured on real jobs, 2026-11-20:
+
+| Jobs | `labels` | `runner_group_id` / name |
+|---|---|---|
+| power-map's gate, its weekly job, Dependabot's (`dynamic`) | `ubuntu-24.04`, `ubuntu-latest` | `0` / "GitHub Actions" |
+| rust-lang/rust run 44791998950, standard x64 and arm | `ubuntu-24.04`, `ubuntu-26.04-arm` | `0` / "GitHub Actions" |
+| denoland/deno CI, standard ubuntu, windows, macos | `*-latest` | `0` / "GitHub Actions" |
+| denoland/deno CI, its `-xl` jobs | `windows-2022-xl`, `ubuntu-24.04-arm64-xl` | `3` / "custom managed runners" |
+| rust-lang/rust run 44791998950, EC2 jobs | `ec2-x86_64ami-c8a.8xlarge-…` | `8` / "gha-self-hosted" |
+
+A job's `labels` are what its `runs-on` asked for: a self-hosted job need not
+carry `self-hosted`, and a larger runner's name is the owner's choice. Group
+`0` is GitHub's standard pool. Any other group is a larger runner (billed at its
+own rate, public repo or not) or a self-hosted one (no Actions minutes), and
+nothing in the job tells them apart, so the census lists those jobs rather than
+guess. A `null` group means no runner picked the job up.
+
+| Reading | When |
+|---|---|
+| `not billed` | public, and every job that ran did so in group `0` |
+| `partly billed` | public, and some jobs ran in another group: their minutes are the most that bills |
+| `billed` | private or internal: the census is the bill, apart from any jobs it lists as off the standard pool |
+| `unknown` | a cache written before the reading: re-fetch to read it |
+
+Not measured here: a GitHub larger runner in a repo we own (the CannObserv org
+has none). That deno's group 3 is GitHub-hosted rests on its `-xl` names, not on
+a reading. The rule doesn't depend on it: either kind is off the standard pool.
+
 ## Separating anomaly days
 
 The gate exists because of one measured day. `CannObserv/cannobserv`, 30 days

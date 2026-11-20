@@ -47,6 +47,11 @@ Per **job**, rounded **up**, with a **one-minute floor**. The floor is the
 whole game: it makes a 3-second job and a 55-second job cost the same, and it
 makes an extra job strictly more expensive than a slower one.
 
+**Only where GitHub bills at all:** a private repo, or a larger runner on any
+repo. A public repo's jobs on GitHub's standard runners bill nothing, so there
+the census measures runner time, not spend
+([#597](https://github.com/gregoryfoster/skills/issues/597)).
+
 **Do not implement that line as written.** Taken literally it bills a phantom
 minute for three classes of row the formula was never meant to see — skipped
 jobs, non-positive durations, and jobs still in flight. That is the form
@@ -108,6 +113,14 @@ silently, because every one of them still produces a plausible number:
 Full evidence, and the two repos' worked numbers:
 [references/measurement.md](references/measurement.md).
 
+**Billed at all.** The census reads the repo's visibility and each job's
+runner group before it calls a minute billed, and heads the report with a
+`BILLING` line: `not billed` (public, standard runners), `partly billed`
+(public, some jobs off the standard pool), `billed`, or `unknown` (a cache
+written before the reading: re-fetch). The runner group decides it, not the
+job's labels, and a larger runner and a self-hosted one look alike to the API:
+[measurement.md](references/measurement.md#billed-at-all-visibility-and-the-runner-group).
+
 **The anomaly gate.** The script flags a day only when it is *both* unusually
 large *and* structurally unlike the others (billed total **and** billed
 min/job above the median by the factor). Total alone flags a merely busy day —
@@ -133,6 +146,13 @@ Read `mean billed/job` from the census.
 State the shape and the number **before** writing a single finding. Every
 saving downstream is computed against this branch.
 
+**On `not billed`, cutting minutes is not a lever by itself.** The shape
+still says where runner time goes. Weigh each lever by what does cost on a
+public repo: PR latency (wall-clock to green), the owner's concurrent-job
+limit, shared across its repos, and Dependabot's fan-out. State savings in
+runner minutes, never billed ones. On `partly billed`, only the off-standard
+jobs' minutes can bill, so size savings against those.
+
 ### Phase 3 — Attribute
 
 From the census: `by_job`, `by_workflow`, `by_event`. Then ask what each run
@@ -143,7 +163,8 @@ whose only output is a status check nothing reads.
 
 Numbered, severity-tiered, and each carrying:
 
-- the **measured saving** in billed min/mo, computed on the Phase 2 branch;
+- the **measured saving** in billed min/mo (runner min/mo where nothing is
+  billed), computed on the Phase 2 branch;
 - a **confidence label — `measured` or `estimated`.** Both audits' biggest wins
   came from converting an estimate into a measurement, and a report that does
   not distinguish them loses exactly that.
@@ -189,6 +210,7 @@ pattern, with the inputs discovered from disk.
 
 ```
 Repo · window · raw total · anomaly days (attributed) · structural baseline
+Billing:    <visibility> · <not billed | partly billed | billed>
 Cost shape: <shape> at <mean> billed min/job (p50/p90 <s>/<s>)
 Findings:   N numbered, each with severity, saving, and measured|estimated
 Non-levers: M rejected, each with reason
