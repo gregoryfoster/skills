@@ -820,6 +820,47 @@ class TestBillingFollowsVisibility:
         text = _census(tmp_path, rows, visibility="public", as_json=False).stdout
         assert "PARTLY BILLED" in text and "self-hosted" in text, text
 
+    def test_partly_billed_advice_follows_the_jobs_that_bill(self, tmp_path):
+        """CR 2614: the free jobs' shape must not prescribe for the billed ones.
+
+        Fourteen free 400-second jobs make the whole repo duration-shaped, and
+        fourteen 20-second off-standard jobs, the only ones that can bill, sit
+        inside the floor: splitting them adds billed minutes.
+        """
+        rows = [
+            _job(
+                f"2026-08-{2 + n // 2:02d}T1{n % 2}:00:00Z",
+                f"2026-08-{2 + n // 2:02d}T1{n % 2}:06:40Z",
+                job="slow",
+                runner_group_id=0,
+            )
+            for n in range(14)
+        ] + [
+            _job(
+                f"2026-08-{2 + n // 2:02d}T1{n % 2}:30:00Z",
+                f"2026-08-{2 + n // 2:02d}T1{n % 2}:30:20Z",
+                job="fast",
+                runner_group_id=3,
+                labels=["ubuntu-24.04-arm64-xl"],
+            )
+            for n in range(14)
+        ]
+        report = json.loads(_census(tmp_path, rows, visibility="public").stdout)
+        assert report["cost_shape"] == "duration"
+        assert report["billing"]["off_standard_shape"] == "job-count", report["billing"]
+        text = _census(tmp_path, rows, visibility="public", as_json=False).stdout
+        assert "Never split a workflow" in text, text
+        assert "Cache, narrow, and split" not in text, (
+            "the duration advice comes from free jobs; it would split billed ones\n"
+            + text
+        )
+
+    def test_public_rows_without_runner_fields_read_unknown(self, tmp_path):
+        """CR 2617: a public meta over rows with no runner group can't say not billed."""
+        rows = [_job("2026-08-02T10:00:00Z", "2026-08-02T10:00:30Z")]
+        result = _census(tmp_path, rows, visibility="public")
+        assert json.loads(result.stdout)["billing"]["reading"] == "unknown"
+
     def test_a_private_repo_is_billed_as_before(self, tmp_path):
         result = _census(tmp_path, _week(), visibility="private")
         report = json.loads(result.stdout)
