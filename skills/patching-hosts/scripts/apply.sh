@@ -1189,23 +1189,97 @@ plan_envelope() {
   fi
 }
 
+# The bulk, against the lists it just refreshed (CR 2530): each package it
+# will install under the plan, its own selection's and those it holds for a
+# step the plan approves, at the candidate those lists offer. A planned one
+# must be at its planned version or a newer one; an unplanned one held for
+# an approved step is outside, since that step would install it and restart
+# its data store. One of the dry run's own, unplanned, the gate judged.
+RECHECK_WHY=""
+plan_recheck_bulk() {  # <the refreshed simulation>
+  local i p c pv seen=" " held
+  RECHECK_WHY=""
+  for p in $DRY_SEL ${RUN_HOLD_PKG[@]+"${RUN_HOLD_PKG[@]}"}; do
+    case $seen in *" $p "*) continue ;; esac
+    seen="$seen$p "
+    held=""
+    for i in ${RUN_HOLD_PKG[@]+"${!RUN_HOLD_PKG[@]}"}; do
+      if [ "${RUN_HOLD_PKG[$i]}" = "$p" ]; then held=${RUN_HOLD_STEP[$i]}; fi
+    done
+    if [ -n "$held" ] && ! in_words "$held" "$PLAN_HELD"; then continue; fi
+    sim_candidate c "$p" "$1"
+    [ -n "$c" ] || continue
+    pv=""
+    for i in ${PLAN_PKG_NAME[@]+"${!PLAN_PKG_NAME[@]}"}; do
+      if [ "${PLAN_PKG_NAME[$i]}" = "$p" ]; then pv=${PLAN_PKG_VERSION[$i]}; fi
+    done
+    if [ -z "$pv" ]; then
+      if [ -n "$held" ] && ! in_words "$p" "$DRY_SEL"; then
+        RECHECK_WHY="$RECHECK_WHY; $p $c, which the held step $held would install, isn't in the plan"
+      fi
+      continue
+    fi
+    [ "$c" != "$pv" ] || continue
+    if ! dpkg --compare-versions "$c" gt "$pv"; then
+      RECHECK_WHY="$RECHECK_WHY; $p is planned at $pv, and the refreshed lists offer $c, which isn't newer"
+    fi
+  done
+}
+
+# A held step under a plan (CR 2530): its bulk ran under the same plan, and
+# each package it releases is one the plan lists, at its planned version or
+# a newer one, as the bulk's refreshed lists offered it.
+plan_held() {
+  local out s p c pv i
+  if ! root_read out "$run/hold-versions"; then
+    plan_diff 0 unread hold-versions "$run/hold-versions can't be read, so what this step installs is unknown"
+    return 0
+  fi
+  read_run_holds || true
+  for i in ${RUN_HOLD_PKG[@]+"${!RUN_HOLD_PKG[@]}"}; do
+    [ "${RUN_HOLD_STEP[$i]}" = "$step" ] || continue
+    p=${RUN_HOLD_PKG[$i]} c=""
+    while read -r s pv; do
+      if [ "$s" = "$p" ]; then c=$pv; fi
+    done <<<"$out"
+    pv=""
+    for s in ${PLAN_PKG_NAME[@]+"${!PLAN_PKG_NAME[@]}"}; do
+      if [ "${PLAN_PKG_NAME[$s]}" = "$p" ]; then pv=${PLAN_PKG_VERSION[$s]}; fi
+    done
+    if [ -z "$pv" ]; then
+      plan_diff 0 held-package "$p" "${c:-a version} the bulk held for $step, which the plan doesn't list: the step would install it, and restart what it serves"
+    elif [ -z "$c" ]; then
+      plan_diff 0 unread "$p" "planned at $pv, and the bulk recorded no candidate for it"
+    elif [ "$c" != "$pv" ]; then
+      if dpkg --compare-versions "$c" gt "$pv"; then
+        plan_diff 1 version-newer "$p" "planned at $pv, and the bulk's refreshed lists offered $c"
+      else
+        plan_diff 0 version-other "$p" "planned at $pv, and the bulk's refreshed lists offered $c, which isn't newer"
+      fi
+    fi
+  done
+}
+
 gate_plan() {
-  local o="" w="" r
+  local o="" w="" r refused=0
   PLAN_DIFFS="" PLAN_OUTSIDE=()
   if [ -z "$planf" ]; then
     jadd J_GATE plan null
     return 0
   fi
   if ! plan_gate "$approve" "$planf" "$host"; then
-    w=$PLAN_WHY
+    # plan_gate refused it already, under --approve.
+    w=$PLAN_WHY refused=1
   elif [ "$PLAN_LANE" != "$LANE" ]; then
     w="the plan $PLAN_ID approves the $PLAN_LANE lane, and this step runs the $LANE lane"
   elif [ "$step" != bulk ] && ! in_words "$step" "$PLAN_HELD"; then
     w="the plan $PLAN_ID doesn't name the held step $step"
+  elif [ "$step" != bulk ] && ! plan_run_approval "$run"; then
+    w=$PLAN_WHY
   fi
   plan_json_head o "$planf"
   if [ -n "$w" ]; then
-    if [ "$approve" -eq 1 ] && [ "$w" != "$PLAN_WHY" ]; then refuse "$w"; fi
+    if [ "$approve" -eq 1 ] && [ "$refused" -eq 0 ]; then refuse "$w"; fi
     jaddb o covers 0
     jadds o why "$w"
     jadd o inside null
@@ -1215,7 +1289,7 @@ gate_plan() {
   fi
   jaddb o covers 1
   jadd o why null
-  if [ "$step" = bulk ]; then plan_envelope; fi
+  if [ "$step" = bulk ]; then plan_envelope; else plan_held; fi
   jaddb o inside "$(( ${#PLAN_OUTSIDE[@]} == 0 ))"
   jadd o differences "[$PLAN_DIFFS]"
   jadd J_GATE plan "{$o}"
@@ -1675,6 +1749,9 @@ emit() {
   printf '{%s}\n' "$o"
 }
 
+# What the run records of the bulk's approval (CR 2530).
+RUN_APPROVAL=session
+if [ -n "$planf" ]; then RUN_APPROVAL=plan; elif [ "$standing" -eq 1 ]; then RUN_APPROVAL="standing $LANE"; fi
 gate_host
 gate_uu
 gate_lane
@@ -2228,6 +2305,22 @@ do_bulk() {
   fi
   if ! printf '%s' "$vout" | root_write "$run/hold-versions"; then
     fail "$run/hold-versions couldn't be written: nothing was held or upgraded"
+    return 0
+  fi
+  # Under a plan, what it will install is held to it again, against the
+  # lists just refreshed: the dry run's are up to a day old (CR 2530).
+  if [ -n "$planf" ]; then
+    plan_recheck_bulk "$sim"
+    if [ -n "$RECHECK_WHY" ]; then
+      fail "outside the plan $PLAN_ID against the refreshed lists: ${RECHECK_WHY#; }. Nothing was held or upgraded"
+      return 0
+    fi
+  fi
+  # Which approval the bulk ran under: its held steps and its reboot, under a
+  # plan, must run under the same one.
+  if [ -n "$planf" ]; then RUN_APPROVAL="plan $PLAN_SHA $PLAN_ID"; fi
+  if ! printf '%s\n' "$RUN_APPROVAL" | root_write "$run/approval"; then
+    fail "$run/approval couldn't be written: nothing was held or upgraded"
     return 0
   fi
   out=""

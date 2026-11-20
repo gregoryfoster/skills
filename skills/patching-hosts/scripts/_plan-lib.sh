@@ -320,10 +320,27 @@ plan_json_head() {  # <var> <file>
   printf -v "$1" '%s' "$_pj"
 }
 
+# A step after the bulk, under a plan, runs only under the plan its bulk
+# ran under (CR 2530): the run's approval record names it by its sha256.
+plan_run_approval() {  # <run dir>: 1 with PLAN_WHY when it doesn't
+  local _ra=""
+  if ! root_read _ra "$1/approval"; then
+    PLAN_WHY="$1/approval can't be read, so which approval the run's bulk ran under is unknown"
+    return 1
+  fi
+  _ra=${_ra%%$'\n'*}
+  case $_ra in
+    "plan $PLAN_SHA "* | "plan $PLAN_SHA") return 0 ;;
+  esac
+  PLAN_WHY="the run's bulk ran under ${_ra:-nothing it recorded}, which isn't this plan ($PLAN_ID, sha256 $PLAN_SHA)"
+  return 1
+}
+
 # recovery-point.sh's and reboot-chain.sh's gate.plan: the plan covers the
 # host and hasn't passed its not-after, and for the reboot, 3(b), it says
-# reboot yes. The envelope is the bulk's: apply.sh reads it.
-plan_gate_record() {  # <approve 0|1> <file, or empty> <host> <reboot 0|1>
+# reboot yes, and is the plan the run's bulk ran under. The envelope is the
+# bulk's: apply.sh reads it.
+plan_gate_record() {  # <approve 0|1> <file, or empty> <host> <reboot 0|1> [<run dir>]
   local _po="" _pw=""
   if [ -z "$2" ]; then
     jadd J_GATE plan null
@@ -333,6 +350,9 @@ plan_gate_record() {  # <approve 0|1> <file, or empty> <host> <reboot 0|1>
     _pw=$PLAN_WHY
   elif [ "$4" -eq 1 ] && [ "$PLAN_REBOOT" != yes ]; then
     _pw="the plan $PLAN_ID says reboot no for this host: the reboot needs the owner's own approval"
+    if [ "$1" -eq 1 ]; then refuse "$_pw"; fi
+  elif [ "$4" -eq 1 ] && ! plan_run_approval "${5:-}"; then
+    _pw=$PLAN_WHY
     if [ "$1" -eq 1 ]; then refuse "$_pw"; fi
   fi
   plan_json_head _po "$2"

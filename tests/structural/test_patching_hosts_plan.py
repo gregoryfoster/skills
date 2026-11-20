@@ -20,6 +20,7 @@ the plan states, and holds each step to it.
 """
 
 import hashlib
+import json
 
 import pytest
 
@@ -343,6 +344,7 @@ def chain(tmp_path) -> RebootHost:
 
 def test_the_reboot_runs_under_a_plan_that_says_reboot_yes(chain):
     p = _plan(chain, HEAD + _section(reboot="yes"))
+    (chain.run_dir / "approval").write_text(f"plan {_sha(p)} cycle-2026-09-29\n")
     out = chain.reboot("--plan", str(p))
     assert out["reboot_chain"]["approval"]["by"] == "plan"
     assert out["gate"]["plan"]["covers"] is True
@@ -436,3 +438,81 @@ def test_a_plan_holding_a_nul_byte_is_refused(host):
     out = host.run("--plan", str(p), rc=3)
     [r] = [r for r in out["refused"] if r.startswith("the plan is malformed")]
     assert "NUL" in r
+
+
+# --- CR 2530: the plan against the bulk's refreshed lists, and its held steps --------
+
+
+def test_a_release_since_the_dry_run_for_a_planned_held_step_stops_the_bulk(host):
+    # postgresql-16 wasn't pending at the dry run; the refreshed lists offer
+    # it, the bulk would hold it for postgres, which the plan approves for
+    # libpq5, and that step would install and restart an unplanned version.
+    sel = {k: v for k, v in SELECTED.items() if k != "postgresql-16"}
+    (host.dry / "dry-run.log").write_text(
+        "Packages that will be upgraded: " + " ".join(sel) + "\n"
+    )
+    _summary(host, sel)
+    p = _plan(host, HEAD + _section(packages=sel))
+    out = host.run("--plan", str(p), rc=1)
+    text = json.dumps(out)
+    assert "postgresql-16" in text and "refreshed lists" in text
+    assert host.holds() == []
+    assert not host.calls("unattended-upgrade")
+
+
+def _held_run(host, plan_path, approval: str | None, versions: str) -> None:
+    host.run_dir.mkdir()
+    host.run_dir.chmod(0o700)
+    (host.run_dir / "dry-run").write_text("lane=security\n")
+    (host.run_dir / "holds").write_text("postgres postgresql-16\npostgres libpq5\n")
+    (host.run_dir / "hold-versions").write_text(versions)
+    if approval is not None:
+        (host.run_dir / "approval").write_text(approval)
+
+
+PG_VERSIONS = "postgresql-16 16.10-0ubuntu0.24.04.1\nlibpq5 16.10-0ubuntu0.24.04.1\n"
+
+
+def _sha(p) -> str:
+    return hashlib.sha256(p.read_bytes()).hexdigest()
+
+
+@pytest.mark.parametrize(
+    "approval, why",
+    [
+        (None, "can't be read"),
+        ("session\n", "isn't this plan"),
+        ("plan " + "0" * 64 + " cycle-2026-09-28\n", "isn't this plan"),
+    ],
+    ids=["no-record", "session", "another-plan"],
+)
+def test_a_held_step_runs_only_under_its_bulks_plan(host, approval, why):
+    p = _plan(host, HEAD + _section())
+    _held_run(host, p, approval, PG_VERSIONS)
+    out = host.run("--plan", str(p), step="postgres", rc=3)
+    assert any(why in r for r in out["refused"]), out["refused"]
+
+
+def test_a_held_step_releasing_an_unplanned_package_is_refused(host):
+    sel = {k: v for k, v in SELECTED.items() if k != "postgresql-16"}
+    p = _plan(host, HEAD + _section(packages=sel))
+    _held_run(host, p, f"plan {_sha(p)} cycle-2026-09-29\n", PG_VERSIONS)
+    out = host.run("--plan", str(p), step="postgres", rc=3)
+    assert ("held-package", "postgresql-16", False) in _kinds(out)
+
+
+def test_a_held_step_under_its_bulks_plan_compares_versions(host):
+    p = _plan(host, HEAD + _section())
+    newer = PG_VERSIONS.replace("libpq5 16.10", "libpq5 16.11")
+    _held_run(host, p, f"plan {_sha(p)} cycle-2026-09-29\n", newer)
+    out = host.run("--plan", str(p), step="postgres", rc=3)
+    # Refused for the bulk the run never ran, not for the plan.
+    assert not [r for r in out["refused"] if "plan" in r], out["refused"]
+    assert ("version-newer", "libpq5", True) in _kinds(out)
+
+
+def test_the_reboot_runs_only_under_its_bulks_plan(chain):
+    p = _plan(chain, HEAD + _section(reboot="yes"))
+    (chain.run_dir / "approval").write_text("session\n")
+    out = chain.reboot("--plan", str(p), rc=3)
+    assert any("isn't this plan" in r for r in out["refused"])

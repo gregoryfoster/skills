@@ -56,9 +56,11 @@ package postgresql-16 16.11-0ubuntu0.24.04.1 security
 | Script | Refused unless |
 |---|---|
 | `recovery-point.sh --approve --plan FILE` | the plan covers the host, and hasn't passed its `not-after` |
-| `apply.sh --approve --plan FILE --step bulk` | that, the plan's `lane` is the bulk's, and the bulk's reading is inside the envelope |
-| `apply.sh --approve --plan FILE --step <held step>` | that, and a `held` line names the step |
-| `reboot-chain.sh --approve --plan FILE` | that, and the plan says `reboot yes` |
+| `apply.sh --approve --plan FILE --step bulk` | that, the plan's `lane` is the bulk's, and the bulk's reading is inside the envelope. Then again against the lists the bulk refreshes, before it holds anything: each package it will install, its own or one held for a step the plan approves, at the plan's version or a newer one; an unplanned one held for an approved step stops it |
+| `apply.sh --approve --plan FILE --step <held step>` | that, a `held` line names the step, the run's bulk ran under this plan, and each package the step releases is one the plan lists, at its version or a newer one |
+| `reboot-chain.sh --approve --plan FILE` | that, the plan says `reboot yes`, and the run's bulk ran under it |
+
+The bulk records which approval it ran under in the run's `approval` file, the plan by its sha256, so a held step or a reboot under another plan is refused. **One gap stays:** a package the dry run didn't select and no group holds, published in the lane between the dry run and the bulk, looks like one outside the lane, so the bulk can't hold it to the plan. Count shortly before the run.
 
 Each reports `gate.plan`: the plan's file, id, `sha256`, `not_after`, `lane` and `reboot`, whether it `covers` the step and, if not, `why`, and for the bulk, `inside` and its `differences`.
 

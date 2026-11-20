@@ -636,7 +636,7 @@ write_chain() {
 }
 
 gate_host
-plan_gate_record "$approve" "$planf" "$host" 1
+plan_gate_record "$approve" "$planf" "$host" 1 "$run"
 standing_gate_record "$approve" "$standing" "$run" 1
 gate_run
 # The chain's gate may wait CHAIN_WAIT before its stops (#646).
