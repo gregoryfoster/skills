@@ -182,10 +182,11 @@ change. Two mandatory ones:
   *building and inspecting the artifact*, not by intuition — a `readme =` entry
   makes a README a build input, and the root `.gitignore` was proved to drop a
   module from an sdist. [references/path-filter-replay.md](references/path-filter-replay.md).
-- **Probe any behaviour a finding depends on.** The eight that already bit —
+- **Probe any behaviour a finding depends on.** The nine that already bit —
   `paths-ignore` seeing the whole PR diff, `workflow_call` inheriting the
   caller's context and silently disabling a release gate, `**/` matching zero
-  directories, `>-` embedding a newline inside `${{ }}` —
+  directories, `>-` embedding a newline inside `${{ }}`, a shallow submodule
+  checkout turning ancestry tests into skips that read green —
   [references/traps.md](references/traps.md). Record each probe's result
   **inline next to the rule**, not only in the PR that produced it.
 

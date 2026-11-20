@@ -1,8 +1,8 @@
 # Traps
 
-Every one of these was hit for real during the two source audits
-([#212](https://github.com/gregoryfoster/skills/issues/212)). Several were
-nearly shipped bugs. They share one property, which is the reason they are
+Every one of these was hit for real: the first eight during the two source
+audits ([#212](https://github.com/gregoryfoster/skills/issues/212)), the ninth
+in a field run (CannObserv/power-map#727). Several were nearly shipped bugs. They share one property, which is the reason they are
 collected rather than scattered: **each is a GitHub behaviour that differs from
 the natural reading of GitHub's documentation**, and each was settled by
 running a probe.
@@ -100,9 +100,32 @@ do not exist. Verify with a trial merge before "fixing" anything.
 This is a review trap rather than a cost one, but it belongs here: it is how a
 correct CI change gets reverted during the review of the PR that introduces it.
 
+## 9. Shallow submodules turn ancestry tests into vacuous skips
+
+`actions/checkout` defaults to `fetch-depth: 1`, and with `submodules:
+recursive` it checks the **submodules** out shallow too. A test that checks a
+pin's ancestry (`git merge-base --is-ancestor`, `git rev-list`, "is the pinned
+SHA on upstream main") can't resolve history there. Written to skip when git
+can't answer, which is the polite choice locally, it **skips in CI and the run
+reads green** ([#600](https://github.com/gregoryfoster/skills/issues/600)).
+
+Simulating power-map's new CI in a clean shallow clone (PR
+CannObserv/power-map#761), **8 pin-ancestry tests** skipped with "git cannot
+resolve … ancestry unverifiable". Each runs locally. With `fetch-depth: 0`
+(about 23 MiB of history there), the skip count matched a local run plus the
+two expected CI-only skips.
+
+- **Detect it:** before trusting green, compare CI's skip count and skip
+  reasons (`pytest -rs`) with a local run. A reason naming git, history or
+  ancestry that appears only in CI is this trap.
+- **Fix it:** `fetch-depth: 0`, or a depth deep enough for the pins, on the
+  checkout step that fetches submodules. Guard it with a test that reads the
+  workflow and fails when that step loses the depth, since nothing else will:
+  the regression's only symptom is a few more skips in a green run.
+
 ## The general form
 
-Six of the eight above are the same mistake in different clothes: **a belief
+Six of the nine above are the same mistake in different clothes: **a belief
 about what GitHub will do, held confidently, sourced from prose.** The audit
 procedure that survives them is the one in Phase 5 — anything the docs do not
 settle gets a probe PR, and the probe's result is recorded where the rule

@@ -33,6 +33,7 @@ public repo names that instead, since there no shape makes minutes cost money.
 | `/timing` as the measurement | either | `billable.<OS>.total_ms` reads 0 on every repo probed, public and private. See [measurement.md](measurement.md). |
 | Blanket `**.md` in `paths-ignore` | either | Package metadata can make a README a build input. See trap 4 in [traps.md](traps.md). |
 | Reading GitHub's glob docs instead of probing | either | The implementation is more lenient than the prose. See trap 6. |
+| A shallow checkout to save fetch time | either | It costs coverage, silently. A shallow submodule checkout (`actions/checkout`'s default depth, with `submodules: recursive`) turned 8 of power-map's pin-ancestry tests into skips that read green; `fetch-depth: 0` cost about 23 MiB of history. See trap 9 in [traps.md](traps.md). |
 | Cutting minutes on a public repo | public, standard runners | No minute is billed, so a cut saves no money by itself ([#597](https://github.com/gregoryfoster/skills/issues/597)). CannObserv/power-map's census read 65 min over 54 jobs, 50 of them Dependabot's own (event `dynamic`), and invited a path filter whose replay showed 3 false skips out of 3: risk, for nothing. What costs there is PR latency, the owner's concurrent-job limit, shared across its repos, and Dependabot's fan-out. A cut is a lever only through one of those. |
 
 ## Writing a new row
