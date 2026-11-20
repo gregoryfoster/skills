@@ -37,7 +37,14 @@ name.
                             refuses only under --approve
   plan_gate_record APPROVE FILE HOST REBOOT  gate.plan for recovery-point.sh
                             and reboot-chain.sh
-  plan_approval VAR APPROVE FILE  the step's approval record
+  plan_approval VAR APPROVE FILE STANDING  the step's approval record
+  standing_for LANE         the knob's standing line for LANE into ST_*: 1
+                            with ST_WHY when none approves
+  standing_any              the same, for any lane: the security lane's first
+  run_lane VAR RUN          the lane the run's bulk ran in, from its dry-run
+                            record: 1 when it can't be read
+  standing_gate_record APPROVE STANDING RUN-OR-EMPTY REBOOT  gate.standing
+                            for recovery-point.sh and reboot-chain.sh
 USAGE
 }
 
@@ -241,15 +248,21 @@ plan_load() {  # <file> <host>
   return 0
 }
 
-# The approval a step records: the plan's, as it states it, or the
-# session's. Empty without --approve.
-plan_approval() {  # <var> <approve 0|1> <plan file, or empty>
+# The approval a step records: the plan's, as it states it, the knob's
+# standing line, or the session's. null without --approve.
+plan_approval() {  # <var> <approve 0|1> <plan file, or empty> <standing 0|1>
   local _pa=""
   if [ "$2" -ne 1 ]; then
     printf -v "$1" '%s' null
     return 0
   fi
-  if [ -z "$3" ]; then
+  if [ "${4:-0}" -eq 1 ]; then
+    jadds _pa by standing
+    jaddsn _pa lane "$ST_LANE"
+    jaddsn _pa review_by "$ST_REVIEW"
+    jaddsn _pa reason "$ST_REASON"
+    jaddn _pa line "$ST_LINE"
+  elif [ -z "$3" ]; then
     jadds _pa by session
   else
     jadds _pa by plan
@@ -316,4 +329,116 @@ plan_gate_record() {  # <approve 0|1> <file, or empty> <host> <reboot 0|1>
     jadd _po why null
   fi
   jadd J_GATE plan "{$_po}"
+}
+
+# --- standing approval (#673 item 4) -------------------------------------------
+# The owner's declaration in a committed knob: `standing <lane> [no-reboot]
+# [no-datastore] [no-held] <review-by> <reason>` (knob.md). It approves only
+# a step of its lane within its limits; past its review-by date, or naming an
+# origin the knob doesn't follow, it approves nothing.
+ST_LANE="" ST_NO_REBOOT=0 ST_NO_DS=0 ST_NO_HELD=0 ST_REVIEW="" ST_REASON="" ST_LINE="" ST_WHY=""
+
+standing_for() {  # <lane>
+  local _sf_r _sf_k _sf_o _sf_ok
+  local -a _sf_f=()
+  ST_LANE="" ST_NO_REBOOT=0 ST_NO_DS=0 ST_NO_HELD=0 ST_REVIEW="" ST_REASON="" ST_LINE="" ST_WHY=""
+  for _sf_r in ${KNOB_STANDING[@]+"${KNOB_STANDING[@]}"}; do
+    IFS=$KNOB_US read -r -a _sf_f <<<"$_sf_r"
+    [ "${_sf_f[0]}" = "$1" ] || continue
+    ST_LANE=${_sf_f[0]} ST_NO_REBOOT=${_sf_f[1]} ST_NO_DS=${_sf_f[2]} ST_NO_HELD=${_sf_f[3]}
+    ST_REVIEW=${_sf_f[4]} ST_REASON=${_sf_f[5]} ST_LINE=${_sf_f[7]}
+    if [ "${_sf_f[6]}" = 1 ]; then
+      ST_WHY="standing $1 (knob line $ST_LINE) passed its review-by date, $ST_REVIEW: it approves nothing until it's renewed"
+      return 1
+    fi
+    case $1 in origin:*)
+      _sf_o=${1#origin:} _sf_ok=0
+      for _sf_k in ${KNOB_ORIGIN[@]+"${KNOB_ORIGIN[@]}"}; do
+        case $_sf_k in "$_sf_o${KNOB_US}follow$KNOB_US"*) _sf_ok=1 ;; esac
+      done
+      if [ "$_sf_ok" -ne 1 ]; then
+        ST_WHY="standing $1 (knob line $ST_LINE) names an origin the knob doesn't follow: it approves nothing"
+        return 1
+      fi ;;
+    esac
+    return 0
+  done
+  ST_WHY="the knob has no standing line for the $1 lane"
+  return 1
+}
+
+# A step with no lane of its own, the recovery point: any lane's line will
+# do, the security lane's first, since it changes no package.
+standing_any() {
+  local _sa_r
+  local -a _sa_f=()
+  if [ "${#KNOB_STANDING[@]}" -eq 0 ]; then
+    standing_for security || true
+    ST_WHY="the knob has no standing line"
+    return 1
+  fi
+  if standing_for security; then return 0; fi
+  for _sa_r in "${KNOB_STANDING[@]}"; do
+    IFS=$KNOB_US read -r -a _sa_f <<<"$_sa_r"
+    [ "${_sa_f[0]}" != security ] || continue
+    if standing_for "${_sa_f[0]}"; then return 0; fi
+  done
+  ST_WHY="no standing line approves: $ST_WHY"
+  return 1
+}
+
+# The lane the run's bulk ran in, from the dry-run record it wrote.
+run_lane() {  # <var> <run dir>
+  local _rl_o _rl_l _rl_v=""
+  printf -v "$1" '%s' ""
+  [ -n "$2" ] && [ "$P_PRIV" != none ] || return 1
+  root_read _rl_o "$2/dry-run" || return 1
+  while IFS= read -r _rl_l; do
+    case $_rl_l in lane=*) _rl_v=${_rl_l#lane=} ;; esac
+  done <<<"$_rl_o"
+  case $_rl_v in security | maintenance | origin:?*) ;; *) return 1 ;; esac
+  printf -v "$1" '%s' "$_rl_v"
+}
+
+standing_json_head() {  # <var>
+  local _sj=""
+  jaddsn _sj lane "$ST_LANE"
+  jaddn _sj line "$ST_LINE"
+  jaddsn _sj review_by "$ST_REVIEW"
+  jaddb _sj no_reboot "$ST_NO_REBOOT"
+  jaddb _sj no_datastore "$ST_NO_DS"
+  jaddb _sj no_held "$ST_NO_HELD"
+  printf -v "$1" '%s' "$_sj"
+}
+
+# recovery-point.sh's and reboot-chain.sh's gate.standing. The recovery
+# point takes any lane's line; the reboot, 3(b), its run's lane's, and none
+# that says no-reboot. Refusals only under --approve, as for a plan.
+standing_gate_record() {  # <approve 0|1> <standing 0|1> <run dir, or empty for the recovery point> <reboot 0|1>
+  local _sg="" _sw="" _sl
+  if [ "$2" -ne 1 ]; then
+    jadd J_GATE standing null
+    return 0
+  fi
+  if [ "$4" -eq 1 ]; then
+    if ! run_lane _sl "$3"; then
+      _sw="the lane the run's bulk ran in can't be read from $3/dry-run, so which standing line applies is unknown"
+    elif ! standing_for "$_sl"; then
+      _sw=$ST_WHY
+    elif [ "$ST_NO_REBOOT" = 1 ]; then
+      _sw="the standing approval for the $_sl lane (knob line $ST_LINE) says no-reboot: the reboot needs the owner's own approval"
+    fi
+  elif ! standing_any; then
+    _sw=$ST_WHY
+  fi
+  standing_json_head _sg
+  if [ -n "$_sw" ]; then
+    if [ "$1" -eq 1 ]; then refuse "$_sw"; fi
+    jaddb _sg covers 0
+    jadds _sg why "$_sw"
+  else
+    jaddb _sg covers 1
+    jadd _sg why null
+  fi
+  jadd J_GATE standing "{$_sg}"
 }

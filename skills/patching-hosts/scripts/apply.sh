@@ -5,7 +5,8 @@ set -euo pipefail
 usage() {
   cat <<'USAGE'
 Usage: bash apply.sh --step bulk|<held step> [--approve] [--run DIR]
-                     [--plan FILE] [--lane security|maintenance|origin:<origin>]
+                     [--plan FILE | --standing]
+                     [--lane security|maintenance|origin:<origin>]
                      [--dry-run DIR] [--offnode-sha256 HEX]...
                      [--offnode-object NAME]... [--health-within SECONDS]
                      [--config FILE] [--host NAME] [--today YYYY-MM-DD]
@@ -62,6 +63,12 @@ Options:
                            not-after, and the bulk's fresh reading is inside
                            its envelope. Without --approve it changes
                            nothing, and gate.plan says what it would decide
+  --standing               the approval is the knob's standing line for the
+                           step's lane: refused unless an unexpired one
+                           covers it, within its limits (no-reboot,
+                           no-datastore, no-held), and the selection holds
+                           only what the lane takes. gate.standing says so,
+                           with or without --approve
   --lane LANE              the bulk only: security (the default),
                            maintenance or origin:<origin>
   --run DIR                the run's directory, an absolute path. A held step
@@ -199,7 +206,7 @@ Exit codes:
 USAGE
 }
 
-step="" approve=0 run="" dryrun="" config="" host="" today="" health_within=300 lane="" planf=""
+step="" approve=0 run="" dryrun="" config="" host="" today="" health_within=300 lane="" planf="" standing=0
 attest=() objects=()
 while [ "$#" -gt 0 ]; do
   case $1 in
@@ -220,11 +227,16 @@ while [ "$#" -gt 0 ]; do
       esac
       shift 2 ;;
     --approve) approve=1; shift ;;
+    --standing) standing=1; shift ;;
     -h | --help) usage; exit 0 ;;
     *) echo "ERROR unknown argument: $1 (see --help)" >&2; exit 2 ;;
   esac
 done
 
+if [ -n "$planf" ] && [ "$standing" -eq 1 ]; then
+  echo "ERROR --plan and --standing are two forms of the owner's approval: pass one" >&2
+  exit 2
+fi
 step_re='^[a-z0-9][a-z0-9-]*$'
 sha_re='^[0-9a-f]{64}$'
 date_re='^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$'
@@ -336,11 +348,15 @@ U_Result="" U_ExecMainStartTimestamp="" U_ExecMainExitTimestamp="" U_LoadState="
 
 # The lane: the bulk names it, and each held step runs its bulk's, as the
 # dry run that bulk recorded says.
-LANE=${lane:-security} _o=""
-if [ "$step" != bulk ] && [ "$P_PRIV" != none ] && root_read _o "$run/dry-run"; then
-  while IFS= read -r _l; do
-    case $_l in lane=*) LANE=${_l#lane=} ;; esac
-  done <<<"$_o"
+LANE=${lane:-security} _o="" LANE_READ=1
+if [ "$step" != bulk ]; then
+  # Read from the run, or a standing line's lane is unknown (#673).
+  LANE_READ=0
+  if [ "$P_PRIV" != none ] && root_read _o "$run/dry-run"; then
+    while IFS= read -r _l; do
+      case $_l in lane=*) LANE=${_l#lane=} LANE_READ=1 ;; esac
+    done <<<"$_o"
+  fi
 fi
 case $LANE in security | maintenance | origin:?*) ;; *) LANE=unknown ;; esac
 
@@ -366,7 +382,7 @@ HOLD_STEPS=${HOLD_STEPS# }
 gate_host() {
   local why t
   [ "$approve" -eq 1 ] ||
-    refuse "no --approve: the owner approves each step, in the host's own session or by a plan that covers it (run.md, Approvals; references/executor.md)"
+    refuse "no --approve: the owner approves each step, in the host's own session, by a plan that covers it, or by the knob's standing line (run.md, Approvals; references/executor.md)"
   for why in ${KNOB_REPORT_ONLY_WHY[@]+"${KNOB_REPORT_ONLY_WHY[@]}"}; do
     refuse "report-only: $why"
   done
@@ -1210,6 +1226,129 @@ gate_plan() {
   fi
 }
 
+# The knob's standing approval (#673 item 4, references/executor.md): the
+# owner's declaration that a step of one lane needs no approval in the
+# session, within its limits. A held step's lane is the one its bulk ran in,
+# from the run's record; unread, nothing approves it. Its limits:
+#   no-reboot: the run's reboot must read "no": certain, due (#655) or
+#     unknown refuses;
+#   no-held: no held step, in the selection or run on its own;
+#   no-datastore: no held step that restarts a declared data store. The
+#     default groups map to their engines (postgres, redis, and docker to a
+#     Qdrant's container); a knob's own group may restart anything, so it's
+#     refused wherever a data store is declared;
+# and the selection may hold only what the lane takes, by each package's
+# class: the security lane, security (or a dry run whose origins are
+# security alone); the maintenance lane, those plus -updates and the
+# followed origins. An unread class refuses. Reported in gate.plan's shape.
+step_restarts_datastore() {  # <held step>: 0 when it may restart a declared data store
+  local _sd_k _sd_r
+  local -a _sd_f=()
+  case $1 in
+    postgres) _sd_k=postgres ;;
+    redis) _sd_k=redis ;;
+    docker) _sd_k=qdrant ;;
+    *) _sd_k="" ;;
+  esac
+  for _sd_r in ${KNOB_DATASTORE[@]+"${KNOB_DATASTORE[@]}"}; do
+    IFS=$KNOB_US read -r -a _sd_f <<<"$_sd_r"
+    if [ -z "$_sd_k" ] || [ "${_sd_f[0]}" = "$_sd_k" ]; then return 0; fi
+  done
+  return 1
+}
+
+followed_class() {  # <class>: 0 when it's third-party:<an origin the knob follows>
+  local _fc_k _fc_o
+  case $1 in third-party:*) ;; *) return 1 ;; esac
+  for _fc_k in ${KNOB_ORIGIN[@]+"${KNOB_ORIGIN[@]}"}; do
+    case $_fc_k in *"${KNOB_US}follow$KNOB_US"*)
+      _fc_o=${_fc_k%%"$KNOB_US"*}
+      if [ "${1#third-party:}" = "${_fc_o// /_}" ]; then return 0; fi ;;
+    esac
+  done
+  return 1
+}
+
+standing_held() {  # <held step>
+  if [ "$ST_NO_HELD" = 1 ]; then
+    plan_diff 0 held-step "$1" "the standing line says no-held, and the run reaches the held step $1"
+  elif [ "$ST_NO_DS" = 1 ] && step_restarts_datastore "$1"; then
+    plan_diff 0 datastore "$1" "the standing line says no-datastore, and the held step $1 may restart a declared data store"
+  fi
+}
+
+standing_envelope() {
+  local p g
+  if [ "$SPAN_READ" -ne 1 ] || [ "$SEL_READ" -ne 1 ]; then
+    plan_diff 0 unread selection "the bulk's selection, each package's class, or its reboot couldn't be read, so its standing limits can't be checked: count again with this skill's probe.sh --refresh-into DIR --dry-run-into DIR"
+    return 0
+  fi
+  for p in $DRY_SEL; do
+    sel_of "$p"
+    if [ -z "$SC" ]; then
+      plan_diff 0 unread "$p" "the dry run selects it, and its class wasn't read"
+      continue
+    fi
+    case $LANE in
+      security)
+        if [ "$SC" != security ] && [ "$DRY_SECURITY_ONLY" != 1 ]; then
+          plan_diff 0 lane-scope "$p" "$SV, class $SC, which the security lane's standing line doesn't take"
+        fi ;;
+      maintenance)
+        case $SC in
+          security | updates) ;;
+          *) followed_class "$SC" || plan_diff 0 lane-scope "$p" "$SV, class $SC, which the maintenance lane's standing line doesn't take" ;;
+        esac ;;
+    esac
+  done
+  for g in $SPAN_GROUPS; do standing_held "$g"; done
+  if [ "$ST_NO_REBOOT" = 1 ] && [ "$SPAN_RC" -ne 1 ]; then
+    if [ "$SPAN_RC" -eq 0 ]; then
+      plan_diff 0 reboot host "the standing line says no-reboot, and the run reboots: $REBOOT_WHY"
+    else
+      g=$REBOOT_WHY
+      [ -n "$g" ] || g="a map that decides it can't be read"
+      plan_diff 0 reboot host "the standing line says no-reboot, and whether the run reboots is unknown: $g"
+    fi
+  fi
+}
+
+gate_standing() {
+  local o="" w="" r
+  if [ "$standing" -ne 1 ]; then
+    jadd J_GATE standing null
+    return 0
+  fi
+  PLAN_DIFFS="" PLAN_OUTSIDE=()
+  if [ "$LANE_READ" -ne 1 ] || [ "$LANE" = unknown ]; then
+    standing_for "" || true
+    w="the lane its bulk ran in can't be read from $run/dry-run, so which standing line applies is unknown"
+  elif ! standing_for "$LANE"; then
+    w=$ST_WHY
+  fi
+  standing_json_head o
+  if [ -n "$w" ]; then
+    if [ "$approve" -eq 1 ]; then refuse "$w"; fi
+    jaddb o covers 0
+    jadds o why "$w"
+    jadd o inside null
+    jadd o differences "[]"
+    jadd J_GATE standing "{$o}"
+    return 0
+  fi
+  jaddb o covers 1
+  jadd o why null
+  if [ "$step" = bulk ]; then standing_envelope; else standing_held "$step"; fi
+  jaddb o inside "$(( ${#PLAN_OUTSIDE[@]} == 0 ))"
+  jadd o differences "[$PLAN_DIFFS]"
+  jadd J_GATE standing "{$o}"
+  if [ "$approve" -eq 1 ]; then
+    for r in ${PLAN_OUTSIDE[@]+"${PLAN_OUTSIDE[@]}"}; do
+      refuse "outside the standing approval for the $LANE lane (knob line $ST_LINE): $r"
+    done
+  fi
+}
+
 # Where the apt timers run, their unattended-upgrade takes the lock a step
 # needs: one running now, or one that starts inside the span, fails the step
 # with nothing upgraded ("Lock file is already taken", 2.9.1), after a held
@@ -1510,7 +1649,7 @@ emit() {
   jadds a lane "$LANE"
   jadds a run "$run"
   jaddb a approved "$approve"
-  plan_approval r "$approve" "$planf"
+  plan_approval r "$approve" "$planf" "$standing"
   jadd a approval "$r"
   jadds a host "$host"
   jadds a knob "$config"
@@ -1545,6 +1684,7 @@ gate_reboot
 gate_dry
 gate_step_span
 gate_plan
+gate_standing
 gate_apt
 gate_recovery
 gate_restarters

@@ -6,7 +6,8 @@ set -euo pipefail
 usage() {
   cat <<'USAGE'
 Usage: bash recovery-point.sh --retain-until YYYY-MM-DD [--approve] [--run DIR]
-                              [--plan FILE] [--personal-data NAME]... [--dump]
+                              [--plan FILE | --standing]
+                              [--personal-data NAME]... [--dump]
                               [--redis-within SECONDS] [--qdrant-within SECONDS]
                               [--rdb-within SECONDS]
                               [--config FILE] [--host NAME] [--today YYYY-MM-DD]
@@ -59,6 +60,9 @@ Options:
                            the host (references/executor.md)
   --plan FILE              a fleet executor's plan: it must cover this host
                            and not have passed its not-after
+  --standing               the approval is the knob's standing line: any
+                           unexpired one, the security lane's first, since
+                           the recovery point changes no package
   --run DIR                the run's directory, an absolute path (default:
                            /var/backups/patching-hosts-<UTC>). Pass the same
                            one to apply.sh
@@ -135,7 +139,7 @@ Exit codes:
 USAGE
 }
 
-approve=0 run="" planf="" retain="" config="" host="" today="" force_dump=0 redis_within=300 qdrant_within=1800 rdb_within=600
+approve=0 run="" planf="" standing=0 retain="" config="" host="" today="" force_dump=0 redis_within=300 qdrant_within=1800 rdb_within=600
 personal=()
 while [ "$#" -gt 0 ]; do
   case $1 in
@@ -155,11 +159,16 @@ while [ "$#" -gt 0 ]; do
       esac
       shift 2 ;;
     --approve) approve=1; shift ;;
+    --standing) standing=1; shift ;;
     --dump) force_dump=1; shift ;;
     -h | --help) usage; exit 0 ;;
     *) echo "ERROR unknown argument: $1 (see --help)" >&2; exit 2 ;;
   esac
 done
+if [ -n "$planf" ] && [ "$standing" -eq 1 ]; then
+  echo "ERROR --plan and --standing are two forms of the owner's approval: pass one" >&2
+  exit 2
+fi
 
 date_re='^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$'
 if [ -z "$retain" ]; then
@@ -268,7 +277,7 @@ gate_host() {
   local why t r db u hit pgunit
   local -a f=() dbs=()
   [ "$approve" -eq 1 ] ||
-    refuse "no --approve: the owner approves the recovery point, in the host's own session or by a plan that covers it (run.md, Approvals; references/executor.md)"
+    refuse "no --approve: the owner approves the recovery point, in the host's own session, by a plan that covers it, or by the knob's standing line (run.md, Approvals; references/executor.md)"
   for why in ${KNOB_REPORT_ONLY_WHY[@]+"${KNOB_REPORT_ONLY_WHY[@]}"}; do
     refuse "report-only: $why"
   done
@@ -689,7 +698,7 @@ emit() {
   jadds a run "$run"
   jadds a record "$run/recovery-point"
   jaddb a approved "$approve"
-  plan_approval r "$approve" "$planf"
+  plan_approval r "$approve" "$planf" "$standing"
   jadd a approval "$r"
   jadds a retain_until "$retain"
   jadds a host "$host"
@@ -711,6 +720,7 @@ emit() {
 
 gate_host
 plan_gate_record "$approve" "$planf" "$host" 0
+standing_gate_record "$approve" "$standing" "" 0
 gate_run
 gate_backup
 gate_datastores
