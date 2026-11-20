@@ -5,8 +5,9 @@ set -euo pipefail
 
 usage() {
   cat <<'USAGE'
-Usage: bash reboot-chain.sh --run DIR [--approve] [--delay SECONDS]
-                            [--expect SECONDS] [--config FILE] [--host NAME]
+Usage: bash reboot-chain.sh --run DIR [--approve] [--plan FILE]
+                            [--delay SECONDS] [--expect SECONDS]
+                            [--config FILE] [--host NAME]
                             [--today YYYY-MM-DD]
 
 Writes the reboot chain in references/reboot-and-record.md section 5 into
@@ -46,8 +47,11 @@ After a stop, nothing aborts it: the host comes back with what it stopped.
 
 Options:
   --run DIR          the run's directory, an absolute path (required)
-  --approve          the owner's approval of the reboot, 3(b), given in the
-                     host's own session
+  --approve          the owner's approval of the reboot, 3(b): given in the
+                     host's own session, or, with --plan, by a plan
+                     approved off the host (references/executor.md)
+  --plan FILE        a fleet executor's plan: it must cover this host, not
+                     have passed its not-after, and say reboot yes
   --delay SECONDS    the seconds from reboot-chain.sh's start to the chain's
                      (default 120). The gate's own time comes out of it, so
                      the chain starts where its span was gated from
@@ -95,14 +99,14 @@ Exit codes:
 USAGE
 }
 
-approve=0 run="" config="" host="" today="" delay=120 expect=600
+approve=0 run="" planf="" config="" host="" today="" delay=120 expect=600
 # The chain's gate reads a busy host again each second for up to this long
 # before it aborts (#646): co-status's chain fired as a 60 s timer's 3 s
 # sweep began, aborted, and told no one. Its span holds the wait.
 CHAIN_WAIT=60
 while [ "$#" -gt 0 ]; do
   case $1 in
-    --run | --delay | --expect | --config | --host | --today)
+    --run | --delay | --expect | --config | --host | --today | --plan)
       [ "$#" -ge 2 ] || { echo "ERROR $1 needs a value" >&2; exit 2; }
       case $1 in
         --run) run=$2 ;;
@@ -111,6 +115,7 @@ while [ "$#" -gt 0 ]; do
         --config) config=$2 ;;
         --host) host=$2 ;;
         --today) today=$2 ;;
+        --plan) planf=$2 ;;
       esac
       shift 2 ;;
     --approve) approve=1; shift ;;
@@ -127,7 +132,7 @@ case $run in
   /*) ;;
   *) echo "ERROR --run takes an absolute path" >&2; exit 2 ;;
 esac
-case $run$config in *[[:cntrl:]]*)
+case $run$config$planf in *[[:cntrl:]]*)
   echo "ERROR an argument holds a control character" >&2
   exit 2 ;;
 esac
@@ -151,7 +156,7 @@ while [ -L "$_self" ] && [ "$_n" -lt 10 ]; do
   _n=$((_n + 1))
 done
 _libdir="$(cd "$(dirname "$_self")" 2>/dev/null && pwd -P)" || _libdir=""
-for _lib in _knob-lib.sh _probe-lib.sh _gate-lib.sh probe.sh; do
+for _lib in _knob-lib.sh _probe-lib.sh _gate-lib.sh _plan-lib.sh probe.sh; do
   if [ -z "$_libdir" ] || [ ! -f "$_libdir/$_lib" ]; then
     echo "ERROR $_lib not found next to $_self" >&2
     exit 2
@@ -164,6 +169,8 @@ done
 ME=reboot-chain
 # shellcheck source=_gate-lib.sh
 . "$_libdir/_gate-lib.sh"
+# shellcheck source=_plan-lib.sh
+. "$_libdir/_plan-lib.sh"
 
 # Every line parsed below is C-locale output, and so is the JSON builder's
 # '?' for a byte that isn't printable ASCII.
@@ -202,7 +209,7 @@ gate_host() {
   local why t r
   local -a f=()
   [ "$approve" -eq 1 ] ||
-    refuse "no --approve: the owner approves the reboot, 3(b), in the host's own session. The chain is below, every command it would run"
+    refuse "no --approve: the owner approves the reboot, 3(b), in the host's own session or by a plan that covers it (references/executor.md). The chain is below, every command it would run"
   for why in ${KNOB_REPORT_ONLY_WHY[@]+"${KNOB_REPORT_ONLY_WHY[@]}"}; do
     refuse "report-only: $why"
   done
@@ -373,6 +380,8 @@ emit() {
   jaddn a delay_seconds "$delay"
   jaddn a gate_wait_seconds "$CHAIN_WAIT"
   jaddb a approved "$approve"
+  plan_approval r "$approve" "$planf"
+  jadd a approval "$r"
   jadds a host "$host"
   jadds a knob "$config"
   jadd o reboot_chain "{$a}"
@@ -618,6 +627,7 @@ write_chain() {
 }
 
 gate_host
+plan_gate_record "$approve" "$planf" "$host" 1
 gate_run
 # The chain's gate may wait CHAIN_WAIT before its stops (#646).
 gate_span "$((delay + CHAIN_WAIT + expect))"

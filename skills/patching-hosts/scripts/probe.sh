@@ -1972,6 +1972,31 @@ pk_class_key() {  # <var> <package>: by_class's key for it, or empty
   printf -v "$1" '%s' "$_pk_k"
 }
 
+# A package's class as the simulation read it (class_of's), or empty.
+PK_C=""
+pk_class() {  # <package>: PK_C := its class
+  local _pc_i
+  PK_C=""
+  for _pc_i in ${PK_NAME[@]+"${!PK_NAME[@]}"}; do
+    if [ "${PK_NAME[$_pc_i]}" = "$1" ]; then
+      PK_C=${PK_CLASS[$_pc_i]}
+      return 0
+    fi
+  done
+}
+
+# The candidate version the simulation would install, or empty.
+sim_candidate() {  # <var> <package>
+  local _sc_k _sc_p _sc_r _sc_v=""
+  while read -r _sc_k _sc_p _sc_r; do
+    if [ "$_sc_k" != Inst ] || [ "$_sc_p" != "$2" ]; then continue; fi
+    case $_sc_r in "["*) _sc_r=${_sc_r#*] } ;; esac
+    case $_sc_r in "("*) _sc_v=${_sc_r#(} _sc_v=${_sc_v%% *} ;; esac
+    break
+  done <<<"$SIM_DIST_OUT"
+  printf -v "$1" '%s' "$_sc_v"
+}
+
 class_of() {  # <var> <origins, ", "-separated>
   local _c_o _c_rest=$2 _c_origin _c_archive _c_sec=0 _c_esm=0 _c_upd=0 _c_ubu=0 _c_third=""
   while [ -n "$_c_rest" ]; do
@@ -3081,6 +3106,17 @@ read_dry_run() {
     if [ "$left_read" -eq 1 ]; then printf 'origin_left=%s\n' "${oleft# }"; fi
     printf 'held_versions=%s\n' "$hv"
     if [ "$sel" -eq 1 ]; then printf 'bulk_takes=%s\nheld_steps=%s\n' "$BS_TAKE" "$BS_STEPS"; fi
+    # Each selected package's candidate and class, as the simulation reads
+    # them, for a plan's envelope (#673): a package the simulation doesn't
+    # list is left out, and apply.sh reads it as unknown.
+    if [ "$sel" -eq 1 ] && [ "$SIM_OK" -eq 1 ]; then
+      printf 'select_read=1\n'
+      for p in ${words[@]+"${words[@]}"}; do
+        sim_candidate w "$p"
+        pk_class "$p"
+        if [ -n "$w" ] && [ -n "$PK_C" ]; then printf 'select=%s %s %s\n' "$p" "$w" "$PK_C"; fi
+      done
+    fi
     # Whether its lists were fresh, which apply.sh checks in every lane (#629).
     printf 'lists_refreshed=%s\nlists_age_hours=%s\n' "$REFRESHED" "$lage"
   } >"$dryrun/summary"
