@@ -80,8 +80,10 @@ gh api "repos/{owner}/{repo}/statuses/$(git rev-parse HEAD)" \
 - id: attest
   env: { GH_TOKEN: "${{ github.token }}", HEAD: "${{ github.event.pull_request.head.sha }}" }
   run: |
-    n=$(gh api "repos/${{ github.repository }}/commits/$HEAD/statuses" \
-          --jq '[.[] | select(.context == "gate/local" and .state == "success")] | length')
+    # The combined status keeps each context's latest state; /statuses lists
+    # every status ever posted, so a later failure would still count as yes.
+    n=$(gh api "repos/${{ github.repository }}/commits/$HEAD/status" \
+          --jq '[.statuses[] | select(.context == "gate/local" and .state == "success")] | length')
     echo "attested=$([ "$n" -gt 0 ] && echo yes || echo no)" >>"$GITHUB_OUTPUT"
 - name: pytest
   if: steps.attest.outputs.attested != 'yes' || github.event.pull_request.user.type == 'Bot'
