@@ -258,6 +258,34 @@ def test_671_a_lines_subject_is_read_after_the_decode(line, subjects):
     assert ee.line_subjects(line, REPO) == ("item", subjects)
 
 
+@pytest.mark.parametrize(
+    "line",
+    [
+        "&nbsp;&nbsp;- [ ] #12 sub",
+        "&#45; [ ] #12 old",
+        "- [ ]&#32;#12 a space an entity spells",
+        "- [ ] &nbsp;#12 after a second space",
+        "&#45; #12 a bullet an entity spells",
+        "| &nbsp;#12 | a cell |",
+        "&#124; #12 | a pipe an entity spells |",
+    ],
+    ids=[
+        "nbsp-indent",
+        "entity-marker",
+        "entity-space-after-the-box",
+        "nbsp-before-the-ref",
+        "entity-bullet",
+        "nbsp-in-a-cell",
+        "entity-pipe",
+    ],
+)
+def test_cr2414_a_lines_marker_box_and_pipe_are_read_as_written(line):
+    """CR 2414: the lead was matched on the decoded line, so an entity acted
+    as markup. GitHub renders the first two as paragraphs, and at the base
+    none of these led anything. Only what follows the marker is decoded."""
+    assert ee.line_subjects(line, REPO) is None
+
+
 # ---------------------------------------------------------------- the lint
 
 
@@ -329,6 +357,38 @@ def test_671_a_scans_new_issue_mentioned_only_as_an_entity_isnt_mentioned(adopte
     ops = [{"op": "log", "text": "{today}: #12 &#183; verified."}]
     res = adopted.edit(REPO, EPIC, ops, "--scan", str(report))
     assert res.returncode == 3 and "doesn't mention: #183" in res.stderr
+
+
+@pytest.mark.parametrize(
+    "line", ["&#45; [ ] #12 old", "&nbsp;&nbsp;- [ ] #12 sub"], ids=["marker", "indent"]
+)
+def test_cr2414_a_line_an_entity_makes_look_like_an_item_isnt_a_second_lead(
+    adopted, line
+):
+    """With #12's real item beside it, tick was refused as ambiguous."""
+    add = [{"op": "add-line", "section": "Log", "line": line}]
+    assert adopted.edit(REPO, EPIC, add).returncode == 0
+    res = adopted.edit(REPO, EPIC, [{"op": "tick", "ref": "#12"}])
+    assert res.returncode == 0, res.stderr
+    assert "- [x] #12 second thing" in adopted.body(REPO, EPIC)
+    assert line in adopted.body(REPO, EPIC)
+
+
+@pytest.mark.parametrize(
+    "line",
+    ["&#45; [ ] #13 old", "- [ ]&#32;#13 entity space"],
+    ids=["entity-marker", "entity-space-after-the-box"],
+)
+def test_cr2414_such_a_line_alone_is_a_refusal_not_a_traceback(adopted, line):
+    """The item was found on the decoded line and its box set on the raw one,
+    where there was none: an AssertionError, exit 1."""
+    adopted.issue(REPO, 13)
+    add = [{"op": "add-line", "section": "Log", "line": line}]
+    assert adopted.edit(REPO, EPIC, add).returncode == 0
+    res = adopted.edit(REPO, EPIC, [{"op": "tick", "ref": "#13"}])
+    assert res.returncode == 3, res.stderr
+    assert "no checklist item leads with it" in res.stderr
+    assert "Traceback" not in res.stderr
 
 
 # ---------------------------------------------------------------- scan.sh

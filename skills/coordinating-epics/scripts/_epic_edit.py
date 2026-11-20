@@ -258,9 +258,15 @@ REF_RE = re.compile(REF_PAT)
 # nothing (#415), so a code-led line is no item, bullet or row (#403).
 MARKUP = r"(?:~~|\*\*|\[)*"
 LEAD = MARKUP + r"(?:[0-9]{1,9}[.)]\s+)?" + MARKUP
-ITEM_RE = re.compile(r"^\s*" + MARKER + r" \[[ xX]\] " + LEAD + REF_PAT)
-BULLET_RE = re.compile(r"^\s*[-*+] " + LEAD + REF_PAT)
-ROW_RE = re.compile(r"^\|\s*" + LEAD + REF_PAT)
+# A lead is a line's structure, then its ref. The structure is read on the
+# line as written and only what follows is decoded: a marker, a box or a pipe
+# that an entity spells is text on GitHub, never markup (CR 2414).
+LEAD_STARTS = (
+    ("item", re.compile(r"^\s*" + MARKER + r" \[[ xX]\] ")),
+    ("bullet", re.compile(r"^\s*[-*+] ")),
+    ("row", re.compile(r"^\|\s*")),
+)
+LEAD_REF_RE = re.compile(LEAD + REF_PAT)
 UNESCAPED_PIPE_RE = re.compile(r"(?<!\\)\|")
 # A closing #-sequence needs whitespace before it, as in CommonMark, so
 # "## Notes on C#" keeps its "#" (CR 255).
@@ -686,7 +692,8 @@ def ref_text(line: str, entities: bool = True) -> str:
     text reads as plain text. A bare or <angled> issue URL is its ref (CR 288).
 
     Entities are decoded last (#671). A decoded character is text, never
-    markup: "&#91;#57&#93;(url)" makes no link, and #57 is linked. A URL is
+    markup: "&#91;#57&#93;(url)" makes no link, and #57 is linked. For the
+    same reason line_subjects reads a line's marker before it decodes. A URL is
     read as written, since GitHub leaves an entity in a bare one alone. It
     does decode one inside a link target or an <angled> URL, which this
     doesn't: an under-read, accepted. entities=False is for text GitHub
@@ -710,9 +717,10 @@ def ref_text(line: str, entities: bool = True) -> str:
 
 # Each ref after a line's lead that continues its subject (#662): a "+", ",",
 # "&" or "and", with markup closing the ref before and opening the next, as in
-# "**#46** + **#47**". Text of any other kind ends the run. The line is read
-# through ref_text, so an entity is already its character: "&amp;" is the "&"
-# joiner, and "&#183;" is a "·", which joins nothing (CR 2314, #671).
+# "**#46** + **#47**". Text of any other kind ends the run. What follows a
+# line's marker is decoded first, so an entity is already its character:
+# "&amp;" is the "&" joiner, and "&#183;" is a "·", which joins nothing
+# (CR 2314, #671).
 SUBJECT_NEXT_RE = re.compile(
     r"(?:~~|\*\*|\])*\s*(?:\+|,|&|\band\b)\s*" + MARKUP + REF_PAT
 )
@@ -725,13 +733,17 @@ def line_subjects(line: str, host: str) -> tuple[str, list[str]] | None:
     "- [x] #46 + #47 title" has two, and refs later in the line are mentions
     (#662, decided 2026-11-15). The first is the lead every op finds it by.
     """
-    line = ref_text(line)
-    for kind, rx in (("item", ITEM_RE), ("bullet", BULLET_RE), ("row", ROW_RE)):
-        m = rx.match(line)
+    line = ref_text(line, entities=False)
+    for kind, start in LEAD_STARTS:
+        s = start.match(line)
+        if not s:
+            continue
+        rest = decode_entities(line[s.end() :])
+        m = LEAD_REF_RE.match(rest)
         if m:
             out = [key(m.group("repo"), m.group("num"), host)]
             pos = m.end()
-            while n := SUBJECT_NEXT_RE.match(line, pos):
+            while n := SUBJECT_NEXT_RE.match(rest, pos):
                 out.append(key(n.group("repo"), n.group("num"), host))
                 pos = n.end()
             # "#46 + #47 + #46" names #46 once (CR 2317).
@@ -1382,7 +1394,8 @@ def apply_ops(
                 if not text or "\n" in text:
                     raise Refused("note text must be one non-empty line")
                 head, close = lines[i].rstrip(), ""
-                row = bool(ROW_RE.match(ref_text(head)))
+                # The line was found by its lead, so it has one (CR 2414).
+                row = line_ref(head, host)[0] == "row"
                 if row:
                     # Inside the last cell: GFM drops a cell past the header's
                     # count, so text after the closing pipe never shows (CR 286).
