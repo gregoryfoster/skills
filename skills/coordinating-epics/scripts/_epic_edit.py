@@ -59,11 +59,18 @@ operations (a JSON array, from --ops FILE or --ops - for stdin):
   {"op": "add-line", "line": "- [ ] #44 ...", "after_ref": "#43"}
   {"op": "add-line", "line": "- [ ] #44 ...", "section": "Tier 2"}
                                               insert, once; refuses a second
-                                              line for a ref that has one
+                                              line for a ref that has one.
+                                              section is a heading, or the
+                                              start of exactly one, up to a
+                                              word's end: "Tier 2" for "Tier 2
+                                              — bugs". Every other op takes a
+                                              heading in full
   {"op": "header", "field": "Last check-in", "value": "{checked}"}
                                               set a "- **Field:** value" line
   {"op": "log", "text": "{today}: #12 closed. No new issues. Next: #13."}
-                                              append "- text" to the Log section
+                                              append "- text" to the Log section;
+                                              a text's own leading "- " is taken
+                                              off, so it isn't doubled
   {"op": "log-comment", "text": "{today}: #12 closed. Next: #13."}
                                               post the text as a comment on the
                                               epic, first line "**Check-in log,
@@ -738,6 +745,40 @@ def line_ref(line: str, host: str) -> tuple[str, str] | None:
     return (ls[0], ls[1][0]) if ls else None
 
 
+def show_key(ref_key: str, host: str) -> str:
+    """A key as its ref is written: "#12" in this repo, "owner/repo#12" in another."""
+    mine = host.lower() + "#"
+    return "#" + ref_key[len(mine) :] if ref_key.startswith(mine) else ref_key
+
+
+def unmarked_lead(line: str, host: str) -> str | None:
+    """The key a line starts with while leading nothing: "#12 title" or
+    "[ ] #12 title", a ref with no item, bullet or row to hold it
+    (CannObserv/processor#84 F9, #670)."""
+    if line_ref(line, host):
+        return None
+    lr = line_ref("- " + line.lstrip(), host)
+    return lr[1] if lr else None
+
+
+def why_no_lead(line: str, ref: str, host: str) -> str:
+    """What a line that doesn't lead with ref is missing, for set-line's refusal."""
+    lr = line_ref(line, host)
+    if lr:
+        return f"it leads with {show_key(lr[1], host)}"
+    starts = unmarked_lead(line, host)
+    if starts:
+        return (
+            f"it starts with {show_key(starts, host)}, but isn't a checklist item,"
+            f' a bullet or a table row. Start it "- [ ] {ref}", "- [x] {ref}",'
+            f' "- {ref}" or "| {ref}"'
+        )
+    return (
+        "its first token isn't a ref. A ref leads when it comes first after the"
+        " marker, with at most an ordinal and markup before it, and outside code"
+    )
+
+
 def ticked_subjects(
     lines: list[str], host: str, open_keys: set[str]
 ) -> tuple[list[dict], list[str]]:
@@ -831,13 +872,50 @@ def section_level(lines: list[str]) -> int:
     return min((lvl for _, lvl, _ in section_headings(lines)), default=2)
 
 
+def heading_by_prefix(lines: list[str], heading: str) -> str | None:
+    """The one heading that starts with `heading` and goes on past a word
+    boundary, when no heading is `heading` itself: "Tier 2" finds
+    "Tier 2 — bugs", never "Tier 20", and "Log" never finds "Logistics".
+
+    For add-line's section alone (CannObserv/processor#84 F10, #670): there a
+    wrong guess adds one line. In section_span it would let the log op write
+    into another section, and replace-section replace one the op didn't name.
+    """
+    want = heading.strip().lower()
+    texts = [t for _, _, t in headings(lines)]
+    if not want or any(t.lower() == want for t in texts):
+        return None
+    found = [
+        t
+        for t in texts
+        if t.lower().startswith(want)
+        and len(t) > len(want)
+        and not t[len(want)].isalnum()
+    ]
+    return found[0] if len(found) == 1 else None
+
+
 def section_span(lines: list[str], heading: str) -> tuple[int, int]:
     """(index of the heading line, index one past the section's last line)."""
     hs = headings(lines)
     want = heading.strip().lower()
     found = [(i, lvl) for i, lvl, text in hs if text.lower() == want]
     if not found:
-        raise Refused(f"no section headed {heading!r}")
+        # The refusal names what there is to choose from (F10): the headings
+        # that start with the text given, or with none, all of them.
+        texts = [t for _, _, t in hs]
+        near = [t for t in texts if want and t.lower().startswith(want)]
+        if near:
+            hint = ". Headings that start with it: "
+        elif texts:
+            hint = ". The headings are: "
+        else:
+            hint = "; the body has no headings"
+        raise Refused(
+            f"no section headed {heading!r}"
+            + hint
+            + ", ".join(repr(t) for t in near or texts)
+        )
     if len(found) > 1:
         raise Refused(f"{len(found)} sections headed {heading!r}; ambiguous")
     start, level = found[0]
@@ -1336,7 +1414,10 @@ def apply_ops(
                     raise Refused("set-line takes one line")
                 lr = line_ref(new, host)
                 if not lr or lr[1] != ref_key:
-                    raise Refused(f"the new line doesn't lead with {op['ref']}")
+                    raise Refused(
+                        f"the new line doesn't lead with {op['ref']}: "
+                        + why_no_lead(new, op["ref"].strip(), host)
+                    )
                 if new == lines[i]:
                     notes.append(f"{where}: {op['ref']}'s line already reads so")
                     continue
@@ -1363,13 +1444,29 @@ def apply_ops(
                         raise Refused(
                             f"{lr[1]} already has a line; use set-line or note"
                         )
+                elif starts := unmarked_lead(new, host):
+                    # Added as written, as it always was: a note, not a refusal.
+                    notes.append(
+                        f"{where}: the line starts with {show_key(starts, host)} but"
+                        " isn't a checklist item, a bullet or a table row, so it is"
+                        " added as text, and no op will find it by that ref"
+                    )
                 if "after_ref" in op:
                     anchor = find_ref_line(
                         lines, parse_ref(op["after_ref"], host), host
                     )
                     pos = after_block(lines, anchor)
                 elif "section" in op:
-                    start, end = section_span(lines, op["section"])
+                    section = op["section"]
+                    took = heading_by_prefix(lines, section)
+                    if took:
+                        notes.append(
+                            f"{where}: no section is headed {section!r}; the line"
+                            f" goes under {took!r}, the one heading that starts"
+                            " with it"
+                        )
+                        section = took
+                    start, end = section_span(lines, section)
                     pos = section_tail(lines, start, end)
                 else:
                     raise Refused("add-line needs after_ref or section")
@@ -1419,6 +1516,10 @@ def apply_ops(
                 lines[hits[0]] = new
             elif kind == "log":
                 text = inject(op["text"], now, scan).strip()
+                # The op writes the "- " itself, so a text that brings its own,
+                # as a line copied from the Log does, doesn't get a second
+                # (CannObserv/processor#84 F8, #670). One is taken, no more.
+                text = re.sub(r"^-\s+", "", text, count=1)
                 if not text or "\n" in text:
                     raise Refused("log text must be one non-empty line")
                 start, end = section_span(lines, "Log")

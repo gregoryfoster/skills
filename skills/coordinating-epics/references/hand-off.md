@@ -18,7 +18,7 @@ Run these against `origin/main` without switching branches: `git fetch`, then `g
   - frozen contracts;
   - other repos' release state;
   - credentials or peers that exist only elsewhere.
-- **Probe the behaviour the design depends on.** A one-line check in the venv decided one design (cannobserv 25).
+- **Probe the behaviour the design depends on.** A one-line check in the venv decided one design (cannobserv 25). For a lock or config move, apply the issue's recipe to a throwaway copy of `origin/main`, run the suites that guard it, and discard the copy. That made an upstream `[stated]` claim `[measured]`, and named two test hazards the brief lacked (processor 11-16 F6).
 - **Say what an upstream release changes from the released artifact, not its CHANGELOG or a report.** Diff the package over what the host imports, and read every changed file. A CHANGELOG misdescribed three pin moves in one run (replicator 10-28; replicator 11-16 B2).
 - **Search the cohort for an existing implementation** of the same mechanism, and brief "port this" when one exists. Name the precondition that made it safe there, and whether it holds here (private-backlog 105, 146; processor F121).
 - **Search upstream for a known issue** before designing a workaround (broker 115).
@@ -74,7 +74,7 @@ The report names the final SHA. Pause before shipping. Never close the epic, eve
 - **A child that writes production data:** name the write gate, and how narrow the write must be. Send one field, not a read-modify-write of the whole record. Check each derived value against its back-link. Stop for the operator before writing (private-cli 45).
 - **"This command breaks prod":** put the safe reproduction and the restore command at the top (private-backlog 135).
 - **Destructive or irreversible steps:** name each one as "needs your approval in the thread", so the stop is expected (broker 138). A Verify step that needs a production Job or a production database read names the operator's consent as its precondition (private-release-move 6).
-- **A doc correction:** list every doc found by searching the claim's terms, not its figure (broker 154).
+- **A doc correction:** list every doc found by searching the claim's terms, not its figure (broker 154). Match each term with and without markup: a grep for the bare term missed a doc that wrapped it in backticks (processor 11-16 F3).
 - **An item that changes how code reaches production:** flag the deploy recipe steps it affects. Take the new recipe from the merged docs, and treat its first use as its test (processor F95, F97).
 - **A decision that replaces a reference implementation:** require an equivalence check while both still exist (processor F126, F132).
 - **Hardening or security:** include a measured host survey. The issue's threat model is a hypothesis to check (processor F93).
