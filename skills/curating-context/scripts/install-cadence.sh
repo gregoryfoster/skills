@@ -1474,7 +1474,45 @@ pr_read_step() {
           fi
           echo "merge mode: $M"
           echo "MERGE_MODE=$M" >>"$GITHUB_ENV"
+
 YAML
+}
+
+# Which measurement PR the branch belongs to (#683): written once here and
+# rendered into the take-in step and the commit step, indented to each. Both
+# decide, because a PR can merge between them; two copies could drift into
+# choosing different PRs. The caller sets BRANCH and LOST (what a failure
+# costs). Blank lines stay unindented: trailing spaces in a YAML block.
+pr_discover() {
+  sed "/./s/^/$1/" <<'SH'
+# >>> which measurement PR (#683)
+# Every PR from the branch, any state, and only this repo's: --head matches
+# a branch name, a fork's included. gh failing is not "none". KEEP when the
+# branch carries rows no finished PR took: an open PR's, or a run's whose PR
+# was never opened. An open PR always wins: one closed and another opened
+# from the same head leaves a finished PR at the tip of an open one's rows.
+PR_BRANCH=context/weekly-measurement
+PRS=$(gh pr list --head "$PR_BRANCH" --base "$BRANCH" --state all --json number,state,headRefOid,isCrossRepository --jq '.[] | select(.isCrossRepository | not) | "\(.number) \(.state) \(.headRefOid)"') || {
+  echo "::error::gh pr list failed, so which measurement PR is open is unknown — $LOST."
+  exit 1; }
+REMOTE=$(git ls-remote origin "refs/heads/$PR_BRANCH") || {
+  echo "::error::could not read $PR_BRANCH from origin — $LOST."
+  exit 1; }
+TIP=${REMOTE%%[[:space:]]*}
+OPEN='' ENDED='' KEEP=''
+while read -r N S OID; do
+  [ -n "$N" ] || continue
+  if [ "$S" = OPEN ]; then
+    OPEN=${OPEN:-$N}
+  elif [ -n "$TIP" ] && [ "$OID" = "$TIP" ]; then
+    ENDED=$N
+  fi
+done <<<"$PRS"
+if [ -n "$TIP" ] && { [ -n "$OPEN" ] || [ -z "$ENDED" ]; }; then
+  KEEP=1
+fi
+# <<< which measurement PR
+SH
 }
 
 pr_take_step() {
@@ -1496,24 +1534,11 @@ pr_take_step() {
         run: |
           [ "${MERGE_MODE:-}" = pr ] || { echo "merge mode ${MERGE_MODE:-unset}: no PR's rows to take in"; exit 0; }
           BRANCH="${GITHUB_REF_NAME:-$(git branch --show-current)}"
-          PR_BRANCH=context/weekly-measurement
-          PRS=$(gh pr list --head "$PR_BRANCH" --base "$BRANCH" --state all --json number,state,headRefOid,isCrossRepository --jq '.[] | select(.isCrossRepository | not) | "\(.number) \(.state) \(.headRefOid)"') || {
-            echo "::error::gh pr list failed, so which measurement PR is open is unknown — nothing was measured."
-            exit 1; }
-          REMOTE=$(git ls-remote origin "refs/heads/$PR_BRANCH") || {
-            echo "::error::could not read $PR_BRANCH from origin — nothing was measured."
-            exit 1; }
-          TIP=${REMOTE%%[[:space:]]*}
-          OPEN='' ENDED=''
-          while read -r N S OID; do
-            [ -n "$N" ] || continue
-            if [ "$S" = OPEN ]; then
-              OPEN=${OPEN:-$N}
-            elif [ -n "$TIP" ] && [ "$OID" = "$TIP" ]; then
-              ENDED=$N
-            fi
-          done <<<"$PRS"
-          if [ -n "$TIP" ] && { [ -n "$OPEN" ] || [ -z "$ENDED" ]; }; then
+          LOST="nothing was measured"
+YAML
+  pr_discover "          "
+  cat <<'YAML'
+          if [ -n "$KEEP" ]; then
             # The commit step sets these too; the merge needs them now.
             git config user.name  "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -1547,30 +1572,12 @@ pr_push_block() {
           case "${MERGE_MODE:-}" in
             direct) ;;
             pr)
-              PR_BRANCH=context/weekly-measurement
+              LOST="the row was not pushed"
               ROW=$(git rev-parse HEAD)
-              # Every PR from the branch, any state, and only this repo's:
-              # --head matches a branch name, a fork's included. gh failing
-              # is not "none".
-              PRS=$(gh pr list --head "$PR_BRANCH" --base "$BRANCH" --state all --json number,state,headRefOid,isCrossRepository --jq '.[] | select(.isCrossRepository | not) | "\(.number) \(.state) \(.headRefOid)"') || {
-                echo "::error::gh pr list failed, so which measurement PR is open is unknown — the row was not pushed."
-                exit 1; }
-              REMOTE=$(git ls-remote origin "refs/heads/$PR_BRANCH") || {
-                echo "::error::could not read $PR_BRANCH from origin — the row was not pushed."
-                exit 1; }
-              TIP=${REMOTE%%[[:space:]]*}
-              OPEN='' ENDED=''
-              while read -r N S OID; do
-                [ -n "$N" ] || continue
-                if [ "$S" = OPEN ]; then
-                  OPEN=${OPEN:-$N}
-                elif [ -n "$TIP" ] && [ "$OID" = "$TIP" ]; then
-                  ENDED=$N
-                fi
-              done <<<"$PRS"
-              # An open PR always wins: one closed and another opened from the
-              # same head leaves a finished PR at the tip of an open one's rows.
-              if [ -n "$TIP" ] && { [ -n "$OPEN" ] || [ -z "$ENDED" ]; }; then
+YAML
+  pr_discover "              "
+  cat <<'YAML'
+              if [ -n "$KEEP" ]; then
                 # The branch carries rows no finished PR took: an open PR's, or
                 # a run's whose PR was never opened. Merge the row INTO it, so
                 # those rows stay first and in order and $BRANCH comes in with
