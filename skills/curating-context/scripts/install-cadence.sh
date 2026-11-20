@@ -68,6 +68,12 @@ Options:
                    keeps the installed schedule too. Still needs to be inside
                    a git repo: a schedule it doesn't keep is derived from the
                    repo identity.
+  --merge-mode M   Render for M, `pr` or `direct`, instead of the mode the
+                   primary checkout's .skills/merge_mode reads (#674). For
+                   the branch that changes the knob, so it carries its own
+                   re-render: install, --print and --check alike. The knob
+                   is still read, and named on stderr (in --check, on the
+                   merge mode line) when it disagrees.
   -h, --help       Show this help and exit 0.
 
 Merge mode (#560):
@@ -78,7 +84,10 @@ Merge mode (#560):
   push to context/weekly-measurement that opens or updates one PR instead of
   pushing to the default branch. Present but unusable refuses
   (exit 5) before anything is written. --check reports a knob the installed
-  workflow does not match. Design: references/cadence.md.
+  workflow does not match. --merge-mode overrides the knob for the render
+  and for that comparison, and is never refused for an unusable knob: the
+  flag names the mode, so nothing is read from it. Design:
+  references/cadence.md.
 
 What it does:
   Ensures .gitattributes carries `<ledger> merge=union`.
@@ -141,6 +150,7 @@ WF_PATH=".github/workflows/context-cadence.yml"
 LEDGER=".skills/context-metrics.jsonl"
 LEDGER_SET=0
 MODE="install"
+MERGE_MODE_ARG=""   # --merge-mode, when given: pr | direct (#674)
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -150,6 +160,15 @@ while [ $# -gt 0 ]; do
     --check) MODE="check"; shift ;;
     --uninstall) MODE="uninstall"; shift ;;
     --print) MODE="print"; shift ;;
+    --merge-mode)
+      # Checked here, not left to the render: a typo must not fall through
+      # to the knob's mode, which is the render the flag exists to replace.
+      [ $# -ge 2 ] || { echo "ERROR --merge-mode needs a mode, pr or direct" >&2; usage >&2; exit 1; }
+      case "$2" in
+        pr | direct) MERGE_MODE_ARG="$2" ;;
+        *) echo "ERROR --merge-mode takes pr or direct, not '$2'" >&2; usage >&2; exit 1 ;;
+      esac
+      shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "ERROR unknown argument: $1" >&2; usage >&2; exit 1 ;;
   esac
@@ -458,6 +477,25 @@ read_merge_mode() {
 read_merge_mode
 RENDER_MODE="direct"
 [ "$KNOB_MODE" != "pr" ] || RENDER_MODE="pr"
+# --merge-mode (#674): the branch that flips the knob, in a linked worktree,
+# reads the primary's knob, the old mode, and rendered that unchanged; its
+# re-render had to wait for a second PR. The flag names the mode instead.
+# The primary stays the only knob this reads (#612): the flag replaces what
+# renders, never where the knob is read from, and the knob is still reported
+# beside it. KNOB_READS words the knob for those reports.
+case "$KNOB_MODE" in
+  absent) KNOB_READS="absent (direct)" ;;
+  unusable) KNOB_READS="unusable: $KNOB_ERR" ;;
+  *) KNOB_READS="$KNOB_MODE" ;;
+esac
+KNOB_AGREES=1
+if [ -n "$MERGE_MODE_ARG" ]; then
+  RENDER_MODE="$MERGE_MODE_ARG"
+  case "$KNOB_MODE:$MERGE_MODE_ARG" in
+    absent:direct | direct:direct | pr:pr) ;;
+    *) KNOB_AGREES=0 ;;
+  esac
+fi
 
 # Which shape is installed, read back like the ledger and the pin: the pr
 # render is the only one with this step.
@@ -808,8 +846,11 @@ if [ "$MODE" = "check" ]; then
     [ "$LEDGER_SET" -eq 0 ] || rr_args+=(--ledger "$LEDGER")
     rr_cron="$CRON_ARG"
     [ -z "$rr_cron" ] || rr_args+=(--cron "$rr_cron")
+    [ -z "$MERGE_MODE_ARG" ] || rr_args+=(--merge-mode "$MERGE_MODE_ARG")
     rr_rc=0
-    rr_out="$(bash "${BASH_SOURCE[0]}" "${rr_args[@]}")" || rr_rc=$?
+    # INSTALL_CADENCE_QUIET_FLAG: the merge mode line below says what the
+    # --print's disagreement note would, so the note isn't printed twice.
+    rr_out="$(INSTALL_CADENCE_QUIET_FLAG=1 bash "${BASH_SOURCE[0]}" "${rr_args[@]}")" || rr_rc=$?
     if [ "$rr_rc" -ne 0 ]; then
       echo "re-render:          unknown — install-cadence.sh --print exited $rr_rc,"
       echo "                    so what a re-render writes can't be compared."
@@ -829,6 +870,7 @@ if [ "$MODE" = "check" ]; then
         derived) rr_cmd="$rr_cmd --cron derived" ;;
         *) rr_cmd="$rr_cmd --cron $rr_q$rr_cron$rr_q" ;;
       esac
+      [ -z "$MERGE_MODE_ARG" ] || rr_cmd="$rr_cmd --merge-mode $MERGE_MODE_ARG"
       echo "re-render:          behind — a re-render rewrites $rr_n line(s) of the"
       echo "                    installed workflow. Run $rr_cmd"
       echo "                    and review the diff before committing it."
@@ -839,6 +881,37 @@ if [ "$MODE" = "check" ]; then
   fi
   # Printed only when there is something to say, so a repo with the knob
   # absent or `direct` reads exactly the report it always did (#560).
+  # With --merge-mode (#674) the installed workflow is judged against the
+  # flag, as the render was, and the knob the primary reads is named under
+  # it: on the knob-flip branch they differ, and that is the point.
+  if [ -n "$MERGE_MODE_ARG" ]; then
+    case "$MERGE_MODE_ARG:$INSTALLED_MODE" in
+      pr:direct)
+        echo "merge mode:         STALE — --merge-mode pr, but the installed workflow"
+        echo "                    pushes to the default branch, which a PR-only"
+        echo "                    ruleset refuses. Re-run install-cadence.sh --merge-mode pr."
+        rc=3 ;;
+      pr:*)
+        echo "merge mode:         pr, as --merge-mode pr gave it (one standing PR from"
+        echo "                    context/weekly-measurement)" ;;
+      direct:pr)
+        echo "merge mode:         direct, as --merge-mode direct gave it, under a"
+        echo "                    workflow rendered for pr. Re-run install-cadence.sh"
+        echo "                    --merge-mode direct to drop pull-requests: write." ;;
+      *)
+        echo "merge mode:         direct, as --merge-mode direct gave it" ;;
+    esac
+    echo "                    The primary checkout's .skills/merge_mode reads $KNOB_READS."
+    if [ "$KNOB_AGREES" = 0 ]; then
+      echo "                    The job reads the knob committed on the branch it"
+      echo "                    runs on, so commit .skills/merge_mode saying"
+      echo "                    $MERGE_MODE_ARG with this workflow; after the merge,"
+      echo "                    --check without the flag reads the same (#674)."
+    fi
+    # The primary's knob is broken whatever the flag says, and the job
+    # will read one: still a reason to look.
+    [ "$KNOB_MODE" != unusable ] || rc=3
+  else
   case "$KNOB_MODE:$INSTALLED_MODE" in
     unusable:*)
       echo "merge mode:         UNUSABLE — $KNOB_ERR"
@@ -861,6 +934,7 @@ if [ "$MODE" = "check" ]; then
       echo "                    Re-run install-cadence.sh to drop pull-requests: write."
       ;;
   esac
+  fi
   if has_attr "$ATTR_LINE"; then
     echo "ledger union merge: yes ($ATTR_LINE)"
   else
@@ -1660,9 +1734,22 @@ render() {
   printf '%s\n' "$out"
 }
 
+# --merge-mode the knob disagrees with renders, and says so (#674): on the
+# knob-flip branch the disagreement is the expected case, not an error. An
+# unusable knob is not refused under the flag: the refusal below exists so an
+# unreadable knob is never read as `direct`, and with the flag nothing is
+# read from it. It is still named, since the job will read it. stderr, so
+# --print's stdout stays the workflow.
+if [ -n "$MERGE_MODE_ARG" ] && [ "$KNOB_AGREES" = 0 ] && [ -z "${INSTALL_CADENCE_QUIET_FLAG:-}" ]; then
+  echo "note: rendering for --merge-mode $MERGE_MODE_ARG; the primary checkout's" >&2
+  echo "      .skills/merge_mode reads $KNOB_READS (#674). The job reads the knob" >&2
+  echo "      committed on the branch it runs on, so commit .skills/merge_mode" >&2
+  echo "      saying $MERGE_MODE_ARG with this workflow." >&2
+fi
+
 # An unusable knob renders nothing and writes nothing. Here, after --check and
 # --uninstall, which never render: neither needs the knob to do its job.
-if [ "$KNOB_MODE" = "unusable" ]; then
+if [ "$KNOB_MODE" = "unusable" ] && [ -z "$MERGE_MODE_ARG" ]; then
   echo "ERROR $KNOB_ERR" >&2
   echo "      Nothing was rendered or written (#560)." >&2
   exit 5
@@ -1751,7 +1838,7 @@ let it open that PR, or the job fails with the row left on the branch:
   \"Allow GitHub Actions to create and approve pull requests\"
 A PR opened with GITHUB_TOKEN starts no pull_request workflow. If a required
 check blocks its merge, close and reopen the PR to start them."
-  if ! knob_tracked; then
+  if [ "$KNOB_MODE" = pr ] && ! knob_tracked; then
     PR_NOTE="$PR_NOTE
 The job reads the COMMITTED knob, and .skills/merge_mode is not committed as
 it reads: commit .skills/merge_mode with the workflow, or the runs push to
