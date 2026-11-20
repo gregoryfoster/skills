@@ -104,9 +104,13 @@ writes the generator's older pin back, quietly: a one-line diff in a file whose
 header says not to hand-edit it, so it reads as part of the regeneration.
 `curating-context`'s `install-cadence.sh` was the first generator found doing
 this ([#373](https://github.com/gregoryfoster/skills/issues/373)). It now keeps
-an installed SHA pin, or a major at or above its template's, so its bump lands
-bare; `--check`'s `checkout pin:` line says what a re-render would write. A
-consumer vendoring a skills commit from before that fix still downgrades.
+an installed SHA pin, or a tag above its template's, so a consumer's bump
+lands bare; `--check`'s `checkout pin:` line says what a re-render would
+write. A consumer vendoring a skills commit from before that fix still
+downgrades. Its template renders a SHA pin
+([#675](https://github.com/gregoryfoster/skills/issues/675)), held by a test
+to the skills repo's own installed copy, so there a bump of
+`context-cadence.yml` moves the template in the same push.
 
 For a generator that still writes its own pin:
 

@@ -12,6 +12,12 @@ The installed line now wins when it is a SHA pin (kept verbatim) or a `@vN` at
 or above the template's major, and `--check` names what a re-render would
 write. Three fixtures, as #373's thread asks: a SHA-pinned installed line, an
 `@vN` above the template and an `@vN` below it, plus the form it can't read.
+
+The template's own line is a SHA pin with its version in a comment (#675): the
+job holds `contents: write` and `ANTHROPIC_API_KEY`, so a floating tag let
+whoever could move it reach both. An installed tag at or below the template's
+version is now pinned on a re-render; one above it is kept, and named as a tag
+that can still move.
 """
 
 from __future__ import annotations
@@ -25,6 +31,7 @@ import pytest
 
 from tests.utils.skill_loader import SKILLS_DIR
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
 INSTALL_CADENCE = SKILLS_DIR / "curating-context" / "scripts" / "install-cadence.sh"
 WF = Path(".github/workflows/context-cadence.yml")
 CHECKOUT = re.compile(r"^ *- uses: actions/checkout@.*$", re.M)
@@ -82,7 +89,18 @@ def _template_line(tmp_path: Path) -> str:
 
 
 def _template_major(tmp_path: Path) -> int:
-    return int(re.search(r"@v(\d+)$", _template_line(tmp_path)).group(1))
+    return int(re.search(r" # v(\d+)\.", _template_line(tmp_path)).group(1))
+
+
+def _template_vars() -> dict[str, str]:
+    """The template's pin, read from the script as the render reads it."""
+    text = INSTALL_CADENCE.read_text()
+    found = dict(re.findall(r"^(TEMPLATE_CHECKOUT_(?:SHA|VERSION))=(\S+)$", text, re.M))
+    assert set(found) == {"TEMPLATE_CHECKOUT_SHA", "TEMPLATE_CHECKOUT_VERSION"}, (
+        "install-cadence.sh no longer sets TEMPLATE_CHECKOUT_SHA and "
+        "TEMPLATE_CHECKOUT_VERSION as plain assignments"
+    )
+    return found
 
 
 def _check_line(repo: Path) -> str:
@@ -155,7 +173,7 @@ def test_check_names_a_sha_pin_below_the_template(tmp_path):
     repo = _installed(tmp_path, old)
     r = _run(repo, "--check")
     assert "kept (SHA-pinned" in r.stdout
-    assert "Its comment says v4, below the template's" in r.stdout
+    assert "Its comment says v4.3.0, below the template's" in r.stdout
     assert r.returncode == 0
     assert (
         "below the template's"
@@ -166,9 +184,9 @@ def test_check_names_a_sha_pin_below_the_template(tmp_path):
 @pytest.mark.parametrize(
     ("line", "says"),
     [
-        (None, "yes (@v"),
+        (None, "yes (the template's SHA pin"),
         (SHA_LINE, "kept (SHA-pinned"),
-        ("      - uses: actions/checkout@v99", "kept (@v99 is at or above"),
+        ("      - uses: actions/checkout@v99", "kept (@v99 is above"),
         ("      - uses: actions/checkout@v7.0.1-rc", "DOWNGRADE"),
     ],
     ids=["template", "sha-pin", "major-above", "unread"],
@@ -178,3 +196,93 @@ def test_check_reports_the_pin_without_changing_the_exit(tmp_path, line, says):
     repo = _installed(tmp_path, line)
     assert says in _check_line(repo)
     assert _run(repo, "--check").returncode == 0
+
+
+def test_the_template_renders_a_sha_pin_with_its_version(tmp_path):
+    """#675: never a floating tag. The SHA and its comment move together, in
+    the shape Dependabot writes and test_dependabot.py's pin rule reads."""
+    v = _template_vars()
+    assert re.fullmatch(r"[0-9a-f]{40}", v["TEMPLATE_CHECKOUT_SHA"]), v
+    assert re.fullmatch(r"\d+\.\d+\.\d+", v["TEMPLATE_CHECKOUT_VERSION"]), v
+    assert _template_line(tmp_path) == (
+        "      - uses: actions/checkout@"
+        f"{v['TEMPLATE_CHECKOUT_SHA']} # v{v['TEMPLATE_CHECKOUT_VERSION']}"
+    )
+
+
+def test_the_template_pin_is_this_repos_installed_pin(tmp_path):
+    """Who moves the template's pin (#675). This repo's Dependabot bumps its own
+    installed context-cadence.yml, never the template inside the script, and a
+    re-render keeps that bump (#373), so nothing else would notice the template
+    falling behind. This test does: the push that lands the bump moves the
+    template with it."""
+    installed = CHECKOUT.search((REPO_ROOT / WF).read_text()).group(0)
+    assert installed == _template_line(tmp_path), (
+        f"this repo's {WF} pins\n  {installed.strip()}\nbut the template in "
+        "install-cadence.sh renders\n  "
+        f"{_template_line(tmp_path / 'again').strip()}\nA Dependabot bump of "
+        "the installed file moved it. In the same push, set "
+        "TEMPLATE_CHECKOUT_SHA and TEMPLATE_CHECKOUT_VERSION in "
+        "skills/curating-context/scripts/install-cadence.sh to the installed "
+        "pin (measure the SHA: git ls-remote https://github.com/actions/checkout "
+        "refs/tags/v<version>), and the checkout line in "
+        "skills/curating-context/references/cadence/workflow.md."
+    )
+
+
+@pytest.mark.parametrize(
+    "tag",
+    ["@v{major}", "@v{version}"],
+    ids=["major-tag", "the-templates-own-version"],
+)
+def test_a_tag_at_the_template_version_is_pinned(tmp_path, tag):
+    """An installed `@v7` was the template's own line before #675. It floats,
+    so a re-render now writes the SHA pin over it, and both paths say so."""
+    v = _template_vars()
+    ref = tag.format(
+        major=v["TEMPLATE_CHECKOUT_VERSION"].split(".")[0],
+        version=v["TEMPLATE_CHECKOUT_VERSION"],
+    )
+    repo = _installed(tmp_path, f"      - uses: actions/checkout{ref}")
+    line = _check_line(repo)
+    assert line.startswith(f"checkout pin:       tag ({ref} can move"), line
+    r = _run(repo, "--check")
+    assert r.returncode == 0, r.stdout
+    assert re.search(r"^re-render:\s+behind", r.stdout, re.M), r.stdout
+    r = _run(repo)
+    assert r.returncode == 0, r.stderr
+    assert _checkout(repo) == _template_line(tmp_path / "again")
+    assert f"pinned: actions/checkout{ref} to the template's SHA" in r.stdout
+
+
+def test_a_tag_above_the_template_is_kept_and_named_as_a_tag(tmp_path):
+    """Above the template, the pin would be a downgrade, so the tag stays; but
+    `--check` says it can still move rather than reading it as current."""
+    repo = _installed(tmp_path, "      - uses: actions/checkout@v7.9")
+    r = _run(repo, "--check")
+    assert r.returncode == 0
+    assert "kept (@v7.9 is above the template's" in r.stdout
+    assert "a tag, which can move" in r.stdout
+    assert _run(repo).returncode == 0
+    assert _checkout(repo) == "      - uses: actions/checkout@v7.9"
+
+
+def test_check_names_a_sha_pin_that_is_not_the_templates_commit(tmp_path):
+    """Same version comment, different SHA: kept verbatim, as every SHA pin is,
+    but a comment that names the template's version over another commit is
+    exactly what a reviewer can't see, so --check names it."""
+    v = _template_vars()
+    other = (
+        "      - uses: actions/checkout@"
+        + "ab" * 20
+        + f" # v{v['TEMPLATE_CHECKOUT_VERSION']}"
+    )
+    repo = _installed(tmp_path, other)
+    r = _run(repo, "--check")
+    assert "kept (SHA-pinned" in r.stdout
+    assert "is not the template's" in r.stdout, r.stdout
+    assert r.returncode == 0
+    assert (
+        "is not the template's"
+        not in _run(_installed(tmp_path / "x", SHA_LINE), "--check").stdout
+    )

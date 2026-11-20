@@ -54,13 +54,16 @@ from tests.utils.skill_loader import SKILLS_DIR
 INSTALL_CADENCE = SKILLS_DIR / "curating-context" / "scripts" / "install-cadence.sh"
 CC_SCRIPTS = "skills/curating-context/scripts"
 WF = ".github/workflows/context-cadence.yml"
-OLD_PIN = "TEMPLATE_CHECKOUT_MAJOR=5"
+# The renderer before the pin moved: its template line a `@v5` tag, as it
+# was before #647's move to v7 and #675's SHA pin.
+TEMPLATE_LINE = re.compile(r'^TEMPLATE_CHECKOUT_LINE=".*"$', re.M)
+OLD_PIN = 'TEMPLATE_CHECKOUT_LINE="      - uses: actions/checkout@v5"'
 
 
 def _old_renderer() -> str:
-    text = INSTALL_CADENCE.read_text()
-    assert "TEMPLATE_CHECKOUT_MAJOR=7" in text, "the template's pin moved"
-    return text.replace("TEMPLATE_CHECKOUT_MAJOR=7", OLD_PIN)
+    text, n = TEMPLATE_LINE.subn(OLD_PIN, INSTALL_CADENCE.read_text())
+    assert n == 1, "install-cadence.sh no longer sets TEMPLATE_CHECKOUT_LINE once"
+    return text
 
 
 def _put_renderer(up: Path, text: str, message: str) -> str:

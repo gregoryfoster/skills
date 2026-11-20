@@ -272,18 +272,54 @@ fi
 # The checkout pin is read back from the installed workflow too (#373). The
 # template's pin is a floor for a fresh install, not a value to impose:
 # Dependabot moves an installed copy of the line, and writing the template's
-# major back over it was a silent downgrade that read as part of the
-# regeneration. So the installed line is kept verbatim when it is a SHA pin
-# (the SHA and its `# vX.Y.Z` comment move together) or a `@vN` tag at or above
-# the template's major: max(installed, template). Anything else (no installed
-# file, an older major, a branch or a form this can't read) renders the
+# back over it was a silent downgrade that read as part of the regeneration.
+#
+# The template's line is a SHA pin with its version in a comment (#675). The
+# job holds contents: write and ANTHROPIC_API_KEY (pull-requests: write under
+# `pr`), and a tag can be moved by whoever controls it. The SHA is measured,
+# never copied: `git ls-remote https://github.com/actions/checkout
+# refs/tags/v<version>` (a lightweight tag, so no ^{} line). This repo's
+# Dependabot moves its installed context-cadence.yml, never these two lines;
+# test_cadence_checkout_pin.py holds them to that file, so the push that
+# lands the bump moves them too.
+#
+# Installed, kept verbatim: a SHA pin, whatever its comment says (--check
+# names one below the template's version, or one claiming the template's
+# version over another commit), and a `@vX[.Y[.Z]]` tag above the template's
+# version, since the pin would be a downgrade. A tag at or below it is
+# replaced by the pin: `@v7` floats, and pinning it is the point. Anything
+# else (no installed file, a branch, a form this can't read) renders the
 # template's line, and --check says which it was.
-TEMPLATE_CHECKOUT_MAJOR=7
-TEMPLATE_CHECKOUT_LINE="      - uses: actions/checkout@v$TEMPLATE_CHECKOUT_MAJOR"
+TEMPLATE_CHECKOUT_SHA=3d3c42e5aac5ba805825da76410c181273ba90b1
+TEMPLATE_CHECKOUT_VERSION=7.0.1
+TEMPLATE_CHECKOUT_MAJOR=${TEMPLATE_CHECKOUT_VERSION%%.*}
+TEMPLATE_CHECKOUT_LINE="      - uses: actions/checkout@$TEMPLATE_CHECKOUT_SHA # v$TEMPLATE_CHECKOUT_VERSION"
+# How messages name it: the version a reader knows, and enough SHA to match.
+TEMPLATE_CHECKOUT_SHOWN="v$TEMPLATE_CHECKOUT_VERSION (${TEMPLATE_CHECKOUT_SHA:0:12})"
 CHECKOUT_LINE="$TEMPLATE_CHECKOUT_LINE"
-CHECKOUT_PIN="none"   # none | template | sha | newer | older | unread
+CHECKOUT_PIN="none"   # none | template | sha | newer | tag | older | unread
 INSTALLED_CHECKOUT_REF=""
 CHECKOUT_SHA_BELOW=""
+CHECKOUT_SHA_OTHER=""
+
+# version_cmp A B: prints -1, 0 or 1 for two dotted numeric versions, a
+# missing part read as 0, so `7` is 7.0.0 and below 7.0.1.
+version_cmp() {
+  local -a a b
+  local i n x y
+  IFS=. read -r -a a <<<"$1"
+  IFS=. read -r -a b <<<"$2"
+  n=${#a[@]}
+  (( ${#b[@]} <= n )) || n=${#b[@]}
+  for (( i = 0; i < n; i++ )); do
+    x=$((10#${a[i]:-0}))
+    y=$((10#${b[i]:-0}))
+    if (( x < y )); then echo -1; return 0; fi
+    if (( x > y )); then echo 1; return 0; fi
+  done
+  echo 0
+}
+
 if [ -f "$WF" ]; then
   installed_checkout="$(grep -m1 -E '^ *- uses: actions/checkout@' "$WF" || true)"
   if [ -n "$installed_checkout" ]; then
@@ -293,17 +329,25 @@ if [ -f "$WF" ]; then
       CHECKOUT_PIN="template"
     elif [[ "$INSTALLED_CHECKOUT_REF" =~ ^[0-9a-f]{40}$ ]]; then
       CHECKOUT_PIN="sha"
-      # Kept whatever it pins, but --check names one whose version comment
-      # is below the floor: verbatim must not quietly mean "below @v5".
-      if [[ "$installed_checkout" =~ \#[[:space:]]*v([0-9]+) ]] \
-        && (( 10#${BASH_REMATCH[1]} < TEMPLATE_CHECKOUT_MAJOR )); then
-        CHECKOUT_SHA_BELOW="v${BASH_REMATCH[1]}"
+      # Kept whatever it pins, but --check names a comment below the
+      # template's version (verbatim must not quietly mean "below v4"), and
+      # one that claims the template's version over another commit.
+      if [[ "$installed_checkout" =~ \#[[:space:]]*v([0-9]+(\.[0-9]+)*) ]]; then
+        case "$(version_cmp "${BASH_REMATCH[1]}" "$TEMPLATE_CHECKOUT_VERSION")" in
+          -1) CHECKOUT_SHA_BELOW="v${BASH_REMATCH[1]}" ;;
+          0)
+            [ "$INSTALLED_CHECKOUT_REF" = "$TEMPLATE_CHECKOUT_SHA" ] \
+              || CHECKOUT_SHA_OTHER="v${BASH_REMATCH[1]}" ;;
+        esac
       fi
-    elif [[ "$INSTALLED_CHECKOUT_REF" =~ ^v([0-9]+)(\.[0-9]+)*$ ]]; then
-      if (( 10#${BASH_REMATCH[1]} >= TEMPLATE_CHECKOUT_MAJOR )); then
+    elif [[ "$INSTALLED_CHECKOUT_REF" =~ ^v(([0-9]+)(\.[0-9]+)*)$ ]]; then
+      installed_major=${BASH_REMATCH[2]}
+      if [ "$(version_cmp "${BASH_REMATCH[1]}" "$TEMPLATE_CHECKOUT_VERSION")" = 1 ]; then
         CHECKOUT_PIN="newer"
-      else
+      elif (( 10#$installed_major < TEMPLATE_CHECKOUT_MAJOR )); then
         CHECKOUT_PIN="older"
+      else
+        CHECKOUT_PIN="tag"
       fi
     else
       CHECKOUT_PIN="unread"
@@ -772,27 +816,36 @@ if [ "$MODE" = "check" ]; then
     # the installed pin, which is the one thing a re-render used to change
     # without a word (#373).
     case "$CHECKOUT_PIN" in
-      template) echo "checkout pin:       yes (@v$TEMPLATE_CHECKOUT_MAJOR, the template's)" ;;
+      template) echo "checkout pin:       yes (the template's SHA pin, $TEMPLATE_CHECKOUT_SHOWN)" ;;
       sha)
         echo "checkout pin:       kept (SHA-pinned; a re-render keeps the line verbatim)"
         if [ -n "$CHECKOUT_SHA_BELOW" ]; then
           echo "                    Its comment says $CHECKOUT_SHA_BELOW, below the template's"
-          echo "                    @v$TEMPLATE_CHECKOUT_MAJOR: move the pin by hand, or let Dependabot."
+          echo "                    v$TEMPLATE_CHECKOUT_VERSION: move the pin by hand, or let Dependabot."
+        fi
+        if [ -n "$CHECKOUT_SHA_OTHER" ]; then
+          echo "                    Its comment says $CHECKOUT_SHA_OTHER, the template's version, but"
+          echo "                    its SHA is not the template's ${TEMPLATE_CHECKOUT_SHA:0:12}: check"
+          echo "                    which commit it pins."
         fi ;;
       newer)
-        echo "checkout pin:       kept (@$INSTALLED_CHECKOUT_REF is at or above the"
-        echo "                    template's @v$TEMPLATE_CHECKOUT_MAJOR; a re-render keeps it)" ;;
+        echo "checkout pin:       kept (@$INSTALLED_CHECKOUT_REF is above the template's"
+        echo "                    $TEMPLATE_CHECKOUT_SHOWN; a re-render keeps it). It is"
+        echo "                    a tag, which can move: pin its SHA with a # v comment." ;;
+      tag)
+        echo "checkout pin:       tag (@$INSTALLED_CHECKOUT_REF can move; a re-render pins it"
+        echo "                    to the template's SHA, $TEMPLATE_CHECKOUT_SHOWN) (#675)" ;;
       older)
         echo "checkout pin:       behind (@$INSTALLED_CHECKOUT_REF; a re-render raises it"
-        echo "                    to the template's @v$TEMPLATE_CHECKOUT_MAJOR)" ;;
+        echo "                    to the template's SHA pin, $TEMPLATE_CHECKOUT_SHOWN)" ;;
       unread)
         echo "checkout pin:       DOWNGRADE — @$INSTALLED_CHECKOUT_REF is neither a SHA pin"
         echo "                    nor @vN, so a re-render writes the template's"
-        echo "                    @v$TEMPLATE_CHECKOUT_MAJOR over it. Restore the line after"
+        echo "                    $TEMPLATE_CHECKOUT_SHOWN over it. Restore the line after"
         echo "                    re-rendering, or pin it in a form this reads." ;;
       none)
         echo "checkout pin:       none (no actions/checkout line installed; a re-render"
-        echo "                    writes the template's @v$TEMPLATE_CHECKOUT_MAJOR)" ;;
+        echo "                    writes the template's SHA pin, $TEMPLATE_CHECKOUT_SHOWN)" ;;
     esac
     # The whole file, not one line (#647). Every line above checks one known
     # half, so a template change none of them names (the pin was the case
@@ -1180,9 +1233,11 @@ jobs:
       # during the measurement, and rebasing on a depth-1 clone lacks the history
       # to replay onto.
       # Never below @v5: v4 targets Node 20, which runners force onto Node 24
-      # with a deprecation warning on every run (#163). The template's pin is
-      # only a floor: a re-render keeps an installed SHA pin, or an installed
-      # major at or above the template's, so a Dependabot bump survives (#373).
+      # with a deprecation warning on every run (#163). A SHA pin, because
+      # this job holds the key and write access, and a tag can be moved
+      # (#675). The template's pin is a floor: a re-render keeps an installed
+      # SHA pin, or a tag above the template's, so a Dependabot bump survives
+      # (#373).
 $CHECKOUT_LINE
         with:
           submodules: recursive
@@ -1703,8 +1758,10 @@ case "$CRON_SRC" in
 esac
 case "$CHECKOUT_PIN" in
   sha|newer) echo "kept: actions/checkout@$INSTALLED_CHECKOUT_REF, the installed pin (#373)" ;;
+  tag|older) echo "pinned: actions/checkout@$INSTALLED_CHECKOUT_REF to the template's SHA," \
+                  "$TEMPLATE_CHECKOUT_SHOWN: a tag can be moved (#675)" ;;
   unread)    echo "replaced: actions/checkout@$INSTALLED_CHECKOUT_REF with the template's" \
-                  "@v$TEMPLATE_CHECKOUT_MAJOR — restore it if it was deliberate (#373)" >&2 ;;
+                  "$TEMPLATE_CHECKOUT_SHOWN — restore it if it was deliberate (#373)" >&2 ;;
 esac
 # NOT inside the else. The installer's contract is two artifacts, and an early
 # exit on "the workflow is current" skipped this entirely — so every repo that

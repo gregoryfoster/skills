@@ -218,21 +218,42 @@ the warning.
 `--check` reports a workflow rendered before this as `delta check: STALE` and
 exits 3, the same marker the drift report carries.
 
-## A re-render keeps a newer checkout pin
+## A SHA-pinned checkout, and a re-render keeps a newer one
+
+The job holds `contents: write` and `ANTHROPIC_API_KEY`, and `pull-requests:
+write` under `pr`, so the template renders `actions/checkout` as a full commit
+SHA with its version in a comment, `@<sha40> # vX.Y.Z`, never a tag whoever
+controls it can move ([#675](https://github.com/gregoryfoster/skills/issues/675)).
+The SHA is measured with `git ls-remote https://github.com/actions/checkout
+refs/tags/v<version>`, not copied.
 
 Dependabot's `github-actions` ecosystem bumps every `uses:` under
 `.github/workflows/`, this generated file included, and a re-render used to
-write the template's `actions/checkout` pin back over the bump without a word
+write the template's pin back over the bump without a word
 ([#373](https://github.com/gregoryfoster/skills/issues/373)). The template's
-pin is now a floor. An installed SHA pin is kept verbatim, with its
-`# vX.Y.Z` comment, and so is an installed `@vN` at or above the template's
-major. An older major is raised to the template's, and a ref that is neither
-(a branch, a pre-release tag) is replaced, with a `replaced:` line on stderr.
+pin is a floor, so a re-render:
+- keeps an installed SHA pin verbatim, with its comment;
+- keeps an installed tag above the template's version (`@v8`, `@v7.1`), since
+  the pin would be a downgrade;
+- pins an installed tag at or below it (`@v7` reads as 7.0.0), with a
+  `pinned:` line;
+- replaces a ref that is neither (a branch, a pre-release tag), with a
+  `replaced:` line on stderr.
 
-`--check` prints a `checkout pin:` line saying which it is, `DOWNGRADE` for
-that last case. It is not a guarantee, so it never sets exit 3. `--print` reads
-the installed line too, which is what lets this repo's parity test pass a bare
-Dependabot bump of `context-cadence.yml`.
+`--check` prints a `checkout pin:` line saying which it is: `tag` for a tag
+the re-render pins, `DOWNGRADE` for the last case. On a kept tag it says the
+tag can still move, and on a kept SHA pin it names a comment below the
+template's version, or one that gives the template's version over a
+different commit. It is not a guarantee, so it never sets exit 3. `--print`
+reads the installed line too, which is what lets this repo's parity test pass
+a Dependabot bump of `context-cadence.yml`.
+
+That bump moves the installed file, never the template inside
+`install-cadence.sh`, so `test_cadence_checkout_pin.py` holds the template's
+`TEMPLATE_CHECKOUT_SHA` and `TEMPLATE_CHECKOUT_VERSION` to this repo's
+installed line. The push that lands the bump moves both, and
+`cadence/workflow.md`'s copy, with it. That is how the pin reaches consumers:
+through the submodule refresh, then a re-render.
 
 ## `--check` says when a re-render would change the file
 
