@@ -101,7 +101,7 @@ plan_sha() {  # <var> <file>
 # Reads FILE for HOST. 0 with the plan read, PLAN_COVERS 1 when it has a
 # section for HOST; 1 with PLAN_WHY when it can't be read, or doesn't parse.
 plan_load() {  # <file> <host>
-  local f=$1 h=$2 text line s n=0 sec="" seen_secs=" " d nt mine=0 hre
+  local f=$1 h=$2 text line s n=0 sec="" seen_secs=" " d nt mine=0 hre copy
   local mine_lane="" mine_reboot="" seen_lane="" seen_reboot=""
   local id_re='^[A-Za-z0-9][A-Za-z0-9._:-]*$' step_re='^[a-z0-9][a-z0-9-]*$'
   local class_re='^(security|updates|esm|ubuntu-other|third-party:[^[:space:]]+)$'
@@ -111,12 +111,27 @@ plan_load() {  # <file> <host>
   PLAN_SHA="" PLAN_WHY="" PLAN_COVERS=0
   PLAN_LANE="" PLAN_REBOOT="" PLAN_HELD="" PLAN_ORIGINS=""
   PLAN_PKG_NAME=() PLAN_PKG_VERSION=() PLAN_PKG_CLASS=()
-  plan_read text cat -- "$f"
+  # Read once (CR 2529): a regular file, copied whole into P_TMP, and that
+  # copy is what's parsed and hashed. A pipe, /dev/stdin or a file rewritten
+  # between two reads would otherwise hash one plan and run another; a NUL,
+  # which bash drops from what it reads, would do the same.
+  copy=$P_TMP/plan
+  plan_read text test -f "$f"
   if [ "$CAP_RC" -ne 0 ]; then
-    PLAN_WHY="$f couldn't be read${CAP_ERR:+: $CAP_ERR}"
+    PLAN_WHY="$f isn't a regular file, or can't be read: a plan is read once, from a file"
     return 1
   fi
-  plan_sha PLAN_SHA "$f"
+  if ! cat -- "$f" >"$copy" 2>/dev/null; then
+    if [ "$P_PRIV" = none ] || ! as_root cat -- "$f" >"$copy" 2>/dev/null; then
+      PLAN_WHY="$f couldn't be read"
+      return 1
+    fi
+  fi
+  if [ "$(wc -c <"$copy")" -ne "$(tr -d '\000' <"$copy" | wc -c)" ]; then
+    PLAN_WHY="$f holds a NUL byte"
+    return 1
+  fi
+  plan_sha PLAN_SHA "$copy"
   if [ -z "$PLAN_SHA" ]; then
     PLAN_WHY="$f couldn't be hashed: neither sha256sum nor shasum read it"
     return 1
@@ -235,7 +250,7 @@ plan_load() {  # <file> <host>
     # A section's lane and reboot are checked once the next one starts, or
     # the file ends: below.
     if [ "$mine" -eq 1 ]; then PLAN_LANE=$mine_lane PLAN_REBOOT=$mine_reboot; fi
-  done <<<"$text"
+  done <"$copy"
   if [ -z "$PLAN_ID" ] || [ -z "$PLAN_APPROVED_AT" ] || [ -z "$PLAN_NOT_AFTER" ]; then
     PLAN_WHY="a plan needs its plan, approved and not-after lines, before any section"
     return 1

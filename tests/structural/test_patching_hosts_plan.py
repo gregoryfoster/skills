@@ -353,3 +353,86 @@ def test_the_reboot_is_refused_under_a_plan_that_says_reboot_no(chain):
     out = chain.reboot("--plan", str(p), rc=3)
     assert any("says reboot no" in r for r in out["refused"])
     assert not any(n == "systemd-run" for n, _, _ in chain.calls())
+
+
+# --- CR 2529: one read, of a regular file ------------------------------------------
+
+
+class HashHost(ApplyHost):
+    """The apply rig, with sha256sum a stub a case can answer."""
+
+    STUBBED = (*ApplyHost.STUBBED, "sha256sum")
+    FALLBACKS = {
+        **ApplyHost.FALLBACKS,
+        "sha256sum": (
+            "for x in /usr/bin/sha256sum /sbin/sha256sum; do "
+            '[ -x "$x" ] && exec "$x" "$@"; done; exec shasum -a 256 "$@"'
+        ),
+    }
+
+
+def test_a_plan_is_parsed_and_hashed_from_one_read(tmp_path):
+    # The file changes between a parse and a second read for the hash: the
+    # record must hash what was parsed (CR 2529).
+    host = _apply_ready(HashHost(tmp_path))
+    _summary(host)
+    good = HEAD + _section()
+    p = _plan(host, good)
+    other = host.tmp / "other"
+    other.write_text(HEAD + _section(reboot="no", held=()))
+    host.on(
+        "sha256sum",
+        "*",
+        script=(
+            f'cp "{other}" "{p}"; for x in /usr/bin/sha256sum /sbin/sha256sum; do '
+            '[ -x "$x" ] && exec "$x" "$@"; done; exec shasum -a 256 "$@"'
+        ),
+    )
+    out = host.run("--plan", str(p))
+    sha = hashlib.sha256(good.encode()).hexdigest()
+    assert out["apply"]["approval"]["sha256"] == sha
+    assert out["gate"]["plan"]["reboot"] == "yes"
+
+
+def test_a_plan_that_isnt_a_regular_file_is_refused(host):
+    # A pipe: /dev/stdin, as an executor might pass it (CR 2529).
+    p = _plan(host, HEAD + _section())
+    cmd = [
+        "bash",
+        "-c",
+        'f=$1; shift; cat "$f" | "$@"',
+        "x",
+        str(p),
+        "bash",
+        str(host.scripts / "apply.sh"),
+        "--step",
+        "bulk",
+        "--run",
+        str(host.run_dir),
+        "--config",
+        str(host.knob_path),
+        "--host",
+        "web-1",
+        "--today",
+        "2026-09-29",
+        "--approve",
+        "--dry-run",
+        str(host.dry),
+        "--plan",
+        "/dev/stdin",
+    ]
+    host.cases["date"] = [("+%s", f"{host.clock}\n", 0, "", None)]
+    (host.state / "holds").write_text("")
+    r = host.execute(cmd, 3)
+    assert "isn't a regular file" in r.stdout
+    assert _changed(host) == []
+
+
+def test_a_plan_holding_a_nul_byte_is_refused(host):
+    p = host.tmp / "plan"
+    p.write_bytes(
+        (HEAD + _section()).replace("lane security", "lane secu\0rity").encode()
+    )
+    out = host.run("--plan", str(p), rc=3)
+    [r] = [r for r in out["refused"] if r.startswith("the plan is malformed")]
+    assert "NUL" in r
