@@ -32,6 +32,7 @@ import argparse
 import datetime as dt
 import difflib
 import hashlib
+import html.entities
 import json
 import os
 import re
@@ -125,9 +126,11 @@ operations (a JSON array, from --ops FILE or --ops - for stdin):
   A ref is "#N" for this repo or "owner/repo#N". A ref's line is the checklist
   item, bullet or table row whose first token is that ref, after an optional
   ordinal ("- [x] 12. #447"); a task item's marker may be ordered ("1. [ ]").
-  A ref in a code span leads nothing. The summary's counts read a ticked item
-  with a " · not planned" or " · out of epic" field as "disposed", apart from
-  "done"; GitHub's [x] tally is the two together. In any text,
+  A ref in a code span leads nothing. Outside code, an HTML entity is read as
+  the character GitHub renders, before any ref: "&#x23;49" is #49, and the
+  "·" spelled "&#183;" names no #183 (#671). The summary's counts read a ticked
+  item with a " · not planned" or " · out of epic" field as "disposed", apart
+  from "done"; GitHub's [x] tally is the two together. In any text,
   {now} becomes the UTC time (2026-10-14T18:03Z) and {today} the UTC date.
   With --scan FILE (scan.sh's report), {checked} becomes the report's own time
   and {last_seen} its highest number (#58). Write those two into the header's
@@ -631,7 +634,42 @@ def parse_ref(ref: str, host: str) -> str:
     return key(m.group("repo"), m.group("num"), host)
 
 
-def ref_text(line: str) -> str:
+# GitHub decodes an HTML entity in Markdown text before it links refs (#671):
+# "&#x23;49" links #49, the "#183" of "&#183;" (a "·") links nothing, and
+# "#5&#52;" links #54. Its rules are not html.unescape's [each measured with
+# gh api markdown, 2026-11-20]: the ";" is required ("&#35 58" links #35); a
+# numeric entity has 1 to 8 digits, decimal or hex; a name is one of HTML5's;
+# and an "&" that a backslash escapes starts none ("\&#35;51" links #35). The
+# first alternative reads an escaped character past, so "\\&#35;88" is an
+# escaped backslash and then an entity.
+ENTITY_RE = re.compile(
+    r"\\[!-/:-@\[-`{-~]"
+    r"|&(?:#(?P<dec>[0-9]{1,8})|#[xX](?P<hex>[0-9A-Fa-f]{1,8})"
+    r"|(?P<name>[A-Za-z][A-Za-z0-9]{1,31}));"
+)
+
+
+def decode_entities(text: str) -> str:
+    """The text with each HTML entity as the character GitHub renders.
+
+    One pass, as GitHub makes: "&amp;#183;" is the text "&#183;", whose #183
+    it links. A code point that is 0, a surrogate or past U+10FFFF renders as
+    U+FFFD. An unknown name is left as written.
+    """
+
+    def sub(m: re.Match) -> str:
+        if m.group("name"):
+            return html.entities.html5.get(m.group("name") + ";", m.group(0))
+        if m.group("dec") or m.group("hex"):
+            cp = int(m.group("dec") or m.group("hex"), 10 if m.group("dec") else 16)
+            bad = cp == 0 or 0xD800 <= cp <= 0xDFFF or cp > 0x10FFFF
+            return "\ufffd" if bad else chr(cp)
+        return m.group(0)  # an escaped character, kept as written
+
+    return ENTITY_RE.sub(sub, text) if "&" in text else text
+
+
+def ref_text(line: str, entities: bool = True) -> str:
     """The line as refs read it: a link to an issue becomes its ref; any other, nothing.
 
     `[#400](https://github.com/o/r/issues/400)` is o/r#400, not this repo's #400,
@@ -639,6 +677,14 @@ def ref_text(line: str) -> str:
     GitHub doesn't autolink inside link text, so `[see #5](doc)` holds none
     either (CR 271). Reference-style links (`[text][id]`) aren't resolved: their
     text reads as plain text. A bare or <angled> issue URL is its ref (CR 288).
+
+    Entities are decoded last (#671). A decoded character is text, never
+    markup: "&#91;#57&#93;(url)" makes no link, and #57 is linked. A URL is
+    read as written, since GitHub leaves an entity in a bare one alone. It
+    does decode one inside a link target or an <angled> URL, which this
+    doesn't: an under-read, accepted. entities=False is for text GitHub
+    doesn't render as Markdown, a commit message: "&#183;" there references
+    #183 [measured: 608c8094 on gregoryfoster/skills#183].
     """
 
     def sub(m: re.Match) -> str:
@@ -651,21 +697,17 @@ def ref_text(line: str) -> str:
         return f"{m.group('repo')}#{m.group('num')}"
 
     line = MD_LINK_RE.sub(sub, line)
-    return BARE_ISSUE_URL_RE.sub(as_ref, ANGLED_ISSUE_URL_RE.sub(as_ref, line))
+    line = BARE_ISSUE_URL_RE.sub(as_ref, ANGLED_ISSUE_URL_RE.sub(as_ref, line))
+    return decode_entities(line) if entities else line
 
 
 # Each ref after a line's lead that continues its subject (#662): a "+", ",",
 # "&" or "and", with markup closing the ref before and opening the next, as in
-# "**#46** + **#47**". Text of any other kind ends the run. GitHub decodes an
-# entity before it links refs: "&amp;" is an "&", and the "#183" of "&#183;"
-# (a "·") is no ref (CR 2314).
-ENTITY_AMP = r"&(?=(?:[A-Za-z][A-Za-z0-9]*|#[0-9]+|#[xX][0-9A-Fa-f]+);)"
+# "**#46** + **#47**". Text of any other kind ends the run. The line is read
+# through ref_text, so an entity is already its character: "&amp;" is the "&"
+# joiner, and "&#183;" is a "·", which joins nothing (CR 2314, #671).
 SUBJECT_NEXT_RE = re.compile(
-    r"(?:~~|\*\*|\])*\s*(?:\+|,|&amp;|(?!"
-    + ENTITY_AMP
-    + r")&|\band\b)\s*"
-    + MARKUP
-    + REF_PAT
+    r"(?:~~|\*\*|\])*\s*(?:\+|,|&|\band\b)\s*" + MARKUP + REF_PAT
 )
 
 
