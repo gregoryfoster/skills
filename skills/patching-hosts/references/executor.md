@@ -95,8 +95,8 @@ With `--approve`, each outside difference is a refusal: the host stops for this 
 |---|---|
 | `recovery-point.sh` | an unexpired line for its `--lane`, `security` by default; the next bulk it suggests carries the lane |
 | `apply.sh --step bulk` | an unexpired line for the bulk's `--lane`, and the bulk's reading within its limits. Under `no-held` or `no-datastore` it holds nothing: one the refreshed lists would have it hold stops it, with nothing held |
-| `apply.sh --step <held step>` | an unexpired line for the lane its bulk ran in, read from the run's `dry-run` record (unread, it's refused), and the step within its limits |
-| `reboot-chain.sh` | an unexpired line for the run's lane, without `no-reboot`, nor `no-datastore` where the knob declares a data store: the chain stops each one |
+| `apply.sh --step <held step>` | an unexpired line for the lane its bulk ran in, read from the run's `dry-run` record (unread, it's refused); the run's bulk ran under that same lane's line, as its `approval` record says; the step within its limits; and each package it releases of a class the lane takes, as the bulk recorded it in `hold-versions` (unknown refuses) |
+| `reboot-chain.sh` | an unexpired line for the run's lane, under which the run's bulk ran, without `no-reboot`, nor `no-datastore` where the knob declares a data store: the chain stops each one |
 
 **An origin lane the knob doesn't follow approves nothing** (`standing-origin`).
 

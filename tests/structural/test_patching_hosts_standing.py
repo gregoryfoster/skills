@@ -253,8 +253,9 @@ def test_a_held_step_under_no_held_is_refused(host):
     host.run_dir.mkdir()
     host.run_dir.chmod(0o700)
     (host.run_dir / "dry-run").write_text("lane=security\n")
+    (host.run_dir / "approval").write_text("standing security\n")
     out = host.run("--standing", step="postgres", rc=3)
-    assert _kinds(out) == [("held-step", "postgres", False)]
+    assert ("held-step", "postgres", False) in _kinds(out)
 
 
 # --- recovery-point.sh and reboot-chain.sh -----------------------------------------
@@ -282,6 +283,7 @@ def test_the_recovery_point_refuses_without_a_line(recovery):
 def chain(tmp_path) -> RebootHost:
     h = _reboot_ready(RebootHost(tmp_path))
     (h.run_dir / "dry-run").write_text("lane=security\n")
+    (h.run_dir / "approval").write_text("standing security\n")
     return h
 
 
@@ -439,3 +441,88 @@ def test_a_bulk_that_would_hold_for_a_refused_step_stops_first(host, limits):
     assert host.holds() == []
     assert not host.calls("unattended-upgrade")
     assert not [n for n in out["next"] if "--step " in n]
+
+
+# --- CR 2543: a held step and the reboot under their bulk's standing line ------------
+
+
+def _held_standing(host, approval, versions, security_only=1) -> None:
+    host.run_dir.mkdir()
+    host.run_dir.chmod(0o700)
+    (host.run_dir / "dry-run").write_text(
+        f"lane=security\nsecurity_only={security_only}\n"
+    )
+    (host.run_dir / "holds").write_text("postgres postgresql-16\npostgres libpq5\n")
+    (host.run_dir / "hold-versions").write_text(versions)
+    if approval is not None:
+        (host.run_dir / "approval").write_text(approval)
+
+
+SEC_VERSIONS = (
+    "postgresql-16 16.11-0ubuntu0.24.04.1 security\n"
+    "libpq5 16.11-0ubuntu0.24.04.1 security\n"
+)
+
+
+@pytest.mark.parametrize(
+    "approval, why",
+    [
+        (None, "can't be read"),
+        ("session\n", "isn't a standing approval for the security lane"),
+        (
+            "plan " + "0" * 64 + " x\n",
+            "isn't a standing approval for the security lane",
+        ),
+        ("standing maintenance\n", "isn't a standing approval for the security lane"),
+    ],
+    ids=["no-record", "session", "plan", "another-lane"],
+)
+def test_a_held_step_runs_only_under_its_bulks_standing_line(host, approval, why):
+    _standing(host)
+    _held_standing(host, approval, SEC_VERSIONS)
+    out = host.run("--standing", step="postgres", rc=3)
+    assert any(why in r for r in out["refused"]), out["refused"]
+    assert out["gate"]["standing"]["covers"] is False
+
+
+@pytest.mark.parametrize(
+    "versions, security_only, kinds",
+    [
+        (SEC_VERSIONS, 1, []),
+        # exception uu:origins: a session bulk held an -updates
+        # postgresql-16, which the security lane's line doesn't take.
+        (
+            SEC_VERSIONS.replace(
+                "16.11-0ubuntu0.24.04.1 security\nlibpq5",
+                "16.12-0ubuntu0.24.04.1 updates\nlibpq5",
+                1,
+            ),
+            0,
+            [("lane-scope", "postgresql-16", False)],
+        ),
+        # A record from before the class column: unknown refuses.
+        (
+            "postgresql-16 16.11-0ubuntu0.24.04.1\nlibpq5 16.11-0ubuntu0.24.04.1\n",
+            1,
+            [("unread", "postgresql-16", False), ("unread", "libpq5", False)],
+        ),
+    ],
+    ids=["security", "updates-wide-origins", "no-class"],
+)
+def test_a_held_step_under_standing_takes_only_its_lanes_classes(
+    host, versions, security_only, kinds
+):
+    _standing(host)
+    _held_standing(host, "standing security\n", versions, security_only)
+    out = host.run("--standing", step="postgres", rc=3)
+    assert out["gate"]["standing"]["covers"] is True
+    assert _kinds(out) == kinds
+
+
+def test_the_reboot_runs_only_under_its_bulks_standing_line(chain):
+    (chain.run_dir / "approval").write_text("session\n")
+    chain.knob(chain.knob_path.read_text() + STANDING.format(limits=""))
+    out = chain.reboot("--standing", rc=3)
+    assert any(
+        "isn't a standing approval for the security lane" in r for r in out["refused"]
+    ), out["refused"]

@@ -2602,7 +2602,8 @@ def test_the_security_lane_records_held_versions_and_compares_none(host):
         in out["holds"]["versions_not_compared"]
     )
     assert out["verdict"]["version_moved"] == []
-    assert f"redis-server {REDIS_NOW}\n" in host.record("hold-versions")
+    # "<package> <version> <class>", the class the dry run read, or ? (CR 2543).
+    assert f"redis-server {REDIS_NOW} " in host.record("hold-versions")
     newer = "16.11-0ubuntu0.24.04.1"
     host.cases["dpkg-query"].insert(
         0,

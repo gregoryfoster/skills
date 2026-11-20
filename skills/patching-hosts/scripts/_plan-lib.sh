@@ -44,6 +44,8 @@ name.
   plan_span_gate APPROVE FILE  that, as a refusal, once the span is gated
   standing_for LANE         the knob's standing line for LANE into ST_*: 1
                             with ST_WHY when none approves
+  standing_run_approval RUN LANE  whether the run's bulk ran under LANE's
+                            standing line
   run_lane VAR RUN          the lane the run's bulk ran in, from its dry-run
                             record: 1 when it can't be read
   standing_gate_record APPROVE STANDING RUN-OR-EMPTY REBOOT  gate.standing
@@ -424,6 +426,20 @@ standing_for() {  # <lane>
   return 1
 }
 
+# A step after the bulk, under a standing line, runs only where its bulk ran
+# under the same lane's line (CR 2543): the run's approval record.
+standing_run_approval() {  # <run dir> <lane>: 1 with ST_WHY when it doesn't
+  local _sr=""
+  if ! root_read _sr "$1/approval"; then
+    ST_WHY="$1/approval can't be read, so which approval the run's bulk ran under is unknown"
+    return 1
+  fi
+  _sr=${_sr%%$'\n'*}
+  [ "$_sr" != "standing $2" ] || return 0
+  ST_WHY="the run's bulk ran under ${_sr:-nothing it recorded}, which isn't a standing approval for the $2 lane"
+  return 1
+}
+
 # The lane the run's bulk ran in, from the dry-run record it wrote.
 run_lane() {  # <var> <run dir>
   local _rl_o _rl_l _rl_v=""
@@ -462,6 +478,8 @@ standing_gate_record() {  # <approve 0|1> <standing 0|1> <run dir, or empty for 
     if ! run_lane _sl "$3"; then
       _sw="the lane the run's bulk ran in can't be read from $3/dry-run, so which standing line applies is unknown"
     elif ! standing_for "$_sl"; then
+      _sw=$ST_WHY
+    elif ! standing_run_approval "$3" "$_sl"; then
       _sw=$ST_WHY
     elif [ "$ST_NO_REBOOT" = 1 ]; then
       _sw="the standing approval for the $_sl lane (knob line $ST_LINE) says no-reboot: the reboot needs the owner's own approval"

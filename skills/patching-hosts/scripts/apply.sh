@@ -164,7 +164,7 @@ The run's directory is root-only: 0700, and each file 0600.
   dry-run          the dry run's summary, for the held steps' gate
   before-versions, before-showhold, before-showauto
   holds            "<step> <package>": each hold the run placed
-  hold-versions    "<package> <version>": each held package's candidate
+  hold-versions    "<package> <version> <class>": each held package's candidate
                    after the bulk's list refresh
   steps            one tab-separated line per step that began its upgrade:
                    <step>, ok or failed, when apply.sh started (epoch), and
@@ -1260,7 +1260,7 @@ plan_held() {
   for i in ${RUN_HOLD_PKG[@]+"${!RUN_HOLD_PKG[@]}"}; do
     [ "${RUN_HOLD_STEP[$i]}" = "$step" ] || continue
     p=${RUN_HOLD_PKG[$i]} c=""
-    while read -r s pv; do
+    while read -r s pv _; do
       if [ "$s" = "$p" ]; then c=$pv; fi
     done <<<"$out"
     pv=""
@@ -1375,6 +1375,52 @@ standing_held() {  # <held step>
   fi
 }
 
+# Whether the standing line's lane takes a package of CLASS (CR 2543): the
+# security lane, security, or anything where its dry run's origins were
+# security alone; the maintenance lane, those plus -updates and followed
+# origins; an origin lane, what its own dry run selected. Unknown refuses.
+standing_scope() {  # <package> <version> <class> <security_only>
+  if [ -z "$3" ] || [ "$3" = "?" ]; then
+    plan_diff 0 unread "$1" "its class wasn't read, so whether the $LANE lane's line takes it is unknown"
+    return 0
+  fi
+  case $LANE in
+    security)
+      if [ "$3" != security ] && [ "$4" != 1 ]; then
+        plan_diff 0 lane-scope "$1" "$2, class $3, which the security lane's standing line doesn't take"
+      fi ;;
+    maintenance)
+      case $3 in
+        security | updates) ;;
+        *) followed_class "$3" || plan_diff 0 lane-scope "$1" "$2, class $3, which the maintenance lane's standing line doesn't take" ;;
+      esac ;;
+  esac
+}
+
+# A held step under a standing line: each package it releases, at the
+# class the bulk recorded, within the lane (CR 2543).
+standing_held_scope() {
+  local out s v c so="" i p
+  if ! root_read out "$run/hold-versions"; then
+    plan_diff 0 unread hold-versions "$run/hold-versions can't be read, so what this step installs is unknown"
+    return 0
+  fi
+  if root_read s "$run/dry-run"; then
+    while IFS= read -r v; do
+      case $v in security_only=*) so=${v#security_only=} ;; esac
+    done <<<"$s"
+  fi
+  read_run_holds || true
+  for i in ${RUN_HOLD_PKG[@]+"${!RUN_HOLD_PKG[@]}"}; do
+    [ "${RUN_HOLD_STEP[$i]}" = "$step" ] || continue
+    p=${RUN_HOLD_PKG[$i]} v="" c=""
+    while read -r s pv cl; do
+      if [ "$s" = "$p" ]; then v=$pv c=${cl:-}; fi
+    done <<<"$out"
+    standing_scope "$p" "${v:-a version}" "$c" "$so"
+  done
+}
+
 standing_envelope() {
   local p g
   if [ "$SPAN_READ" -ne 1 ] || [ "$SEL_READ" -ne 1 ]; then
@@ -1387,17 +1433,7 @@ standing_envelope() {
       plan_diff 0 unread "$p" "the dry run selects it, and its class wasn't read"
       continue
     fi
-    case $LANE in
-      security)
-        if [ "$SC" != security ] && [ "$DRY_SECURITY_ONLY" != 1 ]; then
-          plan_diff 0 lane-scope "$p" "$SV, class $SC, which the security lane's standing line doesn't take"
-        fi ;;
-      maintenance)
-        case $SC in
-          security | updates) ;;
-          *) followed_class "$SC" || plan_diff 0 lane-scope "$p" "$SV, class $SC, which the maintenance lane's standing line doesn't take" ;;
-        esac ;;
-    esac
+    standing_scope "$p" "$SV" "$SC" "$DRY_SECURITY_ONLY"
   done
   for g in $SPAN_GROUPS; do standing_held "$g"; done
   if [ "$ST_NO_REBOOT" = 1 ] && [ "$SPAN_RC" -ne 1 ]; then
@@ -1423,6 +1459,8 @@ gate_standing() {
     w="the lane its bulk ran in can't be read from $run/dry-run, so which standing line applies is unknown"
   elif ! standing_for "$LANE"; then
     w=$ST_WHY
+  elif [ "$step" != bulk ] && ! standing_run_approval "$run" "$LANE"; then
+    w=$ST_WHY
   fi
   standing_json_head o
   if [ -n "$w" ]; then
@@ -1436,7 +1474,12 @@ gate_standing() {
   fi
   jaddb o covers 1
   jadd o why null
-  if [ "$step" = bulk ]; then standing_envelope; else standing_held "$step"; fi
+  if [ "$step" = bulk ]; then
+    standing_envelope
+  else
+    standing_held "$step"
+    standing_held_scope
+  fi
   jaddb o inside "$(( ${#PLAN_OUTSIDE[@]} == 0 ))"
   jadd o differences "[$PLAN_DIFFS]"
   jadd J_GATE standing "{$o}"
@@ -2313,7 +2356,10 @@ do_bulk() {
     p=${RUN_HOLD_PKG[$i]}
     version_in c "$bv" "$p"
     version_in d "$dv" "$p"
-    vout="$vout$p $c"$'\n'
+    # Its class as the dry run read it, or ? (CR 2543): a held step under a
+    # standing line takes only its lane's.
+    sel_of "$p"
+    vout="$vout$p $c ${SC:-?}"$'\n'
     e=""
     jadds e package "$p"
     jadds e step "${RUN_HOLD_STEP[$i]}"
@@ -2551,7 +2597,7 @@ held_installed() {  # <packages>...
     done <<<"$out"
   fi
   if root_read out "$run/hold-versions"; then
-    while read -r x y; do
+    while read -r x y _; do
       if [ -n "$x" ]; then bv="$bv $x=$y"; fi
     done <<<"$out"
   fi
