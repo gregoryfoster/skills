@@ -119,7 +119,11 @@ while [ "$#" -gt 0 ]; do
         --config) config=$2 ;;
         --host) host=$2 ;;
         --today) today=$2 ;;
-        --plan) planf=$2 ;;
+        --plan)
+          planf=$2
+          # An empty one would read as no plan, and the session's approval
+          # (CR 2533).
+          [ -n "$planf" ] || { echo "ERROR --plan takes a file: the plan an executor carries" >&2; exit 2; } ;;
       esac
       shift 2 ;;
     --approve) approve=1; shift ;;

@@ -21,10 +21,12 @@ the plan states, and holds each step to it.
 
 import hashlib
 import json
+import subprocess
 
 import pytest
 
-from tests.structural.patching_hosts_rig import dispatcher
+from tests.structural.patching_hosts_rig import SKILL, dispatcher
+from tests.structural.patching_hosts_rig import clean_env as _clean_env
 from tests.structural.test_patching_hosts_apply import TUE_1530, _changed
 from tests.structural.test_patching_hosts_apply import Host as ApplyHost
 from tests.structural.test_patching_hosts_apply import _ready as _apply_ready
@@ -563,3 +565,26 @@ def test_an_unplanned_masked_package_in_a_security_only_lane_says_so(host, cls):
     [d] = out["gate"]["plan"]["differences"]
     assert (d["kind"], d["inside"]) == ("new-security", True)
     assert "the simulation's" in d["detail"] and cls in d["detail"]
+
+
+# --- CR 2533: an empty --plan --------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "script, args",
+    [
+        ("apply.sh", ["--step", "bulk"]),
+        ("recovery-point.sh", ["--retain-until", "2099-01-01"]),
+        ("reboot-chain.sh", ["--run", "/nonexistent"]),
+    ],
+)
+def test_an_empty_plan_is_a_usage_error_not_a_session(script, args):
+    # "--plan ''" read as no plan: the step ran as the session's approval.
+    r = subprocess.run(
+        ["bash", str(SKILL / "scripts" / script), *args, "--approve", "--plan", ""],
+        capture_output=True,
+        text=True,
+        env=_clean_env(),
+    )
+    assert r.returncode == 2
+    assert "--plan takes a file" in r.stderr

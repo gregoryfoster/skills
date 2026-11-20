@@ -214,7 +214,11 @@ while [ "$#" -gt 0 ]; do
       [ "$#" -ge 2 ] || { echo "ERROR $1 needs a value" >&2; exit 2; }
       case $1 in
         --step) step=$2 ;;
-        --plan) planf=$2 ;;
+        --plan)
+          planf=$2
+          # An empty one would read as no plan, and the session's approval
+          # (CR 2533).
+          [ -n "$planf" ] || { echo "ERROR --plan takes a file: the plan an executor carries" >&2; exit 2; } ;;
         --run) run=$2 ;;
         --lane) lane=$2 ;;
         --dry-run) dryrun=$2 ;;
