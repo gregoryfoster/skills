@@ -314,3 +314,41 @@ def test_the_recovery_points_next_bulk_carries_standing(recovery):
     out = recovery.recover("--standing")
     [n] = [x for x in out["next"] if "--step bulk" in x]
     assert "--standing" in n
+
+
+# --- CR 2548: a followed origin declared by its site ---------------------------------
+
+DOCKER_POLICY = (
+    "Package files:\n"
+    " 500 https://download.docker.com/linux/ubuntu noble/stable amd64 Packages\n"
+    "     release o=Docker,a=noble,n=noble,l=Docker CE,c=stable,b=amd64\n"
+    "     origin download.docker.com\n"
+)
+
+
+@pytest.mark.parametrize("decl", ["Docker", "download.docker.com"])
+def test_the_maintenance_lines_followed_origin_may_be_declared_by_its_site(host, decl):
+    host.knob(
+        KNOB + f"origin {decl} follow\n" + "standing maintenance 2099-01-01 monthly\n"
+    )
+    host.on("apt-cache", "policy", DOCKER_POLICY)
+    _summary(host, {**SELECTED, "libxml2": ("9", "third-party:Docker")}, 0)
+    out = host.run("--standing", "--lane", "maintenance", rc=3)
+    assert [k for k in _kinds(out) if k[0] == "lane-scope"] == []
+
+
+# --- CR 2549: the recovery point's lane ----------------------------------------------
+
+
+def test_the_recovery_point_takes_its_lanes_line_and_carries_the_lane(recovery):
+    recovery.knob(
+        recovery.knob_path.read_text()
+        + "standing security 2026-01-01 lapsed\n"
+        + "standing maintenance 2099-01-01 monthly\n"
+    )
+    refused = recovery.recover("--standing", rc=3)
+    assert any("passed its review-by date" in r for r in refused["refused"])
+    out = recovery.recover("--standing", "--lane", "maintenance")
+    assert out["recovery_point"]["approval"]["lane"] == "maintenance"
+    [n] = [x for x in out["next"] if "--step bulk" in x]
+    assert "--standing --lane maintenance" in n

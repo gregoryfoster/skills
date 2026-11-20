@@ -1351,13 +1351,30 @@ step_restarts_datastore() {  # <held step>: 0 when it may restart a declared dat
   return 1
 }
 
+# A followed origin may be declared by its o= name or by its site
+# (knob.md), which apt-cache policy maps to its o= names, as the lanes read
+# it (CR 2548). The policy is read once, and unread, a site matches nothing.
+FC_POLICY="" FC_POLICY_READ=0
 followed_class() {  # <class>: 0 when it's third-party:<an origin the knob follows>
-  local _fc_k _fc_o
+  local _fc_k _fc_o _fc_n _fc_x
   case $1 in third-party:*) ;; *) return 1 ;; esac
   for _fc_k in ${KNOB_ORIGIN[@]+"${KNOB_ORIGIN[@]}"}; do
     case $_fc_k in *"${KNOB_US}follow$KNOB_US"*)
       _fc_o=${_fc_k%%"$KNOB_US"*}
-      if [ "${1#third-party:}" = "${_fc_o// /_}" ]; then return 0; fi ;;
+      case $_fc_o in *.*)
+        if [ "$FC_POLICY_READ" -eq 0 ]; then
+          FC_POLICY_READ=1
+          capture FC_POLICY apt-cache policy
+          [ "$CAP_RC" -eq 0 ] || FC_POLICY=""
+        fi ;;
+      esac
+      origin_names _fc_n "$_fc_o" "$FC_POLICY"
+      _fc_n=${_fc_n#|}
+      while [ -n "$_fc_n" ]; do
+        _fc_x=${_fc_n%%|*}
+        _fc_n=${_fc_n#*|}
+        if [ -n "$_fc_x" ] && [ "${1#third-party:}" = "${_fc_x// /_}" ]; then return 0; fi
+      done ;;
     esac
   done
   return 1

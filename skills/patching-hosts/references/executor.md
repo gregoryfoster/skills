@@ -93,7 +93,7 @@ With `--approve`, each outside difference is a refusal: the host stops for this 
 
 | Script | Refused unless |
 |---|---|
-| `recovery-point.sh` | any unexpired line, the security lane's first: it changes no package |
+| `recovery-point.sh` | an unexpired line for its `--lane`, `security` by default; the next bulk it suggests carries the lane |
 | `apply.sh --step bulk` | an unexpired line for the bulk's `--lane`, and the bulk's reading within its limits |
 | `apply.sh --step <held step>` | an unexpired line for the lane its bulk ran in, read from the run's `dry-run` record (unread, it's refused), and the step within its limits |
 | `reboot-chain.sh` | an unexpired line for the run's lane, without `no-reboot` |

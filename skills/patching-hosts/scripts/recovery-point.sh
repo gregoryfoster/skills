@@ -6,7 +6,7 @@ set -euo pipefail
 usage() {
   cat <<'USAGE'
 Usage: bash recovery-point.sh --retain-until YYYY-MM-DD [--approve] [--run DIR]
-                              [--plan FILE | --standing]
+                              [--plan FILE | --standing [--lane LANE]]
                               [--personal-data NAME]... [--dump]
                               [--redis-within SECONDS] [--qdrant-within SECONDS]
                               [--rdb-within SECONDS]
@@ -60,9 +60,11 @@ Options:
                            the host (references/executor.md)
   --plan FILE              a fleet executor's plan: it must cover this host
                            and not have passed its not-after
-  --standing               the approval is the knob's standing line: any
-                           unexpired one, the security lane's first, since
-                           the recovery point changes no package
+  --standing               the approval is the knob's standing line for
+                           --lane: unexpired, it approves the recovery point
+  --lane LANE              with --standing, the run's lane, security (the
+                           default), maintenance or origin:<origin>, whose
+                           line approves it; the next bulk carries it
   --run DIR                the run's directory, an absolute path (default:
                            /var/backups/patching-hosts-<UTC>). Pass the same
                            one to apply.sh
@@ -139,11 +141,11 @@ Exit codes:
 USAGE
 }
 
-approve=0 run="" planf="" standing=0 retain="" config="" host="" today="" force_dump=0 redis_within=300 qdrant_within=1800 rdb_within=600
+approve=0 run="" planf="" standing=0 lane=security retain="" config="" host="" today="" force_dump=0 redis_within=300 qdrant_within=1800 rdb_within=600
 personal=()
 while [ "$#" -gt 0 ]; do
   case $1 in
-    --run | --retain-until | --personal-data | --redis-within | --qdrant-within | --rdb-within | --config | --host | --today | --plan)
+    --run | --retain-until | --personal-data | --redis-within | --qdrant-within | --rdb-within | --config | --host | --today | --plan | --lane)
       [ "$#" -ge 2 ] || { echo "ERROR $1 needs a value" >&2; exit 2; }
       case $1 in
         --run) run=$2 ;;
@@ -155,6 +157,7 @@ while [ "$#" -gt 0 ]; do
         --config) config=$2 ;;
         --host) host=$2 ;;
         --today) today=$2 ;;
+        --lane) lane=$2 ;;
         --plan)
           planf=$2
           # An empty one would read as no plan, and the session's approval
@@ -169,6 +172,10 @@ while [ "$#" -gt 0 ]; do
     *) echo "ERROR unknown argument: $1 (see --help)" >&2; exit 2 ;;
   esac
 done
+case $lane in
+  security | maintenance | origin:?*) ;;
+  *) echo "ERROR --lane takes security, maintenance or origin:<an origin the knob follows>" >&2; exit 2 ;;
+esac
 if [ -n "$planf" ] && [ "$standing" -eq 1 ]; then
   echo "ERROR --plan and --standing are two forms of the owner's approval: pass one" >&2
   exit 2
@@ -730,7 +737,7 @@ emit() {
 
 gate_host
 plan_gate_record "$approve" "$planf" "$host" 0
-standing_gate_record "$approve" "$standing" "" 0
+standing_gate_record "$approve" "$standing" "" 0 "$lane"
 gate_run
 gate_backup
 gate_datastores
@@ -1211,7 +1218,7 @@ if [ "${#FAILED[@]}" -eq 0 ]; then
     NEXT+=("$_u runs appendonly yes: it loads its AOF at start and ignores dump.rdb, so a restore from this RDB file means staging it as the AOF's base, not copying it over dump.rdb (run.md section 2), or the host's own restore procedure.")
   done
   _aa=""
-  approval_args _aa "$planf" "$standing"
+  approval_args _aa "$planf" "$standing" "$lane"
   NEXT+=("bash \"$_libdir/apply.sh\" --approve$_aa --step bulk --run \"$run\" --dry-run <DIR>: approval 2")
   NEXT+=("Delete every file in $run on $retain, the retention stated here.")
 fi
