@@ -80,10 +80,33 @@ def _plan(host, text: str):
     return p
 
 
-def _summary(host, selected: dict | None = SELECTED, security_only: int = 1):
+# What the apply rig's simulation offers each default hold group, and so
+# what a dry run of it records in held_versions (#383).
+GROUP_VERSIONS = {
+    "postgresql-16": "16.10-0ubuntu0.24.04.1",
+    "libpq5": "16.10-0ubuntu0.24.04.1",
+    "redis-server": "5:7.0.15-1ubuntu0.24.04.1",
+}
+
+
+def _summary(
+    host,
+    selected: dict | None = SELECTED,
+    security_only: int = 1,
+    held: tuple[str, ...] | None = None,
+):
+    """A dry run's summary, as probe.sh writes it. Its held_versions name
+    each group package it saw: the selection's, and redis-server, which the
+    security lane passed over at the same candidate, unless HELD says
+    otherwise. One it didn't see is a release since, which the bulk holds."""
+    if held is None:
+        held = tuple(
+            p for p in GROUP_VERSIONS if p in (selected or {}) or p == "redis-server"
+        )
     text = (
         f"began={TUE_1530 - 3600}\nexit=0\ncount=5\nwall_seconds=540\n"
         f"security_only={security_only}\nlists_refreshed=1\n"
+        "held_versions=" + " ".join(f"{p}={GROUP_VERSIONS[p]}" for p in held) + "\n"
     )
     if selected is not None:
         text += "select_read=1\n"
@@ -701,3 +724,17 @@ def test_an_unplanned_selected_package_held_for_an_approved_step_stops_the_bulk(
     assert "postgresql-16" in json.dumps(out)
     assert host.holds() == []
     assert not host.calls("unattended-upgrade")
+
+
+# --- CR 2554: a package held for a step the plan doesn't name ------------------------
+
+
+def test_a_release_held_for_a_step_the_plan_doesnt_name_stops_the_bulk(host):
+    # redis-server wasn't seen by the dry run; the refreshed lists offer it,
+    # and the bulk would hold it for redis, a step the plan doesn't name, so
+    # it could never be released under the plan.
+    _summary(host, held=("postgresql-16", "libpq5"))
+    p = _plan(host, HEAD + _section())
+    out = host.run("--plan", str(p), rc=1)
+    assert "redis-server" in json.dumps(out)
+    assert host.holds() == []

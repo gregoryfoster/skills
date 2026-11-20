@@ -1300,6 +1300,64 @@ redis_persistence() {  # <var>
   printf -v "$1" '%s' "$_rp"
 }
 
+# The origins that are Ubuntu's or Canonical's own: they need no knob
+# policy, and carry no exposure (CR 1959).
+FIRST_PARTY_ORIGINS="Ubuntu UbuntuESM UbuntuESMApps Canonical"
+
+# A package's class from an Inst line's origins: security, updates, esm,
+# third-party:<origin> or ubuntu-other. Shared with apply.sh, which classes
+# what the bulk holds from the lists it refreshed (CR 2552).
+class_of() {  # <var> <origins, ", "-separated>
+  local _c_o _c_rest=$2 _c_origin _c_archive _c_sec=0 _c_esm=0 _c_upd=0 _c_ubu=0 _c_third=""
+  while [ -n "$_c_rest" ]; do
+    _c_o=${_c_rest%%, *}
+    if [ "$_c_o" = "$_c_rest" ]; then _c_rest=""; else _c_rest=${_c_rest#*, }; fi
+    _c_origin=${_c_o%%:*}
+    _c_archive=${_c_o##*/}
+    case $_c_origin in
+      UbuntuESM | UbuntuESMApps) _c_esm=1 ;;
+      Ubuntu)
+        _c_ubu=1
+        case $_c_archive in *-security) _c_sec=1 ;; *-updates) _c_upd=1 ;; esac ;;
+      *)
+        # Canonical's own origin is first party, as read_origins and the
+        # exposure check read it, so it's never third-party: (#609). No lane
+        # takes it and no knob line names it, so it's ubuntu-other, with
+        # Ubuntu's release, backports and proposed pockets, whatever its
+        # archive: the Ubuntu Cloud Archive's is jammy-updates (its Release
+        # file, read 2026-11-14), and the maintenance lane takes o=Ubuntu's.
+        if in_words "$_c_origin" "$FIRST_PARTY_ORIGINS"; then
+          _c_ubu=1
+        else
+          _c_third=${_c_third:-$_c_origin}
+        fi ;;
+    esac
+  done
+  if [ "$_c_esm" -eq 1 ]; then printf -v "$1" esm
+  elif [ "$_c_sec" -eq 1 ]; then printf -v "$1" security
+  elif [ "$_c_upd" -eq 1 ]; then printf -v "$1" updates
+  elif [ -n "$_c_third" ] && [ "$_c_ubu" -eq 0 ]; then printf -v "$1" 'third-party:%s' "${_c_third// /_}"
+  else printf -v "$1" ubuntu-other
+  fi
+}
+
+# A package's class in a simulation, from its Inst line's origins, or
+# empty where the simulation doesn't list it.
+sim_class() {  # <var> <package> <simulation>
+  local _sk_k _sk_p _sk_r _sk_o=""
+  printf -v "$1" '%s' ""
+  while read -r _sk_k _sk_p _sk_r; do
+    if [ "$_sk_k" != Inst ] || [ "$_sk_p" != "$2" ]; then continue; fi
+    case $_sk_r in *"("*) ;; *) return 0 ;; esac
+    _sk_o=${_sk_r#*(}
+    _sk_o=${_sk_o%%)*}
+    _sk_o=${_sk_o#* }
+    _sk_o=${_sk_o% \[*}
+    class_of "$1" "$_sk_o"
+    return 0
+  done <<<"$3"
+}
+
 # The candidate version a simulation would install, or empty: probe.sh's
 # own (SIM_DIST_OUT), or the one given.
 sim_candidate() {  # <var> <package> [<simulation>]

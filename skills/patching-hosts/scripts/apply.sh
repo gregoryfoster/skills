@@ -1209,7 +1209,8 @@ plan_envelope() {
 
 # The bulk, against the lists it just refreshed (CR 2530): each package it
 # will install under the plan, its own selection's and those it holds for a
-# step the plan approves, at the candidate those lists offer. A planned one
+# step the plan approves, at the candidate those lists offer; and none it
+# would hold for a step the plan doesn't name (CR 2554). A planned one
 # must be at its planned version or a newer one; an unplanned one held for
 # an approved step is outside, since that step would install it and restart
 # its data store, whether or not the dry run selected it (CR 2545). One of
@@ -1225,7 +1226,13 @@ plan_recheck_bulk() {  # <the refreshed simulation>
     for i in ${RUN_HOLD_PKG[@]+"${!RUN_HOLD_PKG[@]}"}; do
       if [ "${RUN_HOLD_PKG[$i]}" = "$p" ]; then held=${RUN_HOLD_STEP[$i]}; fi
     done
-    if [ -n "$held" ] && ! in_words "$held" "$PLAN_HELD"; then continue; fi
+    # Held for a step the plan doesn't name: that step can never run under
+    # it, so the package would stay held (CR 2554).
+    if [ -n "$held" ] && ! in_words "$held" "$PLAN_HELD"; then
+      sim_candidate c "$p" "$1"
+      RECHECK_WHY="$RECHECK_WHY; $p ${c:-}, which the bulk would hold for $held, a held step the plan doesn't name"
+      continue
+    fi
     sim_candidate c "$p" "$1"
     [ -n "$c" ] || continue
     pv=""
@@ -1400,7 +1407,7 @@ standing_scope() {  # <package> <version> <class> <security_only>
 # A held step under a standing line: each package it releases, at the
 # class the bulk recorded, within the lane (CR 2543).
 standing_held_scope() {
-  local out s v c so="" i p
+  local out s v c so="" i p pv cl
   if ! root_read out "$run/hold-versions"; then
     plan_diff 0 unread hold-versions "$run/hold-versions can't be read, so what this step installs is unknown"
     return 0
@@ -1436,6 +1443,14 @@ standing_envelope() {
     standing_scope "$p" "$SV" "$SC" "$DRY_SECURITY_ONLY"
   done
   for g in $SPAN_GROUPS; do standing_held "$g"; done
+  # no-datastore where the knob declares one: the reboot chain stops each,
+  # so a run that reboots, certain, due or unknown, is outside it, as
+  # reboot-chain.sh refuses it (CR 2542, CR 2553).
+  if [ "$ST_NO_DS" = 1 ] && [ "${#KNOB_DATASTORE[@]}" -gt 0 ] && [ "$SPAN_RC" -ne 1 ]; then
+    g=$REBOOT_WHY
+    [ -n "$g" ] || g="whether it does can't be read"
+    plan_diff 0 datastore host "the standing line says no-datastore, the knob declares a data store, which the reboot chain stops, and the run may reboot: $g"
+  fi
   if [ "$ST_NO_REBOOT" = 1 ] && [ "$SPAN_RC" -ne 1 ]; then
     if [ "$SPAN_RC" -eq 0 ]; then
       plan_diff 0 reboot host "the standing line says no-reboot, and the run reboots: $REBOOT_WHY"
@@ -2227,7 +2242,7 @@ STARTED=0
 LANE_KEEP=""
 do_bulk() {
   local out pend="" p i r s g o="" a="" names="" e kw rest pol onames oskip sim bv dv="" dseen=0 c d line vout="" va="" outside="" bver=""
-  local btake hsteps=""
+  local btake hsteps="" cl
   local -a f=() w=()
   if ! root_has "$run" && ! as_root mkdir -p -m 700 -- "$run"; then
     fail "$run couldn't be made"
@@ -2356,10 +2371,11 @@ do_bulk() {
     p=${RUN_HOLD_PKG[$i]}
     version_in c "$bv" "$p"
     version_in d "$dv" "$p"
-    # Its class as the dry run read it, or ? (CR 2543): a held step under a
-    # standing line takes only its lane's.
-    sel_of "$p"
-    vout="$vout$p $c ${SC:-?}"$'\n'
+    # Its class, from the lists just refreshed, or ? where they don't list
+    # it (CR 2543, CR 2552): a held step under a standing line takes only its
+    # lane's.
+    sim_class cl "$p" "$sim"
+    vout="$vout$p $c ${cl:-?}"$'\n'
     e=""
     jadds e package "$p"
     jadds e step "${RUN_HOLD_STEP[$i]}"
@@ -2384,6 +2400,22 @@ do_bulk() {
     plan_recheck_bulk "$sim"
     if [ -n "$RECHECK_WHY" ]; then
       fail "outside the plan $PLAN_ID against the refreshed lists: ${RECHECK_WHY#; }. Nothing was held or upgraded"
+      return 0
+    fi
+  fi
+  # Under a standing line, each package the bulk holds is of a class its
+  # lane takes, as the refreshed lists read it (CR 2552): one that isn't, or
+  # can't be read, would leave its held step refused and the package held.
+  if [ "$standing" -eq 1 ]; then
+    PLAN_DIFFS="" PLAN_OUTSIDE=()
+    while read -r p c cl; do
+      [ -n "$p" ] || continue
+      standing_scope "$p" "$c" "$cl" "$DRY_SECURITY_ONLY"
+    done <<<"$vout"
+    if [ "${#PLAN_OUTSIDE[@]}" -gt 0 ]; then
+      r=""
+      for i in "${PLAN_OUTSIDE[@]}"; do r="$r; $i"; done
+      fail "outside the standing approval for the $LANE lane (knob line $ST_LINE) against the refreshed lists: ${r#; }. Nothing was held or upgraded"
       return 0
     fi
   fi

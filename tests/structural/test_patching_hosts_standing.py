@@ -2,25 +2,36 @@
 
 The knob's `standing <lane> [no-reboot] [no-datastore] [no-held] <review-by>
 <reason>` is the owner's declaration that a step of one lane needs no
-approval in the host's own session, or a plan, within its limits. `--standing`
+approval in the host's own session, or a plan, within its limits. Its
+review-by date is read against the host's clock (CR 2528). `--standing`
 beside `--approve` holds each step to it:
 
-- apply.sh: an unexpired line for the step's lane, the bulk's `--lane`, or
-  for a held step the lane its bulk ran in, read from the run; and the
-  bulk's fresh reading inside its limits: no-reboot (an unknown or due
-  reboot refuses), no-held, no-datastore (a held step that may restart a
-  declared data store), and the lane's own classes. gate.standing reports
-  it in gate.plan's shape, and without --approve it's the read-only check;
-- recovery-point.sh: any unexpired line;
-- reboot-chain.sh: its run's lane's line, refused under no-reboot;
+- apply.sh's bulk: an unexpired line for its `--lane`, and its fresh
+  reading inside the limits: no-reboot (a certain, due or unknown reboot
+  refuses), no-held and no-datastore (no held step at all; no-datastore
+  also refuses a run that may reboot where the knob declares a data store,
+  CR 2544, CR 2553), and the lane's own classes, for what it selects and
+  for each package it would hold, read from the refreshed lists (CR 2552).
+  Under no-held or no-datastore it holds nothing (CR 2546);
+- apply.sh's held step: the lane its bulk ran in, read from the run, its
+  bulk's own standing approval for that lane (the run's approval record,
+  CR 2543), the limits, and the class of each package it releases;
+- gate.standing reports it in gate.plan's shape, and without --approve
+  it's the read-only check;
+- recovery-point.sh: its --lane's line, security by default (CR 2549);
+- reboot-chain.sh: its run's lane's line, under which its bulk ran, refused
+  under no-reboot, or no-datastore where the knob declares a data store
+  (CR 2542);
 - each records approval {by: standing, lane, review_by, reason, line}.
 """
 
 import json
+import subprocess
 
 import pytest
 
-from tests.structural.patching_hosts_rig import dispatcher
+from tests.structural.patching_hosts_rig import SKILL, dispatcher
+from tests.structural.patching_hosts_rig import clean_env as _clean_env
 from tests.structural.test_patching_hosts_apply import (
     KNOB,
     MAPS,
@@ -157,7 +168,9 @@ def test_plan_and_standing_are_exclusive(host):
             "no-datastore ",
             "datastore postgres postgresql@16-main app\n",
             False,
-            [("datastore", "postgres", False)],
+            # ...and, the cluster declared, a run whose reboot (unknown here)
+            # the chain would stop it for (CR 2553).
+            [("datastore", "postgres", False), ("datastore", "host", False)],
         ),
         # ...and so does one the knob doesn't declare: no-datastore refuses
         # every held step (CR 2544, CR 2547).
@@ -526,3 +539,70 @@ def test_the_reboot_runs_only_under_its_bulks_standing_line(chain):
     assert any(
         "isn't a standing approval for the security lane" in r for r in out["refused"]
     ), out["refused"]
+
+
+# --- CR 2552: each held package's class, from the refreshed lists --------------------
+
+
+def _refreshed(host, sim: str) -> None:
+    host.cases["apt-get"] = [c for c in host.cases["apt-get"] if c[0] != SIM_ARGS]
+    host.on("apt-get", SIM_ARGS, sim)
+
+
+def test_a_standing_bulk_records_each_held_packages_class_from_the_refreshed_lists(
+    host,
+):
+    # The dry run reaches no group; the refreshed lists offer the postgres
+    # and redis groups' packages, which it holds. Their class comes from
+    # those lists, so the held step can read it.
+    _standing(host)
+    _quiet(host)
+    _refreshed(host, SIMULATION)
+    host.run("--standing")
+    hv = host.record("hold-versions")
+    assert "postgresql-16 16.10-0ubuntu0.24.04.1 security\n" in hv
+    assert " ?\n" not in hv
+
+
+def test_a_standing_bulk_that_would_hold_outside_its_lane_stops_first(host):
+    # The host's origins are wider than security, and the refreshed lists
+    # offer an -updates redis-tools for the redis group: the security lane's
+    # line doesn't take it, so its held step would be refused.
+    _standing(host)
+    _quiet(host)
+    _summary(host, QUIET_SEL, 0)
+    _refreshed(
+        host,
+        SIMULATION + "Inst redis-tools [5:7.0.15-1build2] (5:7.0.15-1ubuntu0.24.04.2 "
+        "Ubuntu:24.04/noble-updates [arm64])\n",
+    )
+    out = host.run("--standing", rc=1)
+    assert "redis-tools" in json.dumps(out)
+    assert host.holds() == []
+
+
+# --- CR 2553: no-datastore, and the bulk's reboot ------------------------------------
+
+
+def test_a_bulk_whose_run_reboots_under_no_datastore_with_a_data_store_is_refused(host):
+    # The chain stops each declared data store, and its reboot is due
+    # (#655): reboot-chain.sh would refuse it, so the bulk is refused first.
+    _standing(host, "no-datastore ", "datastore postgres postgresql@16-main app\n")
+    _quiet(host)
+    host.write("run/reboot-required", "*** System restart required ***\n")
+    out = host.run("--standing", rc=3)
+    assert ("datastore", "host", False) in _kinds(out)
+
+
+def test_reboot_chain_help_names_what_standing_needs():
+    # CR 2555: the run's approval record (CR 2543), and no-datastore where
+    # the knob declares a data store (CR 2542).
+    r = subprocess.run(
+        ["bash", str(SKILL / "scripts" / "reboot-chain.sh"), "--help"],
+        capture_output=True,
+        text=True,
+        env=_clean_env(),
+    )
+    flat = " ".join(r.stdout.split())
+    assert "its approval record" in flat
+    assert "no-datastore where the knob declares a data store" in flat
