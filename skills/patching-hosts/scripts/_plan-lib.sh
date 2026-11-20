@@ -465,6 +465,9 @@ standing_gate_record() {  # <approve 0|1> <standing 0|1> <run dir, or empty for 
       _sw=$ST_WHY
     elif [ "$ST_NO_REBOOT" = 1 ]; then
       _sw="the standing approval for the $_sl lane (knob line $ST_LINE) says no-reboot: the reboot needs the owner's own approval"
+    elif [ "$ST_NO_DS" = 1 ] && [ "${#KNOB_DATASTORE[@]}" -gt 0 ]; then
+      # The chain checkpoints and stops each declared data store (CR 2542).
+      _sw="the standing approval for the $_sl lane (knob line $ST_LINE) says no-datastore, and the reboot chain stops each declared data store: the reboot needs the owner's own approval"
     fi
   elif ! standing_for "${5:-security}"; then
     _sw=$ST_WHY

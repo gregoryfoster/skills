@@ -352,3 +352,19 @@ def test_the_recovery_point_takes_its_lanes_line_and_carries_the_lane(recovery):
     assert out["recovery_point"]["approval"]["lane"] == "maintenance"
     [n] = [x for x in out["next"] if "--step bulk" in x]
     assert "--standing --lane maintenance" in n
+
+
+# --- CR 2542: no-datastore stops the reboot where a data store is declared -----------
+
+
+def test_the_reboot_is_refused_under_no_datastore_with_a_data_store(chain):
+    # The chain checkpoints and stops each declared data store, Postgres
+    # and Redis here, before it reboots.
+    (chain.run_dir / "approval").write_text("standing security\n")
+    chain.knob(chain.knob_path.read_text() + STANDING.format(limits="no-datastore "))
+    out = chain.reboot("--standing", rc=3)
+    assert any(
+        "no-datastore" in r and "stops each declared data store" in r
+        for r in out["refused"]
+    ), out["refused"]
+    assert not any(n == "systemd-run" for n, _, _ in chain.calls())
