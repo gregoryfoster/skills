@@ -306,7 +306,11 @@ fi
 # names one below the template's version, or one claiming the template's
 # version over another commit), and a `@vX[.Y[.Z]]` tag above the template's
 # version, since the pin would be a downgrade. A tag at or below it is
-# replaced by the pin: `@v7` floats, and pinning it is the point. Anything
+# replaced by the pin: `@v7` floats, and pinning it is the point. That can
+# step back: `@v7` runs the newest v7 release, which may be past the
+# template's pin until Dependabot or the next skills bump moves it. The
+# trade is taken, and both --check and the install report say so (CR 2566).
+# Anything
 # else (no installed file, a branch, a form this can't read) renders the
 # template's line, and --check says which it was.
 TEMPLATE_CHECKOUT_SHA=3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -320,16 +324,19 @@ CHECKOUT_PIN="none"   # none | template | sha | newer | tag | older | unread
 INSTALLED_CHECKOUT_REF=""
 CHECKOUT_SHA_BELOW=""
 CHECKOUT_SHA_OTHER=""
+CHECKOUT_TAG_FLOATS=""
 
-# version_cmp A B: prints -1, 0 or 1 for two dotted numeric versions, a
-# missing part read as 0, so `7` is 7.0.0 and below 7.0.1.
+# version_cmp A B [prefix]: prints -1, 0 or 1 for two dotted numeric
+# versions, a missing part read as 0, so `7` is 7.0.0 and below 7.0.1. With
+# `prefix`, only as many parts as A has are compared, so `7` equals 7.0.1:
+# a comment says no more than it gives (CR 2569).
 version_cmp() {
   local -a a b
   local i n x y
   IFS=. read -r -a a <<<"$1"
   IFS=. read -r -a b <<<"$2"
   n=${#a[@]}
-  (( ${#b[@]} <= n )) || n=${#b[@]}
+  [ "${3:-}" = prefix ] || (( ${#b[@]} <= n )) || n=${#b[@]}
   for (( i = 0; i < n; i++ )); do
     x=$((10#${a[i]:-0}))
     y=$((10#${b[i]:-0}))
@@ -346,18 +353,22 @@ if [ -f "$WF" ]; then
     INSTALLED_CHECKOUT_REF="${INSTALLED_CHECKOUT_REF%%[[:space:]]*}"
     if [ "$installed_checkout" = "$TEMPLATE_CHECKOUT_LINE" ]; then
       CHECKOUT_PIN="template"
-    elif [[ "$INSTALLED_CHECKOUT_REF" =~ ^[0-9a-f]{40}$ ]]; then
+    elif [[ "$INSTALLED_CHECKOUT_REF" =~ ^[0-9a-fA-F]{40}$ ]]; then
+      # Either case of hex names the same commit, and is kept as written.
       CHECKOUT_PIN="sha"
+      installed_sha=$(printf '%s' "$INSTALLED_CHECKOUT_REF" | tr 'A-F' 'a-f')
       # Kept whatever it pins, but --check names a comment below the
       # template's version (verbatim must not quietly mean "below v4"), and
-      # one that claims the template's version over another commit.
-      if [[ "$installed_checkout" =~ \#[[:space:]]*v([0-9]+(\.[0-9]+)*) ]]; then
-        case "$(version_cmp "${BASH_REMATCH[1]}" "$TEMPLATE_CHECKOUT_VERSION")" in
-          -1) CHECKOUT_SHA_BELOW="v${BASH_REMATCH[1]}" ;;
-          0)
-            [ "$INSTALLED_CHECKOUT_REF" = "$TEMPLATE_CHECKOUT_SHA" ] \
-              || CHECKOUT_SHA_OTHER="v${BASH_REMATCH[1]}" ;;
-        esac
+      # one that claims the template's exact version over another commit.
+      # A comment is compared only as far as it goes (`# v7` is not below
+      # 7.0.1), and the template's own commit is never below itself.
+      if [ "$installed_sha" != "$TEMPLATE_CHECKOUT_SHA" ] \
+        && [[ "$installed_checkout" =~ \#[[:space:]]*v([0-9]+(\.[0-9]+)*) ]]; then
+        if [ "$(version_cmp "${BASH_REMATCH[1]}" "$TEMPLATE_CHECKOUT_VERSION" prefix)" = -1 ]; then
+          CHECKOUT_SHA_BELOW="v${BASH_REMATCH[1]}"
+        elif [ "${BASH_REMATCH[1]}" = "$TEMPLATE_CHECKOUT_VERSION" ]; then
+          CHECKOUT_SHA_OTHER="v${BASH_REMATCH[1]}"
+        fi
       fi
     elif [[ "$INSTALLED_CHECKOUT_REF" =~ ^v(([0-9]+)(\.[0-9]+)*)$ ]]; then
       installed_major=${BASH_REMATCH[2]}
@@ -367,6 +378,9 @@ if [ -f "$WF" ]; then
         CHECKOUT_PIN="older"
       else
         CHECKOUT_PIN="tag"
+        # A tag short of x.y.z follows the newest release under it, which may
+        # already be past the template's pin (CR 2566). Pinned anyway, said.
+        [[ "${BASH_REMATCH[1]}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || CHECKOUT_TAG_FLOATS=1
       fi
     else
       CHECKOUT_PIN="unread"
@@ -872,7 +886,12 @@ if [ "$MODE" = "check" ]; then
         echo "                    a tag, which can move: pin its SHA with a # v comment." ;;
       tag)
         echo "checkout pin:       tag (@$INSTALLED_CHECKOUT_REF can move; a re-render pins it"
-        echo "                    to the template's SHA, $TEMPLATE_CHECKOUT_SHOWN) (#675)" ;;
+        echo "                    to the template's SHA, $TEMPLATE_CHECKOUT_SHOWN) (#675)"
+        if [ -n "$CHECKOUT_TAG_FLOATS" ]; then
+          echo "                    @$INSTALLED_CHECKOUT_REF runs its newest release, so the pin"
+          echo "                    may be older than what it runs now, until Dependabot"
+          echo "                    or the next skills bump moves it."
+        fi ;;
       older)
         echo "checkout pin:       behind (@$INSTALLED_CHECKOUT_REF; a re-render raises it"
         echo "                    to the template's SHA pin, $TEMPLATE_CHECKOUT_SHOWN)" ;;
@@ -1892,8 +1911,13 @@ case "$CRON_SRC" in
 esac
 case "$CHECKOUT_PIN" in
   sha|newer) echo "kept: actions/checkout@$INSTALLED_CHECKOUT_REF, the installed pin (#373)" ;;
-  tag|older) echo "pinned: actions/checkout@$INSTALLED_CHECKOUT_REF to the template's SHA," \
-                  "$TEMPLATE_CHECKOUT_SHOWN: a tag can be moved (#675)" ;;
+  tag|older)
+    echo "pinned: actions/checkout@$INSTALLED_CHECKOUT_REF to the template's SHA," \
+         "$TEMPLATE_CHECKOUT_SHOWN: a tag can be moved (#675)"
+    if [ -n "$CHECKOUT_TAG_FLOATS" ]; then
+      echo "        @$INSTALLED_CHECKOUT_REF ran its newest release, so the pin may be older" \
+           "than what it runs now, until Dependabot or the next skills bump moves it"
+    fi ;;
   unread)    echo "replaced: actions/checkout@$INSTALLED_CHECKOUT_REF with the template's" \
                   "$TEMPLATE_CHECKOUT_SHOWN — restore it if it was deliberate (#373)" >&2 ;;
 esac

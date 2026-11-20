@@ -286,3 +286,76 @@ def test_check_names_a_sha_pin_that_is_not_the_templates_commit(tmp_path):
         "is not the template's"
         not in _run(_installed(tmp_path / "x", SHA_LINE), "--check").stdout
     )
+
+
+def test_pinning_a_bare_major_tag_says_it_may_step_back(tmp_path):
+    """CR 2566. `@v7` follows the newest v7 release, so once checkout ships
+    one past the template's pin, pinning it steps the job back to an older
+    commit until Dependabot or the next skills bump moves the pin. The trade
+    is kept (the moving tag is what #675 removes), but both paths say so,
+    and a full `@vX.Y.Z` tag, which can't run anything newer, doesn't."""
+    v = _template_vars()
+    major = v["TEMPLATE_CHECKOUT_VERSION"].split(".")[0]
+    repo = _installed(tmp_path, f"      - uses: actions/checkout@v{major}")
+    says = "may be older than what it runs now"
+    assert says in _run(repo, "--check").stdout
+    r = _run(repo)
+    assert r.returncode == 0, r.stderr
+    assert says in r.stdout, r.stdout
+    full = _installed(
+        tmp_path / "full",
+        f"      - uses: actions/checkout@v{v['TEMPLATE_CHECKOUT_VERSION']}",
+    )
+    assert says not in _run(full, "--check").stdout
+    assert says not in _run(full).stdout
+
+
+@pytest.mark.parametrize(
+    "comment",
+    ["v{major}", "v{major}.{minor}"],
+    ids=["major-only", "major-minor"],
+)
+def test_a_short_comment_is_compared_only_as_far_as_it_goes(tmp_path, comment):
+    """CR 2569. `# v7` read as 7.0.0 called the template's own SHA "below the
+    template's v7.0.1: move the pin". A comment is compared only as far as it
+    goes, and the template's SHA is never called below itself."""
+    v = _template_vars()
+    major, minor, _ = v["TEMPLATE_CHECKOUT_VERSION"].split(".")
+    tag = comment.format(major=major, minor=minor)
+    own = f"      - uses: actions/checkout@{v['TEMPLATE_CHECKOUT_SHA']} # {tag}"
+    other = "      - uses: actions/checkout@" + "ab" * 20 + f" # {tag}"
+    for repo in (_installed(tmp_path / "own", own), _installed(tmp_path / "x", other)):
+        out = _run(repo, "--check").stdout
+        assert "kept (SHA-pinned" in out, out
+        assert "below the template's" not in out, out
+        # Only an exact version claim is "the template's version".
+        assert "is not the template's" not in out, out
+
+
+def test_the_templates_sha_is_never_below_itself(tmp_path):
+    """Whatever its comment says, the template's own commit isn't behind it."""
+    v = _template_vars()
+    line = f"      - uses: actions/checkout@{v['TEMPLATE_CHECKOUT_SHA']} # v4.0.0"
+    out = _run(_installed(tmp_path, line), "--check").stdout
+    assert "kept (SHA-pinned" in out and "below the template's" not in out, out
+
+
+def test_an_uppercase_hex_sha_pin_is_a_sha_pin(tmp_path):
+    """A SHA in uppercase hex names the same commit; it read as neither form,
+    so `--check` said DOWNGRADE and a re-render replaced it."""
+    v = _template_vars()
+    upper = "      - uses: actions/checkout@" + "AB" * 20 + " # v99.0.1"
+    repo = _installed(tmp_path, upper)
+    assert "kept (SHA-pinned" in _check_line(repo)
+    r = _run(repo)
+    assert r.returncode == 0, r.stderr
+    assert _checkout(repo) == upper
+    assert "replaced:" not in r.stderr
+    # The template's own commit, upper-cased, is still never below itself.
+    own = (
+        "      - uses: actions/checkout@"
+        + v["TEMPLATE_CHECKOUT_SHA"].upper()
+        + " # v4.0.0"
+    )
+    out = _run(_installed(tmp_path / "own", own), "--check").stdout
+    assert "kept (SHA-pinned" in out and "below the template's" not in out, out
