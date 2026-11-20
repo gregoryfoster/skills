@@ -84,7 +84,7 @@ With `--approve`, each outside difference is a refusal: the host stops for this 
 
 ## A standing approval
 
-`standing <lane> [no-reboot] [no-datastore] [no-held] <review-by> <reason>` ([knob.md](knob.md)) is **the owner's declaration, in the host's committed knob,** that a step of one lane needs no approval in the session and no plan, within its limits. It's adopted host by host, and reviewed like any other knob change. Its review-by date keeps it from outliving that review: once passed, it's an `expired-standing` finding and approves nothing, until it's renewed.
+`standing <lane> [no-reboot] [no-datastore] [no-held] <review-by> <reason>` ([knob.md](knob.md)) is **the owner's declaration, in the host's committed knob,** that a step of one lane needs no approval in the session and no plan, within its limits. It's adopted host by host, and reviewed like any other knob change. Its review-by date keeps it from outliving that review: once passed, it's an `expired-standing` finding and approves nothing, until it's renewed. `--standing` reads that date against the host's own clock, never `--today`, which is the caller's.
 
 `--standing`, beside `--approve` and never with `--plan`, holds each step to it:
 

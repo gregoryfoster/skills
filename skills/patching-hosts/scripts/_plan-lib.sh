@@ -354,7 +354,7 @@ plan_gate_record() {  # <approve 0|1> <file, or empty> <host> <reboot 0|1>
 ST_LANE="" ST_NO_REBOOT=0 ST_NO_DS=0 ST_NO_HELD=0 ST_REVIEW="" ST_REASON="" ST_LINE="" ST_WHY=""
 
 standing_for() {  # <lane>
-  local _sf_r _sf_k _sf_o _sf_ok
+  local _sf_r _sf_k _sf_o _sf_ok _sf_d
   local -a _sf_f=()
   ST_LANE="" ST_NO_REBOOT=0 ST_NO_DS=0 ST_NO_HELD=0 ST_REVIEW="" ST_REASON="" ST_LINE="" ST_WHY=""
   for _sf_r in ${KNOB_STANDING[@]+"${KNOB_STANDING[@]}"}; do
@@ -362,7 +362,14 @@ standing_for() {  # <lane>
     [ "${_sf_f[0]}" = "$1" ] || continue
     ST_LANE=${_sf_f[0]} ST_NO_REBOOT=${_sf_f[1]} ST_NO_DS=${_sf_f[2]} ST_NO_HELD=${_sf_f[3]}
     ST_REVIEW=${_sf_f[4]} ST_REASON=${_sf_f[5]} ST_LINE=${_sf_f[7]}
-    if [ "${_sf_f[6]}" = 1 ]; then
+    # Against the host's own clock, never --today, which is the caller's
+    # (CR 2528). A clock that can't be read approves nothing.
+    if ! is_int "${P_NOW:-}"; then
+      ST_WHY="the host's clock can't be read, so whether standing $1 (knob line $ST_LINE) has passed its review-by date is unknown: it approves nothing"
+      return 1
+    fi
+    knob_epoch_day _sf_d "$ST_REVIEW"
+    if [ "${_sf_f[6]}" = 1 ] || [ $((P_NOW / 86400)) -gt "$_sf_d" ]; then
       ST_WHY="standing $1 (knob line $ST_LINE) passed its review-by date, $ST_REVIEW: it approves nothing until it's renewed"
       return 1
     fi

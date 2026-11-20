@@ -280,3 +280,23 @@ def test_the_reboot_is_refused_under_no_reboot(chain):
     out = chain.reboot("--standing", rc=3)
     assert any("says no-reboot" in r for r in out["refused"])
     assert not any(n == "systemd-run" for n, _, _ in chain.calls())
+
+
+def test_a_standing_lines_expiry_is_read_from_the_clock_not_today(host):
+    # CR 2528: --today is the caller's, and a standing line is the owner's
+    # declaration against the host's own clock. The clock reads 2026-09-29;
+    # the line expired on the 28th, and --today says the 1st.
+    host.knob(KNOB + "standing security 2026-09-28 lapsed\n")
+    out = host.run("--standing", "--today", "2026-09-01", rc=3)
+    assert any("passed its review-by date, 2026-09-28" in r for r in out["refused"]), (
+        out["refused"]
+    )
+    assert _changed(host) == []
+
+
+def test_the_recovery_point_reads_a_standing_lines_expiry_from_the_clock(recovery):
+    recovery.knob(
+        recovery.knob_path.read_text() + "standing security 2026-09-28 lapsed\n"
+    )
+    out = recovery.recover("--standing", "--today", "2026-09-01", rc=3)
+    assert any("passed its review-by date" in r for r in out["refused"])
