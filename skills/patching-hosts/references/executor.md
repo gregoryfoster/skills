@@ -1,6 +1,6 @@
-# A fleet executor: a plan approved off the host
+# A fleet executor: a plan approved off the host, and a standing approval
 
-A cohort can move its patch runs off each host's own session and onto an executor: a short-lived machine that runs this skill's own scripts on hosts. The owner approves, once a cycle and off any host, a plan listing each host's pending updates, its held steps and its reboot. The Iron Law's first line accepts that plan in place of the host's own session (#673). This page is what the skill does with one.
+A cohort can move its patch runs off each host's own session and onto an executor: a short-lived machine that runs this skill's own scripts on hosts. The owner approves, once a cycle and off any host, a plan listing each host's pending updates, its held steps and its reboot. The Iron Law's first line accepts that plan in place of the host's own session, and so does the host's own standing approval, a line in its knob (#673). This page is what the skill does with each.
 
 Diagnosis stays where it is. A host the plan doesn't cover, or whose reading falls outside the plan's envelope, stops: it's worked on in a session, as before.
 
@@ -16,6 +16,7 @@ Each step's JSON records its approval:
 | `approval` | When |
 |---|---|
 | `{"by": "plan", "plan", "sha256", "approved_at", "approved_by"}` | `--approve --plan FILE`. `approved_at` and `approved_by` are the plan's own statement, copied, never verified; `sha256` is the skill's. |
+| `{"by": "standing", "lane", "review_by", "reason", "line"}` | `--approve --standing`: the knob's line, [below](#a-standing-approval) |
 | `{"by": "session"}` | `--approve` alone: approval given in the host's own session |
 | `null` | no `--approve` |
 
@@ -81,8 +82,35 @@ With `--approve`, each outside difference is a refusal: the host stops for this 
 
 **The read-only check:** after a fresh `probe.sh --refresh-into DIR --dry-run-into DIR`, `apply.sh --step bulk --plan FILE --dry-run DIR`, without `--approve`, runs the whole gate and changes nothing. Its only refusal for the plan is the missing `--approve`; `gate.plan.inside` says whether the host is in. An executor runs it before the recovery point, and drops a host that's out.
 
-## What stays out of a plan
+## A standing approval
+
+`standing <lane> [no-reboot] [no-datastore] [no-held] <review-by> <reason>` ([knob.md](knob.md)) is **the owner's declaration, in the host's committed knob,** that a step of one lane needs no approval in the session and no plan, within its limits. It's adopted host by host, and reviewed like any other knob change. Its review-by date keeps it from outliving that review: once passed, it's an `expired-standing` finding and approves nothing, until it's renewed.
+
+`--standing`, beside `--approve` and never with `--plan`, holds each step to it:
+
+| Script | Refused unless |
+|---|---|
+| `recovery-point.sh` | any unexpired line, the security lane's first: it changes no package |
+| `apply.sh --step bulk` | an unexpired line for the bulk's `--lane`, and the bulk's reading within its limits |
+| `apply.sh --step <held step>` | an unexpired line for the lane its bulk ran in, read from the run's `dry-run` record (unread, it's refused), and the step within its limits |
+| `reboot-chain.sh` | an unexpired line for the run's lane, without `no-reboot` |
+
+**An origin lane the knob doesn't follow approves nothing** (`standing-origin`).
+
+**The limits, and what stops a host.** `gate.standing` reports each difference in `gate.plan`'s shape, and with `--approve` each one is a refusal:
+
+| Difference | When |
+|---|---|
+| `reboot` | `no-reboot`, and the run reboots: certain, already due (#655), or unknown |
+| `held-step` | `no-held`, and the selection reaches a held group, or the step is one |
+| `datastore` | `no-datastore`, and a held step may restart a declared data store. The default groups map to their engines: `postgres`, `redis`, and `docker` to a Qdrant's container. A knob's own group may restart anything, so it's refused wherever any data store is declared. A group whose engine isn't declared restarts none, and passes |
+| `lane-scope` | the selection holds what the lane doesn't take: in the security lane, anything but security, unless the dry run's origins are security alone; in the maintenance lane, anything but security, `-updates` and followed origins |
+| `unread` | the selection, a package's class or the reboot couldn't be read |
+
+Without `--approve` nothing is refused for it, and `gate.standing.inside` is the read-only check, as for a plan.
+
+## What stays out of a plan or a standing approval
 
 - **Pruning:** `prune.sh` takes the owner's approval in the host's own session only. A removal is one-way.
 - **The needrestart drop-in,** approval 1: a change to the host's repo.
-- **Nothing said in a chat channel counts as approval,** and a plan file isn't one.
+- **Nothing said in a chat channel counts as approval,** and neither a plan file nor a knob line is one.
