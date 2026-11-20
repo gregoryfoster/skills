@@ -1294,6 +1294,8 @@ gate_plan() {
     w="the plan $PLAN_ID doesn't name the held step $step"
   elif [ "$step" != bulk ] && ! plan_run_approval "$run"; then
     w=$PLAN_WHY
+  else
+    plan_span_why w
   fi
   plan_json_head o "$planf"
   if [ -n "$w" ]; then

@@ -30,7 +30,7 @@ The knob's grammar ([knob.md](knob.md)): one directive a line, `#` a comment at 
 |---|---|---|
 | `plan <id>` | once, before any section | the plan's id: letters, digits, `.`, `_`, `:` and `-` |
 | `approved <YYYY-MM-DDTHH:MM:SSZ> <by...>` | once, before any section | when, and by whom, as the executor states it |
-| `not-after <YYYY-MM-DDTHH:MM:SSZ>` | once, before any section | after this, every step under the plan is refused. The executor's statement, taken as given; the knob's windows still gate every step |
+| `not-after <YYYY-MM-DDTHH:MM:SSZ>` | once, before any section | a step whose span, as its gate reckons it, runs past this is refused: the bulk's is the rest of the run, the reboot chain's its delay and the boot. The executor's statement, taken as given; the knob's windows still gate every step |
 | `lane security\|maintenance\|origin:<origin>` | once a section, required | the bulk's lane, which its held steps run too |
 | `reboot yes\|no` | once a section, required | whether the plan approves the reboot, 3(b) |
 | `package <name> <version> <class>` | a section, repeated | each planned package, at its candidate, of the class `probe.sh` names: `security`, `updates`, `esm`, `ubuntu-other` or `third-party:<origin>` |

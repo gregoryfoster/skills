@@ -645,6 +645,7 @@ standing_gate_record "$approve" "$standing" "$run" 1
 gate_run
 # The chain's gate may wait CHAIN_WAIT before its stops (#646).
 gate_span "$((delay + CHAIN_WAIT + expect))"
+plan_span_gate "$approve" "$planf"
 gate_packages
 gate_datastores
 # Last, so its reading is the freshest.

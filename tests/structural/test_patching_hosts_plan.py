@@ -616,6 +616,34 @@ def test_a_package_named_twice_in_a_section_is_malformed(host):
     assert "package libc6 appears twice in [host web-1]" in r
 
 
+# --- CR 2537: a step's span ends before the plan's not-after ------------------------
+
+
+def test_a_bulk_whose_span_runs_past_the_plans_not_after_is_refused(host):
+    # From 15:30 the run's span is about an hour; the plan ends at 15:45.
+    p = _plan(
+        host, HEAD.replace("2026-09-29T23:00:00Z", "2026-09-29T15:45:00Z") + _section()
+    )
+    out = host.run("--plan", str(p), rc=3)
+    assert any(
+        "span runs to 2026-09-29T16:29:00Z, past the plan cycle-2026-09-29's "
+        "not-after, 2026-09-29T15:45:00Z" in r
+        for r in out["refused"]
+    ), out["refused"]
+
+
+def test_a_reboot_whose_span_runs_past_the_plans_not_after_is_refused(chain):
+    # The chain's span is its 120 s delay, 60 s of gate and 600 s of boot.
+    p = _plan(
+        chain, HEAD.replace("2026-09-29T23:00:00Z", "2026-09-29T15:35:00Z") + _section()
+    )
+    (chain.run_dir / "approval").write_text(f"plan {_sha(p)} cycle-2026-09-29\n")
+    out = chain.reboot("--plan", str(p), rc=3)
+    assert any(
+        "span runs to 2026-09-29T15:43:00Z, past the plan" in r for r in out["refused"]
+    ), out["refused"]
+
+
 # --- CR 2539: a clock that can't be read ---------------------------------------------
 
 

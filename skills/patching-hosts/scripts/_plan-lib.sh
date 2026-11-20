@@ -40,6 +40,8 @@ name.
   plan_approval VAR APPROVE FILE STANDING  the step's approval record
   approval_args VAR FILE STANDING  the --plan or --standing a next command
                             carries
+  plan_span_why VAR         why the step's span runs past the not-after
+  plan_span_gate APPROVE FILE  that, as a refusal, once the span is gated
   standing_for LANE         the knob's standing line for LANE into ST_*: 1
                             with ST_WHY when none approves
   standing_any              the same, for any lane: the security lane's first
@@ -506,3 +508,22 @@ approval_args() {  # <var> <plan file, or empty> <standing 0|1>
   printf -v "$1" '%s' "$_apa_s"
 }
 
+# A step whose span runs past the plan's not-after (CR 2537): the span the
+# gate computed, SPAN_E, from _gate-lib.sh. Unread, the span's own gate
+# refuses the step.
+plan_span_why() {  # <var>: VAR := why, or empty
+  local _ps_iso=""
+  printf -v "$1" '%s' ""
+  is_int "${SPAN_E:-}" && is_int "$PLAN_NOT_AFTER_S" || return 0
+  [ "$SPAN_E" -gt "$PLAN_NOT_AFTER_S" ] || return 0
+  iso_utc _ps_iso "$SPAN_E"
+  printf -v "$1" '%s' "the step's span runs to $_ps_iso, past the plan $PLAN_ID's not-after, $PLAN_NOT_AFTER"
+}
+
+# reboot-chain.sh's, once its span is gated.
+plan_span_gate() {  # <approve 0|1> <plan file, or empty>
+  local _pw=""
+  [ -n "$2" ] && [ -n "$PLAN_ID" ] || return 0
+  plan_span_why _pw
+  if [ -n "$_pw" ] && [ "$1" -eq 1 ]; then refuse "$_pw"; fi
+}
