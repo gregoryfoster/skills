@@ -16,6 +16,8 @@ beside `--approve` holds each step to it:
 - each records approval {by: standing, lane, review_by, reason, line}.
 """
 
+import json
+
 import pytest
 
 from tests.structural.patching_hosts_rig import dispatcher
@@ -23,6 +25,8 @@ from tests.structural.test_patching_hosts_apply import (
     KNOB,
     MAPS,
     QUIET,
+    SIM_ARGS,
+    SIMULATION,
     _changed,
     _owners,
     _step4,
@@ -63,11 +67,23 @@ def _standing(host, limits: str = "", extra: str = "") -> None:
     host.knob(KNOB + extra + STANDING.format(limits=limits))
 
 
+QUIET_SIM = (
+    "NOTE: This is only a simulation!\n"
+    "Inst libxml2 [2.9.14+dfsg-1.3ubuntu3.4] (2.9.14+dfsg-1.3ubuntu3.5 "
+    "Ubuntu:24.04/noble-security [arm64])\n"
+    "Inst tzdata [2025a-0ubuntu0.24.04.1] (2025b-0ubuntu0.24.04.1 "
+    "Ubuntu:24.04/noble-security [all])\n"
+)
+
+
 def _quiet(host) -> None:
-    """The selection reaches no held group, and the run reads no reboot."""
+    """The selection reaches no held group, nor do the refreshed lists, and
+    the run reads no reboot."""
     (host.dry / "dry-run.log").write_text(
         "Packages that will be upgraded: libxml2 tzdata\n"
     )
+    host.cases["apt-get"] = [c for c in host.cases["apt-get"] if c[0] != SIM_ARGS]
+    host.on("apt-get", SIM_ARGS, QUIET_SIM)
     _summary(host, QUIET_SEL)
     host.pid1_maps.write_text(MAPS)
     _step4(_owners(host), {**QUIET})
@@ -403,3 +419,23 @@ def test_no_datastore_refuses_every_held_step(host, extra, step):
     _held(host, step)
     out = host.run("--standing", step=step, rc=3)
     assert ("datastore", step, False) in _kinds(out)
+
+
+# --- CR 2546: the bulk holds nothing for a step its line refuses ---------------------
+
+
+@pytest.mark.parametrize("limits", ["no-held ", "no-datastore "])
+def test_a_bulk_that_would_hold_for_a_refused_step_stops_first(host, limits):
+    # The dry run reaches no group, but the refreshed lists offer group
+    # packages the bulk would hold (#488): their steps are refused under
+    # this line, so the holds would stand, and a next step would be
+    # suggested that the line refuses.
+    _standing(host, limits)
+    _quiet(host)
+    host.cases["apt-get"] = [c for c in host.cases["apt-get"] if c[0] != SIM_ARGS]
+    host.on("apt-get", SIM_ARGS, SIMULATION)
+    out = host.run("--standing", rc=1)
+    assert "nothing was held" in json.dumps(out).lower()
+    assert host.holds() == []
+    assert not host.calls("unattended-upgrade")
+    assert not [n for n in out["next"] if "--step " in n]

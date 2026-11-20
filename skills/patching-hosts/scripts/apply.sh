@@ -2341,6 +2341,16 @@ do_bulk() {
       return 0
     fi
   fi
+  # Under a standing line that refuses every held step, no-held or
+  # no-datastore, the bulk holds nothing (CR 2546): a group it held could
+  # never be released under the line, and its next step would be refused.
+  if [ "$standing" -eq 1 ] && { [ "$ST_NO_HELD" = 1 ] || [ "$ST_NO_DS" = 1 ]; } &&
+    [ "${#RUN_HOLD_PKG[@]}" -gt 0 ]; then
+    r=""
+    for i in "${!RUN_HOLD_PKG[@]}"; do r="$r, ${RUN_HOLD_PKG[$i]} for ${RUN_HOLD_STEP[$i]}"; done
+    fail "the standing approval for the $LANE lane (knob line $ST_LINE) refuses every held step, and the refreshed lists would have the bulk hold ${r#, }: nothing was held or upgraded"
+    return 0
+  fi
   # Which approval the bulk ran under: its held steps and its reboot, under a
   # plan, must run under the same one.
   if [ -n "$planf" ]; then RUN_APPROVAL="plan $PLAN_SHA $PLAN_ID"; fi
