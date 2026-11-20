@@ -308,3 +308,33 @@ def test_pinning_a_bare_major_tag_says_it_may_step_back(tmp_path):
     )
     assert says not in _run(full, "--check").stdout
     assert says not in _run(full).stdout
+
+
+@pytest.mark.parametrize(
+    "comment",
+    ["v{major}", "v{major}.{minor}"],
+    ids=["major-only", "major-minor"],
+)
+def test_a_short_comment_is_compared_only_as_far_as_it_goes(tmp_path, comment):
+    """CR 2569. `# v7` read as 7.0.0 called the template's own SHA "below the
+    template's v7.0.1: move the pin". A comment is compared only as far as it
+    goes, and the template's SHA is never called below itself."""
+    v = _template_vars()
+    major, minor, _ = v["TEMPLATE_CHECKOUT_VERSION"].split(".")
+    tag = comment.format(major=major, minor=minor)
+    own = f"      - uses: actions/checkout@{v['TEMPLATE_CHECKOUT_SHA']} # {tag}"
+    other = "      - uses: actions/checkout@" + "ab" * 20 + f" # {tag}"
+    for repo in (_installed(tmp_path / "own", own), _installed(tmp_path / "x", other)):
+        out = _run(repo, "--check").stdout
+        assert "kept (SHA-pinned" in out, out
+        assert "below the template's" not in out, out
+        # Only an exact version claim is "the template's version".
+        assert "is not the template's" not in out, out
+
+
+def test_the_templates_sha_is_never_below_itself(tmp_path):
+    """Whatever its comment says, the template's own commit isn't behind it."""
+    v = _template_vars()
+    line = f"      - uses: actions/checkout@{v['TEMPLATE_CHECKOUT_SHA']} # v4.0.0"
+    out = _run(_installed(tmp_path, line), "--check").stdout
+    assert "kept (SHA-pinned" in out and "below the template's" not in out, out

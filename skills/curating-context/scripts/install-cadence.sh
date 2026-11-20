@@ -307,15 +307,17 @@ CHECKOUT_SHA_BELOW=""
 CHECKOUT_SHA_OTHER=""
 CHECKOUT_TAG_FLOATS=""
 
-# version_cmp A B: prints -1, 0 or 1 for two dotted numeric versions, a
-# missing part read as 0, so `7` is 7.0.0 and below 7.0.1.
+# version_cmp A B [prefix]: prints -1, 0 or 1 for two dotted numeric
+# versions, a missing part read as 0, so `7` is 7.0.0 and below 7.0.1. With
+# `prefix`, only as many parts as A has are compared, so `7` equals 7.0.1:
+# a comment says no more than it gives (CR 2569).
 version_cmp() {
   local -a a b
   local i n x y
   IFS=. read -r -a a <<<"$1"
   IFS=. read -r -a b <<<"$2"
   n=${#a[@]}
-  (( ${#b[@]} <= n )) || n=${#b[@]}
+  [ "${3:-}" = prefix ] || (( ${#b[@]} <= n )) || n=${#b[@]}
   for (( i = 0; i < n; i++ )); do
     x=$((10#${a[i]:-0}))
     y=$((10#${b[i]:-0}))
@@ -336,14 +338,16 @@ if [ -f "$WF" ]; then
       CHECKOUT_PIN="sha"
       # Kept whatever it pins, but --check names a comment below the
       # template's version (verbatim must not quietly mean "below v4"), and
-      # one that claims the template's version over another commit.
-      if [[ "$installed_checkout" =~ \#[[:space:]]*v([0-9]+(\.[0-9]+)*) ]]; then
-        case "$(version_cmp "${BASH_REMATCH[1]}" "$TEMPLATE_CHECKOUT_VERSION")" in
-          -1) CHECKOUT_SHA_BELOW="v${BASH_REMATCH[1]}" ;;
-          0)
-            [ "$INSTALLED_CHECKOUT_REF" = "$TEMPLATE_CHECKOUT_SHA" ] \
-              || CHECKOUT_SHA_OTHER="v${BASH_REMATCH[1]}" ;;
-        esac
+      # one that claims the template's exact version over another commit.
+      # A comment is compared only as far as it goes (`# v7` is not below
+      # 7.0.1), and the template's own commit is never below itself.
+      if [ "$INSTALLED_CHECKOUT_REF" != "$TEMPLATE_CHECKOUT_SHA" ] \
+        && [[ "$installed_checkout" =~ \#[[:space:]]*v([0-9]+(\.[0-9]+)*) ]]; then
+        if [ "$(version_cmp "${BASH_REMATCH[1]}" "$TEMPLATE_CHECKOUT_VERSION" prefix)" = -1 ]; then
+          CHECKOUT_SHA_BELOW="v${BASH_REMATCH[1]}"
+        elif [ "${BASH_REMATCH[1]}" = "$TEMPLATE_CHECKOUT_VERSION" ]; then
+          CHECKOUT_SHA_OTHER="v${BASH_REMATCH[1]}"
+        fi
       fi
     elif [[ "$INSTALLED_CHECKOUT_REF" =~ ^v(([0-9]+)(\.[0-9]+)*)$ ]]; then
       installed_major=${BASH_REMATCH[2]}
