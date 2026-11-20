@@ -5,7 +5,7 @@ set -euo pipefail
 
 usage() {
   cat <<'USAGE'
-Usage: bash reboot-chain.sh --run DIR [--approve] [--plan FILE]
+Usage: bash reboot-chain.sh --run DIR [--approve] [--plan FILE | --standing]
                             [--delay SECONDS] [--expect SECONDS]
                             [--config FILE] [--host NAME]
                             [--today YYYY-MM-DD]
@@ -52,6 +52,10 @@ Options:
                      approved off the host (references/executor.md)
   --plan FILE        a fleet executor's plan: it must cover this host, not
                      have passed its not-after, and say reboot yes
+  --standing         the approval is the knob's standing line for the lane
+                     the run's bulk ran in, read from its dry-run record:
+                     refused when that can't be read, when no unexpired
+                     line covers the lane, or when it says no-reboot
   --delay SECONDS    the seconds from reboot-chain.sh's start to the chain's
                      (default 120). The gate's own time comes out of it, so
                      the chain starts where its span was gated from
@@ -99,7 +103,7 @@ Exit codes:
 USAGE
 }
 
-approve=0 run="" planf="" config="" host="" today="" delay=120 expect=600
+approve=0 run="" planf="" standing=0 config="" host="" today="" delay=120 expect=600
 # The chain's gate reads a busy host again each second for up to this long
 # before it aborts (#646): co-status's chain fired as a 60 s timer's 3 s
 # sweep began, aborted, and told no one. Its span holds the wait.
@@ -115,14 +119,23 @@ while [ "$#" -gt 0 ]; do
         --config) config=$2 ;;
         --host) host=$2 ;;
         --today) today=$2 ;;
-        --plan) planf=$2 ;;
+        --plan)
+          planf=$2
+          # An empty one would read as no plan, and the session's approval
+          # (CR 2533).
+          [ -n "$planf" ] || { echo "ERROR --plan takes a file: the plan an executor carries" >&2; exit 2; } ;;
       esac
       shift 2 ;;
     --approve) approve=1; shift ;;
+    --standing) standing=1; shift ;;
     -h | --help) usage; exit 0 ;;
     *) echo "ERROR unknown argument: $1 (see --help)" >&2; exit 2 ;;
   esac
 done
+if [ -n "$planf" ] && [ "$standing" -eq 1 ]; then
+  echo "ERROR --plan and --standing are two forms of the owner's approval: pass one" >&2
+  exit 2
+fi
 
 if [ -z "$run" ]; then
   echo "ERROR --run DIR is required: the chain, its log and the journal copy go in the run's directory" >&2
@@ -209,7 +222,7 @@ gate_host() {
   local why t r
   local -a f=()
   [ "$approve" -eq 1 ] ||
-    refuse "no --approve: the owner approves the reboot, 3(b), in the host's own session or by a plan that covers it (references/executor.md). The chain is below, every command it would run"
+    refuse "no --approve: the owner approves the reboot, 3(b), in the host's own session, by a plan that covers it, or by the knob's standing line (references/executor.md). The chain is below, every command it would run"
   for why in ${KNOB_REPORT_ONLY_WHY[@]+"${KNOB_REPORT_ONLY_WHY[@]}"}; do
     refuse "report-only: $why"
   done
@@ -380,7 +393,7 @@ emit() {
   jaddn a delay_seconds "$delay"
   jaddn a gate_wait_seconds "$CHAIN_WAIT"
   jaddb a approved "$approve"
-  plan_approval r "$approve" "$planf"
+  plan_approval r "$approve" "$planf" "$standing"
   jadd a approval "$r"
   jadds a host "$host"
   jadds a knob "$config"
@@ -627,10 +640,12 @@ write_chain() {
 }
 
 gate_host
-plan_gate_record "$approve" "$planf" "$host" 1
+plan_gate_record "$approve" "$planf" "$host" 1 "$run"
+standing_gate_record "$approve" "$standing" "$run" 1
 gate_run
 # The chain's gate may wait CHAIN_WAIT before its stops (#646).
 gate_span "$((delay + CHAIN_WAIT + expect))"
+plan_span_gate "$approve" "$planf"
 gate_packages
 gate_datastores
 # Last, so its reading is the freshest.

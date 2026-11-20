@@ -1985,18 +1985,6 @@ pk_class() {  # <package>: PK_C := its class
   done
 }
 
-# The candidate version the simulation would install, or empty.
-sim_candidate() {  # <var> <package>
-  local _sc_k _sc_p _sc_r _sc_v=""
-  while read -r _sc_k _sc_p _sc_r; do
-    if [ "$_sc_k" != Inst ] || [ "$_sc_p" != "$2" ]; then continue; fi
-    case $_sc_r in "["*) _sc_r=${_sc_r#*] } ;; esac
-    case $_sc_r in "("*) _sc_v=${_sc_r#(} _sc_v=${_sc_v%% *} ;; esac
-    break
-  done <<<"$SIM_DIST_OUT"
-  printf -v "$1" '%s' "$_sc_v"
-}
-
 class_of() {  # <var> <origins, ", "-separated>
   local _c_o _c_rest=$2 _c_origin _c_archive _c_sec=0 _c_esm=0 _c_upd=0 _c_ubu=0 _c_third=""
   while [ -n "$_c_rest" ]; do

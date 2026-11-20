@@ -1304,6 +1304,19 @@ redis_persistence() {  # <var>
 # from an apt-get -s dist-upgrade's Inst lines ("Inst <pkg> [<old>] (<new>
 # <origin> [<arch>])"), as "<pkg>=<version>" words: so a held step's version
 # can be told from the one the dry run counted (#383).
+# The candidate version a simulation would install, or empty: probe.sh's
+# own (SIM_DIST_OUT), or the one given.
+sim_candidate() {  # <var> <package> [<simulation>]
+  local _sc_k _sc_p _sc_r _sc_v=""
+  while read -r _sc_k _sc_p _sc_r; do
+    if [ "$_sc_k" != Inst ] || [ "$_sc_p" != "$2" ]; then continue; fi
+    case $_sc_r in "["*) _sc_r=${_sc_r#*] } ;; esac
+    case $_sc_r in "("*) _sc_v=${_sc_r#(} _sc_v=${_sc_v%% *} ;; esac
+    break
+  done <<<"${3-$SIM_DIST_OUT}"
+  printf -v "$1" '%s' "$_sc_v"
+}
+
 hold_group_versions() {  # <var> <simulation>
   local _hv="" _hk _hp _hr _hx _hg
   local -a _hf=()

@@ -37,7 +37,18 @@ name.
                             refuses only under --approve
   plan_gate_record APPROVE FILE HOST REBOOT  gate.plan for recovery-point.sh
                             and reboot-chain.sh
-  plan_approval VAR APPROVE FILE  the step's approval record
+  plan_approval VAR APPROVE FILE STANDING  the step's approval record
+  approval_args VAR FILE STANDING  the --plan or --standing a next command
+                            carries
+  plan_span_why VAR         why the step's span runs past the not-after
+  plan_span_gate APPROVE FILE  that, as a refusal, once the span is gated
+  standing_for LANE         the knob's standing line for LANE into ST_*: 1
+                            with ST_WHY when none approves
+  standing_any              the same, for any lane: the security lane's first
+  run_lane VAR RUN          the lane the run's bulk ran in, from its dry-run
+                            record: 1 when it can't be read
+  standing_gate_record APPROVE STANDING RUN-OR-EMPTY REBOOT  gate.standing
+                            for recovery-point.sh and reboot-chain.sh
 USAGE
 }
 
@@ -94,8 +105,8 @@ plan_sha() {  # <var> <file>
 # Reads FILE for HOST. 0 with the plan read, PLAN_COVERS 1 when it has a
 # section for HOST; 1 with PLAN_WHY when it can't be read, or doesn't parse.
 plan_load() {  # <file> <host>
-  local f=$1 h=$2 text line s n=0 sec="" seen_secs=" " d nt mine=0 hre
-  local mine_lane="" mine_reboot="" seen_lane="" seen_reboot=""
+  local f=$1 h=$2 text line s n=0 sec="" seen_secs=" " d nt mine=0 hre copy
+  local mine_lane="" mine_reboot="" seen_lane="" seen_reboot="" seen_pkgs=" "
   local id_re='^[A-Za-z0-9][A-Za-z0-9._:-]*$' step_re='^[a-z0-9][a-z0-9-]*$'
   local class_re='^(security|updates|esm|ubuntu-other|third-party:[^[:space:]]+)$'
   local -a tok=()
@@ -104,12 +115,27 @@ plan_load() {  # <file> <host>
   PLAN_SHA="" PLAN_WHY="" PLAN_COVERS=0
   PLAN_LANE="" PLAN_REBOOT="" PLAN_HELD="" PLAN_ORIGINS=""
   PLAN_PKG_NAME=() PLAN_PKG_VERSION=() PLAN_PKG_CLASS=()
-  plan_read text cat -- "$f"
+  # Read once (CR 2529): a regular file, copied whole into P_TMP, and that
+  # copy is what's parsed and hashed. A pipe, /dev/stdin or a file rewritten
+  # between two reads would otherwise hash one plan and run another; a NUL,
+  # which bash drops from what it reads, would do the same.
+  copy=$P_TMP/plan
+  plan_read text test -f "$f"
   if [ "$CAP_RC" -ne 0 ]; then
-    PLAN_WHY="$f couldn't be read${CAP_ERR:+: $CAP_ERR}"
+    PLAN_WHY="$f isn't a regular file, or can't be read: a plan is read once, from a file"
     return 1
   fi
-  plan_sha PLAN_SHA "$f"
+  if ! cat -- "$f" >"$copy" 2>/dev/null; then
+    if [ "$P_PRIV" = none ] || ! as_root cat -- "$f" >"$copy" 2>/dev/null; then
+      PLAN_WHY="$f couldn't be read"
+      return 1
+    fi
+  fi
+  if [ "$(wc -c <"$copy")" -ne "$(tr -d '\000' <"$copy" | wc -c)" ]; then
+    PLAN_WHY="$f holds a NUL byte"
+    return 1
+  fi
+  plan_sha PLAN_SHA "$copy"
   if [ -z "$PLAN_SHA" ]; then
     PLAN_WHY="$f couldn't be hashed: neither sha256sum nor shasum read it"
     return 1
@@ -136,7 +162,7 @@ plan_load() {  # <file> <host>
         return 1 ;;
       esac
       seen_secs="$seen_secs$sec "
-      seen_lane="" seen_reboot=""
+      seen_lane="" seen_reboot="" seen_pkgs=" "
       mine=0
       if [ "$sec" = "$h" ]; then mine=1 PLAN_COVERS=1; fi
       continue
@@ -212,6 +238,13 @@ plan_load() {  # <file> <host>
           PLAN_WHY="line $n: package takes <name> <version> <class>, the class one of security, updates, esm, ubuntu-other or third-party:<origin>"
           return 1
         fi
+        # One line a package (CR 2536): a second, at any version, would
+        # stand beside the first.
+        case $seen_pkgs in *" ${tok[1]} "*)
+          PLAN_WHY="line $n: package ${tok[1]} appears twice in [host $sec]"
+          return 1 ;;
+        esac
+        seen_pkgs="$seen_pkgs${tok[1]} "
         if [ "$mine" -eq 1 ]; then
           PLAN_PKG_NAME+=("${tok[1]}") PLAN_PKG_VERSION+=("${tok[2]}") PLAN_PKG_CLASS+=("${tok[3]}")
           case ${tok[3]} in third-party:*)
@@ -225,10 +258,11 @@ plan_load() {  # <file> <host>
         fi
         if [ "$mine" -eq 1 ]; then PLAN_HELD="$PLAN_HELD ${tok[1]}"; fi ;;
     esac
-    # A section's lane and reboot are checked once the next one starts, or
-    # the file ends: below.
+    # Only this host's own section must name its lane and reboot, checked
+    # once the file ends, below; another host's section is checked only for
+    # its form.
     if [ "$mine" -eq 1 ]; then PLAN_LANE=$mine_lane PLAN_REBOOT=$mine_reboot; fi
-  done <<<"$text"
+  done <"$copy"
   if [ -z "$PLAN_ID" ] || [ -z "$PLAN_APPROVED_AT" ] || [ -z "$PLAN_NOT_AFTER" ]; then
     PLAN_WHY="a plan needs its plan, approved and not-after lines, before any section"
     return 1
@@ -241,15 +275,21 @@ plan_load() {  # <file> <host>
   return 0
 }
 
-# The approval a step records: the plan's, as it states it, or the
-# session's. Empty without --approve.
-plan_approval() {  # <var> <approve 0|1> <plan file, or empty>
+# The approval a step records: the plan's, as it states it, the knob's
+# standing line, or the session's. null without --approve.
+plan_approval() {  # <var> <approve 0|1> <plan file, or empty> <standing 0|1>
   local _pa=""
   if [ "$2" -ne 1 ]; then
     printf -v "$1" '%s' null
     return 0
   fi
-  if [ -z "$3" ]; then
+  if [ "${4:-0}" -eq 1 ]; then
+    jadds _pa by standing
+    jaddsn _pa lane "$ST_LANE"
+    jaddsn _pa review_by "$ST_REVIEW"
+    jaddsn _pa reason "$ST_REASON"
+    jaddn _pa line "$ST_LINE"
+  elif [ -z "$3" ]; then
     jadds _pa by session
   else
     jadds _pa by plan
@@ -271,6 +311,10 @@ plan_gate() {  # <approve 0|1> <file> <host>
     why="the plan is malformed: $PLAN_WHY"
   elif [ "$PLAN_COVERS" -ne 1 ]; then
     why="the plan $PLAN_ID has no [host $3] section, so it doesn't cover this host"
+  elif ! is_int "${P_NOW:-}"; then
+    # Fail closed (CR 2539): a clock that can't be read can't say the plan
+    # still stands.
+    why="the host's clock can't be read, so whether the plan $PLAN_ID passed its not-after is unknown"
   elif [ "$P_NOW" -gt "$PLAN_NOT_AFTER_S" ]; then
     why="the plan $PLAN_ID passed its not-after, $PLAN_NOT_AFTER"
   fi
@@ -292,10 +336,27 @@ plan_json_head() {  # <var> <file>
   printf -v "$1" '%s' "$_pj"
 }
 
+# A step after the bulk, under a plan, runs only under the plan its bulk
+# ran under (CR 2530): the run's approval record names it by its sha256.
+plan_run_approval() {  # <run dir>: 1 with PLAN_WHY when it doesn't
+  local _ra=""
+  if ! root_read _ra "$1/approval"; then
+    PLAN_WHY="$1/approval can't be read, so which approval the run's bulk ran under is unknown"
+    return 1
+  fi
+  _ra=${_ra%%$'\n'*}
+  case $_ra in
+    "plan $PLAN_SHA "* | "plan $PLAN_SHA") return 0 ;;
+  esac
+  PLAN_WHY="the run's bulk ran under ${_ra:-nothing it recorded}, which isn't this plan ($PLAN_ID, sha256 $PLAN_SHA)"
+  return 1
+}
+
 # recovery-point.sh's and reboot-chain.sh's gate.plan: the plan covers the
 # host and hasn't passed its not-after, and for the reboot, 3(b), it says
-# reboot yes. The envelope is the bulk's: apply.sh reads it.
-plan_gate_record() {  # <approve 0|1> <file, or empty> <host> <reboot 0|1>
+# reboot yes, and is the plan the run's bulk ran under. The envelope is the
+# bulk's: apply.sh reads it.
+plan_gate_record() {  # <approve 0|1> <file, or empty> <host> <reboot 0|1> [<run dir>]
   local _po="" _pw=""
   if [ -z "$2" ]; then
     jadd J_GATE plan null
@@ -305,6 +366,9 @@ plan_gate_record() {  # <approve 0|1> <file, or empty> <host> <reboot 0|1>
     _pw=$PLAN_WHY
   elif [ "$4" -eq 1 ] && [ "$PLAN_REBOOT" != yes ]; then
     _pw="the plan $PLAN_ID says reboot no for this host: the reboot needs the owner's own approval"
+    if [ "$1" -eq 1 ]; then refuse "$_pw"; fi
+  elif [ "$4" -eq 1 ] && ! plan_run_approval "${5:-}"; then
+    _pw=$PLAN_WHY
     if [ "$1" -eq 1 ]; then refuse "$_pw"; fi
   fi
   plan_json_head _po "$2"
@@ -316,4 +380,151 @@ plan_gate_record() {  # <approve 0|1> <file, or empty> <host> <reboot 0|1>
     jadd _po why null
   fi
   jadd J_GATE plan "{$_po}"
+}
+
+# --- standing approval (#673 item 4) -------------------------------------------
+# The owner's declaration in a committed knob: `standing <lane> [no-reboot]
+# [no-datastore] [no-held] <review-by> <reason>` (knob.md). It approves only
+# a step of its lane within its limits; past its review-by date, or naming an
+# origin the knob doesn't follow, it approves nothing.
+ST_LANE="" ST_NO_REBOOT=0 ST_NO_DS=0 ST_NO_HELD=0 ST_REVIEW="" ST_REASON="" ST_LINE="" ST_WHY=""
+
+standing_for() {  # <lane>
+  local _sf_r _sf_k _sf_o _sf_ok _sf_d
+  local -a _sf_f=()
+  ST_LANE="" ST_NO_REBOOT=0 ST_NO_DS=0 ST_NO_HELD=0 ST_REVIEW="" ST_REASON="" ST_LINE="" ST_WHY=""
+  for _sf_r in ${KNOB_STANDING[@]+"${KNOB_STANDING[@]}"}; do
+    IFS=$KNOB_US read -r -a _sf_f <<<"$_sf_r"
+    [ "${_sf_f[0]}" = "$1" ] || continue
+    ST_LANE=${_sf_f[0]} ST_NO_REBOOT=${_sf_f[1]} ST_NO_DS=${_sf_f[2]} ST_NO_HELD=${_sf_f[3]}
+    ST_REVIEW=${_sf_f[4]} ST_REASON=${_sf_f[5]} ST_LINE=${_sf_f[7]}
+    # Against the host's own clock, never --today, which is the caller's
+    # (CR 2528). A clock that can't be read approves nothing.
+    if ! is_int "${P_NOW:-}"; then
+      ST_WHY="the host's clock can't be read, so whether standing $1 (knob line $ST_LINE) has passed its review-by date is unknown: it approves nothing"
+      return 1
+    fi
+    knob_epoch_day _sf_d "$ST_REVIEW"
+    if [ "${_sf_f[6]}" = 1 ] || [ $((P_NOW / 86400)) -gt "$_sf_d" ]; then
+      ST_WHY="standing $1 (knob line $ST_LINE) passed its review-by date, $ST_REVIEW: it approves nothing until it's renewed"
+      return 1
+    fi
+    case $1 in origin:*)
+      _sf_o=${1#origin:} _sf_ok=0
+      for _sf_k in ${KNOB_ORIGIN[@]+"${KNOB_ORIGIN[@]}"}; do
+        case $_sf_k in "$_sf_o${KNOB_US}follow$KNOB_US"*) _sf_ok=1 ;; esac
+      done
+      if [ "$_sf_ok" -ne 1 ]; then
+        ST_WHY="standing $1 (knob line $ST_LINE) names an origin the knob doesn't follow: it approves nothing"
+        return 1
+      fi ;;
+    esac
+    return 0
+  done
+  ST_WHY="the knob has no standing line for the $1 lane"
+  return 1
+}
+
+# A step with no lane of its own, the recovery point: any lane's line will
+# do, the security lane's first, since it changes no package.
+standing_any() {
+  local _sa_r
+  local -a _sa_f=()
+  if [ "${#KNOB_STANDING[@]}" -eq 0 ]; then
+    standing_for security || true
+    ST_WHY="the knob has no standing line"
+    return 1
+  fi
+  if standing_for security; then return 0; fi
+  for _sa_r in "${KNOB_STANDING[@]}"; do
+    IFS=$KNOB_US read -r -a _sa_f <<<"$_sa_r"
+    [ "${_sa_f[0]}" != security ] || continue
+    if standing_for "${_sa_f[0]}"; then return 0; fi
+  done
+  ST_WHY="no standing line approves: $ST_WHY"
+  return 1
+}
+
+# The lane the run's bulk ran in, from the dry-run record it wrote.
+run_lane() {  # <var> <run dir>
+  local _rl_o _rl_l _rl_v=""
+  printf -v "$1" '%s' ""
+  [ -n "$2" ] && [ "$P_PRIV" != none ] || return 1
+  root_read _rl_o "$2/dry-run" || return 1
+  while IFS= read -r _rl_l; do
+    case $_rl_l in lane=*) _rl_v=${_rl_l#lane=} ;; esac
+  done <<<"$_rl_o"
+  case $_rl_v in security | maintenance | origin:?*) ;; *) return 1 ;; esac
+  printf -v "$1" '%s' "$_rl_v"
+}
+
+standing_json_head() {  # <var>
+  local _sj=""
+  jaddsn _sj lane "$ST_LANE"
+  jaddn _sj line "$ST_LINE"
+  jaddsn _sj review_by "$ST_REVIEW"
+  jaddb _sj no_reboot "$ST_NO_REBOOT"
+  jaddb _sj no_datastore "$ST_NO_DS"
+  jaddb _sj no_held "$ST_NO_HELD"
+  printf -v "$1" '%s' "$_sj"
+}
+
+# recovery-point.sh's and reboot-chain.sh's gate.standing. The recovery
+# point takes any lane's line; the reboot, 3(b), its run's lane's, and none
+# that says no-reboot. Refusals only under --approve, as for a plan.
+standing_gate_record() {  # <approve 0|1> <standing 0|1> <run dir, or empty for the recovery point> <reboot 0|1>
+  local _sg="" _sw="" _sl
+  if [ "$2" -ne 1 ]; then
+    jadd J_GATE standing null
+    return 0
+  fi
+  if [ "$4" -eq 1 ]; then
+    if ! run_lane _sl "$3"; then
+      _sw="the lane the run's bulk ran in can't be read from $3/dry-run, so which standing line applies is unknown"
+    elif ! standing_for "$_sl"; then
+      _sw=$ST_WHY
+    elif [ "$ST_NO_REBOOT" = 1 ]; then
+      _sw="the standing approval for the $_sl lane (knob line $ST_LINE) says no-reboot: the reboot needs the owner's own approval"
+    fi
+  elif ! standing_any; then
+    _sw=$ST_WHY
+  fi
+  standing_json_head _sg
+  if [ -n "$_sw" ]; then
+    if [ "$1" -eq 1 ]; then refuse "$_sw"; fi
+    jaddb _sg covers 0
+    jadds _sg why "$_sw"
+  else
+    jaddb _sg covers 1
+    jadd _sg why null
+  fi
+  jadd J_GATE standing "{$_sg}"
+}
+
+# The approval a suggested next command carries, as given here (CR 2535).
+approval_args() {  # <var> <plan file, or empty> <standing 0|1>
+  local _apa_s=""
+  if [ -n "$2" ]; then _apa_s=" --plan \"$2\""; fi
+  if [ "$3" -eq 1 ]; then _apa_s=" --standing"; fi
+  printf -v "$1" '%s' "$_apa_s"
+}
+
+# A step whose span runs past the plan's not-after (CR 2537): the span the
+# gate computed, SPAN_E, from _gate-lib.sh. Unread, the span's own gate
+# refuses the step.
+plan_span_why() {  # <var>: VAR := why, or empty
+  local _ps_iso=""
+  printf -v "$1" '%s' ""
+  is_int "${SPAN_E:-}" && is_int "$PLAN_NOT_AFTER_S" || return 0
+  [ "$SPAN_E" -gt "$PLAN_NOT_AFTER_S" ] || return 0
+  iso_utc _ps_iso "$SPAN_E"
+  printf -v "$1" '%s' "the step's span runs to $_ps_iso, past the plan $PLAN_ID's not-after, $PLAN_NOT_AFTER"
+}
+
+# reboot-chain.sh's, once its span is gated.
+plan_span_gate() {  # <approve 0|1> <plan file, or empty>
+  local _pw=""
+  [ -n "$2" ] && [ -n "$PLAN_ID" ] || return 0
+  plan_span_why _pw
+  if [ -n "$_pw" ] && [ "$1" -eq 1 ]; then refuse "$_pw"; fi
 }

@@ -25,7 +25,7 @@ NO APPLY ON A HOST WITH A DATA STORE UNTIL ITS RECOVERY POINT HAS LEFT THE NODE
 NO CLAIM ABOUT THE HOST THAT WASN'T READ ON THE HOST
 ```
 
-A maintainer script's restart is still a restart. Nothing said in a chat channel counts as approval. A plan approved off the host counts only as `--plan`, which holds each step to the plan and the bulk to its envelope ([executor.md](references/executor.md)). An absent setting is `unknown`, never its default. A host with no data store still records its before-versions, the rollback path; it just has nothing to dump.
+A maintainer script's restart is still a restart. Nothing said in a chat channel counts as approval. A plan approved off the host counts only as `--plan`, and the knob's standing line only as `--standing`, each holding every step to what it approves ([executor.md](references/executor.md)). An absent setting is `unknown`, never its default. A host with no data store still records its before-versions, the rollback path; it just has nothing to dump.
 
 ## Rationalization prevention
 
@@ -94,7 +94,7 @@ It never unmasks a timer, edits apt or needrestart config beyond the approved dr
 - [references/policy.md](references/policy.md) — the two postures, the two lanes, pending classes, exceptions, dormant components, owners
 - [references/pruning.md](references/pruning.md) — pruning a dormant component: the calendar, the plan, the stages, and what a purge deletes
 - [references/knob.md](references/knob.md) — the `.skills/patching-hosts` grammar
-- [references/executor.md](references/executor.md) — a fleet executor's plan: its file, what each step checks, the envelope, what's recorded
+- [references/executor.md](references/executor.md) — a fleet executor's plan, and a host's standing approval: what each step checks, the envelope and the limits, what's recorded
 - [references/environments/exe-dev-exeuntu.md](references/environments/exe-dev-exeuntu.md) — the exe.dev exeuntu profile
 - [references/process-log.md](references/process-log.md) — one entry per run, the rules promoted from them, and how to add an entry
 
