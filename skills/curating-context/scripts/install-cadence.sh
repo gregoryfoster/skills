@@ -1529,7 +1529,71 @@ pr_read_step() {
           fi
           echo "merge mode: $M"
           echo "MERGE_MODE=$M" >>"$GITHUB_ENV"
+
+      # merge_mode pr (#683): the PR path merges the measurement branch into
+      # the branch the run is on and pushes the result to that branch, and a
+      # dispatch can name any branch. Run on feature/x, the row's parents
+      # carried feature/x's commits into the open measurement PR into the
+      # default branch, unreviewed, under a bot's title. So a pr run stops
+      # here, before the credential is spent, unless it is on the default
+      # branch. That is read from origin, not the event, so a schedule and a
+      # dispatch read it alike, and unread is a refusal. It binds this file as
+      # rendered: a branch that edits its own workflow is past it, as anyone
+      # with write access already is. `direct` is not held: its row lands on
+      # the dispatched branch itself, reviewed in that branch's own PR.
+      - name: Hold the run to the default branch
+        run: |
+          [ "${MERGE_MODE:-}" = pr ] || { echo "merge mode ${MERGE_MODE:-unset}: the row goes to the branch the run is on"; exit 0; }
+          BRANCH="${GITHUB_REF_NAME:-$(git branch --show-current)}"
+          HEAD_REF=$(git ls-remote --symref origin HEAD) || HEAD_REF=''
+          DEFAULT=$(awk '$1 == "ref:" && $3 == "HEAD" { sub("^refs/heads/", "", $2); print $2; exit }' <<<"$HEAD_REF")
+          if [ -z "$DEFAULT" ]; then
+            echo "::error::could not read origin's default branch, so whether ${BRANCH:-this branch} is it is unknown — nothing was measured."
+            exit 1
+          fi
+          if [ "$BRANCH" != "$DEFAULT" ]; then
+            echo "::error::this run is on ${BRANCH:-a detached HEAD}, not the default branch $DEFAULT. In pr mode a run merges the measurement branch into the branch it is on and pushes the result, so that branch's commits would reach the measurement PR into $DEFAULT unreviewed (#683). Nothing was measured: dispatch the workflow on $DEFAULT."
+            exit 1
+          fi
+          echo "on $DEFAULT, the default branch"
 YAML
+}
+
+# Which measurement PR the branch belongs to (#683): written once here and
+# rendered into the take-in step and the commit step, indented to each. Both
+# decide, because a PR can merge between them; two copies could drift into
+# choosing different PRs. The caller sets BRANCH and LOST (what a failure
+# costs). Blank lines stay unindented: trailing spaces in a YAML block.
+pr_discover() {
+  sed "/./s/^/$1/" <<'SH'
+# >>> which measurement PR (#683)
+# Every PR from the branch, any state, and only this repo's: --head matches
+# a branch name, a fork's included. gh failing is not "none". KEEP when the
+# branch carries rows no finished PR took: an open PR's, or a run's whose PR
+# was never opened. An open PR always wins: one closed and another opened
+# from the same head leaves a finished PR at the tip of an open one's rows.
+PR_BRANCH=context/weekly-measurement
+PRS=$(gh pr list --head "$PR_BRANCH" --base "$BRANCH" --state all --json number,state,headRefOid,isCrossRepository --jq '.[] | select(.isCrossRepository | not) | "\(.number) \(.state) \(.headRefOid)"') || {
+  echo "::error::gh pr list failed, so which measurement PR is open is unknown — $LOST."
+  exit 1; }
+REMOTE=$(git ls-remote origin "refs/heads/$PR_BRANCH") || {
+  echo "::error::could not read $PR_BRANCH from origin — $LOST."
+  exit 1; }
+TIP=${REMOTE%%[[:space:]]*}
+OPEN='' ENDED='' KEEP=''
+while read -r N S OID; do
+  [ -n "$N" ] || continue
+  if [ "$S" = OPEN ]; then
+    OPEN=${OPEN:-$N}
+  elif [ -n "$TIP" ] && [ "$OID" = "$TIP" ]; then
+    ENDED=$N
+  fi
+done <<<"$PRS"
+if [ -n "$TIP" ] && { [ -n "$OPEN" ] || [ -z "$ENDED" ]; }; then
+  KEEP=1
+fi
+# <<< which measurement PR
+SH
 }
 
 pr_take_step() {
@@ -1544,31 +1608,19 @@ pr_take_step() {
       # --no-commit: HEAD stays the default branch's tip, so the row's
       # repo_commit is a commit that branch keeps, and the commit step
       # records the merge with the row. Which PR is decided as the push
-      # decides it, and the push decides again: a PR can merge mid-run.
+      # decides it, and the push decides again: a PR can merge mid-run. What
+      # was taken in goes to the commit step as TAKEN and TAKEN_PR (#683).
       - name: Take in the measurement PR's rows
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           [ "${MERGE_MODE:-}" = pr ] || { echo "merge mode ${MERGE_MODE:-unset}: no PR's rows to take in"; exit 0; }
           BRANCH="${GITHUB_REF_NAME:-$(git branch --show-current)}"
-          PR_BRANCH=context/weekly-measurement
-          PRS=$(gh pr list --head "$PR_BRANCH" --base "$BRANCH" --state all --json number,state,headRefOid,isCrossRepository --jq '.[] | select(.isCrossRepository | not) | "\(.number) \(.state) \(.headRefOid)"') || {
-            echo "::error::gh pr list failed, so which measurement PR is open is unknown — nothing was measured."
-            exit 1; }
-          REMOTE=$(git ls-remote origin "refs/heads/$PR_BRANCH") || {
-            echo "::error::could not read $PR_BRANCH from origin — nothing was measured."
-            exit 1; }
-          TIP=${REMOTE%%[[:space:]]*}
-          OPEN='' ENDED=''
-          while read -r N S OID; do
-            [ -n "$N" ] || continue
-            if [ "$S" = OPEN ]; then
-              OPEN=${OPEN:-$N}
-            elif [ -n "$TIP" ] && [ "$OID" = "$TIP" ]; then
-              ENDED=$N
-            fi
-          done <<<"$PRS"
-          if [ -n "$TIP" ] && { [ -n "$OPEN" ] || [ -z "$ENDED" ]; }; then
+          LOST="nothing was measured"
+YAML
+  pr_discover "          "
+  cat <<'YAML'
+          if [ -n "$KEEP" ]; then
             # The commit step sets these too; the merge needs them now.
             git config user.name  "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -1579,6 +1631,7 @@ pr_take_step() {
               echo "::error::could not merge $PR_BRANCH in — nothing was measured."
               git diff --name-only --diff-filter=U | sed 's/^/::error::  conflicted: /'
               exit 1; }
+            { echo "TAKEN=$TIP"; echo "TAKEN_PR=$OPEN"; } >>"$GITHUB_ENV"
             echo "measuring after the rows on $PR_BRANCH${OPEN:+ (PR #$OPEN)}"
           else
             echo "no rows on $PR_BRANCH to take in: the row is measured after $BRANCH's"
@@ -1602,30 +1655,24 @@ pr_push_block() {
           case "${MERGE_MODE:-}" in
             direct) ;;
             pr)
-              PR_BRANCH=context/weekly-measurement
+              LOST="the row was not pushed"
               ROW=$(git rev-parse HEAD)
-              # Every PR from the branch, any state, and only this repo's:
-              # --head matches a branch name, a fork's included. gh failing
-              # is not "none".
-              PRS=$(gh pr list --head "$PR_BRANCH" --base "$BRANCH" --state all --json number,state,headRefOid,isCrossRepository --jq '.[] | select(.isCrossRepository | not) | "\(.number) \(.state) \(.headRefOid)"') || {
-                echo "::error::gh pr list failed, so which measurement PR is open is unknown — the row was not pushed."
-                exit 1; }
-              REMOTE=$(git ls-remote origin "refs/heads/$PR_BRANCH") || {
-                echo "::error::could not read $PR_BRANCH from origin — the row was not pushed."
-                exit 1; }
-              TIP=${REMOTE%%[[:space:]]*}
-              OPEN='' ENDED=''
-              while read -r N S OID; do
-                [ -n "$N" ] || continue
-                if [ "$S" = OPEN ]; then
-                  OPEN=${OPEN:-$N}
-                elif [ -n "$TIP" ] && [ "$OID" = "$TIP" ]; then
-                  ENDED=$N
-                fi
-              done <<<"$PRS"
-              # An open PR always wins: one closed and another opened from the
-              # same head leaves a finished PR at the tip of an open one's rows.
-              if [ -n "$TIP" ] && { [ -n "$OPEN" ] || [ -z "$ENDED" ]; }; then
+YAML
+  pr_discover "              "
+  cat <<'YAML'
+              # The take-in step merged a tip in (TAKEN) because the branch was
+              # to be kept. Not kept now, its PR merged or closed mid-run
+              # (#683), and ROW has that tip as a parent: restarted at ROW, the
+              # branch reopens those rows in a new PR whose merge base is the
+              # old default tip, showing its merged rows again. Rebuilding the row on
+              # the new tip means replaying the calibration files' merge too, so
+              # the row is refused instead, and a re-run measures after them.
+              if [ -n "${TAKEN:-}" ] && [ -z "$KEEP" ]; then
+                ENDED_WHAT=${TAKEN_PR:+PR #$TAKEN_PR}
+                echo "::error::${ENDED_WHAT:-$PR_BRANCH} ended during this run (merged, closed or deleted), after its rows were taken in at ${TAKEN:0:12}. Pushed now, this row would reopen them in a new PR. The row was not pushed: re-run this workflow, or let the next run measure after them."
+                exit 1
+              fi
+              if [ -n "$KEEP" ]; then
                 # The branch carries rows no finished PR took: an open PR's, or
                 # a run's whose PR was never opened. Merge the row INTO it, so
                 # those rows stay first and in order and $BRANCH comes in with

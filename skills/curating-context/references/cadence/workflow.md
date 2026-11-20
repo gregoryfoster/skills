@@ -323,7 +323,8 @@ path back to this doc. The pin above is what keeps that copy in step.
 
 This is the render for `.skills/merge_mode` absent or `direct`. At `pr` the
 installer adds five insertions and changes nothing above: `pull-requests:
-write`, a `Read the merge mode` step after the symlink heal, a `Take in the
+write`, a `Read the merge mode` step after the symlink heal and a `Hold the
+run to the default branch` step after it, a `Take in the
 measurement PR's rows` step after the credential preflight, `GH_TOKEN` on
 the commit step, and a PR path after `# --- push ---`. `install-cadence.sh
 --print` in such a repo shows them in place; what they do and why:

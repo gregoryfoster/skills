@@ -56,6 +56,7 @@ THIS_REPOS_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "context-cadence.yml
 LEDGER = ".skills/context-metrics.jsonl"
 PR_BRANCH = "context/weekly-measurement"
 READ_STEP = "Read the merge mode"
+GUARD_STEP = "Hold the run to the default branch"
 TAKE_STEP = "Take in the measurement PR's rows"
 COMMIT_STEP = "Commit the row"
 
@@ -276,21 +277,32 @@ class Rig:
         )
 
     def run(
-        self, ts: str, mode_env: str | None = None, tokens: int | None = None
+        self,
+        ts: str,
+        mode_env: str | None = None,
+        tokens: int | None = None,
+        ref: str = "main",
+        between=None,
     ) -> subprocess.CompletedProcess:
         """One scheduled run: a fresh clone of main, the knob read and the
         PR's rows taken in (when the render has those steps), one row
         appended, the commit step run. With `tokens`, the row is recorded by
         record-telemetry.sh, and the seam sweep's interval is read first, as
-        the workflow orders them; without, it is appended by hand."""
+        the workflow orders them; without, it is appended by hand.
+
+        `ref` is the branch the run is on, checked out as a dispatch on it
+        checks it out (#683). `between` runs after the take-in step and
+        before the commit step: whatever a human does mid-run."""
         self.runs += 1
         steps = _steps(self.rendered)
         runner = self.clone(f"runner{self.runs}")
+        if ref != "main":
+            _git(runner, "checkout", "-q", ref)
         gh_env = self.tmp / f"github_env{self.runs}"
         gh_env.write_text("")
         env = _env(
             GITHUB_ENV=str(gh_env),
-            GITHUB_REF_NAME="main",
+            GITHUB_REF_NAME=ref,
             FAKE_GH=str(self.gh),
             MERGE_TOKEN_COUNTS_SH=str(MERGE_TOKEN_COUNTS),
             PATH=f"{self.gh / 'bin'}{os.pathsep}{os.environ['PATH']}",
@@ -301,14 +313,26 @@ class Rig:
             for line in gh_env.read_text().splitlines():
                 k, _, v = line.partition("=")
                 env[k] = v
+        self.guard = None
+        if GUARD_STEP in steps:
+            self.guard = self.step(GUARD_STEP, runner, env)
+            if self.guard.returncode:
+                return self.guard
         if mode_env is not None:
             env["MERGE_MODE"] = mode_env
         self.take = None
         if TAKE_STEP in steps:
+            seen = len(gh_env.read_text())
             self.take = self.step(TAKE_STEP, runner, env)
             if self.take.returncode:
                 return self.take
+            # Only what the take-in step exported: a mode_env set above stands.
+            for line in gh_env.read_text()[seen:].splitlines():
+                k, _, v = line.partition("=")
+                env[k] = v
         self.runner = runner
+        if between is not None:
+            between()
         if tokens is None:
             led = runner / LEDGER
             led.write_text(led.read_text() + self.row(ts) + "\n")
