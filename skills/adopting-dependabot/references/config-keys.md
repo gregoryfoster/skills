@@ -15,7 +15,7 @@ failure it prevents. The guard test pins each one.
 | `versioning-strategy` | uv/pip: the default `auto` resolves to `widen` for a library, which uv doesn't support (dependabot-core#15290). Pin `increase-if-necessary`. Even that raised floors on in-range bumps under uv, so read a library's floor before merging | notifier#33, #103 |
 | `commit-message.prefix` | The default subject, `Bump x from a to b`, matches no `type:` convention. `prefix: chore` gives `chore: bump …` or `chore: Bump …`. The case isn't the prefix's: identical configs gave each, and it appears to follow the repo's recent subjects. Either reads as `type:`, so guard the prefix, not the case | watcher#354–#357 (`bump`); gregoryfoster/skills#506, #507 (`Bump`, 2026-10-27) |
 | `groups` | Without a dev group, dev tooling (ruff alone ships minors about monthly) buries runtime bumps. Runtime dependencies stay individual PRs | notifier#33 |
-| `groups.applies-to` | Defaults to `version-updates`, so a version group never catches a security PR. With no `security-updates` group, each advisory opens its own PR: a round against a lockfile is a burst, each PR its own gate run and merge, each merge rebasing the rest. A group is per block, so grouped, a round opens one PR per ecosystem. An ecosystem with no block (held back) can't be grouped and keeps one PR per advisory. The guard checks it only with `SECURITY_GROUPED` on: [below](#grouping-security-updates) | CannObserv/power-map#715, #729 and #736: 16 security PRs in 6 days, before its config (gregoryfoster/skills#599) |
+| `groups.applies-to` | Defaults to `version-updates`, so a version group never catches a security PR. With no `security-updates` group, each advisory opens its own PR: a round against a lockfile is a burst, each PR its own gate run and merge, each merge rebasing the rest. A group is per block, so grouped, a round opens one PR per block, which is one per ecosystem with one block each. A directory no block configures (a held-back ecosystem's) is grouped only by the repo's **Grouped security updates** setting. The guard checks it only with `SECURITY_GROUPED` on: [below](#grouping-security-updates) | CannObserv/power-map#715, #729 and #736: 16 security PRs in 6 days, before its config (gregoryfoster/skills#599) |
 | `ignore` | Lockstep pins, which move with another repo, need one, or the bot proposes moves nobody should take | watcher#358 |
 
 ## The PR limit, derived and not guessed
@@ -38,7 +38,7 @@ cost of one red check holding back every bump.
 
 ## Grouping security updates
 
-One catch-all group per block makes an advisory round one PR per ecosystem:
+One catch-all group per block makes an advisory round one PR per block:
 
 ```yaml
     groups:
@@ -57,6 +57,14 @@ to a catch-all: `patterns` holds `*`, and no `exclude-patterns`,
 `dependency-type` or `update-types` narrows it. The guard can't see whether
 security updates are on, which is a repository setting:
 `check-dependabot.sh`'s `security-updates` check reads it.
+
+**The other route is a setting.** The repository's (or organization's)
+**Grouped security updates**, under Settings → Advanced Security, groups
+security updates across directories, per ecosystem, but only for directories
+no `dependabot.yml` block configures; a configured block's groups govern its
+own. So it's the one way to group a held-back ecosystem, which has no block.
+GitHub documents no API that reads it, so neither the guard nor
+`check-dependabot.sh` can see it: ask the owner, and record the answer.
 
 **Not yet observed:** the grouped PR itself. power-map's `uv` and `npm` blocks
 carry the group (read 2026-11-20), and no advisory had fired against them when

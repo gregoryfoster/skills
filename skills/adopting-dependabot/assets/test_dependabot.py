@@ -51,7 +51,8 @@ SHA_PINS = False
 # Every block carries one catch-all security group (`applies-to: security-updates`,
 # `patterns: ["*"]`), so an advisory round opens one PR per block, not one per
 # advisory. Whether security updates are on is a repo setting this file can't
-# show: check-dependabot.sh reads it.
+# show: check-dependabot.sh reads it. So is "Grouped security updates", which
+# groups only directories no block here configures.
 SECURITY_GROUPED = False
 # -----------------------------------------------------------------------------
 
