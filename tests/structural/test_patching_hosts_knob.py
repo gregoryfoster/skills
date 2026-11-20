@@ -1470,6 +1470,10 @@ def test_a_standing_origin_the_knob_doesnt_follow_is_a_finding(tmp_path):
         "standing security no-restart 2026-12-31 an unknown limit",
         "standing security no-reboot 2026-13-01 a date that isn't one",
         "standing security no-reboot no-reboot-please 2026-12-31 typo",
+        # CR 2534: a limit after the date would read as reason, so the line
+        # would approve more than the owner wrote.
+        "standing security 2026-12-01 no-reboot no-held nightly fixes",
+        "standing maintenance no-held 2026-12-31 then no-datastore too",
     ],
 )
 def test_a_standing_line_that_doesnt_parse_is_malformed(tmp_path, line):

@@ -433,10 +433,16 @@ _knob_directive() {  # <line> <sec> <text>
         esac
         si=$((si + 1))
       done
+      # A limit after the date would read as reason, so the line would
+      # approve more than the owner wrote (CR 2534).
+      local sw
+      for sw in "${tok[@]:$((si + 1))}"; do
+        case $sw in no-reboot | no-datastore | no-held) sok=0 ;; esac
+      done
       if [ "$sok" -eq 1 ] && [ "$nt" -ge $((si + 2)) ] && _knob_is_date "${tok[$si]}"; then
         _knob_record "$n" "$sec" standing "$sl" "$sl$u$snr$u$snd$u$snh$u${tok[$si]}$u${tok[*]:$((si + 1))}"
       else
-        _knob_malformed "$n" "standing takes <lane: security, maintenance or origin:<origin>> [no-reboot] [no-datastore] [no-held] <review-by YYYY-MM-DD> <reason>"
+        _knob_malformed "$n" "standing takes <lane: security, maintenance or origin:<origin>> [no-reboot] [no-datastore] [no-held] <review-by YYYY-MM-DD> <reason>, each limit before the date and none in the reason"
       fi ;;
     # #673: how the host is rebuilt onto a new VM, for an executor to run.
     # The commands take the rest of the line, as health's does.
