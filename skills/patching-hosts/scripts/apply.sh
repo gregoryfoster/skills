@@ -1176,8 +1176,13 @@ plan_envelope() {
       plan_diff 0 unread "$p" "the dry run selects it, the plan doesn't list it, and its class wasn't read"
     elif [[ $SC == third-party:* ]] && ! in_words "${SC#third-party:}" "$PLAN_ORIGINS"; then
       plan_diff 0 new-origin "$p" "$SV from ${SC#third-party:}, an origin the plan doesn't name"
-    elif [ "$SC" = security ] || { [ "$LANE" = security ] && [ "$DRY_SECURITY_ONLY" = 1 ]; }; then
+    elif [ "$SC" = security ]; then
       plan_diff 1 new-security "$p" "$SV, in the security lane, which the plan doesn't list"
+    elif [ "$LANE" = security ] && [ "$DRY_SECURITY_ONLY" = 1 ]; then
+      # The masking rule (CR 2532): a security lane whose origins are
+      # security alone selected it, so the step takes its -security
+      # version, though the simulation shows a newer one from elsewhere.
+      plan_diff 1 new-security "$p" "selected by the security lane, whose origins are security alone, so the step takes its -security version; $SV is the simulation's candidate, from $SC. The plan doesn't list it"
     else
       plan_diff 0 new-package "$p" "$SV, class $SC, which the plan doesn't list: only a new security package is inside"
     fi

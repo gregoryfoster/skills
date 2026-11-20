@@ -546,3 +546,20 @@ def test_a_planned_packages_class_change_is_outside(host, fresh, security_only, 
     out = host.run("--plan", str(p), rc=0 if inside else 3)
     got = [k for k in _kinds(out) if k[1] == "libc6"]
     assert got == kinds
+
+
+# --- CR 2532: the masking rule, said ----------------------------------------------
+
+
+@pytest.mark.parametrize("cls", ["updates", "esm", "ubuntu-other"])
+def test_an_unplanned_masked_package_in_a_security_only_lane_says_so(host, cls):
+    # The dry run of a security lane whose origins are security alone
+    # selected it, so the step takes its -security version; the simulation
+    # shows a newer one from elsewhere. Inside, and the detail says whose
+    # version it names.
+    _summary(host, {**SELECTED, "libxml2": ("2.9.14+dfsg-1.3ubuntu3.6", cls)}, 1)
+    p = _plan(host, HEAD + _section(packages=_without("libxml2")))
+    out = host.run("--plan", str(p))
+    [d] = out["gate"]["plan"]["differences"]
+    assert (d["kind"], d["inside"]) == ("new-security", True)
+    assert "the simulation's" in d["detail"] and cls in d["detail"]

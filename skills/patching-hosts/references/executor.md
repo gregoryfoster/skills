@@ -71,11 +71,11 @@ Each reports `gate.plan`: the plan's file, id, `sha256`, `not_after`, `lane` and
 | Difference | Inside? |
 |---|---|
 | `version-newer`: a planned package whose candidate is newer than planned | inside |
-| `new-security`: an unplanned package in the security lane | inside |
+| `new-security`: an unplanned package in the security lane: of class `security`, or any package a security lane whose origins are security alone selected, since the step takes its `-security` version whatever newer one the simulation shows (its detail says the version is the simulation's) | inside |
 | `not-pending`: a planned package the dry run no longer selects | inside, noted |
 | `version-other`: a planned package at a candidate that isn't newer | outside |
 | `class-changed`: a planned package whose candidate is of another class than planned. In a security lane whose origins are security alone, a planned security package that reads `updates` is inside: the simulation shows the newer `-updates` version over the `-security` one the step installs | outside |
-| `new-package`: an unplanned package from `-updates`, ESM, Ubuntu's other pockets, or a followed origin | outside |
+| `new-package`: any other unplanned package, from `-updates`, ESM, Ubuntu's other pockets, or a followed origin | outside |
 | `new-origin`: a package from an origin the plan's packages don't name | outside |
 | `held-step`: a held step the selection reaches that the plan doesn't name. A data store restarts in a held step, so this is the new data-store restart | outside |
 | `reboot`: the run reboots, or whether it does can't be read, and the plan says `reboot no` | outside |
