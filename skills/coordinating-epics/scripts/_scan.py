@@ -859,10 +859,15 @@ def commits(
         sha, author, subject, body = (rec.split("\x1f") + ["", "", ""])[:4]
         # Code spans are read too: GitHub cross-references a #N between
         # backticks in a commit message (96d6183 on gregoryfoster/skills#41, #415).
+        # Entities are read as written, for the same reason: a commit message
+        # isn't rendered as Markdown, and its "&#183;" references #183
+        # (608c8094 on gregoryfoster/skills#183, #671).
         refs = sorted(
             {
                 key(m.group("repo"), m.group("num"), host)
-                for m in REF_RE.finditer(ref_text(subject + "\n" + body))
+                for m in REF_RE.finditer(
+                    ref_text(subject + "\n" + body, entities=False)
+                )
             }
         )
         children = [r for r in refs if r in items]
