@@ -55,7 +55,10 @@ Options:
   --standing         the approval is the knob's standing line for the lane
                      the run's bulk ran in, read from its dry-run record:
                      refused when that can't be read, when no unexpired
-                     line covers the lane, or when it says no-reboot
+                     line covers the lane, when the run's bulk didn't run
+                     under that lane's line, as its approval record says,
+                     or when the line says no-reboot, or no-datastore where
+                     the knob declares a data store, which the chain stops
   --delay SECONDS    the seconds from reboot-chain.sh's start to the chain's
                      (default 120). The gate's own time comes out of it, so
                      the chain starts where its span was gated from

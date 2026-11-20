@@ -1407,7 +1407,7 @@ standing_scope() {  # <package> <version> <class> <security_only>
 # A held step under a standing line: each package it releases, at the
 # class the bulk recorded, within the lane (CR 2543).
 standing_held_scope() {
-  local out s v c so="" i p
+  local out s v c so="" i p pv cl
   if ! root_read out "$run/hold-versions"; then
     plan_diff 0 unread hold-versions "$run/hold-versions can't be read, so what this step installs is unknown"
     return 0

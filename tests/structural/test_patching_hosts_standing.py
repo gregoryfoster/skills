@@ -2,25 +2,36 @@
 
 The knob's `standing <lane> [no-reboot] [no-datastore] [no-held] <review-by>
 <reason>` is the owner's declaration that a step of one lane needs no
-approval in the host's own session, or a plan, within its limits. `--standing`
+approval in the host's own session, or a plan, within its limits. Its
+review-by date is read against the host's clock (CR 2528). `--standing`
 beside `--approve` holds each step to it:
 
-- apply.sh: an unexpired line for the step's lane, the bulk's `--lane`, or
-  for a held step the lane its bulk ran in, read from the run; and the
-  bulk's fresh reading inside its limits: no-reboot (an unknown or due
-  reboot refuses), no-held, no-datastore (a held step that may restart a
-  declared data store), and the lane's own classes. gate.standing reports
-  it in gate.plan's shape, and without --approve it's the read-only check;
-- recovery-point.sh: any unexpired line;
-- reboot-chain.sh: its run's lane's line, refused under no-reboot;
+- apply.sh's bulk: an unexpired line for its `--lane`, and its fresh
+  reading inside the limits: no-reboot (a certain, due or unknown reboot
+  refuses), no-held and no-datastore (no held step at all; no-datastore
+  also refuses a run that may reboot where the knob declares a data store,
+  CR 2544, CR 2553), and the lane's own classes, for what it selects and
+  for each package it would hold, read from the refreshed lists (CR 2552).
+  Under no-held or no-datastore it holds nothing (CR 2546);
+- apply.sh's held step: the lane its bulk ran in, read from the run, its
+  bulk's own standing approval for that lane (the run's approval record,
+  CR 2543), the limits, and the class of each package it releases;
+- gate.standing reports it in gate.plan's shape, and without --approve
+  it's the read-only check;
+- recovery-point.sh: its --lane's line, security by default (CR 2549);
+- reboot-chain.sh: its run's lane's line, under which its bulk ran, refused
+  under no-reboot, or no-datastore where the knob declares a data store
+  (CR 2542);
 - each records approval {by: standing, lane, review_by, reason, line}.
 """
 
 import json
+import subprocess
 
 import pytest
 
-from tests.structural.patching_hosts_rig import dispatcher
+from tests.structural.patching_hosts_rig import SKILL, dispatcher
+from tests.structural.patching_hosts_rig import clean_env as _clean_env
 from tests.structural.test_patching_hosts_apply import (
     KNOB,
     MAPS,
@@ -581,3 +592,17 @@ def test_a_bulk_whose_run_reboots_under_no_datastore_with_a_data_store_is_refuse
     host.write("run/reboot-required", "*** System restart required ***\n")
     out = host.run("--standing", rc=3)
     assert ("datastore", "host", False) in _kinds(out)
+
+
+def test_reboot_chain_help_names_what_standing_needs():
+    # CR 2555: the run's approval record (CR 2543), and no-datastore where
+    # the knob declares a data store (CR 2542).
+    r = subprocess.run(
+        ["bash", str(SKILL / "scripts" / "reboot-chain.sh"), "--help"],
+        capture_output=True,
+        text=True,
+        env=_clean_env(),
+    )
+    flat = " ".join(r.stdout.split())
+    assert "its approval record" in flat
+    assert "no-datastore where the knob declares a data store" in flat
