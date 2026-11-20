@@ -346,6 +346,89 @@ def test_a_grouped_actions_block_needs_only_its_batch(tmp_path):
     assert _pytest(root, "tests/ci/test_dependabot.py").returncode == 1
 
 
+# #599: a group that applies only to security updates. It never holds a
+# version PR, and security PRs don't count against open-pull-requests-limit
+# (their own fixed limit is 10), so no version-update derivation may read it.
+SECURITY_GROUP = (
+    "    groups:\n      security:\n"
+    '        applies-to: security-updates\n        patterns: ["*"]\n'
+)
+
+
+def test_a_security_group_does_not_shrink_the_actions_batch(tmp_path):
+    """#599: counted as a version group, it matched every action, so the batch
+    fell to 1 and a limit one full version batch fills passed the guard."""
+    fillable = ACTIONS_WITH_COMPOSITE.replace("limit: 10", "limit: 2")
+    root = _dependabot_repo(tmp_path, fillable + SECURITY_GROUP)
+    proc = _pytest(root, "tests/ci/test_dependabot.py")
+    assert proc.returncode == 1, f"a fillable limit passed:\n{proc.stdout}"
+    assert "test_actions_open_pr_limit_outlasts_a_full_batch" in proc.stdout
+
+
+def test_a_security_group_does_not_count_toward_the_package_limit(tmp_path):
+    """#599: 4 runtime PRs and one dev group in each of two directories make 6;
+    the security group's PR is held to its own limit, so 7 is enough."""
+    block = UV_BLOCK.replace("limit: 10", "limit: 7").replace(
+        "    ignore:\n", SECURITY_GROUP.split("\n", 1)[1] + "    ignore:\n"
+    )
+    root = _dependabot_repo(tmp_path, ACTIONS_WITH_COMPOSITE + block, uv=True)
+    proc = _pytest(root, "tests/ci/test_dependabot.py")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+
+
+def test_a_security_group_is_not_a_dev_group(tmp_path):
+    """#599: a dev-typed security group never holds a version bump, so dev churn
+    still reaches main one PR at a time."""
+    block = UV_BLOCK.replace(
+        "      dev-tools:\n",
+        "      dev-security:\n        applies-to: security-updates\n",
+    )
+    root = _dependabot_repo(tmp_path, ACTIONS_WITH_COMPOSITE + block, uv=True)
+    proc = _pytest(root, "tests/ci/test_dependabot.py")
+    assert proc.returncode == 1, f"a security group passed as dev:\n{proc.stdout}"
+    assert "test_dev_churn_is_grouped" in proc.stdout
+
+
+def _security_grouped(
+    tmp_path: Path, config: str, *, on: bool = True
+) -> subprocess.CompletedProcess:
+    root = _dependabot_repo(tmp_path, config)
+    test = root / "tests/ci/test_dependabot.py"
+    test.write_text(_adapt(test.read_text(), SECURITY_GROUPED=str(on)))
+    return _pytest(root, "tests/ci/test_dependabot.py")
+
+
+def test_a_missing_security_group_fails_only_when_security_grouped_is_on(tmp_path):
+    """#599: the file can't show whether security updates are on, so the adopter
+    declares the policy; off, the guard says nothing about security groups."""
+    proc = _security_grouped(tmp_path, ACTIONS_WITH_COMPOSITE)
+    assert proc.returncode == 1, proc.stdout
+    assert "no catch-all security group" in proc.stdout, proc.stdout
+    off = _security_grouped(tmp_path / "off", ACTIONS_WITH_COMPOSITE, on=False)
+    assert off.returncode == 0, off.stdout
+    grouped = ACTIONS_WITH_COMPOSITE + SECURITY_GROUP
+    proc = _security_grouped(tmp_path / "grouped", grouped)
+    assert proc.returncode == 0, proc.stdout
+
+
+# Each leaves some advisory to a PR of its own, so none is the catch-all.
+NARROWED = {
+    "version-group": ("applies-to: security-updates", "applies-to: version-updates"),
+    "some-patterns": ('patterns: ["*"]', 'patterns: ["actions/*"]'),
+    "update-types": ('["*"]\n', '["*"]\n        update-types: ["patch"]\n'),
+    "excluded": ('["*"]\n', '["*"]\n        exclude-patterns: ["astral-sh/*"]\n'),
+}
+
+
+@pytest.mark.parametrize("narrowing", list(NARROWED))
+def test_a_narrowed_security_group_is_not_the_catch_all(tmp_path, narrowing):
+    old, new = NARROWED[narrowing]
+    config = ACTIONS_WITH_COMPOSITE + SECURITY_GROUP.replace(old, new)
+    proc = _security_grouped(tmp_path, config)
+    assert proc.returncode == 1, f"{narrowing} passed as catch-all:\n{proc.stdout}"
+    assert "no catch-all security group" in proc.stdout, proc.stdout
+
+
 PIP_BLOCK = UV_BLOCK.replace('"uv"', '"pip"').replace('      - "/clients/python"\n', "")
 
 

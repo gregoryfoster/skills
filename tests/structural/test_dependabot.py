@@ -142,6 +142,17 @@ def _directories(block: dict) -> set[str]:
     )
 
 
+def _version_groups(block: dict) -> list[dict]:
+    """The groups that hold version updates. ``applies-to`` defaults to
+    ``version-updates``; a ``security-updates`` group never holds a version PR,
+    and its PRs are held to their own limit of 10, not the block's (#599)."""
+    return [
+        g or {}
+        for g in (block.get("groups") or {}).values()
+        if (g or {}).get("applies-to", "version-updates") == "version-updates"
+    ]
+
+
 def _tracked() -> list[str]:
     out = subprocess.run(
         ["git", "-C", str(REPO_ROOT), "ls-files"],
@@ -337,12 +348,12 @@ def test_actions_block_covers_every_workflow_and_action() -> None:
 
 
 def _batch(block: dict, names: set[str]) -> int:
-    """How many PRs one batch can open: one per group that matches anything,
-    plus one per dependency no group matches. A group with no ``patterns``
-    matches everything its ``exclude-patterns`` leaves."""
+    """How many version PRs one batch can open: one per version group that
+    matches anything, plus one per dependency no such group matches. A group
+    with no ``patterns`` matches everything its ``exclude-patterns`` leaves."""
     grouped: set[str] = set()
     groups = 0
-    for group in (block.get("groups") or {}).values():
+    for group in _version_groups(block):
         include = group.get("patterns", ["*"])
         exclude = group.get("exclude-patterns", [])
         matched = {
@@ -377,6 +388,8 @@ def test_the_batch_counts_groups_once():
     assert _batch({"groups": {"all": {"patterns": ["*"]}}}, names) == 1
     assert _batch({"groups": {"gh": {"patterns": ["actions/*"]}}}, names) == 2
     assert _batch({"groups": {"a": {"exclude-patterns": ["astral-sh/*"]}}}, names) == 2
+    security = {"applies-to": "security-updates", "patterns": ["*"]}
+    assert _batch({"groups": {"security": security}}, names) == 3
 
 
 @pytest.mark.parametrize("ecosystem", sorted(ENABLED & PACKAGE_ECOSYSTEMS))
@@ -405,10 +418,8 @@ def test_versioning_strategy_is_pinned(block: dict) -> None:
 )
 def test_dev_churn_is_grouped(block: dict) -> None:
     """Dev tooling carries most of the churn; runtime bumps stay their own PRs."""
-    groups = block.get("groups") or {}
-    assert any(g.get("dependency-type") == "development" for g in groups.values()), (
-        "no development group"
-    )
+    types = {g.get("dependency-type") for g in _version_groups(block)}
+    assert "development" in types, "no development group"
 
 
 @pytest.mark.parametrize(
@@ -426,9 +437,10 @@ def test_lockstep_pins_are_ignored(block: dict) -> None:
     "block", _package_blocks(), ids=lambda b: ",".join(sorted(_directories(b)))
 )
 def test_package_open_pr_limit_outlasts_a_full_backlog(block: dict) -> None:
-    """Each runtime dependency is its own PR and each group one more per directory."""
+    """Each runtime dependency is its own PR and each version group one more per
+    directory."""
     runtime = sum(_runtime_count(d) for d in _directories(block))
-    grouped = len(block.get("groups") or {}) * len(_directories(block))
+    grouped = len(_version_groups(block)) * len(_directories(block))
     limit = block.get("open-pull-requests-limit", 5)
     assert limit > runtime + grouped, (
         f"limit {limit} can be filled by {runtime} runtime PRs and {grouped} group PRs; "

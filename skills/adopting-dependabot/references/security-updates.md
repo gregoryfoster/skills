@@ -39,7 +39,9 @@ repo's own token, and not re-verified. Re-derive it with
   entries**, once all three switches are on.
 
 Version updates propose only direct dependencies, so a transitive advisory is
-exactly the case security updates fix.
+exactly the case security updates fix. Each advisory is its own PR unless the
+block carries a `security-updates` group:
+[config-keys.md](config-keys.md#grouping-security-updates).
 
 A security PR opened before the repo has a `dependabot.yml` can't be rebased
 once the config lands. index's and power-map's four were of that kind
