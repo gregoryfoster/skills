@@ -1300,10 +1300,6 @@ redis_persistence() {  # <var>
   printf -v "$1" '%s' "$_rp"
 }
 
-# The candidate version of each pending package a hold group's globs take,
-# from an apt-get -s dist-upgrade's Inst lines ("Inst <pkg> [<old>] (<new>
-# <origin> [<arch>])"), as "<pkg>=<version>" words: so a held step's version
-# can be told from the one the dry run counted (#383).
 # The candidate version a simulation would install, or empty: probe.sh's
 # own (SIM_DIST_OUT), or the one given.
 sim_candidate() {  # <var> <package> [<simulation>]
@@ -1317,6 +1313,10 @@ sim_candidate() {  # <var> <package> [<simulation>]
   printf -v "$1" '%s' "$_sc_v"
 }
 
+# The candidate version of each pending package a hold group's globs take,
+# from an apt-get -s dist-upgrade's Inst lines ("Inst <pkg> [<old>] (<new>
+# <origin> [<arch>])"), as "<pkg>=<version>" words: so a held step's version
+# can be told from the one the dry run counted (#383).
 hold_group_versions() {  # <var> <simulation>
   local _hv="" _hk _hp _hr _hx _hg
   local -a _hf=()

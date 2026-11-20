@@ -44,7 +44,8 @@ name.
   plan_span_gate APPROVE FILE  that, as a refusal, once the span is gated
   standing_for LANE         the knob's standing line for LANE into ST_*: 1
                             with ST_WHY when none approves
-  standing_any              the same, for any lane: the security lane's first
+  standing_run_approval RUN LANE  whether the run's bulk ran under LANE's
+                            standing line
   run_lane VAR RUN          the lane the run's bulk ran in, from its dry-run
                             record: 1 when it can't be read
   standing_gate_record APPROVE STANDING RUN-OR-EMPTY REBOOT  gate.standing
@@ -425,23 +426,17 @@ standing_for() {  # <lane>
   return 1
 }
 
-# A step with no lane of its own, the recovery point: any lane's line will
-# do, the security lane's first, since it changes no package.
-standing_any() {
-  local _sa_r
-  local -a _sa_f=()
-  if [ "${#KNOB_STANDING[@]}" -eq 0 ]; then
-    standing_for security || true
-    ST_WHY="the knob has no standing line"
+# A step after the bulk, under a standing line, runs only where its bulk ran
+# under the same lane's line (CR 2543): the run's approval record.
+standing_run_approval() {  # <run dir> <lane>: 1 with ST_WHY when it doesn't
+  local _sr=""
+  if ! root_read _sr "$1/approval"; then
+    ST_WHY="$1/approval can't be read, so which approval the run's bulk ran under is unknown"
     return 1
   fi
-  if standing_for security; then return 0; fi
-  for _sa_r in "${KNOB_STANDING[@]}"; do
-    IFS=$KNOB_US read -r -a _sa_f <<<"$_sa_r"
-    [ "${_sa_f[0]}" != security ] || continue
-    if standing_for "${_sa_f[0]}"; then return 0; fi
-  done
-  ST_WHY="no standing line approves: $ST_WHY"
+  _sr=${_sr%%$'\n'*}
+  [ "$_sr" != "standing $2" ] || return 0
+  ST_WHY="the run's bulk ran under ${_sr:-nothing it recorded}, which isn't a standing approval for the $2 lane"
   return 1
 }
 
@@ -470,9 +465,10 @@ standing_json_head() {  # <var>
 }
 
 # recovery-point.sh's and reboot-chain.sh's gate.standing. The recovery
-# point takes any lane's line; the reboot, 3(b), its run's lane's, and none
-# that says no-reboot. Refusals only under --approve, as for a plan.
-standing_gate_record() {  # <approve 0|1> <standing 0|1> <run dir, or empty for the recovery point> <reboot 0|1>
+# point takes its --lane's line (CR 2549); the reboot, 3(b), its run's
+# lane's, and none that says no-reboot. Refusals only under --approve, as
+# for a plan.
+standing_gate_record() {  # <approve 0|1> <standing 0|1> <run dir, or empty for the recovery point> <reboot 0|1> [<the recovery point's lane>]
   local _sg="" _sw="" _sl
   if [ "$2" -ne 1 ]; then
     jadd J_GATE standing null
@@ -483,10 +479,15 @@ standing_gate_record() {  # <approve 0|1> <standing 0|1> <run dir, or empty for 
       _sw="the lane the run's bulk ran in can't be read from $3/dry-run, so which standing line applies is unknown"
     elif ! standing_for "$_sl"; then
       _sw=$ST_WHY
+    elif ! standing_run_approval "$3" "$_sl"; then
+      _sw=$ST_WHY
     elif [ "$ST_NO_REBOOT" = 1 ]; then
       _sw="the standing approval for the $_sl lane (knob line $ST_LINE) says no-reboot: the reboot needs the owner's own approval"
+    elif [ "$ST_NO_DS" = 1 ] && [ "${#KNOB_DATASTORE[@]}" -gt 0 ]; then
+      # The chain checkpoints and stops each declared data store (CR 2542).
+      _sw="the standing approval for the $_sl lane (knob line $ST_LINE) says no-datastore, and the reboot chain stops each declared data store: the reboot needs the owner's own approval"
     fi
-  elif ! standing_any; then
+  elif ! standing_for "${5:-security}"; then
     _sw=$ST_WHY
   fi
   standing_json_head _sg
@@ -502,10 +503,12 @@ standing_gate_record() {  # <approve 0|1> <standing 0|1> <run dir, or empty for 
 }
 
 # The approval a suggested next command carries, as given here (CR 2535).
-approval_args() {  # <var> <plan file, or empty> <standing 0|1>
+approval_args() {  # <var> <plan file, or empty> <standing 0|1> [<lane>]
   local _apa_s=""
-  if [ -n "$2" ]; then _apa_s=" --plan \"$2\""; fi
-  if [ "$3" -eq 1 ]; then _apa_s=" --standing"; fi
+  # Quoted as the shell reads it back (CR 2550): a path may hold '"', '$'
+  # or a backtick.
+  if [ -n "$2" ]; then printf -v _apa_s ' --plan %q' "$2"; fi
+  if [ "$3" -eq 1 ]; then _apa_s=" --standing${4:+ --lane $4}"; fi
   printf -v "$1" '%s' "$_apa_s"
 }
 

@@ -597,14 +597,14 @@ def test_the_bulks_next_held_step_carries_its_plan(host):
     p = _plan(host, HEAD + _section())
     out = host.run("--plan", str(p))
     [n] = [x for x in out["next"] if "--step postgres" in x]
-    assert f'--plan "{p}"' in n
+    assert f"--plan {p}" in n
 
 
 def test_the_recovery_points_next_bulk_carries_its_plan(recovery):
     p = _plan(recovery, HEAD + _section())
     out = recovery.recover("--plan", str(p))
     [n] = [x for x in out["next"] if "--step bulk" in x]
-    assert f'--plan "{p}"' in n
+    assert f"--plan {p}" in n
 
 
 def test_a_package_named_twice_in_a_section_is_malformed(host):
@@ -676,3 +676,28 @@ def test_a_plan_path_holding_a_space_is_read_by_the_recovery_point_too(recovery)
     p.write_text(HEAD + _section())
     out = recovery.recover("--plan", str(p))
     assert out["recovery_point"]["approval"]["by"] == "plan"
+
+
+def test_the_next_commands_quote_a_plan_path_as_the_shell_reads_it(recovery):
+    # CR 2550: a path holding '"', '$' or '`' was spliced into "...".
+    p = recovery.tmp / 'cy$cle "plan" `x`'
+    p.write_text(HEAD + _section())
+    out = recovery.recover("--plan", str(p))
+    [n] = [x for x in out["next"] if "--step bulk" in x]
+    arg = n.split("--plan ", 1)[1].split(" --step", 1)[0]
+    r = subprocess.run(
+        ["bash", "-c", f"printf %s {arg}"], capture_output=True, text=True
+    )
+    assert r.stdout == str(p)
+
+
+def test_an_unplanned_selected_package_held_for_an_approved_step_stops_the_bulk(host):
+    # CR 2545: the dry run selected postgresql-16 and the plan doesn't list
+    # it. The envelope rates it new-security, inside, but the bulk holds it
+    # for postgres, which the plan approves, and that step would refuse it:
+    # the run would strand with the group held. The bulk stops first.
+    p = _plan(host, HEAD + _section(packages=_without("postgresql-16")))
+    out = host.run("--plan", str(p), rc=1)
+    assert "postgresql-16" in json.dumps(out)
+    assert host.holds() == []
+    assert not host.calls("unattended-upgrade")

@@ -93,10 +93,10 @@ With `--approve`, each outside difference is a refusal: the host stops for this 
 
 | Script | Refused unless |
 |---|---|
-| `recovery-point.sh` | any unexpired line, the security lane's first: it changes no package |
-| `apply.sh --step bulk` | an unexpired line for the bulk's `--lane`, and the bulk's reading within its limits |
-| `apply.sh --step <held step>` | an unexpired line for the lane its bulk ran in, read from the run's `dry-run` record (unread, it's refused), and the step within its limits |
-| `reboot-chain.sh` | an unexpired line for the run's lane, without `no-reboot` |
+| `recovery-point.sh` | an unexpired line for its `--lane`, `security` by default; the next bulk it suggests carries the lane |
+| `apply.sh --step bulk` | an unexpired line for the bulk's `--lane`, and the bulk's reading within its limits. Under `no-held` or `no-datastore` it holds nothing: one the refreshed lists would have it hold stops it, with nothing held |
+| `apply.sh --step <held step>` | an unexpired line for the lane its bulk ran in, read from the run's `dry-run` record (unread, it's refused); the run's bulk ran under that same lane's line, as its `approval` record says; the step within its limits; and each package it releases of a class the lane takes, as the bulk recorded it in `hold-versions` (unknown refuses) |
+| `reboot-chain.sh` | an unexpired line for the run's lane, under which the run's bulk ran, without `no-reboot`, nor `no-datastore` where the knob declares a data store: the chain stops each one |
 
 **An origin lane the knob doesn't follow approves nothing** (`standing-origin`).
 
@@ -106,7 +106,7 @@ With `--approve`, each outside difference is a refusal: the host stops for this 
 |---|---|
 | `reboot` | `no-reboot`, and the run reboots: certain, already due (#655), or unknown |
 | `held-step` | `no-held`, and the selection reaches a held group, or the step is one |
-| `datastore` | `no-datastore`, and a held step may restart a declared data store. The default groups map to their engines: `postgres`, `redis`, and `docker` to a Qdrant's container. A knob's own group may restart anything, so it's refused wherever any data store is declared. A group whose engine isn't declared restarts none, and passes |
+| `datastore` | `no-datastore`, and the run reaches a held step, or is one: a hold group exists to restart a data store or a container, the knob's own or a default, declared or not, and its name doesn't say which, so every one is refused. The reboot is refused too, where the knob declares a data store. An undeclared data store is a probe finding already |
 | `lane-scope` | the selection holds what the lane doesn't take: in the security lane, anything but security, unless the dry run's origins are security alone; in the maintenance lane, anything but security, `-updates` and followed origins |
 | `unread` | the selection, a package's class or the reboot couldn't be read |
 

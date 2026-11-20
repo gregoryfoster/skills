@@ -16,6 +16,8 @@ beside `--approve` holds each step to it:
 - each records approval {by: standing, lane, review_by, reason, line}.
 """
 
+import json
+
 import pytest
 
 from tests.structural.patching_hosts_rig import dispatcher
@@ -23,6 +25,8 @@ from tests.structural.test_patching_hosts_apply import (
     KNOB,
     MAPS,
     QUIET,
+    SIM_ARGS,
+    SIMULATION,
     _changed,
     _owners,
     _step4,
@@ -63,11 +67,23 @@ def _standing(host, limits: str = "", extra: str = "") -> None:
     host.knob(KNOB + extra + STANDING.format(limits=limits))
 
 
+QUIET_SIM = (
+    "NOTE: This is only a simulation!\n"
+    "Inst libxml2 [2.9.14+dfsg-1.3ubuntu3.4] (2.9.14+dfsg-1.3ubuntu3.5 "
+    "Ubuntu:24.04/noble-security [arm64])\n"
+    "Inst tzdata [2025a-0ubuntu0.24.04.1] (2025b-0ubuntu0.24.04.1 "
+    "Ubuntu:24.04/noble-security [all])\n"
+)
+
+
 def _quiet(host) -> None:
-    """The selection reaches no held group, and the run reads no reboot."""
+    """The selection reaches no held group, nor do the refreshed lists, and
+    the run reads no reboot."""
     (host.dry / "dry-run.log").write_text(
         "Packages that will be upgraded: libxml2 tzdata\n"
     )
+    host.cases["apt-get"] = [c for c in host.cases["apt-get"] if c[0] != SIM_ARGS]
+    host.on("apt-get", SIM_ARGS, QUIET_SIM)
     _summary(host, QUIET_SEL)
     host.pid1_maps.write_text(MAPS)
     _step4(_owners(host), {**QUIET})
@@ -143,8 +159,9 @@ def test_plan_and_standing_are_exclusive(host):
             False,
             [("datastore", "postgres", False)],
         ),
-        # ...but with no data store declared, it restarts none.
-        ("no-datastore ", "", False, []),
+        # ...and so does one the knob doesn't declare: no-datastore refuses
+        # every held step (CR 2544, CR 2547).
+        ("no-datastore ", "", False, [("datastore", "postgres", False)]),
     ],
     ids=[
         "no-reboot-unknown",
@@ -236,8 +253,9 @@ def test_a_held_step_under_no_held_is_refused(host):
     host.run_dir.mkdir()
     host.run_dir.chmod(0o700)
     (host.run_dir / "dry-run").write_text("lane=security\n")
+    (host.run_dir / "approval").write_text("standing security\n")
     out = host.run("--standing", step="postgres", rc=3)
-    assert _kinds(out) == [("held-step", "postgres", False)]
+    assert ("held-step", "postgres", False) in _kinds(out)
 
 
 # --- recovery-point.sh and reboot-chain.sh -----------------------------------------
@@ -265,6 +283,7 @@ def test_the_recovery_point_refuses_without_a_line(recovery):
 def chain(tmp_path) -> RebootHost:
     h = _reboot_ready(RebootHost(tmp_path))
     (h.run_dir / "dry-run").write_text("lane=security\n")
+    (h.run_dir / "approval").write_text("standing security\n")
     return h
 
 
@@ -314,3 +333,196 @@ def test_the_recovery_points_next_bulk_carries_standing(recovery):
     out = recovery.recover("--standing")
     [n] = [x for x in out["next"] if "--step bulk" in x]
     assert "--standing" in n
+
+
+# --- CR 2548: a followed origin declared by its site ---------------------------------
+
+DOCKER_POLICY = (
+    "Package files:\n"
+    " 500 https://download.docker.com/linux/ubuntu noble/stable amd64 Packages\n"
+    "     release o=Docker,a=noble,n=noble,l=Docker CE,c=stable,b=amd64\n"
+    "     origin download.docker.com\n"
+)
+
+
+@pytest.mark.parametrize("decl", ["Docker", "download.docker.com"])
+def test_the_maintenance_lines_followed_origin_may_be_declared_by_its_site(host, decl):
+    host.knob(
+        KNOB + f"origin {decl} follow\n" + "standing maintenance 2099-01-01 monthly\n"
+    )
+    host.on("apt-cache", "policy", DOCKER_POLICY)
+    _summary(host, {**SELECTED, "libxml2": ("9", "third-party:Docker")}, 0)
+    out = host.run("--standing", "--lane", "maintenance", rc=3)
+    assert [k for k in _kinds(out) if k[0] == "lane-scope"] == []
+
+
+# --- CR 2549: the recovery point's lane ----------------------------------------------
+
+
+def test_the_recovery_point_takes_its_lanes_line_and_carries_the_lane(recovery):
+    recovery.knob(
+        recovery.knob_path.read_text()
+        + "standing security 2026-01-01 lapsed\n"
+        + "standing maintenance 2099-01-01 monthly\n"
+    )
+    refused = recovery.recover("--standing", rc=3)
+    assert any("passed its review-by date" in r for r in refused["refused"])
+    out = recovery.recover("--standing", "--lane", "maintenance")
+    assert out["recovery_point"]["approval"]["lane"] == "maintenance"
+    [n] = [x for x in out["next"] if "--step bulk" in x]
+    assert "--standing --lane maintenance" in n
+
+
+# --- CR 2542: no-datastore stops the reboot where a data store is declared -----------
+
+
+def test_the_reboot_is_refused_under_no_datastore_with_a_data_store(chain):
+    # The chain checkpoints and stops each declared data store, Postgres
+    # and Redis here, before it reboots.
+    (chain.run_dir / "approval").write_text("standing security\n")
+    chain.knob(chain.knob_path.read_text() + STANDING.format(limits="no-datastore "))
+    out = chain.reboot("--standing", rc=3)
+    assert any(
+        "no-datastore" in r and "stops each declared data store" in r
+        for r in out["refused"]
+    ), out["refused"]
+    assert not any(n == "systemd-run" for n, _, _ in chain.calls())
+
+
+# --- CR 2544, CR 2547: no-datastore refuses every held step --------------------------
+
+
+def _held(host, step: str) -> None:
+    host.run_dir.mkdir()
+    host.run_dir.chmod(0o700)
+    (host.run_dir / "dry-run").write_text("lane=security\nsecurity_only=1\n")
+    (host.run_dir / "approval").write_text("standing security\n")
+
+
+@pytest.mark.parametrize(
+    "extra, step",
+    [
+        # A knob hold line that replaces the default postgres group, taking
+        # redis-server, with a Redis declared: the name says postgres.
+        (
+            "hold postgresql-* libpq5 redis-server postgres\n"
+            "datastore redis redis-server\n",
+            "postgres",
+        ),
+        # An engine the knob doesn't declare.
+        ("", "postgres"),
+        # docker: containerd's restart restarts every container.
+        ("", "docker"),
+    ],
+    ids=["replaced-default", "undeclared-engine", "docker"],
+)
+def test_no_datastore_refuses_every_held_step(host, extra, step):
+    _standing(host, "no-datastore ", extra)
+    _held(host, step)
+    out = host.run("--standing", step=step, rc=3)
+    assert ("datastore", step, False) in _kinds(out)
+
+
+# --- CR 2546: the bulk holds nothing for a step its line refuses ---------------------
+
+
+@pytest.mark.parametrize("limits", ["no-held ", "no-datastore "])
+def test_a_bulk_that_would_hold_for_a_refused_step_stops_first(host, limits):
+    # The dry run reaches no group, but the refreshed lists offer group
+    # packages the bulk would hold (#488): their steps are refused under
+    # this line, so the holds would stand, and a next step would be
+    # suggested that the line refuses.
+    _standing(host, limits)
+    _quiet(host)
+    host.cases["apt-get"] = [c for c in host.cases["apt-get"] if c[0] != SIM_ARGS]
+    host.on("apt-get", SIM_ARGS, SIMULATION)
+    out = host.run("--standing", rc=1)
+    assert "nothing was held" in json.dumps(out).lower()
+    assert host.holds() == []
+    assert not host.calls("unattended-upgrade")
+    assert not [n for n in out["next"] if "--step " in n]
+
+
+# --- CR 2543: a held step and the reboot under their bulk's standing line ------------
+
+
+def _held_standing(host, approval, versions, security_only=1) -> None:
+    host.run_dir.mkdir()
+    host.run_dir.chmod(0o700)
+    (host.run_dir / "dry-run").write_text(
+        f"lane=security\nsecurity_only={security_only}\n"
+    )
+    (host.run_dir / "holds").write_text("postgres postgresql-16\npostgres libpq5\n")
+    (host.run_dir / "hold-versions").write_text(versions)
+    if approval is not None:
+        (host.run_dir / "approval").write_text(approval)
+
+
+SEC_VERSIONS = (
+    "postgresql-16 16.11-0ubuntu0.24.04.1 security\n"
+    "libpq5 16.11-0ubuntu0.24.04.1 security\n"
+)
+
+
+@pytest.mark.parametrize(
+    "approval, why",
+    [
+        (None, "can't be read"),
+        ("session\n", "isn't a standing approval for the security lane"),
+        (
+            "plan " + "0" * 64 + " x\n",
+            "isn't a standing approval for the security lane",
+        ),
+        ("standing maintenance\n", "isn't a standing approval for the security lane"),
+    ],
+    ids=["no-record", "session", "plan", "another-lane"],
+)
+def test_a_held_step_runs_only_under_its_bulks_standing_line(host, approval, why):
+    _standing(host)
+    _held_standing(host, approval, SEC_VERSIONS)
+    out = host.run("--standing", step="postgres", rc=3)
+    assert any(why in r for r in out["refused"]), out["refused"]
+    assert out["gate"]["standing"]["covers"] is False
+
+
+@pytest.mark.parametrize(
+    "versions, security_only, kinds",
+    [
+        (SEC_VERSIONS, 1, []),
+        # exception uu:origins: a session bulk held an -updates
+        # postgresql-16, which the security lane's line doesn't take.
+        (
+            SEC_VERSIONS.replace(
+                "16.11-0ubuntu0.24.04.1 security\nlibpq5",
+                "16.12-0ubuntu0.24.04.1 updates\nlibpq5",
+                1,
+            ),
+            0,
+            [("lane-scope", "postgresql-16", False)],
+        ),
+        # A record from before the class column: unknown refuses.
+        (
+            "postgresql-16 16.11-0ubuntu0.24.04.1\nlibpq5 16.11-0ubuntu0.24.04.1\n",
+            1,
+            [("unread", "postgresql-16", False), ("unread", "libpq5", False)],
+        ),
+    ],
+    ids=["security", "updates-wide-origins", "no-class"],
+)
+def test_a_held_step_under_standing_takes_only_its_lanes_classes(
+    host, versions, security_only, kinds
+):
+    _standing(host)
+    _held_standing(host, "standing security\n", versions, security_only)
+    out = host.run("--standing", step="postgres", rc=3)
+    assert out["gate"]["standing"]["covers"] is True
+    assert _kinds(out) == kinds
+
+
+def test_the_reboot_runs_only_under_its_bulks_standing_line(chain):
+    (chain.run_dir / "approval").write_text("session\n")
+    chain.knob(chain.knob_path.read_text() + STANDING.format(limits=""))
+    out = chain.reboot("--standing", rc=3)
+    assert any(
+        "isn't a standing approval for the security lane" in r for r in out["refused"]
+    ), out["refused"]

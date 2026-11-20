@@ -164,7 +164,7 @@ The run's directory is root-only: 0700, and each file 0600.
   dry-run          the dry run's summary, for the held steps' gate
   before-versions, before-showhold, before-showauto
   holds            "<step> <package>": each hold the run placed
-  hold-versions    "<package> <version>": each held package's candidate
+  hold-versions    "<package> <version> <class>": each held package's candidate
                    after the bulk's list refresh
   steps            one tab-separated line per step that began its upgrade:
                    <step>, ok or failed, when apply.sh started (epoch), and
@@ -1212,7 +1212,8 @@ plan_envelope() {
 # step the plan approves, at the candidate those lists offer. A planned one
 # must be at its planned version or a newer one; an unplanned one held for
 # an approved step is outside, since that step would install it and restart
-# its data store. One of the dry run's own, unplanned, the gate judged.
+# its data store, whether or not the dry run selected it (CR 2545). One of
+# the dry run's own, unplanned and not held, the gate judged.
 RECHECK_WHY=""
 plan_recheck_bulk() {  # <the refreshed simulation>
   local i p c pv seen=" " held
@@ -1232,7 +1233,9 @@ plan_recheck_bulk() {  # <the refreshed simulation>
       if [ "${PLAN_PKG_NAME[$i]}" = "$p" ]; then pv=${PLAN_PKG_VERSION[$i]}; fi
     done
     if [ -z "$pv" ]; then
-      if [ -n "$held" ] && ! in_words "$p" "$DRY_SEL"; then
+      # Held for an approved step, it's outside whatever the dry run said
+      # (CR 2545): that step would refuse it, and leave the group held.
+      if [ -n "$held" ]; then
         RECHECK_WHY="$RECHECK_WHY; $p $c, which the held step $held would install, isn't in the plan"
       fi
       continue
@@ -1257,7 +1260,7 @@ plan_held() {
   for i in ${RUN_HOLD_PKG[@]+"${!RUN_HOLD_PKG[@]}"}; do
     [ "${RUN_HOLD_STEP[$i]}" = "$step" ] || continue
     p=${RUN_HOLD_PKG[$i]} c=""
-    while read -r s pv; do
+    while read -r s pv _; do
       if [ "$s" = "$p" ]; then c=$pv; fi
     done <<<"$out"
     pv=""
@@ -1327,37 +1330,38 @@ gate_plan() {
 #   no-reboot: the run's reboot must read "no": certain, due (#655) or
 #     unknown refuses;
 #   no-held: no held step, in the selection or run on its own;
-#   no-datastore: no held step that restarts a declared data store. The
-#     default groups map to their engines (postgres, redis, and docker to a
-#     Qdrant's container); a knob's own group may restart anything, so it's
-#     refused wherever a data store is declared;
+#   no-datastore: no held step at all, and no reboot where the knob declares
+#     a data store (CR 2542, CR 2544, CR 2547). A hold group exists to
+#     restart a data store or a container, default or the knob's own,
+#     declared or not, and a group's name doesn't say which: fail closed;
 # and the selection may hold only what the lane takes, by each package's
 # class: the security lane, security (or a dry run whose origins are
 # security alone); the maintenance lane, those plus -updates and the
 # followed origins. An unread class refuses. Reported in gate.plan's shape.
-step_restarts_datastore() {  # <held step>: 0 when it may restart a declared data store
-  local _sd_k _sd_r
-  local -a _sd_f=()
-  case $1 in
-    postgres) _sd_k=postgres ;;
-    redis) _sd_k=redis ;;
-    docker) _sd_k=qdrant ;;
-    *) _sd_k="" ;;
-  esac
-  for _sd_r in ${KNOB_DATASTORE[@]+"${KNOB_DATASTORE[@]}"}; do
-    IFS=$KNOB_US read -r -a _sd_f <<<"$_sd_r"
-    if [ -z "$_sd_k" ] || [ "${_sd_f[0]}" = "$_sd_k" ]; then return 0; fi
-  done
-  return 1
-}
-
+# A followed origin may be declared by its o= name or by its site
+# (knob.md), which apt-cache policy maps to its o= names, as the lanes read
+# it (CR 2548). The policy is read once, and unread, a site matches nothing.
+FC_POLICY="" FC_POLICY_READ=0
 followed_class() {  # <class>: 0 when it's third-party:<an origin the knob follows>
-  local _fc_k _fc_o
+  local _fc_k _fc_o _fc_n _fc_x
   case $1 in third-party:*) ;; *) return 1 ;; esac
   for _fc_k in ${KNOB_ORIGIN[@]+"${KNOB_ORIGIN[@]}"}; do
     case $_fc_k in *"${KNOB_US}follow$KNOB_US"*)
       _fc_o=${_fc_k%%"$KNOB_US"*}
-      if [ "${1#third-party:}" = "${_fc_o// /_}" ]; then return 0; fi ;;
+      case $_fc_o in *.*)
+        if [ "$FC_POLICY_READ" -eq 0 ]; then
+          FC_POLICY_READ=1
+          capture FC_POLICY apt-cache policy
+          [ "$CAP_RC" -eq 0 ] || FC_POLICY=""
+        fi ;;
+      esac
+      origin_names _fc_n "$_fc_o" "$FC_POLICY"
+      _fc_n=${_fc_n#|}
+      while [ -n "$_fc_n" ]; do
+        _fc_x=${_fc_n%%|*}
+        _fc_n=${_fc_n#*|}
+        if [ -n "$_fc_x" ] && [ "${1#third-party:}" = "${_fc_x// /_}" ]; then return 0; fi
+      done ;;
     esac
   done
   return 1
@@ -1366,9 +1370,55 @@ followed_class() {  # <class>: 0 when it's third-party:<an origin the knob follo
 standing_held() {  # <held step>
   if [ "$ST_NO_HELD" = 1 ]; then
     plan_diff 0 held-step "$1" "the standing line says no-held, and the run reaches the held step $1"
-  elif [ "$ST_NO_DS" = 1 ] && step_restarts_datastore "$1"; then
-    plan_diff 0 datastore "$1" "the standing line says no-datastore, and the held step $1 may restart a declared data store"
+  elif [ "$ST_NO_DS" = 1 ]; then
+    plan_diff 0 datastore "$1" "the standing line says no-datastore, and every held step may restart a data store or a container, declared or not: $1 is one"
   fi
+}
+
+# Whether the standing line's lane takes a package of CLASS (CR 2543): the
+# security lane, security, or anything where its dry run's origins were
+# security alone; the maintenance lane, those plus -updates and followed
+# origins; an origin lane, what its own dry run selected. Unknown refuses.
+standing_scope() {  # <package> <version> <class> <security_only>
+  if [ -z "$3" ] || [ "$3" = "?" ]; then
+    plan_diff 0 unread "$1" "its class wasn't read, so whether the $LANE lane's line takes it is unknown"
+    return 0
+  fi
+  case $LANE in
+    security)
+      if [ "$3" != security ] && [ "$4" != 1 ]; then
+        plan_diff 0 lane-scope "$1" "$2, class $3, which the security lane's standing line doesn't take"
+      fi ;;
+    maintenance)
+      case $3 in
+        security | updates) ;;
+        *) followed_class "$3" || plan_diff 0 lane-scope "$1" "$2, class $3, which the maintenance lane's standing line doesn't take" ;;
+      esac ;;
+  esac
+}
+
+# A held step under a standing line: each package it releases, at the
+# class the bulk recorded, within the lane (CR 2543).
+standing_held_scope() {
+  local out s v c so="" i p
+  if ! root_read out "$run/hold-versions"; then
+    plan_diff 0 unread hold-versions "$run/hold-versions can't be read, so what this step installs is unknown"
+    return 0
+  fi
+  if root_read s "$run/dry-run"; then
+    while IFS= read -r v; do
+      case $v in security_only=*) so=${v#security_only=} ;; esac
+    done <<<"$s"
+  fi
+  read_run_holds || true
+  for i in ${RUN_HOLD_PKG[@]+"${!RUN_HOLD_PKG[@]}"}; do
+    [ "${RUN_HOLD_STEP[$i]}" = "$step" ] || continue
+    p=${RUN_HOLD_PKG[$i]} v="" c=""
+    while read -r s pv cl; do
+      if [ "$s" = "$p" ]; then v=$pv c=${cl:-}; fi
+    done <<<"$out"
+    standing_scope "$p" "${v:-a version}" "$c" "$so"
+  done
 }
 
 standing_envelope() {
@@ -1383,17 +1433,7 @@ standing_envelope() {
       plan_diff 0 unread "$p" "the dry run selects it, and its class wasn't read"
       continue
     fi
-    case $LANE in
-      security)
-        if [ "$SC" != security ] && [ "$DRY_SECURITY_ONLY" != 1 ]; then
-          plan_diff 0 lane-scope "$p" "$SV, class $SC, which the security lane's standing line doesn't take"
-        fi ;;
-      maintenance)
-        case $SC in
-          security | updates) ;;
-          *) followed_class "$SC" || plan_diff 0 lane-scope "$p" "$SV, class $SC, which the maintenance lane's standing line doesn't take" ;;
-        esac ;;
-    esac
+    standing_scope "$p" "$SV" "$SC" "$DRY_SECURITY_ONLY"
   done
   for g in $SPAN_GROUPS; do standing_held "$g"; done
   if [ "$ST_NO_REBOOT" = 1 ] && [ "$SPAN_RC" -ne 1 ]; then
@@ -1419,6 +1459,8 @@ gate_standing() {
     w="the lane its bulk ran in can't be read from $run/dry-run, so which standing line applies is unknown"
   elif ! standing_for "$LANE"; then
     w=$ST_WHY
+  elif [ "$step" != bulk ] && ! standing_run_approval "$run" "$LANE"; then
+    w=$ST_WHY
   fi
   standing_json_head o
   if [ -n "$w" ]; then
@@ -1432,7 +1474,12 @@ gate_standing() {
   fi
   jaddb o covers 1
   jadd o why null
-  if [ "$step" = bulk ]; then standing_envelope; else standing_held "$step"; fi
+  if [ "$step" = bulk ]; then
+    standing_envelope
+  else
+    standing_held "$step"
+    standing_held_scope
+  fi
   jaddb o inside "$(( ${#PLAN_OUTSIDE[@]} == 0 ))"
   jadd o differences "[$PLAN_DIFFS]"
   jadd J_GATE standing "{$o}"
@@ -2309,7 +2356,10 @@ do_bulk() {
     p=${RUN_HOLD_PKG[$i]}
     version_in c "$bv" "$p"
     version_in d "$dv" "$p"
-    vout="$vout$p $c"$'\n'
+    # Its class as the dry run read it, or ? (CR 2543): a held step under a
+    # standing line takes only its lane's.
+    sel_of "$p"
+    vout="$vout$p $c ${SC:-?}"$'\n'
     e=""
     jadds e package "$p"
     jadds e step "${RUN_HOLD_STEP[$i]}"
@@ -2336,6 +2386,16 @@ do_bulk() {
       fail "outside the plan $PLAN_ID against the refreshed lists: ${RECHECK_WHY#; }. Nothing was held or upgraded"
       return 0
     fi
+  fi
+  # Under a standing line that refuses every held step, no-held or
+  # no-datastore, the bulk holds nothing (CR 2546): a group it held could
+  # never be released under the line, and its next step would be refused.
+  if [ "$standing" -eq 1 ] && { [ "$ST_NO_HELD" = 1 ] || [ "$ST_NO_DS" = 1 ]; } &&
+    [ "${#RUN_HOLD_PKG[@]}" -gt 0 ]; then
+    r=""
+    for i in "${!RUN_HOLD_PKG[@]}"; do r="$r, ${RUN_HOLD_PKG[$i]} for ${RUN_HOLD_STEP[$i]}"; done
+    fail "the standing approval for the $LANE lane (knob line $ST_LINE) refuses every held step, and the refreshed lists would have the bulk hold ${r#, }: nothing was held or upgraded"
+    return 0
   fi
   # Which approval the bulk ran under: its held steps and its reboot, under a
   # plan, must run under the same one.
@@ -2537,7 +2597,7 @@ held_installed() {  # <packages>...
     done <<<"$out"
   fi
   if root_read out "$run/hold-versions"; then
-    while read -r x y; do
+    while read -r x y _; do
       if [ -n "$x" ]; then bv="$bv $x=$y"; fi
     done <<<"$out"
   fi
