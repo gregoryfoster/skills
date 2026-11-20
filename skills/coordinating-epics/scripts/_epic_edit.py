@@ -740,6 +740,40 @@ def line_ref(line: str, host: str) -> tuple[str, str] | None:
     return (ls[0], ls[1][0]) if ls else None
 
 
+def show_key(ref_key: str, host: str) -> str:
+    """A key as its ref is written: "#12" in this repo, "owner/repo#12" in another."""
+    mine = host.lower() + "#"
+    return "#" + ref_key[len(mine) :] if ref_key.startswith(mine) else ref_key
+
+
+def unmarked_lead(line: str, host: str) -> str | None:
+    """The key a line starts with while leading nothing: "#12 title" or
+    "[ ] #12 title", a ref with no item, bullet or row to hold it
+    (CannObserv/processor#84 F9, #670)."""
+    if line_ref(line, host):
+        return None
+    lr = line_ref("- " + line.lstrip(), host)
+    return lr[1] if lr else None
+
+
+def why_no_lead(line: str, ref: str, host: str) -> str:
+    """What a line that doesn't lead with ref is missing, for set-line's refusal."""
+    lr = line_ref(line, host)
+    if lr:
+        return f"it leads with {show_key(lr[1], host)}"
+    starts = unmarked_lead(line, host)
+    if starts:
+        return (
+            f"it starts with {show_key(starts, host)}, but isn't a checklist item,"
+            f' a bullet or a table row. Start it "- [ ] {ref}", "- [x] {ref}",'
+            f' "- {ref}" or "| {ref}"'
+        )
+    return (
+        "its first token isn't a ref. A ref leads when it comes first after the"
+        " marker, with at most an ordinal and markup before it, and outside code"
+    )
+
+
 def ticked_subjects(
     lines: list[str], host: str, open_keys: set[str]
 ) -> tuple[list[dict], list[str]]:
@@ -1338,7 +1372,10 @@ def apply_ops(
                     raise Refused("set-line takes one line")
                 lr = line_ref(new, host)
                 if not lr or lr[1] != ref_key:
-                    raise Refused(f"the new line doesn't lead with {op['ref']}")
+                    raise Refused(
+                        f"the new line doesn't lead with {op['ref']}: "
+                        + why_no_lead(new, op["ref"].strip(), host)
+                    )
                 if new == lines[i]:
                     notes.append(f"{where}: {op['ref']}'s line already reads so")
                     continue
@@ -1365,6 +1402,13 @@ def apply_ops(
                         raise Refused(
                             f"{lr[1]} already has a line; use set-line or note"
                         )
+                elif starts := unmarked_lead(new, host):
+                    # Added as written, as it always was: a note, not a refusal.
+                    notes.append(
+                        f"{where}: the line starts with {show_key(starts, host)} but"
+                        " isn't a checklist item, a bullet or a table row, so it is"
+                        " added as text, and no op will find it by that ref"
+                    )
                 if "after_ref" in op:
                     anchor = find_ref_line(
                         lines, parse_ref(op["after_ref"], host), host
