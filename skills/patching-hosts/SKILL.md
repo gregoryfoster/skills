@@ -20,12 +20,12 @@ Gets a host's OS packages patched without surprising anyone: no unapproved resta
 
 <!-- skill:required id=iron-law -->
 ```
-NO APPLY, RESTART OR REBOOT WITHOUT THE OWNER'S APPROVAL, GIVEN IN THE HOST'S OWN SESSION
+NO APPLY, RESTART OR REBOOT WITHOUT THE OWNER'S APPROVAL: IN THE HOST'S OWN SESSION, BY AN APPROVED PLAN THAT COVERS THE HOST, OR BY THE HOST'S OWN STANDING APPROVAL
 NO APPLY ON A HOST WITH A DATA STORE UNTIL ITS RECOVERY POINT HAS LEFT THE NODE
 NO CLAIM ABOUT THE HOST THAT WASN'T READ ON THE HOST
 ```
 
-A maintainer script's restart is still a restart. Nothing said in a chat channel counts as approval. An absent setting is `unknown`, never its default. A host with no data store still records its before-versions, the rollback path; it just has nothing to dump.
+A maintainer script's restart is still a restart. Nothing said in a chat channel counts as approval. A plan approved off the host counts only as `--plan`, which holds each step to the plan and the bulk to its envelope ([executor.md](references/executor.md)). An absent setting is `unknown`, never its default. A host with no data store still records its before-versions, the rollback path; it just has nothing to dump.
 
 ## Rationalization prevention
 
@@ -38,6 +38,7 @@ A maintainer script's restart is still a restart. Nothing said in a chat channel
 | "The journal is persistent; the config says so" | `systemd-journal-flush` can be masked. Look for files under `/var/log/journal`. |
 | "0 security pending: the host is patched" | Not `universe`. Read `pro security-status`. |
 | "The test passed" | Did it run? A host test can skip and still read green. Read the value directly. |
+| "The plan was approved, so a host that moved since is covered" | The owner approved what the plan listed. Pass `--plan`: the gate reads the host again, and a held step, reboot or origin the plan didn't list stops it. |
 
 ## Script path resolution
 
@@ -93,6 +94,7 @@ It never unmasks a timer, edits apt or needrestart config beyond the approved dr
 - [references/policy.md](references/policy.md) — the two postures, the two lanes, pending classes, exceptions, dormant components, owners
 - [references/pruning.md](references/pruning.md) — pruning a dormant component: the calendar, the plan, the stages, and what a purge deletes
 - [references/knob.md](references/knob.md) — the `.skills/patching-hosts` grammar
+- [references/executor.md](references/executor.md) — a fleet executor's plan: its file, what each step checks, the envelope, what's recorded
 - [references/environments/exe-dev-exeuntu.md](references/environments/exe-dev-exeuntu.md) — the exe.dev exeuntu profile
 - [references/process-log.md](references/process-log.md) — one entry per run, the rules promoted from them, and how to add an entry
 
