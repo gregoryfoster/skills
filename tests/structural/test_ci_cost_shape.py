@@ -359,6 +359,24 @@ class TestTheTrapCountStaysTrue:
         )
 
 
+class TestLocalGateAttestationIsALeverWithConditions:
+    """#602: live only where it pays, and only sketched, not shipped."""
+
+    def test_its_conditions_and_its_sketch_mark_are_recorded(self):
+        text = " ".join(
+            (SKILL_DIR / "references" / "non-levers.md").read_text().split()
+        )
+        assert "Local-gate attestation" in text
+        for condition in ("private", "duration", "Dependabot"):
+            assert condition in text, (
+                f"the attestation lever must name {condition!r}: it pays only in a "
+                "private, duration-shaped repo, and bot PRs still need the full run"
+            )
+        assert "A sketch, not shipped" in text, (
+            "the status-posting step is a sketch; shipping-work has no such step"
+        )
+
+
 def _census(
     tmp_path, rows: list[dict], *args, visibility=None, as_json=True
 ) -> subprocess.CompletedProcess:
