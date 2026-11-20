@@ -839,6 +839,28 @@ def test_the_dry_run_counts_security_exactly_into_its_scratch_cache(host):
     assert [c for c in host.calls("choom") if "-n 0" in c[1]]
 
 
+def test_the_summary_names_each_selected_packages_candidate_and_class(host):
+    # #673: a fleet executor's plan is held to the bulk's fresh reading, so
+    # apply.sh reads each selected package's candidate and class from the
+    # summary. One the simulation doesn't list (passwd) is left out, and
+    # apply.sh reads it as unknown.
+    scratch = host.tmp / "dry"
+    host.on("apt-get", "-s *dist-upgrade", SIMULATION)
+    host.on(
+        "unattended-upgrade",
+        "--dry-run -d",
+        "Packages that will be upgraded: libc6 libxml2 tailscale passwd\n",
+    )
+    host.run(*host.refreshed(), "--dry-run-into", str(scratch))
+    lines = (scratch / "summary").read_text().splitlines()
+    assert "select_read=1" in lines
+    assert [x for x in lines if x.startswith("select=")] == [
+        "select=libc6 2.39-0ubuntu8.4 security",
+        "select=libxml2 2.9.14+dfsg-1.3ubuntu3.1 security",
+        "select=tailscale 1.76.1 third-party:Tailscale",
+    ]
+
+
 # --- the dry run's lists (#629) -----------------------------------------------
 # address-validator, 2026-11-13: on 167-hour-old lists, without --refresh-into,
 # the dry run counted 0 in 3 s and passed apply.sh's gate; with them refreshed

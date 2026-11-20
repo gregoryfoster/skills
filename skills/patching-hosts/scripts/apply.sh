@@ -5,7 +5,7 @@ set -euo pipefail
 usage() {
   cat <<'USAGE'
 Usage: bash apply.sh --step bulk|<held step> [--approve] [--run DIR]
-                     [--lane security|maintenance|origin:<origin>]
+                     [--plan FILE] [--lane security|maintenance|origin:<origin>]
                      [--dry-run DIR] [--offnode-sha256 HEX]...
                      [--offnode-object NAME]... [--health-within SECONDS]
                      [--config FILE] [--host NAME] [--today YYYY-MM-DD]
@@ -54,8 +54,14 @@ nothing cuts it off, in the background, and read its JSON when it ends.
 
 Options:
   --step STEP              bulk, or a held step (required)
-  --approve                the owner's approval of this step, given in the
-                           host's own session
+  --approve                the owner's approval of this step: given in the
+                           host's own session, or, with --plan, by a plan
+                           approved off the host (references/executor.md)
+  --plan FILE              a fleet executor's plan: the step runs only if it
+                           covers this host and this step, hasn't passed its
+                           not-after, and the bulk's fresh reading is inside
+                           its envelope. Without --approve it changes
+                           nothing, and gate.plan says what it would decide
   --lane LANE              the bulk only: security (the default),
                            maintenance or origin:<origin>
   --run DIR                the run's directory, an absolute path. A held step
@@ -193,14 +199,15 @@ Exit codes:
 USAGE
 }
 
-step="" approve=0 run="" dryrun="" config="" host="" today="" health_within=300 lane=""
+step="" approve=0 run="" dryrun="" config="" host="" today="" health_within=300 lane="" planf=""
 attest=() objects=()
 while [ "$#" -gt 0 ]; do
   case $1 in
-    --step | --run | --lane | --dry-run | --offnode-sha256 | --offnode-object | --health-within | --config | --host | --today)
+    --step | --run | --lane | --dry-run | --offnode-sha256 | --offnode-object | --health-within | --config | --host | --today | --plan)
       [ "$#" -ge 2 ] || { echo "ERROR $1 needs a value" >&2; exit 2; }
       case $1 in
         --step) step=$2 ;;
+        --plan) planf=$2 ;;
         --run) run=$2 ;;
         --lane) lane=$2 ;;
         --dry-run) dryrun=$2 ;;
@@ -229,7 +236,7 @@ if ! [[ $step =~ $step_re ]]; then
   echo "ERROR --step takes bulk or a held step's name: lowercase letters, digits and hyphens" >&2
   exit 2
 fi
-for _v in "$run" "$dryrun" "$config" ${objects[@]+"${objects[@]}"}; do
+for _v in "$run" "$dryrun" "$config" "$planf" ${objects[@]+"${objects[@]}"}; do
   case $_v in *[[:cntrl:]]*)
     echo "ERROR an argument holds a control character" >&2
     exit 2 ;;
@@ -286,7 +293,7 @@ while [ -L "$_self" ] && [ "$_n" -lt 10 ]; do
   _n=$((_n + 1))
 done
 _libdir="$(cd "$(dirname "$_self")" 2>/dev/null && pwd -P)" || _libdir=""
-for _lib in _knob-lib.sh _probe-lib.sh _gate-lib.sh probe.sh; do
+for _lib in _knob-lib.sh _probe-lib.sh _gate-lib.sh _plan-lib.sh probe.sh; do
   if [ -z "$_libdir" ] || [ ! -f "$_libdir/$_lib" ]; then
     echo "ERROR $_lib not found next to $_self" >&2
     exit 2
@@ -299,6 +306,8 @@ done
 ME=apply
 # shellcheck source=_gate-lib.sh
 . "$_libdir/_gate-lib.sh"
+# shellcheck source=_plan-lib.sh
+. "$_libdir/_plan-lib.sh"
 
 # Every line parsed below is C-locale output, and so is the JSON builder's
 # '?' for a byte that isn't printable ASCII.
@@ -357,7 +366,7 @@ HOLD_STEPS=${HOLD_STEPS# }
 gate_host() {
   local why t
   [ "$approve" -eq 1 ] ||
-    refuse "no --approve: the owner approves each step in the host's own session (run.md, Approvals)"
+    refuse "no --approve: the owner approves each step, in the host's own session or by a plan that covers it (run.md, Approvals; references/executor.md)"
   for why in ${KNOB_REPORT_ONLY_WHY[@]+"${KNOB_REPORT_ONLY_WHY[@]}"}; do
     refuse "report-only: $why"
   done
@@ -627,8 +636,14 @@ gate_reboot() {
 # A dry run counts the set pending that day: a month-old one counted
 # another, so its wall time isn't this run's floor.
 DRY_SUMMARY="" DRY_MAX_AGE=86400
+# What the dry run selected, as the probe's simulation read each package:
+# its candidate and class (#673), for a plan's envelope. SEL_READ is 1 only
+# where this skill's probe wrote them.
+DRY_SECURITY_ONLY="" SEL_READ=0
+SEL_NAME=() SEL_VERSION=() SEL_CLASS=()
 gate_dry() {
   local line rc="" count="" began="" iso dlane=security dleft="" dleft_seen=0
+  local -a _sf=()
   local lref="" lage=""
   [ "$step" = bulk ] || return 0
   if [ -z "$dryrun" ]; then
@@ -650,6 +665,13 @@ gate_dry() {
       origin_left=*) dleft=${line#origin_left=} dleft_seen=1 ;;
       lists_refreshed=*) lref=${line#lists_refreshed=} ;;
       lists_age_hours=*) lage=${line#lists_age_hours=} ;;
+      security_only=*) DRY_SECURITY_ONLY=${line#security_only=} ;;
+      select_read=1) SEL_READ=1 ;;
+      select=*)
+        read -r -a _sf <<<"${line#select=}"
+        if [ "${#_sf[@]}" -eq 3 ]; then
+          SEL_NAME+=("${_sf[0]}") SEL_VERSION+=("${_sf[1]}") SEL_CLASS+=("${_sf[2]}")
+        fi ;;
     esac
   done <<<"$DRY_SUMMARY"
   # Its wall time is this step's floor only for the selection it counted.
@@ -960,6 +982,9 @@ predict_reboot() {  # <the selection, space-separated>
 # selection makes a reboot certain or that can't be read, or one is already
 # due (#655), the reboot chain. Otherwise a late bulk leaves the reboot no
 # room, and the host runs on deleted libraries until the next window.
+# What the bulk's span read, for a plan's envelope (#673): each held step
+# its selection reaches, and the reboot: 0 certain or due, 1 not, 2 unknown.
+SPAN_READ=0 SPAN_GROUPS="" SPAN_RC=2
 gate_step_span() {
   local x="" h=0 hh line sel="" p r g groups="" o="" w rc=0 due
   local -a f=()
@@ -1014,6 +1039,7 @@ gate_step_span() {
   jadd o bulk_takes "$w"
   takes_nothing_note w "$BS_TAKE" "$BS_STEPS"
   jaddsn o takes_nothing "$w"
+  SPAN_GROUPS=${groups# }
   predict_reboot "$sel" || rc=$?
   # A reboot already due before the bulk is the run's too (#655): PID 1, or
   # another process step 4 reboots for, mapping a file an earlier upgrade
@@ -1043,10 +1069,145 @@ gate_step_span() {
     # A refusal says when the reboot was due before the bulk (CR 2520).
     [ "$due" -eq 0 ] || w="$w, already due"
   fi
+  SPAN_RC=$rc SPAN_READ=1
   jaddn o run_seconds "$x"
   jadd J_GATE run_span "{$o}"
   SPAN_WHAT="the run's span (the bulk at $BULK_FACTOR times its dry run${groups:+, held steps$groups}$w)"
   gate_span "$x"
+}
+
+# A fleet executor's plan (#673, references/executor.md). The skill can't
+# see the owner's approval, only the file: it covers this host and step and
+# hasn't passed its not-after, or the step is refused. For the bulk, the
+# fresh reading is held to the plan's envelope:
+#   inside: a planned package at a newer version; a new package in the
+#     security lane; a planned package no longer selected (noted);
+#   outside: a held step the plan doesn't name, which is where a data store
+#     restarts; a reboot, certain, due or unknown, where the plan says no;
+#     an unplanned package from -updates, ESM, Ubuntu's other pockets or a
+#     followed origin; an origin the plan doesn't name; a planned package at
+#     another version that isn't newer; and anything that can't be read.
+# Without --approve nothing is refused for it: gate.plan says what the plan
+# would decide, which is the executor's read-only check.
+PLAN_DIFFS="" PLAN_OUTSIDE=()
+plan_diff() {  # <inside 1|0> <kind> <what> <detail>
+  local _d=""
+  jadds _d kind "$2"
+  jadds _d what "$3"
+  jaddb _d inside "$1"
+  jadds _d detail "$4"
+  jpush PLAN_DIFFS "{$_d}"
+  if [ "$1" -eq 0 ]; then PLAN_OUTSIDE+=("$2 $3: $4"); fi
+}
+
+SV="" SC=""
+sel_of() {  # <package>: SV, SC := its candidate and class, or empty
+  local _i
+  SV="" SC=""
+  for _i in ${SEL_NAME[@]+"${!SEL_NAME[@]}"}; do
+    if [ "${SEL_NAME[$_i]}" = "$1" ]; then
+      SV=${SEL_VERSION[$_i]} SC=${SEL_CLASS[$_i]}
+      return 0
+    fi
+  done
+}
+
+plan_envelope() {
+  local i p pv planned w
+  if [ "$SPAN_READ" -ne 1 ] || [ "$SEL_READ" -ne 1 ]; then
+    plan_diff 0 unread selection "the bulk's selection, each package's candidate and class, or its reboot couldn't be read, so its envelope can't be checked: count again with this skill's probe.sh --refresh-into DIR --dry-run-into DIR"
+    return 0
+  fi
+  for i in ${PLAN_PKG_NAME[@]+"${!PLAN_PKG_NAME[@]}"}; do
+    p=${PLAN_PKG_NAME[$i]} pv=${PLAN_PKG_VERSION[$i]}
+    if ! in_words "$p" "$DRY_SEL"; then
+      plan_diff 1 not-pending "$p" "planned at $pv, and the dry run doesn't select it"
+      continue
+    fi
+    sel_of "$p"
+    if [ -z "$SV" ]; then
+      plan_diff 0 unread "$p" "the dry run selects it, and its candidate and class weren't read"
+      continue
+    fi
+    if [[ $SC == third-party:* ]] && ! in_words "${SC#third-party:}" "$PLAN_ORIGINS"; then
+      plan_diff 0 new-origin "$p" "its candidate, $SV, comes from ${SC#third-party:}, an origin the plan doesn't name"
+      continue
+    fi
+    [ "$SV" != "$pv" ] || continue
+    if dpkg --compare-versions "$SV" gt "$pv"; then
+      plan_diff 1 version-newer "$p" "planned at $pv, and its candidate is now $SV"
+    else
+      plan_diff 0 version-other "$p" "planned at $pv, and its candidate is $SV, which isn't newer"
+    fi
+  done
+  for p in $DRY_SEL; do
+    planned=0
+    for i in ${PLAN_PKG_NAME[@]+"${!PLAN_PKG_NAME[@]}"}; do
+      if [ "${PLAN_PKG_NAME[$i]}" = "$p" ]; then planned=1; fi
+    done
+    [ "$planned" -eq 0 ] || continue
+    sel_of "$p"
+    if [ -z "$SC" ]; then
+      plan_diff 0 unread "$p" "the dry run selects it, the plan doesn't list it, and its class wasn't read"
+    elif [[ $SC == third-party:* ]] && ! in_words "${SC#third-party:}" "$PLAN_ORIGINS"; then
+      plan_diff 0 new-origin "$p" "$SV from ${SC#third-party:}, an origin the plan doesn't name"
+    elif [ "$SC" = security ] || { [ "$LANE" = security ] && [ "$DRY_SECURITY_ONLY" = 1 ]; }; then
+      plan_diff 1 new-security "$p" "$SV, in the security lane, which the plan doesn't list"
+    else
+      plan_diff 0 new-package "$p" "$SV, class $SC, which the plan doesn't list: only a new security package is inside"
+    fi
+  done
+  for p in $SPAN_GROUPS; do
+    if ! in_words "$p" "$PLAN_HELD"; then
+      plan_diff 0 held-step "$p" "the selection reaches the held step $p, which the plan doesn't name: a data store restarts in a held step"
+    fi
+  done
+  if [ "$PLAN_REBOOT" = no ] && [ "$SPAN_RC" -ne 1 ]; then
+    if [ "$SPAN_RC" -eq 0 ]; then
+      plan_diff 0 reboot host "the plan says reboot no, and the run reboots: $REBOOT_WHY"
+    else
+      w=$REBOOT_WHY
+      [ -n "$w" ] || w="a map that decides it can't be read"
+      plan_diff 0 reboot host "the plan says reboot no, and whether the run reboots is unknown: $w"
+    fi
+  fi
+}
+
+gate_plan() {
+  local o="" w="" r
+  PLAN_DIFFS="" PLAN_OUTSIDE=()
+  if [ -z "$planf" ]; then
+    jadd J_GATE plan null
+    return 0
+  fi
+  if ! plan_gate "$approve" "$planf" "$host"; then
+    w=$PLAN_WHY
+  elif [ "$PLAN_LANE" != "$LANE" ]; then
+    w="the plan $PLAN_ID approves the $PLAN_LANE lane, and this step runs the $LANE lane"
+  elif [ "$step" != bulk ] && ! in_words "$step" "$PLAN_HELD"; then
+    w="the plan $PLAN_ID doesn't name the held step $step"
+  fi
+  plan_json_head o "$planf"
+  if [ -n "$w" ]; then
+    if [ "$approve" -eq 1 ] && [ "$w" != "$PLAN_WHY" ]; then refuse "$w"; fi
+    jaddb o covers 0
+    jadds o why "$w"
+    jadd o inside null
+    jadd o differences "[]"
+    jadd J_GATE plan "{$o}"
+    return 0
+  fi
+  jaddb o covers 1
+  jadd o why null
+  if [ "$step" = bulk ]; then plan_envelope; fi
+  jaddb o inside "$(( ${#PLAN_OUTSIDE[@]} == 0 ))"
+  jadd o differences "[$PLAN_DIFFS]"
+  jadd J_GATE plan "{$o}"
+  if [ "$approve" -eq 1 ]; then
+    for r in ${PLAN_OUTSIDE[@]+"${PLAN_OUTSIDE[@]}"}; do
+      refuse "outside the plan $PLAN_ID's envelope: $r"
+    done
+  fi
 }
 
 # Where the apt timers run, their unattended-upgrade takes the lock a step
@@ -1349,6 +1510,8 @@ emit() {
   jadds a lane "$LANE"
   jadds a run "$run"
   jaddb a approved "$approve"
+  plan_approval r "$approve" "$planf"
+  jadd a approval "$r"
   jadds a host "$host"
   jadds a knob "$config"
   jadd o apply "{$a}"
@@ -1381,6 +1544,7 @@ gate_run
 gate_reboot
 gate_dry
 gate_step_span
+gate_plan
 gate_apt
 gate_recovery
 gate_restarters

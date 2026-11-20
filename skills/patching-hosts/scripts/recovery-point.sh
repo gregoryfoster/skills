@@ -6,7 +6,7 @@ set -euo pipefail
 usage() {
   cat <<'USAGE'
 Usage: bash recovery-point.sh --retain-until YYYY-MM-DD [--approve] [--run DIR]
-                              [--personal-data NAME]... [--dump]
+                              [--plan FILE] [--personal-data NAME]... [--dump]
                               [--redis-within SECONDS] [--qdrant-within SECONDS]
                               [--rdb-within SECONDS]
                               [--config FILE] [--host NAME] [--today YYYY-MM-DD]
@@ -54,8 +54,11 @@ Options:
   --retain-until DATE      when the owner deletes these files, --today or
                            later (required: every recovery-point file has a
                            stated retention)
-  --approve                the owner's approval, given in the host's own
-                           session
+  --approve                the owner's approval: given in the host's own
+                           session, or, with --plan, by a plan approved off
+                           the host (references/executor.md)
+  --plan FILE              a fleet executor's plan: it must cover this host
+                           and not have passed its not-after
   --run DIR                the run's directory, an absolute path (default:
                            /var/backups/patching-hosts-<UTC>). Pass the same
                            one to apply.sh
@@ -132,11 +135,11 @@ Exit codes:
 USAGE
 }
 
-approve=0 run="" retain="" config="" host="" today="" force_dump=0 redis_within=300 qdrant_within=1800 rdb_within=600
+approve=0 run="" planf="" retain="" config="" host="" today="" force_dump=0 redis_within=300 qdrant_within=1800 rdb_within=600
 personal=()
 while [ "$#" -gt 0 ]; do
   case $1 in
-    --run | --retain-until | --personal-data | --redis-within | --qdrant-within | --rdb-within | --config | --host | --today)
+    --run | --retain-until | --personal-data | --redis-within | --qdrant-within | --rdb-within | --config | --host | --today | --plan)
       [ "$#" -ge 2 ] || { echo "ERROR $1 needs a value" >&2; exit 2; }
       case $1 in
         --run) run=$2 ;;
@@ -148,6 +151,7 @@ while [ "$#" -gt 0 ]; do
         --config) config=$2 ;;
         --host) host=$2 ;;
         --today) today=$2 ;;
+        --plan) planf=$2 ;;
       esac
       shift 2 ;;
     --approve) approve=1; shift ;;
@@ -166,7 +170,7 @@ if ! [[ $retain =~ $date_re ]]; then
   echo "ERROR --retain-until takes a date, YYYY-MM-DD" >&2
   exit 2
 fi
-for _v in "$run" "$config" ${personal[@]+"${personal[@]}"}; do
+for _v in "$run" "$config" "$planf" ${personal[@]+"${personal[@]}"}; do
   case $_v in *[[:cntrl:]]* | *[[:space:]]*)
     echo "ERROR an argument holds a space or a control character" >&2
     exit 2 ;;
@@ -200,7 +204,7 @@ while [ -L "$_self" ] && [ "$_n" -lt 10 ]; do
   _n=$((_n + 1))
 done
 _libdir="$(cd "$(dirname "$_self")" 2>/dev/null && pwd -P)" || _libdir=""
-for _lib in _knob-lib.sh _probe-lib.sh _gate-lib.sh; do
+for _lib in _knob-lib.sh _probe-lib.sh _gate-lib.sh _plan-lib.sh; do
   if [ -z "$_libdir" ] || [ ! -f "$_libdir/$_lib" ]; then
     echo "ERROR $_lib not found next to $_self" >&2
     exit 2
@@ -213,6 +217,8 @@ done
 ME=recovery-point
 # shellcheck source=_gate-lib.sh
 . "$_libdir/_gate-lib.sh"
+# shellcheck source=_plan-lib.sh
+. "$_libdir/_plan-lib.sh"
 
 # Every line parsed below is C-locale output, and so is the JSON builder's
 # '?' for a byte that isn't printable ASCII.
@@ -262,7 +268,7 @@ gate_host() {
   local why t r db u hit pgunit
   local -a f=() dbs=()
   [ "$approve" -eq 1 ] ||
-    refuse "no --approve: the owner approves the recovery point in the host's own session (run.md, Approvals)"
+    refuse "no --approve: the owner approves the recovery point, in the host's own session or by a plan that covers it (run.md, Approvals; references/executor.md)"
   for why in ${KNOB_REPORT_ONLY_WHY[@]+"${KNOB_REPORT_ONLY_WHY[@]}"}; do
     refuse "report-only: $why"
   done
@@ -683,6 +689,8 @@ emit() {
   jadds a run "$run"
   jadds a record "$run/recovery-point"
   jaddb a approved "$approve"
+  plan_approval r "$approve" "$planf"
+  jadd a approval "$r"
   jadds a retain_until "$retain"
   jadds a host "$host"
   jadds a knob "$config"
@@ -702,6 +710,7 @@ emit() {
 }
 
 gate_host
+plan_gate_record "$approve" "$planf" "$host" 0
 gate_run
 gate_backup
 gate_datastores

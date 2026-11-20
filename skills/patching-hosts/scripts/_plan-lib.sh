@@ -1,0 +1,319 @@
+#!/usr/bin/env bash
+# _plan-lib.sh — read a fleet executor's plan file (references/executor.md).
+#
+# Sourced by apply.sh, recovery-point.sh and reboot-chain.sh, after
+# _knob-lib.sh, _probe-lib.sh and _gate-lib.sh, whose trim, day arithmetic,
+# capture and refuse it uses. A plan is an owner's approval given off the
+# host: the skill can't verify that, so it reads what the file states,
+# hashes the file itself, and holds each step to it. Nothing here guesses: a
+# line that doesn't parse makes the whole plan malformed (#673).
+# The PLAN_* variables are its output.
+# shellcheck disable=SC2034
+set -euo pipefail
+
+plan_lib_usage() {
+  cat <<'USAGE'
+Usage: . _plan-lib.sh    (sourced by apply.sh, recovery-point.sh and
+                         reboot-chain.sh; running it does nothing)
+
+The grammar is the knob's: one directive a line, '#' a comment at the start
+of a line or after whitespace, and [host <name>] sections, each an exact
+name.
+
+  plan <id>                                 once, before any section
+  approved <YYYY-MM-DDTHH:MM:SSZ> <by...>   once, before any section
+  not-after <YYYY-MM-DDTHH:MM:SSZ>          once, before any section
+  [host <name>]
+  lane security|maintenance|origin:<origin> once a section
+  reboot yes|no                             once a section
+  package <name> <version> <class>          class: security, updates, esm,
+                                            ubuntu-other or
+                                            third-party:<origin>
+  held <step>                               each held step it approves
+
+  plan_load FILE HOST       read FILE for HOST: 1 with PLAN_WHY when it
+                            can't be read or doesn't parse
+  plan_gate APPROVE FILE HOST  plan_load, then the host and its not-after;
+                            refuses only under --approve
+  plan_gate_record APPROVE FILE HOST REBOOT  gate.plan for recovery-point.sh
+                            and reboot-chain.sh
+  plan_approval VAR APPROVE FILE  the step's approval record
+USAGE
+}
+
+case "${0##*/}" in
+  _plan-lib.sh) case "${1-}" in -h | --help) plan_lib_usage; exit 0 ;; esac ;;
+esac
+
+PLAN_ID="" PLAN_APPROVED_AT="" PLAN_APPROVED_BY="" PLAN_NOT_AFTER="" PLAN_NOT_AFTER_S=""
+PLAN_SHA="" PLAN_WHY="" PLAN_COVERS=0
+PLAN_LANE="" PLAN_REBOOT="" PLAN_HELD="" PLAN_ORIGINS=""
+PLAN_PKG_NAME=() PLAN_PKG_VERSION=() PLAN_PKG_CLASS=()
+
+# <var> <YYYY-MM-DDTHH:MM:SSZ>: VAR := its seconds since 1970, or empty.
+plan_epoch() {
+  local _pe_d _pe_day _pe_h _pe_m _pe_s
+  local _pe_re='^([0-9]{4}-[0-9]{2}-[0-9]{2})T([0-9]{2}):([0-9]{2}):([0-9]{2})Z$'
+  printf -v "$1" '%s' ""
+  [[ $2 =~ $_pe_re ]] || return 0
+  # Taken before _knob_is_day, whose own match replaces BASH_REMATCH.
+  _pe_day=${BASH_REMATCH[1]} _pe_h=$((10#${BASH_REMATCH[2]}))
+  _pe_m=$((10#${BASH_REMATCH[3]})) _pe_s=$((10#${BASH_REMATCH[4]}))
+  _knob_is_day "$_pe_day" || return 0
+  if [ "$_pe_h" -gt 23 ] || [ "$_pe_m" -gt 59 ] || [ "$_pe_s" -gt 59 ]; then return 0; fi
+  knob_epoch_day _pe_d "$_pe_day"
+  printf -v "$1" '%s' $((_pe_d * 86400 + _pe_h * 3600 + _pe_m * 60 + _pe_s))
+}
+
+# A plan an executor wrote may be root's alone: read it as the caller, then
+# as root.
+plan_read() {  # <var> <cmd>...
+  local _pr_v=$1
+  shift
+  capture "$_pr_v" "$@"
+  if [ "$CAP_RC" -ne 0 ] && [ "$P_PRIV" != none ]; then capture "$_pr_v" as_root "$@"; fi
+}
+
+# The file's SHA-256: the skill's own, whatever the plan or its executor says.
+plan_sha() {  # <var> <file>
+  local _ps_o=""
+  printf -v "$1" '%s' ""
+  if have sha256sum; then
+    plan_read _ps_o sha256sum -- "$2"
+  elif have shasum; then
+    plan_read _ps_o shasum -a 256 -- "$2"
+  else
+    return 0
+  fi
+  [ "$CAP_RC" -eq 0 ] || return 0
+  _ps_o=${_ps_o%% *}
+  [[ $_ps_o =~ ^[0-9a-f]{64}$ ]] || return 0
+  printf -v "$1" '%s' "$_ps_o"
+}
+
+# Reads FILE for HOST. 0 with the plan read, PLAN_COVERS 1 when it has a
+# section for HOST; 1 with PLAN_WHY when it can't be read, or doesn't parse.
+plan_load() {  # <file> <host>
+  local f=$1 h=$2 text line s n=0 sec="" seen_secs=" " d nt mine=0 hre
+  local mine_lane="" mine_reboot="" seen_lane="" seen_reboot=""
+  local id_re='^[A-Za-z0-9][A-Za-z0-9._:-]*$' step_re='^[a-z0-9][a-z0-9-]*$'
+  local class_re='^(security|updates|esm|ubuntu-other|third-party:[^[:space:]]+)$'
+  local -a tok=()
+  hre='^\[host[[:space:]]+([^][:space:]]+)[[:space:]]*\]$'
+  PLAN_ID="" PLAN_APPROVED_AT="" PLAN_APPROVED_BY="" PLAN_NOT_AFTER="" PLAN_NOT_AFTER_S=""
+  PLAN_SHA="" PLAN_WHY="" PLAN_COVERS=0
+  PLAN_LANE="" PLAN_REBOOT="" PLAN_HELD="" PLAN_ORIGINS=""
+  PLAN_PKG_NAME=() PLAN_PKG_VERSION=() PLAN_PKG_CLASS=()
+  plan_read text cat -- "$f"
+  if [ "$CAP_RC" -ne 0 ]; then
+    PLAN_WHY="$f couldn't be read${CAP_ERR:+: $CAP_ERR}"
+    return 1
+  fi
+  plan_sha PLAN_SHA "$f"
+  if [ -z "$PLAN_SHA" ]; then
+    PLAN_WHY="$f couldn't be hashed: neither sha256sum nor shasum read it"
+    return 1
+  fi
+  while IFS= read -r line || [ -n "$line" ]; do
+    n=$((n + 1))
+    case $line in *[[:cntrl:]]*)
+      PLAN_WHY="line $n holds a control character"
+      return 1 ;;
+    esac
+    s=" $line"
+    s=${s%%[[:space:]]#*}
+    _knob_trim "$s"
+    s=$_KR
+    [ -n "$s" ] || continue
+    if [[ $s == "["* ]]; then
+      if ! [[ $s =~ $hre ]] || [[ ${BASH_REMATCH[1]} == *[*?]* ]]; then
+        PLAN_WHY="line $n: a section is [host <name>], an exact name"
+        return 1
+      fi
+      sec=${BASH_REMATCH[1]}
+      case $seen_secs in *" $sec "*)
+        PLAN_WHY="line $n: [host $sec] appears twice"
+        return 1 ;;
+      esac
+      seen_secs="$seen_secs$sec "
+      seen_lane="" seen_reboot=""
+      mine=0
+      if [ "$sec" = "$h" ]; then mine=1 PLAN_COVERS=1; fi
+      continue
+    fi
+    read -r -a tok <<<"$s"
+    d=${tok[0]}
+    nt=$((${#tok[@]} - 1))
+    case $d in
+      plan | approved | not-after)
+        if [ -n "$sec" ]; then
+          PLAN_WHY="line $n: $d belongs before any section"
+          return 1
+        fi ;;
+      lane | reboot | package | held)
+        if [ -z "$sec" ]; then
+          PLAN_WHY="line $n: $d belongs in a [host <name>] section"
+          return 1
+        fi ;;
+      *)
+        PLAN_WHY="line $n: $d isn't a plan directive (plan, approved, not-after, lane, reboot, package, held)"
+        return 1 ;;
+    esac
+    case $d in
+      plan)
+        if [ "$nt" -ne 1 ] || ! [[ ${tok[1]} =~ $id_re ]]; then
+          PLAN_WHY="line $n: plan takes one id: letters, digits, '.', '_', ':' and '-'"
+          return 1
+        fi
+        if [ -n "$PLAN_ID" ]; then PLAN_WHY="line $n: plan appears twice"; return 1; fi
+        PLAN_ID=${tok[1]} ;;
+      approved)
+        if [ "$nt" -lt 2 ]; then
+          PLAN_WHY="line $n: approved takes <YYYY-MM-DDTHH:MM:SSZ> <by>"
+          return 1
+        fi
+        plan_epoch d "${tok[1]}"
+        if [ -z "$d" ]; then
+          PLAN_WHY="line $n: approved takes a UTC time, YYYY-MM-DDTHH:MM:SSZ"
+          return 1
+        fi
+        if [ -n "$PLAN_APPROVED_AT" ]; then PLAN_WHY="line $n: approved appears twice"; return 1; fi
+        PLAN_APPROVED_AT=${tok[1]} PLAN_APPROVED_BY=${tok[*]:2} ;;
+      not-after)
+        if [ "$nt" -ne 1 ]; then
+          PLAN_WHY="line $n: not-after takes one UTC time, YYYY-MM-DDTHH:MM:SSZ"
+          return 1
+        fi
+        plan_epoch d "${tok[1]}"
+        if [ -z "$d" ]; then
+          PLAN_WHY="line $n: not-after takes a UTC time, YYYY-MM-DDTHH:MM:SSZ"
+          return 1
+        fi
+        if [ -n "$PLAN_NOT_AFTER" ]; then PLAN_WHY="line $n: not-after appears twice"; return 1; fi
+        PLAN_NOT_AFTER=${tok[1]} PLAN_NOT_AFTER_S=$d ;;
+      lane)
+        if [ "$nt" -ne 1 ] || ! [[ ${tok[1]} =~ ^(security|maintenance|origin:[^[:space:]]+)$ ]]; then
+          PLAN_WHY="line $n: lane takes security, maintenance or origin:<origin>"
+          return 1
+        fi
+        if [ -n "$seen_lane" ]; then PLAN_WHY="line $n: [host $sec] names its lane twice"; return 1; fi
+        seen_lane=${tok[1]}
+        if [ "$mine" -eq 1 ]; then mine_lane=${tok[1]}; fi ;;
+      reboot)
+        if [ "$nt" -ne 1 ] || ! [[ ${tok[1]} =~ ^(yes|no)$ ]]; then
+          PLAN_WHY="line $n: reboot takes yes or no"
+          return 1
+        fi
+        if [ -n "$seen_reboot" ]; then PLAN_WHY="line $n: [host $sec] names its reboot twice"; return 1; fi
+        seen_reboot=${tok[1]}
+        if [ "$mine" -eq 1 ]; then mine_reboot=${tok[1]}; fi ;;
+      package)
+        if [ "$nt" -ne 3 ] || ! [[ ${tok[3]} =~ $class_re ]]; then
+          PLAN_WHY="line $n: package takes <name> <version> <class>, the class one of security, updates, esm, ubuntu-other or third-party:<origin>"
+          return 1
+        fi
+        if [ "$mine" -eq 1 ]; then
+          PLAN_PKG_NAME+=("${tok[1]}") PLAN_PKG_VERSION+=("${tok[2]}") PLAN_PKG_CLASS+=("${tok[3]}")
+          case ${tok[3]} in third-party:*)
+            in_words "${tok[3]#third-party:}" "$PLAN_ORIGINS" || PLAN_ORIGINS="$PLAN_ORIGINS ${tok[3]#third-party:}" ;;
+          esac
+        fi ;;
+      held)
+        if [ "$nt" -ne 1 ] || ! [[ ${tok[1]} =~ $step_re ]]; then
+          PLAN_WHY="line $n: held takes one step's name"
+          return 1
+        fi
+        if [ "$mine" -eq 1 ]; then PLAN_HELD="$PLAN_HELD ${tok[1]}"; fi ;;
+    esac
+    # A section's lane and reboot are checked once the next one starts, or
+    # the file ends: below.
+    if [ "$mine" -eq 1 ]; then PLAN_LANE=$mine_lane PLAN_REBOOT=$mine_reboot; fi
+  done <<<"$text"
+  if [ -z "$PLAN_ID" ] || [ -z "$PLAN_APPROVED_AT" ] || [ -z "$PLAN_NOT_AFTER" ]; then
+    PLAN_WHY="a plan needs its plan, approved and not-after lines, before any section"
+    return 1
+  fi
+  if [ "$PLAN_COVERS" -eq 1 ] && { [ -z "$PLAN_LANE" ] || [ -z "$PLAN_REBOOT" ]; }; then
+    PLAN_WHY="[host $h] needs a lane line and a reboot line"
+    return 1
+  fi
+  PLAN_HELD=${PLAN_HELD# } PLAN_ORIGINS=${PLAN_ORIGINS# }
+  return 0
+}
+
+# The approval a step records: the plan's, as it states it, or the
+# session's. Empty without --approve.
+plan_approval() {  # <var> <approve 0|1> <plan file, or empty>
+  local _pa=""
+  if [ "$2" -ne 1 ]; then
+    printf -v "$1" '%s' null
+    return 0
+  fi
+  if [ -z "$3" ]; then
+    jadds _pa by session
+  else
+    jadds _pa by plan
+    jaddsn _pa plan "$PLAN_ID"
+    jaddsn _pa sha256 "$PLAN_SHA"
+    jaddsn _pa approved_at "$PLAN_APPROVED_AT"
+    jaddsn _pa approved_by "$PLAN_APPROVED_BY"
+  fi
+  printf -v "$1" '{%s}' "$_pa"
+}
+
+# What every script checks of a plan: that it parses, covers HOST, and
+# hasn't passed its not-after. Refusals go through refuse only under
+# --approve: without it, the step is refused anyway, and gate.plan says
+# what the plan would decide. Returns 1 when the plan doesn't stand.
+plan_gate() {  # <approve 0|1> <file> <host>
+  local why=""
+  if ! plan_load "$2" "$3"; then
+    why="the plan is malformed: $PLAN_WHY"
+  elif [ "$PLAN_COVERS" -ne 1 ]; then
+    why="the plan $PLAN_ID has no [host $3] section, so it doesn't cover this host"
+  elif [ "$P_NOW" -gt "$PLAN_NOT_AFTER_S" ]; then
+    why="the plan $PLAN_ID passed its not-after, $PLAN_NOT_AFTER"
+  fi
+  PLAN_WHY=$why
+  [ -n "$why" ] || return 0
+  if [ "$1" -eq 1 ]; then refuse "$why"; fi
+  return 1
+}
+
+# gate.plan's opening keys, shared by the three scripts.
+plan_json_head() {  # <var> <file>
+  local _pj=""
+  jadds _pj file "$2"
+  jaddsn _pj id "$PLAN_ID"
+  jaddsn _pj sha256 "$PLAN_SHA"
+  jaddsn _pj not_after "$PLAN_NOT_AFTER"
+  jaddsn _pj lane "$PLAN_LANE"
+  jaddsn _pj reboot "$PLAN_REBOOT"
+  printf -v "$1" '%s' "$_pj"
+}
+
+# recovery-point.sh's and reboot-chain.sh's gate.plan: the plan covers the
+# host and hasn't passed its not-after, and for the reboot, 3(b), it says
+# reboot yes. The envelope is the bulk's: apply.sh reads it.
+plan_gate_record() {  # <approve 0|1> <file, or empty> <host> <reboot 0|1>
+  local _po="" _pw=""
+  if [ -z "$2" ]; then
+    jadd J_GATE plan null
+    return 0
+  fi
+  if ! plan_gate "$1" "$2" "$3"; then
+    _pw=$PLAN_WHY
+  elif [ "$4" -eq 1 ] && [ "$PLAN_REBOOT" != yes ]; then
+    _pw="the plan $PLAN_ID says reboot no for this host: the reboot needs the owner's own approval"
+    if [ "$1" -eq 1 ]; then refuse "$_pw"; fi
+  fi
+  plan_json_head _po "$2"
+  if [ -n "$_pw" ]; then
+    jaddb _po covers 0
+    jadds _po why "$_pw"
+  else
+    jaddb _po covers 1
+    jadd _po why null
+  fi
+  jadd J_GATE plan "{$_po}"
+}

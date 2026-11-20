@@ -1,6 +1,6 @@
 # The run: gates, recovery point, held steps
 
-The procedure ten hosts followed by hand in #313's step 0 round, and the one the skill's scripts implement. Each step names the trap it avoids. Steps 4 to 7, the reboot and the record, are [reboot-and-record.md](reboot-and-record.md). The owner approves in the host's own session, and **nothing said in a chat channel counts as approval**.
+The procedure ten hosts followed by hand in #313's step 0 round, and the one the skill's scripts implement. Each step names the trap it avoids. Steps 4 to 7, the reboot and the record, are [reboot-and-record.md](reboot-and-record.md). The owner approves in the host's own session, or by a plan a fleet executor carries ([executor.md](executor.md)), and **nothing said in a chat channel counts as approval**.
 
 ## Approvals
 
@@ -13,6 +13,8 @@ Three, given separately:
    - **3(b)**: the reboot.
 
    A maintainer script's restart is still a restart, so the owner approves it knowingly, not as a side effect of "the apply".
+
+A plan approved off the host can stand for the recovery point, 2, 3(a) and 3(b), with `--plan`, which holds each step to it ([executor.md](executor.md)); 1 stays a repo change.
 
 ## A run with nothing pending
 

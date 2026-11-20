@@ -28,7 +28,7 @@ The host is patched in a scheduled, gated run at the host's cadence, and the apt
 - the verification;
 - a record.
 
-The procedure is [run.md](run.md). This is the answer to #313's D4 (decided 2026-09-29), and the posture the CannObserv cohort took. The host repo's owner is accountable for the window, and approves each run in that host's own session.
+The procedure is [run.md](run.md). This is the answer to #313's D4 (decided 2026-09-29), and the posture the CannObserv cohort took. The host repo's owner is accountable for the window, and approves each run: in that host's own session, or by a plan an executor carries ([executor.md](executor.md)).
 
 The needrestart drop-in is part of both postures: every run relies on the hook restarting nothing.
 
