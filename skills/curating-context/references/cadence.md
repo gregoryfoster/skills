@@ -357,19 +357,19 @@ ship is refused too, so a repo that needs one needs the other.
   that branch keeps even after a squash merge, and the commit step records
   the merge with the row. The push decides again, since a PR can merge
   mid-run. When the PR it took in has ended by then (squash-merged, with
-  or without its branch deleted, or closed), the row is refused. A PR
-  merged with a merge commit is the exception: its tip is in the default
-  branch's history, so the branch restarts at the row, with the default
-  branch's new tip merged in first: when the default branch moved between
-  runs, the row's two parents gave a PR two merge bases and the merged rows
-  back in its diff. Pushed,
+  or without its branch deleted, or closed), the row is refused. Pushed,
   it would have reopened those rows in a new PR whose merge base is the old
   default tip, the squash's rows shown again; reproduced on
   [#683](https://github.com/gregoryfoster/skills/issues/683). A fresh
   run measures after them: dispatch it (`gh workflow run
   context-cadence.yml`) or let the next scheduled run, never GitHub's
   *Re-run jobs*, which reuses the run's `GITHUB_SHA`, so checkout gives it
-  the commit from before the merge again. `record-telemetry.sh --repair` after the fact was the other way,
+  the commit from before the merge again. A PR merged with a merge commit
+  is the exception: its tip is in the default branch's history, so the
+  branch restarts with the row merged into the default branch's new tip.
+  Into it, as the open-PR path merges into the PR's branch: the row then
+  follows any row that landed mid-run, and the PR has one merge base, the
+  default tip, so its diff is the row alone. `record-telemetry.sh --repair` after the fact was the other way,
   and it can't do this: it rewrites deltas, never the observed `seams`.
 - **A refused push is reported once.** On the PR's branch a refusal is a
   rule or a concurrent push, not a race a rebase fixes. A `GH013` or

@@ -1803,20 +1803,26 @@ YAML
               # Not GitHub's "Re-run jobs" (CR 2564): it reuses GITHUB_SHA, so
               # checkout gives it the commit from before the merge again. Unless
               # the PR merged with a merge commit (CR 2567): then the tip is in
-              # $BRANCH's history, a PR from ROW has it as its merge base and
-              # shows this row alone, and the restart below is right. A fetch
-              # that fails can't say so, and refuses. $BRANCH's new tip is
-              # merged into the row first (CR 2571): the row's other parent is
-              # this run's checkout, which the taken-in tip lacks whenever
-              # $BRANCH moved between runs, and two merge bases put the
-              # merged rows back in the PR's diff.
+              # $BRANCH's history, so a PR from the row can't show its rows
+              # again, and the restart below is right. A fetch
+              # that fails can't say so, and refuses. The row is merged INTO
+              # $BRANCH's new tip first (CR 2571, CR 2574): the row's other
+              # parent is this run's checkout, which the taken-in tip lacks
+              # whenever $BRANCH moved between runs, and two merge bases put
+              # the merged rows back in the PR's diff. Into, not from: as on
+              # the keep-the-branch path, merge=union then writes $BRANCH's
+              # rows first, so one that landed mid-run stays before this one.
+              # With HEAD on $BRANCH, merge=ours keeps $BRANCH's ratio file, a
+              # trade that path already accepts: the next --exact recomputes
+              # it (#173).
               if [ -n "${TAKEN:-}" ] && [ -z "$KEEP" ]; then
                 ENDED_WHAT=${TAKEN_PR:+PR #$TAKEN_PR}
                 if git fetch -q origin "+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH" \
                   && git merge-base --is-ancestor "$TAKEN" "origin/$BRANCH"; then
                   echo "${ENDED_WHAT:-$PR_BRANCH} merged into $BRANCH during this run, its rows with it: the branch restarts at this row"
-                  git merge -q --no-edit -m "chore: weekly context measurement" "origin/$BRANCH" || {
-                    echo "::error::merging $BRANCH's new tip into the row failed — the row was not pushed."
+                  { git checkout -q --detach "origin/$BRANCH" \
+                    && git merge -q --no-edit -m "chore: weekly context measurement" "$ROW"; } || {
+                    echo "::error::merging the row into $BRANCH's new tip failed — the row was not pushed."
                     git diff --name-only --diff-filter=U | sed 's/^/::error::  conflicted: /'
                     exit 1; }
                 else
