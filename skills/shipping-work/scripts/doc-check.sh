@@ -379,17 +379,66 @@ fi
 # .skills/merge_mode, by which curating-context's install-cadence.sh renders
 # .github/workflows/context-cadence.yml. Nothing re-ran the renderer when the
 # knob changed, so a cohort host's workflow kept pushing to the default branch
-# under `pr`. The renderer reads the knob from the primary checkout, so a
-# re-render on this branch renders the mode the primary reads now (from a
-# linked worktree, the old one), in silence. Hence the note in the branch that
-# changes the knob: re-render after it merges. A hit, exit 1, because it asks
-# for a follow-up. A renderer missing or failing is said, never exit 2: the
-# doc check itself ran. The renderer is looked for where the workflow looks.
+# under `pr`. The renderer reads the knob from the primary checkout, which on
+# this branch (from a linked worktree, at least) still holds the old mode, so
+# a plain re-render here renders that, in silence. Its --merge-mode (#674)
+# names the mode instead: this reads the knob as this branch COMMITS it, the
+# file the job will read, and asks --check whether the branch's workflow is
+# already that mode's render. If it is, the branch carries its own re-render
+# and there is nothing to do; if not, the in-branch command comes first and
+# "re-render after the merge" second. A hit, exit 1, either way: the branch
+# changes how work lands, and the merge leaves a check to read. A renderer
+# missing or failing is said, never exit 2: the doc check itself ran. The
+# renderer is looked for where the workflow looks.
 RENDER_WF=".github/workflows/context-cadence.yml"
 RENDER_NOTE=0
 if grep -qxF ".skills/merge_mode" <<<"$CHANGED" && [[ -f "$RENDER_WF" ]]; then
   RENDER_NOTE=1
 fi
+# committed_merge_mode: the branch's committed .skills/merge_mode, in
+# merge-mode.sh's grammar (one word, `pr` or `direct`; blank lines and
+# whole-line `#` comments ignored; absent is `direct`). Sets CM_MODE, or
+# CM_ERR when the committed file is unusable or git can't read it. HEAD's
+# tree, not the working file: the job reads what is committed.
+committed_merge_mode() {
+  local entry blob line word="" count=0
+  local -a words
+  CM_MODE="" CM_ERR=""
+  if ! entry=$(git ls-tree HEAD -- .skills/merge_mode 2>&1); then
+    CM_ERR="git ls-tree HEAD failed: $entry"
+    return 0
+  fi
+  if [[ -z "$entry" ]]; then
+    CM_MODE="direct"
+    return 0
+  fi
+  if [[ "$entry" != 100* ]]; then
+    CM_ERR="it is committed as something other than a regular file"
+    return 0
+  fi
+  if ! blob=$(git cat-file blob HEAD:.skills/merge_mode 2>&1); then
+    CM_ERR="git cat-file failed: $blob"
+    return 0
+  fi
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line=${line%$'\r'}
+    read -r -a words <<<"$line"
+    [[ ${#words[@]} -gt 0 ]] || continue
+    case ${words[0]} in \#*) continue ;; esac
+    count=$((count + ${#words[@]}))
+    word=${words[0]}
+  done <<<"$blob"
+  if [[ $count -eq 0 ]]; then
+    CM_ERR="it names no mode"
+  elif [[ $count -ne 1 ]]; then
+    CM_ERR="it has $count words; it takes one"
+  else
+    case $word in
+      pr | direct) CM_MODE=$word ;;
+      *) CM_ERR="it says '$word', which is not a merge mode" ;;
+    esac
+  fi
+}
 print_render_note() {
   local d renderer="" out rc=0
   for d in scripts .claude/skills/curating-context/scripts skills/curating-context/scripts; do
@@ -400,23 +449,41 @@ print_render_note() {
   done
   echo ""
   echo "Knob-rendered artifact: .skills/merge_mode changes on this branch, and"
-  echo "$RENDER_WF is rendered by it. Re-render it after this branch merges,"
-  echo "once the default branch has the knob: in the primary checkout, run the"
-  echo "command install-cadence.sh --check names on its re-render: line (it"
-  echo "keeps the installed schedule) and review the diff. Re-rendered on this"
-  echo "branch, it renders the mode the primary checkout reads now."
+  echo "$RENDER_WF is rendered by it."
+  committed_merge_mode
+  if [[ -n "$CM_ERR" ]]; then
+    echo "  This branch's committed .skills/merge_mode is unusable: $CM_ERR."
+    echo "  Fix it (one word, 'pr' or 'direct', or delete the file for 'direct')"
+    echo "  before re-rendering; the job refuses it too."
+    return 0
+  fi
   if [[ -z "$renderer" ]]; then
+    echo "Re-render it on this branch with install-cadence.sh --merge-mode $CM_MODE,"
+    echo "or after this branch merges, once the default branch has the knob."
     echo "  (no install-cadence.sh in scripts/, .claude/skills/curating-context/scripts/"
     echo "  or skills/curating-context/scripts/, so its --check was not run)"
     return 0
   fi
-  out=$(bash "$renderer" --check </dev/null 2>&1) || rc=$?
+  out=$(bash "$renderer" --check --merge-mode "$CM_MODE" </dev/null 2>&1) || rc=$?
   if [[ $rc -ne 0 && $rc -ne 3 ]]; then
-    echo "  bash $renderer --check exited $rc:"
+    echo "  bash $renderer --check --merge-mode $CM_MODE exited $rc:"
     printf '%s\n' "$out" | sed 's/^/    /'
     return 0
   fi
-  echo "  bash $renderer --check says, of the mode read now:"
+  if grep -q '^re-render: *none' <<<"$out"; then
+    echo "This branch already carries its $CM_MODE render, so nothing is left to"
+    echo "re-render. After the merge, from the primary checkout:"
+    echo "  bash $renderer --check"
+    echo "should read 're-render: none' and merge mode $CM_MODE."
+  else
+    echo "Re-render it on this branch, so the knob and its render land together:"
+    echo "  bash $renderer --merge-mode $CM_MODE"
+    echo "(it keeps the installed schedule), review the diff and commit it with"
+    echo "the knob. Or re-render after this branch merges, once the default"
+    echo "branch has the knob: in the primary checkout, run the command"
+    echo "install-cadence.sh --check names on its re-render: line."
+  fi
+  echo "  bash $renderer --check --merge-mode $CM_MODE says:"
   printf '%s\n' "$out" |
     awk '/^[^ ]/ { keep = ($0 ~ /^(merge mode|re-render):/) } keep { print "    " $0 }'
 }
