@@ -308,6 +308,10 @@ plan_gate() {  # <approve 0|1> <file> <host>
     why="the plan is malformed: $PLAN_WHY"
   elif [ "$PLAN_COVERS" -ne 1 ]; then
     why="the plan $PLAN_ID has no [host $3] section, so it doesn't cover this host"
+  elif ! is_int "${P_NOW:-}"; then
+    # Fail closed (CR 2539): a clock that can't be read can't say the plan
+    # still stands.
+    why="the host's clock can't be read, so whether the plan $PLAN_ID passed its not-after is unknown"
   elif [ "$P_NOW" -gt "$PLAN_NOT_AFTER_S" ]; then
     why="the plan $PLAN_ID passed its not-after, $PLAN_NOT_AFTER"
   fi
@@ -501,3 +505,4 @@ approval_args() {  # <var> <plan file, or empty> <standing 0|1>
   if [ "$3" -eq 1 ]; then _apa_s=" --standing"; fi
   printf -v "$1" '%s' "$_apa_s"
 }
+

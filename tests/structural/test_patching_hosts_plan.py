@@ -614,3 +614,28 @@ def test_a_package_named_twice_in_a_section_is_malformed(host):
     out = host.run("--plan", str(p), rc=3)
     [r] = [r for r in out["refused"] if r.startswith("the plan is malformed")]
     assert "package libc6 appears twice in [host web-1]" in r
+
+
+# --- CR 2539: a clock that can't be read ---------------------------------------------
+
+
+def test_a_plan_is_refused_when_the_clock_cant_be_read(tmp_path):
+    p = tmp_path / "plan"
+    p.write_text(HEAD + _section())
+    lib = SKILL / "scripts"
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    script = (
+        "set -euo pipefail; "
+        + "".join(
+            f'. "{lib}/{x}"; '
+            for x in ("_knob-lib.sh", "_probe-lib.sh", "_gate-lib.sh", "_plan-lib.sh")
+        )
+        + f'P_PRIV=none P_TMP="{scratch}" P_NOW=soon; '
+        + f'if plan_gate 1 "{p}" web-1; then echo stood; else printf "%s\\n" "${{REFUSED[@]}}"; fi'
+    )
+    r = subprocess.run(
+        ["bash", "-c", script], capture_output=True, text=True, env=_clean_env()
+    )
+    assert "stood" not in r.stdout, r.stderr
+    assert "clock can't be read" in r.stdout, (r.stdout, r.stderr)
