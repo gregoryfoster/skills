@@ -855,6 +855,20 @@ class TestBillingFollowsVisibility:
             + text
         )
 
+    def test_a_mixed_off_standard_shape_reads_the_off_standard_rows(self, tmp_path):
+        """CR 2622: by_job is mostly free jobs; a mixed shape points elsewhere."""
+        off = {"runner_group_id": 3, "labels": ["x-xl"]}
+        rows = _week() + [
+            _job("2026-08-03T11:00:00Z", "2026-08-03T11:00:20Z", job="a", **off),
+            _job("2026-08-03T12:00:00Z", "2026-08-03T12:01:10Z", job="b", **off),
+            _job("2026-08-03T13:00:00Z", "2026-08-03T13:00:20Z", job="c", **off),
+        ]
+        report = json.loads(_census(tmp_path, rows, visibility="public").stdout)
+        assert report["billing"]["off_standard_shape"] == "mixed", report["billing"]
+        assert all("median_seconds" in r for r in report["billing"]["off_standard"])
+        text = _census(tmp_path, rows, visibility="public", as_json=False).stdout
+        assert "Read billing.off_standard" in text and "Read by_job" not in text, text
+
     def test_public_rows_without_runner_fields_read_unknown(self, tmp_path):
         """CR 2617: a public meta over rows with no runner group can't say not billed."""
         rows = [_job("2026-08-02T10:00:00Z", "2026-08-02T10:00:30Z")]

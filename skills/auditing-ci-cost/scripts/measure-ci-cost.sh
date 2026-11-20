@@ -345,7 +345,7 @@ REPORT=$(jq -s --argjson factor "$ANOMALY_FACTOR" --arg repo "$REPO" \
       off_standard: ($off | group_by(.workflow + " / " + .job)
         | map({job: (.[0].workflow + " / " + .[0].job), runs: length,
                billed: (map(.billed) | add), labels: .[0].labels,
-               runner_group: .[0].runner_group})
+               runner_group: .[0].runner_group, median_seconds: (map(.secs) | median)})
         | sort_by(-.billed))
     },
     raw: {jobs: ($billable | length), billed_minutes: ($billable | map(.billed) | add // 0),
@@ -475,7 +475,12 @@ printf '%s' "$REPORT" | jq -r '
      "  Only the off-standard jobs can bill, and their own shape is " +
        "\(.billing.off_standard_shape | ascii_upcase)",
      "  at \(.billing.off_standard_mean_billed) min/job. For those jobs:",
-     advice(.billing.off_standard_shape),
+     # by_job lists free jobs too, so a mixed shape reads the off-standard
+     # list instead (CR 2622).
+     (if .billing.off_standard_shape == "mixed" then
+        "  Neither lever dominates. Read billing.off_standard (--json): treat",
+        "  rows whose median_seconds < 60 as job-count and the rest as duration."
+      else advice(.billing.off_standard_shape) end),
      "  The rest is runner time: weigh it by PR latency, the owner'"'"'s",
      "  concurrent-job limit and Dependabot fan-out, not by minutes."
    else advice(.cost_shape) end),
