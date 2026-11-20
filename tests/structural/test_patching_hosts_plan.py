@@ -516,3 +516,33 @@ def test_the_reboot_runs_only_under_its_bulks_plan(chain):
     (chain.run_dir / "approval").write_text("session\n")
     out = chain.reboot("--plan", str(p), rc=3)
     assert any("isn't this plan" in r for r in out["refused"])
+
+
+# --- CR 2531: a planned package's class -------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "fresh, security_only, kinds",
+    [
+        # Now from a third-party origin the plan names for another package.
+        (
+            ("2.39-0ubuntu8.7", "third-party:Example"),
+            1,
+            [("class-changed", "libc6", False)],
+        ),
+        # Now from -updates, the host's origins wider than security.
+        (("2.39-0ubuntu8.7", "updates"), 0, [("class-changed", "libc6", False)]),
+        # The masking case: in a security-only lane, a newer -updates
+        # version hides the -security one the step installs. Inside.
+        (("2.39-0ubuntu8.7", "updates"), 1, [("version-newer", "libc6", True)]),
+    ],
+    ids=["third-party", "updates-wide", "updates-masking"],
+)
+def test_a_planned_packages_class_change_is_outside(host, fresh, security_only, kinds):
+    _summary(host, {**SELECTED, "libc6": fresh}, security_only)
+    pk = {**SELECTED, "docker-ce": ("1.0", "third-party:Example")}
+    p = _plan(host, HEAD + _section(packages=pk))
+    inside = all(k[2] for k in kinds)
+    out = host.run("--plan", str(p), rc=0 if inside else 3)
+    got = [k for k in _kinds(out) if k[1] == "libc6"]
+    assert got == kinds

@@ -1129,13 +1129,13 @@ sel_of() {  # <package>: SV, SC := its candidate and class, or empty
 }
 
 plan_envelope() {
-  local i p pv planned w
+  local i p pv pc planned w
   if [ "$SPAN_READ" -ne 1 ] || [ "$SEL_READ" -ne 1 ]; then
     plan_diff 0 unread selection "the bulk's selection, each package's candidate and class, or its reboot couldn't be read, so its envelope can't be checked: count again with this skill's probe.sh --refresh-into DIR --dry-run-into DIR"
     return 0
   fi
   for i in ${PLAN_PKG_NAME[@]+"${!PLAN_PKG_NAME[@]}"}; do
-    p=${PLAN_PKG_NAME[$i]} pv=${PLAN_PKG_VERSION[$i]}
+    p=${PLAN_PKG_NAME[$i]} pv=${PLAN_PKG_VERSION[$i]} pc=${PLAN_PKG_CLASS[$i]}
     if ! in_words "$p" "$DRY_SEL"; then
       plan_diff 1 not-pending "$p" "planned at $pv, and the dry run doesn't select it"
       continue
@@ -1147,6 +1147,15 @@ plan_envelope() {
     fi
     if [[ $SC == third-party:* ]] && ! in_words "${SC#third-party:}" "$PLAN_ORIGINS"; then
       plan_diff 0 new-origin "$p" "its candidate, $SV, comes from ${SC#third-party:}, an origin the plan doesn't name"
+      continue
+    fi
+    # Its class, as planned (CR 2531). One exception: in a security lane
+    # whose origins are security alone, the simulation shows a newer
+    # -updates version over the -security one the step installs, so a
+    # planned security package can read updates.
+    if [ "$SC" != "$pc" ] && ! { [ "$pc" = security ] && [ "$SC" = updates ] &&
+      [ "$LANE" = security ] && [ "$DRY_SECURITY_ONLY" = 1 ]; }; then
+      plan_diff 0 class-changed "$p" "planned as $pc, and its candidate, $SV, is $SC now"
       continue
     fi
     [ "$SV" != "$pv" ] || continue
