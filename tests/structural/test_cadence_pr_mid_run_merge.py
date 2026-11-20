@@ -168,6 +168,52 @@ class TestAMergeCommitKeepsTheRow:
         assert len(added) == 1 and "2026-10-15" in added[0], diff
         assert rig.show(PR_BRANCH) == ["2026-10-01", "2026-10-08", "2026-10-15"]
 
+    def test_a_row_landing_on_main_mid_run_stays_before_this_one(self, tmp_path: Path):
+        """CR 2574: merging the default branch INTO the row put its new lines
+        after the row's under merge=union, so a curation row that landed on
+        main after the merge commit, mid-run, came after this run's row: the
+        ledger went out of order on the branch and, once merged, on main.
+        The row is merged into the default branch's tip instead, as the
+        keep-the-branch path merges it into the PR's branch."""
+        rig = Rig(tmp_path, knob="pr\n")
+        assert rig.run("2026-10-08", tokens=110).returncode == 0
+        work = rig.clone("weekly-work")
+        (work / "NOTES.md").write_text("the week's ordinary work\n")
+        _git(work, "add", "-A")
+        _git(work, "commit", "-qm", "work")
+        _git(work, "push", "-q", "origin", "HEAD:main")
+        merge = _merge_commit_mid_run(rig, 7)
+
+        def merge_then_curate() -> None:
+            merge()
+            human = rig.clone("curation")
+            rig.record(human, "2026-10-14", 120)
+            _git(human, "add", "-A")
+            _git(human, "commit", "-qm", "curation row")
+            _git(human, "push", "-q", "origin", "HEAD:main")
+
+        r = rig.run("2026-10-15", tokens=130, between=merge_then_curate)
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert [x["ts"] for x in rig.rows(PR_BRANCH)] == [
+            "2026-10-01",
+            "2026-10-08",
+            "2026-10-14",
+            "2026-10-15",
+        ], "this run's row must be the ledger's last"
+        main = _git(rig.origin, "rev-parse", "main")
+        assert _git(rig.origin, "rev-parse", f"{PR_BRANCH}^1") == main
+        assert _git(rig.origin, "merge-base", "--all", "main", PR_BRANCH).split() == [
+            main
+        ]
+        added = [
+            ln
+            for ln in _git(
+                rig.origin, "diff", f"main...{PR_BRANCH}", "--", LEDGER
+            ).splitlines()
+            if ln.startswith("+{")
+        ]
+        assert len(added) == 1 and "2026-10-15" in added[0], added
+
     def test_squashed_the_row_is_still_refused(self, tmp_path: Path):
         rig = Rig(tmp_path, knob="pr\n")
         assert rig.run("2026-10-08").returncode == 0
