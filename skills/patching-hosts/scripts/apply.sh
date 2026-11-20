@@ -1212,7 +1212,8 @@ plan_envelope() {
 # step the plan approves, at the candidate those lists offer. A planned one
 # must be at its planned version or a newer one; an unplanned one held for
 # an approved step is outside, since that step would install it and restart
-# its data store. One of the dry run's own, unplanned, the gate judged.
+# its data store, whether or not the dry run selected it (CR 2545). One of
+# the dry run's own, unplanned and not held, the gate judged.
 RECHECK_WHY=""
 plan_recheck_bulk() {  # <the refreshed simulation>
   local i p c pv seen=" " held
@@ -1232,7 +1233,9 @@ plan_recheck_bulk() {  # <the refreshed simulation>
       if [ "${PLAN_PKG_NAME[$i]}" = "$p" ]; then pv=${PLAN_PKG_VERSION[$i]}; fi
     done
     if [ -z "$pv" ]; then
-      if [ -n "$held" ] && ! in_words "$p" "$DRY_SEL"; then
+      # Held for an approved step, it's outside whatever the dry run said
+      # (CR 2545): that step would refuse it, and leave the group held.
+      if [ -n "$held" ]; then
         RECHECK_WHY="$RECHECK_WHY; $p $c, which the held step $held would install, isn't in the plan"
       fi
       continue
