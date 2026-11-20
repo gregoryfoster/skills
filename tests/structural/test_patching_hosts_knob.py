@@ -35,7 +35,13 @@ What this file pins, against references/knob.md:
   and refuses a date or a host it can't use;
 - a backup line names the datastore units it covers, and one naming none is
   malformed (CR 194);
-- nothing the reader prints carries an unescaped control character.
+- nothing the reader prints carries an unescaped control character;
+- `rebuild-*` lines describe how a host is rebuilt onto a new VM, and how a
+  dependent steps around it, each step with its undo; a secret is a path the
+  reader never opens; a knob without them prints `rebuild: null` (#673);
+- a `standing` line pre-approves one lane within its limits until its
+  review-by date, and is per lane; past the date it's `expired-standing`
+  and isn't honoured (#673).
 
 Runs under whatever `bash` is on PATH, which is 3.2 on macOS: the library is
 written for it. No API calls; each test writes its knob under tmp_path.
@@ -870,6 +876,15 @@ EVERY_DIRECTIVE = {
     "origin": "origin tailscale follow",
     "exception": "exception keep:nginx 2026-12-31 ships with the image",
     "records": "records example-org/host-records",
+    # #673: one row in knob.md documents the whole rebuild-* family.
+    "rebuild-image": "rebuild-image example-org/base-image\n"
+    "rebuild-install bash scripts/install.sh\n"
+    "rebuild-restore bash scripts/restore.sh --latest\n"
+    "rebuild-check curl -sf http://localhost:8000/health\n"
+    "rebuild-secret /etc/app/secret.env\n"
+    "rebuild-step app-db stop-ingest systemctl stop app-ingest.timer\n"
+    "rebuild-undo app-db stop-ingest systemctl start app-ingest.timer",
+    "standing": "standing security no-reboot no-datastore 2026-12-31 security fixes between runs",
 }
 
 
@@ -897,8 +912,10 @@ def test_every_directive_in_knob_md_is_one_the_parser_reads(tmp_path):
         "owner",
         "origin",
         "exception",
+        "standing",
     ):
         assert out[key], f"{key} parsed to nothing"
+    assert out["rebuild"]["image"]["value"] == "example-org/base-image"
     assert out["records"]["value"] == "example-org/host-records"
     assert out["bulk_factor"]["value"] == 4
 
@@ -1171,3 +1188,321 @@ def test_a_config_path_with_a_control_character_is_refused(tmp_path):
     r = _run("--config", str(tmp_path / "a\nb"), "--host", "h", "--today", TODAY)
     assert r.returncode == 2
     assert r.stdout == ""
+
+
+# --- rebuild-* (#673 item 3) ---------------------------------------------------
+
+REBUILD = (
+    "posture scheduled\n"
+    "rebuild-image example-org/base-image\n"
+    "rebuild-install bash scripts/install.sh --host-env prod # from the checkout\n"
+    "rebuild-restore bash scripts/restore.sh --latest\n"
+    "rebuild-check curl -sf http://localhost:8000/health\n"
+    "rebuild-check bash scripts/go-no-go.sh\n"
+    "rebuild-secret /etc/app/secret.env\n"
+    "rebuild-secret /etc/app/gcs-key.json\n"
+)
+
+
+def test_a_rebuild_section_reads_as_one_object_with_its_lines(tmp_path):
+    out = _read(tmp_path, REBUILD)
+    assert out["findings"] == []
+    assert out["report_only"] is False
+    assert out["rebuild"] == {
+        "image": {"value": "example-org/base-image", "line": 2},
+        "install": {"value": "bash scripts/install.sh --host-env prod", "line": 3},
+        "restore": {"value": "bash scripts/restore.sh --latest", "line": 4},
+        "check": [
+            {"command": "curl -sf http://localhost:8000/health", "line": 5},
+            {"command": "bash scripts/go-no-go.sh", "line": 6},
+        ],
+        "secret": [
+            {"path": "/etc/app/secret.env", "line": 7},
+            {"path": "/etc/app/gcs-key.json", "line": 8},
+        ],
+        "step": [],
+    }
+
+
+def test_a_knob_without_rebuild_or_standing_lines_reads_as_it_did(tmp_path):
+    # Additive: every knob that read clean still does, with rebuild null and
+    # standing empty, and nothing else changed.
+    out = _read(tmp_path, "posture scheduled\nwindow Tue 15:00-21:00\n")
+    assert out["findings"] == []
+    assert out["rebuild"] is None
+    assert out["standing"] == []
+
+
+def test_a_rebuild_secret_is_a_path_the_reader_never_opens(tmp_path):
+    # A FIFO blocks whoever opens it: a reader that read the secret would
+    # hang here. One that doesn't exist is no finding either: the reader
+    # checks the path's form, never the file.
+    fifo = tmp_path / "secret.fifo"
+    os.mkfifo(fifo)
+    text = REBUILD + f"rebuild-secret {fifo}\nrebuild-secret /nonexistent/key\n"
+    knob = tmp_path / "patching-hosts"
+    knob.write_text(text)
+    r = subprocess.run(
+        [
+            "bash",
+            str(READ_KNOB),
+            "--config",
+            str(knob),
+            "--host",
+            "web-1",
+            "--today",
+            TODAY,
+        ],
+        capture_output=True,
+        text=True,
+        env=_clean_env(),
+        timeout=30,
+    )
+    assert r.returncode == 0, r.stderr
+    out = json.loads(r.stdout)
+    assert out["findings"] == []
+    assert [s["path"] for s in out["rebuild"]["secret"]][-2:] == [
+        str(fifo),
+        "/nonexistent/key",
+    ]
+
+
+def test_a_relative_rebuild_secret_is_a_finding_not_report_only(tmp_path):
+    out = _read(tmp_path, REBUILD + "rebuild-secret etc/app/secret.env\n")
+    assert _kinds(out) == ["rebuild-secret-path"]
+    [f] = out["findings"]
+    assert f["line"] == 9
+    assert "absolute" in f["message"]
+    # A rebuild line never stops a patch run.
+    assert out["report_only"] is False
+
+
+def test_a_rebuild_section_missing_a_part_is_incomplete(tmp_path):
+    text = "posture scheduled\nrebuild-image example-org/base-image\nrebuild-secret /etc/a\n"
+    out = _read(tmp_path, text)
+    assert _kinds(out) == ["rebuild-incomplete"]
+    [f] = out["findings"]
+    assert "rebuild-install" in f["message"]
+    assert "rebuild-restore" in f["message"]
+    assert "rebuild-check" in f["message"]
+    assert out["report_only"] is False
+
+
+def test_a_dependents_steps_pair_with_their_undo_by_host_and_name(tmp_path):
+    # The dependent's own knob declares what it runs when app-db moves: its
+    # steps alone are no rebuild section of its own, so nothing is incomplete.
+    text = (
+        "posture scheduled\n"
+        "rebuild-step app-db stop-ingest systemctl stop app-ingest.timer\n"
+        "rebuild-undo app-db stop-ingest systemctl start app-ingest.timer\n"
+        "rebuild-step app-db repoint sed -i s/old/new/ /etc/app/db.env\n"
+        "rebuild-undo app-cache flush systemctl restart app-cache\n"
+    )
+    out = _read(tmp_path, text)
+    assert out["rebuild"]["image"] == {"value": None, "line": None}
+    assert out["rebuild"]["step"] == [
+        {
+            "host": "app-db",
+            "name": "stop-ingest",
+            "run": "systemctl stop app-ingest.timer",
+            "line": 2,
+            "undo": "systemctl start app-ingest.timer",
+            "undo_line": 3,
+        },
+        {
+            "host": "app-db",
+            "name": "repoint",
+            "run": "sed -i s/old/new/ /etc/app/db.env",
+            "line": 4,
+            "undo": None,
+            "undo_line": None,
+        },
+    ]
+    assert sorted(_kinds(out)) == ["rebuild-no-step", "rebuild-no-undo"]
+    by_kind = {f["kind"]: f for f in out["findings"]}
+    assert by_kind["rebuild-no-undo"]["line"] == 4
+    assert "app-db repoint" in by_kind["rebuild-no-undo"]["message"]
+    assert by_kind["rebuild-no-step"]["line"] == 5
+    assert out["report_only"] is False
+
+
+def test_rebuild_lines_are_scoped_by_section(tmp_path):
+    text = "posture scheduled\n[host co-db]\n" + REBUILD.split("\n", 1)[1]
+    assert _read(tmp_path, text, host="web-1")["rebuild"] is None
+    out = _read(tmp_path, text, host="co-db")
+    assert out["rebuild"]["image"]["value"] == "example-org/base-image"
+    assert out["findings"] == []
+    # A more specific section replaces a one-value line and a list.
+    text = (
+        REBUILD + "[host web-1]\nrebuild-image example-org/other\nrebuild-check true\n"
+    )
+    out = _read(tmp_path, text)
+    assert out["rebuild"]["image"] == {"value": "example-org/other", "line": 10}
+    assert out["rebuild"]["check"] == [{"command": "true", "line": 11}]
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "rebuild-image",
+        "rebuild-image two words",
+        "rebuild-install",
+        "rebuild-restore",
+        "rebuild-check",
+        "rebuild-secret",
+        "rebuild-secret /a /b",
+        "rebuild-step app-db",
+        "rebuild-step app-db stop",
+        "rebuild-step app/db stop true",
+        "rebuild-step app-db Stop_It true",
+        "rebuild-undo app-db stop",
+    ],
+)
+def test_a_rebuild_line_that_doesnt_parse_is_malformed(tmp_path, line):
+    out = _read(tmp_path, f"posture scheduled\n{line}\n")
+    assert _kinds(out) == ["malformed"]
+    assert out["findings"][0]["line"] == 2
+    assert out["report_only"] is True
+
+
+# --- standing (#673 item 4) ----------------------------------------------------
+
+
+def test_a_standing_line_reads_its_lane_limits_and_review_by(tmp_path):
+    text = (
+        "posture scheduled\n"
+        "origin tailscale follow\n"
+        "standing security no-reboot no-datastore 2026-12-31 between attended runs\n"
+        "standing origin:tailscale no-held 2026-12-31 the client and daemon\n"
+        "standing maintenance 2026-12-31 everything the run takes\n"
+    )
+    out = _read(tmp_path, text)
+    assert out["findings"] == []
+    assert out["standing"] == [
+        {
+            "lane": "security",
+            "no_reboot": True,
+            "no_datastore": True,
+            "no_held": False,
+            "review_by": "2026-12-31",
+            "reason": "between attended runs",
+            "expired": False,
+            "line": 3,
+        },
+        {
+            "lane": "origin:tailscale",
+            "no_reboot": False,
+            "no_datastore": False,
+            "no_held": True,
+            "review_by": "2026-12-31",
+            "reason": "the client and daemon",
+            "expired": False,
+            "line": 4,
+        },
+        {
+            "lane": "maintenance",
+            "no_reboot": False,
+            "no_datastore": False,
+            "no_held": False,
+            "review_by": "2026-12-31",
+            "reason": "everything the run takes",
+            "expired": False,
+            "line": 5,
+        },
+    ]
+
+
+def test_a_standing_line_expires_the_day_after_its_review_by_date(tmp_path):
+    text = "posture scheduled\nstanding security no-reboot 2026-09-30 between runs\n"
+    assert _read(tmp_path, text, today="2026-09-30")["findings"] == []
+    out = _read(tmp_path, text, today="2026-10-01")
+    assert out["standing"][0]["expired"] is True
+    assert _kinds(out) == ["expired-standing"]
+    [f] = out["findings"]
+    assert f["line"] == 2
+    assert "security" in f["message"] and "2026-09-30" in f["message"]
+    assert out["report_only"] is False
+
+
+def test_a_standing_line_is_keyed_by_lane_and_scoped_by_section(tmp_path):
+    text = (
+        "posture scheduled\n"
+        "standing security 2026-12-31 every host\n"
+        "[host web-*]\n"
+        "standing security no-reboot 2026-12-31 the web hosts never reboot unattended\n"
+        "[host db-*]\n"
+        "standing maintenance 2026-12-31 not for web\n"
+    )
+    out = _read(tmp_path, text, host="web-1")
+    assert [(s["lane"], s["no_reboot"], s["line"]) for s in out["standing"]] == [
+        ("security", True, 4)
+    ]
+    out = _read(tmp_path, text, host="db-1")
+    assert [(s["lane"], s["line"]) for s in out["standing"]] == [
+        ("security", 2),
+        ("maintenance", 6),
+    ]
+
+
+def test_a_standing_origin_the_knob_doesnt_follow_is_a_finding(tmp_path):
+    # apply.sh refuses --lane origin:<origin> for one the knob doesn't
+    # follow, so such a line could never approve anything.
+    text = (
+        "posture scheduled\n"
+        "origin nodesource pin 22.11.0-1nodesource1\n"
+        "standing origin:nodesource 2026-12-31 node\n"
+        "standing origin:docker 2026-12-31 docker\n"
+    )
+    out = _read(tmp_path, text)
+    assert _kinds(out) == ["standing-origin", "standing-origin"]
+    assert [f["line"] for f in out["findings"]] == [3, 4]
+    assert out["report_only"] is False
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "standing",
+        "standing security",
+        "standing security 2026-12-31",
+        "standing nightly 2026-12-31 a lane apply.sh has no name for",
+        "standing origin: 2026-12-31 no origin",
+        "standing security no-restart 2026-12-31 an unknown limit",
+        "standing security no-reboot 2026-13-01 a date that isn't one",
+        "standing security no-reboot no-reboot-please 2026-12-31 typo",
+    ],
+)
+def test_a_standing_line_that_doesnt_parse_is_malformed(tmp_path, line):
+    out = _read(tmp_path, f"posture scheduled\n{line}\n")
+    assert _kinds(out) == ["malformed"]
+    assert out["report_only"] is True
+
+
+def test_knob_standing_and_rebuild_records_keep_their_documented_fields(tmp_path):
+    # The scripts read these records (the --standing gate, an executor's
+    # rebuild): the field order documented at knob_reset is the contract.
+    knob = (
+        "posture scheduled\n"
+        "standing security no-reboot no-held 2026-12-31 two words\n"
+        + REBUILD.split("\n", 1)[1]
+        + "rebuild-step app-db stop systemctl stop x\n"
+        "rebuild-undo app-db stop systemctl start x\n"
+    )
+    after = (
+        'printf "S %s\\n" "${KNOB_STANDING[0]//$KNOB_US/|}"\n'
+        'printf "I %s %s\\n" "$KNOB_REBUILD_IMAGE" "$KNOB_REBUILD_IMAGE_LINE"\n'
+        'printf "C %s\\n" "${KNOB_REBUILD_CHECK[0]//$KNOB_US/|}"\n'
+        'printf "X %s\\n" "${KNOB_REBUILD_SECRET[1]//$KNOB_US/|}"\n'
+        'printf "P %s\\n" "${KNOB_REBUILD_STEP[0]//$KNOB_US/|}"\n'
+        'printf "A %s\\n" "$KNOB_REBUILD"\n'
+    )
+    r = _source(tmp_path, knob, "", after)
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.splitlines() == [
+        "S security|1|0|1|2026-12-31|two words|0|2",
+        "I example-org/base-image 3",
+        "C curl -sf http://localhost:8000/health|6",
+        "X /etc/app/gcs-key.json|9",
+        "P app-db|stop|systemctl stop x|10|systemctl start x|11",
+        "A 1",
+    ]

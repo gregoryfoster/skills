@@ -84,6 +84,21 @@ esac
 #   KNOB_ORIGIN     origin policy value line
 #   KNOB_EXCEPTION  what review-by reason expired(0|1) line
 #   KNOB_FINDING    line-or-empty kind message
+#   KNOB_STANDING   lane no-reboot(0|1) no-datastore(0|1) no-held(0|1)
+#                   review-by reason expired(0|1) line; one per lane, the
+#                   lane security, maintenance or origin:<origin> as
+#                   apply.sh's --lane names it (#673). An expired one
+#                   approves nothing.
+#
+# The rebuild section (#673), what an executor reads to rebuild the host onto
+# a new VM; no script here runs or opens any of it. KNOB_REBUILD is 1 when
+# any rebuild-* line applies to the host. KNOB_REBUILD_IMAGE, _INSTALL and
+# _RESTORE are one value each, with a *_LINE.
+#   KNOB_REBUILD_CHECK   command line
+#   KNOB_REBUILD_SECRET  path line (a path only: never opened or statted)
+#   KNOB_REBUILD_STEP    host name run line undo undo-line; host is the one
+#                        whose rebuild it steps around, and undo and its
+#                        line are empty where no rebuild-undo pairs it
 knob_reset() {
   KNOB_PATH="" KNOB_HOST="" KNOB_TODAY="" KNOB_PRESENT=0
   KNOB_CLASS="production" KNOB_CLASS_LINE=""
@@ -99,7 +114,11 @@ knob_reset() {
   KNOB_WINDOW=() KNOB_QUIET=() KNOB_INFLIGHT=() KNOB_HEALTH=() KNOB_RECOVERY=()
   KNOB_RESTARTER=() KNOB_SERVICE=() KNOB_BACKUP=() KNOB_CALLER=() KNOB_DEPENDS=()
   KNOB_DATASTORE=() KNOB_HOLD=() KNOB_OWNER=() KNOB_ORIGIN=()
-  KNOB_EXCEPTION=() KNOB_FINDING=()
+  KNOB_EXCEPTION=() KNOB_FINDING=() KNOB_STANDING=()
+  KNOB_REBUILD=0 KNOB_REBUILD_IMAGE="" KNOB_REBUILD_IMAGE_LINE=""
+  KNOB_REBUILD_INSTALL="" KNOB_REBUILD_INSTALL_LINE=""
+  KNOB_REBUILD_RESTORE="" KNOB_REBUILD_RESTORE_LINE=""
+  KNOB_REBUILD_CHECK=() KNOB_REBUILD_SECRET=() KNOB_REBUILD_STEP=()
   KNOB_REPORT_ONLY=0 KNOB_REPORT_ONLY_WHY=()
   # Parsed records: one entry per valid directive line, in file order.
   _KP_LINE=() _KP_SEC=() _KP_DIR=() _KP_KEY=() _KP_VAL=()
@@ -397,6 +416,60 @@ _knob_directive() {  # <line> <sec> <text>
       else
         _knob_malformed "$n" "exception takes <what> <review-by YYYY-MM-DD> <reason>"
       fi ;;
+    # #673: the owner's standing approval of one lane, within its limits.
+    standing)
+      local sl=${tok[0]:-} si=1 snr=0 snd=0 snh=0 sok=1
+      local slre='^origin:[A-Za-z0-9][A-Za-z0-9._-]*$'
+      case $sl in
+        security | maintenance) ;;
+        *) [[ $sl =~ $slre ]] || sok=0 ;;
+      esac
+      while [ "$si" -lt "$nt" ]; do
+        case ${tok[$si]} in
+          no-reboot) snr=1 ;;
+          no-datastore) snd=1 ;;
+          no-held) snh=1 ;;
+          *) break ;;
+        esac
+        si=$((si + 1))
+      done
+      if [ "$sok" -eq 1 ] && [ "$nt" -ge $((si + 2)) ] && _knob_is_date "${tok[$si]}"; then
+        _knob_record "$n" "$sec" standing "$sl" "$sl$u$snr$u$snd$u$snh$u${tok[$si]}$u${tok[*]:$((si + 1))}"
+      else
+        _knob_malformed "$n" "standing takes <lane: security, maintenance or origin:<origin>> [no-reboot] [no-datastore] [no-held] <review-by YYYY-MM-DD> <reason>"
+      fi ;;
+    # #673: how the host is rebuilt onto a new VM, for an executor to run.
+    # The commands take the rest of the line, as health's does.
+    rebuild-image)
+      if [ "$nt" -eq 1 ]; then
+        _knob_record "$n" "$sec" rebuild-image "" "${tok[0]}"
+      else
+        _knob_malformed "$n" "rebuild-image takes one image family"
+      fi ;;
+    rebuild-install | rebuild-restore | rebuild-check)
+      if [ -n "$rest" ]; then
+        _knob_record "$n" "$sec" "$dir" "" "$rest"
+      else
+        _knob_malformed "$n" "$dir takes a command"
+      fi ;;
+    rebuild-secret)
+      if [ "$nt" -eq 1 ]; then
+        _knob_record "$n" "$sec" rebuild-secret "" "${tok[0]}"
+      else
+        _knob_malformed "$n" "rebuild-secret takes one path"
+      fi ;;
+    # A step a dependent runs when <host> is rebuilt, and its undo, paired
+    # by host and name.
+    rebuild-step | rebuild-undo)
+      local rsre='^[a-z0-9][a-z0-9-]*$' rcmd
+      if [ "$nt" -ge 3 ] && _knob_is_host "${tok[0]}" && [[ ${tok[1]} =~ $rsre ]]; then
+        _knob_trim "${rest#"${tok[0]}"}"
+        _knob_trim "${_KR#"${tok[1]}"}"
+        rcmd=$_KR
+        _knob_record "$n" "$sec" "$dir" "${tok[0]} ${tok[1]}" "${tok[0]}$u${tok[1]}$u$rcmd"
+      else
+        _knob_malformed "$n" "$dir takes <host> <name> <command>, with a step name of lowercase letters, digits and hyphens"
+      fi ;;
     records)
       if [ "$nt" -eq 1 ]; then
         _knob_record "$n" "$sec" records "" "${tok[0]}"
@@ -693,6 +766,31 @@ _knob_resolve() {
     done
   done
 
+  # Standing approvals, one per lane (#673). Past its review-by date one
+  # approves nothing, as an expired exception covers nothing.
+  local o followed
+  _knob_select standing keyed
+  for i in ${_KSEL[@]+"${_KSEL[@]}"}; do
+    IFS=$u read -r -a f <<<"${_KP_VAL[$i]}"
+    if [[ $KNOB_TODAY > ${f[4]} ]]; then
+      KNOB_STANDING+=("${_KP_VAL[$i]}${u}1$u${_KP_LINE[$i]}")
+      _knob_finding "${_KP_LINE[$i]}" expired-standing \
+        "standing ${f[0]} passed its review-by date, ${f[4]}; it approves nothing until it's renewed, so each step needs the owner's approval in the host's own session, or a plan"
+    else
+      KNOB_STANDING+=("${_KP_VAL[$i]}${u}0$u${_KP_LINE[$i]}")
+    fi
+    case ${f[0]} in origin:*)
+      o=${f[0]#origin:} followed=0
+      for k in ${KNOB_ORIGIN[@]+"${KNOB_ORIGIN[@]}"}; do
+        case $k in "$o${u}follow$u"*) followed=1 ;; esac
+      done
+      [ "$followed" -eq 1 ] || _knob_finding "${_KP_LINE[$i]}" standing-origin \
+        "standing ${f[0]} names an origin the knob doesn't follow, so apply.sh refuses its lane and the line approves nothing: declare origin $o follow, or remove the line" ;;
+    esac
+  done
+
+  _knob_resolve_rebuild
+
   # Holds: the defaults, each replaced by a knob line naming its step, plus
   # any step only the knob names.
   _knob_select hold keyed
@@ -705,6 +803,76 @@ _knob_resolve() {
     KNOB_HOLD+=("$val$u")
   done
   for i in ${_KSEL[@]+"${_KSEL[@]}"}; do KNOB_HOLD+=("${_KP_VAL[$i]}$u${_KP_LINE[$i]}"); done
+}
+
+# The rebuild section (#673). Nothing here stops a patch run: a line that
+# parses but can't serve a rebuild is a finding, never report-only.
+_knob_resolve_rebuild() {
+  local i k u=$KNOB_US first="" missing=""
+  local -a f=() g=() undos=()
+  _knob_select rebuild-image keyed
+  for i in ${_KSEL[@]+"${_KSEL[@]}"}; do KNOB_REBUILD_IMAGE=${_KP_VAL[$i]} KNOB_REBUILD_IMAGE_LINE=${_KP_LINE[$i]}; done
+  _knob_select rebuild-install keyed
+  for i in ${_KSEL[@]+"${_KSEL[@]}"}; do KNOB_REBUILD_INSTALL=${_KP_VAL[$i]} KNOB_REBUILD_INSTALL_LINE=${_KP_LINE[$i]}; done
+  _knob_select rebuild-restore keyed
+  for i in ${_KSEL[@]+"${_KSEL[@]}"}; do KNOB_REBUILD_RESTORE=${_KP_VAL[$i]} KNOB_REBUILD_RESTORE_LINE=${_KP_LINE[$i]}; done
+  _knob_select rebuild-check list
+  for i in ${_KSEL[@]+"${_KSEL[@]}"}; do KNOB_REBUILD_CHECK+=("${_KP_VAL[$i]}$u${_KP_LINE[$i]}"); done
+  _knob_select rebuild-secret list
+  for i in ${_KSEL[@]+"${_KSEL[@]}"}; do
+    KNOB_REBUILD_SECRET+=("${_KP_VAL[$i]}$u${_KP_LINE[$i]}")
+    case ${_KP_VAL[$i]} in
+      /*) ;;
+      *) _knob_finding "${_KP_LINE[$i]}" rebuild-secret-path \
+        "rebuild-secret ${_KP_VAL[$i]} isn't an absolute path: name the file on the old VM from /" ;;
+    esac
+  done
+  # A rebuild section of the host's own: anything but a dependent's steps.
+  for k in "$KNOB_REBUILD_IMAGE_LINE" "$KNOB_REBUILD_INSTALL_LINE" "$KNOB_REBUILD_RESTORE_LINE"; do
+    [ -n "$first" ] || first=$k
+  done
+  [ -n "$first" ] || [ "${#KNOB_REBUILD_CHECK[@]}" -eq 0 ] || first=${KNOB_REBUILD_CHECK[0]##*"$u"}
+  [ -n "$first" ] || [ "${#KNOB_REBUILD_SECRET[@]}" -eq 0 ] || first=${KNOB_REBUILD_SECRET[0]##*"$u"}
+  if [ -n "$first" ]; then
+    KNOB_REBUILD=1
+    [ -n "$KNOB_REBUILD_IMAGE_LINE" ] || missing="$missing, rebuild-image"
+    [ -n "$KNOB_REBUILD_INSTALL_LINE" ] || missing="$missing, rebuild-install"
+    [ -n "$KNOB_REBUILD_RESTORE_LINE" ] || missing="$missing, rebuild-restore"
+    [ "${#KNOB_REBUILD_CHECK[@]}" -gt 0 ] || missing="$missing, rebuild-check"
+    [ -z "$missing" ] || _knob_finding "" rebuild-incomplete \
+      "the rebuild section has no ${missing#, }: an executor can't rebuild this host until it has each"
+  fi
+  # Steps pair with their undo by host and name.
+  _knob_select rebuild-undo keyed
+  undos=(${_KSEL[@]+"${_KSEL[@]}"})
+  _knob_select rebuild-step keyed
+  for i in ${_KSEL[@]+"${_KSEL[@]}"}; do
+    KNOB_REBUILD=1
+    IFS=$u read -r -a f <<<"${_KP_VAL[$i]}"
+    g=()
+    for k in ${undos[@]+"${undos[@]}"}; do
+      if [ "${_KP_KEY[$k]}" = "${_KP_KEY[$i]}" ]; then
+        IFS=$u read -r -a g <<<"${_KP_VAL[$k]}"
+        g+=("${_KP_LINE[$k]}")
+        break
+      fi
+    done
+    if [ "${#g[@]}" -eq 0 ]; then
+      KNOB_REBUILD_STEP+=("${f[0]}$u${f[1]}$u${f[2]}$u${_KP_LINE[$i]}$u$u")
+      _knob_finding "${_KP_LINE[$i]}" rebuild-no-undo \
+        "rebuild-step ${f[0]} ${f[1]} has no rebuild-undo ${f[0]} ${f[1]}: a rebuild whose step can't be undone can't be rolled back, so an executor won't plan it"
+    else
+      KNOB_REBUILD_STEP+=("${f[0]}$u${f[1]}$u${f[2]}$u${_KP_LINE[$i]}$u${g[2]}$u${g[3]}")
+    fi
+  done
+  for k in ${undos[@]+"${undos[@]}"}; do
+    KNOB_REBUILD=1
+    for i in ${_KSEL[@]+"${_KSEL[@]}"}; do
+      [ "${_KP_KEY[$i]}" != "${_KP_KEY[$k]}" ] || continue 2
+    done
+    _knob_finding "${_KP_LINE[$k]}" rebuild-no-step \
+      "rebuild-undo ${_KP_KEY[$k]} undoes no rebuild-step ${_KP_KEY[$k]}"
+  done
 }
 
 _knob_report_only() {
