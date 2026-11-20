@@ -1485,19 +1485,26 @@ pr_read_step() {
       # dispatch read it alike, and unread is a refusal. It binds this file as
       # rendered: a branch that edits its own workflow is past it, as anyone
       # with write access already is. `direct` is not held: its row lands on
-      # the dispatched branch itself, reviewed in that branch's own PR.
+      # the dispatched branch itself, reviewed in that branch's own PR. The
+      # full GITHUB_REF, not GITHUB_REF_NAME (CR 2565): a dispatch on a tag
+      # named like the default branch has the same short name. Without it
+      # (a run outside Actions) the checked-out branch answers.
       - name: Hold the run to the default branch
         run: |
           [ "${MERGE_MODE:-}" = pr ] || { echo "merge mode ${MERGE_MODE:-unset}: the row goes to the branch the run is on"; exit 0; }
-          BRANCH="${GITHUB_REF_NAME:-$(git branch --show-current)}"
           HEAD_REF=$(git ls-remote --symref origin HEAD) || HEAD_REF=''
           DEFAULT=$(awk '$1 == "ref:" && $3 == "HEAD" { sub("^refs/heads/", "", $2); print $2; exit }' <<<"$HEAD_REF")
           if [ -z "$DEFAULT" ]; then
-            echo "::error::could not read origin's default branch, so whether ${BRANCH:-this branch} is it is unknown — nothing was measured."
+            echo "::error::could not read origin's default branch, so whether this run is on it is unknown — nothing was measured."
             exit 1
           fi
-          if [ "$BRANCH" != "$DEFAULT" ]; then
-            echo "::error::this run is on ${BRANCH:-a detached HEAD}, not the default branch $DEFAULT. In pr mode a run merges the measurement branch into the branch it is on and pushes the result, so that branch's commits would reach the measurement PR into $DEFAULT unreviewed (#683). Nothing was measured: dispatch the workflow on $DEFAULT."
+          if [ -n "${GITHUB_REF:-}" ]; then
+            ON=$GITHUB_REF WANT=refs/heads/$DEFAULT
+          else
+            ON=$(git branch --show-current) WANT=$DEFAULT
+          fi
+          if [ "$ON" != "$WANT" ]; then
+            echo "::error::this run is on ${ON:-a detached HEAD}, not the default branch $DEFAULT. In pr mode a run merges the measurement branch into the branch it is on and pushes the result, so that branch's commits would reach the measurement PR into $DEFAULT unreviewed (#683). Nothing was measured: dispatch the workflow on $DEFAULT."
             exit 1
           fi
           echo "on $DEFAULT, the default branch"

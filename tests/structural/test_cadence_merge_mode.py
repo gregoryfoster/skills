@@ -302,6 +302,7 @@ class Rig:
         gh_env.write_text("")
         env = _env(
             GITHUB_ENV=str(gh_env),
+            GITHUB_REF=f"refs/heads/{ref}",
             GITHUB_REF_NAME=ref,
             FAKE_GH=str(self.gh),
             MERGE_TOKEN_COUNTS_SH=str(MERGE_TOKEN_COUNTS),

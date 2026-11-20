@@ -132,3 +132,50 @@ class TestARunOffTheDefaultBranchIsRefused:
 
     def test_the_direct_render_has_no_guard(self, tmp_path: Path):
         assert GUARD_STEP not in _render(tmp_path, None)
+
+
+def _guard(repo: Path, **ref: str) -> subprocess.CompletedProcess:
+    """The guard step alone, with only the GITHUB_REF* given: a run under
+    Actions would otherwise hand its own to the fixture."""
+    env = _env(MERGE_MODE="pr")
+    for k in ("GITHUB_REF", "GITHUB_REF_NAME"):
+        env.pop(k, None)
+    env.update(ref)
+    return subprocess.run(
+        ["bash", "-e", "-c", _steps(_render(repo.parent, "pr\n", "g"))[GUARD_STEP]],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=30,
+    )
+
+
+class TestTheRefIsReadInFull:
+    """CR 2565: GITHUB_REF_NAME can't tell a branch from a tag. A dispatch on
+    refs/tags/main, a tag named like the default branch on a feature commit,
+    passed the guard and fed that commit into the PR."""
+
+    def test_a_tag_named_like_the_default_branch_is_refused(self, tmp_path: Path):
+        rig = Rig(tmp_path, knob="pr\n")
+        feature = _feature_branch(rig)
+        dev = rig.clone("tagger")
+        _git(dev, "push", "-q", "origin", f"{feature}:refs/tags/main")
+        runner = rig.clone("runner-tag")
+        _git(runner, "checkout", "-q", "refs/tags/main")
+        r = _guard(runner, GITHUB_REF="refs/tags/main", GITHUB_REF_NAME="main")
+        assert r.returncode != 0, r.stdout
+        assert "::error::" in r.stdout and "refs/tags/main" in r.stdout
+
+    def test_the_default_branch_in_full_proceeds(self, tmp_path: Path):
+        rig = Rig(tmp_path, knob="pr\n")
+        r = _guard(rig.clone("runner-main"), GITHUB_REF="refs/heads/main")
+        assert r.returncode == 0, r.stdout + r.stderr
+
+    def test_without_github_ref_the_checked_out_branch_answers(self, tmp_path: Path):
+        rig = Rig(tmp_path, knob="pr\n")
+        runner = rig.clone("runner-local")
+        assert _guard(runner).returncode == 0
+        _git(runner, "checkout", "-q", "-b", "feature/y")
+        r = _guard(runner)
+        assert r.returncode != 0 and "feature/y" in r.stdout, r.stdout

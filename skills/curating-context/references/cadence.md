@@ -286,7 +286,9 @@ ship is refused too, so a repo that needs one needs the other.
   `feature/x` ([#683](https://github.com/gregoryfoster/skills/issues/683)).
   So a `pr` run stops before the credential is spent unless it is on the
   default branch, read from `origin` (`git ls-remote --symref origin HEAD`)
-  rather than the event, and unread is a refusal. It binds the workflow as
+  rather than the event, and unread is a refusal. The run's full
+  `GITHUB_REF` is compared with `refs/heads/<default>`, so a tag named like
+  the default branch doesn't pass. It binds the workflow as
   rendered: a branch that edits its own copy is past it, as anyone with
   write access already is. `direct` is not held. Its row lands on the
   dispatched branch itself and is reviewed in that branch's own PR; no
