@@ -47,10 +47,12 @@ jobs:
       # during the measurement, and rebasing on a depth-1 clone lacks the history
       # to replay onto.
       # Never below @v5: v4 targets Node 20, which runners force onto Node 24
-      # with a deprecation warning on every run (#163). The template's pin is
-      # only a floor: a re-render keeps an installed SHA pin, or an installed
-      # major at or above the template's, so a Dependabot bump survives (#373).
-      - uses: actions/checkout@v7
+      # with a deprecation warning on every run (#163). A SHA pin, because
+      # this job holds the key and write access, and a tag can be moved
+      # (#675). The template's pin is a floor: a re-render keeps an installed
+      # SHA pin, or a tag above the template's, so a Dependabot bump survives
+      # (#373).
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           submodules: recursive
           fetch-depth: 0
