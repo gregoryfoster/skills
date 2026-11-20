@@ -25,6 +25,8 @@ import os
 import subprocess
 from pathlib import Path
 
+import pytest
+
 from tests.structural.doc_check_fixtures import (
     CLICK_LIVE_TREE,
     make_repo,
@@ -224,3 +226,115 @@ def test_the_committed_knob_is_read_not_the_working_file(tmp_path):
     (repo / ".skills" / "merge_mode").write_text("direct\n")
     r = run_doc_check(repo)
     assert "--merge-mode pr" in " ".join(r.stdout.split()), r.stdout
+
+
+# --- CR 2568, 2570 b/f: the committed knob behind a link; what --check prints
+
+
+def _commit_link(repo: Path, link: str, target: str, files: dict[str, str]) -> None:
+    for rel, body in files.items():
+        p = repo / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(body)
+    lp = repo / link
+    lp.parent.mkdir(parents=True, exist_ok=True)
+    if lp.is_symlink() or lp.exists():
+        lp.unlink()
+    lp.symlink_to(target)
+    run_git(repo, "add", "-A")
+    run_git(repo, "commit", "-q", "-m", "link " + link)
+
+
+def test_a_knob_committed_as_a_symlink_is_read_through_it(tmp_path):
+    """CR 2568: the job's `[ -f ]` follows the link, so doc-check does too."""
+    repo = make_repo(tmp_path, CLICK_LIVE_TREE, ["docs/notes.md"])
+    _with_cadence(repo)
+    _commit_link(
+        repo,
+        ".skills/merge_mode",
+        "merge_mode.shared",
+        {".skills/merge_mode.shared": "pr\n"},
+    )
+    text = " ".join(run_doc_check(repo).stdout.split())
+    assert "unusable" not in text, text
+    assert f"bash {RENDERER} --merge-mode pr" in text, text
+
+
+def test_a_symlinked_skills_dir_is_read_through_it(tmp_path):
+    repo = make_repo(tmp_path, CLICK_LIVE_TREE, ["docs/notes.md"])
+    _with_cadence(repo)
+    _commit_link(repo, ".skills", "config/skills", {"config/skills/merge_mode": "pr\n"})
+    text = " ".join(run_doc_check(repo).stdout.split())
+    assert f"bash {RENDERER} --merge-mode pr" in text, text
+
+
+def test_a_dangling_knob_link_is_unusable_as_the_job_finds_it(tmp_path):
+    repo = make_repo(tmp_path, CLICK_LIVE_TREE, ["docs/notes.md"])
+    _with_cadence(repo)
+    _commit_link(repo, ".skills/merge_mode", "nowhere", {})
+    text = " ".join(run_doc_check(repo).stdout.split())
+    assert "unusable" in text and "--merge-mode" not in text, text
+
+
+@pytest.mark.parametrize(
+    ("target", "files"),
+    [
+        ("/etc/merge_mode", {}),
+        ("hop", {".skills/far": "pr\n"}),
+    ],
+    ids=["outside-the-tree", "two-hops"],
+)
+def test_a_link_doc_check_cannot_follow_is_said_not_guessed(tmp_path, target, files):
+    repo = make_repo(tmp_path, CLICK_LIVE_TREE, ["docs/notes.md"])
+    _with_cadence(repo)
+    if target == "hop":
+        (repo / ".skills").mkdir(exist_ok=True)
+        (repo / ".skills" / "hop").symlink_to("far")
+    _commit_link(repo, ".skills/merge_mode", target, files)
+    text = " ".join(run_doc_check(repo).stdout.split())
+    assert "check it by hand" in text, text
+    assert "--merge-mode" not in text and "the job refuses" not in text, text
+
+
+def test_carrying_a_direct_render_names_no_merge_mode_line(tmp_path):
+    """CR 2570 b: --check prints no merge mode line for a direct knob."""
+    repo = make_repo(tmp_path, CLICK_LIVE_TREE, ["docs/notes.md"])
+    run_git(repo, "checkout", "-q", "main")
+    _flip_knob(repo)
+    _with_cadence(repo)
+    run_git(repo, "rm", "-q", ".skills/merge_mode")
+    run_git(repo, "commit", "-q", "-m", "back to direct")
+    _render_on_branch(repo, "direct")
+    text = " ".join(run_doc_check(repo).stdout.split())
+    assert "already carries its direct render" in text, text
+    assert "and merge mode direct" not in text, text
+    assert "'merge mode:" not in text.split("says:")[0], text
+
+
+def test_carrying_a_pr_render_names_the_line_check_prints(tmp_path):
+    repo = make_repo(tmp_path, CLICK_LIVE_TREE, ["docs/notes.md"])
+    _with_cadence(repo)
+    _flip_knob(repo)
+    _render_on_branch(repo, "pr")
+    text = " ".join(run_doc_check(repo).stdout.split())
+    assert "'merge mode: pr" in text, text
+
+
+def test_an_uncommitted_render_is_not_called_carried(tmp_path):
+    """CR 2570 f: Step 1.5 runs before the commit, and --check reads the
+    working file. A render in the tree but not in HEAD is not carried yet."""
+    repo = make_repo(tmp_path, CLICK_LIVE_TREE, ["docs/notes.md"])
+    _with_cadence(repo)
+    _flip_knob(repo)
+    r = subprocess.run(
+        ["bash", str(INSTALL_CADENCE), "--merge-mode", "pr"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        env={k: v for k, v in os.environ.items() if not k.startswith("GIT_")},
+        timeout=60,
+    )
+    assert r.returncode == 0, r.stderr
+    text = " ".join(run_doc_check(repo).stdout.split())
+    assert "already carries" not in text, text
+    assert "not committed" in text, text
