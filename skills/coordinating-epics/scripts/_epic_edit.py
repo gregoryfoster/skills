@@ -62,9 +62,9 @@ operations (a JSON array, from --ops FILE or --ops - for stdin):
                                               line for a ref that has one.
                                               section is a heading, or the
                                               start of exactly one, up to a
-                                              word's end: "Tier 2" for "Tier 2
-                                              — bugs". Every other op takes a
-                                              heading in full
+                                              space or a colon: "Tier 2" for
+                                              "Tier 2 — bugs". Every other op
+                                              takes a heading in full
   {"op": "header", "field": "Last check-in", "value": "{checked}"}
                                               set a "- **Field:** value" line
   {"op": "log", "text": "{today}: #12 closed. No new issues. Next: #13."}
@@ -886,9 +886,10 @@ def section_level(lines: list[str]) -> int:
 
 
 def heading_by_prefix(lines: list[str], heading: str) -> str | None:
-    """The one heading that starts with `heading` and goes on past a word
-    boundary, when no heading is `heading` itself: "Tier 2" finds
-    "Tier 2 — bugs", never "Tier 20", and "Log" never finds "Logistics".
+    """The one heading that starts with `heading` and goes on after white
+    space or a colon, when no heading is `heading` itself: "Tier 2" finds
+    "Tier 2 — bugs" or "Tier 2: bugs", never "Tier 20" or "Tier 2.5"
+    (CR 2416), and "Log" never finds "Logistics".
 
     For add-line's section alone (CannObserv/processor#84 F10, #670): there a
     wrong guess adds one line. In section_span it would let the log op write
@@ -903,7 +904,7 @@ def heading_by_prefix(lines: list[str], heading: str) -> str | None:
         for t in texts
         if t.lower().startswith(want)
         and len(t) > len(want)
-        and not t[len(want)].isalnum()
+        and (t[len(want)].isspace() or t[len(want)] == ":")
     ]
     return found[0] if len(found) == 1 else None
 
