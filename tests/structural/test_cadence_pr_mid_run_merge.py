@@ -138,6 +138,36 @@ class TestAMergeCommitKeepsTheRow:
         assert len(added) == 1 and "2026-10-15" in added[0], added
         assert _creates(rig) == 2, "the restarted branch gets its PR"
 
+    def test_with_the_default_branch_moved_the_pr_shows_the_row_alone(
+        self, tmp_path: Path
+    ):
+        """CR 2571: the normal week. A commit lands on main between the runs,
+        so this run's checkout G isn't in the taken-in tip; after a merge
+        commit mid-run, a row with parents G and the tip had two merge bases
+        with main, and the new PR showed the merged row again. The default
+        branch's new tip is merged into the row before it is pushed."""
+        rig = Rig(tmp_path, knob="pr\n")
+        assert rig.run("2026-10-08").returncode == 0
+        human = rig.clone("weekly-work")
+        (human / "NOTES.md").write_text("the week's ordinary work\n")
+        _git(human, "add", "-A")
+        _git(human, "commit", "-qm", "work")
+        _git(human, "push", "-q", "origin", "HEAD:main")
+        r = rig.run("2026-10-15", between=_merge_commit_mid_run(rig, 7))
+        assert r.returncode == 0, r.stdout + r.stderr
+        bases = _git(rig.origin, "merge-base", "--all", "main", PR_BRANCH).split()
+        assert bases == [_git(rig.origin, "rev-parse", "main")], (
+            "the PR's branch must contain main, one merge base"
+        )
+        diff = _git(rig.origin, "diff", f"main...{PR_BRANCH}")
+        added = [
+            ln
+            for ln in diff.splitlines()
+            if ln.startswith("+") and not ln.startswith("+++")
+        ]
+        assert len(added) == 1 and "2026-10-15" in added[0], diff
+        assert rig.show(PR_BRANCH) == ["2026-10-01", "2026-10-08", "2026-10-15"]
+
     def test_squashed_the_row_is_still_refused(self, tmp_path: Path):
         rig = Rig(tmp_path, knob="pr\n")
         assert rig.run("2026-10-08").returncode == 0
