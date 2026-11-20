@@ -2,10 +2,10 @@
 
 Every one of these was hit for real: the first eight during the two source
 audits ([#212](https://github.com/gregoryfoster/skills/issues/212)), the ninth
-in a field run (CannObserv/power-map#727). Several were nearly shipped bugs. They share one property, which is the reason they are
-collected rather than scattered: **each is a GitHub behaviour that differs from
-the natural reading of GitHub's documentation**, and each was settled by
-running a probe.
+in a field run (CannObserv/power-map#727). Several were nearly shipped bugs.
+They share one property, which is the reason they are collected rather than
+scattered: **each is a GitHub behaviour that differs from the natural reading
+of GitHub's documentation**, and each was settled by running a probe.
 
 That is the stance. When the docs and a probe disagree about what Actions will
 do, the probe wins and the probe's result gets written down next to the rule it
