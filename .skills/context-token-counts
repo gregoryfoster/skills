@@ -7,7 +7,7 @@
 3182 1220 docs/BUDGETS.md
 21138 7491 docs/CONVENTIONS.md
 3255 1238 docs/GATE.md
-16017 6166 docs/KNOBS.md
+17195 6594 docs/KNOBS.md
 5485 2060 docs/SKILLS.md
 26882 9992 docs/STYLE.md
 11225 4324 skills/adopting-dependabot/SKILL.md
@@ -19,7 +19,7 @@
 4206 1582 skills/adopting-dependabot/references/security-updates.md
 12092 4481 skills/auditing-ci-cost/SKILL.md
 10745 4192 skills/auditing-ci-cost/references/measurement.md
-7601 2818 skills/auditing-ci-cost/references/non-levers.md
+7014 2529 skills/auditing-ci-cost/references/non-levers.md
 4171 1459 skills/auditing-ci-cost/references/path-filter-replay.md
 6439 2303 skills/auditing-ci-cost/references/traps.md
 13174 4817 skills/coordinating-epics/SKILL.md
@@ -263,7 +263,8 @@
 15683 5642 skills/reviewing-code-python-click/SKILL.md
 15376 5643 skills/reviewing-code-python-fastapi/SKILL.md
 11714 4238 skills/reviewing-code/SKILL.md
-16050 5986 skills/shipping-work/SKILL.md
+16024 5979 skills/shipping-work/SKILL.md
+7250 2673 skills/shipping-work/references/attestation.md
 6082 2253 skills/shipping-work/references/deploy-command.md
 9651 3851 skills/shipping-work/references/gate-topology.md
 10315 4096 skills/shipping-work/references/pr-mode.md
