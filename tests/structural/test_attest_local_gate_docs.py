@@ -127,6 +127,13 @@ class TestTheSnippetKeepsItsRules:
         assert "pull_request_target" not in cond
         assert "Keep a scheduled run" in _flat(REFERENCE)
 
+    def test_a_tags_release_run_does_not_skip(self):
+        """CR 2675: a tag push is a `push` too, and a release workflow would
+        have skipped its heavy tier for an attested commit."""
+        (heavy,) = [s for s in _steps() if "if" in s]
+        cond = " ".join(heavy["if"].split())
+        assert "|| startsWith(github.ref, 'refs/tags/')" in cond
+
     def test_the_job_may_read_statuses(self):
         assert _snippet()["permissions"] == {"contents": "read", "statuses": "read"}
 

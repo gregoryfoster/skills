@@ -54,11 +54,17 @@ BRANCH=$(git branch --show-current)
 # A file here or in the commit is all that is asked without the knob: no gh,
 # no gate, no library. The library then reads the knob from the commit, and a
 # file that is only in the work tree is refused there, by name.
-# The committed knob's one word is `off`, by _attest-gate.sh's grammar. Asked
-# only when that library is missing; with it, the library reads the knob.
+# The committed knob's one word is `off`, by _attest-gate.sh's grammar: a
+# regular file with no NUL byte in it (CR 2677). Asked only when that library
+# is missing; with it, the library reads the knob.
 attest_knob_says_off() {
-  local text line count=0 word=""
+  local entry text size kept line count=0 word=""
   local -a words
+  entry=$(git ls-tree HEAD -- .skills/attest-local-gate 2>/dev/null) || return 1
+  case ${entry%% *} in 100644 | 100755) ;; *) return 1 ;; esac
+  size=$(git cat-file -s HEAD:.skills/attest-local-gate 2>/dev/null) || return 1
+  kept=$(git cat-file blob HEAD:.skills/attest-local-gate 2>/dev/null | LC_ALL=C tr -d '\000' | wc -c) || return 1
+  [[ $((size)) -eq $((kept)) ]] || return 1
   text=$(git cat-file blob HEAD:.skills/attest-local-gate 2>/dev/null) || return 1
   while IFS= read -r line || [[ -n "$line" ]]; do
     line=${line%$'\r'}
