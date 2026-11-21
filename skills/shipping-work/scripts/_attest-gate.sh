@@ -169,14 +169,19 @@ attest_read_knob() {
 # git's defaults are not trusted (CR 2664). A repo's config can hide what
 # makes the files differ from the commit, and a gate that passes only because
 # of what is hidden would be attested for a commit that fails it:
-#   status.showUntrackedFiles=no     hides every untracked file
+#   status.showUntrackedFiles=no     hides every untracked file, in this
+#                                    repo's config, the user's or a submodule's
 #   submodule.<name>.ignore=dirty    hides an edit inside a submodule, which
 #                                    is where a consumer vendors this gate
 #   skip-worktree, assume-unchanged  tell git not to look at a path at all,
 #                                    so no status can vouch for it
 _attest_tree_state() {
   local out hidden rc=0
-  out=$(git status --porcelain --untracked-files=all --ignore-submodules=none) || rc=$?
+  # `-c` as well as the flag (CR 2674): git asks each submodule for its own
+  # status, and only `-c` reaches that, so an untracked file inside one stayed
+  # hidden when the setting was in the submodule's config or the user's.
+  out=$(git -c status.showUntrackedFiles=all status --porcelain \
+    --untracked-files=all --ignore-submodules=none) || rc=$?
   if [[ $rc -ne 0 ]]; then
     echo "ERROR: git status failed (exit $rc): the tree state is unknown," >&2
     echo "       which is not clean. Nothing was pushed." >&2

@@ -793,6 +793,48 @@ class TestNeverSuccessForATreeTheGateDidNotPass:
         assert on.lines("gate") == []
         _nothing_was_pushed(on, result)
 
+    @pytest.mark.parametrize("where", ["submodule", "global"])
+    def test_an_untracked_file_inside_a_submodule_is_still_a_dirty_tree(
+        self, on, tmp_path, where
+    ):
+        """CR 2674: git asks a submodule for its own status, and the flags
+        on the outer command don't reach that. With showUntrackedFiles=no in
+        the submodule's config or the user's, a vendored gate that passes
+        only because of an untracked file beside it was attested."""
+        lib = tmp_path / "lib"
+        lib.mkdir()
+        _git(lib, "init", "-q", "-b", "main")
+        _git(lib, "config", "user.email", "test@example.com")
+        _git(lib, "config", "user.name", "test")
+        (lib / "gate.sh").write_text(". ./helper.sh\n")
+        _git(lib, "add", "-A")
+        _git(lib, "commit", "-q", "-m", "lib")
+        _git(
+            on.repo,
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            "-q",
+            str(lib),
+            "vendor",
+        )
+        _git(on.repo, "add", "-A")
+        _git(on.repo, "commit", "-q", "-m", "vendor the lib")
+        env = {}
+        if where == "submodule":
+            _git(on.repo / "vendor", "config", "status.showUntrackedFiles", "no")
+        else:
+            config = tmp_path / "gitconfig"
+            config.write_text("[status]\n\tshowUntrackedFiles = no\n")
+            env["GIT_CONFIG_GLOBAL"] = str(config)
+        (on.repo / "vendor" / "helper.sh").write_text("true\n")
+        result = on.push(**env)
+        assert result.returncode == 1, result.stdout + result.stderr
+        assert "vendor" in result.stderr
+        assert on.lines("gate") == []
+        _nothing_was_pushed(on, result)
+
     @pytest.mark.parametrize("flag", ["--skip-worktree", "--assume-unchanged"])
     def test_a_path_git_was_told_not_to_watch_cannot_be_vouched_for(self, on, flag):
         """CR 2664: git reports no change to such a path, whatever is in it,
