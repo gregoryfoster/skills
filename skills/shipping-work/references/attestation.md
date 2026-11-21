@@ -104,15 +104,21 @@ jobs:
                 --jq '[.statuses[] | select(.context == "gate/local" and .state == "success")] | length')
           echo "attested=$([ "$n" -gt 0 ] && echo yes || echo no)" >>"$GITHUB_OUTPUT"
       - name: Heavy tier
-        # Runs unless attested, and always for a bot's PR or a fork's:
-        # neither came from a local gate.
+        # Skipped only for an attested commit, on a push or a pull request,
+        # and never for a bot's PR or a fork's: neither came from a local
+        # gate. Every other event (a schedule, a manual run,
+        # pull_request_target) always runs it.
         if: >-
           steps.attest.outputs.attested != 'yes'
+          || (github.event_name != 'push' && github.event_name != 'pull_request')
           || (github.event_name == 'pull_request'
               && (github.event.pull_request.user.type == 'Bot'
                   || github.event.pull_request.head.repo.full_name != github.repository))
         run: uv run pytest
 ```
+
+Keep a scheduled run of that workflow. It always runs the heavy tier, and it
+is the only clean-runner run a directly shipped commit gets.
 
 ## What the status is not
 

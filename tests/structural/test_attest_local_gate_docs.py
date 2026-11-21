@@ -108,6 +108,20 @@ class TestTheSnippetKeepsItsRules:
         assert guarded, cond
         assert "'Bot'" in guarded.group(1) and "full_name" in guarded.group(1)
 
+    def test_only_a_push_or_a_pull_request_may_skip(self):
+        """CR 2665: a schedule, a manual run and pull_request_target read
+        github.sha too. Skipping there would leave a directly shipped commit
+        with no clean-runner run at all, and pull_request_target would trust
+        a status on a bot's or a fork's branch."""
+        (heavy,) = [s for s in _steps() if "if" in s]
+        cond = " ".join(heavy["if"].split())
+        assert (
+            "|| (github.event_name != 'push' && github.event_name != 'pull_request')"
+            in cond
+        )
+        assert "pull_request_target" not in cond
+        assert "Keep a scheduled run" in _flat(REFERENCE)
+
     def test_the_job_may_read_statuses(self):
         assert _snippet()["permissions"] == {"contents": "read", "statuses": "read"}
 
