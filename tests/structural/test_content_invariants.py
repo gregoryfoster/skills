@@ -1356,6 +1356,16 @@ GATE_SCRIPTS = {
         "it reads as absent skips a deploy or a check, so every unusable "
         "shape dies with exit 2 and its git probe is captured"
     ),
+    "_attest-gate.sh": (
+        "sourced by push.sh when `.skills/attest-local-gate` is on (#688), and "
+        "its verdicts decide two things: whether the push happens (the knob "
+        "read from the commit, the tree state, the gate's exit code, each "
+        "captured, with an unusable knob or a gate that did not run exit 2 "
+        "and never a pass) and whether `gate/local` = `success` is written, "
+        "which is reached only after the gate exited 0 on a clean tree. gh's "
+        "stderr is never redirected, and a refused write is said on both "
+        "streams (test_attest_local_gate.py)"
+    ),
     "merge-mode.sh": (
         "its answer decides whether Step 3 merges locally or Step 4 opens a "
         "PR, and whether run-deploy-command.sh holds the deploy to the "
@@ -1433,7 +1443,9 @@ NON_GATE_SCRIPTS = {
     ),
     "push.sh": (
         "an action, not a gate: `git push`'s own exit code is the verdict and "
-        "no output is parsed"
+        "no output is parsed. With `.skills/attest-local-gate` on it sources "
+        "_attest-gate.sh, classified as a gate above, and branches only on "
+        "that library's return codes (#688)"
     ),
     "cloud-session-start.sh": (
         "an action, off the ship path: the SessionStart hook that provisions "

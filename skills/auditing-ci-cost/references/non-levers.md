@@ -34,7 +34,7 @@ public repo names that instead, since there no shape makes minutes cost money.
 | Blanket `**.md` in `paths-ignore` | either | Package metadata can make a README a build input. See trap 4 in [traps.md](traps.md). |
 | Reading GitHub's glob docs instead of probing | either | The implementation is more lenient than the prose. See trap 6. |
 | A shallow checkout to save fetch time | either | It costs coverage, silently. A shallow submodule checkout (`actions/checkout`'s default depth, with `submodules: recursive`) turned 8 of power-map's pin-ancestry tests into skips that read green; `fetch-depth: 0` cost about 23 MiB of history. See trap 9 in [traps.md](traps.md). |
-| Local-gate attestation | public; `job-count`; bot or fork PRs | Live only in a private, `duration`-shaped repo whose PRs come from people who just ran the same gate locally ([#602](https://github.com/gregoryfoster/skills/issues/602)). Rejected on power-map because it's public, so there was nothing to save. Its costs, and a sketch: [below](#local-gate-attestation-where-it-is-live). |
+| Local-gate attestation | public; `job-count`; bot or fork PRs | Live only in a private, `duration`-shaped repo whose PRs come from people who just ran the same gate locally ([#602](https://github.com/gregoryfoster/skills/issues/602)). Rejected on power-map because it's public, so there was nothing to save. Its costs, and the step that ships it: [below](#local-gate-attestation-where-it-is-live). |
 | Cutting minutes on a public repo | public, standard runners | No minute is billed, so a cut saves no money by itself ([#597](https://github.com/gregoryfoster/skills/issues/597)). CannObserv/power-map's census read 65 min over 54 jobs, 50 of them Dependabot's own (event `dynamic`), and invited a path filter whose replay showed 3 false skips out of 3: risk, for nothing. What costs there is PR latency, the owner's concurrent-job limit, shared across its repos, and Dependabot's fan-out. A cut is a lever only through one of those. |
 
 ## Local-gate attestation: where it is live
@@ -51,7 +51,7 @@ It's live only when all three hold: the repo is **private**, the cost shape is
 saving with the census before and after; a saving quoted without that is an
 estimate.
 
-Its costs, which are why it would be opt-in:
+Its costs, which are why it is opt-in:
 
 - It trusts the operator's machine. Unpinned tools, a dirty venv or local-only
   data can pass locally and fail on a clean runner, and only a clean runner
@@ -61,37 +61,20 @@ Its costs, which are why it would be opt-in:
 - The local gate ran on the branch head, not on the merge with the base that a
   `pull_request` run tests. CI must read the status on
   `github.event.pull_request.head.sha`, since `github.sha` is the merge commit.
-- The ship step gains a GitHub write, and its token needs `statuses: write`.
-- It is never a required status by itself, unless branch protection also
-  requires the runner job for bot PRs.
+- The ship step gains a GitHub write, made with the operator's own `gh`
+  login, and the CI job's token needs `statuses: read`.
+- It is never a required status by itself: a bot's PR never gets one. Branch
+  protection requires the runner job, which reads it.
 
-**A sketch, not shipped.** `shipping-work` has no such step. The opt-in knob
-it would read is proposed as `attest-local-gate` and doesn't exist yet:
-
-```bash
-# SKETCH: after a green local gate, on a clean tree, for the SHA being pushed.
-gh api "repos/{owner}/{repo}/statuses/$(git rev-parse HEAD)" \
-  -f state=success -f context=gate/local \
-  -f description="tree $(git rev-parse 'HEAD^{tree}'), ${GATE_SECONDS}s"
-```
-
-```yaml
-# SKETCH: CI trusts the attestation for the heavy tier only, never for bots.
-- id: attest
-  env: { GH_TOKEN: "${{ github.token }}", HEAD: "${{ github.event.pull_request.head.sha }}" }
-  run: |
-    # The combined status keeps each context's latest state; /statuses lists
-    # every status ever posted, so a later failure would still count as yes.
-    n=$(gh api "repos/${{ github.repository }}/commits/$HEAD/status" \
-          --jq '[.statuses[] | select(.context == "gate/local" and .state == "success")] | length')
-    echo "attested=$([ "$n" -gt 0 ] && echo yes || echo no)" >>"$GITHUB_OUTPUT"
-- name: pytest
-  if: steps.attest.outputs.attested != 'yes' || github.event.pull_request.user.type == 'Bot'
-  run: uv run pytest
-```
-
-A status on the exact SHA already names the tree, so the description's tree
-hash is for a person reading it, not a second check.
+**Shipped, and opt-in.** `shipping-work`'s `push.sh` does this for a repo
+that commits `.skills/attest-local-gate` as `on`: it asks the gate about the
+tree before it pushes, then posts `gate/local` = `success` on the pushed SHA
+and reads it back ([#688](https://github.com/gregoryfoster/skills/issues/688)).
+The knob, the token and the workflow step to copy are in
+[its reference](../../shipping-work/references/attestation.md). The step
+keeps three rules: read the combined status, never `/statuses`; on a pull
+request read `pull_request.head.sha`, never `github.sha`; and never trust the
+status for a bot's PR or a fork's.
 
 ## Writing a new row
 
