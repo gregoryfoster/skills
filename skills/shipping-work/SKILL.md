@@ -60,7 +60,7 @@ bash "${SD:?}/$S"
 
 The first line is a preflight: when `.skills/doctor.sh` is present, it heals any dangling vendor symlinks (or reports an actionable error); when absent, the group is a no-op. `|| exit 1` skips `pre-ship.sh` if the doctor reports unrecoverable state so the original "No such file or directory" noise doesn't drown out the doctor's message. The loop then resolves each script against the skill directory rather than the cwd — a bare `scripts/` path resolves relative to the project root, where the script does not exist ([#63](https://github.com/gregoryfoster/skills/issues/63)). A project-local `scripts/<name>` still wins, for that script alone: a `scripts/pre-ship.sh` — a wrapper that loads what the project needs and execs the skill's gate, or a whole gate for a toolchain the skill's cannot detect — must not send the others looking beside it ([#301](https://github.com/gregoryfoster/skills/issues/301)). A script found nowhere stops the block here, by name. `pre-ship.sh` is listed last, so the final line runs it. Resolution runs *after* the doctor so a freshly healed symlink chain is visible to it.
 
-In every later step a `<name.sh>` is a **placeholder** for the path printed for that script — substitute it literally (same convention as `init-project-fastapi` Phase 0). Each Bash invocation runs in a fresh shell, so nothing the block set is inherited.
+In every later step a `<name.sh>` is a **placeholder** for the path printed for that script — substitute it literally. Each Bash invocation runs in a fresh shell, so nothing the block set is inherited.
 
 ```
 NO CONTINUATION IF CHECKS FAIL
@@ -109,8 +109,6 @@ If this checkout is a worktree (test: `git rev-parse --show-toplevel` differs fr
 2. Invoke `using-git-worktrees` Phase 4 to merge the branch back into the main checkout before continuing
 3. The remaining steps (push, GH comments, close) run from the main checkout
 
-If this is a single (non-worktree) checkout, skip this step.
-
 **`pr` mode:** check it in either checkout shape. `bash "<merge-mode.sh>"` prints `direct` (no `.skills/merge_mode`: this procedure as written) or `pr`, where work lands through a PR merged on GitHub and each step's `pr` line below replaces what it names ([references/pr-mode.md](references/pr-mode.md)). Exit 2: the knob is unusable; fix it, never read it as `direct`. Here: no Phase 4 merge; stay on the branch, in the worktree or not. A PR already merged starts the post-merge pass (Step 8) instead.
 
 ### Step 3 — Ensure on main
@@ -128,7 +126,7 @@ Without `.skills/deploy_command`, a checkout that is a unit's `WorkingDirectory=
 bash "<push.sh>"
 ```
 
-Confirm push succeeded before proceeding.
+Confirm push succeeded before proceeding. With `.skills/attest-local-gate`, it gates first and attests the pass; report its `Attestation:` line ([references/attestation.md](references/attestation.md)).
 
 **`pr` mode:** this pushes the branch. Then open the PR with `Closes #<n>` per in-scope issue, or let the push update an open one; `gh pr view` finds merged and closed PRs too, so read its `state`.
 
@@ -211,7 +209,6 @@ If nothing applies, omit this step entirely.
 ## Notes
 
 - If `gh` CLI hits errors (e.g., Projects API changes), use `--json` flag workarounds as needed
-- The project's AGENTS.md is authoritative for commit conventions — read it before committing
 
 **Self-budget:** held to a **6,000-token ratchet (estimate and exact)** by
 `tests/structural/test_skill_self_budget.py` — both readings must clear it, so

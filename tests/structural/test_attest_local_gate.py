@@ -270,6 +270,24 @@ def on(world: World) -> World:
     return world
 
 
+def _path_without_gh(tmp_path: Path, farm: bool) -> str:
+    """A PATH with git and the shell's tools on it and no gh. The system
+    directories do, unless gh is installed into one of them (a host that got
+    it from apt has /usr/bin/gh): then a directory of links to everything
+    there but gh stands in. `farm` asks for the links either way, so that
+    arm is exercised on every host instead of skipped on most."""
+    dirs = ["/usr/bin", "/bin"]
+    if not farm and not shutil.which("gh", path=":".join(dirs)):
+        return ":".join(dirs)
+    links = tmp_path / "no-gh"
+    links.mkdir()
+    for d in dirs:
+        for tool in Path(d).iterdir():
+            if tool.name != "gh" and not (links / tool.name).exists():
+                (links / tool.name).symlink_to(tool)
+    return str(links)
+
+
 def _is_the_plain_push(stdout: str, branch: str = "main") -> None:
     """The pre-knob script's two lines around git's own, whose wording for
     the upstream it set varies by version. Nothing about an attestation."""
@@ -277,6 +295,16 @@ def _is_the_plain_push(stdout: str, branch: str = "main") -> None:
     assert stdout.endswith("Push succeeded.\n"), stdout
     assert "ttest" not in stdout, stdout
     assert len(stdout.splitlines()) <= 3, stdout
+
+
+def _posts(world: World) -> list[list[str]]:
+    return [row for row in world.lines("gh") if "POST" in row]
+
+
+def _nothing_was_pushed(world: World, result: subprocess.CompletedProcess) -> None:
+    assert not world.remote_has(world.head()), result.stdout + result.stderr
+    assert "Push succeeded." not in result.stdout
+    assert world.lines("gh") == [], "no status may be written before a push"
 
 
 class TestWithoutTheKnobNothingChanges:
@@ -363,3 +391,447 @@ class TestWithoutTheKnobNothingChanges:
         assert result.returncode != 0
         assert "Push succeeded." not in result.stdout
         assert w.lines("gh") == []
+
+
+class TestAGreenGateIsSaidOnTheCommit:
+    def test_it_verifies_then_pushes_then_writes_then_reads_back(self, on):
+        sha, tree = on.head(), on.tree()
+        result = on.push()
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert on.remote_has(sha)
+
+        (gate,) = on.lines("gate")
+        assert "pushed=no" in gate, "the gate is asked before the push"
+        assert f"cwd={on.repo.resolve()}" in gate
+
+        post, read = on.lines("gh")
+        assert post[1:4] == ["api", "--hostname", "github.com"]
+        assert f"repos/acme/widgets/statuses/{sha}" in post
+        assert "state=success" in post
+        assert f"context={CONTEXT}" in post
+        (description,) = [a for a in post if a.startswith("description=")]
+        assert tree in description, "the description names the tree, for a reader"
+        assert len(description) - len("description=") <= 140
+
+        assert "POST" not in read
+        assert f"repos/acme/widgets/commits/{sha}/status?per_page=100" in read, (
+            "read back through the combined status, as CI reads it, a whole page"
+        )
+        assert not any(a.endswith("/statuses") for a in read)
+
+        assert "Push succeeded." in result.stdout
+        assert f"Attestation: {CONTEXT} = success posted on {sha}" in result.stdout
+        assert result.stdout.index("stub gate: stdout line") < result.stdout.index(
+            "Pushing main to origin..."
+        )
+        assert "stub gate: stderr line" in result.stderr, "the gate's stderr is shown"
+
+    def test_the_read_back_asks_for_this_context_only(self, on):
+        on.push()
+        read = on.lines("gh")[-1]
+        jq = read[read.index("--jq") + 1]
+        assert f'select(.context == "{CONTEXT}")' in jq
+        assert ".statuses[]" in jq
+
+    def test_pr_mode_attests_the_branch_head(self, on):
+        """`pr` mode pushes the branch, so its head, which the PR's CI reads
+        as pull_request.head.sha, is what carries the status."""
+        _git(on.repo, "checkout", "-q", "-b", "work")
+        (on.repo / "tracked.txt").write_text("y\n")
+        _git(on.repo, "commit", "-q", "-am", "work")
+        sha = on.head()
+        result = on.push()
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "Pushing work to origin..." in result.stdout
+        assert f"repos/acme/widgets/statuses/{sha}" in _posts(on)[0]
+        assert _git(on.remote, "rev-parse", "refs/heads/work") == sha
+
+    def test_a_reused_pass_attests_and_a_fresh_run_is_never_forced(self, on):
+        """The step asks the gate and takes its answer. It sets no
+        GATE_STAMP, so a gate that reuses a recorded pass for this exact tree
+        answers 0 without running, and that answer attests."""
+        result = on.push()
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "stamp=unset" in on.lines("gate")[0]
+        assert len(_posts(on)) == 1
+
+    def test_the_callers_gate_stamp_reaches_the_gate_unchanged(self, on):
+        on.push(GATE_STAMP="off")
+        assert "stamp=off" in on.lines("gate")[0]
+
+    def test_running_it_again_writes_again(self, on):
+        """The retry after a refused write: the push is a no-op, the gate
+        answers again, and the status is written."""
+        first = on.push(GH_POST_EXIT="1", GH_POST_STDERR="gh: HTTP 502")
+        assert first.returncode == 0 and "ATTESTATION NOT POSTED" in first.stderr
+        second = on.push()
+        assert second.returncode == 0, second.stdout + second.stderr
+        assert (
+            f"Attestation: {CONTEXT} = success posted on {on.head()}" in second.stdout
+        )
+
+    def test_the_comments_and_blank_lines_of_the_knob_are_ignored(self, world):
+        world.commit_knob("# attest the local gate (#688)\r\n\r\n  on  \r\n")
+        result = world.push()
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert len(_posts(world)) == 1
+
+    @pytest.mark.parametrize(
+        ("url", "slug", "host"),
+        [
+            ("https://github.com/acme/widgets", "acme/widgets", "github.com"),
+            ("git@github.com:acme/widgets.git", "acme/widgets", "github.com"),
+            ("git@github-acme:acme/widgets.git", "acme/widgets", "github.com"),
+            ("ssh://git@github.com/acme/widgets.git", "acme/widgets", "github.com"),
+            (
+                "https://ghe.example.com/acme/widgets.git",
+                "acme/widgets",
+                "ghe.example.com",
+            ),
+        ],
+        ids=["https", "scp", "ssh-alias", "ssh-url", "enterprise"],
+    )
+    def test_the_repo_is_origins_own(self, tmp_path, url, slug, host):
+        """origin is where push.sh pushed, so its configured URL names the
+        repository, never gh's pick among the remotes (an `upstream` fork
+        parent would win there). An ssh alias is resolved as #576 does."""
+        w = _world(tmp_path / "w", url=url)
+        _git(
+            w.repo, "remote", "add", "upstream", "https://github.com/parent/widgets.git"
+        )
+        w.commit_knob("on\n")
+        result = w.push()
+        assert result.returncode == 0, result.stdout + result.stderr
+        post = _posts(w)[0]
+        assert post[1:4] == ["api", "--hostname", host]
+        assert f"repos/{slug}/statuses/{w.head()}" in post
+
+
+class TestTheGateIsWhatStep1Resolves:
+    def test_the_skills_own_gate_answers_when_the_project_has_none(self, tmp_path):
+        """A repo with no scripts/pre-ship.sh is gated by the skill's, found
+        beside push.sh."""
+        w = _world(tmp_path / "w", gate=False)
+        w.commit_knob("on\n")
+        skill = tmp_path / "skill" / "scripts"
+        skill.mkdir(parents=True)
+        shutil.copy(PUSH, skill / "push.sh")
+        shutil.copy(LIB, skill / "_attest-gate.sh")
+        (skill / "pre-ship.sh").write_text(GATE_STUB)
+        result = w.push(script=skill / "push.sh")
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert len(w.lines("gate")) == 1 and len(_posts(w)) == 1
+
+    def test_a_wrapper_beside_the_link_wins_over_the_links_target(self, tmp_path):
+        """The per-file symlink shape keeps a real pre-ship.sh wrapper beside
+        links to the vendored scripts. Step 1 runs that wrapper, so the
+        attestation asks it too, not the vendored gate beside push.sh's
+        target, which would run without the env the wrapper loads."""
+        w = _world(tmp_path / "w", gate=False)
+        w.commit_knob("on\n")
+        vendor = tmp_path / "vendor" / "scripts"
+        vendor.mkdir(parents=True)
+        shutil.copy(PUSH, vendor / "push.sh")
+        shutil.copy(LIB, vendor / "_attest-gate.sh")
+        (vendor / "pre-ship.sh").write_text("#!/usr/bin/env bash\nexit 1\n")
+        local = tmp_path / "consumer" / "scripts"
+        local.mkdir(parents=True)
+        (local / "push.sh").symlink_to(vendor / "push.sh")
+        (local / "pre-ship.sh").write_text(GATE_STUB)
+        result = w.push(script=local / "push.sh")
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert len(w.lines("gate")) == 1, "the wrapper beside the link ran"
+        assert len(_posts(w)) == 1
+
+    def test_the_library_is_found_through_a_per_file_symlink(self, tmp_path):
+        w = _world(tmp_path / "w")
+        w.commit_knob("on\n")
+        local = tmp_path / "consumer" / "scripts"
+        local.mkdir(parents=True)
+        (local / "push.sh").symlink_to(PUSH)
+        result = w.push(script=local / "push.sh")
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert len(_posts(w)) == 1
+
+    def test_a_missing_library_is_exit_2_before_the_push(self, tmp_path):
+        """The knob is on and the step can't run: said, never skipped."""
+        w = _world(tmp_path / "w")
+        w.commit_knob("on\n")
+        alone = tmp_path / "alone" / "scripts"
+        alone.mkdir(parents=True)
+        shutil.copy(PUSH, alone / "push.sh")
+        result = w.push(script=alone / "push.sh")
+        assert result.returncode == 2, result.stdout + result.stderr
+        assert "_attest-gate.sh" in result.stderr
+        _nothing_was_pushed(w, result)
+
+    def test_no_gate_anywhere_is_exit_2_before_the_push(self, tmp_path):
+        w = _world(tmp_path / "w", gate=False)
+        w.commit_knob("on\n")
+        skill = tmp_path / "skill" / "scripts"
+        skill.mkdir(parents=True)
+        shutil.copy(PUSH, skill / "push.sh")
+        shutil.copy(LIB, skill / "_attest-gate.sh")
+        result = w.push(script=skill / "push.sh")
+        assert result.returncode == 2, result.stdout + result.stderr
+        assert "pre-ship.sh" in result.stderr
+        _nothing_was_pushed(w, result)
+
+
+class TestNeverSuccessForATreeTheGateDidNotPass:
+    def test_a_failing_gate_is_exit_1_and_nothing_is_pushed(self, on):
+        result = on.push(GATE_EXIT="1")
+        assert result.returncode == 1, result.stdout + result.stderr
+        assert "the gate failed" in result.stderr
+        assert "Nothing was pushed" in result.stderr
+        _nothing_was_pushed(on, result)
+
+    @pytest.mark.parametrize(
+        ("env", "code"),
+        [
+            ({"GATE_EXIT": "2"}, "2"),
+            ({"GATE_EXIT": "127"}, "127"),
+            ({"GATE_SIGNAL": "TERM"}, "143"),
+        ],
+        ids=["exit-2", "exit-127", "sigterm"],
+    )
+    def test_a_gate_that_could_not_run_is_exit_2(self, on, env, code):
+        """Exit 2 is never a pass, and neither is a gate that was killed."""
+        result = on.push(**env)
+        assert result.returncode == 2, result.stdout + result.stderr
+        assert f"exit {code}" in result.stderr
+        assert "Nothing was pushed" in result.stderr
+        _nothing_was_pushed(on, result)
+
+    @pytest.mark.parametrize("kind", ["tracked", "untracked", "staged"])
+    def test_a_dirty_tree_is_exit_1_and_the_gate_is_not_asked(self, on, kind):
+        """A gate run on files that aren't the commit says nothing about the
+        commit, so it isn't run at all."""
+        if kind == "untracked":
+            (on.repo / "scratch").write_text("x\n")
+        else:
+            (on.repo / "tracked.txt").write_text("uncommitted\n")
+            if kind == "staged":
+                _git(on.repo, "add", "-A")
+        result = on.push()
+        assert result.returncode == 1, result.stdout + result.stderr
+        assert "uncommitted" in result.stderr
+        assert on.lines("gate") == []
+        _nothing_was_pushed(on, result)
+
+    def test_a_knob_switched_off_in_the_work_tree_only_is_a_dirty_tree(self, on):
+        (on.repo / KNOB).write_text("off\n")
+        result = on.push()
+        assert result.returncode == 1, result.stdout + result.stderr
+        _nothing_was_pushed(on, result)
+
+    @pytest.mark.parametrize("did", ["untracked", "modify", "commit"])
+    def test_a_tree_the_gate_changed_is_exit_1(self, on, did):
+        """The gate passed on something, but no longer on what is here."""
+        result = on.push(GATE_DO=did)
+        assert result.returncode == 1, result.stdout + result.stderr
+        assert "changed under the gate" in result.stderr
+        assert "Push succeeded." not in result.stdout
+        assert on.lines("gh") == []
+
+    def test_an_unreadable_tree_state_is_exit_2(self, on):
+        """git status failing is not a clean tree (#257)."""
+        (on.repo / ".git" / "index").write_bytes(b"not an index")
+        result = on.push()
+        assert result.returncode == 2, result.stdout + result.stderr
+        assert on.lines("gate") == []
+        assert on.lines("gh") == []
+        assert "Push succeeded." not in result.stdout
+
+
+class TestARefusedWriteIsLoudAndTheShipGoesOn:
+    def _refused(self, world: World, result: subprocess.CompletedProcess) -> None:
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert world.remote_has(world.head()), "the push landed first"
+        assert "Push succeeded." in result.stdout
+        assert "ATTESTATION NOT POSTED" in result.stderr
+        assert "ship goes on" in result.stderr
+        assert "full tier" in result.stderr
+        assert "by hand" in result.stderr
+        assert f"Attestation: {CONTEXT} NOT posted" in result.stdout
+        assert f"{CONTEXT} = success posted" not in result.stdout
+
+    @pytest.mark.parametrize(
+        ("code", "message"),
+        [
+            ("1", "gh: Resource not accessible by personal access token (HTTP 403)"),
+            ("1", "error connecting to api.github.com"),
+            ("4", "To get started with GitHub CLI, please run:  gh auth login"),
+            ("1", "gh: No commit found for SHA (HTTP 422)"),
+        ],
+        ids=["no-scope", "network", "no-token", "unknown-sha"],
+    )
+    def test_ghs_refusal_is_shown_verbatim(self, on, code, message):
+        result = on.push(GH_POST_EXIT=code, GH_POST_STDERR=message)
+        self._refused(on, result)
+        assert message in result.stderr
+        assert f"exit {code}" in result.stderr
+        assert len(on.lines("gh")) == 1, "nothing is read back after a refusal"
+
+    @pytest.mark.parametrize("farm", [False, True], ids=["system-dirs", "link-farm"])
+    def test_no_gh_on_path(self, on, tmp_path, farm):
+        result = on.push(path=_path_without_gh(tmp_path, farm))
+        self._refused(on, result)
+        assert "gh is not on PATH" in result.stderr
+        assert on.lines("gh") == []
+
+    def test_an_origin_that_names_no_host_repo(self, tmp_path):
+        w = _world(tmp_path / "w", url=str(tmp_path / "w" / "remote.git"))
+        w.commit_knob("on\n")
+        result = w.push()
+        self._refused(w, result)
+        assert "origin" in result.stderr
+        assert w.lines("gh") == []
+
+    def test_a_head_that_moved_during_the_push(self, on):
+        """A pre-push hook that commits: what was verified is no longer
+        HEAD, so nothing is written for either commit."""
+        hook = on.repo / ".git" / "hooks" / "pre-push"
+        hook.parent.mkdir(exist_ok=True)
+        hook.write_text(
+            "#!/usr/bin/env bash\ngit commit -q --allow-empty -m 'made by the hook'\n"
+        )
+        hook.chmod(0o755)
+        result = on.push()
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "ATTESTATION NOT POSTED" in result.stderr
+        assert "HEAD moved" in result.stderr
+        assert on.lines("gh") == []
+
+
+class TestAWriteThatDoesNotReadBackIsNotConfirmed:
+    def test_another_state_in_the_combined_status(self, on):
+        result = on.push(GH_READBACK="failure")
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "ATTESTATION NOT CONFIRMED" in result.stderr
+        assert "failure" in result.stderr
+        assert f"{CONTEXT} = success posted" not in result.stdout
+        assert f"Attestation: {CONTEXT} NOT confirmed" in result.stdout
+
+    def test_no_such_context_in_the_combined_status(self, on):
+        result = on.push(GH_READBACK="none")
+        assert "ATTESTATION NOT CONFIRMED" in result.stderr
+        assert result.returncode == 0
+
+    def test_a_read_back_that_fails(self, on):
+        result = on.push(GH_GET_EXIT="1", GH_GET_STDERR="gh: HTTP 500")
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "ATTESTATION NOT CONFIRMED" in result.stderr
+        assert "gh: HTTP 500" in result.stderr
+
+    def test_the_read_back_is_tried_again_before_giving_up(self, on):
+        """A write can take a moment to show in the combined status."""
+        on.push(GH_READBACK="none")
+        reads = [row for row in on.lines("gh") if "POST" not in row]
+        assert len(reads) == 3
+
+
+class TestTheKnobIsReadFromTheCommit:
+    REMEDY = "'on' or 'off'"
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "",
+            "\n\n",
+            "# on\n",
+            "yes\n",
+            "ON\n",
+            "on off\n",
+            "on\non\n",
+            "true\n",
+            "pr\n",
+        ],
+        ids=[
+            "empty",
+            "blank",
+            "comment-only",
+            "yes",
+            "upper",
+            "two-words",
+            "twice",
+            "true",
+            "pr",
+        ],
+    )
+    def test_an_unusable_knob_is_exit_2_before_the_push(self, world, text):
+        """Never `on`, and never silently `off`: a typo that fell back either
+        way would write where nobody asked, or stop writing without a word."""
+        world.commit_knob(text)
+        result = world.push()
+        assert result.returncode == 2, result.stdout + result.stderr
+        assert KNOB in result.stderr
+        assert self.REMEDY in result.stderr
+        assert world.lines("gate") == []
+        _nothing_was_pushed(world, result)
+
+    def test_a_knob_that_is_not_committed_is_exit_2(self, world):
+        """Only a committed knob turns writes on: one developer's untracked
+        file can't decide it for the repo. Ignored here, so the tree is
+        clean and the refusal is the knob's own."""
+        (world.repo / ".git" / "info").mkdir(exist_ok=True)
+        (world.repo / ".git" / "info" / "exclude").write_text(".skills/\n")
+        (world.repo / ".skills").mkdir()
+        (world.repo / KNOB).write_text("on\n")
+        result = world.push()
+        assert result.returncode == 2, result.stdout + result.stderr
+        assert "not in the commit" in result.stderr
+        _nothing_was_pushed(world, result)
+
+    def test_a_symlink_is_not_a_knob(self, world):
+        (world.repo / ".skills").mkdir()
+        (world.repo / ".skills" / "really").write_text("on\n")
+        (world.repo / KNOB).symlink_to("really")
+        _git(world.repo, "add", "-A")
+        _git(world.repo, "commit", "-q", "-m", "a linked knob")
+        result = world.push()
+        assert result.returncode == 2, result.stdout + result.stderr
+        assert "regular file" in result.stderr
+        _nothing_was_pushed(world, result)
+
+    def test_the_commit_decides_not_the_branch_it_came_from(self, on):
+        """A branch that removes the knob stops attesting with that commit."""
+        _git(on.repo, "checkout", "-q", "-b", "work")
+        _git(on.repo, "rm", "-q", KNOB)
+        _git(on.repo, "commit", "-q", "-m", "drop the knob")
+        result = on.push()
+        assert result.returncode == 0, result.stdout + result.stderr
+        _is_the_plain_push(result.stdout, "work")
+        assert on.lines("gh") == [] and on.lines("gate") == []
+
+
+class TestTheLibraryAlone:
+    def test_running_it_does_nothing(self, world):
+        """There is no command-line path to the write: only push.sh, after
+        the gate answered, in the same process."""
+        result = subprocess.run(
+            ["bash", str(LIB)],
+            cwd=world.repo,
+            capture_output=True,
+            text=True,
+            env=_env(ATTEST_LOG=str(world.log), PATH=f"{world.bindir}:/usr/bin:/bin"),
+            timeout=30,
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert world.lines("gh") == []
+
+    def test_help(self):
+        result = subprocess.run(
+            ["bash", str(LIB), "--help"], capture_output=True, text=True, timeout=30
+        )
+        assert result.returncode == 0
+        assert "sourced by push.sh" in result.stdout
+        assert KNOB in result.stdout
+
+    def test_push_help_names_the_knob(self):
+        result = subprocess.run(
+            ["bash", str(PUSH), "--help"], capture_output=True, text=True, timeout=30
+        )
+        assert result.returncode == 0
+        assert KNOB in result.stdout
+        assert CONTEXT in result.stdout
