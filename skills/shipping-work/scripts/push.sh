@@ -29,11 +29,14 @@ if [[ "${1:-}" == "--help" ]]; then
   echo "Exit codes:"
   echo "  0  pushed. With the knob on, see the 'Attestation:' line: a refused"
   echo "     status write is reported under ATTESTATION NOT POSTED and is still 0"
-  echo "  1  with the knob on: uncommitted changes, or the gate failed on this"
-  echo "     tree. Nothing was pushed"
-  echo "  2  with the knob on: the knob is unusable, or the gate could not run."
-  echo "     Nothing was pushed"
-  echo "  *  otherwise git push's own exit code"
+  echo "  1  with the knob on, before the push: uncommitted changes, the gate"
+  echo "     failed on this tree, or the tree changed under the gate. It says"
+  echo "     'Nothing was pushed'"
+  echo "  2  with the knob on, before the push: the knob is unusable,"
+  echo "     _attest-gate.sh or pre-ship.sh was not found, the gate could not"
+  echo "     run, or git failed. It says 'Nothing was pushed'"
+  echo "  *  after 'Pushing <branch> to origin...': git push's own exit code, as"
+  echo "     without the knob (a rejected push is git's 1)"
   exit 0
 fi
 
@@ -51,6 +54,23 @@ BRANCH=$(git branch --show-current)
 # A file here or in the commit is all that is asked without the knob: no gh,
 # no gate, no library. The library then reads the knob from the commit, and a
 # file that is only in the work tree is refused there, by name.
+# The committed knob's one word is `off`, by _attest-gate.sh's grammar. Asked
+# only when that library is missing; with it, the library reads the knob.
+attest_knob_says_off() {
+  local text line count=0 word=""
+  local -a words
+  text=$(git cat-file blob HEAD:.skills/attest-local-gate 2>/dev/null) || return 1
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line=${line%$'\r'}
+    read -r -a words <<<"$line"
+    [[ ${#words[@]} -gt 0 ]] || continue
+    case ${words[0]} in \#*) continue ;; esac
+    count=$((count + ${#words[@]}))
+    word=${words[0]}
+  done <<<"$text"
+  [[ $count -eq 1 && "$word" == off ]]
+}
+
 ATTEST=0
 if [[ -e .skills/attest-local-gate || -L .skills/attest-local-gate ]] ||
   git cat-file -e HEAD:.skills/attest-local-gate 2>/dev/null; then
@@ -80,17 +100,25 @@ if [[ -e .skills/attest-local-gate || -L .skills/attest-local-gate ]] ||
       break
     fi
   done
-  if [[ -z "$ATTEST_LIB" ]]; then
+  # `off` is the same as no file, so it must not need the library either
+  # (CR 2667): a copied push.sh with no library beside it pushed before the
+  # knob, and still does when the committed knob's one word is `off`.
+  if [[ -z "$ATTEST_LIB" ]] && attest_knob_says_off; then
+    ATTEST_LIB=off
+  elif [[ -z "$ATTEST_LIB" ]]; then
     echo "ERROR: .skills/attest-local-gate is present, but _attest-gate.sh is not" >&2
     echo "       beside push.sh ($ATTEST_LINK_DIR) or its target" >&2
     echo "       ($ATTEST_SCRIPT_DIR). Link or restore it, or remove the knob." >&2
     echo "       Nothing was pushed." >&2
     exit 2
   fi
-  # shellcheck source=_attest-gate.sh
-  . "$ATTEST_LIB"
-  ATTEST_RC=0
-  attest_verify || ATTEST_RC=$?
+  ATTEST_RC=3
+  if [[ "$ATTEST_LIB" != off ]]; then
+    # shellcheck source=_attest-gate.sh
+    . "$ATTEST_LIB"
+    ATTEST_RC=0
+    attest_verify || ATTEST_RC=$?
+  fi
   case $ATTEST_RC in
     0) ATTEST=1 ;;
     3) ;; # the knob says off: the plain push below

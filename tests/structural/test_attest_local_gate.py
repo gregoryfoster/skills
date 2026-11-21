@@ -383,6 +383,24 @@ class TestWithoutTheKnobNothingChanges:
         _is_the_plain_push(result.stdout)
         assert w.remote_has(w.head())
 
+    @pytest.mark.parametrize(
+        "text", ["off\n", "# public repo\r\n\r\n  off  \r\n"], ids=["bare", "commented"]
+    )
+    def test_off_needs_no_library_either(self, tmp_path, text):
+        """CR 2667: `off` is the same as no file, so a copied push.sh with
+        no library beside it pushes as it did before the knob."""
+        w = _world(tmp_path / "w")
+        w.commit_knob(text)
+        alone = tmp_path / "alone" / "scripts"
+        alone.mkdir(parents=True)
+        shutil.copy(PUSH, alone / "push.sh")
+        result = w.push(script=alone / "push.sh")
+        assert result.returncode == 0, result.stdout + result.stderr
+        _is_the_plain_push(result.stdout)
+        assert "ttest" not in result.stderr
+        assert w.remote_has(w.head())
+        assert w.lines("gh") == [] and w.lines("gate") == []
+
     def test_a_failing_push_still_fails_as_git_does(self, tmp_path):
         w = _world(tmp_path / "w")
         _git(w.repo, "config", f"url.{w.root / 'nowhere.git'}.insteadOf", GITHUB_URL)
@@ -454,6 +472,37 @@ class TestAGreenGateIsSaidOnTheCommit:
         assert result.returncode == 0, result.stdout + result.stderr
         assert "stamp=unset" in on.lines("gate")[0]
         assert len(_posts(on)) == 1
+
+    def test_a_rejected_push_is_gits_own_failure_and_nothing_is_written(self, on):
+        """CR 2666: the gate passed, then git refused the push. That is
+        git's exit code, after the Pushing line, and no status."""
+        on.push()
+        on.log.unlink()
+        other = on.root / "other"
+        subprocess.run(
+            ["git", "clone", "-q", str(on.remote), str(other)],
+            check=True,
+            capture_output=True,
+            env=_env(),
+        )
+        _git(other, "config", "user.email", "test@example.com")
+        _git(other, "config", "user.name", "test")
+        _git(other, "commit", "-q", "--allow-empty", "-m", "someone else's")
+        _git(other, "push", "-q", "origin", "main")
+        _git(on.repo, "commit", "-q", "--allow-empty", "-m", "mine")
+        result = on.push()
+        assert result.returncode == 1, result.stdout + result.stderr
+        assert "Pushing main to origin..." in result.stdout
+        assert "Push succeeded." not in result.stdout
+        assert "Nothing was pushed" not in result.stderr, "that line is the gate's"
+        assert len(on.lines("gate")) == 1 and on.lines("gh") == []
+
+    def test_a_detached_head_fails_as_git_does(self, on):
+        _git(on.repo, "checkout", "-q", "--detach")
+        result = on.push()
+        assert result.returncode != 0
+        assert "Push succeeded." not in result.stdout
+        assert on.lines("gh") == []
 
     def test_the_callers_gate_stamp_reaches_the_gate_unchanged(self, on):
         on.push(GATE_STAMP="off")

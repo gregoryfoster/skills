@@ -25,6 +25,7 @@ No API calls. Text analysis, and a YAML parse of the snippet.
 from __future__ import annotations
 
 import re
+import subprocess
 from pathlib import Path
 
 import yaml
@@ -156,10 +157,27 @@ class TestTheReferenceSaysWhatTheStepIs:
         assert "`repo` scope" in text
 
     def test_every_exit_code_push_help_names_is_in_the_table(self):
-        table = REFERENCE.read_text()
-        for row in ("| 1 |", "| 2 |", "ATTESTATION NOT POSTED"):
-            assert row in table, row
-        assert "ATTESTATION NOT POSTED" in LIB.read_text()
+        """CR 2666, CR 2671: read from --help itself. Each code it lists has
+        a row, and the rows that end before the push say how to tell them
+        from git's own failure after it."""
+        out = subprocess.run(
+            ["bash", str(PUSH), "--help"], capture_output=True, text=True, timeout=30
+        ).stdout
+        codes = re.findall(r"^  (\d|\*)  ", out[out.index("Exit codes:") :], re.M)
+        assert codes == ["0", "1", "2", "*"], out
+        rows = [
+            line.split("|")[1].strip()
+            for line in REFERENCE.read_text().splitlines()
+            if line.startswith("| ") and not line.startswith("| Exit")
+        ]
+        firsts = [row.split(",")[0] for row in rows]
+        assert firsts == ["0", "0", "1", "2", "any other"], rows
+        for row in rows[2:4]:
+            assert "`Nothing was pushed`" in row, row
+        assert "after `Pushing <branch> to origin...`" in rows[4]
+        assert "ATTESTATION NOT POSTED" in rows[1]
+        for text in (out, LIB.read_text()):
+            assert "ATTESTATION NOT POSTED" in text
 
     def test_skill_md_points_at_it_from_the_push_step(self):
         skill = (SKILL / "SKILL.md").read_text()

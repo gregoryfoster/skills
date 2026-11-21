@@ -41,8 +41,9 @@ default branch, and `pr` mode pushes the PR's head, the SHA its CI reads.
 |---|---|---|
 | 0, `Attestation: gate/local = success posted on <sha>` | pushed and attested | carry on |
 | 0, `ATTESTATION NOT POSTED` or `NOT CONFIRMED` on stderr | pushed; the write was refused or didn't read back | carry on, and say so in the Step 7 report. Running `push.sh` again retries it |
-| 1 | uncommitted changes, the gate failed, or the gate changed the tree. Nothing was pushed | fix, commit, run it again |
-| 2 | the knob is unusable, or the gate could not run. Nothing was pushed | fix what it names |
+| 1, `Nothing was pushed` | uncommitted changes, the gate failed, or the tree changed under the gate | fix, commit, run it again |
+| 2, `Nothing was pushed` | the knob is unusable, `_attest-gate.sh` or `pre-ship.sh` wasn't found, the gate could not run, or git failed | fix what it names |
+| any other, after `Pushing <branch> to origin...` | `git push` itself failed, with git's own code (a rejected push is 1) | as without the knob: resolve it, then push |
 
 **Never post the status by hand.** It is written only after the gate exited 0
 on the exact tree, and a hand-posted `success` is the false pass this step
