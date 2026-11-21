@@ -419,6 +419,28 @@ class TestWithoutTheKnobNothingChanges:
         assert w.remote_has(w.head())
         assert w.lines("gh") == [] and w.lines("gate") == []
 
+    @pytest.mark.parametrize("kind", ["nul-inside", "nul-after", "symlink"])
+    def test_without_the_library_only_a_plain_off_is_off(self, tmp_path, kind):
+        """CR 2677: push.sh's own reader, used when the library is missing,
+        read `o\\0ff` and a symlink named `off` as `off`, where the library
+        refuses both. Never silently `off`, with or without the library."""
+        w = _world(tmp_path / "w")
+        if kind == "symlink":
+            (w.repo / ".skills").mkdir()
+            (w.repo / KNOB).symlink_to("off")
+            _git(w.repo, "add", "-A")
+            _git(w.repo, "commit", "-q", "-m", "a linked knob")
+        else:
+            w.commit_knob("o\x00ff\n" if kind == "nul-inside" else "off\x00\n")
+        alone = tmp_path / "alone" / "scripts"
+        alone.mkdir(parents=True)
+        shutil.copy(PUSH, alone / "push.sh")
+        result = w.push(script=alone / "push.sh")
+        assert result.returncode == 2, result.stdout + result.stderr
+        assert "_attest-gate.sh" in result.stderr
+        assert "null byte" not in result.stderr, "bash 5's own warning"
+        assert not w.remote_has(w.head())
+
     def test_a_failing_push_still_fails_as_git_does(self, tmp_path):
         w = _world(tmp_path / "w")
         _git(w.repo, "config", f"url.{w.root / 'nowhere.git'}.insteadOf", GITHUB_URL)
@@ -846,6 +868,9 @@ class TestNeverSuccessForATreeTheGateDidNotPass:
         assert result.returncode == 1, result.stdout + result.stderr
         assert "tracked.txt" in result.stderr
         assert "not to watch" in result.stderr
+        # CR 2676: a remedy that can be carried out, not "commit them".
+        assert "Commit them" not in result.stderr
+        assert flag.replace("--", "--no-") in result.stderr
         assert on.lines("gate") == []
         _nothing_was_pushed(on, result)
 
@@ -940,6 +965,16 @@ class TestARefusedWriteIsLoudAndTheShipGoesOn:
         assert "ghp_SECRETTOKEN" not in result.stdout + result.stderr
         assert "https://git.example.com/group/sub/widgets.git" in result.stderr
         assert "names no host/owner/repo" in result.stderr
+
+    def test_a_password_with_a_slash_in_it_is_never_printed(self, tmp_path):
+        """CR 2679: the userinfo was cut at the first slash."""
+        url = "https://bot:ghp_SEC/RETTOKEN@git.example.com/group/sub/widgets.git"
+        w = _world(tmp_path / "w", url=url)
+        w.commit_knob("on\n")
+        result = w.push()
+        self._refused(w, result)
+        assert "ghp_SEC" not in result.stdout + result.stderr
+        assert "RETTOKEN" not in result.stdout + result.stderr
 
     def test_an_ssh_host_that_ssh_cannot_name_says_so(self, tmp_path):
         """CR 2669: not "names no repository", which sends the reader to

@@ -30,12 +30,16 @@ default branch, and `pr` mode pushes the PR's head, the SHA its CI reads.
 1. **Verify, before the push.** The tree must be clean, by a stricter test
    than `git status`: an untracked file, an edit inside a submodule and a
    skip-worktree or assume-unchanged path all count, whatever the repo's
-   config hides. Then the gate is asked about it: the project's
+   config hides. So a sparse checkout can't attest; ship from a full one.
+   Then the gate is asked about it: the project's
    `scripts/pre-ship.sh`, else the one beside `push.sh`. Its exit code is the
    whole answer.
 2. **Push.**
-3. **Write, then read back.** `gh` posts the status to `origin`'s repository,
-   and the combined status, the endpoint CI reads, must show it.
+3. **Write, then read back.** `gh` posts the status to the repository
+   `origin` pushes to, and the combined status, the endpoint CI reads, must
+   show it. That repository is read from `origin`'s configured push URL, else
+   its URL, as written: an `insteadOf` or `pushInsteadOf` rewrite that sends
+   pushes to another repository isn't followed.
 
 | Exit | Meaning | Do |
 |---|---|---|
@@ -81,8 +85,8 @@ on this side.
 ## The CI side
 
 Add `statuses: read` to the `permissions` of the workflow that runs the heavy
-tier, beside what it already grants, and copy the `attest` step and the `if:`. Cheap tiers (lint, format, guards) keep
-running on every commit.
+tier, beside what it already grants, and copy the `attest` step and the `if:`.
+Cheap tiers (lint, format, guards) keep running on every commit.
 
 ```yaml
 permissions:
@@ -109,21 +113,23 @@ jobs:
                 --jq '[.statuses[] | select(.context == "gate/local" and .state == "success")] | length')
           echo "attested=$([ "$n" -gt 0 ] && echo yes || echo no)" >>"$GITHUB_OUTPUT"
       - name: Heavy tier
-        # Skipped only for an attested commit, on a push or a pull request,
-        # and never for a bot's PR or a fork's: neither came from a local
-        # gate. Every other event (a schedule, a manual run,
-        # pull_request_target) always runs it.
+        # Skipped only for an attested commit, on a branch push or a pull
+        # request, and never for a bot's PR or a fork's: neither came from a
+        # local gate. Everything else (a schedule, a manual run, a tag's
+        # release, pull_request_target) always runs it.
         if: >-
           steps.attest.outputs.attested != 'yes'
           || (github.event_name != 'push' && github.event_name != 'pull_request')
+          || startsWith(github.ref, 'refs/tags/')
           || (github.event_name == 'pull_request'
               && (github.event.pull_request.user.type == 'Bot'
                   || github.event.pull_request.head.repo.full_name != github.repository))
         run: uv run pytest
 ```
 
-Keep a scheduled run of that workflow. It always runs the heavy tier, and it
-is the only clean-runner run a directly shipped commit gets.
+Keep a scheduled run of that workflow. It always runs the heavy tier, as a
+tag's release run does, and it is the only clean-runner run a directly
+shipped commit gets.
 
 ## What the status is not
 

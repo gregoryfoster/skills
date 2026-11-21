@@ -175,8 +175,10 @@ attest_read_knob() {
 #                                    is where a consumer vendors this gate
 #   skip-worktree, assume-unchanged  tell git not to look at a path at all,
 #                                    so no status can vouch for it
+ATTEST_DIRT=""
 _attest_tree_state() {
   local out hidden rc=0
+  ATTEST_DIRT=""
   # `-c` as well as the flag (CR 2674): git asks each submodule for its own
   # status, and only `-c` reaches that, so an untracked file inside one stayed
   # hidden when the setting was in the submodule's config or the user's.
@@ -189,6 +191,7 @@ _attest_tree_state() {
   fi
   if [[ -n "$out" ]]; then
     printf '%s\n' "$out" | sed -n '1,5s/^/         /p' >&2
+    ATTEST_DIRT="Commit them (Step 2), or remove them; a change inside a submodule is committed or removed there."
     return 1
   fi
   # `git ls-files -v` tags a skip-worktree path S and lowercases the tag of
@@ -202,8 +205,7 @@ _attest_tree_state() {
   hidden=$(grep '^[a-zS] ' <<<"$hidden" || true)
   if [[ -n "$hidden" ]]; then
     printf '%s\n' "$hidden" | sed -n '1,5s/^/         /p' >&2
-    echo "       git was told not to watch these paths (skip-worktree or" >&2
-    echo "       assume-unchanged), so it can't say they are the commit's." >&2
+    ATTEST_DIRT="git was told not to watch these paths (skip-worktree or assume-unchanged), so it can't say they are the commit's. Clear the flag (git update-index --no-skip-worktree or --no-assume-unchanged), and ship a sparse checkout's work from a full one."
     return 1
   fi
   return 0
@@ -228,8 +230,9 @@ attest_verify() {
     0) ;;
     1)
       echo "ERROR: uncommitted changes (above). The gate would run on files" >&2
-      echo "       that aren't the commit, so it can't speak for it. Commit" >&2
-      echo "       them (Step 2), then push. Nothing was pushed." >&2
+      echo "       that aren't the commit, so it can't speak for it." >&2
+      echo "       $ATTEST_DIRT" >&2
+      echo "       Then push. Nothing was pushed." >&2
       return 1
       ;;
     *) return 2 ;;
@@ -283,8 +286,9 @@ attest_verify() {
     0) ;;
     1)
       echo "ERROR: the tree changed under the gate (above): what it passed is" >&2
-      echo "       no longer what is here. Nothing was pushed. Commit or" >&2
-      echo "       discard the changes, then push." >&2
+      echo "       no longer what is here." >&2
+      echo "       $ATTEST_DIRT" >&2
+      echo "       Then push. Nothing was pushed." >&2
       return 1
       ;;
     *) return 2 ;;
@@ -362,7 +366,9 @@ _attest_shown() {
       auth=${rest%%/*}
       case $auth in
         *@*) printf '%s://%s%s\n' "${url%%://*}" "${auth##*@}" "${rest#"$auth"}" ;;
-        *) printf '%s\n' "$url" ;;
+        # An `@` past the first slash: a password with a `/` in it, or a
+        # path with an `@`. Either way only what follows the last one shows.
+        *) printf '%s://(removed)@%s\n' "${url%%://*}" "${rest##*@}" ;;
       esac
       ;;
     *) printf '%s\n' "$url" ;;
