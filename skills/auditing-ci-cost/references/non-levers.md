@@ -72,9 +72,9 @@ tree before it pushes, then posts `gate/local` = `success` on the pushed SHA
 and reads it back ([#688](https://github.com/gregoryfoster/skills/issues/688)).
 The knob, the token and the workflow step to copy are in
 [its reference](../../shipping-work/references/attestation.md). The step
-keeps three rules: read the combined status, never `/statuses`; read
-`pull_request.head.sha`, never `github.sha`; and never trust the status for a
-bot's PR or a fork's.
+keeps three rules: read the combined status, never `/statuses`; on a pull
+request read `pull_request.head.sha`, never `github.sha`; and never trust the
+status for a bot's PR or a fork's.
 
 ## Writing a new row
 

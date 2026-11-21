@@ -9,7 +9,7 @@ It pays only in a private, duration-shaped repo whose PRs come from people who
 ran the gate; `auditing-ci-cost` says
 [when](../../auditing-ci-cost/references/non-levers.md#local-gate-attestation-where-it-is-live),
 and its census measures the saving. Without the knob nothing changes: the same
-commands, the same output, no `gh` call.
+push, the same output, no `gh` call and no gate run.
 
 ## The knob
 
@@ -30,9 +30,9 @@ default branch, and `pr` mode pushes the PR's head, the SHA its CI reads.
 1. **Verify, before the push.** The tree must be clean, by a stricter test
    than `git status`: an untracked file, an edit inside a submodule and a
    skip-worktree or assume-unchanged path all count, whatever the repo's
-   config hides. Then the gate is asked
-   about it: the project's `scripts/pre-ship.sh`, else the skill's, as Step 1
-   resolved it. Its exit code is the whole answer.
+   config hides. Then the gate is asked about it: the project's
+   `scripts/pre-ship.sh`, else the one beside `push.sh`. Its exit code is the
+   whole answer.
 2. **Push.**
 3. **Write, then read back.** `gh` posts the status to `origin`'s repository,
    and the combined status, the endpoint CI reads, must show it.
@@ -53,15 +53,19 @@ exists to rule out.
 
 - **A reused pass attests.** The gate records a pass against the exact tree
   and its tools, only for a clean tree, and answers 0 for that tree again
-  without running ([gate-topology.md](gate-topology.md)). That is the same
-  evidence a fresh run gives, so the step takes it. `GATE_STAMP=off` still
-  forces a run.
+  without running ([gate-topology.md](gate-topology.md)). For everything
+  that key covers it is the evidence a fresh run gives, so the step takes it.
+  `GATE_STAMP=off` still forces a run.
+- **The gate often runs in full at the push.** A pass is recorded only for a
+  clean tree. When Step 1 ran on uncommitted work, or a merge made a new
+  tree, the commit has none, so `push.sh` runs the whole gate: give that
+  Bash call the gate's time.
 - **A repo whose own `scripts/pre-ship.sh` is the gate** is asked through that
   script. If it records no pass, it runs a second time at the push; have it
   record one (`gate-stamp.sh`) or accept the second run.
 - **The gate is asked before the push,** so a tree it fails is never pushed,
-  and the write follows the push by seconds. A runner that push starts reads
-  the status after it exists.
+  and the write follows the push by seconds. A runner that push starts
+  usually finds the status; one that doesn't runs the full tier.
 - **A refused write doesn't fail the ship.** The push has landed by then, and
   a missing status fails safe: CI runs everything. Failing here would only
   add pressure to post it by hand.
@@ -76,8 +80,8 @@ on this side.
 
 ## The CI side
 
-Copy the `permissions` lines, the `attest` step and the `if:` into the
-workflow that runs the heavy tier. Cheap tiers (lint, format, guards) keep
+Add `statuses: read` to the `permissions` of the workflow that runs the heavy
+tier, beside what it already grants, and copy the `attest` step and the `if:`. Cheap tiers (lint, format, guards) keep
 running on every commit.
 
 ```yaml

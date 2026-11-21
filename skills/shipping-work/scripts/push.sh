@@ -9,7 +9,7 @@
 # = success on the pushed SHA and reads it back. A refused write is said
 # aloud and doesn't fail the push, which has landed by then. Without the
 # knob, or with it `off`, this is the script it was before the knob: the
-# same commands and the same output. references/attestation.md.
+# same push and the same output. references/attestation.md.
 #
 # Usage: bash "<push.sh>" [--help]
 set -euo pipefail

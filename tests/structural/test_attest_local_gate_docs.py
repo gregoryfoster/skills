@@ -78,8 +78,12 @@ class TestOneNameForTheContext:
 class TestTheSnippetKeepsItsRules:
     def test_it_reads_the_combined_status_a_whole_page_never_the_list(self):
         (attest,) = [s for s in _steps() if s.get("id") == "attest"]
-        assert "/commits/$HEAD/status?per_page=100" in attest["run"]
-        assert not re.search(r"/statuses\b[^:]", attest["run"].split("#")[0])
+        # Comments dropped line by line (CR 2671): the block opens with one
+        # that names /statuses, and a whole-text split left nothing to test.
+        code = "\n".join(line.split("#")[0] for line in attest["run"].splitlines())
+        assert "/commits/$HEAD/status?per_page=100" in code
+        assert "/statuses" not in code
+        assert "/statuses" in attest["run"], "the comment says why not"
 
     def test_it_reads_the_prs_head_and_falls_to_the_pushed_commit(self):
         (attest,) = [s for s in _steps() if s.get("id") == "attest"]
@@ -198,7 +202,9 @@ class TestAuditingCiCostPointsAtWhatShipped:
     def test_it_still_names_the_three_rules(self):
         text = _flat(NON_LEVERS)
         assert "the combined status, never `/statuses`" in text
-        assert "`pull_request.head.sha`, never `github.sha`" in text
+        assert (
+            "on a pull request read `pull_request.head.sha`, never `github.sha`" in text
+        )
         assert "never trust the status for a bot's PR or a fork's" in text
 
 
@@ -208,5 +214,8 @@ class TestThisRepoDoesNotOptIn:
         nothing would read the status. The step is for consuming repos."""
         assert not (REPO / KNOB).exists()
         for workflow in (REPO / ".github" / "workflows").glob("*.y*ml"):
+            # `on:` may be a word, a list or a mapping (CR 2671): a bare
+            # set() of the word `push` is its letters.
             triggers = yaml.safe_load(workflow.read_text()).get(True, {})
-            assert not {"push", "pull_request"} & set(triggers), workflow.name
+            names = {triggers} if isinstance(triggers, str) else set(triggers)
+            assert not {"push", "pull_request"} & names, workflow.name

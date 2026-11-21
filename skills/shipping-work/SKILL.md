@@ -126,7 +126,7 @@ Without `.skills/deploy_command`, a checkout that is a unit's `WorkingDirectory=
 bash "<push.sh>"
 ```
 
-Confirm push succeeded before proceeding. With `.skills/attest-local-gate`, it gates first and attests the pass; report its `Attestation:` line ([references/attestation.md](references/attestation.md)).
+Confirm push succeeded before proceeding. With `.skills/attest-local-gate`, it gates first (allow the gate's time) and attests the pass; report its `Attestation:` line ([references/attestation.md](references/attestation.md)).
 
 **`pr` mode:** this pushes the branch. Then open the PR with `Closes #<n>` per in-scope issue, or let the push update an open one; `gh pr view` finds merged and closed PRs too, so read its `state`.
 

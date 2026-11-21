@@ -12,7 +12,8 @@
 #   attest_verify  before the push. The knob, then a clean tree, then the gate
 #                  on it. Verifying first means a tree the gate fails is never
 #                  pushed, and the write follows the push by seconds instead
-#                  of by a gate run, so a runner that push starts can find it.
+#                  of by a gate run, so a runner that push starts usually
+#                  finds it. One that doesn't runs its full tier.
 #   (push.sh pushes)
 #   attest_post    the write, then a read-back through the combined status,
 #                  the endpoint CI reads.
@@ -24,13 +25,14 @@
 # comments are ignored. `off` is the same as absent. Anything else is exit 2
 # before the push, never `on` and never silently `off`.
 #
-# THE GATE is the one Step 1 resolved: the project's scripts/pre-ship.sh,
-# else the pre-ship.sh beside the path push.sh was run through, else the one
-# beside its target. It is asked, not re-implemented, and its exit code is
-# the whole answer. So a pass it reuses from a stamp attests: the stamp is
-# keyed to this exact tree and its tools and written only for a clean tree
-# (gate-stamp.sh), which is the evidence a fresh run would give. GATE_STAMP
-# reaches the gate as the caller set it; nothing here forces a run.
+# THE GATE is the project's scripts/pre-ship.sh, else the pre-ship.sh beside
+# the path push.sh was run through, else the one beside its target: where
+# Step 1 found push.sh, it finds the gate. It is asked, not re-implemented,
+# and its exit code is the whole answer. So a pass it reuses from a stamp
+# attests: the stamp is keyed to this exact tree and its tools and written
+# only for a clean tree (gate-stamp.sh), which for everything the key covers
+# is the evidence a fresh run would give. GATE_STAMP reaches the gate as the
+# caller set it; nothing here forces a run.
 #
 # NEVER `success` FOR A TREE THE GATE DIDN'T PASS. The write is reached only
 # after the gate exited 0 on a clean tree, HEAD and the tree were checked
@@ -81,9 +83,19 @@ case "${0##*/}" in
   _attest-gate.sh) case "${1-}" in -h | --help) attest_usage; exit 0 ;; esac ;;
 esac
 
+# The knob's word as it may be printed (CR 2673). A BOM or a form feed
+# echoed raw reads "says 'on'", which tells the reader nothing is wrong.
+_attest_word() {
+  local LC_ALL=C
+  case $1 in
+    *[![:print:]]*) printf 'a word with bytes outside printable ASCII' ;;
+    *) printf "'%s'" "$1" ;;
+  esac
+}
+
 # 0 on, 3 off, 2 unusable (said on stderr).
 attest_read_knob() {
-  local entry mode text line count=0 word="" rc=0
+  local entry mode text size kept line count=0 word="" rc=0
   local remedy="write one word, 'on' or 'off', or delete the file"
   local -a words
   entry=$(git ls-tree HEAD -- "$ATTEST_KNOB") || rc=$?
@@ -107,10 +119,23 @@ attest_read_knob() {
       return 2
       ;;
   esac
-  text=$(git cat-file blob "HEAD:$ATTEST_KNOB") || rc=$?
+  # A shell variable drops NUL bytes, so `o\0n` would read as `on` (CR 2673):
+  # counted, and dropped, while the blob is still a stream.
+  size=$(git cat-file -s "HEAD:$ATTEST_KNOB") || rc=$?
+  if [[ $rc -eq 0 ]]; then
+    kept=$(git cat-file blob "HEAD:$ATTEST_KNOB" | LC_ALL=C tr -d '\000' | wc -c) || rc=$?
+  fi
+  if [[ $rc -eq 0 ]]; then
+    text=$(git cat-file blob "HEAD:$ATTEST_KNOB" | LC_ALL=C tr -d '\000') || rc=$?
+  fi
   if [[ $rc -ne 0 ]]; then
     echo "ERROR: git cat-file failed (exit $rc) reading $ATTEST_KNOB from the" >&2
     echo "       commit. Nothing was pushed." >&2
+    return 2
+  fi
+  if [[ $((size)) -ne $((kept)) ]]; then
+    echo "ERROR: $ATTEST_KNOB, in the commit being shipped, holds NUL bytes:" >&2
+    echo "       $remedy. Nothing was pushed." >&2
     return 2
   fi
   while IFS= read -r line || [[ -n "$line" ]]; do
@@ -132,7 +157,7 @@ attest_read_knob() {
   elif [[ $count -gt 1 ]]; then
     echo "ERROR: $ATTEST_KNOB, in the commit being shipped, has $count words; it takes one:" >&2
   else
-    echo "ERROR: $ATTEST_KNOB, in the commit being shipped, says '$word':" >&2
+    echo "ERROR: $ATTEST_KNOB, in the commit being shipped, says $(_attest_word "$word"):" >&2
   fi
   echo "       $remedy. Nothing was pushed." >&2
   return 2
@@ -218,8 +243,8 @@ attest_verify() {
     return 2
   fi
 
-  echo "Attestation: $ATTEST_KNOB is on. Asking the gate about $sha"
-  echo "  before the push: $gate"
+  echo "Gate before the push ($ATTEST_KNOB is on): asking"
+  echo "  $gate about $sha"
   bash "$gate" || rc=$?
   case $rc in
     0) ;;

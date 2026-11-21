@@ -102,6 +102,24 @@ esac
 exit "${GATE_EXIT:-0}"
 """
 
+# A whole gate of the project's own that records its pass with the skill's
+# gate-stamp.sh, as attestation.md tells such a repo to: a tree it already
+# passed is answered without running.
+STAMPING_GATE = """\
+#!/usr/bin/env bash
+set -euo pipefail
+log="${ATTEST_LOG:?}"
+stamp="${STAMP_SH:?}"
+key=$(bash "$stamp" key) || key=""
+if [ -n "$key" ] && bash "$stamp" check "$key" >/dev/null; then
+  printf 'gate\\treused\\n' >>"$log"
+  echo "this exact tree already passed"
+  exit 0
+fi
+printf 'gate\\tran\\n' >>"$log"
+[ -z "$key" ] || bash "$stamp" write "$key" --label "stub suite"
+"""
+
 # gh, recording every call as one tab-separated line. A POST answers with
 # $GH_POST_EXIT and $GH_POST_STDERR and remembers the state it was given; the
 # combined-status read answers with what was posted, or $GH_READBACK. Real gh
@@ -503,6 +521,38 @@ class TestAGreenGateIsSaidOnTheCommit:
         assert result.returncode != 0
         assert "Push succeeded." not in result.stdout
         assert on.lines("gh") == []
+
+    def test_a_pass_reused_from_a_real_stamp_attests(self, tmp_path):
+        """CR 2671: the decision, run for real. The project's gate records
+        its pass with gate-stamp.sh; the next push of that tree is answered
+        from the stamp without running, and it attests all the same. A new
+        commit is a new tree, and runs."""
+        w = _world(tmp_path / "w", gate=False)
+        gate = w.repo / "scripts" / "pre-ship.sh"
+        gate.parent.mkdir()
+        gate.write_text(STAMPING_GATE)
+        w.commit_knob("on\n")
+        stamp = str(SKILL / "scripts" / "gate-stamp.sh")
+        for expected in ("ran", "reused"):
+            result = w.push(STAMP_SH=stamp)
+            assert result.returncode == 0, result.stdout + result.stderr
+            assert w.lines("gate")[-1] == ["gate", expected]
+            assert f"{CONTEXT} = success posted on {w.head()}" in result.stdout
+        assert len(_posts(w)) == 2
+        _git(w.repo, "commit", "-q", "--allow-empty", "-m", "same tree, new commit")
+        (w.repo / "tracked.txt").write_text("a new tree\n")
+        _git(w.repo, "commit", "-q", "-am", "a new tree")
+        result = w.push(STAMP_SH=stamp)
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert w.lines("gate")[-1] == ["gate", "ran"]
+
+    def test_only_the_outcome_line_begins_attestation(self, on):
+        """CR 2673: SKILL.md says to report "its `Attestation:` line", so
+        there is one, and the line before the gate reads otherwise."""
+        result = on.push()
+        lines = [x for x in result.stdout.splitlines() if x.startswith("Attestation:")]
+        assert len(lines) == 1 and "posted on" in lines[0], result.stdout
+        assert "Gate before the push (.skills/attest-local-gate is on)" in result.stdout
 
     def test_the_callers_gate_stamp_reaches_the_gate_unchanged(self, on):
         on.push(GATE_STAMP="off")
@@ -918,6 +968,11 @@ class TestTheKnobIsReadFromTheCommit:
             "on\non\n",
             "true\n",
             "pr\n",
+            "on # attest\n",
+            "\ufeffon\n",
+            "on\x0c\n",
+            "o\x00n\n",
+            "on\x00\n",
         ],
         ids=[
             "empty",
@@ -929,6 +984,11 @@ class TestTheKnobIsReadFromTheCommit:
             "twice",
             "true",
             "pr",
+            "trailing-comment",
+            "bom",
+            "form-feed",
+            "nul-inside",
+            "nul-after",
         ],
     )
     def test_an_unusable_knob_is_exit_2_before_the_push(self, world, text):
@@ -941,6 +1001,18 @@ class TestTheKnobIsReadFromTheCommit:
         assert self.REMEDY in result.stderr
         assert world.lines("gate") == []
         _nothing_was_pushed(world, result)
+
+    def test_a_word_with_invisible_characters_is_shown_escaped(self, world):
+        """CR 2673: a BOM echoed raw reads "says 'on': write 'on' or 'off'"."""
+        world.commit_knob("\ufeffon\n")
+        result = world.push()
+        assert result.returncode == 2
+        assert "says 'on'" not in result.stderr
+        assert "says a word with bytes outside printable ASCII" in result.stderr
+
+    def test_a_plain_wrong_word_is_quoted(self, world):
+        world.commit_knob("yes\n")
+        assert "says 'yes'" in world.push().stderr
 
     def test_a_knob_that_is_not_committed_is_exit_2(self, world):
         """Only a committed knob turns writes on: one developer's untracked
