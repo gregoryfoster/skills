@@ -43,9 +43,6 @@
 # The caller sets ATTEST_LINK_DIR and ATTEST_SCRIPT_DIR, and runs from the
 # project root. ATTEST_READBACK_PAUSE is the seconds between read-backs
 # (default 2).
-#
-# ATTEST_SHA and ATTEST_TREE are read by push.sh, which shellcheck can't see.
-# shellcheck disable=SC2034
 set -euo pipefail
 
 ATTEST_KNOB=.skills/attest-local-gate
@@ -268,12 +265,19 @@ attest_verify() {
   return 0
 }
 
-# _attest_repo_of <remote url>: `host/owner/repo`, or nothing for a URL that
-# names no host's repository. managing-skills' _gh_repo_of, ported (#576): an
-# SSH URL's host is an ssh_config name, so `ssh -G` names the HostName behind
-# a deploy-key alias, and SSH-over-443's ssh.github.com is github.com to gh.
+# _attest_repo_of <remote url>: ATTEST_REPO becomes `host/owner/repo`, or
+# stays empty with the reason in ATTEST_WHY for a URL that names no host's
+# repository. It sets variables, so call it in this shell. managing-skills'
+# _gh_repo_of, ported (#576): an SSH URL's host is an ssh_config name, so
+# `ssh -G` names the HostName behind a deploy-key alias, and SSH-over-443's
+# ssh.github.com is github.com to gh. An https URL keeps its port, which is
+# the API's too; an ssh URL's port is ssh's, and is dropped (CR 2668).
+ATTEST_REPO=""
+ATTEST_WHY=""
 _attest_repo_of() {
   local url=$1 rest host path ssh="" alias
+  ATTEST_REPO=""
+  ATTEST_WHY="it names no host/owner/repo"
   case $url in
     ssh://* | git+ssh://* | ssh+git://*) ssh=1 ;;
   esac
@@ -283,7 +287,7 @@ _attest_repo_of() {
       host=${rest%%/*}
       path=${rest#*/}
       host=${host##*@}
-      host=${host%%:*}
+      [[ -z "$ssh" ]] || host=${host%%:*}
       ;;
     *:*)
       # scp-like, [user@]host:path: git's rule is no slash before the colon.
@@ -307,9 +311,32 @@ _attest_repo_of() {
     alias=$host
     host=$(ssh -G -- "$alias" </dev/null 2>/dev/null | awk '$1 == "hostname" { print $2; exit }' || true)
     [[ "$host" != ssh.github.com ]] || host=github.com
-    case $host in '' | -*) return 0 ;; esac
+    case $host in
+      '' | -*)
+        ATTEST_WHY="ssh -G could not name the host behind '$alias'"
+        return 0
+        ;;
+    esac
   fi
-  printf '%s/%s\n' "$host" "$path"
+  ATTEST_WHY=""
+  ATTEST_REPO="$host/$path"
+}
+
+# A URL as it may be printed: a token in `https://user:token@host/...` must
+# not reach the transcript (CR 2669).
+_attest_shown() {
+  local url=$1 rest auth
+  case $url in
+    *://*@*)
+      rest=${url#*://}
+      auth=${rest%%/*}
+      case $auth in
+        *@*) printf '%s://%s%s\n' "${url%%://*}" "${auth##*@}" "${rest#"$auth"}" ;;
+        *) printf '%s\n' "$url" ;;
+      esac
+      ;;
+    *) printf '%s\n' "$url" ;;
+  esac
 }
 
 _attest_goes_on() {
@@ -345,11 +372,21 @@ attest_post() {
     _attest_not_posted "HEAD moved during the push, from the commit the gate passed to ${head:-an unknown commit}"
     return 1
   fi
-  # The configured URL, not `git remote get-url`, which expands insteadOf.
-  url=$(git config --get remote.origin.url) || url=""
-  repo=$(_attest_repo_of "$url")
+  # Where the push went: origin's push URL when it has one, else its URL
+  # (CR 2668). The configured value, not `git remote get-url`, which expands
+  # insteadOf.
+  url=$(git config --get-all remote.origin.pushurl) || url=""
+  case $url in
+    *$'\n'*)
+      _attest_not_posted "origin pushes to more than one URL, so there is no one repository to write the status to"
+      return 1
+      ;;
+    "") url=$(git config --get remote.origin.url) || url="" ;;
+  esac
+  _attest_repo_of "$url"
+  repo=$ATTEST_REPO
   if [[ -z "$repo" ]]; then
-    _attest_not_posted "origin's URL (${url:-none}) names no repository on a GitHub host"
+    _attest_not_posted "origin's push URL ($(_attest_shown "${url:-none}")) can't be read as a repository: $ATTEST_WHY"
     return 1
   fi
   host=${repo%%/*}

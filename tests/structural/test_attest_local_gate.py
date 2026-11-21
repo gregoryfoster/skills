@@ -537,8 +537,22 @@ class TestAGreenGateIsSaidOnTheCommit:
                 "acme/widgets",
                 "ghe.example.com",
             ),
+            (
+                "https://ghe.example.com:8443/acme/widgets/",
+                "acme/widgets",
+                "ghe.example.com:8443",
+            ),
+            ("ssh://git@github.com:22/acme/widgets.git", "acme/widgets", "github.com"),
         ],
-        ids=["https", "scp", "ssh-alias", "ssh-url", "enterprise"],
+        ids=[
+            "https",
+            "scp",
+            "ssh-alias",
+            "ssh-url",
+            "enterprise",
+            "https-port",
+            "ssh-port",
+        ],
     )
     def test_the_repo_is_origins_own(self, tmp_path, url, slug, host):
         """origin is where push.sh pushed, so its configured URL names the
@@ -802,6 +816,48 @@ class TestARefusedWriteIsLoudAndTheShipGoesOn:
         result = w.push()
         self._refused(w, result)
         assert "origin" in result.stderr
+        assert w.lines("gh") == []
+
+    def test_the_status_goes_where_the_push_went(self, tmp_path):
+        """CR 2668: with a push URL of its own, origin's commits land in
+        that repository, so that is the one to write to."""
+        w = _world(tmp_path / "w")
+        elsewhere = "https://github.com/acme/elsewhere.git"
+        _git(w.repo, "config", "remote.origin.pushurl", elsewhere)
+        _git(w.repo, "config", f"url.{w.remote}.insteadOf", elsewhere)
+        w.commit_knob("on\n")
+        result = w.push()
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert f"repos/acme/elsewhere/statuses/{w.head()}" in _posts(w)[0]
+
+    def test_two_push_urls_name_no_one_repository(self, on):
+        _git(on.repo, "config", "--add", "remote.origin.pushurl", GITHUB_URL)
+        _git(on.repo, "config", "--add", "remote.origin.pushurl", GITHUB_URL)
+        result = on.push()
+        self._refused(on, result)
+        assert "more than one URL" in result.stderr
+        assert on.lines("gh") == []
+
+    def test_a_token_in_origins_url_is_never_printed(self, tmp_path):
+        """CR 2669: the refusal quotes the URL, and the transcript keeps it."""
+        url = "https://bot:ghp_SECRETTOKEN@git.example.com/group/sub/widgets.git"
+        w = _world(tmp_path / "w", url=url)
+        w.commit_knob("on\n")
+        result = w.push()
+        self._refused(w, result)
+        assert "ghp_SECRETTOKEN" not in result.stdout + result.stderr
+        assert "https://git.example.com/group/sub/widgets.git" in result.stderr
+        assert "names no host/owner/repo" in result.stderr
+
+    def test_an_ssh_host_that_ssh_cannot_name_says_so(self, tmp_path):
+        """CR 2669: not "names no repository", which sends the reader to
+        the URL when the fault is ssh's."""
+        w = _world(tmp_path / "w", url="git@github-acme:acme/widgets.git")
+        (w.bindir / "ssh").write_text("#!/usr/bin/env bash\nexit 255\n")
+        w.commit_knob("on\n")
+        result = w.push()
+        self._refused(w, result)
+        assert "ssh -G could not name the host behind 'github-acme'" in result.stderr
         assert w.lines("gh") == []
 
     def test_a_head_that_moved_during_the_push(self, on):
