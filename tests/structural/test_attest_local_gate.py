@@ -634,6 +634,73 @@ class TestNeverSuccessForATreeTheGateDidNotPass:
         assert "Push succeeded." not in result.stdout
         assert on.lines("gh") == []
 
+    def test_untracked_files_git_was_told_to_hide_are_still_a_dirty_tree(self, on):
+        """CR 2664: with status.showUntrackedFiles=no a bare `git status`
+        lists no untracked file, so a gate that passes only because of one
+        attested a commit that lacks it."""
+        _git(on.repo, "config", "status.showUntrackedFiles", "no")
+        (on.repo / "helper.js").write_text("the gate needs this\n")
+        result = on.push()
+        assert result.returncode == 1, result.stdout + result.stderr
+        assert "helper.js" in result.stderr
+        assert on.lines("gate") == []
+        _nothing_was_pushed(on, result)
+
+    def test_a_submodule_git_was_told_to_ignore_is_still_a_dirty_tree(
+        self, on, tmp_path
+    ):
+        """CR 2664: `ignore = dirty` in .gitmodules hides an edit inside a
+        submodule, and a consumer vendors this very gate in one."""
+        lib = tmp_path / "lib"
+        lib.mkdir()
+        _git(lib, "init", "-q", "-b", "main")
+        _git(lib, "config", "user.email", "test@example.com")
+        _git(lib, "config", "user.name", "test")
+        (lib / "gate.sh").write_text("exit 1\n")
+        _git(lib, "add", "-A")
+        _git(lib, "commit", "-q", "-m", "lib")
+        _git(
+            on.repo,
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            "-q",
+            str(lib),
+            "vendor",
+        )
+        _git(on.repo, "config", "-f", ".gitmodules", "submodule.vendor.ignore", "dirty")
+        _git(on.repo, "add", "-A")
+        _git(on.repo, "commit", "-q", "-m", "vendor the lib")
+        (on.repo / "vendor" / "gate.sh").write_text("exit 0\n")
+        assert _git(on.repo, "status", "--porcelain") == "", "git hides the edit"
+        result = on.push()
+        assert result.returncode == 1, result.stdout + result.stderr
+        assert "vendor" in result.stderr
+        assert on.lines("gate") == []
+        _nothing_was_pushed(on, result)
+
+    @pytest.mark.parametrize("flag", ["--skip-worktree", "--assume-unchanged"])
+    def test_a_path_git_was_told_not_to_watch_cannot_be_vouched_for(self, on, flag):
+        """CR 2664: git reports no change to such a path, whatever is in it,
+        so the files the gate ran on can't be shown to be the commit's."""
+        _git(on.repo, "update-index", flag, "tracked.txt")
+        (on.repo / "tracked.txt").write_text("not what was committed\n")
+        assert _git(on.repo, "status", "--porcelain") == "", "git hides the edit"
+        result = on.push()
+        assert result.returncode == 1, result.stdout + result.stderr
+        assert "tracked.txt" in result.stderr
+        assert "not to watch" in result.stderr
+        assert on.lines("gate") == []
+        _nothing_was_pushed(on, result)
+
+    def test_a_gate_that_leaves_a_hidden_untracked_file_changed_the_tree(self, on):
+        _git(on.repo, "config", "status.showUntrackedFiles", "no")
+        result = on.push(GATE_DO="untracked")
+        assert result.returncode == 1, result.stdout + result.stderr
+        assert "changed under the gate" in result.stderr
+        assert on.lines("gh") == []
+
     def test_an_unreadable_tree_state_is_exit_2(self, on):
         """git status failing is not a clean tree (#257)."""
         (on.repo / ".git" / "index").write_bytes(b"not an index")

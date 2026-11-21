@@ -143,17 +143,43 @@ attest_read_knob() {
 
 # 0 clean, 1 not (the first paths are listed), 2 unknown. git's own stderr is
 # shown: a failing status is not a clean tree (#257).
+#
+# git's defaults are not trusted (CR 2664). A repo's config can hide what
+# makes the files differ from the commit, and a gate that passes only because
+# of what is hidden would be attested for a commit that fails it:
+#   status.showUntrackedFiles=no     hides every untracked file
+#   submodule.<name>.ignore=dirty    hides an edit inside a submodule, which
+#                                    is where a consumer vendors this gate
+#   skip-worktree, assume-unchanged  tell git not to look at a path at all,
+#                                    so no status can vouch for it
 _attest_tree_state() {
-  local out rc=0
-  out=$(git status --porcelain) || rc=$?
+  local out hidden rc=0
+  out=$(git status --porcelain --untracked-files=all --ignore-submodules=none) || rc=$?
   if [[ $rc -ne 0 ]]; then
     echo "ERROR: git status failed (exit $rc): the tree state is unknown," >&2
     echo "       which is not clean. Nothing was pushed." >&2
     return 2
   fi
-  [[ -n "$out" ]] || return 0
-  printf '%s\n' "$out" | sed -n '1,5s/^/         /p' >&2
-  return 1
+  if [[ -n "$out" ]]; then
+    printf '%s\n' "$out" | sed -n '1,5s/^/         /p' >&2
+    return 1
+  fi
+  # `git ls-files -v` tags a skip-worktree path S and lowercases the tag of
+  # an assume-unchanged one.
+  hidden=$(git ls-files -v) || rc=$?
+  if [[ $rc -ne 0 ]]; then
+    echo "ERROR: git ls-files failed (exit $rc): the tree state is unknown," >&2
+    echo "       which is not clean. Nothing was pushed." >&2
+    return 2
+  fi
+  hidden=$(grep '^[a-zS] ' <<<"$hidden" || true)
+  if [[ -n "$hidden" ]]; then
+    printf '%s\n' "$hidden" | sed -n '1,5s/^/         /p' >&2
+    echo "       git was told not to watch these paths (skip-worktree or" >&2
+    echo "       assume-unchanged), so it can't say they are the commit's." >&2
+    return 1
+  fi
+  return 0
 }
 
 attest_verify() {

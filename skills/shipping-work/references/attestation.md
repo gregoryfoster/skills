@@ -27,7 +27,10 @@ push: never `on`, and never silently `off`.
 Both shipping paths run `push.sh`, so both attest: a direct ship pushes the
 default branch, and `pr` mode pushes the PR's head, the SHA its CI reads.
 
-1. **Verify, before the push.** The tree must be clean. Then the gate is asked
+1. **Verify, before the push.** The tree must be clean, by a stricter test
+   than `git status`: an untracked file, an edit inside a submodule and a
+   skip-worktree or assume-unchanged path all count, whatever the repo's
+   config hides. Then the gate is asked
    about it: the project's `scripts/pre-ship.sh`, else the skill's, as Step 1
    resolved it. Its exit code is the whole answer.
 2. **Push.**
