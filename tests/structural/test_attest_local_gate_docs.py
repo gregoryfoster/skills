@@ -36,6 +36,7 @@ SKILL = SKILLS_DIR / "shipping-work"
 REFERENCE = SKILL / "references" / "attestation.md"
 LIB = SKILL / "scripts" / "_attest-gate.sh"
 PUSH = SKILL / "scripts" / "push.sh"
+NON_LEVERS = SKILLS_DIR / "auditing-ci-cost" / "references" / "non-levers.md"
 KNOBS = REPO / "docs" / "KNOBS.md"
 KNOB = ".skills/attest-local-gate"
 
@@ -69,7 +70,7 @@ class TestOneNameForTheContext:
         assert '.state == "success"' in attest["run"]
 
     def test_every_document_spells_it_the_same(self):
-        for doc in (REFERENCE, KNOBS):
+        for doc in (REFERENCE, NON_LEVERS, KNOBS):
             assert f"`{_context()}`" in doc.read_text(), doc
 
 
@@ -152,6 +153,21 @@ class TestTheReferenceSaysWhatTheStepIs:
         assert f"`{KNOB}`" in step
         assert "references/attestation.md" in step
         assert "`Attestation:`" in step, "the line the agent reports in Step 7"
+
+
+class TestAuditingCiCostPointsAtWhatShipped:
+    def test_the_sketch_is_gone_and_the_step_is_linked(self):
+        text = _flat(NON_LEVERS)
+        assert "A sketch, not shipped" not in text
+        assert "SKETCH" not in text
+        assert "../../shipping-work/references/attestation.md" in text
+        assert f"`{KNOB}`" in text
+
+    def test_it_still_names_the_three_rules(self):
+        text = _flat(NON_LEVERS)
+        assert "the combined status, never `/statuses`" in text
+        assert "`pull_request.head.sha`, never `github.sha`" in text
+        assert "never trust the status for a bot's PR or a fork's" in text
 
 
 class TestThisRepoDoesNotOptIn:

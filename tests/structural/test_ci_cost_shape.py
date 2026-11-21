@@ -360,9 +360,10 @@ class TestTheTrapCountStaysTrue:
 
 
 class TestLocalGateAttestationIsALeverWithConditions:
-    """#602: live only where it pays, and only sketched, not shipped."""
+    """#602: live only where it pays. #688 shipped the step, opt-in, in
+    shipping-work; test_attest_local_gate_docs.py holds the pointer at it."""
 
-    def test_its_conditions_and_its_sketch_mark_are_recorded(self):
+    def test_its_conditions_are_recorded_and_the_shipped_step_is_named(self):
         text = " ".join(
             (SKILL_DIR / "references" / "non-levers.md").read_text().split()
         )
@@ -372,8 +373,8 @@ class TestLocalGateAttestationIsALeverWithConditions:
                 f"the attestation lever must name {condition!r}: it pays only in a "
                 "private, duration-shaped repo, and bot PRs still need the full run"
             )
-        assert "A sketch, not shipped" in text, (
-            "the status-posting step is a sketch; shipping-work has no such step"
+        assert "Shipped, and opt-in" in text, (
+            "the status-posting step ships in shipping-work behind a knob (#688)"
         )
 
 
