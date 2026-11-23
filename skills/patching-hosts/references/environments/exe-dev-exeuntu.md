@@ -121,7 +121,7 @@ The probe reads the effective rule as `environment.tmp`: the rule, its file, `cl
 
 ## Clean-shutdown and boot evidence
 
-- **PID 1 logs to the journal only until the first reload** (#684). A boot runs on exe-init's `--log-target=syslog`, read as `journal`. The first daemon-reload or re-exec, which every apply makes, applies the image's `LogTarget=console`, unless a later drop-in sets the journal. wslcb-licensing-tracker's host lost PID 1's lines from 2026-11-12 to 11-18 that way (measured 2026-11-20, #685). PID 1's lines are evidence where present; otherwise use:
+- **PID 1 logs to the journal only until the first reload** (#684). A boot runs on exe-init's `--log-target=syslog`, read as `journal`. The first daemon-reload, which every apply makes, applies the image's `LogTarget=console` (a re-exec restores argv's), unless a later drop-in sets the journal. wslcb-licensing-tracker's host lost PID 1's lines from 2026-11-12 to 11-18 that way (measured 2026-11-20, #685). PID 1's lines are evidence where present; otherwise use:
   - the service's own stop line;
   - journald's `Journal stopped`, where the journal is persistent;
   - the data store's own log (Postgres: `CHECKPOINT` → `fast shutdown request` → `database system is shut down`);
