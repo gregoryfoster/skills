@@ -1383,14 +1383,18 @@ class_of() {  # <var> <origins, ", "-separated>
 # Label-less repos on one suite. Built once per policy.
 REL_MAP="" REL_MAP_OF="" REL_MAP_BUILT=0
 rel_map() {  # <policy output>
-  local _rm_l _rm_v _rm_o="" _rm_lb="" _rm_ve="" _rm_a="" _rm_t _rm_x _rm_k _rm_i _rm_in=0
+  local _rm_l _rm_v _rm_o="" _rm_lb="" _rm_ve="" _rm_a="" _rm_site="" _rm_i _rm_in=0
   local _rm_us=$'\x1f'
   local -a _rm_kv=() _rm_keys=() _rm_vals=()
   if [ "$REL_MAP_BUILT" -eq 1 ] && [ "$1" = "$REL_MAP_OF" ]; then return 0; fi
+  # A release line's record ends at the next line that isn't its origin
+  # line: a file: repo's site is empty, and apt-cache policy prints no
+  # origin line for it (noble, apt 2.8.3, 2026-11-23; CR 2772).
   while IFS= read -r _rm_l; do
     case $_rm_l in
       *" release "*)
-        _rm_o="" _rm_lb="" _rm_ve="" _rm_a="" _rm_in=1
+        _rel_map_add
+        _rm_o="" _rm_lb="" _rm_ve="" _rm_a="" _rm_site="" _rm_in=1
         IFS=, read -r -a _rm_kv <<<"${_rm_l#*release }"
         for _rm_v in ${_rm_kv[@]+"${_rm_kv[@]}"}; do
           case $_rm_v in
@@ -1401,29 +1405,12 @@ rel_map() {  # <policy output>
           esac
         done ;;
       *" origin "*)
-        [ "$_rm_in" -eq 1 ] || continue
-        _rm_in=0
-        [ -n "$_rm_o" ] || continue
-        if [ -z "$_rm_a" ]; then
-          _rm_t=${_rm_l#*origin }
-          _rm_t=${_rm_t:-localhost}
-        elif [ -n "$_rm_ve" ]; then
-          _rm_t=$_rm_ve/$_rm_a
-        else
-          _rm_t=$_rm_a
-        fi
-        _rm_k=${_rm_lb:+$_rm_lb:}$_rm_t
-        _rm_x=""
-        for _rm_i in ${_rm_keys[@]+"${!_rm_keys[@]}"}; do
-          if [ "${_rm_keys[$_rm_i]}" = "$_rm_k" ]; then _rm_x=$_rm_i; fi
-        done
-        if [ -z "$_rm_x" ]; then
-          _rm_keys+=("$_rm_k") _rm_vals+=("$_rm_o:$_rm_t")
-        elif [ "${_rm_vals[$_rm_x]}" != "$_rm_o:$_rm_t" ]; then
-          _rm_vals[_rm_x]=""
-        fi ;;
+        if [ "$_rm_in" -eq 1 ]; then _rm_site=${_rm_l#*origin }; fi
+        _rel_map_add ;;
+      *) _rel_map_add ;;
     esac
   done <<<"$1"
+  _rel_map_add
   REL_MAP=$'\n'
   for _rm_i in ${_rm_keys[@]+"${!_rm_keys[@]}"}; do
     REL_MAP="$REL_MAP${_rm_keys[$_rm_i]}$_rm_us${_rm_vals[$_rm_i]}"$'\n'
@@ -1431,10 +1418,39 @@ rel_map() {  # <policy output>
   REL_MAP_OF=$1 REL_MAP_BUILT=1
 }
 
+# rel_map's record, ended: its text as apt-get -s prints it, keyed to its
+# o=. With no Archive, apt prints the site, or "localhost" where it has
+# none: a file: repo whose Release file names no Suite (measured as above).
+# Reads and sets rel_map's locals.
+_rel_map_add() {
+  local _ra_t _ra_k _ra_x="" _ra_i
+  [ "$_rm_in" -eq 1 ] || return 0
+  _rm_in=0
+  [ -n "$_rm_o" ] || return 0
+  if [ -z "$_rm_a" ]; then
+    _ra_t=${_rm_site:-localhost}
+  elif [ -n "$_rm_ve" ]; then
+    _ra_t=$_rm_ve/$_rm_a
+  else
+    _ra_t=$_rm_a
+  fi
+  _ra_k=${_rm_lb:+$_rm_lb:}$_ra_t
+  for _ra_i in ${_rm_keys[@]+"${!_rm_keys[@]}"}; do
+    if [ "${_rm_keys[$_ra_i]}" = "$_ra_k" ]; then _ra_x=$_ra_i; fi
+  done
+  if [ -z "$_ra_x" ]; then
+    _rm_keys+=("$_ra_k") _rm_vals+=("$_rm_o:$_ra_t")
+  elif [ "${_rm_vals[$_ra_x]}" != "$_rm_o:$_ra_t" ]; then
+    _rm_vals[_ra_x]=""
+  fi
+}
+
 # The candidate's releases in an Inst line ("Inst <pkg> [<old>] (<new>
 # <release>, <release> [<arch>])", or what follows <pkg>), each as
 # "<o=>:<the text after its Label>", for class_of. A Label may hold spaces and
-# a ")", so the arch and the closing paren come off the end. A release
+# a ")", so the line is cut at its last ")", then the arch comes off: where
+# a package breaks another, apt adds " []" or " [<pkg>:<arch> ]" after the
+# paren, which holds no ")" (noble, apt 2.8.3, 2026-11-23; CR 2764). A release
 # whose text no release line prints, or two origins print, keeps apt's own
 # text: class_of then keys it on the Label, as before #695. So does every
 # release where the policy is empty or unread.
@@ -1445,7 +1461,7 @@ inst_origins() {  # <var> <Inst line> <policy output>
     return 0 ;;
   esac
   _io_r=${_io_r#*(}
-  _io_r=${_io_r%)}
+  _io_r=${_io_r%)*}
   _io_r=${_io_r% \[*\]}
   case $_io_r in *" "*) _io_r=${_io_r#* } ;; *) _io_r="" ;; esac
   rel_map "$3"

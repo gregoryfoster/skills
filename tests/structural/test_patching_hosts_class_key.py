@@ -170,6 +170,54 @@ def test_sim_class_reads_the_origin_given_the_policy():
     )
 
 
+# apt-get -s adds a suffix after the paren where a package breaks another:
+# " []" or " [<pkg>:<arch> ]" (noble, apt 2.8.3, 2026-11-23; CR 2764).
+SUFFIXED = [
+    (
+        "Inst perl-base [5.38.2-3.2build2] (5.38.2-3.2ubuntu0.7 Ubuntu:24.04/noble-updates,"
+        " Ubuntu:24.04/noble-security [arm64]) []",
+        "security",
+    ),
+    (
+        "Inst libperl5.38t64 [5.38.2-3.2build2] (5.38.2-3.2ubuntu0.7"
+        " Ubuntu:24.04/noble-updates, Ubuntu:24.04/noble-security [arm64]) [perl:arm64 ]",
+        "security",
+    ),
+    (SURY_INST + " []", "third-party:deb.sury.org"),
+    (DOCKER_INST + " [docker-ce:arm64 ]", "third-party:Docker"),
+    (
+        "Inst php8.3-cli [8.3.1] (8.3.2 PPA for PHP (deprecated):24.04/noble [arm64]) []",
+        "third-party:LP-PPA-ondrej-php",
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    "line, key", SUFFIXED, ids=["empty", "pkg-arch", "sury", "docker", "ondrej"]
+)
+def test_a_suffix_after_the_paren_doesnt_change_the_class(line, key):
+    assert _inst_class(line, POLICY) == key
+    name = line.split(" ")[1]
+    out = _lib(
+        f'sim_class c {name} "$SIM" "$POLICY"; printf %s "$c"',
+        SIM=f"NOTE: This is only a simulation!\n{line}\n",
+        POLICY=POLICY,
+    )
+    assert out == key
+
+
+def test_origin_split_takes_a_suffixed_line_from_its_origin():
+    sim = f"{SURY_INST} []\n{SURY_INST.replace('libgd3', 'libgd-tools')}\n"
+    sim += SUFFIXED[0][0] + "\n"
+    out = _lib(
+        'origin_names n packages.sury.org "$POLICY"; '
+        'origin_split k s "$n" "$SIM" "$POLICY"; printf "%s|%s" "$k" "$s"',
+        SIM=sim,
+        POLICY=POLICY,
+    )
+    assert out == "libgd3 libgd-tools|perl-base"
+
+
 # --- the probe ---------------------------------------------------------------
 
 
@@ -196,6 +244,19 @@ def test_the_probe_counts_each_origin_under_its_o_name(tmp_path):
         "tailscale",
         "libgd-tools",
     ]
+
+
+def test_the_probe_counts_suffixed_lines_by_their_class(tmp_path):
+    sim = "".join(line + "\n" for line, _ in SUFFIXED)
+    out = _probe(tmp_path, "posture automatic\n", sim).run()
+    p = out["pending"]
+    assert p["by_class"]["security_lower_bound"] == 2
+    assert p["by_class"]["updates"] == 0
+    assert p["by_class"]["third_party"] == {
+        "deb.sury.org": 1,
+        "Docker": 1,
+        "LP-PPA-ondrej-php": 1,
+    }
 
 
 def test_a_knob_line_naming_the_origin_or_its_site_covers_its_packages(tmp_path):
@@ -281,3 +342,67 @@ def test_the_one_origin_bulk_takes_a_label_less_repos_packages(tmp_path):
     assert out["upgrade"]["origin_pending"] == ["libgd3"]
     skipped = host.record("lane.conf").split("Package-Blacklist {")[1]
     assert '  "^libc6$";' in skipped and "libgd3" not in skipped
+
+
+# A file: repo, flat (noble, apt 2.8.3, 2026-11-23; CR 2772): apt-cache policy
+# prints no origin line under its release line, since its site is empty. With
+# no Suite in its Release file, apt-get -s prints "localhost" for it.
+FILE_POLICY = (
+    " 500 file:/repo3 ./ Packages\n"
+    "     release o=Local3,c=\n"
+    " 500 file:/repo2 ./ Packages\n"
+    "     release o=Local,a=stable,l=Local Repo,c=\n"
+)
+
+
+@pytest.mark.parametrize(
+    "line, policy, key",
+    [
+        (
+            "Inst hostname [3.23+nmu2ubuntu2] (99.0 localhost [arm64])",
+            FILE_POLICY + UBUNTU_POLICY,
+            "third-party:Local3",
+        ),
+        (
+            "Inst hostname [3.23+nmu2ubuntu2] (99.0 Local Repo:stable [arm64])",
+            FILE_POLICY + UBUNTU_POLICY,
+            "third-party:Local",
+        ),
+        # Last in the policy, with nothing after it.
+        (
+            "Inst hostname [3.23+nmu2ubuntu2] (99.0 Local Repo:stable [arm64])",
+            UBUNTU_POLICY + FILE_POLICY,
+            "third-party:Local",
+        ),
+        # A Release file with no Origin: nothing to map, so apt's text.
+        (
+            "Inst hostname [3.23+nmu2ubuntu2] (99.0 localhost [arm64])",
+            " 500 file:/repo1 ./ Packages\n     release c=\n" + UBUNTU_POLICY,
+            "third-party:localhost",
+        ),
+    ],
+    ids=["no-suite", "suite", "last", "no-origin"],
+)
+def test_a_file_repo_with_no_origin_line_maps_too(line, policy, key):
+    assert _inst_class(line, policy) == key
+    # A site-less release doesn't take the next release's origin line.
+    assert _inst_class(UBUNTU_INST, policy) == "security"
+
+
+def test_a_bulk_that_cant_read_the_policy_says_its_classes_read_the_label(tmp_path):
+    # CR 2771: the security and maintenance lanes go on without it, keyed on
+    # apt's Label as before #695, and the bulk's record says so.
+    host = _lane(tmp_path)
+    host.cases["apt-cache"].insert(0, ("policy", "", 100, "E: broken\n", None))
+    out = host.run("--lane", "maintenance")
+    assert out["verdict"]["ok"] is True, out
+    why = out["holds"]["classes_by_label"]
+    assert "apt-cache policy" in why and "E: broken" in why and "#695" in why
+
+
+def test_a_bulk_that_reads_the_policy_says_nothing_of_it(tmp_path):
+    host = _lane(tmp_path)
+    host.on("apt-cache", "policy", POLICY)
+    out = host.run("--lane", "maintenance")
+    assert out["verdict"]["ok"] is True, out
+    assert "classes_by_label" not in out["holds"]
