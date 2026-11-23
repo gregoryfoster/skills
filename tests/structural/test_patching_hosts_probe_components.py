@@ -376,8 +376,8 @@ def test_live_args_redacts_the_review_s_forms(host, argv, args):
             "d https://a.blob.core.windows.net/c?sv=2022-11-02&sig=<redacted>",
         ),
         (
-            ["d", "https://h/x?flag&token=abc#frag"],
-            "d https://h/x?flag&token=<redacted>#frag",
+            ["d", "https://h/x?flag&token=abc"],
+            "d https://h/x?flag&token=<redacted>",
         ),
         (
             ["d", "https://h/x?a=1;token=abc&b=2"],
@@ -392,6 +392,52 @@ def test_live_args_redacts_the_review_s_forms(host, argv, args):
     ],
 )
 def test_live_args_redacts_the_verify_pass_s_forms(host, argv, args):
+    e = _service_argv(host, argv)
+    assert e["args"] == args
+    assert "abc" not in host.result.stdout
+
+
+@pytest.mark.parametrize(
+    "argv, args",
+    [
+        # CR 2791: a secret parameter's value runs to the next & or a ,
+        # that starts a new URL, so a , ; or # inside it doesn't end it,
+        # and a fragment after it is redacted with it (safe beats readable).
+        (["d", "https://h/?token=ab,abc"], "d https://h/?token=<redacted>"),
+        (
+            ["d", "https://h/?password=p;abc&x=1"],
+            "d https://h/?password=<redacted>&x=1",
+        ),
+        (["d", "https://h/?token=abc#frag"], "d https://h/?token=<redacted>"),
+        (
+            ["d", "https://a/?token=abc,https://b/?x=1"],
+            "d https://a/?token=<redacted>,https://b/?x=1",
+        ),
+        # CR 2794: a URL nested in another parameter's value is scanned.
+        (
+            ["d", "https://h/login?next=https://app/cb?token=abc"],
+            "d https://h/login?next=https://app/cb?token=<redacted>",
+        ),
+        # CR 2792: a NAME=value word, inside a script string or an argv of
+        # its own (env's), takes the same name rule. An element that starts
+        # with one is redacted whole, as --password=a b is: its value may
+        # hold the spaces (env "DB_PASSWORD=a b").
+        (
+            ["/bin/sh", "-c", "cd /srv && API_TOKEN=abc exec d"],
+            "/bin/sh -c cd /srv && API_TOKEN=<redacted> exec d",
+        ),
+        (
+            ["/bin/sh", "-c", "API_TOKEN=abc exec d"],
+            "/bin/sh -c API_TOKEN=<redacted>",
+        ),
+        (["env", "DB_PASSWORD=a abc", "d"], "env DB_PASSWORD=<redacted> d"),
+        (
+            ["env", "DB_PASSWORD=abc", "d", "sslmode=require"],
+            "env DB_PASSWORD=<redacted> d sslmode=require",
+        ),
+    ],
+)
+def test_live_args_redacts_the_final_round_s_forms(host, argv, args):
     e = _service_argv(host, argv)
     assert e["args"] == args
     assert "abc" not in host.result.stdout
