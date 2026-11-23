@@ -3658,6 +3658,27 @@ ordering_ok() {  # <datastore unit> <After= list>
   return 1
 }
 
+# Whether a service's main process runs a binary dpkg has since replaced:
+# /proc/<pid>/exe reads "<path> (deleted)" until it restarts, whatever an
+# earlier run or unattended-upgrades installed (#699). true, false, or null
+# with no process or a link neither the user nor root can read. Another
+# user's link is "Permission denied" without root.
+exe_deleted() {  # <var> <unit> <MainPID>
+  local _ed_x="" _ed_v=null
+  if is_int "$3" && [ "$3" -gt 0 ]; then
+    _ed_x=$(readlink -- "$P_ROOT/proc/$3/exe" 2>/dev/null) ||
+      _ed_x=$(as_root readlink -- "$P_ROOT/proc/$3/exe" 2>/dev/null) || _ed_x=""
+    case $_ed_x in
+      "") ;;
+      *" (deleted)")
+        _ed_v=true
+        finding risk "stale-binary:$2" "" "$2 still runs ${_ed_x% (deleted)}, which an upgrade has since replaced (/proc/$3/exe reads deleted): the installed version hasn't taken effect for it. Restart it, or take the reboot, with the owner's approval (reboot-and-record.md section 4)." ;;
+      *) _ed_v=false ;;
+    esac
+  fi
+  printf -v "$1" '%s' "$_ed_v"
+}
+
 # Each runbook service: its ordering on every data store, and what Requires= it.
 read_services() {
   local svc e ds bad w
@@ -3665,10 +3686,12 @@ read_services() {
   for svc in $KNOB_SERVICES; do
     e=""
     jadds e unit "$svc"
-    if unit_show "$svc" After RequiredBy BoundBy Result NRestarts ActiveState; then
+    if unit_show "$svc" After RequiredBy BoundBy Result NRestarts ActiveState MainPID; then
       jadds e active_state "$U_ActiveState"
       jaddsn e result "$U_Result"
       jaddn e restarts "$U_NRestarts"
+      exe_deleted w "$svc" "$U_MainPID"
+      jadd e exe_deleted "$w"
       bad=""
       for ds in $DS_UNITS; do
         # A service that is itself the data store, as co-index's Qdrant is.
