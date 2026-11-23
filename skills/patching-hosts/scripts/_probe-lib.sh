@@ -496,13 +496,24 @@ origin_names() {  # <var> <key> <policy output>
 # output), so a Label-less repo's packages, or a PPA's whose Label isn't its
 # Origin, are told apart by the o= a knob names (#695):
 # "Inst tailscale [1.102.2] (1.102.4 Tailscale:pkgs.tailscale.com [arm64])".
+# OS_AMBIG := each release text a pending package printed that two repos
+# print alike, quoted and ", " apart: no package from it can be told to be
+# the origin's (CR 2795).
+OS_AMBIG=""
 origin_split() {  # <keep var> <skip var> <|names|> <sim output> <policy output>
   local _os_l _os_n _os_r _os_e _os_k="" _os_s="" _os_hit
+  OS_AMBIG=""
   while IFS= read -r _os_l; do
     case $_os_l in 'Inst '*) ;; *) continue ;; esac
     _os_n=${_os_l#Inst }
     _os_n=${_os_n%% *}
     inst_origins _os_r "$_os_l" "${5-}"
+    if [ -n "$INST_AMBIG" ]; then
+      case $OS_AMBIG in
+        *"\"$INST_AMBIG\""*) ;;
+        *) OS_AMBIG="$OS_AMBIG, \"$INST_AMBIG\"" ;;
+      esac
+    fi
     _os_hit=0
     while [ -n "$_os_r" ]; do
       _os_e=${_os_r%%, *}
@@ -511,6 +522,7 @@ origin_split() {  # <keep var> <skip var> <|names|> <sim output> <policy output>
     done
     if [ "$_os_hit" -eq 1 ]; then _os_k="$_os_k $_os_n"; else _os_s="$_os_s $_os_n"; fi
   done <<<"$4"
+  OS_AMBIG=${OS_AMBIG#, }
   printf -v "$1" '%s' "${_os_k# }"
   printf -v "$2" '%s' "${_os_s# }"
 }
@@ -1498,8 +1510,10 @@ _rel_map_add() {
 # whose text no release line prints, or two origins print, keeps apt's own
 # text: class_of then keys it on the Label, as before #695. So does every
 # release where the policy is empty or unread.
+INST_AMBIG=""  # a text inst_origins read that two repos print alike, or empty
 inst_origins() {  # <var> <Inst line> <policy output>
   local _io_r=$2 _io_e _io_o _io_out="" _io_us=$'\x1f' _io_nl=$'\n'
+  INST_AMBIG=""
   case $_io_r in *"("*) ;; *)
     printf -v "$1" '%s' ""
     return 0 ;;
@@ -1515,7 +1529,8 @@ inst_origins() {  # <var> <Inst line> <policy output>
     _io_o=""
     case $REL_MAP in *"$_io_nl$_io_e$_io_us"*)
       _io_o=${REL_MAP#*"$_io_nl$_io_e$_io_us"}
-      _io_o=${_io_o%%"$_io_nl"*} ;;
+      _io_o=${_io_o%%"$_io_nl"*}
+      [ -n "$_io_o" ] || INST_AMBIG=$_io_e ;;
     esac
     _io_out="$_io_out, ${_io_o:-$_io_e}"
   done
