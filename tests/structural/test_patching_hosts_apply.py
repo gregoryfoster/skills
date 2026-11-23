@@ -131,11 +131,9 @@ def _dispatcher(tmp_path_factory):
 
 
 # apply.sh shows phased updates: unattended-upgrade takes them all (#354).
-SIM_ARGS = "-s -o APT::Get::Always-Include-Phased-Updates=true dist-upgrade"
+SIM_ARGS = "-s -o Dir::Log::Planner=/dev/null -o APT::Get::Always-Include-Phased-Updates=true dist-upgrade"
 # A step's own change set, which its free-space gate sizes (#390).
-SPACE_ARGS = (
-    "-s -o APT::Get::Always-Include-Phased-Updates=true install --only-upgrade "
-)
+SPACE_ARGS = "-s -o Dir::Log::Planner=/dev/null -o APT::Get::Always-Include-Phased-Updates=true install --only-upgrade "
 SPACE_SIM = (
     "Inst libc6 [2.39-0ubuntu8.5] (2.39-0ubuntu8.6 Ubuntu:24.04/noble-updates, "
     "Ubuntu:24.04/noble-security [arm64])\n"
