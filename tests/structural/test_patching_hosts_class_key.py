@@ -342,3 +342,48 @@ def test_the_one_origin_bulk_takes_a_label_less_repos_packages(tmp_path):
     assert out["upgrade"]["origin_pending"] == ["libgd3"]
     skipped = host.record("lane.conf").split("Package-Blacklist {")[1]
     assert '  "^libc6$";' in skipped and "libgd3" not in skipped
+
+
+# A file: repo, flat (noble, apt 2.8.3, 2026-11-23; CR 2772): apt-cache policy
+# prints no origin line under its release line, since its site is empty. With
+# no Suite in its Release file, apt-get -s prints "localhost" for it.
+FILE_POLICY = (
+    " 500 file:/repo3 ./ Packages\n"
+    "     release o=Local3,c=\n"
+    " 500 file:/repo2 ./ Packages\n"
+    "     release o=Local,a=stable,l=Local Repo,c=\n"
+)
+
+
+@pytest.mark.parametrize(
+    "line, policy, key",
+    [
+        (
+            "Inst hostname [3.23+nmu2ubuntu2] (99.0 localhost [arm64])",
+            FILE_POLICY + UBUNTU_POLICY,
+            "third-party:Local3",
+        ),
+        (
+            "Inst hostname [3.23+nmu2ubuntu2] (99.0 Local Repo:stable [arm64])",
+            FILE_POLICY + UBUNTU_POLICY,
+            "third-party:Local",
+        ),
+        # Last in the policy, with nothing after it.
+        (
+            "Inst hostname [3.23+nmu2ubuntu2] (99.0 Local Repo:stable [arm64])",
+            UBUNTU_POLICY + FILE_POLICY,
+            "third-party:Local",
+        ),
+        # A Release file with no Origin: nothing to map, so apt's text.
+        (
+            "Inst hostname [3.23+nmu2ubuntu2] (99.0 localhost [arm64])",
+            " 500 file:/repo1 ./ Packages\n     release c=\n" + UBUNTU_POLICY,
+            "third-party:localhost",
+        ),
+    ],
+    ids=["no-suite", "suite", "last", "no-origin"],
+)
+def test_a_file_repo_with_no_origin_line_maps_too(line, policy, key):
+    assert _inst_class(line, policy) == key
+    # A site-less release doesn't take the next release's origin line.
+    assert _inst_class(UBUNTU_INST, policy) == "security"
