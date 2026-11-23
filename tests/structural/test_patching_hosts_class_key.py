@@ -170,6 +170,54 @@ def test_sim_class_reads_the_origin_given_the_policy():
     )
 
 
+# apt-get -s adds a suffix after the paren where a package breaks another:
+# " []" or " [<pkg>:<arch> ]" (noble, apt 2.8.3, 2026-11-23; CR 2764).
+SUFFIXED = [
+    (
+        "Inst perl-base [5.38.2-3.2build2] (5.38.2-3.2ubuntu0.7 Ubuntu:24.04/noble-updates,"
+        " Ubuntu:24.04/noble-security [arm64]) []",
+        "security",
+    ),
+    (
+        "Inst libperl5.38t64 [5.38.2-3.2build2] (5.38.2-3.2ubuntu0.7"
+        " Ubuntu:24.04/noble-updates, Ubuntu:24.04/noble-security [arm64]) [perl:arm64 ]",
+        "security",
+    ),
+    (SURY_INST + " []", "third-party:deb.sury.org"),
+    (DOCKER_INST + " [docker-ce:arm64 ]", "third-party:Docker"),
+    (
+        "Inst php8.3-cli [8.3.1] (8.3.2 PPA for PHP (deprecated):24.04/noble [arm64]) []",
+        "third-party:LP-PPA-ondrej-php",
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    "line, key", SUFFIXED, ids=["empty", "pkg-arch", "sury", "docker", "ondrej"]
+)
+def test_a_suffix_after_the_paren_doesnt_change_the_class(line, key):
+    assert _inst_class(line, POLICY) == key
+    name = line.split(" ")[1]
+    out = _lib(
+        f'sim_class c {name} "$SIM" "$POLICY"; printf %s "$c"',
+        SIM=f"NOTE: This is only a simulation!\n{line}\n",
+        POLICY=POLICY,
+    )
+    assert out == key
+
+
+def test_origin_split_takes_a_suffixed_line_from_its_origin():
+    sim = f"{SURY_INST} []\n{SURY_INST.replace('libgd3', 'libgd-tools')}\n"
+    sim += SUFFIXED[0][0] + "\n"
+    out = _lib(
+        'origin_names n packages.sury.org "$POLICY"; '
+        'origin_split k s "$n" "$SIM" "$POLICY"; printf "%s|%s" "$k" "$s"',
+        SIM=sim,
+        POLICY=POLICY,
+    )
+    assert out == "libgd3 libgd-tools|perl-base"
+
+
 # --- the probe ---------------------------------------------------------------
 
 
@@ -196,6 +244,19 @@ def test_the_probe_counts_each_origin_under_its_o_name(tmp_path):
         "tailscale",
         "libgd-tools",
     ]
+
+
+def test_the_probe_counts_suffixed_lines_by_their_class(tmp_path):
+    sim = "".join(line + "\n" for line, _ in SUFFIXED)
+    out = _probe(tmp_path, "posture automatic\n", sim).run()
+    p = out["pending"]
+    assert p["by_class"]["security_lower_bound"] == 2
+    assert p["by_class"]["updates"] == 0
+    assert p["by_class"]["third_party"] == {
+        "deb.sury.org": 1,
+        "Docker": 1,
+        "LP-PPA-ondrej-php": 1,
+    }
 
 
 def test_a_knob_line_naming_the_origin_or_its_site_covers_its_packages(tmp_path):

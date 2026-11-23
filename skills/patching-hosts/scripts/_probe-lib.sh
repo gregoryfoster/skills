@@ -1410,7 +1410,9 @@ rel_map() {  # <policy output>
 # The candidate's releases in an Inst line ("Inst <pkg> [<old>] (<new>
 # <release>, <release> [<arch>])", or what follows <pkg>), each as
 # "<o=>:<the text after its Label>", for class_of. A Label may hold spaces and
-# a ")", so the arch and the closing paren come off the end. A release
+# a ")", so the line is cut at its last ")", then the arch comes off: where
+# a package breaks another, apt adds " []" or " [<pkg>:<arch> ]" after the
+# paren, which holds no ")" (noble, apt 2.8.3, 2026-11-23; CR 2764). A release
 # whose text no release line prints, or two origins print, keeps apt's own
 # text: class_of then keys it on the Label, as before #695. So does every
 # release where the policy is empty or unread.
@@ -1421,7 +1423,7 @@ inst_origins() {  # <var> <Inst line> <policy output>
     return 0 ;;
   esac
   _io_r=${_io_r#*(}
-  _io_r=${_io_r%)}
+  _io_r=${_io_r%)*}
   _io_r=${_io_r% \[*\]}
   case $_io_r in *" "*) _io_r=${_io_r#* } ;; *) _io_r="" ;; esac
   rel_map "$3"
