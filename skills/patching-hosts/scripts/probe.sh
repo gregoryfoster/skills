@@ -3836,31 +3836,20 @@ ordering_ok() {  # <datastore unit> <After= list>
 
 # Whether a service's processes run a binary dpkg has since replaced:
 # /proc/<pid>/exe reads "<path> (deleted)" until it restarts, whatever an
-# earlier run or unattended-upgrades installed (#699). Every process whose
-# cgroup names the unit, not its MainPID alone, which a wrapper or a
-# oneshot's RemainAfterExit leaves elsewhere (CR 2778); what needrestart
-# passes over, such as a memfd exec, isn't stale (CR 2776). true; false;
-# or null with no process, or with a link neither the user nor root can
-# read and none stale. Another user's link is "Permission denied" without
-# root.
-SVC_PIDS="" SVC_PIDS_READ=0  # "<unit>|<pid>" words for each declared service's processes
+# earlier run or unattended-upgrades installed (#699). Every process in the
+# unit's cgroup and the cgroups below it, as apply.sh's read_stale lists
+# them through reboot_pids, not its MainPID alone, which a wrapper or a
+# oneshot's RemainAfterExit leaves elsewhere (CR 2778, CR 2784); what
+# needrestart passes over, such as a memfd exec, isn't stale (CR 2776).
+# true; false; or null with no process, a cgroup that can't be read, or a
+# link neither the user nor root can read and none stale. Another user's
+# link is "Permission denied" without root.
 exe_deleted() {  # <var> <unit>
-  local _ed_f _ed_p _ed_u _ed_x _ed_v=null _ed_unread=0 _ed_stale=""
-  if [ "$SVC_PIDS_READ" -eq 0 ]; then
-    SVC_PIDS_READ=1
-    for _ed_f in "$P_ROOT"/proc/[0-9]*/cgroup; do
-      [ -r "$_ed_f" ] || continue
-      _ed_p=${_ed_f%/cgroup}
-      _ed_p=${_ed_p##*/}
-      unit_of_pid _ed_u "$_ed_p"
-      if [ -n "$_ed_u" ] && in_words "$_ed_u" "$KNOB_SERVICES"; then
-        SVC_PIDS="$SVC_PIDS $_ed_u|$_ed_p"
-      fi
-    done
-  fi
-  for _ed_p in $SVC_PIDS; do
-    [ "${_ed_p%%|*}" = "$2" ] || continue
-    _ed_p=${_ed_p#*|}
+  local _ed_pids _ed_p _ed_x _ed_v=null _ed_unread=0 _ed_stale=""
+  # reboot_pids reads the caller's CGROUP_DIR: the probe's, under its root.
+  local CGROUP_DIR=$P_ROOT/sys/fs/cgroup
+  reboot_pids _ed_pids "$2" || _ed_unread=1
+  for _ed_p in $_ed_pids; do
     _ed_x=$(readlink -- "$P_ROOT/proc/$_ed_p/exe" 2>/dev/null) ||
       _ed_x=$(as_root readlink -- "$P_ROOT/proc/$_ed_p/exe" 2>/dev/null) || _ed_x=""
     case $_ed_x in
