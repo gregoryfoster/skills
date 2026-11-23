@@ -387,3 +387,22 @@ def test_a_file_repo_with_no_origin_line_maps_too(line, policy, key):
     assert _inst_class(line, policy) == key
     # A site-less release doesn't take the next release's origin line.
     assert _inst_class(UBUNTU_INST, policy) == "security"
+
+
+def test_a_bulk_that_cant_read_the_policy_says_its_classes_read_the_label(tmp_path):
+    # CR 2771: the security and maintenance lanes go on without it, keyed on
+    # apt's Label as before #695, and the bulk's record says so.
+    host = _lane(tmp_path)
+    host.cases["apt-cache"].insert(0, ("policy", "", 100, "E: broken\n", None))
+    out = host.run("--lane", "maintenance")
+    assert out["verdict"]["ok"] is True, out
+    why = out["holds"]["classes_by_label"]
+    assert "apt-cache policy" in why and "E: broken" in why and "#695" in why
+
+
+def test_a_bulk_that_reads_the_policy_says_nothing_of_it(tmp_path):
+    host = _lane(tmp_path)
+    host.on("apt-cache", "policy", POLICY)
+    out = host.run("--lane", "maintenance")
+    assert out["verdict"]["ok"] is True, out
+    assert "classes_by_label" not in out["holds"]

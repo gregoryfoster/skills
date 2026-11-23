@@ -2241,7 +2241,7 @@ STARTED=0
 
 LANE_KEEP=""
 do_bulk() {
-  local out pend="" p i r s g o="" a="" names="" e kw rest pol="" polrc onames oskip sim bv dv="" dseen=0 c d line vout="" va="" outside="" bver=""
+  local out pend="" p i r s g o="" a="" names="" e kw rest pol="" polrc polerr onames oskip sim bv dv="" dseen=0 c d line vout="" va="" outside="" bver=""
   local btake hsteps="" cl
   local -a f=() w=()
   if ! root_has "$run" && ! as_root mkdir -p -m 700 -- "$run"; then
@@ -2295,7 +2295,7 @@ do_bulk() {
   # (#695), from the same lists. Unread, a class keys on the Label, as
   # before; the one-origin lane can't tell its packages without them.
   capture pol apt-cache policy
-  polrc=$CAP_RC
+  polrc=$CAP_RC polerr=$CAP_ERR
   [ "$polrc" -eq 0 ] || pol=""
   # The one-origin lane takes that origin's packages alone: every other
   # pending package goes in its file's Package-Blacklist, and only its own
@@ -2394,6 +2394,10 @@ do_bulk() {
   jadd o versions "[$va]"
   if [ "$LANE" = security ]; then
     jadds o versions_not_compared "the security lane takes each package's -security version, which the simulation's candidate isn't where -updates has a newer one"
+  fi
+  # Unread, a class keys a third party on apt's Label (CR 2771).
+  if [ "$polrc" -ne 0 ]; then
+    jadds o classes_by_label "apt-cache policy failed (${polerr:-exit $polrc}), so each held package's class keys a third party on apt's Label, not its repo's o= (#695)"
   fi
   if ! printf '%s' "$vout" | root_write "$run/hold-versions"; then
     fail "$run/hold-versions couldn't be written: nothing was held or upgraded"
