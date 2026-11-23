@@ -3005,7 +3005,11 @@ read_dry_run() {
         finding "$OF_KIND" dry-run "" "the $lane lane's dry run didn't run: $OF_WHY, and on lists older than the run it can count an older release of the origin's package with every gate passed (#523). Count again with --refresh-into DIR beside --dry-run-into."
         return 0
       fi
-      origin_split lkeep lskip "$lnames" "$SIM_DIST_OUT" "$POLICY_OUT" ;;
+      origin_split lkeep lskip "$lnames" "$SIM_DIST_OUT" "$POLICY_OUT"
+      if [ -z "$lkeep" ] && [ -n "$OS_AMBIG" ]; then
+        finding unknown dry-run "" "the $lane lane's dry run didn't run: two repos print the same release text ($OS_AMBIG) in apt-get -s, so which pending packages come from ${lane#origin:} can't be keyed on its o= (#695)."
+        return 0
+      fi ;;
   esac
   # On lists more than a day old it counts the lists, not the host, in any
   # lane: address-validator's, 167 hours old, counted 0 where a refresh

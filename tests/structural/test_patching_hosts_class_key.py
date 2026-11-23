@@ -312,11 +312,15 @@ def test_the_probes_one_origin_dry_run_takes_a_label_less_repos_packages(tmp_pat
 # --- apply.sh ----------------------------------------------------------------
 
 
-def test_the_one_origin_bulk_takes_a_label_less_repos_packages(tmp_path):
-    lane = "origin:packages.sury.org"
+SURY_LANE = "origin:packages.sury.org"
+
+
+def _sury_bulk(tmp_path, sim: str, policy: str):
+    """A one-origin bulk for packages.sury.org, its dry run having counted
+    one package, over SIM until an upgrade takes libgd3."""
     host = _lane(tmp_path, KNOB + "origin packages.sury.org follow\n")
     s = host.state
-    (s / "sim").write_text(f"{SURY_INST}\n{UBUNTU_INST}\n")
+    (s / "sim").write_text(sim)
     (s / "sim-after").write_text(f"{UBUNTU_INST}\n")
     host.cases["apt-get"].insert(
         0,
@@ -328,16 +332,21 @@ def test_the_one_origin_bulk_takes_a_label_less_repos_packages(tmp_path):
             f'if [ -e "{s}/took" ]; then cat "{s}/sim-after"; else cat "{s}/sim"; fi; exit 0',
         ),
     )
-    host.on("apt-cache", "policy", POLICY)
+    host.on("apt-cache", "policy", policy)
     host.uu(
         "Packages that will be upgraded: libgd3\nAll upgrades installed\n",
         before=f'touch "{s}/took"; ',
     )
     (host.dry / "summary").write_text(
         f"began={TUE_1530 - 3600}\nexit=0\ncount=1\nwall_seconds=60\n"
-        f"security_only=0\nlane={lane}\norigin_left=\nlists_refreshed=1\n"
+        f"security_only=0\nlane={SURY_LANE}\norigin_left=\nlists_refreshed=1\n"
     )
-    out = host.run("--lane", lane)
+    return host
+
+
+def test_the_one_origin_bulk_takes_a_label_less_repos_packages(tmp_path):
+    host = _sury_bulk(tmp_path, f"{SURY_INST}\n{UBUNTU_INST}\n", POLICY)
+    out = host.run("--lane", SURY_LANE)
     assert out["verdict"]["ok"] is True, out
     assert out["upgrade"]["origin_pending"] == ["libgd3"]
     skipped = host.record("lane.conf").split("Package-Blacklist {")[1]
@@ -449,3 +458,57 @@ def test_the_probe_and_the_split_cant_give_an_origin_less_repos_package_to_sury(
         POLICY=NO_ORIGIN_POLICY,
     )
     assert split == "|vendor-agent libgd3"
+
+
+# CR 2795: there, nothing is the origin's, and the reason isn't that its
+# packages are current: two repos print one text, so none can be keyed on o=.
+AMBIGUOUS = "two repos print the same release text"
+
+
+def test_origin_split_names_a_text_two_repos_print():
+    sim = f"{VENDOR_INST}\n{SURY_INST}\n{UBUNTU_INST}\n"
+    out = _lib(
+        'origin_names n packages.sury.org "$P1"; '
+        'origin_split k s "$n" "$SIM" "$P1"; a=$OS_AMBIG; '
+        'origin_split k s "$n" "$SIM" "$P2"; printf "%s|%s" "$a" "$OS_AMBIG"',
+        SIM=sim,
+        P1=NO_ORIGIN_POLICY,
+        P2=POLICY,
+    )
+    assert out == '"noble"|'
+
+
+def test_a_one_origin_bulk_says_two_repos_print_its_text(tmp_path):
+    host = _sury_bulk(tmp_path, f"{VENDOR_INST}\n{SURY_INST}\n", NO_ORIGIN_POLICY)
+    out = host.run("--lane", SURY_LANE, rc=1)
+    [why] = [w for w in out["verdict"]["why"] if "packages.sury.org" in w]
+    assert AMBIGUOUS in why and '"noble"' in why and "#695" in why, why
+    assert "its packages are current" not in why
+    assert not host.calls("unattended-upgrade")
+
+
+def test_the_probes_one_origin_dry_run_says_two_repos_print_its_text(tmp_path):
+    h = _probe(
+        tmp_path,
+        "class production\nposture scheduled\norigin packages.sury.org follow\n",
+        f"{VENDOR_INST}\n{SURY_INST}\n",
+        NO_ORIGIN_POLICY,
+    )
+    h.on(
+        "apt-get",
+        "update*",
+        script="for a; do case $a in Dir::State::Lists=*) d=${a#*=} ;; esac; done; "
+        'touch "${d}security.ubuntu.com_ubuntu_dists_noble-security_InRelease" '
+        '"${d}packages.sury.org_php_dists_noble_InRelease"; exit 0',
+    )
+    out = h.run(
+        "--refresh-into",
+        str(h.tmp / "fresh"),
+        "--dry-run-into",
+        str(h.tmp / "dry"),
+        "--lane",
+        SURY_LANE,
+    )
+    [f] = [f for f in out["findings"] if f["id"] == "dry-run"]
+    assert AMBIGUOUS in f["message"] and '"noble"' in f["message"], f
+    assert not h.calls("unattended-upgrade")

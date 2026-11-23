@@ -2385,6 +2385,9 @@ do_bulk() {
       if [ "$onames" = "|" ]; then
         fail "apt-cache policy lists no origin at ${LANE#origin:}, so nothing from it is pending: is its source configured? Nothing was held or upgraded"
         return 0
+      elif [ -z "$LANE_KEEP" ] && [ -n "$OS_AMBIG" ]; then
+        fail "nothing pending can be told to be from the ${LANE#origin:} origin: two repos print the same release text ($OS_AMBIG) in apt-get -s, so a package's class can't be keyed on its o= (#695). Nothing was held or upgraded"
+        return 0
       elif [ -z "$LANE_KEEP" ]; then
         fail "nothing from the ${LANE#origin:} origin is pending against the refreshed lists: its packages are current, its source isn't configured, or the owner holds them (apt-mark showhold: ${BEFORE_HOLDS:-none}). Nothing was held or upgraded"
         return 0
