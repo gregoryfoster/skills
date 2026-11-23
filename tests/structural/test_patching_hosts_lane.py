@@ -700,6 +700,22 @@ def test_a_one_origin_held_step_must_take_its_packages(tmp_path, took):
     assert out["upgrade"]["origin_left"] == ([] if took else ["tailscale"])
 
 
+def test_no_simulation_overwrites_the_planner_log_of_the_install_it_follows(
+    tmp_path,
+):
+    # CR 2779: read_origin_left's apt-get -s, as root right after the install,
+    # rewrote /var/log/apt/eipp.log.xz, the log of the install it had just made.
+    knob = KNOB + ORIGINS.replace("Tailscale", "pkgs.tailscale.com")
+    host = _one_origin(tmp_path, knob + "hold tailscale ts\n")
+    host.uu("No packages found that can be upgraded unattended\n")
+    assert host.run("--lane", TS)["verdict"]["ok"] is True
+    host.uu(TOOK, before=f'touch "{host.state}/took"; ')
+    assert host.run(step="ts")["verdict"]["ok"] is True
+    sims = [a.split() for _, a, _ in host.calls("apt-get") if a.split()[:1] == ["-s"]]
+    assert len(sims) >= 3
+    assert all("Dir::Log::Planner=/dev/null" in a for a in sims), sims
+
+
 # #607, co-index 2026-10-23 and broker 2026-10-28: an origin lane whose every
 # pending package is held runs a bulk that takes nothing, and nothing said so.
 # It isn't refused (a held step needs a green bulk): the gate and the holds

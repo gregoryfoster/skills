@@ -364,8 +364,12 @@ if [ "$step" != bulk ]; then
 fi
 case $LANE in security | maintenance | origin:?*) ;; *) LANE=unknown ;; esac
 
+# A simulation run as root rewrites /var/log/apt/eipp.log.xz, apt's log of
+# the last real install, so one after the install overwrote that install's
+# own (CR 2779). None writes it.
+SIM_NOLOG=(-o Dir::Log::Planner=/dev/null)
 # What a step writes is read as root, as its other simulations are.
-SS_APT_GET=(as_root apt-get -s)
+SS_APT_GET=(as_root apt-get -s "${SIM_NOLOG[@]}")
 
 # --- the gate -------------------------------------------------------------------
 # _gate-lib.sh holds refuse and fail, the root-only records, the span and the
@@ -1903,7 +1907,7 @@ check_holds() {
 LANE_TAKE="" ORIGIN_LEFT="" ORIGIN_READ=0 ORIGIN_ERR=""
 read_origin_left() {
   local out kw p rest
-  capture out as_root apt-get -s "${APT_SIM_PHASED[@]}" dist-upgrade
+  capture out as_root apt-get -s "${SIM_NOLOG[@]}" "${APT_SIM_PHASED[@]}" dist-upgrade
   if [ "$CAP_RC" -ne 0 ]; then
     ORIGIN_ERR=${CAP_ERR:-exit $CAP_RC}
     return 0
@@ -2282,7 +2286,7 @@ do_bulk() {
   # What's pending now, against the refreshed lists: every upgrade, from any
   # origin, so a group is held whichever origin its update comes from, and
   # whatever its phase: unattended-upgrade ignores phasing (_probe-lib.sh).
-  capture out as_root apt-get -s "${APT_SIM_PHASED[@]}" dist-upgrade
+  capture out as_root apt-get -s "${SIM_NOLOG[@]}" "${APT_SIM_PHASED[@]}" dist-upgrade
   if [ "$CAP_RC" -ne 0 ]; then
     fail "apt-get -s dist-upgrade failed (${CAP_ERR:-exit $CAP_RC}): nothing was held or upgraded"
     return 0
