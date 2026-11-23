@@ -3749,13 +3749,19 @@ secret_arg_name() {  # <name, dashes stripped, no value> [<more words>]: 0 when 
   [ "$_sn_nc" -eq 1 ] || shopt -u nocasematch
   return "$_sn_rc"
 }
-# A URL parameter: a name after ? & # or ;, its value up to the next of
-# them or a , (a comma joins URLs in one word). Patterns in variables: & ; and # are
-# operators in a literal [[ =~ ]].
+# A URL parameter: a name after ? & # or ;. A secret one's value runs to the
+# next &, or a , that starts another URL (a comma joins URLs in one word), so
+# a , ; or # inside it doesn't end it, and a fragment after it goes with it
+# (CR 2791). Any other's ends at & # , ; or ?, so a URL nested in it is
+# scanned too (CR 2794). Patterns in variables: & ; and # are operators in a
+# literal [[ =~ ]].
 URL_PARAM_PRE='^([^?&#;]*[?&#;])(.*)$'
-URL_PARAM_KV='^([^=&#,?;]+)=([^&#,;]*)(.*)$'
+URL_PARAM_KV='^([^=&#,?;]+)=(.*)$'
+URL_PARAM_PLAIN='^([^&#,;?]*)(.*)$'
+URL_START='^[A-Za-z][A-Za-z0-9+.-]*://'
+ENV_NAME='^[A-Za-z_][A-Za-z0-9_.-]*$'
 redact_url() {  # <var> <word>: the word with each URL's userinfo and secret parameter values redacted
-  local _ru_w=$2 _ru_out="" _ru_auth _ru_ui _ru_k _ru_v
+  local _ru_w=$2 _ru_out="" _ru_auth _ru_ui _ru_k _ru_v _ru_r _ru_p
   [[ $_ru_w == *://* ]] || { printf -v "$1" '%s' "$_ru_w"; return 0; }
   while [[ $_ru_w == *://* ]]; do
     _ru_out="$_ru_out${_ru_w%%://*}://"
@@ -3779,8 +3785,24 @@ redact_url() {  # <var> <word>: the word with each URL's userinfo and secret par
     _ru_out="$_ru_out${BASH_REMATCH[1]}"
     _ru_w=${BASH_REMATCH[2]}
     if [[ $_ru_w =~ $URL_PARAM_KV ]]; then
-      _ru_k=${BASH_REMATCH[1]} _ru_v=${BASH_REMATCH[2]} _ru_w=${BASH_REMATCH[3]}
-      if secret_arg_name "$_ru_k" "$SECRET_PARAM_WORDS"; then _ru_v="<redacted>"; fi
+      _ru_k=${BASH_REMATCH[1]} _ru_w=${BASH_REMATCH[2]}
+      if secret_arg_name "$_ru_k" "$SECRET_PARAM_WORDS"; then
+        _ru_r=${_ru_w%%&*}
+        _ru_v=${_ru_r%%,*}
+        _ru_r=${_ru_r#"$_ru_v"}
+        while [ -n "$_ru_r" ]; do
+          _ru_r=${_ru_r#,}
+          if [[ $_ru_r =~ $URL_START ]]; then break; fi
+          _ru_p=${_ru_r%%,*}
+          _ru_v="$_ru_v,$_ru_p"
+          _ru_r=${_ru_r#"$_ru_p"}
+        done
+        _ru_w=${_ru_w#"$_ru_v"}
+        _ru_v="<redacted>"
+      else
+        [[ $_ru_w =~ $URL_PARAM_PLAIN ]]
+        _ru_v=${BASH_REMATCH[1]} _ru_w=${BASH_REMATCH[2]}
+      fi
       _ru_out="$_ru_out$_ru_k=$_ru_v"
     fi
   done
@@ -3798,6 +3820,11 @@ redact_arg() {  # <var> <word>: one word under the name rule
       if secret_arg_name "$_ra_n"; then
         case $_ra_w in *=*) _ra_w="${_ra_w%%=*}=<redacted>" ;; *) ARG_NEXT=1 ;; esac
       fi ;;
+    # An environment assignment, as in a script string or env's argv, is an
+    # option with no dash (CR 2792).
+    [A-Za-z_]*=*)
+      _ra_n=${_ra_w%%=*}
+      if [[ $_ra_n =~ $ENV_NAME ]] && secret_arg_name "$_ra_n"; then _ra_w="$_ra_n=<redacted>"; fi ;;
   esac
   redact_url _ra_w "$_ra_w"
   printf -v "$1" '%s' "$_ra_w"
