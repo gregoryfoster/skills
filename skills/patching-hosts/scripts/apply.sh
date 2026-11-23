@@ -796,8 +796,9 @@ REBOOT_REQUIRED=/run/reboot-required
 # suffix still on, as it matches them: deleted_passed_over, in
 # _probe-lib.sh, which read_stale shares (CR 2776). needrestart's other
 # test isn't read here: a mapping whose file was replaced without the
-# marker, which it finds by comparing map_files' inodes. dpkg replaces a library by rename, which shows as
-# "(deleted)", so that case is rare (CR 2526).
+# marker, which it finds by comparing map_files' inodes. dpkg replaces a
+# library by rename, which shows as "(deleted)", so that case is rare
+# (CR 2526).
 RB_DUE=""
 reboot_maps() {  # <the selection> <who> <pid>...
   local _rm_sel=$1 _rm_who=$2 _rm_pid _rm_maps _rm_out _rm_line _rm_p _rm_owners="" _rm_paths="" _rm_unk="" _rm_v=maps _rm_rc _rm_x _rm_del="" _rm_n=0 _rm_first=""
