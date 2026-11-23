@@ -531,30 +531,35 @@ journal_first_line() { { jctl -q -o short-unix --no-pager 2>/dev/null || true; }
 # /usr/lib, a dangling link passed over, and a link to /dev/null, an empty
 # file or a directory masking the rest. The version is the root's dpkg
 # database's: unread, the file is read as 256 and newer read it, and that's
-# in not_read when it's another file than /etc's.
+# in not_read when it's another file than /etc's. PID 1 reads system.conf
+# by the same rule (systemd 256's config_parse_standard_file_with_dropins).
 # dpkg-query's format fields, not shell expansions.
 # shellcheck disable=SC2016
 DPKG_STATUS_VERSION='${db:Status-Status} ${Version}'
-journald_main_file() {  # <var>: journald's main file, under P_ROOT; empty for none
-  local _jm_got="" _jm_any=1 _jm_rc=0 _jm_d _jm_f _jm_main=""
-  if have dpkg-query && have dpkg; then capture _jm_got dpkgq -W -f "$DPKG_STATUS_VERSION" systemd; fi
-  case $_jm_got in
-    "installed "?*)
-      dpkg --compare-versions "${_jm_got#installed }" lt 256~ 2>/dev/null || _jm_rc=$?
-      case $_jm_rc in 0) _jm_any=0 ;; 1) ;; *) _jm_got="" ;; esac ;;
-    *) _jm_got="" ;;
-  esac
+SD_MAIN_ANY="" SD_MAIN_GOT=""  # systemd's version, read once for both main files
+systemd_main_file() {  # <var> <name under systemd/> <whose>: its main file, under P_ROOT; empty for none
+  local _jm_rc=0 _jm_d _jm_f _jm_main=""
+  if [ -z "$SD_MAIN_ANY" ]; then
+    SD_MAIN_ANY=1
+    if have dpkg-query && have dpkg; then capture SD_MAIN_GOT dpkgq -W -f "$DPKG_STATUS_VERSION" systemd; fi
+    case $SD_MAIN_GOT in
+      "installed "?*)
+        dpkg --compare-versions "${SD_MAIN_GOT#installed }" lt 256~ 2>/dev/null || _jm_rc=$?
+        case $_jm_rc in 0) SD_MAIN_ANY=0 ;; 1) ;; *) SD_MAIN_GOT="" ;; esac ;;
+      *) SD_MAIN_GOT="" ;;
+    esac
+  fi
   for _jm_d in etc run usr/local/lib usr/lib; do
-    [ "$_jm_any" -eq 1 ] || [ "$_jm_d" = etc ] || continue
-    _jm_f=$P_ROOT/$_jm_d/systemd/journald.conf
+    [ "$SD_MAIN_ANY" -eq 1 ] || [ "$_jm_d" = etc ] || continue
+    _jm_f=$P_ROOT/$_jm_d/systemd/$2
     # -e follows a link: a dangling one isn't there.
     if [ -e "$_jm_f" ]; then
       if [ -f "$_jm_f" ]; then _jm_main=$_jm_f; fi
       break
     fi
   done
-  if [ -z "$_jm_got" ] && [ -n "$_jm_main" ] && [ "$_jm_d" != etc ]; then
-    not_read "journald's main file: systemd's version couldn't be read from /var/lib/dpkg, so it's read as systemd 256 and newer read it, the first of /etc, /run, /usr/local/lib and /usr/lib: ${_jm_main#"$P_ROOT"}"
+  if [ -z "$SD_MAIN_GOT" ] && [ -n "$_jm_main" ] && [ "$_jm_d" != etc ]; then
+    not_read "$3 main file: systemd's version couldn't be read from /var/lib/dpkg, so it's read as systemd 256 and newer read it, the first of /etc, /run, /usr/local/lib and /usr/lib: ${_jm_main#"$P_ROOT"}"
   fi
   printf -v "$1" '%s' "$_jm_main"
 }
@@ -562,7 +567,7 @@ journald_main_file() {  # <var>: journald's main file, under P_ROOT; empty for n
 read_journal() {
   local o="" f line n storage="" ssrc="" flush flush_live="" out pc="" vc="" verdict=unknown oldest="" reach="" at dfs main sect k v
   # The main file, then the drop-ins as journald reads them (#515).
-  journald_main_file main
+  systemd_main_file main journald.conf "journald's"
   dropin_files dfs "$P_ROOT/etc/systemd/journald.conf.d" "$P_ROOT/run/systemd/journald.conf.d" \
     "$P_ROOT/usr/local/lib/systemd/journald.conf.d" "$P_ROOT/usr/lib/systemd/journald.conf.d"
   # Each line as journald's parser takes it (#608): trimmed, a # or ; line a
@@ -1096,17 +1101,84 @@ read_exe_init() {
   R_EXE_INIT="{$o}"
 }
 
+# PID 1's log target (#684): the live one, argv's, and system.conf's. A
+# command-line option beats system.conf, so a boot runs on argv's: exeuntu's
+# exe-init starts PID 1 with --log-target=syslog, which PID 1 reads as the
+# journal (log.c's upgrade_syslog_to_journal). The first daemon-reload or
+# re-exec applies system.conf's LogTarget= instead, and the image's
+# container-overrides.conf sets console: PID 1's lines then stop reaching the
+# journal. Measured on CannObserv/wslcb-licensing-tracker's host, systemd
+# 255.4-1ubuntu8.19, 2026-11-20 (#684, #685). Whether a reload with no
+# LogTarget= line keeps argv's target or takes systemd's default
+# (journal-or-kmsg) wasn't measured, so with an argv one that reads unknown.
+# The kernel's systemd.log_target= isn't read: exeuntu's cmdline has none.
+LT_LIVE="" LT_ARGV="" LT_ARGV_READ=0 LT_CONF="" LT_CONF_IN="" LT_RELOAD=""
+log_target_journal() {  # <var> <target>: 1 when PID 1 logs to the journal on it, 0 when not, empty when unknown
+  case $2 in
+    journal | journal-or-kmsg | syslog | syslog-or-kmsg) printf -v "$1" 1 ;;
+    console | console-prefixed | kmsg | null) printf -v "$1" 0 ;;
+    *) printf -v "$1" '%s' "" ;;
+  esac
+}
+
+read_log_target() {
+  local a prev="" main dfs f n line sect k v
+  if live_cmd systemd-analyze; then
+    capture LT_LIVE systemd-analyze get-log-target
+    LT_LIVE=${LT_LIVE%%$'\n'*}
+  fi
+  # getopt's: --log-target=X or --log-target X, the last one winning.
+  if [ "$P_LIVE" -eq 1 ] && [ -r "$P_ROOT/proc/1/cmdline" ]; then
+    LT_ARGV_READ=1
+    while IFS= read -r -d '' a || [ -n "$a" ]; do
+      case $prev in --log-target) LT_ARGV=$a ;; esac
+      case $a in --log-target=*) LT_ARGV=${a#--log-target=} ;; esac
+      prev=$a
+    done <"$P_ROOT/proc/1/cmdline"
+  fi
+  # As PID 1 parses it: [Manager]'s keys only, trimmed, # and ; comments; a
+  # value log_target_from_string doesn't take, an empty one included, is
+  # logged and ignored (config_parse_target), and the one before it stands.
+  systemd_main_file main system.conf "PID 1's"
+  dropin_files dfs "$P_ROOT/etc/systemd/system.conf.d" "$P_ROOT/run/systemd/system.conf.d" \
+    "$P_ROOT/usr/local/lib/systemd/system.conf.d" "$P_ROOT/usr/lib/systemd/system.conf.d"
+  while IFS= read -r f; do
+    [ -f "$f" ] || continue
+    n=0 sect=""
+    while IFS= read -r line || [ -n "$line" ]; do
+      n=$((n + 1))
+      trim line "$line"
+      case $line in
+        '' | '#'* | ';'*) continue ;;
+        '['*']') sect=$line; continue ;;
+        *=*) ;;
+        *) continue ;;
+      esac
+      [ "$sect" = '[Manager]' ] || continue
+      trim k "${line%%=*}"
+      [ "$k" = LogTarget ] || continue
+      trim v "${line#*=}"
+      case $v in
+        console | console-prefixed | kmsg | journal | journal-or-kmsg | syslog | syslog-or-kmsg | auto | null)
+          LT_CONF=$v LT_CONF_IN="${f#"$P_ROOT"}:$n" ;;
+      esac
+    done <"$f"
+  done <<<"$main"$'\n'"$dfs"
+  if [ -n "$LT_CONF" ]; then
+    LT_RELOAD=$LT_CONF
+  elif [ "$LT_ARGV_READ" -eq 1 ] && [ -z "$LT_ARGV" ]; then
+    LT_RELOAD=journal-or-kmsg
+  fi
+}
+
 read_environment() {
-  local o="" lt=""
+  local o="" j="" b
   read_profile
   read_image_conf
   read_exe_init
   read_boot
   read_journal
-  if live_cmd systemd-analyze; then
-    capture lt systemd-analyze get-log-target
-    lt=${lt%%$'\n'*}
-  fi
+  read_log_target
   read_session
   read_setup
   read_tmp
@@ -1115,7 +1187,16 @@ read_environment() {
   jadd o exe_init "$R_EXE_INIT"
   jadd o boot "{$R_BOOT}"
   jadd o journal "{$R_JOURNAL}"
-  jaddsn o pid1_log_target "$lt"
+  jaddsn o pid1_log_target "$LT_LIVE"
+  jaddsn o pid1_log_target_argv "$LT_ARGV"
+  jaddsn o pid1_log_target_conf "$LT_CONF"
+  jaddsn o pid1_log_target_conf_set_in "$LT_CONF_IN"
+  jaddsn o pid1_log_target_reload "$LT_RELOAD"
+  log_target_journal b "$LT_LIVE"
+  jaddb j now "$b"
+  log_target_journal b "$LT_RELOAD"
+  jaddb j after_reload "$b"
+  jadd o pid1_logs_to_journal "{$j}"
   jadd o session "{$R_SESSION}"
   jadd o setup_script "{$R_SETUP}"
   jadd o tmp "{$R_TMP}"
@@ -5206,6 +5287,28 @@ check_redis() {
   done
 }
 
+# PID 1's own shutdown lines in the previous boot, judged by their presence
+# (#684). The new boot's pid1_log_target isn't the target the shutdown ran
+# on: the first reload after a boot can move PID 1 to the console, as
+# exeuntu's container-overrides.conf does. Present, they're evidence of the
+# shutdown; absent, they're none either way, so that reads unknown, not a
+# failure.
+check_pid1_lines() {
+  local out ev=""
+  capture out jctl -b -1 _PID=1 -n 200 -q --no-pager -o cat
+  if [ "$CAP_RC" -ne 0 ]; then
+    check shutdown:pid1-lines "" "PID 1's lines in the previous boot couldn't be read (${CAP_ERR:-exit $CAP_RC})"
+    return 0
+  fi
+  case $out in *"Reached target final.target"*) ev="Reached target final.target" ;; esac
+  case $out in *"Shutting down."*) ev="${ev:+$ev, }Shutting down." ;; esac
+  if [ -n "$ev" ]; then
+    check shutdown:pid1-lines 1 "the previous boot's journal holds PID 1's own shutdown lines: $ev"
+  else
+    check shutdown:pid1-lines "" "the previous boot's journal holds none of PID 1's shutdown lines (Reached target final.target, Shutting down.): a reload may have moved PID 1 to the console before the shutdown, as exeuntu's container-overrides.conf does, so their absence says nothing either way"
+  fi
+}
+
 check_journal_record() {
   local out r
   if [ "$JOURNAL_VERDICT" = persistent ]; then
@@ -5222,6 +5325,7 @@ check_journal_record() {
         *) check shutdown:journal-stopped 0 "the previous boot's last 20 journal lines have no Journal stopped: the shutdown never reached journald's stop" ;;
       esac
     fi
+    check_pid1_lines
     return 0
   fi
   post_run_dir r
@@ -5255,7 +5359,7 @@ check_journal_record() {
 # (InactiveExitTimestamp) with it still unset has run since, whatever the
 # journal kept: measured on systemd 255. One that did stop needs PID 1's
 # lines in this boot's journal to tell a failure from a stop by hand, and PID
-# 1 logs to the console on exeuntu.
+# 1 logs to the console on exeuntu from the first reload (#684).
 first_start() {  # <unit>, after unit_show read its Inactive*Timestamps: FIRST_START := held, failed, stopped, or empty when nothing tells
   local out
   FIRST_START=""
