@@ -3647,64 +3647,98 @@ cmdline_of() {  # <var> <pid>
   printf -v "$1" '%s' "${_ca% }"
 }
 
-# A process's arguments as live_args emits them: the value of any option whose
-# name marks a secret is <redacted>, and so is a URL's password, since a
-# reading is made to be copied off the host (#698). Read from the NUL-separated
-# argv, so a value holding a space stays one value. The name stays, to show it
-# was passed. By name only: a positional secret, a short option's value and the
-# environment aren't recognised (readings.md). cmdline_of stays whole for the
-# probe's own reads of argv.
-SECRET_ARG_NAMES="token password passwd passphrase secret key apikey api-key api_key"
-SECRET_ARG_SUFFIXES="token secret password passwd passphrase key"
+# A process's arguments as live_args emits them, since a reading is made to be
+# copied off the host (#698). The value of an option whose name marks a secret
+# is <redacted>, and so are a URL's userinfo password, a userinfo with none (a
+# token used as the user name can't be told from a user), and a secret-named
+# query parameter's value. The name stays, to show it was passed. Read from the
+# NUL-separated argv, so a value holding a space stays one value; an argv
+# rewritten as one string is read by its words (CR 2768). By name only: a
+# positional secret, a short option's value and the environment aren't
+# recognised (readings.md). cmdline_of stays whole for the probe's own reads.
+# A name is secret when it's one of SECRET_ARG_NAMES, or its last word is one
+# of SECRET_ARG_WORDS: words split at . - _ and a camelCase capital, so
+# -Dspring.datasource.password, --db_pass and --authToken all are (CR 2766).
+# A --no- name is a boolean, and takes no value (CR 2769).
+SECRET_ARG_NAMES="requirepass masterauth"
+SECRET_ARG_WORDS="token password passwd passphrase pass pwd secret key apikey authkey credential credentials"
 secret_arg_name() {  # <option, dashes stripped, no value>: 0 when it names a secret
-  local _sn_w
-  for _sn_w in $SECRET_ARG_NAMES; do
-    case $1 in "$_sn_w") return 0 ;; esac
-  done
-  for _sn_w in $SECRET_ARG_SUFFIXES; do
-    case $1 in *-"$_sn_w" | *_"$_sn_w") return 0 ;; esac
-  done
-  return 1
+  local _sn_last=${1##*[._-]} _sn_camel="" _sn_w _sn_nc=0 _sn_rc=1
+  shopt -q nocasematch && _sn_nc=1
+  shopt -u nocasematch
+  if [[ $_sn_last =~ [a-z0-9]([A-Z][a-z]*)$ ]]; then _sn_camel=${BASH_REMATCH[1]}; fi
+  shopt -s nocasematch
+  case $1 in
+    no[-_]*) ;;
+    *)
+      for _sn_w in $SECRET_ARG_NAMES; do
+        case $1 in "$_sn_w") _sn_rc=0 ;; esac
+      done
+      for _sn_w in $SECRET_ARG_WORDS; do
+        case $_sn_last in "$_sn_w") _sn_rc=0 ;; esac
+        case $_sn_camel in "$_sn_w") _sn_rc=0 ;; esac
+      done ;;
+  esac
+  [ "$_sn_nc" -eq 1 ] || shopt -u nocasematch
+  return "$_sn_rc"
 }
-redact_url() {  # <var> <word>: the word with any scheme://user:password@'s password redacted
-  local _ru_w=$2 _ru_out="" _ru_auth _ru_host
+redact_url() {  # <var> <word>: the word with each URL's userinfo and secret query values redacted
+  local _ru_w=$2 _ru_out="" _ru_auth _ru_ui _ru_q _ru_p _ru_qo
   while [[ $_ru_w == *://* ]]; do
     _ru_out="$_ru_out${_ru_w%%://*}://"
     _ru_w=${_ru_w#*://}
-    _ru_auth=${_ru_w%%[/@]*}
-    if [ "${_ru_w:${#_ru_auth}:1}" = @ ] && [[ $_ru_auth == *:* ]]; then
-      _ru_host=${_ru_w#*@}
-      _ru_out="$_ru_out${_ru_auth%%:*}:<redacted>@"
-      _ru_w=$_ru_host
-    fi
+    # The authority runs to the first / ? or #, and its userinfo to its last
+    # @, as URL parsers read it (CR 2765).
+    _ru_auth=${_ru_w%%[/?#]*}
+    case $_ru_auth in *@*)
+      _ru_ui=${_ru_auth%@*}
+      _ru_w=${_ru_w#"$_ru_ui"@}
+      case $_ru_ui in
+        *:*) _ru_out="$_ru_out${_ru_ui%%:*}:<redacted>@" ;;
+        *) _ru_out="$_ru_out<redacted>@" ;;
+      esac ;;
+    esac
   done
-  printf -v "$1" '%s' "$_ru_out$_ru_w"
+  _ru_w="$_ru_out$_ru_w"
+  case $_ru_w in *://*\?*) ;; *) printf -v "$1" '%s' "$_ru_w"; return 0 ;; esac
+  # A secret-named query parameter's value (CR 2767).
+  _ru_out="${_ru_w%%\?*}?" _ru_q=${_ru_w#*\?} _ru_qo=""
+  while :; do
+    _ru_p=${_ru_q%%&*}
+    case $_ru_p in *=*) if secret_arg_name "${_ru_p%%=*}"; then _ru_p="${_ru_p%%=*}=<redacted>"; fi ;; esac
+    _ru_qo="$_ru_qo&$_ru_p"
+    case $_ru_q in *"&"*) _ru_q=${_ru_q#*&} ;; *) break ;; esac
+  done
+  printf -v "$1" '%s' "$_ru_out${_ru_qo#&}"
 }
 redacted_cmdline_of() {  # <var> <pid>
-  local _rc_w _rc_n _rc_out="" _rc_next=0 _rc_nc=0
-  shopt -q nocasematch && _rc_nc=1
-  shopt -s nocasematch
+  local _rc_w _rc_n _rc_out="" _rc_next=0 _rc_full=0 _rc_one=""
+  local -a _rc_a=()
   while IFS= read -r -d '' _rc_w || [ -n "$_rc_w" ]; do
+    _rc_a+=("$_rc_w")
+    if [ -n "$_rc_w" ]; then _rc_full=$((_rc_full + 1)) _rc_one=$_rc_w; fi
+  done 2>/dev/null <"$P_ROOT/proc/$2/cmdline" || true
+  if [ "$_rc_full" -eq 1 ] && [[ $_rc_one == *[[:space:]]* ]]; then
+    IFS=$' \t\n' read -r -d '' -a _rc_a <<<"$_rc_one" || true
+  fi
+  for _rc_w in ${_rc_a[@]+"${_rc_a[@]}"}; do
     if [ "$_rc_next" -eq 1 ]; then
       _rc_next=0
       _rc_out="$_rc_out <redacted>"
       continue
     fi
     case $_rc_w in
-      --?*=* | -[!-]?*=*)
+      --?* | -[!-]?*)
         _rc_n=${_rc_w%%=*}
         _rc_n=${_rc_n#-}
-        _rc_n=${_rc_n#-}
-        if secret_arg_name "$_rc_n"; then _rc_w="${_rc_w%%=*}=<redacted>"; fi ;;
-      --?* | -[!-]?*)
-        _rc_n=${_rc_w#-}
-        _rc_n=${_rc_n#-}
-        if secret_arg_name "$_rc_n"; then _rc_next=1; fi ;;
+        case $_rc_n in -*) _rc_n=${_rc_n#-} ;; D?*) _rc_n=${_rc_n#D} ;; esac
+        if secret_arg_name "$_rc_n"; then
+          case $_rc_w in *=*) _rc_w="${_rc_w%%=*}=<redacted>" ;; *) _rc_next=1 ;; esac
+        fi ;;
     esac
     redact_url _rc_w "$_rc_w"
     _rc_out="$_rc_out $_rc_w"
-  done 2>/dev/null <"$P_ROOT/proc/$2/cmdline" || true
-  [ "$_rc_nc" -eq 1 ] || shopt -u nocasematch
+  done
   printf -v "$1" '%s' "${_rc_out# }"
 }
 
