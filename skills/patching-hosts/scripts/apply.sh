@@ -2241,7 +2241,7 @@ STARTED=0
 
 LANE_KEEP=""
 do_bulk() {
-  local out pend="" p i r s g o="" a="" names="" e kw rest pol onames oskip sim bv dv="" dseen=0 c d line vout="" va="" outside="" bver=""
+  local out pend="" p i r s g o="" a="" names="" e kw rest pol="" polrc onames oskip sim bv dv="" dseen=0 c d line vout="" va="" outside="" bver=""
   local btake hsteps="" cl
   local -a f=() w=()
   if ! root_has "$run" && ! as_root mkdir -p -m 700 -- "$run"; then
@@ -2291,19 +2291,24 @@ do_bulk() {
     case $kw:$rest in Inst:"["*) pend="$pend $p" ;; esac
   done <<<"$out"
   sim=$out
+  # The release lines that map each Inst line's Label to its repo's o=
+  # (#695), from the same lists. Unread, a class keys on the Label, as
+  # before; the one-origin lane can't tell its packages without them.
+  capture pol apt-cache policy
+  polrc=$CAP_RC
+  [ "$polrc" -eq 0 ] || pol=""
   # The one-origin lane takes that origin's packages alone: every other
   # pending package goes in its file's Package-Blacklist, and only its own
   # are candidates for a hold group. The split reads the lists just
   # refreshed, so it's what unattended-upgrade sees.
   case $LANE in
     origin:*)
-      capture pol apt-cache policy
-      if [ "$CAP_RC" -ne 0 ]; then
-        fail "apt-cache policy failed (${CAP_ERR:-exit $CAP_RC}), so the ${LANE#origin:} origin's packages are unknown: nothing was held or upgraded"
+      if [ "$polrc" -ne 0 ]; then
+        fail "apt-cache policy failed (${CAP_ERR:-exit $polrc}), so the ${LANE#origin:} origin's packages are unknown: nothing was held or upgraded"
         return 0
       fi
       origin_names onames "${LANE#origin:}" "$pol"
-      origin_split LANE_KEEP oskip "$onames" "$out"
+      origin_split LANE_KEEP oskip "$onames" "$out" "$pol"
       # A window with nothing from the origin in it fails here, before any
       # hold: unattended-upgrade would log "No packages found" and exit 0.
       if [ "$onames" = "|" ]; then
@@ -2374,7 +2379,7 @@ do_bulk() {
     # Its class, from the lists just refreshed, or ? where they don't list
     # it (CR 2543, CR 2552): a held step under a standing line takes only its
     # lane's.
-    sim_class cl "$p" "$sim"
+    sim_class cl "$p" "$sim" "$pol"
     vout="$vout$p $c ${cl:-?}"$'\n'
     e=""
     jadds e package "$p"
