@@ -1117,30 +1117,33 @@ read_exe_init() {
   R_EXE_INIT="{$o}"
 }
 
-# PID 1's log target (#684): the live one, argv's, and what the next reload
-# applies. A boot runs on argv's: exeuntu's exe-init starts PID 1 with
-# --log-target=syslog, which PID 1 reads as the journal (log.c's
-# upgrade_syslog_to_journal). A daemon-reload or re-exec doesn't read argv
-# again: systemd v255's parse_configuration() reads system.conf's LogTarget=,
-# then the kernel's systemd.log_target=, then PID 1's SYSTEMD_LOG_TARGET,
-# each later one winning, and reset_arguments() leaves the target alone, so
-# with none of them set the reload keeps the live one (CR 2774). The image's
-# container-overrides.conf sets console, so PID 1's lines stop reaching the
-# journal at the first reload: measured on CannObserv/wslcb-licensing-
-# tracker's host, systemd 255.4-1ubuntu8.19, 2026-11-20 (#684, #685). A
-# runtime systemd-analyze set-log-target survives a reload too, and nothing
-# here tells it from argv's, so the reload then reads as what the files say.
-# Nor is a ManagerEnvironment= SYSTEMD_LOG_TARGET read: /proc/1/environ holds
-# only the environment PID 1 started with.
-LT_LIVE="" LT_ARGV="" LT_CONF="" LT_CONF_IN="" LT_KERNEL="" LT_ENV="" LT_RELOAD=""
+# PID 1's log target (#684): the live one, argv's, and what the next
+# daemon-reload and re-exec apply, from systemd v255's main.c. A boot runs on
+# argv's: exeuntu's exe-init passes --log-target=syslog, which PID 1 reads as
+# the journal (log.c's upgrade_syslog_to_journal). A daemon-reload doesn't
+# read argv: parse_configuration() reads system.conf's LogTarget=, then the
+# kernel's systemd.log_target=, then PID 1's SYSTEMD_LOG_TARGET, each later
+# one winning, and reset_arguments() leaves the target alone, so with none
+# set it keeps the live one (CR 2774). A re-exec passes argv on (filter_args)
+# and parses it last, so argv's wins, then those three, then the default the
+# new PID 1 starts from (CR 2783). exeuntu's container-overrides.conf sets
+# console, so PID 1's lines stop at the first daemon-reload; a systemd
+# upgrade's re-exec puts them back until the next (CannObserv/wslcb-
+# licensing-tracker's host, systemd 255.4-1ubuntu8.19, 2026-11-20; #684,
+# #685). A runtime set-log-target survives both, and nothing here tells it
+# from argv's. Nor is a ManagerEnvironment= SYSTEMD_LOG_TARGET read:
+# /proc/1/environ holds the environment PID 1 started with.
+LT_LIVE="" LT_ARGV="" LT_ARGV_READ=0 LT_CONF="" LT_CONF_IN="" LT_KERNEL="" LT_ENV="" LT_RELOAD="" LT_REEXEC=""
 LT_VALID=" console console-prefixed kmsg journal journal-or-kmsg syslog syslog-or-kmsg auto null "
 # kmsg reaches the journal while journald reads it (journald-kmsg.c files
-# PID 1's lines as _TRANSPORT=kernel SYSLOG_PID=1), and auto is
-# journal-or-kmsg for PID 1 (log.c's log_settle_target).
+# PID 1's lines as _TRANSPORT=kernel SYSLOG_PID=1). auto opens the journal
+# itself once journald runs, as journal-or-kmsg does (log.c's log_open;
+# manager_recheck_journal lifts prohibit_ipc), whatever ReadKMsg says (CR 2789).
 log_target_journal() {  # <var> <target>: 1 when PID 1 logs to the journal on it, 0 when not, empty when unknown
   case $2 in
     journal | journal-or-kmsg | syslog | syslog-or-kmsg) printf -v "$1" 1 ;;
-    kmsg | auto) printf -v "$1" '%s' "$JD_READ_KMSG" ;;
+    auto) printf -v "$1" 1 ;;
+    kmsg) printf -v "$1" '%s' "$JD_READ_KMSG" ;;
     console | console-prefixed | null) printf -v "$1" 0 ;;
     *) printf -v "$1" '%s' "" ;;
   esac
@@ -1155,6 +1158,7 @@ read_log_target() {
   fi
   # getopt's: --log-target=X or --log-target X, the last one winning.
   if [ "$P_LIVE" -eq 1 ] && [ -r "$P_ROOT/proc/1/cmdline" ]; then
+    LT_ARGV_READ=1
     while IFS= read -r -d '' a || [ -n "$a" ]; do
       case $prev in --log-target) LT_ARGV=$a ;; esac
       case $a in --log-target=*) LT_ARGV=${a#--log-target=} ;; esac
@@ -1215,6 +1219,10 @@ read_log_target() {
     fi
   fi
   LT_RELOAD=${LT_ENV:-${LT_KERNEL:-${LT_CONF:-$LT_LIVE}}}
+  # A host's PID 1 starts from journal-or-kmsg (a container's from journal).
+  if [ "$LT_ARGV_READ" -eq 1 ]; then
+    LT_REEXEC=${LT_ARGV:-${LT_ENV:-${LT_KERNEL:-${LT_CONF:-journal-or-kmsg}}}}
+  fi
 }
 
 read_environment() {
@@ -1240,10 +1248,13 @@ read_environment() {
   jaddsn o pid1_log_target_kernel "$LT_KERNEL"
   jaddsn o pid1_log_target_env "$LT_ENV"
   jaddsn o pid1_log_target_reload "$LT_RELOAD"
+  jaddsn o pid1_log_target_reexec "$LT_REEXEC"
   log_target_journal b "$LT_LIVE"
   jaddb j now "$b"
   log_target_journal b "$LT_RELOAD"
   jaddb j after_reload "$b"
+  log_target_journal b "$LT_REEXEC"
+  jaddb j after_reexec "$b"
   jadd o pid1_logs_to_journal "{$j}"
   jadd o session "{$R_SESSION}"
   jadd o setup_script "{$R_SETUP}"

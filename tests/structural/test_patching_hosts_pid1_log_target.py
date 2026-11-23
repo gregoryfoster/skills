@@ -65,7 +65,14 @@ def test_the_exeuntu_trap_reads_journal_now_and_console_after_a_reload(host):
     assert env["pid1_log_target_conf"] == "console"
     assert env["pid1_log_target_conf_set_in"] == f"/{DROP}/container-overrides.conf:2"
     assert env["pid1_log_target_reload"] == "console"
-    assert env["pid1_logs_to_journal"] == {"now": True, "after_reload": False}
+    # A re-exec passes argv on, and argv wins (CR 2783): a systemd upgrade
+    # during the apply puts PID 1 back on the journal, until the next reload.
+    assert env["pid1_log_target_reexec"] == "syslog"
+    assert env["pid1_logs_to_journal"] == {
+        "now": True,
+        "after_reload": False,
+        "after_reexec": True,
+    }
 
 
 def test_a_drop_in_sorted_after_the_override_keeps_pid_1_on_the_journal(host):
@@ -79,7 +86,7 @@ def test_a_drop_in_sorted_after_the_override_keeps_pid_1_on_the_journal(host):
     env = _env(host)
     assert env["pid1_log_target_conf"] == "journal-or-kmsg"
     assert env["pid1_log_target_reload"] == "journal-or-kmsg"
-    assert env["pid1_logs_to_journal"] == {"now": True, "after_reload": True}
+    assert env["pid1_logs_to_journal"]["after_reload"] is True
 
 
 def test_a_drop_in_under_usr_lib_is_read_in_filename_order(host):
@@ -190,8 +197,9 @@ def test_a_runtime_override_reads_as_what_system_conf_would_apply(host):
         # PID 1 upgrades syslog to the journal (log.c's upgrade_syslog_to_journal).
         ("syslog", True),
         ("syslog-or-kmsg", True),
-        # journald reads kmsg (ReadKMsg=yes, its default), and auto is
-        # journal-or-kmsg for PID 1 (log.c's log_settle_target).
+        # journald reads kmsg (ReadKMsg=yes, its default). auto opens the
+        # journal for PID 1 once journald runs (log.c's log_open, with
+        # manager_recheck_journal lifting prohibit_ipc), whatever ReadKMsg says.
         ("kmsg", True),
         ("auto", True),
         ("console", False),
@@ -200,17 +208,51 @@ def test_a_runtime_override_reads_as_what_system_conf_would_apply(host):
     ],
 )
 def test_the_targets_that_reach_the_journal(host, target, journal):
+    _pid1(host, "/sbin/init")
     host.on("systemd-analyze", "get-log-target", f"{target}\n")
     host.write(CONF, f"[Manager]\nLogTarget={target}\n")
     env = _env(host)
-    assert env["pid1_logs_to_journal"] == {"now": journal, "after_reload": journal}
+    j = env["pid1_logs_to_journal"]
+    assert (j["now"], j["after_reload"], j["after_reexec"]) == (journal,) * 3
 
 
 def test_kmsg_doesnt_reach_the_journal_when_journald_doesnt_read_it(host):
     host.write("etc/systemd/journald.conf", "[Journal]\nReadKMsg=no\n")
     host.on("systemd-analyze", "get-log-target", "kmsg\n")
     host.write(CONF, "[Manager]\nLogTarget=journal-or-kmsg\n")
-    assert _env(host)["pid1_logs_to_journal"] == {"now": False, "after_reload": True}
+    j = _env(host)["pid1_logs_to_journal"]
+    assert (j["now"], j["after_reload"]) == (False, True)
+
+
+def test_auto_reaches_the_journal_whatever_readkmsg_says(host):
+    # CR 2789.
+    host.write("etc/systemd/journald.conf", "[Journal]\nReadKMsg=no\n")
+    host.on("systemd-analyze", "get-log-target", "auto\n")
+    assert _env(host)["pid1_logs_to_journal"]["now"] is True
+
+
+# --- what a re-exec applies (CR 2783) -----------------------------------------------
+# systemd v255's do_reexecute() passes the original argv on (filter_args keeps
+# --log-target=), and the new PID 1 runs parse_argv() after
+# parse_configuration(): argv wins, then SYSTEMD_LOG_TARGET, the kernel's and
+# system.conf's, then the default it starts from.
+
+
+@pytest.mark.parametrize(
+    "argv, conf, want",
+    [
+        (("/sbin/init", "--log-target=kmsg"), "console", "kmsg"),
+        (("/sbin/init",), "console", "console"),
+        (("/sbin/init",), None, "journal-or-kmsg"),
+    ],
+    ids=["argv-wins", "then-system-conf", "then-the-default"],
+)
+def test_a_reexec_applies_argv_over_everything_else(host, argv, conf, want):
+    _pid1(host, *argv)
+    host.on("systemd-analyze", "get-log-target", "console\n")
+    if conf:
+        host.write(CONF, f"[Manager]\nLogTarget={conf}\n")
+    assert _env(host)["pid1_log_target_reexec"] == want
 
 
 def test_a_tree_nothing_runs_reads_no_argv(tmp_path):
@@ -219,6 +261,7 @@ def test_a_tree_nothing_runs_reads_no_argv(tmp_path):
     env = h.run()["environment"]
     assert env["pid1_log_target_argv"] is None
     assert env["pid1_logs_to_journal"]["now"] is None
+    assert env["pid1_log_target_reexec"] is None
 
 
 # --- after the boot -------------------------------------------------------------
