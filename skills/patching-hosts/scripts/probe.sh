@@ -3824,23 +3824,50 @@ ordering_ok() {  # <datastore unit> <After= list>
   return 1
 }
 
-# Whether a service's main process runs a binary dpkg has since replaced:
+# Whether a service's processes run a binary dpkg has since replaced:
 # /proc/<pid>/exe reads "<path> (deleted)" until it restarts, whatever an
-# earlier run or unattended-upgrades installed (#699). true, false, or null
-# with no process or a link neither the user nor root can read. Another
-# user's link is "Permission denied" without root.
-exe_deleted() {  # <var> <unit> <MainPID>
-  local _ed_x="" _ed_v=null
-  if is_int "$3" && [ "$3" -gt 0 ]; then
-    _ed_x=$(readlink -- "$P_ROOT/proc/$3/exe" 2>/dev/null) ||
-      _ed_x=$(as_root readlink -- "$P_ROOT/proc/$3/exe" 2>/dev/null) || _ed_x=""
+# earlier run or unattended-upgrades installed (#699). Every process whose
+# cgroup names the unit, not its MainPID alone, which a wrapper or a
+# oneshot's RemainAfterExit leaves elsewhere (CR 2778); what needrestart
+# passes over, such as a memfd exec, isn't stale (CR 2776). true; false;
+# or null with no process, or with a link neither the user nor root can
+# read and none stale. Another user's link is "Permission denied" without
+# root.
+SVC_PIDS="" SVC_PIDS_READ=0  # "<unit>|<pid>" words for each declared service's processes
+exe_deleted() {  # <var> <unit>
+  local _ed_f _ed_p _ed_u _ed_x _ed_v=null _ed_unread=0 _ed_stale=""
+  if [ "$SVC_PIDS_READ" -eq 0 ]; then
+    SVC_PIDS_READ=1
+    for _ed_f in "$P_ROOT"/proc/[0-9]*/cgroup; do
+      [ -r "$_ed_f" ] || continue
+      _ed_p=${_ed_f%/cgroup}
+      _ed_p=${_ed_p##*/}
+      unit_of_pid _ed_u "$_ed_p"
+      if [ -n "$_ed_u" ] && in_words "$_ed_u" "$KNOB_SERVICES"; then
+        SVC_PIDS="$SVC_PIDS $_ed_u|$_ed_p"
+      fi
+    done
+  fi
+  for _ed_p in $SVC_PIDS; do
+    [ "${_ed_p%%|*}" = "$2" ] || continue
+    _ed_p=${_ed_p#*|}
+    _ed_x=$(readlink -- "$P_ROOT/proc/$_ed_p/exe" 2>/dev/null) ||
+      _ed_x=$(as_root readlink -- "$P_ROOT/proc/$_ed_p/exe" 2>/dev/null) || _ed_x=""
     case $_ed_x in
-      "") ;;
+      "") _ed_unread=1 ;;
       *" (deleted)")
-        _ed_v=true
-        finding risk "stale-binary:$2" "" "$2 still runs ${_ed_x% (deleted)}, which an upgrade has since replaced (/proc/$3/exe reads deleted): the installed version hasn't taken effect for it. Restart it, or take the reboot, with the owner's approval (reboot-and-record.md section 4)." ;;
-      *) _ed_v=false ;;
+        if deleted_passed_over "$_ed_x"; then
+          [ "$_ed_v" = true ] || _ed_v=false
+        else
+          _ed_v=true
+          in_words "${_ed_x% (deleted)}" "$_ed_stale" || _ed_stale="$_ed_stale ${_ed_x% (deleted)}"
+        fi ;;
+      *) [ "$_ed_v" = true ] || _ed_v=false ;;
     esac
+  done
+  if [ "$_ed_v" = false ] && [ "$_ed_unread" -eq 1 ]; then _ed_v=null; fi
+  if [ "$_ed_v" = true ]; then
+    finding risk "stale-binary:$2" "" "$2 still runs${_ed_stale}, which an upgrade has since replaced (/proc/<pid>/exe reads deleted): the installed version hasn't taken effect for it. Restart it, or take the reboot, with the owner's approval (reboot-and-record.md section 4)."
   fi
   printf -v "$1" '%s' "$_ed_v"
 }
@@ -3852,11 +3879,11 @@ read_services() {
   for svc in $KNOB_SERVICES; do
     e=""
     jadds e unit "$svc"
-    if unit_show "$svc" After RequiredBy BoundBy Result NRestarts ActiveState MainPID; then
+    if unit_show "$svc" After RequiredBy BoundBy Result NRestarts ActiveState; then
       jadds e active_state "$U_ActiveState"
       jaddsn e result "$U_Result"
       jaddn e restarts "$U_NRestarts"
-      exe_deleted w "$svc" "$U_MainPID"
+      exe_deleted w "$svc"
       jadd e exe_deleted "$w"
       bad=""
       for ds in $DS_UNITS; do
