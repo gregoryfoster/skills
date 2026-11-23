@@ -1035,6 +1035,47 @@ iso_utc() {  # <var> <epoch>
   printf -v "$1" '%s' "$_iu"
 }
 
+# The processes a unit runs: every one in its cgroup and the cgroups below
+# it, where a user manager's sit (init.scope, app.slice). MainPID alone
+# misses PostgreSQL's backends. A unit that isn't running has no cgroup and
+# runs nothing. 1 with RB_WHY where its cgroup can't be read. apply.sh's
+# reboot decision and read_stale read it, and probe.sh's exe_deleted (CR
+# 2784): the ControlGroup systemctl shows resolves an alias unit, and the
+# listing reaches a delegated unit's sub-cgroups. CGROUP_DIR is the caller's.
+RB_WHY=""
+# unit_show sets it by name.
+U_ControlGroup=""
+reboot_pids() {  # <var> <unit>: VAR := its PIDs, space-separated
+  local _rp_cg _rp_fs _rp_f _rp_x _rp_p _rp_out=""
+  printf -v "$1" '%s' ""
+  if ! unit_show "$2" ControlGroup; then
+    RB_WHY="systemctl couldn't show $2's ControlGroup"
+    return 1
+  fi
+  [ -n "$U_ControlGroup" ] || return 0
+  _rp_cg=$CGROUP_DIR$U_ControlGroup
+  if [ ! -d "$_rp_cg" ]; then
+    RB_WHY="$2's cgroup, $_rp_cg, isn't there"
+    return 1
+  fi
+  capture _rp_fs find "$_rp_cg" -name cgroup.procs
+  if [ "$CAP_RC" -ne 0 ]; then
+    RB_WHY="$2's cgroup, $_rp_cg, couldn't be listed${CAP_ERR:+: $CAP_ERR}"
+    return 1
+  fi
+  while IFS= read -r _rp_f; do
+    [ -n "$_rp_f" ] || continue
+    if ! _rp_x=$(cat -- "$_rp_f" 2>/dev/null); then
+      # A child cgroup removed since the listing held nothing more.
+      [ -e "$_rp_f" ] || continue
+      RB_WHY="$_rp_f couldn't be read"
+      return 1
+    fi
+    for _rp_p in $_rp_x; do _rp_out="$_rp_out $_rp_p"; done
+  done <<<"$_rp_fs"
+  printf -v "$1" '%s' "${_rp_out# }"
+}
+
 # The deleted files needrestart 3.6 passes over (noble's 3.6-7ubuntu4.6,
 # measured 2026-11-18): its default blacklist_mappings, each Perl pattern in
 # POSIX ERE, matched on the path with " (deleted)" still on. A memfd, a /tmp

@@ -248,25 +248,59 @@ def test_no_declared_service_reads_nothing(ahost):
 host = _probe.host
 
 
-def _probe_service(host, procs: dict):
-    """UNIT, active, running PROCS: each PID's exe target, None for a link
-    that can't be read. Each is in UNIT's cgroup, as /proc/<pid>/cgroup
-    names it."""
-    host.knob(f"posture scheduled\nservice {UNIT}\n")
+def _probe_service(
+    host, procs: dict, name: str = UNIT, cgroup: str = _cgroup(UNIT), sub: str = ""
+):
+    """The knob's service NAME, active, its ControlGroup CGROUP as systemctl
+    shows it, running PROCS: each PID's exe target, None for a link that
+    can't be read. They sit in CGROUP's cgroup.procs, or in its SUB
+    cgroup's, as a delegated unit's do (CR 2784)."""
+    host.knob(f"posture scheduled\nservice {name}\n")
+    unit = name if "." in name else f"{name}.service"
     host.show(
-        UNIT,
+        unit,
         After="network.target",
         Result="success",
         NRestarts="0",
         ActiveState="active",
         RequiredBy="",
         BoundBy="",
+        ControlGroup=cgroup,
     )
+    cg = host.root / "sys" / "fs" / "cgroup" / cgroup.lstrip("/")
+    leaf = cg / sub if sub else cg
+    leaf.mkdir(parents=True, exist_ok=True)
+    if leaf != cg:
+        (cg / "cgroup.procs").write_text("")
+    (leaf / "cgroup.procs").write_text("".join(f"{p}\n" for p in procs))
     for pid, exe in procs.items():
-        host.write(f"proc/{pid}/cgroup", f"0::{_cgroup(UNIT)}\n")
+        host.write(f"proc/{pid}/cgroup", f"0::{cgroup}{'/' + sub if sub else ''}\n")
         if exe is not None:
             host.link(f"proc/{pid}/exe", exe)
     return host
+
+
+def test_the_probe_reads_an_alias_units_processes(host):
+    # CR 2784: `service redis` is redis-server.service, as systemctl shows
+    # its ControlGroup; apply.sh reads it the same way.
+    out = _probe_service(
+        host,
+        {PID: "/usr/bin/redis-server (deleted)"},
+        name="redis",
+        cgroup=_cgroup("redis-server.service"),
+    ).run()
+    [svc] = out["impact"]["services"]
+    assert svc["exe_deleted"] is True
+    assert "stale-binary:redis.service" in _ids(out)
+
+
+def test_the_probe_reads_a_delegated_sub_cgroup(host):
+    # CR 2784: a delegated unit's payload runs in a cgroup below its own.
+    out = _probe_service(
+        host, {PID: "/usr/bin/cloudflared (deleted)"}, sub="payload"
+    ).run()
+    [svc] = out["impact"]["services"]
+    assert svc["exe_deleted"] is True
 
 
 def test_the_probe_reads_a_service_left_on_a_replaced_binary(host):
