@@ -1379,8 +1379,9 @@ class_of() {  # <var> <origins, ", "-separated>
 # policy (POLICY, its output) read from the same lists: each prints the l=,
 # v= and a= that make up the text, and the origin line under it the site.
 # REL_MAP holds a line "<text>US<o=>:<the text after its Label>" for each,
-# with nothing after US where two origins print the same text: two
-# Label-less repos on one suite. Built once per policy.
+# with nothing after US where the release has no o=, or where two print
+# the same text with different ones: two Label-less repos on one suite.
+# Built once per policy.
 REL_MAP="" REL_MAP_OF="" REL_MAP_BUILT=0
 rel_map() {  # <policy output>
   local _rm_l _rm_v _rm_o="" _rm_lb="" _rm_ve="" _rm_a="" _rm_site="" _rm_i _rm_in=0
@@ -1421,12 +1422,13 @@ rel_map() {  # <policy output>
 # rel_map's record, ended: its text as apt-get -s prints it, keyed to its
 # o=. With no Archive, apt prints the site, or "localhost" where it has
 # none: a file: repo whose Release file names no Suite (measured as above).
+# A release with no o= is recorded too, with nothing to map to, so a repo
+# with one that prints the same text can't claim its packages (CR 2782).
 # Reads and sets rel_map's locals.
 _rel_map_add() {
-  local _ra_t _ra_k _ra_x="" _ra_i
+  local _ra_t _ra_k _ra_v _ra_x="" _ra_i
   [ "$_rm_in" -eq 1 ] || return 0
   _rm_in=0
-  [ -n "$_rm_o" ] || return 0
   if [ -z "$_rm_a" ]; then
     _ra_t=${_rm_site:-localhost}
   elif [ -n "$_rm_ve" ]; then
@@ -1435,12 +1437,13 @@ _rel_map_add() {
     _ra_t=$_rm_a
   fi
   _ra_k=${_rm_lb:+$_rm_lb:}$_ra_t
+  _ra_v=${_rm_o:+$_rm_o:$_ra_t}
   for _ra_i in ${_rm_keys[@]+"${!_rm_keys[@]}"}; do
     if [ "${_rm_keys[$_ra_i]}" = "$_ra_k" ]; then _ra_x=$_ra_i; fi
   done
   if [ -z "$_ra_x" ]; then
-    _rm_keys+=("$_ra_k") _rm_vals+=("$_rm_o:$_ra_t")
-  elif [ "${_rm_vals[$_ra_x]}" != "$_rm_o:$_ra_t" ]; then
+    _rm_keys+=("$_ra_k") _rm_vals+=("$_ra_v")
+  elif [ "${_rm_vals[$_ra_x]}" != "$_ra_v" ]; then
     _rm_vals[_ra_x]=""
   fi
 }

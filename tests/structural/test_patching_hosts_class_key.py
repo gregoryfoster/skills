@@ -406,3 +406,46 @@ def test_a_bulk_that_reads_the_policy_says_nothing_of_it(tmp_path):
     out = host.run("--lane", "maintenance")
     assert out["verdict"]["ok"] is True, out
     assert "classes_by_label" not in out["holds"]
+
+
+# CR 2782: a repo whose Release file names no Origin prints the same text as
+# sury's ("noble"). Which of the two a package comes from can't be told, so
+# both keep apt's text, as readings.md says, and the sury lane takes neither.
+NO_ORIGIN_POLICY = (
+    " 500 https://vendor.example/apt noble/main arm64 Packages\n"
+    "     release a=noble,n=noble,c=main,b=arm64\n"
+    "     origin vendor.example\n" + SURY_POLICY + " 500 file:/srv/a ./ Packages\n"
+    "     release o=LocalA,c=\n"
+    " 500 file:/srv/b ./ Packages\n"
+    "     release c=\n" + UBUNTU_POLICY
+)
+VENDOR_INST = "Inst vendor-agent [1.0] (1.1 noble [arm64])"
+
+
+@pytest.mark.parametrize(
+    "line, key",
+    [
+        (VENDOR_INST, "third-party:noble"),
+        (SURY_INST, "third-party:noble"),
+        ("Inst fromb [1] (2 localhost [all])", "third-party:localhost"),
+        (UBUNTU_INST, "security"),
+    ],
+    ids=["vendor", "sury", "file", "ubuntu"],
+)
+def test_an_origin_less_repo_printing_alike_keeps_apts_text(line, key):
+    assert _inst_class(line, NO_ORIGIN_POLICY) == key
+
+
+def test_the_probe_and_the_split_cant_give_an_origin_less_repos_package_to_sury(
+    tmp_path,
+):
+    sim = f"{VENDOR_INST}\n{SURY_INST}\n"
+    out = _probe(tmp_path, "posture automatic\n", sim, NO_ORIGIN_POLICY).run()
+    assert out["pending"]["by_class"]["third_party"] == {"noble": 2}
+    split = _lib(
+        'origin_names n packages.sury.org "$POLICY"; '
+        'origin_split k s "$n" "$SIM" "$POLICY"; printf "%s|%s" "$k" "$s"',
+        SIM=sim,
+        POLICY=NO_ORIGIN_POLICY,
+    )
+    assert split == "|vendor-agent libgd3"
