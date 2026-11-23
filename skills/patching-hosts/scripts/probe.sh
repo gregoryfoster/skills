@@ -38,6 +38,8 @@ Options:
   --refresh-into DIR  refresh apt's lists into DIR/lists first, never into
                       /var/lib/apt/lists, and count against them (the ESM
                       count, from pro, still reads the host's own lists).
+                      The host's APT::Update hooks don't run: as root, they
+                      start services and move update-success-stamp (#696).
                       It also audits each service's uv.lock against OSV
                       (pending.language), which nothing else asks for: per
                       package, its advisories' ids, and in the same order
@@ -476,8 +478,10 @@ if [ -n "$P_ROOT" ]; then
   printf 'Dir "%s/";\n' "$P_ROOT" >"$P_TMP/apt-root.conf"
 fi
 # apt never writes its binary cache here: a non-root probe can't, and the
-# host's may be stale against refreshed lists.
-APT_OPTS=(-o Dir::Cache::pkgcache= -o Dir::Cache::srcpkgcache=)
+# host's may be stale against refreshed lists. Nor its planner log: run as
+# root, a simulation rewrote /var/log/apt/eipp.log.xz, the log of the host's
+# last real install (apt 2.8.3, #696).
+APT_OPTS=(-o Dir::Cache::pkgcache= -o Dir::Cache::srcpkgcache= -o Dir::Log::Planner=/dev/null)
 LISTS_DIR=$P_ROOT/var/lib/apt/lists
 REFRESHED=0
 LISTS_OPT=()
@@ -1157,10 +1161,18 @@ refresh_lists() {
   local out
   [ -n "$refresh" ] || return 0
   mkdir -p "$refresh/lists/partial" "$refresh/archives/partial"
+  # The refresh runs none of the host's APT::Update hooks (#696). As root, on a
+  # 24.04 image, they started apt-news and esm-cache, rebuilt command-not-found's
+  # and AppStream's data and the motd's count from the host's own lists, and
+  # touched update-success-stamp, which APT::Periodic and the motd read as the
+  # host's last update. None of it reads the lists this refresh fetched, and the
+  # probe reads none of it. Only a -c file can #clear them: it's read after
+  # apt.conf.d, and APT_CONFIG before it (apt 2.8.3, measured).
+  printf '%s\n' '#clear APT::Update::Pre-Invoke;' '#clear APT::Update::Post-Invoke;' '#clear APT::Update::Post-Invoke-Success;' >"$P_TMP/apt-no-update-hooks.conf"
   # --error-on=any (apt 2.1.16; noble ships 2.8): without it, a source that
   # fails to fetch is a warning, the update exits 0, and the pending set is
   # counted against that source's old lists, or none (#542).
-  capture2 out apt_env apt-get update --error-on=any -o "Dir::State::Lists=$refresh/lists/" -o "Dir::Cache::archives=$refresh/archives/" "${APT_OPTS[@]}"
+  capture2 out apt_env apt-get update --error-on=any -c "$P_TMP/apt-no-update-hooks.conf" -o "Dir::State::Lists=$refresh/lists/" -o "Dir::Cache::archives=$refresh/archives/" "${APT_OPTS[@]}"
   if [ "$CAP_RC" -eq 0 ]; then
     LISTS_DIR=$refresh/lists REFRESHED=1
     LISTS_OPT=(-o "Dir::State::Lists=$refresh/lists/")

@@ -1505,6 +1505,40 @@ def test_a_refresh_with_a_source_that_failed_isnt_a_refresh(host):
     assert "--error-on=any" in args
 
 
+def test_a_refresh_clears_the_hosts_update_hooks(host):
+    # #696: the host's APT::Update hooks started apt-news and esm-cache, and
+    # moved update-success-stamp, from a reading. Only a -c file read after
+    # apt.conf.d can #clear them: APT_CONFIG is read before it.
+    seen = host.tmp / "update-c.conf"
+    host.on(
+        "apt-get",
+        "update*",
+        script='p=""; for a; do if [ "$p" = -c ]; then cat "$a" >'
+        f' "{seen}"; fi; p=$a; done; exit 0',
+    )
+    out = host.run("--refresh-into", str(host.tmp / "fresh"))
+    assert out["pending"]["lists"]["refreshed"] is True
+    [args] = _update_args(host)
+    assert args.count("-c") == 1
+    assert seen.read_text().split("\n")[:3] == [
+        "#clear APT::Update::Pre-Invoke;",
+        "#clear APT::Update::Post-Invoke;",
+        "#clear APT::Update::Post-Invoke-Success;",
+    ]
+    # The hooks go only for the refresh: a simulation runs none.
+    sims = [c[1].split() for c in host.calls("apt-get") if "-s" in c[1].split()]
+    assert sims and not any("-c" in s for s in sims)
+
+
+def test_no_apt_call_rewrites_the_hosts_planner_log(host):
+    # #696: apt-get -s dist-upgrade, as root, rewrote /var/log/apt/eipp.log.xz,
+    # the planner log of the host's last real install (apt 2.8.3, measured).
+    host.apt_update()
+    host.run("--refresh-into", str(host.tmp / "fresh"))
+    calls = [c[1].split() for c in host.calls("apt-get")]
+    assert calls and all("Dir::Log::Planner=/dev/null" in a for a in calls)
+
+
 def test_a_refresh_whose_sources_all_fetch_is_one(host):
     host.apt_update()
     out = host.run("--refresh-into", str(host.tmp / "fresh"))
