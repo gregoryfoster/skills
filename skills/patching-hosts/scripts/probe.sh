@@ -3703,18 +3703,22 @@ cmdline_of() {  # <var> <pid>
 # copied off the host (#698). The value of an option whose name marks a secret
 # is <redacted>, and so are a URL's userinfo password, a userinfo with none (a
 # token used as the user name can't be told from a user), and a secret-named
-# query parameter's value. The name stays, to show it was passed. Read from the
-# NUL-separated argv, so a value holding a space stays one value; an argv
-# rewritten as one string is read by its words (CR 2768). By name only: a
+# query or fragment parameter's value. The name stays, to show it was passed.
+# Read from the NUL-separated argv, so a value holding a space stays one value;
+# an element holding whitespace, a wrapper's script string or an argv rewritten
+# as one string, is read by its words too (CR 2768, CR 2785). By name only: a
 # positional secret, a short option's value and the environment aren't
 # recognised (readings.md). cmdline_of stays whole for the probe's own reads.
 # A name is secret when it's one of SECRET_ARG_NAMES, or its last word is one
 # of SECRET_ARG_WORDS: words split at . - _ and a camelCase capital, so
 # -Dspring.datasource.password, --db_pass and --authToken all are (CR 2766).
-# A --no- name is a boolean, and takes no value (CR 2769).
+# A --no- name is a boolean, and takes no value (CR 2769). A URL parameter
+# may also be one of SECRET_PARAM_WORDS: Azure's SAS signature, AWS's.
 SECRET_ARG_NAMES="requirepass masterauth"
-SECRET_ARG_WORDS="token password passwd passphrase pass pwd secret key apikey authkey credential credentials"
-secret_arg_name() {  # <option, dashes stripped, no value>: 0 when it names a secret
+SECRET_ARG_WORDS="token password passwd passphrase pass pwd secret key apikey authkey
+  credential credentials secretkey accesskey privatekey apitoken authtoken accesstoken"
+SECRET_PARAM_WORDS="sig signature"
+secret_arg_name() {  # <name, dashes stripped, no value> [<more words>]: 0 when it names a secret
   local _sn_last=${1##*[._-]} _sn_camel="" _sn_w _sn_nc=0 _sn_rc=1
   shopt -q nocasematch && _sn_nc=1
   shopt -u nocasematch
@@ -3726,7 +3730,7 @@ secret_arg_name() {  # <option, dashes stripped, no value>: 0 when it names a se
       for _sn_w in $SECRET_ARG_NAMES; do
         case $1 in "$_sn_w") _sn_rc=0 ;; esac
       done
-      for _sn_w in $SECRET_ARG_WORDS; do
+      for _sn_w in $SECRET_ARG_WORDS ${2-}; do
         case $_sn_last in "$_sn_w") _sn_rc=0 ;; esac
         case $_sn_camel in "$_sn_w") _sn_rc=0 ;; esac
       done ;;
@@ -3734,14 +3738,20 @@ secret_arg_name() {  # <option, dashes stripped, no value>: 0 when it names a se
   [ "$_sn_nc" -eq 1 ] || shopt -u nocasematch
   return "$_sn_rc"
 }
-redact_url() {  # <var> <word>: the word with each URL's userinfo and secret query values redacted
-  local _ru_w=$2 _ru_out="" _ru_auth _ru_ui _ru_q _ru_p _ru_qo
+# A URL parameter: a name after ? & # or ;, its value up to the next of
+# them or a , (a comma joins URLs in one word). Patterns in variables: & ; and # are
+# operators in a literal [[ =~ ]].
+URL_PARAM_PRE='^([^?&#;]*[?&#;])(.*)$'
+URL_PARAM_KV='^([^=&#,?;]+)=([^&#,;]*)(.*)$'
+redact_url() {  # <var> <word>: the word with each URL's userinfo and secret parameter values redacted
+  local _ru_w=$2 _ru_out="" _ru_auth _ru_ui _ru_k _ru_v
+  [[ $_ru_w == *://* ]] || { printf -v "$1" '%s' "$_ru_w"; return 0; }
   while [[ $_ru_w == *://* ]]; do
     _ru_out="$_ru_out${_ru_w%%://*}://"
     _ru_w=${_ru_w#*://}
-    # The authority runs to the first / ? or #, and its userinfo to its last
-    # @, as URL parsers read it (CR 2765).
-    _ru_auth=${_ru_w%%[/?#]*}
+    # The authority runs to the first /, and its userinfo to its last @, as
+    # libpq reads a URI: a password may hold a ? or a # (CR 2765, CR 2781).
+    _ru_auth=${_ru_w%%/*}
     case $_ru_auth in *@*)
       _ru_ui=${_ru_auth%@*}
       _ru_w=${_ru_w#"$_ru_ui"@}
@@ -3751,46 +3761,76 @@ redact_url() {  # <var> <word>: the word with each URL's userinfo and secret que
       esac ;;
     esac
   done
-  _ru_w="$_ru_out$_ru_w"
-  case $_ru_w in *://*\?*) ;; *) printf -v "$1" '%s' "$_ru_w"; return 0 ;; esac
-  # A secret-named query parameter's value (CR 2767).
-  _ru_out="${_ru_w%%\?*}?" _ru_q=${_ru_w#*\?} _ru_qo=""
-  while :; do
-    _ru_p=${_ru_q%%&*}
-    case $_ru_p in *=*) if secret_arg_name "${_ru_p%%=*}"; then _ru_p="${_ru_p%%=*}=<redacted>"; fi ;; esac
-    _ru_qo="$_ru_qo&$_ru_p"
-    case $_ru_q in *"&"*) _ru_q=${_ru_q#*&} ;; *) break ;; esac
+  _ru_w="$_ru_out$_ru_w" _ru_out=""
+  # Each parameter in every URL of the word, the query's and the
+  # fragment's (CR 2767, CR 2786).
+  while [[ $_ru_w =~ $URL_PARAM_PRE ]]; do
+    _ru_out="$_ru_out${BASH_REMATCH[1]}"
+    _ru_w=${BASH_REMATCH[2]}
+    if [[ $_ru_w =~ $URL_PARAM_KV ]]; then
+      _ru_k=${BASH_REMATCH[1]} _ru_v=${BASH_REMATCH[2]} _ru_w=${BASH_REMATCH[3]}
+      if secret_arg_name "$_ru_k" "$SECRET_PARAM_WORDS"; then _ru_v="<redacted>"; fi
+      _ru_out="$_ru_out$_ru_k=$_ru_v"
+    fi
   done
-  printf -v "$1" '%s' "$_ru_out${_ru_qo#&}"
+  printf -v "$1" '%s' "$_ru_out$_ru_w"
+}
+ARG_NEXT=0  # 1 when redact_arg's word names a secret whose value is the next word
+redact_arg() {  # <var> <word>: one word under the name rule
+  local _ra_w=$2 _ra_n
+  ARG_NEXT=0
+  case $_ra_w in
+    --?* | -[!-]?*)
+      _ra_n=${_ra_w%%=*}
+      _ra_n=${_ra_n#-}
+      case $_ra_n in -*) _ra_n=${_ra_n#-} ;; D?*) _ra_n=${_ra_n#D} ;; esac
+      if secret_arg_name "$_ra_n"; then
+        case $_ra_w in *=*) _ra_w="${_ra_w%%=*}=<redacted>" ;; *) ARG_NEXT=1 ;; esac
+      fi ;;
+  esac
+  redact_url _ra_w "$_ra_w"
+  printf -v "$1" '%s' "$_ra_w"
+}
+redact_words() {  # <var> <word>...: the words under the name rule, joined by a space
+  local _rw_v=$1 _rw_w _rw_out="" _rw_next=0
+  shift
+  for _rw_w in "$@"; do
+    if [ "$_rw_next" -eq 1 ]; then
+      _rw_next=0
+      _rw_out="$_rw_out <redacted>"
+      continue
+    fi
+    redact_arg _rw_w "$_rw_w"
+    _rw_next=$ARG_NEXT
+    _rw_out="$_rw_out $_rw_w"
+  done
+  printf -v "$_rw_v" '%s' "${_rw_out# }"
 }
 redacted_cmdline_of() {  # <var> <pid>
-  local _rc_w _rc_n _rc_out="" _rc_next=0 _rc_full=0 _rc_one=""
-  local -a _rc_a=()
+  local _rc_w _rc_out="" _rc_next=0
+  local -a _rc_a=() _rc_s=()
   while IFS= read -r -d '' _rc_w || [ -n "$_rc_w" ]; do
     _rc_a+=("$_rc_w")
-    if [ -n "$_rc_w" ]; then _rc_full=$((_rc_full + 1)) _rc_one=$_rc_w; fi
   done 2>/dev/null <"$P_ROOT/proc/$2/cmdline" || true
-  if [ "$_rc_full" -eq 1 ] && [[ $_rc_one == *[[:space:]]* ]]; then
-    IFS=$' \t\n' read -r -d '' -a _rc_a <<<"$_rc_one" || true
-  fi
   for _rc_w in ${_rc_a[@]+"${_rc_a[@]}"}; do
     if [ "$_rc_next" -eq 1 ]; then
       _rc_next=0
       _rc_out="$_rc_out <redacted>"
       continue
     fi
-    case $_rc_w in
-      --?* | -[!-]?*)
-        _rc_n=${_rc_w%%=*}
-        _rc_n=${_rc_n#-}
-        case $_rc_n in -*) _rc_n=${_rc_n#-} ;; D?*) _rc_n=${_rc_n#D} ;; esac
-        if secret_arg_name "$_rc_n"; then
-          case $_rc_w in *=*) _rc_w="${_rc_w%%=*}=<redacted>" ;; *) _rc_next=1 ;; esac
-        fi ;;
-    esac
-    redact_url _rc_w "$_rc_w"
+    redact_arg _rc_w "$_rc_w"
+    _rc_next=$ARG_NEXT
+    # Its words too, within the element: a secret's value inside it is
+    # never taken from the next element.
+    if [[ $_rc_w == *[[:space:]]* ]]; then
+      _rc_s=()
+      IFS=$' \t\n' read -r -d '' -a _rc_s <<<"$_rc_w" || true
+      redact_words _rc_w ${_rc_s[@]+"${_rc_s[@]}"}
+    fi
     _rc_out="$_rc_out $_rc_w"
   done
+  # Without the empty elements a rewritten argv is padded with.
+  while [[ $_rc_out == *" " ]]; do _rc_out=${_rc_out% }; done
   printf -v "$1" '%s' "${_rc_out# }"
 }
 

@@ -341,6 +341,62 @@ def test_live_args_redacts_the_review_s_forms(host, argv, args):
     assert "abc" not in host.result.stdout
 
 
+@pytest.mark.parametrize(
+    "argv, args",
+    [
+        # CR 2781: a password holding a ? or # is still userinfo: the
+        # authority ends at the first / alone, as libpq reads it.
+        (["d", "postgresql://app:p?abc@db/x"], "d postgresql://app:<redacted>@db/x"),
+        (["d", "redis://:p#abc@r:6379/0"], "d redis://:<redacted>@r:6379/0"),
+        # CR 2785, CR 2787: any element holding whitespace is read by its
+        # words too, a wrapper's script string or a rewritten title with
+        # leftovers after it, and the element stays one argument.
+        (
+            ["/bin/sh", "-c", "exec /usr/bin/d --token abc"],
+            "/bin/sh -c exec /usr/bin/d --token <redacted>",
+        ),
+        (["d --token abc", "leftover"], "d --token <redacted> leftover"),
+        (
+            ["d", "--password", "a b", "--region", "us"],
+            "d --password <redacted> --region us",
+        ),
+        # CR 2786: each URL's query, a fragment's parameters, Azure's SAS
+        # signature, a parameter with no value before a secret one, and a
+        # fragment after a redacted last parameter.
+        (
+            ["d", "https://a/?x=1,https://b/?token=abc"],
+            "d https://a/?x=1,https://b/?token=<redacted>",
+        ),
+        (
+            ["d", "https://h/cb#access_token=abc&state=s"],
+            "d https://h/cb#access_token=<redacted>&state=s",
+        ),
+        (
+            ["d", "https://a.blob.core.windows.net/c?sv=2022-11-02&sig=abc"],
+            "d https://a.blob.core.windows.net/c?sv=2022-11-02&sig=<redacted>",
+        ),
+        (
+            ["d", "https://h/x?flag&token=abc#frag"],
+            "d https://h/x?flag&token=<redacted>#frag",
+        ),
+        (
+            ["d", "https://h/x?a=1;token=abc&b=2"],
+            "d https://h/x?a=1;token=<redacted>&b=2",
+        ),
+        # CR 2788: a compound that names a secret whole; a host key's path
+        # names where one is, and stays readable.
+        (
+            ["d", "--secretkey", "abc", "--accesskey=abc", "--hostkey", "/k"],
+            "d --secretkey <redacted> --accesskey=<redacted> --hostkey /k",
+        ),
+    ],
+)
+def test_live_args_redacts_the_verify_pass_s_forms(host, argv, args):
+    e = _service_argv(host, argv)
+    assert e["args"] == args
+    assert "abc" not in host.result.stdout
+
+
 def test_an_argv_rewritten_as_one_string_is_read_by_its_words(host):
     # CR 2768: a process that rewrote its argv as one string, padded with
     # NULs, is one element; its words are redacted as arguments.
