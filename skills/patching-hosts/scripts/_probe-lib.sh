@@ -1033,6 +1033,30 @@ iso_utc() {  # <var> <epoch>
   printf -v "$1" '%s' "$_iu"
 }
 
+# The deleted files needrestart 3.6 passes over (noble's 3.6-7ubuntu4.6,
+# measured 2026-11-18): its default blacklist_mappings, each Perl pattern in
+# POSIX ERE, matched on the path with " (deleted)" still on. A memfd, a /tmp
+# file and the like are no file dpkg replaced, and no restart clears them.
+# apply.sh's reboot_maps reads a map by them, and read_stale and probe.sh's
+# exe_deleted a process's binary (CR 2776).
+DELETED_SKIP=(
+  '^/(SYSV00000000( \(deleted\))?|drm([[:space:]]|$)|dev/)'
+  '^/memfd:'
+  '^/\[aio\]'
+  '/orcexec\.[[:alnum:]_]+( \(deleted\))?$'
+  '/#[0-9]+( \(deleted\))?$'
+  '/jna[0-9]+\.tmp( \(deleted\))?$'
+  '^(/var)?/tmp/'
+  '^(/var)?/run/'
+)
+deleted_passed_over() {  # <path, " (deleted)" still on>: 0 when needrestart passes it over
+  local _dp_s
+  for _dp_s in "${DELETED_SKIP[@]}"; do
+    if [[ $1 =~ $_dp_s ]]; then return 0; fi
+  done
+  return 1
+}
+
 is_int() {
   local re='^-?[0-9]+$'
   [[ ${1-} =~ $re ]]

@@ -825,24 +825,14 @@ reboot_pids() {  # <var> <unit>: VAR := its PIDs, space-separated
 # 2026-11-18): an executable mapping (perms holding x), an inode that isn't
 # 0, a path ending " (deleted)", and none of the default blacklist_mappings
 # in /etc/needrestart/needrestart.conf, matched on the path with that
-# suffix still on, as it matches them. RB_SKIP is that list, each Perl
-# pattern in POSIX ERE. needrestart's other test isn't read here: a mapping
+# suffix still on, as it matches them: deleted_passed_over, in
+# _probe-lib.sh, which read_stale shares (CR 2776). needrestart's other test isn't read here: a mapping
 # whose file was replaced without the marker, which it finds by comparing
 # map_files' inodes. dpkg replaces a library by rename, which shows as
 # "(deleted)", so that case is rare (CR 2526).
 RB_DUE=""
-RB_SKIP=(
-  '^/(SYSV00000000( \(deleted\))?|drm([[:space:]]|$)|dev/)'
-  '^/memfd:'
-  '^/\[aio\]'
-  '/orcexec\.[[:alnum:]_]+( \(deleted\))?$'
-  '/#[0-9]+( \(deleted\))?$'
-  '/jna[0-9]+\.tmp( \(deleted\))?$'
-  '^(/var)?/tmp/'
-  '^(/var)?/run/'
-)
 reboot_maps() {  # <the selection> <who> <pid>...
-  local _rm_sel=$1 _rm_who=$2 _rm_pid _rm_maps _rm_out _rm_line _rm_p _rm_owners="" _rm_paths="" _rm_unk="" _rm_v=maps _rm_rc _rm_x _rm_del="" _rm_n=0 _rm_first="" _rm_s _rm_k
+  local _rm_sel=$1 _rm_who=$2 _rm_pid _rm_maps _rm_out _rm_line _rm_p _rm_owners="" _rm_paths="" _rm_unk="" _rm_v=maps _rm_rc _rm_x _rm_del="" _rm_n=0 _rm_first=""
   # A maps line: address, perms, offset, dev, inode, then the path, which
   # may hold a space (CR 2516), so it's the rest of the line.
   local _rm_re='^[^ ]+ +([^ ]+) +[^ ]+ +[^ ]+ +([^ ]+)( +(.*))?$'
@@ -880,14 +870,7 @@ reboot_maps() {  # <the selection> <who> <pid>...
         case ${BASH_REMATCH[1]} in *x*) ;; *) continue ;; esac
         [ "${BASH_REMATCH[2]}" != 0 ] || continue
         case $_rm_x in *" (deleted)") ;; *) continue ;; esac
-        _rm_k=0
-        for _rm_s in "${RB_SKIP[@]}"; do
-          if [[ $_rm_x =~ $_rm_s ]]; then
-            _rm_k=1
-            break
-          fi
-        done
-        [ "$_rm_k" -eq 0 ] || continue
+        if deleted_passed_over "$_rm_x"; then continue; fi
       fi
       _rm_x=${_rm_x% (deleted)}
       # A file maps a segment a line: count it once.
@@ -2161,67 +2144,97 @@ holds_left() {  # <var>: JSON array
 # for every declared service, whichever step replaced its binary, so one an
 # earlier step or unattended-upgrades left is named too. Not a failure: the
 # step did what it ran, so the verdict says what hasn't taken effect.
+#
+# Every process in the unit's cgroup, as reboot_pids lists them, not its
+# MainPID alone: a oneshot's RemainAfterExit, or Type=forking with
+# GuessMainPID=no, leaves MainPID at 0 or a wrapper while the daemon runs
+# as its child (CR 2778). What needrestart passes over isn't stale: a memfd
+# exec reads "/memfd:<name> (deleted)", and no restart clears it (CR 2776).
+stale_owner() {  # <path>: SO_PKG, SO_VER := its package and installed version, or empty
+  local _so_p _so_out _so_l _so_v
+  SO_PKG="" SO_VER=""
+  # noble's dpkg records some files without /usr: iproute2's /sbin/ip,
+  # which /proc reads as /usr/sbin/ip (CR 2777).
+  for _so_p in "$1" "${1#/usr}"; do
+    case $_so_p in /*) ;; *) continue ;; esac
+    capture _so_out dpkg-query -S "$_so_p"
+    while IFS= read -r _so_l; do
+      case $_so_l in diversion* | "") continue ;; esac
+      _so_l=${_so_l%%: /*}
+      _so_l=${_so_l%%,*}
+      SO_PKG=${_so_l%%:*}
+      break
+    done <<<"$_so_out"
+    [ -z "$SO_PKG" ] || break
+    case $1 in /usr/bin/* | /usr/sbin/* | /usr/lib*/*) ;; *) break ;; esac
+  done
+  [ -n "$SO_PKG" ] || return 0
+  capture _so_out dpkg-query -W "$SO_PKG"
+  while read -r _so_l _so_v; do
+    if [ "${_so_l%%:*}" = "$SO_PKG" ]; then SO_VER=$_so_v; fi
+  done <<<"$_so_out"
+}
+
+SO_PKG="" SO_VER=""
 read_stale() {
-  local r u pid x path out line pkg ver o="" un="" e what rc t
+  local r u pids pid x path o="" un="" e what rc t seen hit unread
   local -a f=()
   for r in ${KNOB_SERVICE[@]+"${KNOB_SERVICE[@]}"}; do
     IFS=$KNOB_US read -r -a f <<<"$r"
     unit_name u "${f[0]}"
-    e=""
-    jadds e unit "$u"
-    if ! unit_show "$u" MainPID; then
+    if ! reboot_pids pids "$u"; then
+      e=""
+      jadds e unit "$u"
       jadd e pid null
-      jadds e why "systemctl couldn't show its MainPID"
+      jadds e why "$RB_WHY"
       jpush un "{$e}"
-      STALE_NEXT+=("read $u's binary by hand: sudo readlink /proc/<its MainPID>/exe, where a target ending (deleted) means this step hasn't taken effect for it")
+      STALE_NEXT+=("read $u's binary by hand: sudo readlink /proc/<each pid in its cgroup>/exe, where a target ending (deleted) means this step hasn't taken effect for it")
       continue
     fi
-    pid=$U_MainPID
-    # No process, no binary: a unit that isn't running runs nothing old.
-    if ! is_int "$pid" || [ "$pid" -le 0 ]; then continue; fi
-    jaddn e pid "$pid"
-    capture x as_root readlink -- "$PROC_DIR/$pid/exe"
-    if [ "$CAP_RC" -ne 0 ] || [ -z "$x" ]; then
-      # Exited since systemctl named it, only where root finds no entry.
-      rc=0
-      as_root test -e "$PROC_DIR/$pid" || rc=$?
-      [ "$rc" -ne 1 ] || continue
-      jadds e why "/proc/$pid/exe couldn't be read as root"
-      jpush un "{$e}"
-      STALE_NEXT+=("read $u's binary by hand: sudo readlink /proc/$pid/exe, where a target ending (deleted) means this step hasn't taken effect for it")
-      continue
-    fi
-    x=${x%%$'\n'*}
-    case $x in *" (deleted)") ;; *) continue ;; esac
-    path=${x% (deleted)}
-    # The file now at that path is the new version's: its package, as
-    # reboot_maps reads an owner, and the version installed.
-    pkg="" ver=""
-    capture out dpkg-query -S "$path"
-    while IFS= read -r line; do
-      case $line in diversion* | "") continue ;; esac
-      line=${line%%: /*}
-      line=${line%%,*}
-      pkg=${line%%:*}
-      break
-    done <<<"$out"
-    if [ -n "$pkg" ]; then
-      capture out dpkg-query -W "$pkg"
-      while read -r line t; do
-        if [ "${line%%:*}" = "$pkg" ]; then ver=$t; fi
-      done <<<"$out"
-    fi
-    jadds e path "$path"
-    jaddsn e package "$pkg"
-    jaddsn e version "$ver"
-    t=0
-    if [ -n "$pkg" ] && in_words "$pkg" "$UU_UPGRADED"; then t=1; fi
-    jaddb e taken "$t"
-    jpush o "{$e}"
-    STALE_N=$((STALE_N + 1))
-    what="${pkg:-the package owning $path}${ver:+ $ver}"
-    NOT_IN_EFFECT+=("$u still runs the replaced $path, so $what hasn't taken effect for it")
-    STALE_NEXT+=("restart $u, or reboot, before $what takes effect: it still runs the replaced $path (stale_binary)")
+    seen=$'\n' hit=0 unread=0
+    for pid in $pids; do
+      capture x as_root readlink -- "$PROC_DIR/$pid/exe"
+      if [ "$CAP_RC" -ne 0 ] || [ -z "$x" ]; then
+        # Exited since its cgroup was read, only where root finds no entry.
+        rc=0
+        as_root test -e "$PROC_DIR/$pid" || rc=$?
+        [ "$rc" -ne 1 ] || continue
+        e=""
+        jadds e unit "$u"
+        jaddn e pid "$pid"
+        jadds e why "/proc/$pid/exe couldn't be read as root"
+        jpush un "{$e}"
+        if [ "$unread" -eq 0 ]; then
+          STALE_NEXT+=("read $u's binary by hand: sudo readlink /proc/$pid/exe, where a target ending (deleted) means this step hasn't taken effect for it")
+        fi
+        unread=1
+        continue
+      fi
+      x=${x%%$'\n'*}
+      case $x in *" (deleted)") ;; *) continue ;; esac
+      if deleted_passed_over "$x"; then continue; fi
+      path=${x% (deleted)}
+      # One entry a binary: a daemon's workers share it.
+      case $seen in *$'\n'"$path"$'\n'*) continue ;; esac
+      seen="$seen$path"$'\n'
+      # The file now at that path is the new version's.
+      stale_owner "$path"
+      e=""
+      jadds e unit "$u"
+      jaddn e pid "$pid"
+      jadds e path "$path"
+      jaddsn e package "$SO_PKG"
+      jaddsn e version "$SO_VER"
+      t=0
+      if [ -n "$SO_PKG" ] && in_words "$SO_PKG" "$UU_UPGRADED"; then t=1; fi
+      jaddb e taken "$t"
+      jpush o "{$e}"
+      hit=1
+      what="${SO_PKG:-the package owning $path}${SO_VER:+ $SO_VER}"
+      NOT_IN_EFFECT+=("$u still runs the replaced $path, so $what hasn't taken effect for it")
+      STALE_NEXT+=("restart $u, or reboot, before $what takes effect: it still runs the replaced $path (stale_binary)")
+    done
+    STALE_N=$((STALE_N + hit))
   done
   J_STALE="[$o]" J_STALE_UNREAD="[$un]"
 }
