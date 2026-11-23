@@ -378,6 +378,10 @@ J_RECOVERY=null
 # A held group's version that differs from the dry run's (#383).
 VERSION_MOVED=()
 J_VERDICT=null J_ABORT=null J_REPROBE=null
+# What read_stale finds after a step (#699): null until it reads.
+J_STALE=null J_STALE_UNREAD=null
+STALE_N=0
+NOT_IN_EFFECT=() STALE_NEXT=()
 
 HOLD_STEPS=""
 for _r in ${KNOB_HOLD[@]+"${KNOB_HOLD[@]}"}; do HOLD_STEPS="$HOLD_STEPS ${_r%%"$KNOB_US"*}"; done
@@ -1822,6 +1826,8 @@ emit() {
   jadd o qdrant "$J_QDRANT"
   jadd o redis "$J_REDIS"
   jadd o restarters "$J_RESTARTERS"
+  jadd o stale_binary "$J_STALE"
+  jadd o stale_binary_unread "$J_STALE_UNREAD"
   jadd o verdict "$J_VERDICT"
   jadd o abort "$J_ABORT"
   a=""
@@ -2146,9 +2152,84 @@ holds_left() {  # <var>: JSON array
   printf -v "$1" '[%s]' "$_hl"
 }
 
+# Each knob service's binary after the step (#699). A process still running
+# a file dpkg replaced reads "<path> (deleted)" at /proc/<pid>/exe, and runs
+# the old version until it restarts. A postinst that restarts nothing leaves
+# it there, though the step installed the new version and its health
+# passed: cloudflared's unit, which `cloudflared service install` writes
+# outside the package's files, ran the replaced binary until a reboot. Read
+# for every declared service, whichever step replaced its binary, so one an
+# earlier step or unattended-upgrades left is named too. Not a failure: the
+# step did what it ran, so the verdict says what hasn't taken effect.
+read_stale() {
+  local r u pid x path out line pkg ver o="" un="" e what rc t
+  local -a f=()
+  for r in ${KNOB_SERVICE[@]+"${KNOB_SERVICE[@]}"}; do
+    IFS=$KNOB_US read -r -a f <<<"$r"
+    unit_name u "${f[0]}"
+    e=""
+    jadds e unit "$u"
+    if ! unit_show "$u" MainPID; then
+      jadd e pid null
+      jadds e why "systemctl couldn't show its MainPID"
+      jpush un "{$e}"
+      STALE_NEXT+=("read $u's binary by hand: sudo readlink /proc/<its MainPID>/exe, where a target ending (deleted) means this step hasn't taken effect for it")
+      continue
+    fi
+    pid=$U_MainPID
+    # No process, no binary: a unit that isn't running runs nothing old.
+    if ! is_int "$pid" || [ "$pid" -le 0 ]; then continue; fi
+    jaddn e pid "$pid"
+    capture x as_root readlink -- "$PROC_DIR/$pid/exe"
+    if [ "$CAP_RC" -ne 0 ] || [ -z "$x" ]; then
+      # Exited since systemctl named it, only where root finds no entry.
+      rc=0
+      as_root test -e "$PROC_DIR/$pid" || rc=$?
+      [ "$rc" -ne 1 ] || continue
+      jadds e why "/proc/$pid/exe couldn't be read as root"
+      jpush un "{$e}"
+      STALE_NEXT+=("read $u's binary by hand: sudo readlink /proc/$pid/exe, where a target ending (deleted) means this step hasn't taken effect for it")
+      continue
+    fi
+    x=${x%%$'\n'*}
+    case $x in *" (deleted)") ;; *) continue ;; esac
+    path=${x% (deleted)}
+    # The file now at that path is the new version's: its package, as
+    # reboot_maps reads an owner, and the version installed.
+    pkg="" ver=""
+    capture out dpkg-query -S "$path"
+    while IFS= read -r line; do
+      case $line in diversion* | "") continue ;; esac
+      line=${line%%: /*}
+      line=${line%%,*}
+      pkg=${line%%:*}
+      break
+    done <<<"$out"
+    if [ -n "$pkg" ]; then
+      capture out dpkg-query -W "$pkg"
+      while read -r line t; do
+        if [ "${line%%:*}" = "$pkg" ]; then ver=$t; fi
+      done <<<"$out"
+    fi
+    jadds e path "$path"
+    jaddsn e package "$pkg"
+    jaddsn e version "$ver"
+    t=0
+    if [ -n "$pkg" ] && in_words "$pkg" "$UU_UPGRADED"; then t=1; fi
+    jaddb e taken "$t"
+    jpush o "{$e}"
+    STALE_N=$((STALE_N + 1))
+    what="${pkg:-the package owning $path}${ver:+ $ver}"
+    NOT_IN_EFFECT+=("$u still runs the replaced $path, so $what hasn't taken effect for it")
+    STALE_NEXT+=("restart $u, or reboot, before $what takes effect: it still runs the replaced $path (stale_binary)")
+  done
+  J_STALE="[$o]" J_STALE_UNREAD="[$un]"
+}
+
 STOPPED=""
 finish() {
   local o="" a="" r rc=0 out result=ok ok=1 left u i err="" aa
+  if [ "$STARTED" -eq 1 ]; then read_stale; fi
   if [ "${#FAILED[@]}" -gt 0 ]; then result=failed; fi
   if [ "$STARTED" -eq 1 ]; then
     printf '%s\t%s\t%s\t%s\t%s\n' "$step" "$result" "$P_NOW" "${UU_WALL:-}" "${UU_RSS:-}" | root_append "$run/steps" ||
@@ -2165,6 +2246,9 @@ finish() {
     NEXT+=("A version moved since the dry run, for the owner to read before the next approval: $r.")
   done
   jadd o version_moved "[$a]"
+  a=""
+  for r in ${NOT_IN_EFFECT[@]+"${NOT_IN_EFFECT[@]}"}; do jpushs a "$r"; done
+  jadd o not_in_effect "[$a]"
   J_VERDICT="{$o}"
   if [ "$result" = failed ] && [ "$STARTED" -eq 0 ]; then
     o="" a="" left="[]"
@@ -2211,7 +2295,12 @@ finish() {
         break
       done
     done
-    NEXT+=("the reboot decision: reboot-and-record.md section 4")
+    NEXT+=(${STALE_NEXT[@]+"${STALE_NEXT[@]}"})
+    case $STALE_N in
+      0) NEXT+=("the reboot decision: reboot-and-record.md section 4") ;;
+      1) NEXT+=("the reboot decision: reboot-and-record.md section 4. 1 declared service still runs a replaced binary (stale_binary): restart it, or reboot") ;;
+      *) NEXT+=("the reboot decision: reboot-and-record.md section 4. $STALE_N declared services still run a replaced binary (stale_binary): restart them, or reboot") ;;
+    esac
   fi
   # The probe again, into the run, for the record: never part of the verdict.
   out=$(bash "$_libdir/probe.sh" --config "$config" --host "$host" --today "$today" 2>"$P_TMP/reprobe.err") || rc=$?

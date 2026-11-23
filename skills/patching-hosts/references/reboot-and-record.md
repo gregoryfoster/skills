@@ -13,6 +13,8 @@ After the last step:
 
 Reboot when any of them calls for it: dbus, logind, `user@`, a data store, PID 1 mapping deleted libraries, or a pending kernel (needrestart's `NEEDRESTART-KSTA` of 2 or 3). **On exe.dev, never decide from a kernel:** there's no guest kernel, so its kernel lines mean nothing ([the profile](environments/exe-dev-exeuntu.md#update-channels)). PID 1 re-executing itself during the apply (it did on most hosts) doesn't mean no reboot.
 
+**A `service` still on a replaced binary** is each step's `stale_binary` (#699): its `/proc/<MainPID>/exe` ends ` (deleted)`. A postinst that restarts nothing leaves it there, as with a unit an installer subcommand wrote outside the package's files (`cloudflared service install`). The step stays `verdict.ok`, and `verdict.not_in_effect` says the update hasn't taken effect. Restart the unit with the owner's approval, or reboot. It needs no reboot on its own.
+
 ## 5. The reboot chain
 
 Run it detached, as a 0700 root script, so the operator's disconnect can't cut it off. `reboot-chain.sh --run <dir>` prints the chain for the owner to read; with `--approve` it writes it into the run's directory, with its log and the journal copy beside it, and launches it:
