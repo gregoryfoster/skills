@@ -115,20 +115,71 @@ def test_log_target_is_parsed_as_pid_1_parses_it(host, text, want):
     assert _env(host)["pid1_log_target_conf"] == want
 
 
-def test_with_no_line_and_no_argv_the_reload_target_is_systemds_default(host):
-    _pid1(host, "/sbin/init")
+# --- what a reload applies (CR 2774) ---------------------------------------------
+# systemd v255's main.c: a reload's parse_configuration() reads system.conf,
+# then log_parse_environment() the kernel's systemd.log_target= and then
+# SYSTEMD_LOG_TARGET, each later one winning. reset_arguments() never resets
+# the log target, so with none of them set the reload keeps the live one.
+
+
+def test_with_no_line_a_reload_keeps_the_live_target(host):
+    _pid1(host, "/sbin/init", "--log-target=console")
+    host.on("systemd-analyze", "get-log-target", "console\n")
     env = _env(host)
     assert env["pid1_log_target_conf"] is None
-    assert env["pid1_log_target_reload"] == "journal-or-kmsg"
-    assert env["pid1_logs_to_journal"]["after_reload"] is True
+    assert env["pid1_log_target_reload"] == "console"
+    assert env["pid1_logs_to_journal"]["after_reload"] is False
 
 
-def test_with_no_line_but_an_argv_target_the_reload_target_is_unknown(host):
-    # Not measured: whether a reload keeps argv's target or systemd's default.
-    _pid1(host, "/sbin/init", "--log-target=console")
+def test_the_kernels_log_target_beats_system_conf_at_a_reload(host):
+    host.on("systemd-analyze", "get-log-target", "journal-or-kmsg\n")
+    host.write(
+        "proc/cmdline", "console=hvc0 systemd.log_target=console root=/dev/vda\n"
+    )
     env = _env(host)
-    assert env["pid1_log_target_reload"] is None
-    assert env["pid1_logs_to_journal"]["after_reload"] is None
+    assert env["pid1_log_target_kernel"] == "console"
+    assert env["pid1_log_target_reload"] == "console"
+    host.write(CONF, "[Manager]\nLogTarget=journal\n")
+    assert _env(host)["pid1_log_target_reload"] == "console"
+
+
+def test_pid_1s_environment_beats_the_kernel_and_system_conf(host):
+    host.write("proc/cmdline", "systemd.log_target=console\n")
+    host.write(CONF, "[Manager]\nLogTarget=journal\n")
+    host.write("proc/1/environ", "HOME=/\0SYSTEMD_LOG_TARGET=kmsg\0TERM=linux\0")
+    env = _env(host)
+    assert env["pid1_log_target_env"] == "kmsg"
+    assert env["pid1_log_target_reload"] == "kmsg"
+
+
+def test_an_invalid_kernel_or_environment_target_is_ignored(host):
+    host.write("proc/cmdline", "systemd.log_target=bogus\n")
+    host.write("proc/1/environ", "SYSTEMD_LOG_TARGET=\0")
+    host.write(CONF, "[Manager]\nLogTarget=journal\n")
+    env = _env(host)
+    assert (env["pid1_log_target_kernel"], env["pid1_log_target_env"]) == (None, None)
+    assert env["pid1_log_target_reload"] == "journal"
+
+
+def test_an_environment_that_cant_be_read_is_null_and_unread(tmp_path):
+    h = _probe.Host(tmp_path, sudo=False).knob("posture automatic\n")
+    h.write("proc/1/environ", "SYSTEMD_LOG_TARGET=kmsg\0", mode=0)
+    out = h.run()
+    assert out["environment"]["pid1_log_target_env"] is None
+    assert [n for n in out["not_read"] if "SYSTEMD_LOG_TARGET" in n]
+
+
+def test_a_runtime_override_reads_as_what_system_conf_would_apply(host):
+    # An accepted limitation: systemd-analyze set-log-target journal survives a
+    # reload (main.c's log_target_overridden), but nothing the probe can read
+    # tells it from argv's target, so the reload reads as system.conf's.
+    _pid1(host, "/sbin/init", "--log-target=syslog")
+    host.on("systemd-analyze", "get-log-target", "journal\n")
+    host.write(f"{DROP}/container-overrides.conf", "[Manager]\nLogTarget=console\n")
+    assert _env(host)["pid1_log_target_reload"] == "console"
+
+
+# --- which targets reach the journal (CR 2775) --------------------------------------
 
 
 @pytest.mark.parametrize(
@@ -139,17 +190,27 @@ def test_with_no_line_but_an_argv_target_the_reload_target_is_unknown(host):
         # PID 1 upgrades syslog to the journal (log.c's upgrade_syslog_to_journal).
         ("syslog", True),
         ("syslog-or-kmsg", True),
+        # journald reads kmsg (ReadKMsg=yes, its default), and auto is
+        # journal-or-kmsg for PID 1 (log.c's log_settle_target).
+        ("kmsg", True),
+        ("auto", True),
         ("console", False),
-        ("kmsg", False),
+        ("console-prefixed", False),
         ("null", False),
-        ("auto", None),
     ],
 )
-def test_journal_and_journal_or_kmsg_both_count_as_the_journal(host, target, journal):
+def test_the_targets_that_reach_the_journal(host, target, journal):
     host.on("systemd-analyze", "get-log-target", f"{target}\n")
     host.write(CONF, f"[Manager]\nLogTarget={target}\n")
     env = _env(host)
     assert env["pid1_logs_to_journal"] == {"now": journal, "after_reload": journal}
+
+
+def test_kmsg_doesnt_reach_the_journal_when_journald_doesnt_read_it(host):
+    host.write("etc/systemd/journald.conf", "[Journal]\nReadKMsg=no\n")
+    host.on("systemd-analyze", "get-log-target", "kmsg\n")
+    host.write(CONF, "[Manager]\nLogTarget=journal-or-kmsg\n")
+    assert _env(host)["pid1_logs_to_journal"] == {"now": False, "after_reload": True}
 
 
 def test_a_tree_nothing_runs_reads_no_argv(tmp_path):
@@ -164,6 +225,7 @@ def test_a_tree_nothing_runs_reads_no_argv(tmp_path):
 
 
 PERSISTENT = "var/log/journal/" + "a" * 32 + "/system.journal"
+PID1_QUERY = "-b -1 _PID=1 + _TRANSPORT=kernel SYSLOG_PID=1 -n 200 -q --no-pager -o cat"
 PID1_TAIL = "Reached target final.target - Late Shutdown Services.\nShutting down.\n"
 
 
@@ -172,7 +234,7 @@ def test_post_boot_reads_pid_1s_shutdown_lines_by_their_presence(host, now):
     # Whatever the new boot's target: it isn't the one the shutdown ran on.
     host.write(PERSISTENT, "x")
     host.on("systemd-analyze", "get-log-target", f"{now}\n")
-    host.on("journalctl", "-b -1 _PID=1 -n 200 -q --no-pager -o cat", PID1_TAIL)
+    host.on("journalctl", PID1_QUERY, PID1_TAIL)
     out = host.run("--post-boot")
     checks = {c["check"]: c for c in out["post_boot"]}
     assert checks["shutdown:pid1-lines"]["ok"] is True
@@ -185,7 +247,7 @@ def test_absent_pid_1_lines_are_no_evidence_either_way(host, now):
     # their absence isn't a failed shutdown, and files no finding.
     host.write(PERSISTENT, "x")
     host.on("systemd-analyze", "get-log-target", f"{now}\n")
-    host.on("journalctl", "-b -1 _PID=1 -n 200 -q --no-pager -o cat", "Started x.\n")
+    host.on("journalctl", PID1_QUERY, "Started x.\n")
     out = host.run("--post-boot")
     c = {c["check"]: c for c in out["post_boot"]}["shutdown:pid1-lines"]
     assert c["ok"] is None

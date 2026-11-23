@@ -568,6 +568,7 @@ systemd_main_file() {  # <var> <name under systemd/> <whose>: its main file, und
   printf -v "$1" '%s' "$_jm_main"
 }
 
+JD_READ_KMSG=1
 read_journal() {
   local o="" f line n storage="" ssrc="" flush flush_live="" out pc="" vc="" verdict=unknown oldest="" reach="" at dfs main sect k v
   # The main file, then the drop-ins as journald reads them (#515).
@@ -594,12 +595,21 @@ read_journal() {
       esac
       [ "$sect" = '[Journal]' ] || continue
       trim k "${line%%=*}"
-      [ "$k" = Storage ] || continue
       trim v "${line#*=}"
-      case $v in
-        auto | volatile | persistent | none)
-          storage=$v
-          ssrc="${f#"$P_ROOT"}:$n" ;;
+      case $k in
+        Storage)
+          case $v in
+            auto | volatile | persistent | none)
+              storage=$v
+              ssrc="${f#"$P_ROOT"}:$n" ;;
+          esac ;;
+        # PID 1's kmsg lines reach the journal only while journald reads
+        # kmsg: ReadKMsg=, a boolean, yes unless set (#684, CR 2775).
+        ReadKMsg)
+          case $v in
+            1 | [Yy] | [Yy][Ee][Ss] | [Tt] | [Tt][Rr][Uu][Ee] | [Oo][Nn]) JD_READ_KMSG=1 ;;
+            0 | [Nn] | [Nn][Oo] | [Ff] | [Ff][Aa][Ll][Ss][Ee] | [Oo][Ff][Ff]) JD_READ_KMSG=0 ;;
+          esac ;;
       esac
     done <"$f"
   done <<<"$main"$'\n'"$dfs"
@@ -1105,35 +1115,44 @@ read_exe_init() {
   R_EXE_INIT="{$o}"
 }
 
-# PID 1's log target (#684): the live one, argv's, and system.conf's. A
-# command-line option beats system.conf, so a boot runs on argv's: exeuntu's
-# exe-init starts PID 1 with --log-target=syslog, which PID 1 reads as the
-# journal (log.c's upgrade_syslog_to_journal). The first daemon-reload or
-# re-exec applies system.conf's LogTarget= instead, and the image's
-# container-overrides.conf sets console: PID 1's lines then stop reaching the
-# journal. Measured on CannObserv/wslcb-licensing-tracker's host, systemd
-# 255.4-1ubuntu8.19, 2026-11-20 (#684, #685). Whether a reload with no
-# LogTarget= line keeps argv's target or takes systemd's default
-# (journal-or-kmsg) wasn't measured, so with an argv one that reads unknown.
-# The kernel's systemd.log_target= isn't read: exeuntu's cmdline has none.
-LT_LIVE="" LT_ARGV="" LT_ARGV_READ=0 LT_CONF="" LT_CONF_IN="" LT_RELOAD=""
+# PID 1's log target (#684): the live one, argv's, and what the next reload
+# applies. A boot runs on argv's: exeuntu's exe-init starts PID 1 with
+# --log-target=syslog, which PID 1 reads as the journal (log.c's
+# upgrade_syslog_to_journal). A daemon-reload or re-exec doesn't read argv
+# again: systemd v255's parse_configuration() reads system.conf's LogTarget=,
+# then the kernel's systemd.log_target=, then PID 1's SYSTEMD_LOG_TARGET,
+# each later one winning, and reset_arguments() leaves the target alone, so
+# with none of them set the reload keeps the live one (CR 2774). The image's
+# container-overrides.conf sets console, so PID 1's lines stop reaching the
+# journal at the first reload: measured on CannObserv/wslcb-licensing-
+# tracker's host, systemd 255.4-1ubuntu8.19, 2026-11-20 (#684, #685). A
+# runtime systemd-analyze set-log-target survives a reload too, and nothing
+# here tells it from argv's, so the reload then reads as what the files say.
+# Nor is a ManagerEnvironment= SYSTEMD_LOG_TARGET read: /proc/1/environ holds
+# only the environment PID 1 started with.
+LT_LIVE="" LT_ARGV="" LT_CONF="" LT_CONF_IN="" LT_KERNEL="" LT_ENV="" LT_RELOAD=""
+LT_VALID=" console console-prefixed kmsg journal journal-or-kmsg syslog syslog-or-kmsg auto null "
+# kmsg reaches the journal while journald reads it (journald-kmsg.c files
+# PID 1's lines as _TRANSPORT=kernel SYSLOG_PID=1), and auto is
+# journal-or-kmsg for PID 1 (log.c's log_settle_target).
 log_target_journal() {  # <var> <target>: 1 when PID 1 logs to the journal on it, 0 when not, empty when unknown
   case $2 in
     journal | journal-or-kmsg | syslog | syslog-or-kmsg) printf -v "$1" 1 ;;
-    console | console-prefixed | kmsg | null) printf -v "$1" 0 ;;
+    kmsg | auto) printf -v "$1" '%s' "$JD_READ_KMSG" ;;
+    console | console-prefixed | null) printf -v "$1" 0 ;;
     *) printf -v "$1" '%s' "" ;;
   esac
 }
 
 read_log_target() {
-  local a prev="" main dfs f n line sect k v
+  local a prev="" main dfs f n line sect k v w env=""
+  local -a kw=()
   if live_cmd systemd-analyze; then
     capture LT_LIVE systemd-analyze get-log-target
     LT_LIVE=${LT_LIVE%%$'\n'*}
   fi
   # getopt's: --log-target=X or --log-target X, the last one winning.
   if [ "$P_LIVE" -eq 1 ] && [ -r "$P_ROOT/proc/1/cmdline" ]; then
-    LT_ARGV_READ=1
     while IFS= read -r -d '' a || [ -n "$a" ]; do
       case $prev in --log-target) LT_ARGV=$a ;; esac
       case $a in --log-target=*) LT_ARGV=${a#--log-target=} ;; esac
@@ -1162,17 +1181,38 @@ read_log_target() {
       trim k "${line%%=*}"
       [ "$k" = LogTarget ] || continue
       trim v "${line#*=}"
-      case $v in
-        console | console-prefixed | kmsg | journal | journal-or-kmsg | syslog | syslog-or-kmsg | auto | null)
-          LT_CONF=$v LT_CONF_IN="${f#"$P_ROOT"}:$n" ;;
-      esac
+      case $LT_VALID in *" $v "*) LT_CONF=$v LT_CONF_IN="${f#"$P_ROOT"}:$n" ;; esac
     done <"$f"
   done <<<"$main"$'\n'"$dfs"
-  if [ -n "$LT_CONF" ]; then
-    LT_RELOAD=$LT_CONF
-  elif [ "$LT_ARGV_READ" -eq 1 ] && [ -z "$LT_ARGV" ]; then
-    LT_RELOAD=journal-or-kmsg
+  # The kernel's, - and _ alike in its key; a value PID 1 can't parse is
+  # ignored, and the one before it stands.
+  if [ "$P_LIVE" -eq 1 ] && [ -r "$P_ROOT/proc/cmdline" ]; then
+    read -r -a kw <"$P_ROOT/proc/cmdline" || true
+    for w in ${kw[@]+"${kw[@]}"}; do
+      case $w in systemd.log[_-]target=*)
+        v=${w#*=}
+        case $LT_VALID in *" $v "*) LT_KERNEL=$v ;; esac ;;
+      esac
+    done
   fi
+  # PID 1's environment is root's alone to read, so sh opens it, as root
+  # where it must.
+  if [ "$P_LIVE" -eq 1 ] && [ -e "$P_ROOT/proc/1/environ" ]; then
+    # sh's own $1, the file: it expands in that sh, not here.
+    # shellcheck disable=SC2016
+    capture env as_reader sh -c 'tr "\0" "\n" <"$1"' sh "$P_ROOT/proc/1/environ"
+    if [ "$CAP_RC" -ne 0 ]; then
+      not_read "PID 1's SYSTEMD_LOG_TARGET: /proc/1/environ couldn't be read, even as root, so the target after a reload leaves it out"
+    else
+      while IFS= read -r line; do
+        case $line in SYSTEMD_LOG_TARGET=*)
+          v=${line#*=}
+          case $LT_VALID in *" $v "*) LT_ENV=$v ;; esac ;;
+        esac
+      done <<<"$env"
+    fi
+  fi
+  LT_RELOAD=${LT_ENV:-${LT_KERNEL:-${LT_CONF:-$LT_LIVE}}}
 }
 
 read_environment() {
@@ -1195,6 +1235,8 @@ read_environment() {
   jaddsn o pid1_log_target_argv "$LT_ARGV"
   jaddsn o pid1_log_target_conf "$LT_CONF"
   jaddsn o pid1_log_target_conf_set_in "$LT_CONF_IN"
+  jaddsn o pid1_log_target_kernel "$LT_KERNEL"
+  jaddsn o pid1_log_target_env "$LT_ENV"
   jaddsn o pid1_log_target_reload "$LT_RELOAD"
   log_target_journal b "$LT_LIVE"
   jaddb j now "$b"
@@ -5417,12 +5459,13 @@ check_redis() {
 # PID 1's own shutdown lines in the previous boot, judged by their presence
 # (#684). The new boot's pid1_log_target isn't the target the shutdown ran
 # on: the first reload after a boot can move PID 1 to the console, as
-# exeuntu's container-overrides.conf does. Present, they're evidence of the
+# exeuntu's container-overrides.conf does. Its kmsg lines are journald's
+# _TRANSPORT=kernel SYSLOG_PID=1, with no _PID (CR 2775). Present, they're evidence of the
 # shutdown; absent, they're none either way, so that reads unknown, not a
 # failure.
 check_pid1_lines() {
   local out ev=""
-  capture out jctl -b -1 _PID=1 -n 200 -q --no-pager -o cat
+  capture out jctl -b -1 _PID=1 + _TRANSPORT=kernel SYSLOG_PID=1 -n 200 -q --no-pager -o cat
   if [ "$CAP_RC" -ne 0 ]; then
     check shutdown:pid1-lines "" "PID 1's lines in the previous boot couldn't be read (${CAP_ERR:-exit $CAP_RC})"
     return 0
