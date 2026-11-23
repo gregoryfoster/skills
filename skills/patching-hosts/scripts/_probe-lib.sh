@@ -48,8 +48,10 @@ The primitives these scripts reach a host through:
   lane_conf PATTERN...      the APT_CONFIG text that adds them, on stdout
   lane_skip_conf NAME...    the APT_CONFIG text that skips those packages
   origin_names VAR KEY POLICY  VAR := |o=|names|: what a knob origin is
-  origin_split KEEP SKIP NAMES SIM  the pending packages from those origins,
-                            and every other one
+  origin_split KEEP SKIP NAMES SIM POLICY  the pending packages from those
+                            origins, and every other one
+  inst_class VAR LINE POLICY  VAR := an Inst line's class, a third party's
+                            keyed on its repo's o= (#695)
   rss_timer FILE            TIMER := GNU time's words to record a command's
                             max RSS in FILE, or none where there's no GNU time
   rss_of VAR TEXT           VAR := the max RSS a TIMER file's TEXT holds
@@ -489,18 +491,18 @@ origin_names() {  # <var> <key> <policy output>
 
 # Each pending package from those origins, and every other one. An Inst line
 # of `apt-get -s dist-upgrade` (SIM, its output) names the candidate's
-# origins in its parentheses, each as <o>:<archive or site>, ", " apart:
+# releases in its parentheses, ", " apart, each by its Label: inst_origins
+# maps each to <o=>:<archive or site> from apt-cache policy (POLICY, its
+# output), so a Label-less repo's packages, or a PPA's whose Label isn't its
+# Origin, are told apart by the o= a knob names (#695):
 # "Inst tailscale [1.102.2] (1.102.4 Tailscale:pkgs.tailscale.com [arm64])".
-origin_split() {  # <keep var> <skip var> <|names|> <sim output>
+origin_split() {  # <keep var> <skip var> <|names|> <sim output> <policy output>
   local _os_l _os_n _os_r _os_e _os_k="" _os_s="" _os_hit
   while IFS= read -r _os_l; do
     case $_os_l in 'Inst '*) ;; *) continue ;; esac
     _os_n=${_os_l#Inst }
     _os_n=${_os_n%% *}
-    _os_r=${_os_l#*(}
-    _os_r=${_os_r%)*}
-    _os_r=${_os_r#* }
-    _os_r=${_os_r% \[*}
+    inst_origins _os_r "$_os_l" "${5-}"
     _os_hit=0
     while [ -n "$_os_r" ]; do
       _os_e=${_os_r%%, *}
@@ -1341,19 +1343,117 @@ class_of() {  # <var> <origins, ", "-separated>
   fi
 }
 
-# A package's class in a simulation, from its Inst line's origins, or
-# empty where the simulation doesn't list it.
-sim_class() {  # <var> <package> <simulation>
-  local _sk_k _sk_p _sk_r _sk_o=""
+# apt-get -s prints a candidate's releases in an Inst line's parentheses as
+# apt's RelStr: "<Label>:" where the Release file has a Label, then
+# "<Version>/<Archive>", "<Archive>", or with no Archive the site. That's
+# the Label, and a knob's origin lines, o= and the origin: findings name the
+# Origin (#695). Measured on noble, apt 2.8.3, 2026-11-23:
+#   the ondrej/php PPA  "PPA for PHP (deprecated):24.04/noble"  o=LP-PPA-ondrej-php
+#   packages.sury.org   "noble" (no Label)                      o=deb.sury.org
+#   Docker              "Docker CE:noble"                       o=Docker
+# So each is mapped back to its o=, from the release lines of apt-cache
+# policy (POLICY, its output) read from the same lists: each prints the l=,
+# v= and a= that make up the text, and the origin line under it the site.
+# REL_MAP holds a line "<text>US<o=>:<the text after its Label>" for each,
+# with nothing after US where two origins print the same text: two
+# Label-less repos on one suite. Built once per policy.
+REL_MAP="" REL_MAP_OF="" REL_MAP_BUILT=0
+rel_map() {  # <policy output>
+  local _rm_l _rm_v _rm_o="" _rm_lb="" _rm_ve="" _rm_a="" _rm_t _rm_x _rm_k _rm_i _rm_in=0
+  local _rm_us=$'\x1f'
+  local -a _rm_kv=() _rm_keys=() _rm_vals=()
+  if [ "$REL_MAP_BUILT" -eq 1 ] && [ "$1" = "$REL_MAP_OF" ]; then return 0; fi
+  while IFS= read -r _rm_l; do
+    case $_rm_l in
+      *" release "*)
+        _rm_o="" _rm_lb="" _rm_ve="" _rm_a="" _rm_in=1
+        IFS=, read -r -a _rm_kv <<<"${_rm_l#*release }"
+        for _rm_v in ${_rm_kv[@]+"${_rm_kv[@]}"}; do
+          case $_rm_v in
+            o=*) _rm_o=${_rm_v#o=} ;;
+            l=*) _rm_lb=${_rm_v#l=} ;;
+            v=*) _rm_ve=${_rm_v#v=} ;;
+            a=*) _rm_a=${_rm_v#a=} ;;
+          esac
+        done ;;
+      *" origin "*)
+        [ "$_rm_in" -eq 1 ] || continue
+        _rm_in=0
+        [ -n "$_rm_o" ] || continue
+        if [ -z "$_rm_a" ]; then
+          _rm_t=${_rm_l#*origin }
+          _rm_t=${_rm_t:-localhost}
+        elif [ -n "$_rm_ve" ]; then
+          _rm_t=$_rm_ve/$_rm_a
+        else
+          _rm_t=$_rm_a
+        fi
+        _rm_k=${_rm_lb:+$_rm_lb:}$_rm_t
+        _rm_x=""
+        for _rm_i in ${_rm_keys[@]+"${!_rm_keys[@]}"}; do
+          if [ "${_rm_keys[$_rm_i]}" = "$_rm_k" ]; then _rm_x=$_rm_i; fi
+        done
+        if [ -z "$_rm_x" ]; then
+          _rm_keys+=("$_rm_k") _rm_vals+=("$_rm_o:$_rm_t")
+        elif [ "${_rm_vals[$_rm_x]}" != "$_rm_o:$_rm_t" ]; then
+          _rm_vals[_rm_x]=""
+        fi ;;
+    esac
+  done <<<"$1"
+  REL_MAP=$'\n'
+  for _rm_i in ${_rm_keys[@]+"${!_rm_keys[@]}"}; do
+    REL_MAP="$REL_MAP${_rm_keys[$_rm_i]}$_rm_us${_rm_vals[$_rm_i]}"$'\n'
+  done
+  REL_MAP_OF=$1 REL_MAP_BUILT=1
+}
+
+# The candidate's releases in an Inst line ("Inst <pkg> [<old>] (<new>
+# <release>, <release> [<arch>])", or what follows <pkg>), each as
+# "<o=>:<the text after its Label>", for class_of. A Label may hold spaces and
+# a ")", so the arch and the closing paren come off the end. A release
+# whose text no release line prints, or two origins print, keeps apt's own
+# text: class_of then keys it on the Label, as before #695. So does every
+# release where the policy is empty or unread.
+inst_origins() {  # <var> <Inst line> <policy output>
+  local _io_r=$2 _io_e _io_o _io_out="" _io_us=$'\x1f' _io_nl=$'\n'
+  case $_io_r in *"("*) ;; *)
+    printf -v "$1" '%s' ""
+    return 0 ;;
+  esac
+  _io_r=${_io_r#*(}
+  _io_r=${_io_r%)}
+  _io_r=${_io_r% \[*\]}
+  case $_io_r in *" "*) _io_r=${_io_r#* } ;; *) _io_r="" ;; esac
+  rel_map "$3"
+  while [ -n "$_io_r" ]; do
+    _io_e=${_io_r%%, *}
+    if [ "$_io_e" = "$_io_r" ]; then _io_r=""; else _io_r=${_io_r#*, }; fi
+    _io_o=""
+    case $REL_MAP in *"$_io_nl$_io_e$_io_us"*)
+      _io_o=${REL_MAP#*"$_io_nl$_io_e$_io_us"}
+      _io_o=${_io_o%%"$_io_nl"*} ;;
+    esac
+    _io_out="$_io_out, ${_io_o:-$_io_e}"
+  done
+  printf -v "$1" '%s' "${_io_out#, }"
+}
+
+# A package's class from its Inst line, keyed on its repo's o= (#695).
+inst_class() {  # <var> <Inst line> <policy output>
+  local _ic_o
+  inst_origins _ic_o "$2" "$3"
+  class_of "$1" "$_ic_o"
+}
+
+# A package's class in a simulation, from its Inst line, or empty where the
+# simulation doesn't list it. Without the policy, keyed on apt's Label.
+sim_class() {  # <var> <package> <simulation> [<policy output>]
+  local _sk_k _sk_p _sk_r
   printf -v "$1" '%s' ""
   while read -r _sk_k _sk_p _sk_r; do
     if [ "$_sk_k" != Inst ] || [ "$_sk_p" != "$2" ]; then continue; fi
     case $_sk_r in *"("*) ;; *) return 0 ;; esac
-    _sk_o=${_sk_r#*(}
-    _sk_o=${_sk_o%%)*}
-    _sk_o=${_sk_o#* }
-    _sk_o=${_sk_o% \[*}
-    class_of "$1" "$_sk_o"
+    inst_class "$1" "$_sk_r" "${4-}"
     return 0
   done <<<"$3"
 }

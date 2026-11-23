@@ -2069,7 +2069,7 @@ read_lists_age() {
 # shows only that one, and unattended-upgrade still takes the security one
 # (usa-wa: 178 against 185). --dry-run-into gives the exact count.
 read_simulation() {
-  local out line rest name paren origins cls rem="" w t n c tpo="" pk="" seen
+  local out line rest name cls rem="" w t n c tpo="" pk="" seen
   local sec=0 upd=0 esm=0 other=0 ns="" nu="" ne="" nt="" no=""
   local -a thirds=() tp=()
   R_BYCLASS=null R_PACKAGES=null R_REMOVALS=null
@@ -2089,11 +2089,8 @@ read_simulation() {
       "Inst "*)
         rest=${line#Inst }
         name=${rest%% *}
-        paren=${rest#*(}
-        paren=${paren%%)*}
-        origins=${paren#* }
-        origins=${origins% \[*}
-        class_of cls "$origins"
+        # Keyed on the repo's o=, as a knob's origin lines name it (#695).
+        inst_class cls "$line" "$POLICY_OUT"
         PK_NAME+=("$name")
         PK_CLASS+=("$cls")
         PEND="$PEND $name"
@@ -2860,7 +2857,7 @@ read_dry_run() {
         finding "$OF_KIND" dry-run "" "the $lane lane's dry run didn't run: $OF_WHY, and on lists older than the run it can count an older release of the origin's package with every gate passed (#523). Count again with --refresh-into DIR beside --dry-run-into."
         return 0
       fi
-      origin_split lkeep lskip "$lnames" "$SIM_DIST_OUT" ;;
+      origin_split lkeep lskip "$lnames" "$SIM_DIST_OUT" "$POLICY_OUT" ;;
   esac
   # On lists more than a day old it counts the lists, not the host, in any
   # lane: address-validator's, 167 hours old, counted 0 where a refresh
