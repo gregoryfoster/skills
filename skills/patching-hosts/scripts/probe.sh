@@ -14,8 +14,10 @@ Reads the host and prints one JSON object on stdout: its environment, what
 updates it, the pending set by class, what an apply would touch, dormant
 components, and every finding against the posture its knob declares. It
 installs, removes, holds, restarts and configures nothing. Run as root, the
-Ubuntu Pro read writes pro's own /var/log/ubuntu-advantage.log and
-/var/lib/ubuntu-advantage/lock, the one host state it changes. It runs the
+Ubuntu Pro read writes pro's own /var/log/ubuntu-advantage.log,
+/var/lib/ubuntu-advantage/lock and apt caches, and --dry-run-into writes
+unattended-upgrade's stamp and runs the host's DPkg hooks: the host state it
+changes (references/readings.md). It runs the
 knob's health lines, which must be safe at any time, and its recovery lines
 only under --post-boot. The readings, and the mistake each one prevents:
 references/readings.md.
@@ -2834,7 +2836,7 @@ read_dry_run() {
   conf=$dryrun/apt.conf
   # apt fetches into archives/partial, and the dry run's fetcher never makes
   # it: without it, every download failed (noble, 2026-10-01).
-  mkdir -p "$dryrun/archives/partial"
+  mkdir -p "$dryrun/archives/partial" "$dryrun/unattended-upgrades"
   # Another lane counts what apply.sh takes in it: the host's own origins,
   # plus the lane's, and for one origin, every other pending package skipped.
   if [ "$lane" != security ] && ! lane_patterns "$lane"; then
@@ -2893,6 +2895,14 @@ read_dry_run() {
     if [ -n "$P_ROOT" ]; then printf 'Dir "%s/";\n' "$P_ROOT"; fi
     printf 'Dir::Cache::archives "%s/archives/";\n' "$dryrun"
     if [ "$REFRESHED" -eq 1 ]; then printf 'Dir::State::Lists "%s/";\n' "$LISTS_DIR"; fi
+    # Nor the host's binary cache, planner log, history.log or term.log, nor
+    # unattended-upgrade's own logs, which a dry run doesn't make the
+    # directory for (CR 2773). Run as root with archives alone, it wrote
+    # each, and fake Upgrade: lines in history.log, which the dormant reading
+    # reads (2.9.1, apt 2.8.3). Its DPkg hooks still run: python-apt's
+    # Cache(rootdir="/") re-reads /etc/apt/apt.conf.d after this file.
+    printf '%s\n' 'Dir::Cache::pkgcache "";' 'Dir::Cache::srcpkgcache "";' 'Dir::Log::Planner "/dev/null";' 'Dir::Log::History "/dev/null";' 'Dir::Log::Terminal "/dev/null";'
+    printf 'Unattended-Upgrade::LogDir "%s/unattended-upgrades/";\n' "$dryrun"
     if [ "$lane" != security ]; then lane_conf "${LANE_PATTERNS[@]}"; fi
     # Word lists, each a package name.
     # shellcheck disable=SC2086

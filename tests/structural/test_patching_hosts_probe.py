@@ -1539,6 +1539,35 @@ def test_no_apt_call_rewrites_the_hosts_planner_log(host):
     assert calls and all("Dir::Log::Planner=/dev/null" in a for a in calls)
 
 
+def test_the_dry_run_writes_no_apt_cache_or_log_of_the_hosts(host):
+    # CR 2773: unattended-upgrade --dry-run takes no -o, and with only
+    # Dir::Cache::archives in its APT_CONFIG it wrote pkgcache.bin, the planner
+    # log, fake Upgrade: records in history.log and term.log, which the
+    # dormant reading reads back, and its own logs (2.9.1, apt 2.8.3, measured).
+    scratch = host.tmp / "dry"
+    host.on(
+        "unattended-upgrade",
+        "--dry-run -d",
+        "Packages that will be upgraded: libc6\n",
+    )
+    out = host.run(*host.refreshed(), "--dry-run-into", str(scratch))
+    assert out["pending"]["dry_run"]["count"] == 1
+    [(_, _, apt_config)] = host.calls("unattended-upgrade")
+    conf = Path(apt_config).read_text().split("\n")
+    for line in (
+        'Dir::Cache::pkgcache "";',
+        'Dir::Cache::srcpkgcache "";',
+        'Dir::Log::Planner "/dev/null";',
+        'Dir::Log::History "/dev/null";',
+        'Dir::Log::Terminal "/dev/null";',
+        f'Unattended-Upgrade::LogDir "{scratch.resolve()}/unattended-upgrades/";',
+    ):
+        assert line in conf
+    # Sized with the same file, so its apt-get reads the same settings.
+    [(_, _, sized)] = [c for c in host.calls("apt-get") if "--print-uris" in c[1]]
+    assert sized == apt_config
+
+
 def test_a_refresh_whose_sources_all_fetch_is_one(host):
     host.apt_update()
     out = host.run("--refresh-into", str(host.tmp / "fresh"))
