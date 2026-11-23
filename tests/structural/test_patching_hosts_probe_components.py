@@ -207,6 +207,95 @@ def test_earlyoom_arguments_come_from_cmdline_not_the_journal(host):
     assert not [c for c in host.calls("journalctl") if "earlyoom" in c[1]]
 
 
+def _service_argv(host, argv: list[str]) -> dict:
+    host.knob("posture scheduled\nservice cloudflared.service\n")
+    host.show("cloudflared.service", MainPID="515")
+    host.write("proc/515/cmdline", "".join(a + "\0" for a in argv).encode())
+    out = host.run()
+    [e] = [
+        a for a in out["impact"]["live_args"] if a["process"] == "cloudflared.service"
+    ]
+    return e
+
+
+def test_a_secret_named_argument_never_reaches_the_reading(host):
+    # #698: cloudflared's unit runs `tunnel run --token <token>`, and a
+    # reading is made to be copied off the host. The issue's fixture: no
+    # "abc" anywhere in the JSON, so the step copies apply.sh keeps
+    # (probe-after-<step>.json, this output verbatim) carry none either.
+    e = _service_argv(
+        host,
+        ["/usr/bin/cloudflared", "tunnel", "run", "--token", "abc", "--password=abc"],
+    )
+    assert e["args"] == (
+        "/usr/bin/cloudflared tunnel run --token <redacted> --password=<redacted>"
+    )
+    assert e["pid"] == 515
+    assert "abc" not in host.result.stdout
+
+
+@pytest.mark.parametrize(
+    "argv, args",
+    [
+        # Each name the issue lists, its suffixes, any case, and Go's
+        # single-dash long form (cloudflared's flags take both).
+        (
+            ["d", "--secret", "abc", "--api-key=abc", "--key", "abc"],
+            "d --secret <redacted> --api-key=<redacted> --key <redacted>",
+        ),
+        (
+            [
+                "d",
+                "--tunnel-token",
+                "abc",
+                "--DB-PASSWORD=abc",
+                "--client-secret",
+                "abc",
+            ],
+            "d --tunnel-token <redacted> --DB-PASSWORD=<redacted> --client-secret <redacted>",
+        ),
+        (
+            ["d", "-token", "abc", "--access_key=abc", "--auth_token", "abc"],
+            "d -token <redacted> --access_key=<redacted> --auth_token <redacted>",
+        ),
+        # A URL's password, wherever it stands: a database URL passed whole.
+        (
+            ["d", "--db", "postgres://app:abc@db:5432/x", "redis://:abc@r/0"],
+            "d --db postgres://app:<redacted>@db:5432/x redis://:<redacted>@r/0",
+        ),
+        # A name that only says where a secret is stays readable, and so
+        # does a flag whose name ends a word some other way.
+        (
+            ["d", "--token-file", "/etc/t", "--keyring", "k", "--monkey", "m"],
+            "d --token-file /etc/t --keyring k --monkey m",
+        ),
+        # The last argument, with no value after it, is the name alone.
+        (["d", "--password"], "d --password"),
+    ],
+)
+def test_live_args_redacts_by_argument_name(host, argv, args):
+    e = _service_argv(host, argv)
+    assert e["args"] == args
+    assert "abc" not in host.result.stdout
+
+
+def test_an_argument_holding_a_space_keeps_its_boundary(host):
+    # Read from the NUL-separated argv, not the joined line: a value with
+    # a space is one value, and the word after it is never taken for it.
+    e = _service_argv(host, ["d", "--password", "a b", "--region", "us"])
+    assert e["args"] == "d --password <redacted> --region us"
+
+
+def test_earlyoom_s_live_args_are_redacted_too(host):
+    # Every live_args entry passes the same emit; cmdline_of, which
+    # read_exe_init reads PID-level argv through, is left whole.
+    host.write("proc/777/comm", "earlyoom\n")
+    host.write("proc/777/cmdline", b"/usr/bin/earlyoom\x00--token\x00abc\x00")
+    out = host.run()
+    [e] = [a for a in out["impact"]["live_args"] if a["process"] == "earlyoom"]
+    assert e["args"] == "/usr/bin/earlyoom --token <redacted>"
+
+
 @pytest.mark.parametrize(
     "after, finds",
     [
