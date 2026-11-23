@@ -263,7 +263,8 @@ def test_a_secret_named_argument_never_reaches_the_reading(host):
             ["d", "--db", "postgres://app:abc@db:5432/x", "redis://:abc@r/0"],
             "d --db postgres://app:<redacted>@db:5432/x redis://:<redacted>@r/0",
         ),
-        # A name that only says where a secret is stays readable, and so
+        # A name that says where a secret is, not what it is, stays
+        # readable (a file name's last word isn't a secret word), and so
         # does a flag whose name ends a word some other way.
         (
             ["d", "--token-file", "/etc/t", "--keyring", "k", "--monkey", "m"],
@@ -276,6 +277,75 @@ def test_a_secret_named_argument_never_reaches_the_reading(host):
 def test_live_args_redacts_by_argument_name(host, argv, args):
     e = _service_argv(host, argv)
     assert e["args"] == args
+    assert "abc" not in host.result.stdout
+
+
+@pytest.mark.parametrize(
+    "argv, args",
+    [
+        # CR 2765: userinfo ends at the authority's last @, as URL parsers
+        # read it, so a password holding an @ is redacted whole.
+        (["d", "redis://:p@abc@host:6379"], "d redis://:<redacted>@host:6379"),
+        # CR 2766: a dotted name (-D's system properties, Spring's
+        # --spring.*), a camelCase one, Redis's own, and the other words.
+        (
+            [
+                "d",
+                "-Dspring.datasource.password=abc",
+                "-Dapp.token=abc",
+                "-Dpassword=abc",
+                "--spring.datasource.password=abc",
+            ],
+            "d -Dspring.datasource.password=<redacted> -Dapp.token=<redacted>"
+            " -Dpassword=<redacted> --spring.datasource.password=<redacted>",
+        ),
+        (
+            ["d", "--authToken", "abc", "--clientSecret=abc", "--apiKey", "abc"],
+            "d --authToken <redacted> --clientSecret=<redacted> --apiKey <redacted>",
+        ),
+        (
+            ["redis-server", "--requirepass", "abc", "--masterauth", "abc"],
+            "redis-server --requirepass <redacted> --masterauth <redacted>",
+        ),
+        (
+            ["d", "--authkey", "abc", "--pass", "abc", "--pwd=abc"],
+            "d --authkey <redacted> --pass <redacted> --pwd=<redacted>",
+        ),
+        (
+            ["d", "--credentials", "abc", "--db-pass", "abc", "--bypass", "x"],
+            "d --credentials <redacted> --db-pass <redacted> --bypass x",
+        ),
+        # CR 2767: a secret-named query parameter, and a userinfo with no
+        # password, which a token used as the user name can't be told from.
+        (
+            ["d", "https://h/x?token=abc&api_key=abc&region=us"],
+            "d https://h/x?token=<redacted>&api_key=<redacted>&region=us",
+        ),
+        (
+            ["d", "--remote=https://abc@github.com/o/r.git"],
+            "d --remote=https://<redacted>@github.com/o/r.git",
+        ),
+        # CR 2769: a --no- boolean takes no value, so the word after it
+        # stays; a *key name's path is redacted, since a path can't be told
+        # from a base64 key that starts with /.
+        (["d", "--no-token", "run", "--no_password"], "d --no-token run --no_password"),
+        (
+            ["d", "--private-key", "/etc/ssl/k.pem", "--tls-key=/k"],
+            "d --private-key <redacted> --tls-key=<redacted>",
+        ),
+    ],
+)
+def test_live_args_redacts_the_review_s_forms(host, argv, args):
+    e = _service_argv(host, argv)
+    assert e["args"] == args
+    assert "abc" not in host.result.stdout
+
+
+def test_an_argv_rewritten_as_one_string_is_read_by_its_words(host):
+    # CR 2768: a process that rewrote its argv as one string, padded with
+    # NULs, is one element; its words are redacted as arguments.
+    e = _service_argv(host, ["d --token abc --region us", "", ""])
+    assert e["args"] == "d --token <redacted> --region us"
     assert "abc" not in host.result.stdout
 
 
