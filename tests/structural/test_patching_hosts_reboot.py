@@ -158,6 +158,7 @@ class Host(ApplyHost):
             "runuser",
             "systemctl",
             "redis-cli",
+            "valkey-cli",
             "journalctl",
             "cp",
             "sync",
@@ -1032,6 +1033,54 @@ def test_a_save_redis_refuses_is_logged(tmp_path):
     )
     # The stop goes on: the boot would stop it anyway.
     assert "systemctl stop -- redis-server.service" in host.sequence()
+
+
+def _valkey(host: Host) -> Host:
+    """broker's move (#706): Ubuntu's valkey-server, and valkey-tools'
+    valkey-cli with no redis-cli beside it."""
+    host.knob(
+        KNOB_CHAIN.replace(
+            "datastore redis redis-server", "datastore redis valkey-server"
+        )
+    )
+    conf = host.tmp / "redis.conf"
+    host.show(
+        "valkey-server.service",
+        ExecStart=f"{{ path=/usr/bin/valkey-server ; argv[]=/usr/bin/valkey-server {conf} --supervised systemd --daemonize no ; }}",
+        MainPID="4242",
+    )
+    s = host.state
+    host.on("valkey-cli", "* CONFIG GET save", "save\n\n")
+    host.on("valkey-cli", "* CONFIG GET appendonly", "appendonly\nno\n")
+    host.on(
+        "valkey-cli",
+        "* SAVE",
+        script=f'echo "${{REDISCLI_AUTH:-}}" >> "{s}/auth"; echo OK; exit 0',
+    )
+    host.absent("redis-cli")
+    return host
+
+
+def test_the_chain_saves_a_valkey_with_valkey_cli(host):
+    _valkey(host)
+    host.reboot()
+    assert "redis-cli" not in (host.run_dir / "reboot-chain.sh").read_text()
+    r = host.fire(_journals(host))
+    assert r.returncode == 0, r.stderr
+    seq = host.sequence()
+    assert "valkey-cli -h 127.0.0.1 -p 6380 SAVE" in seq
+    assert (host.state / "auth").read_text().split() == ["pw-in-the-file"]
+    assert "systemctl stop -- valkey-server.service" in seq
+
+
+def test_a_valkey_the_chain_must_save_without_valkey_cli_is_refused(host):
+    _valkey(host)
+    host.absent("valkey-cli")
+    out = host.reboot(rc=3)
+    assert (
+        "datastore redis valkey-server.service: the chain must SAVE it before "
+        "its stop, and valkey-cli isn't on PATH" in out["refused"]
+    )
 
 
 @pytest.mark.parametrize(

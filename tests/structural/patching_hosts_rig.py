@@ -42,6 +42,7 @@ STUBBED = (
     "tailscale",
     "docker",
     "redis-cli",
+    "valkey-cli",
     "ss",
     "unattended-upgrade",
     "runuser",

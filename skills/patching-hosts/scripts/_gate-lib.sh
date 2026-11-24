@@ -52,13 +52,14 @@ The gate_* functions add their readings to the caller's J_GATE.
   pg_port VAR UNIT          the port of the cluster a postgresql unit runs,
                             or 1 with PG_WHY
   redis_conn UNIT [USER KEY-FILE]
-                            REDIS_ARGS := redis-cli's connection words,
+                            REDIS_ARGS := the client's connection words,
                             REDIS_CONF := the file the unit starts from, and
                             REDIS_LOGIN := key (the knob's USER), conf
                             (default, with requirepass) or none (an aclfile
                             or a user line sets the users, and no USER);
-                            RC_* as redis_conf sets them
-  redis_cli CMD...          redis-cli at REDIS_ARGS, as root, logged in as
+                            REDIS_CLI := redis-cli or valkey-cli, as
+                            redis_engine says; RC_* as redis_conf sets them
+  redis_cli CMD...          REDIS_CLI at REDIS_ARGS, as root, logged in as
                             REDIS_LOGIN says, with the password root's own sh
                             reads from KEY-FILE or REDIS_CONF
   redis_owned UNIT          whether the unit's own process listens at
@@ -456,7 +457,7 @@ pg_port() {  # <var> <unit>
   printf -v "$1" '%s' "$_pp"
 }
 
-# redis-cli reaches the server the unit starts, through the address its own
+# The client reaches the server the unit starts, through the address its own
 # config file binds: a host may bind only its tailnet address. A command
 # that needs a login logs in as the knob's user, with its key file, or else
 # as default with the file's requirepass, except where an aclfile or a user
@@ -464,7 +465,9 @@ pg_port() {  # <var> <unit>
 # password never leaves its file:
 # redis_cli, and the chain when it runs, read it into REDISCLI_AUTH as
 # root, so it reaches no argv and no output.
-REDIS_ARGS=() REDIS_CONF="" REDIS_LOGIN="" REDIS_USER="" REDIS_KEY=""
+# REDIS_CLI is the client the unit's server takes, redis-cli or valkey-cli
+# (redis_engine, #706).
+REDIS_ARGS=() REDIS_CONF="" REDIS_LOGIN="" REDIS_USER="" REDIS_KEY="" REDIS_CLI=redis-cli
 # Where systemd keeps encrypted credentials: a key file under it is one,
 # which systemd-creds decrypts as root, by the name of its file.
 REDIS_CREDSTORE=/etc/credstore.encrypted/
@@ -481,7 +484,7 @@ redis_conn() {  # <unit> [<user> <key-file>]
   local _rc_bind
   REDIS_ARGS=() REDIS_USER=${2:-} REDIS_KEY=${3:-}
   redis_conf "$1"
-  REDIS_CONF=$RC_CONF
+  REDIS_CONF=$RC_CONF REDIS_CLI=$RE_CLI
   _rc_bind=$RC_BIND
   case $_rc_bind in '' | '*' | 0.0.0.0 | '::' | '::*') _rc_bind=127.0.0.1 ;; esac
   if [ -n "$RC_SOCK" ]; then
@@ -608,8 +611,8 @@ redis_key_ok() {
 redis_cli() {  # <command>...
   local -a _ru=()
   if [ "$REDIS_LOGIN" = key ]; then _ru=(--user "$REDIS_USER"); fi
-  as_root sh -c 'c=$1 s=$2 m=$3 k=$4 d=$5
-shift 5
+  as_root sh -c 'c=$1 s=$2 m=$3 k=$4 d=$5 x=$6
+shift 6
 p=""
 case $m in
   key)
@@ -627,5 +630,5 @@ if [ -n "$p" ]; then
   REDISCLI_AUTH=$p
   export REDISCLI_AUTH
 fi
-exec redis-cli "$@"' sh "$REDIS_CONF" "$REDIS_PW_SED" "$REDIS_LOGIN" "$REDIS_KEY" "$REDIS_CREDSTORE" ${_ru[@]+"${_ru[@]}"} ${REDIS_ARGS[@]+"${REDIS_ARGS[@]}"} "$@"
+exec "$x" "$@"' sh "$REDIS_CONF" "$REDIS_PW_SED" "$REDIS_LOGIN" "$REDIS_KEY" "$REDIS_CREDSTORE" "$REDIS_CLI" ${_ru[@]+"${_ru[@]}"} ${REDIS_ARGS[@]+"${REDIS_ARGS[@]}"} "$@"
 }

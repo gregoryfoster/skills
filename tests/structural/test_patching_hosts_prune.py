@@ -392,6 +392,31 @@ NGINX = {
         "/etc/logrotate.d/nginx": 4,
     },
 }
+# broker's soak (#706): valkey-server serves, and the redis-server kept for
+# rollback co-installs beside it (measured on noble: valkey-tools ships
+# valkey-cli, and nothing of redis-tools').
+VALKEY = {
+    "packages": {
+        "valkey-server": {
+            "state": "ii",
+            "version": "7.2.14+dfsg1-0ubuntu0.1",
+            "files": [LIB + "valkey-server.service"],
+            "depends": ["valkey-tools"],
+        },
+        "valkey-tools": {"state": "ii", "version": "7.2.14+dfsg1-0ubuntu0.1"},
+        "redis-server": {
+            "state": "ii",
+            "version": "5:7.0.15-1ubuntu0.24.04.1",
+            "files": [LIB + "redis-server.service"],
+        },
+    },
+    "units": {
+        "valkey-server.service": _unit(LIB + "valkey-server.service"),
+        "redis-server.service": _unit(LIB + "redis-server.service"),
+    },
+    "groups": {},
+    "paths": {"/etc/valkey": 108, "/var/lib/valkey": 2048, "/etc/redis": 108},
+}
 POSTGRES = {
     "packages": {
         "postgresql": {
@@ -761,6 +786,7 @@ def test_help_names_the_stages_and_the_exit_codes():
         (PLAN, ["--component", "apt:libnginx-mod-stream"], "use --component nginx"),
         # Its name would share the component's knob lines and run directory.
         (PLAN, ["--component", "apt:redis"], "use --component redis"),
+        (PLAN, ["--component", "apt:valkey-server"], "use --component valkey"),
         (PLAN, ["--component", "apt:qdrant"], "use --component qdrant"),
         (PLAN, ["--component", "ollama", "--take-orphans"], "outside apt"),
         (
@@ -995,6 +1021,25 @@ def test_a_component_from_outside_apt_is_its_unit_and_binary(tmp_path):
         "paths"
     ]
     assert any("outside apt" in n for n in out["not_read"])
+
+
+def test_a_valkey_is_its_own_component_with_its_own_paths(tmp_path):
+    host = _host(tmp_path, VALKEY, "valkey")
+    out = host.plan("valkey")
+    assert out["packages"]["roots"] == ["valkey-server"]
+    assert [u["unit"] for u in out["units"]] == ["valkey-server.service"]
+    assert out["paths"] == [
+        {"kind": "config", "path": "/etc/valkey", "kib": 108},
+        {"kind": "data", "path": "/var/lib/valkey", "kib": 2048},
+    ]
+    assert "redis-server" not in json.dumps(out["packages"])
+
+
+def test_a_redis_prune_beside_a_valkey_takes_none_of_it(tmp_path):
+    host = _host(tmp_path, VALKEY, "redis")
+    out = host.plan("redis")
+    assert out["packages"]["roots"] == ["redis-server"]
+    assert "valkey" not in json.dumps(out)
 
 
 def test_a_removed_components_residue_is_what_its_purge_takes(tmp_path):

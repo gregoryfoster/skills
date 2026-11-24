@@ -1536,6 +1536,70 @@ def test_a_redis_that_needs_a_login_says_so(host):
     assert "it needs a login (INFO answered NOAUTH)" in d["evidence"]
 
 
+# --- Valkey (#706) -----------------------------------------------------------------
+# Ubuntu's valkey-server renames the unit, the client and the log directory,
+# and co-installs with redis-server: broker keeps a stopped redis-server for
+# rollback while its Valkey serves. Each is its own engine, read by its own
+# evidence.
+
+
+def _valkey(host: Host, info: dict = REDIS_IDLE) -> Host:
+    host.installed("valkey-server")
+    host.show(
+        "valkey-server.service",
+        ExecStart="{ path=/usr/bin/valkey-server ; argv[]=/usr/bin/valkey-server /etc/valkey/valkey.conf --supervised systemd --daemonize no ; }",
+        ActiveState="active",
+    )
+    host.on("valkey-cli", "INFO", "".join(f"{k}:{v}\r\n" for k, v in info.items()))
+    host.absent("redis-cli")
+    return host
+
+
+def test_a_valkey_only_host_reads_a_valkey_engine_through_valkey_cli(host):
+    _valkey(host, {**REDIS_IDLE, "db0": "keys=7,expires=0,avg_ttl=0"})
+    out = host.run()
+    d = _dormant(out, "valkey")
+    assert (d["unit"], d["verdict"], d["evidence"]) == (
+        "valkey-server.service",
+        "in-use",
+        "7 keys",
+    )
+    assert d["workload"]["keys"] == 7
+    assert not [e for e in out["dormant"] if e["name"] == "redis"]
+
+
+def test_a_datastore_line_counts_for_the_engine_its_unit_runs(host):
+    # broker's soak: valkey-server serves the datastore line, and the
+    # redis-server kept for rollback has been stopped for 40 days. The
+    # line is Valkey's use, not redis-server's.
+    host.knob(host.knob_path.read_text() + "datastore redis valkey-server\n")
+    _valkey(host)
+    host.installed("redis-server")
+    host.show(
+        "redis-server.service",
+        ExecStart="{ path=/usr/bin/redis-server ; argv[]=/usr/bin/redis-server /etc/redis/redis.conf ; }",
+        ActiveState="inactive",
+        InactiveEnterTimestamp=f"@{host.now - 40 * DAY}",
+    )
+    out = host.run()
+    v = _dormant(out, "valkey")
+    assert (v["verdict"], v["evidence"]) == ("in-use", "a datastore line declares it")
+    r = _dormant(out, "redis")
+    assert (r["verdict"], r["evidence"]) == ("dormant", "inactive for 40 days")
+
+
+def test_a_never_started_valkey_counts_from_its_log(tmp_path):
+    h = _rebooted(tmp_path, "valkey-server.service", "valkey-server")
+    h.write(
+        "var/log/valkey/valkey-server.log",
+        "Ready to accept connections tcp\n",
+        age_days=50,
+    )
+    d = _dormant(h.run(), "valkey")
+    assert d["verdict"] == "dormant"
+    assert "counted from /var/log/valkey, last written" in d["evidence"]
+
+
 def test_an_unpackaged_engine_counts_from_its_own_start(host):
     host.write("usr/lib/systemd/system/ollama.service", "[Service]\n")
     (host.root / "usr/share/ollama/.ollama/models/manifests").mkdir(parents=True)
@@ -2323,6 +2387,23 @@ def test_post_boot_starts_a_redis_run_at_its_banner_when_its_pid_comes_round(hos
     )
     before += READY + CLEAN_EXIT.replace("309128:", "414:")
     c = _redis_after_boot(host, before + BANNER + READY, conf="")
+    assert c["ok"] is False, c
+    assert 'logged no "DB loaded from"' in c["evidence"]
+
+
+def test_post_boot_starts_a_valkey_run_at_its_banner_when_its_pid_comes_round(host):
+    # Valkey's banner says Valkey (#706; measured on 7.2.14, with its "*"):
+    # a marker naming Redis never matched it, so a PID that came round read
+    # as the run before.
+    banner = "414:C 13 Oct 2026 04:22:18.900 * oO0OoO0OoO0Oo Valkey is starting oO0OoO0OoO0Oo\n"
+    before = (
+        banner + "414:M 12 Oct 2026 00:00:00.050 * DB loaded from disk: 0.001 seconds\n"
+    )
+    before += (
+        READY
+        + "414:M 13 Oct 2026 04:22:08.540 # Valkey is now ready to exit, bye bye...\n"
+    )
+    c = _redis_after_boot(host, before + banner + READY, conf="")
     assert c["ok"] is False, c
     assert 'logged no "DB loaded from"' in c["evidence"]
 

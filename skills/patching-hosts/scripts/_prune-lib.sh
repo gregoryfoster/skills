@@ -42,7 +42,7 @@ Usage: . _prune-lib.sh    (sourced by prune-plan.sh and prune.sh; running it
   derive NAME               D_*: the component as the host stands now; 1 for
                             a name it doesn't know, 2 with D_WHY for a read
                             that failed, 3 with D_WHY for an apt: component
-                            whose removal takes a package one of the six owns
+                            whose removal takes a package one of the seven owns
   calendar NAME             CAL_*: the prune stage the knob declares for it
   signature VAR             the lines a plan and a fresh derive must share
   write_plan HOST COMPONENT the plan file's lines, on stdout
@@ -55,7 +55,7 @@ case "${0##*/}" in
   _prune-lib.sh) case "${1-}" in -h | --help) prune_lib_usage; exit 0 ;; esac ;;
 esac
 
-PRUNE_COMPONENTS="docker postgres redis nginx ollama qdrant"
+PRUNE_COMPONENTS="docker postgres redis valkey nginx ollama qdrant"
 PRUNE_ORPHANS=0
 
 # Each component the probe knows: the package globs that are it (a server,
@@ -69,7 +69,7 @@ PRUNE_ORPHANS=0
 # stage lines and the run's directory call it: the list after apt:, as
 # wslcb's hand-run purged:fwupd did. Each is a Debian package name, so no
 # word of it is a glob or anything a shell reads as more. A package one of
-# the six owns is that component's, never apt:'s: as apt:postgresql-16 its
+# the seven owns is that component's, never apt:'s: as apt:postgresql-16 its
 # purge would drop every cluster with no data guard, and its group would
 # stay (CR 1641). Nor may the name be a component's, whose knob lines and
 # run directory it would share. C_WHY says which to use instead.
@@ -78,7 +78,7 @@ C_NAME="" C_ROOTS="" C_CONFIG="" C_DATA="" C_GROUP="" C_UNIT="" C_BINARY="" C_WH
 # unit_show sets it by name.
 U_LoadState=""
 # Each component's package globs, apart from its other values, so a check
-# of a package against all six sets no C_* (CR 1650).
+# of a package against all seven sets no C_* (CR 1650).
 roots_of() {  # <var> <component>: its package globs; empty from outside apt
   local _ro=""
   case $2 in
@@ -88,6 +88,10 @@ roots_of() {  # <var> <component>: its package globs; empty from outside apt
     docker) _ro='docker.io docker-ce docker-ce-cli docker-ce-rootless-extras docker-buildx docker-buildx-plugin docker-compose docker-compose-plugin docker-compose-v2 containerd containerd.io runc' ;;
     postgres) _ro='postgresql postgresql-[0-9]* postgresql-contrib postgresql-common' ;;
     redis) _ro='redis redis-server' ;;
+    # Ubuntu's Valkey co-installs with redis-server, which a host may keep
+    # stopped for rollback (#706): each is its own component. Its
+    # redis-compat package replaces redis-server, so it's Valkey's.
+    valkey) _ro='valkey-server valkey-redis-compat' ;;
     nginx) _ro='nginx nginx-common nginx-core nginx-full nginx-light nginx-extras libnginx-mod-*' ;;
   esac
   printf -v "$1" '%s' "$_ro"
@@ -126,7 +130,7 @@ prune_component() {  # <name>
         fi
       done
       C_NAME=$_pc_n C_ROOTS=${_pc_n//,/ } ;;
-    docker | postgres | redis | nginx)
+    docker | postgres | redis | valkey | nginx)
       C_NAME=$1
       roots_of C_ROOTS "$1"
       case $1 in
@@ -134,6 +138,7 @@ prune_component() {  # <name>
         # postgresql-common's purge script deletes its createcluster.conf.
         postgres) C_CONFIG='/etc/postgresql /etc/postgresql-common' C_DATA=/var/lib/postgresql ;;
         redis) C_CONFIG=/etc/redis C_DATA=/var/lib/redis ;;
+        valkey) C_CONFIG=/etc/valkey C_DATA=/var/lib/valkey ;;
         nginx) C_CONFIG=/etc/nginx C_DATA='/var/www /var/log/nginx' ;;
       esac ;;
     ollama)
@@ -469,7 +474,7 @@ derive() {  # <name>
     D_PURGE=(${SIM_SET[@]+"${SIM_SET[@]}"}) D_INST="$D_INST $SIM_INST" D_ORPHANS=$SIM_ORPHANS
     D_INST=${D_INST# }
     D_INST=${D_INST% }
-    # An apt: component takes nothing one of the six owns, however apt
+    # An apt: component takes nothing one of the seven owns, however apt
     # comes to take it: their globs leave out clients and libraries, so a
     # purge of libpq5 takes postgresql-16 as a reverse dependency, and an
     # orphan taken may be containerd. Their guards are the component's

@@ -38,8 +38,9 @@ directory. Until every check passes it changes nothing, and prints why.
   a full read (pg_restore -f /dev/null) does too, its mode is 600, and its
   sha256 is read: --list alone passes a dump cut off after its table of
   contents. An RDB copy counts when BGSAVE succeeded and LASTSAVE moved, the
-  copy exited 0, redis-check-rdb reads it where it's installed, its mode is
-  600, and its sha256 is read. A Qdrant's (#367): each collection's exact
+  copy exited 0, redis-check-rdb (valkey-check-rdb for a Valkey) reads it
+  where it's installed, its mode is 600, and its sha256 is read. A
+  Qdrant's (#367): each collection's exact
   point count, written at mode 600 and kept on the node for the check after
   a restart, then a full-storage snapshot through its API, copied out of
   its container, since --rm discards the snapshots directory at the next
@@ -99,25 +100,25 @@ a usage error.
 It refuses (exit 3) for each reason under refused, among them: without
 --approve; on a report-only host; without root; when a tool it needs isn't
 on PATH (sha256sum and systemctl, and pg_lsclusters, pg_dump, pg_dumpall,
-pg_restore and runuser for Postgres, redis-cli and ss for Redis, curl,
-docker and tar for Qdrant); when the knob declares no datastore; when an
-existing --run isn't mode 0700; once the run's bulk has started; when
---personal-data names a Postgres unit, or nothing the knob declares; when a
-cluster or a database can't be found, a cluster isn't online or its port
-can't be read, or a Redis to dump isn't the process ss finds listening at
-its address, can't say where its RDB file is, refuses the login, or has none
-to make (an aclfile or a user line in its config sets the users, and its
-datastore line has no user and key file), or its key file can't be read as
-root; when a Qdrant's container isn't running, its storage's size can't be
-read, its key file can't be read, or its collections can't be listed; when
-a backup line names a datastore, or a database, no
+pg_restore and runuser for Postgres, redis-cli (valkey-cli for a Valkey) and
+ss for Redis, curl, docker and tar for Qdrant); when the knob declares no
+datastore; when an existing --run isn't mode 0700; once the run's bulk has
+started; when --personal-data names a Postgres unit, or nothing the knob
+declares; when a cluster or a database can't be found, a cluster isn't
+online or its port can't be read, or a Redis to dump isn't the process ss
+finds listening at its address, can't say where its RDB file is, refuses the
+login, or has none to make (an aclfile or a user line in its config sets the
+users, and its datastore line has no user and key file), or its key file
+can't be read as root; when a Qdrant's container isn't running, its
+storage's size can't be read, its key file can't be read, or its collections
+can't be listed; when a backup line names a datastore, or a database, no
 datastore line declares, or names a Postgres unit whole whose datastore
-lines name more than one database, and so doesn't say which it takes
-(#480); and when the run's filesystem has less free space than the data it
-would dump plus 131072 KiB, the floor every filesystem a patch run writes
-keeps free (#390), or its free space can't be read. A Qdrant snapshot is
-written under Docker's root first, then copied out: on one filesystem it
-counts twice, and on two, Docker's must hold it too, with the floor kept.
+lines name more than one database, and so doesn't say which it takes (#480);
+and when the run's filesystem has less free space than the data it would
+dump plus 131072 KiB, the floor every filesystem a patch run writes keeps
+free (#390), or its free space can't be read. A Qdrant snapshot is written
+under Docker's root first, then copied out: on one filesystem it counts
+twice, and on two, Docker's must hold it too, with the floor kept.
 
 The record, one line each (run.md section 2):
   began <epoch seconds>    retain <date>
@@ -327,10 +328,13 @@ gate_host() {
           have "$t" || refuse "$t isn't on PATH, and the knob declares a Qdrant datastore"
         done ;;
       *)
-        # ss reads which process listens at its address (#379, CR 239).
-        for t in redis-cli ss; do
-          have "$t" || refuse "$t isn't on PATH, and the knob declares a Redis datastore"
-        done ;;
+        # ss reads which process listens at its address (#379, CR 239). A
+        # Valkey takes valkey-cli, which valkey-tools ships, and no
+        # redis-cli (#706).
+        unit_name u "${f[1]}"
+        redis_engine "$u" || true
+        have "$RE_CLI" || refuse "$RE_CLI isn't on PATH, and the knob declares a Redis datastore, $u, which runs $RE_ENGINE-server"
+        have ss || refuse "ss isn't on PATH, and the knob declares a Redis datastore" ;;
     esac
   done
   # A Postgres datastore is flagged by database, as its dumps are; a Redis
@@ -671,7 +675,7 @@ gate_datastores() {
       jaddn e bytes "$sz"
       jpush a "{$e}"
       if [ -z "$dir" ]; then
-        refuse "datastore redis $u: redis-cli ${REDIS_ARGS[*]} couldn't say where its RDB file is (CONFIG GET dir and dbfilename)"
+        refuse "datastore redis $u: $REDIS_CLI ${REDIS_ARGS[*]} couldn't say where its RDB file is (CONFIG GET dir and dbfilename)"
         continue
       fi
       DS+=("redis $u $dir ${ru:--} ${rk:--}") DS_BYTES+=("$sz")
@@ -1166,7 +1170,7 @@ bgsave_wait() {  # <unit>
     return 0
   fi
   if [ -z "$t0" ]; then
-    BS_WHY="redis-cli ${REDIS_ARGS[*]} LASTSAVE answered \"$line\", not a time, so a BGSAVE couldn't be told from an old save"
+    BS_WHY="$REDIS_CLI ${REDIS_ARGS[*]} LASTSAVE answered \"$line\", not a time, so a BGSAVE couldn't be told from an old save"
     return 0
   fi
   capture out redis_cli BGSAVE
@@ -1180,7 +1184,7 @@ bgsave_wait() {  # <unit>
     *"Background saving started"* | *"already in progress"* | *scheduled*) ;;
     *)
       bg=${out:-${CAP_ERR:-no reply}}
-      BS_ST=refused BS_WHY="redis-cli ${REDIS_ARGS[*]} BGSAVE answered \"${bg%%$'\n'*}\": Redis started no save"
+      BS_ST=refused BS_WHY="$REDIS_CLI ${REDIS_ARGS[*]} BGSAVE answered \"${bg%%$'\n'*}\": Redis started no save"
       return 0 ;;
   esac
   while :; do
@@ -1216,9 +1220,11 @@ dump_redis() {  # <unit> <rdb> <user or -> <key file or ->
     crc=0
     copy_root "$rdb" "$path" || crc=$?
   fi
-  if [ "$crc" = 0 ] && have redis-check-rdb; then
+  # valkey-check-rdb for a Valkey: valkey-tools ships no redis-check-rdb,
+  # so the check would be skipped (#706).
+  if [ "$crc" = 0 ] && have "$RE_CHECK_RDB"; then
     rrc=0
-    as_root redis-check-rdb "$path" >/dev/null 2>&1 || rrc=$?
+    as_root "$RE_CHECK_RDB" "$path" >/dev/null 2>&1 || rrc=$?
   fi
   root_mode mode "$path"
   if [ "$crc" = 0 ] && [ "${rrc:-0}" = 0 ] && [ "$mode" = 0600 ]; then file_sha sha "$path"; fi
@@ -1235,7 +1241,7 @@ dump_redis() {  # <unit> <rdb> <user or -> <key file or ->
   elif [ "$crc" != 0 ]; then
     fail "the copy of $rdb exited $crc"
   elif [ -n "$rrc" ] && [ "$rrc" != 0 ]; then
-    fail "redis-check-rdb can't read the copy of $u's RDB file: exit $rrc"
+    fail "$RE_CHECK_RDB can't read the copy of $u's RDB file: exit $rrc"
   elif [ "$mode" != 0600 ]; then
     fail "the copy of $u's RDB file is mode ${mode:-unknown}, not 0600"
   elif [ -z "$sha" ]; then

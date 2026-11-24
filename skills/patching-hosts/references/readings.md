@@ -81,7 +81,7 @@ The probe reads the root-only readings through `sudo -n`, so it never prompts, a
 
 ## Dormant components
 
-For each engine the probe knows (Docker, Postgres, Redis, nginx, Ollama, Qdrant to start with):
+For each engine the probe knows (Docker, Postgres, Redis, Valkey, nginx, Ollama, Qdrant to start with):
 - the unit's state and whether it's enabled;
 - its listeners;
 - its workload: containers, databases with their sizes and their writes and sessions since the statistics were reset, Redis's keys, lookups, expirations, subscriptions and clients, enabled sites;

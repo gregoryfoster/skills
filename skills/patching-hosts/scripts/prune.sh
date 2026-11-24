@@ -81,7 +81,7 @@ for remove or purge, when apt would install anything, while a package
 manager runs, dpkg --audit isn't clean or one of its packages is held
 (for a purge, unless --release-hold), or of a component from outside apt;
 for a remove of a plan that takes orphans; for an apt: component whose
-removal now takes a package one of the six owns; for --release-hold with
+removal now takes a package one of the seven owns; for --release-hold with
 nothing held; for a --purge-data path the plan doesn't
 name; for a purge whose packages' purge scripts can't be read, or delete a
 data path --purge-data doesn't name, or of postgres while a cluster's data
