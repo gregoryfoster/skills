@@ -62,6 +62,7 @@ from tests.structural.patching_hosts_rig import SKILL, dispatcher
 from tests.structural.patching_hosts_rig import clean_env as _clean_env
 from tests.structural.test_patching_hosts_apply import KNOB, TUE_1530, _changed, _ready
 from tests.structural.test_patching_hosts_apply import Host as ApplyHost
+from tests.structural.test_patching_hosts_probe_components import QUOTE_ROWS
 
 RECOVER = SKILL / "scripts" / "recovery-point.sh"
 RETAIN = "2026-10-29"
@@ -1097,6 +1098,15 @@ def test_an_escape_never_eats_or_joins_a_name(host, raw, shown):
     _logged(host, [list(raw)])
     [line] = host.recover()["backup"][0]["journal"]["lines"]
     assert line == shown
+    assert "zq9" not in host.result.stdout + host.result.stderr
+
+
+@pytest.mark.parametrize("line, shown", QUOTE_ROWS)
+def test_the_backup_log_tracks_a_value_s_quotes_as_a_shell_does(host, line, shown):
+    # #707: the same table as live_args', as a set -x trace logs it.
+    _logged(host, [line])
+    [got] = host.recover()["backup"][0]["journal"]["lines"]
+    assert got == shown
     assert "zq9" not in host.result.stdout + host.result.stderr
 
 
