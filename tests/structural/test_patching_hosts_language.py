@@ -724,24 +724,37 @@ def test_no_language_without_a_refresh_is_accepted_and_says_why(host):
     assert not host.calls("uv")
 
 
-def test_no_language_is_accepted_beside_post_boot_and_named_in_help():
+def test_no_language_is_named_in_help_as_its_own_option():
     r = subprocess.run(
         ["bash", str(PROBE), "--help"], capture_output=True, text=True, env=_clean_env()
     )
     assert "--no-language" in r.stdout
-    # --post-boot reads no pending set, so the flag has nothing to drop there;
-    # it is accepted, never a usage error.
-    r = subprocess.run(
-        [
-            "bash",
-            str(PROBE),
-            "--post-boot",
-            "--no-language",
-            "--root",
-            "/nonexistent-xyz",
-        ],
-        capture_output=True,
-        text=True,
-        env=_clean_env(),
-    )
-    assert "unknown argument" not in r.stderr
+    # A sibling of --refresh-into, not a word that must follow it (CR 2845).
+    assert "[--no-language]" in r.stdout
+    assert "[--refresh-into DIR [--no-language]]" not in r.stdout
+
+
+def test_no_language_is_accepted_beside_post_boot(host):
+    # --post-boot reads no pending set, so the flag has nothing to drop there:
+    # the probe runs, exits 0 and checks the boot as without it (CR 2843).
+    out = host.run("--post-boot", "--no-language")
+    assert out["probe"]["mode"] == "post-boot"
+    assert "pending" not in out
+    assert "--no-language" not in host.result.stderr
+    assert not host.calls("uv")
+
+
+@pytest.mark.parametrize("opt", ["--refresh-into", "--dry-run-into"])
+@pytest.mark.parametrize("value", ["--no-language", "-x", "--no-sudo"])
+def test_a_dir_option_refuses_a_value_that_reads_as_an_option(host, opt, value):
+    # CR 2847: `--refresh-into --no-language` with DIR forgotten took the flag
+    # as DIR, refreshed into ./--no-language and audited, reaching OSV with
+    # --no-language on the line.
+    _tree(host)
+    _uv(host)
+    host.on("apt-get", "update*", "Reading package lists...\n")
+    r = host.run(opt, value, "--no-language", rc=2)
+    assert f"{opt} takes a directory" in r.stderr
+    assert not host.calls("uv")
+    assert not host.calls("apt-get")
+    assert not (host.tmp / value).exists()
