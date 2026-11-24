@@ -1160,6 +1160,53 @@ deleted_passed_over() {  # <path, " (deleted)" still on>: 0 when needrestart pas
   return 1
 }
 
+# The packages that own files, as dpkg-query -S finds them. noble's dpkg
+# records some files under their pre-merge path: iproute2's /sbin/ip, which
+# /proc reads as /usr/sbin/ip. So a /usr/bin, /usr/sbin or /usr/lib* path no
+# package owns is asked again without /usr (CR 2777). apply.sh's
+# reboot_maps and stale_owner both ask through it, so the two can't drift
+# (#703). One line a path that has an owner, "<packages><TAB><the path as
+# given>", the packages space-separated with their :arch kept; a diversion
+# line isn't an owner. dpkg-query exits 1 for a path it doesn't know and
+# prints the rest: 1 with OW_RC (its status) and OW_ERR only past that.
+OW_RC=0 OW_ERR=""
+path_owners() {  # <var> <path>...: VAR := "<packages><TAB><path>", a line an owned path
+  local _po_v=$1 _po_out _po_l _po_k _po_p _po_res="" _po_got=$'\n' _po_pass
+  local -a _po_q=() _po_w=()
+  shift
+  printf -v "$_po_v" '%s' ""
+  _po_q=("$@")
+  for _po_pass in "" /usr; do
+    [ "${#_po_q[@]}" -gt 0 ] || break
+    capture _po_out dpkg-query -S "${_po_q[@]}"
+    if [ "$CAP_RC" -gt 1 ]; then
+      OW_RC=$CAP_RC OW_ERR=$CAP_ERR
+      return 1
+    fi
+    while IFS= read -r _po_l; do
+      case $_po_l in diversion* | "") continue ;; esac
+      # "a:amd64, b: /path": a package name holds no ": ", so the first
+      # ": /" ends the list, and the path may hold anything after it.
+      _po_k=${_po_l%%: /*}
+      [ "$_po_k" != "$_po_l" ] || continue
+      _po_p=$_po_pass${_po_l#"$_po_k": }
+      read -r -a _po_w <<<"${_po_k//,/ }"
+      case $_po_got in *$'\n'"$_po_p"$'\n'*) continue ;; esac
+      _po_got="$_po_got$_po_p"$'\n'
+      _po_res="$_po_res${_po_w[*]}"$'\t'"$_po_p"$'\n'
+    done <<<"$_po_out"
+    [ -z "$_po_pass" ] || break
+    # The second pass: each usr-merged path the first found no owner for.
+    _po_q=()
+    for _po_p in "$@"; do
+      case $_po_got in *$'\n'"$_po_p"$'\n'*) continue ;; esac
+      case $_po_p in /usr/bin/* | /usr/sbin/* | /usr/lib*/*) ;; *) continue ;; esac
+      _po_q+=("${_po_p#/usr}")
+    done
+  done
+  printf -v "$_po_v" '%s' "${_po_res%$'\n'}"
+}
+
 is_int() {
   local re='^-?[0-9]+$'
   [[ ${1-} =~ $re ]]
