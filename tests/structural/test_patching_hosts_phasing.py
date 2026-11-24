@@ -39,8 +39,8 @@ from tests.structural.test_patching_hosts_apply import KNOB, SIM_ARGS, TUE_1530
 from tests.structural.test_patching_hosts_apply import Host as ApplyHost
 from tests.structural.test_patching_hosts_knob import KNOB_MD, _read
 from tests.structural.test_patching_hosts_lane import ORIGINS, _lane
+from tests.structural.test_patching_hosts_probe import STOCK_ORIGINS, _finding, _ids
 from tests.structural.test_patching_hosts_probe import Host as ProbeHost
-from tests.structural.test_patching_hosts_probe import _finding, _ids
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -231,6 +231,39 @@ def test_only_a_phased_package_is_deferred(tmp_path):
     ]
 
 
+# Measured on ubuntu:24.04, apt 2.8.3 (CR 2807): pha and phb at 1, -updates
+# has 2 of each at Phased-Update-Percentage 0, and -security has phb 1.5.
+# Without Always-Include, apt's header lists both as deferred, then it
+# installs phb's phased 2 anyway: a pending security update lifts phasing.
+MEASURED_WITH = (
+    "Inst pha [1] (2 Ubuntu:noble-updates [all])\n"
+    "Inst phb [1] (2 Ubuntu:noble-updates [all])\n"
+)
+MEASURED_WITHOUT = (
+    "The following upgrades have been deferred due to phasing:\n"
+    "  pha\n"
+    "  phb\n"
+    "Inst phb [1] (2 Ubuntu:noble-updates [all])\n"
+)
+
+
+def test_a_package_apt_installs_despite_its_header_isnt_deferred(tmp_path):
+    h = ProbeHost(tmp_path).knob("class production\nposture scheduled\n")
+    h.on(
+        "apt-get", "-s *Always-Include-Phased-Updates=true*dist-upgrade", MEASURED_WITH
+    )
+    h.on("apt-get", "-s *dist-upgrade", MEASURED_WITHOUT)
+    h.on(
+        "apt-cache",
+        "*policy pha phb",
+        _policy("pha", "1", "2", 0) + _policy("phb", "1", "2", 0),
+    )
+    out = h.run()
+    # The Inst lines decide, never the header.
+    assert out["pending"]["phasing"]["deferred"] == ["pha"]
+    assert out["pending"]["phasing"]["in_phase"] == ["phb"]
+
+
 def test_nothing_phased_runs_no_second_simulation(tmp_path):
     h = _probe(tmp_path)
     h.cases["apt-cache"] = [
@@ -304,11 +337,68 @@ def test_respect_blacklists_the_deferred_in_the_maintenance_dry_run(tmp_path):
     assert "phasing=respect\nphased_deferred=libsystemd0 udev\n" in summary
 
 
-def test_respect_doesnt_touch_the_security_lanes_dry_run(tmp_path):
-    h = _probe(tmp_path, "class production\nposture scheduled\nphasing respect\n")
-    _dry(h, "libc6")
+def _origins(h: ProbeHost, extra: str = "") -> ProbeHost:
+    h.apt_config(Enable="1", Lists="1", UU="1", Reboot="false")
+    h.on("apt-config", "dump", STOCK_ORIGINS + extra)
+    return h
+
+
+WIDE = (
+    'Unattended-Upgrade::Allowed-Origins:: "${distro_id}:${distro_codename}-updates";\n'
+)
+
+
+def test_respect_doesnt_touch_a_security_only_dry_run(tmp_path):
+    h = _origins(
+        _probe(tmp_path, "class production\nposture scheduled\nphasing respect\n")
+    )
+    out = _dry(h, "libc6")
+    assert out["pending"]["dry_run"]["security_only"] is True
     [(_, _, apt_config)] = h.calls("unattended-upgrade")
     assert "Package-Blacklist" not in open(apt_config).read()
+
+
+def test_respect_blacklists_in_a_security_lane_whose_origins_take_updates(tmp_path):
+    # CR 2805: a uu:origins exception lets the host's own origins take
+    # -updates, phased ones included, in the security lane.
+    h = _origins(
+        _probe(tmp_path, "class production\nposture scheduled\nphasing respect\n"),
+        WIDE,
+    )
+    out = _dry(h, "libc6 libgl1-mesa-dri")
+    assert out["pending"]["dry_run"]["security_only"] is False
+    [(_, _, apt_config)] = h.calls("unattended-upgrade")
+    skipped = open(apt_config).read().split("Package-Blacklist {")[1]
+    assert '  "^libsystemd0$";' in skipped and '  "^udev$";' in skipped
+    summary = (h.tmp / "dry" / "summary").read_text()
+    assert "phasing=respect\nphased_deferred=libsystemd0 udev\n" in summary
+
+
+def test_the_default_flags_a_security_lane_that_forces_phased_updates(tmp_path):
+    h = _origins(_probe(tmp_path), WIDE)
+    out = _dry(h, "libc6 libsystemd0 udev")
+    f = _finding(out, "dry-run:phased")
+    assert "The security lane takes 2 phased updates apt would defer" in f["message"]
+
+
+def test_under_respect_a_dry_run_that_still_takes_a_deferred_one_says_so(tmp_path):
+    # CR 2806: the blacklist didn't hold, as a host apt.conf.d line that
+    # clears it, read after APT_CONFIG, makes it.
+    h = _probe(tmp_path, "class production\nposture scheduled\nphasing respect\n")
+    out = _dry(h, "libc6 libsystemd0", "--lane", "maintenance")
+    f = _finding(out, "dry-run:phased")
+    assert f["kind"] == "risk"
+    for word in ("blacklist", "didn't hold", "libsystemd0", "Package-Blacklist"):
+        assert word in f["message"], word
+
+
+def test_respect_with_the_set_unsimulated_points_at_the_simulation(tmp_path):
+    # CR 2811: not_read says nothing of it; pending:simulate does.
+    h = _probe(tmp_path, "class production\nposture scheduled\nphasing respect\n")
+    h.cases["apt-get"] = [("-s *dist-upgrade", "", 100, "E: boom\n", None)]
+    out = _dry(h, "libc6", "--lane", "maintenance")
+    f = _finding(out, "dry-run")
+    assert "pending:simulate" in f["message"] and "not_read" not in f["message"]
 
 
 def test_respect_with_the_split_unread_doesnt_run_the_maintenance_dry_run(tmp_path):
@@ -334,11 +424,41 @@ BULK_SIM = (
 BULK_NOPHASE = BULK_SIM.split("Inst libsystemd0")[0]
 
 
-def _bulk(tmp_path, phasing: str = "respect", summary: str = "") -> ApplyHost:
-    """A maintenance bulk with postgresql-16 from -security and the phased
-    libsystemd0 and udev, which apt defers here; udev is a hold group's."""
+HOST_DUMP = (
+    'Unattended-Upgrade::Allowed-Origins:: "${distro_id}:${distro_codename}";\n'
+    'Unattended-Upgrade::Allowed-Origins:: "${distro_id}:${distro_codename}-security";\n'
+)
+
+
+def _dump(host: ApplyHost, extra: str = "", blacklist: bool = True) -> None:
+    """apt-config dump: the host's own entries, then each list an APT_CONFIG
+    file adds, its Package-Blacklist only where BLACKLIST (a host line that
+    clears it, read after the file, leaves none)."""
+    host.cases["apt-config"] = [c for c in host.cases["apt-config"] if c[0] != "dump"]
+    text = host.state / "dump"
+    text.write_text(HOST_DUMP + extra)
+    keep = "" if blacklist else ' && b != "Unattended-Upgrade::Package-Blacklist"'
+    adds = (
+        'if [ -n "${APT_CONFIG:-}" ]; then awk \''
+        '/^[A-Za-z].* \\{$/ { b = $1; next } /^};/ { b = ""; next } '
+        f'/^  "/ && b != ""{keep} {{ sub(/^  /, ""); print b ":: " $0 }}'
+        '\' "$APT_CONFIG"; fi; '
+    )
+    host.on("apt-config", "dump", script=f'cat "{text}"; {adds}exit 0')
+
+
+def _bulk(
+    tmp_path,
+    phasing: str = "respect",
+    summary: str = "",
+    lane: str = "maintenance",
+    extra_knob: str = "",
+) -> ApplyHost:
+    """A bulk with postgresql-16 from -security and the phased libsystemd0
+    and udev, which apt defers here; udev is a hold group's."""
     line = f"phasing {phasing}\n" if phasing else ""
-    host = _lane(tmp_path, KNOB + ORIGINS + "hold udev sysd\n" + line)
+    host = _lane(tmp_path, KNOB + ORIGINS + "hold udev sysd\n" + line + extra_knob)
+    _dump(host, WIDE if lane == "security" else "")
     host.cases["apt-get"].insert(0, (SIM_ARGS, BULK_SIM, 0, "", None))
     host.cases["apt-get"].insert(0, (NOPHASE_ARGS, BULK_NOPHASE, 0, "", None))
     host.on(
@@ -352,8 +472,11 @@ def _bulk(tmp_path, phasing: str = "respect", summary: str = "") -> ApplyHost:
     )
     (host.dry / "summary").write_text(
         f"began={TUE_1530 - 3600}\nexit=0\ncount=1\nwall_seconds=60\n"
-        "security_only=0\nlane=maintenance\nlists_refreshed=1\n"
+        f"security_only=0\nlane={lane}\nlists_refreshed=1\n"
         "held_versions=udev=255.4-1ubuntu8.11\n" + summary
+    )
+    (host.dry / "dry-run.log").write_text(
+        "Packages that will be upgraded: postgresql-16\n"
     )
     return host
 
@@ -389,9 +512,10 @@ def test_respect_blacklists_what_the_dry_run_left_though_its_in_phase_now(tmp_pa
     [
         ("respect", "", "ignore"),
         ("respect", "phasing=ignore\n", "ignore"),
+        ("respect", "phasing=ignore\nphased_deferred=libsystemd0\n", "ignore"),
         ("", RESPECTED, "respect"),
     ],
-    ids=["no-line", "ignore", "respect"],
+    ids=["no-line", "ignore-unread", "ignore", "respect"],
 )
 def test_a_dry_run_counted_under_the_other_phasing_is_refused(
     tmp_path, phasing, summary, counted
@@ -425,3 +549,80 @@ def test_a_deferred_hold_group_package_whose_candidate_moved_isnt_held(tmp_path)
     assert "sysd" not in out["holds"]["placed"]
     assert "udev" in out["holds"]["not_in_lane"]
     assert not [a for _, a, _ in host.calls("apt-mark") if "udev" in a]
+
+
+def test_a_dry_run_under_the_other_phasing_with_nothing_deferred_isnt_refused(
+    tmp_path,
+):
+    # CR 2809: nothing deferred, so its count can't differ.
+    host = _bulk(tmp_path, "respect", "phasing=ignore\nphased_deferred=\n")
+    out = host.run("--lane", "maintenance")
+    assert not [r for r in out["refused"] if "phasing" in r], out["refused"]
+
+
+@pytest.mark.parametrize("word", ['udev";', "$(id)", "Udev", "-x", "a b\\"])
+def test_a_deferred_name_that_isnt_a_package_name_is_refused(tmp_path, word):
+    # CR 2810: the summary is the operator's file, and lane.conf is root's.
+    host = _bulk(
+        tmp_path, summary=f"phasing=respect\nphased_deferred=libsystemd0 {word}\n"
+    )
+    out = host.run("--lane", "maintenance", rc=3)
+    assert any("isn't a package name" in r for r in out["refused"]), out["refused"]
+    assert not host.calls("unattended-upgrade")
+
+
+def test_a_blacklist_apt_doesnt_read_fails_before_any_hold(tmp_path):
+    # CR 2806: read back through apt-config, as the lane's patterns are.
+    host = _bulk(tmp_path, summary=RESPECTED)
+    _dump(host, blacklist=False)
+    out = host.run("--lane", "maintenance", rc=1)
+    assert any(
+        "Package-Blacklist" in f and "libsystemd0" in f for f in out["verdict"]["why"]
+    ), out
+    assert not [a for _, a, _ in host.calls("apt-mark") if a.startswith("hold")]
+    assert not host.calls("unattended-upgrade")
+
+
+def test_a_deferred_update_the_bulk_took_fails_it(tmp_path):
+    # CR 2806: a host line read after APT_CONFIG can still clear it for
+    # unattended-upgrade, which re-reads apt.conf.d.
+    host = _bulk(tmp_path, summary=RESPECTED)
+    host.uu(
+        "Packages that will be upgraded: postgresql-16 libsystemd0\n"
+        "All upgrades installed\n"
+    )
+    out = host.run("--lane", "maintenance", rc=1)
+    assert any(
+        "took libsystemd0" in f and "phasing respect" in f
+        for f in out["verdict"]["why"]
+    ), out["verdict"]["why"]
+
+
+def test_one_deferred_now_that_the_dry_run_counted_is_named(tmp_path):
+    # CR 2808: in phase at the dry run, deferred at the bulk: it leaves the
+    # approved set, and its held step has nothing to take.
+    host = _bulk(tmp_path, summary="phasing=respect\nphased_deferred=libsystemd0\n")
+    (host.dry / "dry-run.log").write_text(
+        "Packages that will be upgraded: postgresql-16 udev\n"
+    )
+    out = host.run("--lane", "maintenance")
+    assert out["holds"]["newly_deferred"] == ["udev"]
+    [n] = [x for x in out["next"] if "udev" in x and "phas" in x]
+    assert "sysd" in n and "dry run counted" in n
+
+
+def test_respect_in_a_security_lane_whose_origins_take_updates(tmp_path):
+    # CR 2805: the bulk and its held steps read the blacklist from lane.conf.
+    host = _bulk(
+        tmp_path,
+        summary=RESPECTED,
+        lane="security",
+        extra_knob="exception uu:origins 2026-12-31 the owner takes -updates\n",
+    )
+    out = host.run()
+    assert out["holds"]["phased_deferred"] == ["libsystemd0", "udev"]
+    skipped = host.record("lane.conf").split("Package-Blacklist {")[1]
+    assert '  "^libsystemd0$";' in skipped
+    assert [c for _, _, c in host.calls("unattended-upgrade")] == [
+        str(host.run_dir / "lane.conf")
+    ]

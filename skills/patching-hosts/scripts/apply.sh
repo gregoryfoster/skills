@@ -512,6 +512,8 @@ pattern_names() {  # <var> <entry>
 # file. A held step runs its bulk's lane: the knob must follow the same
 # origins now. The one-origin lane's skip list is the bulk's (do_bulk).
 LANE_CONF=""
+# 1 when a security lane's run reads lane.conf: its phased blacklist.
+LANE_FILE=0
 gate_lane() {
   local o="" a="" p r v n names stops="" out got="" missing="" l
   local -a f=()
@@ -521,6 +523,9 @@ gate_lane() {
   fi
   jadds o name "$LANE"
   if [ "$LANE" = security ]; then
+    # Its held steps read the bulk's phased blacklist, when it wrote one
+    # (CR 2805).
+    if [ "$step" != bulk ] && root_has "$run/lane.conf"; then LANE_FILE=1; fi
     jadd o patterns "[]"
     jadd J_GATE lane "{$o}"
     return 0
@@ -678,11 +683,20 @@ DRY_SECURITY_ONLY="" SEL_READ=0
 SEL_NAME=() SEL_VERSION=() SEL_CLASS=()
 # What the dry run left as phased updates apt would defer here (#686).
 DRY_DEFERRED=""
+# A Debian package name, with an architecture: one goes into root's
+# lane.conf from the operator's summary file (CR 2810).
+PKG_NAME_RE='^[a-z0-9][a-z0-9+.-]*(:[a-z0-9]+)?$'
+# Whether the lane leaves phased updates: a selection wider than security,
+# the maintenance lane's, or a security lane's an exception uu:origins
+# widens (CR 2805).
+phasing_applies() {
+  [ "$KNOB_PHASING" = respect ] && { [ "$LANE" != security ] || [ "$DRY_SECURITY_ONLY" != 1 ]; }
+}
 # What the dry run counted, by name: its select lines and the bulk's own
 # share. DRY_COUNTED_READ is 1 where either was read (#680).
 DRY_BEGAN="" DRY_COUNTED="" DRY_COUNTED_READ=0
 gate_dry() {
-  local line rc="" count="" began="" iso dlane=security dleft="" dleft_seen=0 dphasing=ignore
+  local line rc="" count="" began="" iso dlane=security dleft="" dleft_seen=0 dphasing=ignore dpd_seen=0
   local -a _sf=()
   local lref="" lage=""
   [ "$step" = bulk ] || return 0
@@ -703,7 +717,7 @@ gate_dry() {
       wall_seconds=*) EXPECT=${line#wall_seconds=} ;;
       lane=*) dlane=${line#lane=} ;;
       phasing=*) dphasing=${line#phasing=} ;;
-      phased_deferred=*) DRY_DEFERRED=${line#phased_deferred=} ;;
+      phased_deferred=*) DRY_DEFERRED=${line#phased_deferred=} dpd_seen=1 ;;
       origin_left=*) dleft=${line#origin_left=} dleft_seen=1 ;;
       lists_refreshed=*) lref=${line#lists_refreshed=} ;;
       lists_age_hours=*) lage=${line#lists_age_hours=} ;;
@@ -722,11 +736,20 @@ gate_dry() {
   if [ "$dlane" != "$LANE" ]; then
     refuse "the dry run counted the $dlane lane, and this bulk runs the $LANE lane: count again with probe.sh --lane $LANE --refresh-into DIR --dry-run-into DIR"
   fi
-  # Its count is this lane's only under the same phasing: a dry run from
-  # before #686 took every phased update, as ignore does.
-  if [ "$LANE" = maintenance ] && [ "$dlane" = "$LANE" ] && [ "$dphasing" != "$KNOB_PHASING" ]; then
-    refuse "the dry run counted with phasing $dphasing, and the knob says $KNOB_PHASING: count again with probe.sh --lane maintenance --refresh-into DIR --dry-run-into DIR"
+  # Its count is this lane's only under the same phasing, where any phased
+  # update would be deferred: a dry run from before #686 took every one, as
+  # ignore does, and didn't say which (CR 2809). Not where the selection is
+  # security alone, which takes none.
+  if [ "$dlane" = "$LANE" ] && [ "$dphasing" != "$KNOB_PHASING" ] &&
+    { [ "$LANE" != security ] || [ "$DRY_SECURITY_ONLY" != 1 ]; } &&
+    { [ "$dpd_seen" -eq 0 ] || [ -n "${DRY_DEFERRED// /}" ]; }; then
+    refuse "the dry run counted with phasing $dphasing, and the knob says $KNOB_PHASING: count again with probe.sh --lane $LANE --refresh-into DIR --dry-run-into DIR"
   fi
+  for line in $DRY_DEFERRED; do
+    if ! [[ $line =~ $PKG_NAME_RE ]]; then
+      refuse "$dryrun/summary's phased_deferred names \"$line\", which isn't a package name, and the bulk would write it into root's lane.conf: count again with this skill's probe.sh"
+    fi
+  done
   if [ "$rc" != 0 ]; then
     refuse "the dry run exited ${rc:-unknown}: read $dryrun/dry-run.log, and count again"
   elif ! is_int "$count"; then
@@ -1901,7 +1924,7 @@ run_uu() {
   local -a lenv=()
   # Another lane adds its origins to the host's own through APT_CONFIG,
   # read before apt.conf.d.
-  if [ "$LANE" != security ]; then lenv=("APT_CONFIG=$run/lane.conf"); fi
+  if [ "$LANE" != security ] || [ "$LANE_FILE" = 1 ]; then lenv=("APT_CONFIG=$run/lane.conf"); fi
   rss_timer "$rss"
   echo "apply: running unattended-upgrade for $step; its log is $log" >&2
   t0=$SECONDS
@@ -2355,7 +2378,7 @@ STARTED=0
 LANE_KEEP=""
 do_bulk() {
   local out pend="" p i r s g o="" a="" names="" e kw rest pol="" polrc polerr onames oskip sim bv dv="" dseen=0 c d line vout="" va="" outside="" bver=""
-  local deferred="" ph
+  local deferred="" ph newly="" newly_got
   local btake hsteps="" cl
   local -a f=() w=()
   if ! root_has "$run" && ! as_root mkdir -p -m 700 -- "$run"; then
@@ -2449,11 +2472,11 @@ do_bulk() {
         return 0
       fi ;;
   esac
-  # Under phasing respect, the maintenance lane leaves the phased updates
-  # apt would defer on this machine (#686), against the lists just
-  # refreshed, and each its dry run left: blacklisted, so neither the bulk
-  # nor a held step takes one, and no group holds one.
-  if [ "$LANE" = maintenance ] && [ "$KNOB_PHASING" = respect ]; then
+  # Under phasing respect, a lane wider than security leaves the phased
+  # updates apt would defer on this machine (#686, CR 2805), against the
+  # lists just refreshed, and each its dry run left: blacklisted, so neither
+  # the bulk nor a held step takes one, and no group holds one.
+  if phasing_applies; then
     read -r -a w <<<"$pend" || true
     ph=" "
     if [ "${#w[@]}" -gt 0 ]; then
@@ -2472,16 +2495,55 @@ do_bulk() {
       fi
       phased_deferred deferred "$sim" "$out" "$ph"
     fi
+    # In phase at the dry run, deferred now: it leaves what the owner
+    # approved, and a held step of its may take nothing (CR 2808).
+    for p in $deferred; do
+      in_words "$p" "$DRY_DEFERRED" && continue
+      newly="$newly $p"
+      in_words "$p" "$DRY_SEL" || continue
+      g=""
+      for r in ${KNOB_HOLD[@]+"${KNOB_HOLD[@]}"}; do
+        IFS=$KNOB_US read -r -a f <<<"$r"
+        if glob_match "$p" "${f[1]}"; then g=${f[0]} && break; fi
+      done
+      NEXT+=("$p was in phase when the dry run counted it, and apt defers it on this machine now, so the bulk leaves it (phasing respect, holds.newly_deferred)${g:+: its held step $g has nothing of it to take}. Tell the owner, whose approval counted it.")
+    done
     for p in $DRY_DEFERRED; do in_words "$p" "$deferred" || deferred="$deferred $p"; done
     deferred=${deferred# }
-    # A word list, each a package name.
-    # shellcheck disable=SC2086
-    if [ -n "$deferred" ] && ! { printf '%s\n' "$LANE_CONF"; lane_skip_conf $deferred; } | root_write "$run/lane.conf"; then
-      fail "$run/lane.conf couldn't be written: nothing was held or upgraded"
-      return 0
+    if [ -n "$deferred" ]; then
+      # A word list, each a package name.
+      # shellcheck disable=SC2086
+      { printf '%s\n' "$LANE_CONF"; lane_skip_conf $deferred; } >"$P_TMP/phased.conf"
+      # apt reads the blacklist, as gate_lane checks the lane's patterns
+      # (CR 2806). unattended-upgrade re-reads apt.conf.d after it, so the
+      # bulk checks what it took, too.
+      capture out env APT_CONFIG="$P_TMP/phased.conf" apt-config dump
+      ph="" newly_got="|"
+      while IFS= read -r line; do
+        case $line in
+          "Unattended-Upgrade::Package-Blacklist:: "*)
+            line=${line#*:: \"}
+            line=${line%\";}
+            newly_got="$newly_got${line//\\/}|" ;;
+        esac
+      done <<<"$out"
+      for p in $deferred; do
+        case $newly_got in *"|^$p\$|"*) ;; *) ph="$ph $p" ;; esac
+      done
+      if [ "$CAP_RC" -ne 0 ] || [ -n "$ph" ]; then
+        fail "apt-config didn't read the phased updates' Package-Blacklist (${ph# }) from APT_CONFIG${CAP_ERR:+: $CAP_ERR}, so unattended-upgrade would take them, against the knob's phasing respect: a host apt.conf.d line may clear it. Nothing was held or upgraded"
+        return 0
+      fi
+      if ! root_write "$run/lane.conf" <"$P_TMP/phased.conf"; then
+        fail "$run/lane.conf couldn't be written: nothing was held or upgraded"
+        return 0
+      fi
+      LANE_FILE=1
     fi
     json_words e "$deferred"
     jadd o phased_deferred "$e"
+    json_words e "$newly"
+    jadd o newly_deferred "$e"
   fi
   # Each held group's candidate now, and the version the dry run counted.
   hold_group_versions bv "$sim"
@@ -2672,7 +2734,15 @@ do_bulk() {
   check_holds
   [ "${#FAILED[@]}" -eq 0 ] || return 0
   run_uu
-  check_unheld "$outside" "$bver"
+  # A deferred update it took: the blacklist didn't hold (CR 2806).
+  for p in $UU_UPGRADED; do
+    if in_words "$p" "$deferred"; then
+      fail "unattended-upgrade took $p, a phased update apt defers on this machine, which the knob's phasing respect blacklisted: the blacklist didn't hold, so a host apt.conf.d line read after APT_CONFIG may clear it. Read $run/$step.log"
+    fi
+  done
+  e=""
+  for p in $outside; do in_words "$p" "$deferred" || e="$e $p"; done
+  check_unheld "$e" "$bver"
   json_words e "$TAKEN_UNHELD"
   jadd o taken_unheld "$e"
   J_HOLDS="{$o}"

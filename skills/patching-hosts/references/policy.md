@@ -37,7 +37,7 @@ The needrestart drop-in is part of both postures: every run relies on the hook r
 | Lane | Selection | Cadence |
 |---|---|---|
 | **security** | Ubuntu `-security` | daily under `automatic` (the apt timers); the host's cadence under `scheduled` |
-| **maintenance** | the security lane's, plus Ubuntu `-updates` and each third-party origin whose policy is *follow*: `apply.sh --lane maintenance` | the host's cadence |
+| **maintenance** | the security lane's, plus Ubuntu `-updates` and each third-party origin whose policy is *follow*: `apply.sh --lane maintenance`; under `phasing respect`, less the phased updates apt defers ([knob.md](knob.md)) | the host's cadence |
 
 - **Under `scheduled`, both lanes run in the same window, at the host's cadence.** A week with nothing pending costs a probe ([run.md](run.md#a-run-with-nothing-pending)).
 - **A security package never waits for the maintenance lane.** docker.io 29 and containerd 2.2 shipped in `noble-security`, so holding them "for the maintenance lane" leaves a security fix with no lane at all. Deferring one is an exception, with a reason and a review-by date.

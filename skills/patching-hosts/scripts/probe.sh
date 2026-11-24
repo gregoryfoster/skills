@@ -2965,7 +2965,7 @@ origin_fresh() {  # <key>
 read_dry_run() {
   local o="" conf t0 t1 out rc line names="" n="" dlk="" free="" rss="" w sel=0 lnames="" lkeep="" lskip=""
   local oleft="" left_read=0 kw p rest unlisted="" prompts="" cfp="" cfs="" i k keys="" po="" hv
-  local lage="" btake=null bsteps=null bnote="" forced=""
+  local lage="" btake=null bsteps=null bnote="" forced="" secure=0
   local -a words=() cf_states=() cf_keys=() fw=()
   R_DRY=null R_PASSED_OVER=null
   if [ -z "$dryrun" ]; then
@@ -2993,9 +2993,25 @@ read_dry_run() {
     finding unknown dry-run "" "the $lane lane's dry run didn't run: $LANE_WHY."
     return 0
   fi
-  # Under phasing respect it leaves what apt would defer here (#686).
-  if [ "$lane" = maintenance ] && [ "$KNOB_PHASING" = respect ] && [ "$PHASED_READ" -ne 1 ]; then
-    finding unknown dry-run "" "the maintenance lane's dry run didn't run: the knob's phasing respect leaves the phased updates apt would defer on this machine, and which they are couldn't be read (not_read)."
+  # The selection is whatever the host's unattended-upgrades origins take:
+  # security alone only when apt-config was read, an origin is set, and none
+  # widens them (read_periodic). Otherwise it holds -updates or third-party
+  # packages too, and isn't a security count.
+  # No other lane's is: maintenance adds -updates and the followed origins,
+  # and origin:<key> takes one origin alone.
+  if [ "$lane" = security ] && [ "$APT_CONFIG_OK" -eq 1 ] && [ "$UU_ORIGINS_N" -gt 0 ] && [ -z "$UU_WIDE" ]; then
+    secure=1
+  fi
+  # Under phasing respect, a selection wider than security leaves what apt
+  # would defer here (#686): the maintenance lane's, or a security lane's
+  # whose own origins an exception uu:origins widens (CR 2805).
+  if [ "$secure" -ne 1 ] && [ "$KNOB_PHASING" = respect ] && [ "$PHASED_READ" -ne 1 ]; then
+    if [ "$SIM_OK" -ne 1 ]; then
+      w="the pending set couldn't be simulated (pending:simulate)"
+    else
+      w="which they are couldn't be read (not_read)"
+    fi
+    finding unknown dry-run "" "the $lane lane's dry run didn't run: the knob's phasing respect leaves the phased updates apt would defer on this machine, and $w."
     return 0
   fi
   case $lane in
@@ -3066,7 +3082,7 @@ read_dry_run() {
     # Word lists, each a package name.
     # shellcheck disable=SC2086
     case $lane in origin:*) lane_skip_conf $lskip ;; esac
-    if [ "$lane" = maintenance ] && [ "$KNOB_PHASING" = respect ] && [ -n "$PHASED_DEFERRED" ]; then
+    if [ "$secure" -ne 1 ] && [ "$KNOB_PHASING" = respect ] && [ -n "$PHASED_DEFERRED" ]; then
       # A word list, each a package name.
       # shellcheck disable=SC2086
       lane_skip_conf $PHASED_DEFERRED
@@ -3164,15 +3180,7 @@ read_dry_run() {
   jaddn o free_kib_run_dir "$w"
   jadds o log "$dryrun/dry-run.log"
   jadds o cache "$dryrun/archives, root-owned: remove it when done"
-  # The selection is whatever the host's unattended-upgrades origins take:
-  # security alone only when apt-config was read, an origin is set, and none
-  # widens them (read_periodic). Otherwise it holds -updates or third-party
-  # packages too, and isn't a security count.
-  # No other lane's is: maintenance adds -updates and the followed origins,
-  # and origin:<key> takes one origin alone.
-  if [ "$lane" = security ] && [ "$APT_CONFIG_OK" -eq 1 ] && [ "$UU_ORIGINS_N" -gt 0 ] && [ -z "$UU_WIDE" ]; then
-    DRY_SECURITY_ONLY=1
-  fi
+  DRY_SECURITY_ONLY=$secure
   jadds o lane "$lane"
   jaddb o security_only "$DRY_SECURITY_ONLY"
   if [ "$SIM_OK" -eq 1 ] && [ "$sel" -eq 1 ]; then
@@ -3322,12 +3330,17 @@ read_dry_run() {
     esac
     finding risk "dry-run:conffile:$p" "" "unattended-upgrade passes over $p at a conffile prompt, so the lane won't install it${k:+, though by_class.$k counts it (by_class.passed_over marks it)} (the dry run exited $rc). Its conffiles on disk: $cfs. Choose a remedy: hold it, declared as exception held:$p <review-by> <reason>; $w; settle the change by hand (a modified conffile); or prune it (policy.md)."
   done
-  # Absent, phasing is ignore; declared, it's the owner's choice (#686).
-  if [ "$lane" = maintenance ] && [ -n "$forced" ] && [ -z "$KNOB_PHASING_LINE" ]; then
+  # Absent, phasing is ignore; declared ignore is the owner's choice. Under
+  # respect, one taken means the blacklist didn't hold (#686, CR 2806).
+  if [ -n "$forced" ] && { [ -z "$KNOB_PHASING_LINE" ] || [ "$KNOB_PHASING" = respect ]; }; then
     read -r -a fw <<<"$forced" || true
     w=s
     [ "${#fw[@]}" -ne 1 ] || w=""
-    finding risk dry-run:phased "" "The maintenance lane takes ${#fw[@]} phased update$w apt would defer on this machine (${forced# }): unattended-upgrade ignores phasing, so the lane forces them, whatever this machine's phase. To leave them to a later run, declare phasing respect; to take them, phasing ignore (knob.md)."
+    if [ "$KNOB_PHASING" = respect ]; then
+      finding risk dry-run:phased "" "The $lane lane's dry run takes ${#fw[@]} phased update$w apt would defer on this machine (${forced# }), though the knob's phasing respect blacklisted them: the blacklist didn't hold. A host apt.conf.d line read after APT_CONFIG, such as #clear Unattended-Upgrade::Package-Blacklist, clears it. Find it before a bulk, which would fail on the same."
+    else
+      finding risk dry-run:phased "" "The $lane lane takes ${#fw[@]} phased update$w apt would defer on this machine (${forced# }): unattended-upgrade ignores phasing, so the lane forces them, whatever this machine's phase. To leave them to a later run, declare phasing respect; to take them, phasing ignore (knob.md)."
+    fi
   fi
   if [ -n "$unlisted" ]; then
     finding risk dry-run:unlisted "" "The dry run selects${unlisted}, which the pending set's class lists don't name: the proposal's counts leave them out, and the apply would take them. Read each in apt-cache policy before proposing."

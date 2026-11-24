@@ -561,7 +561,10 @@ phased_of() {  # <var> <apt-cache policy output> <" name ... ">
 # The phased updates apt would defer on this machine (#686): each one the
 # simulation with APT_SIM_PHASED installs and the one without it doesn't.
 # Only a package PHASED names (phased_of's) can be one, so a simulation that
-# printed nothing defers no other package.
+# printed nothing defers no other package. The Inst lines decide, never apt's
+# "deferred due to phasing" header: apt lifts phasing for a package with a
+# pending security update, and installs its phased version though the
+# header lists it (measured, apt 2.8.3, CR 2807).
 phased_deferred() {  # <var> <simulation with> <simulation without> <phased_of's>
   local _pd_k _pd_p _pd_r _pd_w=" " _pd_o=""
   while read -r _pd_k _pd_p _pd_r; do
