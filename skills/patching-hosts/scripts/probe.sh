@@ -5206,7 +5206,7 @@ read_postgres() {
 }
 
 read_redis() {
-  local inst=0 out r keys=0 up="" v look=0 exp=0 subs=0 clients="" seen=0
+  local inst=0 out r keys=0 up="" v look=0 exp=0 subs=0 clients="" seen=0 cli
   local -a df=()
   WL="" INUSE="" DORM="" UNK=""
   if installed redis-server; then inst=1; fi
@@ -5215,9 +5215,12 @@ read_redis() {
       IFS=$KNOB_US read -r -a df <<<"$r"
       if [ "${df[0]}" = redis ]; then INUSE="a datastore line declares it"; fi
     done
+    # The client its server takes (#706).
+    redis_engine redis-server.service || true
+    cli=$RE_CLI
     unit_show redis-server.service ActiveState || true
-    if [ "$U_ActiveState" = active ] && live_cmd redis-cli; then
-      capture out redis-cli INFO
+    if [ "$U_ActiveState" = active ] && live_cmd "$cli"; then
+      capture out "$cli" INFO
       out=${out//$'\r'/}
       if [ "$CAP_RC" -eq 0 ] && [[ $out == *uptime_in_days:* ]]; then
         while IFS= read -r r; do
@@ -5266,11 +5269,11 @@ read_redis() {
         # nothing reaches its ACL LOG (#379; measured on 7.0).
         case $out in
           NOAUTH*) UNK="active, but it needs a login (INFO answered NOAUTH), so its keys weren't read" ;;
-          *) UNK="redis-cli INFO couldn't be read${CAP_ERR:+: $CAP_ERR}" ;;
+          *) UNK="$cli INFO couldn't be read${CAP_ERR:+: $CAP_ERR}" ;;
         esac
       fi
     elif [ "$U_ActiveState" = active ]; then
-      UNK="active, but redis-cli isn't on PATH, so its keys weren't read"
+      UNK="active, but $cli isn't on PATH, so its keys weren't read"
     elif [ -n "$U_ActiveState" ]; then
       idle_verdict redis-server.service "$U_ActiveState" /var/log/redis redis-server
     else

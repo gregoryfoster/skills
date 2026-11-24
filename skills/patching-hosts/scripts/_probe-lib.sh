@@ -82,6 +82,9 @@ The primitives these scripts reach a host through:
                             file, from tmpfiles' tmp.conf or tmp.mount
   unit_show UNIT PROP...    systemctl show, setting U_<PROP> for each PROP;
                             returns 1, every U_<PROP> empty, when it can't
+  redis_engine UNIT         RE_ENGINE (redis or valkey), RE_CLI and
+                            RE_CHECK_RDB := the server a Redis unit runs, and
+                            the client and RDB checker it takes (#706)
   redis_conf UNIT           RC_* := what a Redis unit's file, read as root,
                             and its own arguments set: port, bind, socket,
                             logfile, dir, dbfilename, save, appendonly,
@@ -1510,6 +1513,34 @@ qdrant_loss() {  # <url> <key-file> <the counts before>
   QL_WHY="each of the $_ql_k collections the recovery point counted is there and not emptied; $_ql_moved counts moved, as client writes move them"
 }
 
+# Which server a Redis unit runs, and so which client and RDB checker it
+# takes (#706): Ubuntu's valkey-server renames them, and its valkey-tools
+# ships valkey-cli and valkey-check-rdb, no redis-cli (measured, 7.2.14);
+# only valkey-redis-compat does, and it removes redis-server. valkey where
+# the unit's ExecStart runs valkey-server, or, where that can't be read,
+# where the unit's name starts with valkey; redis otherwise. The one place
+# the choice is made: redis_conf calls it, and so redis_conn, the chain and
+# the probe take what it says. It leaves U_ExecStart set, and returns
+# unit_show's status.
+RE_ENGINE="" RE_CLI="" RE_CHECK_RDB=""
+redis_engine() {  # <unit>
+  local _re_b="" _re_rc=0
+  unit_show "$1" ExecStart || _re_rc=$?
+  if [[ $U_ExecStart == *argv[]=* ]]; then
+    _re_b=${U_ExecStart#*argv[]=}
+    _re_b=${_re_b%% *}
+    _re_b=${_re_b##*/}
+  else
+    _re_b=${1##*/}
+  fi
+  case $_re_b in
+    valkey*) RE_ENGINE=valkey ;;
+    *) RE_ENGINE=redis ;;
+  esac
+  RE_CLI=$RE_ENGINE-cli RE_CHECK_RDB=$RE_ENGINE-check-rdb
+  return "$_re_rc"
+}
+
 # What a Redis unit's config file and its own arguments set, which Redis
 # takes over the file's: a second Redis may share the file and set its own
 # --port (#379). The file is read as root: it's redis's own, and may hold a
@@ -1561,7 +1592,7 @@ redis_conf() {  # <unit>
   RC_CONF="" RC_PORT="" RC_BIND="" RC_SOCK="" RC_LOGFILE="" RC_DIR=""
   RC_DBFILENAME=dump.rdb RC_SAVE=on RC_AOF=no RC_ACL=0 RC_ACL_WHY="" RC_INCLUDE=0 RC_INCLUDE_IN="" RC_READ=1
   _RC_ACLFILE=0 _RC_USER_IN=""
-  if unit_show "$1" ExecStart; then
+  if redis_engine "$1"; then
     _rf_t=${U_ExecStart#*argv[]=}
     _rf_t=${_rf_t%% ;*}
     read -r -a _rf_a <<<"$_rf_t" || true

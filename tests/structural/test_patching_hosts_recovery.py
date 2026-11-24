@@ -86,6 +86,7 @@ class Host(ApplyHost):
         "pg_dumpall",
         "pg_restore",
         "redis-check-rdb",
+        "valkey-check-rdb",
         "sha256sum",
         "df",
         "stat",
@@ -418,17 +419,25 @@ def test_the_bulk_accepts_the_record_it_writes(host):
 
 
 def _redis(
-    host: Host, conf: str = "", busy: bool = False, saved: int = 2000, check: int = 0
+    host: Host,
+    conf: str = "",
+    busy: bool = False,
+    saved: int = 2000,
+    check: int = 0,
+    engine: str = "redis",
 ) -> Host:
-    host.knob(KNOB + "datastore redis redis-server\n")
+    # Valkey (#706): Ubuntu's valkey-server, whose valkey-tools ships
+    # valkey-cli and valkey-check-rdb, and no redis-cli.
+    cli, server = f"{engine}-cli", f"{engine}-server"
+    host.knob(KNOB + f"datastore redis {server}\n")
     rdb = host.tmp / "redis" / "dump.rdb"
     rdb.parent.mkdir()
     rdb.write_bytes(b"REDIS0011 data")
     conf_path = host.tmp / "redis.conf"
     conf_path.write_text(conf)
     host.show(
-        "redis-server.service",
-        ExecStart=f"{{ path=/usr/bin/redis-server ; argv[]=/usr/bin/redis-server {conf_path} ; ignore_errors=no ; }}",
+        f"{server}.service",
+        ExecStart=f"{{ path=/usr/bin/{server} ; argv[]=/usr/bin/{server} {conf_path} ; ignore_errors=no ; }}",
         MainPID="4242",
     )
     # Its own, read from the socket with no login (#379).
@@ -436,24 +445,24 @@ def _redis(
     s = host.state
     auth = f'echo "${{REDISCLI_AUTH:-}}" >> "{s}/auth"; '
     host.on(
-        "redis-cli",
+        cli,
         "* CONFIG GET dir",
         script=f'{auth}printf "dir\\n{rdb.parent}\\n"; exit 0',
     )
     host.on(
-        "redis-cli",
+        cli,
         "* CONFIG GET dbfilename",
         script=f'{auth}printf "dbfilename\\ndump.rdb\\n"; exit 0',
     )
-    host.on("redis-cli", "* LASTSAVE", "1000\n")
-    host.on("redis-cli", "* BGSAVE", "Background saving started\n")
+    host.on(cli, "* LASTSAVE", "1000\n")
+    host.on(cli, "* BGSAVE", "Background saving started\n")
     info = (
         "rdb_bgsave_in_progress:1\r\n"
         if busy
         else f"rdb_bgsave_in_progress:0\r\nrdb_last_save_time:{saved}\r\n"
     )
-    host.on("redis-cli", "* INFO persistence", info + "rdb_last_bgsave_status:ok\r\n")
-    host.on("redis-check-rdb", "*", "", rc=check)
+    host.on(cli, "* INFO persistence", info + "rdb_last_bgsave_status:ok\r\n")
+    host.on(f"{engine}-check-rdb", "*", "", rc=check)
     return host
 
 
@@ -806,6 +815,52 @@ def test_a_redis_without_ss_on_path_is_refused_up_front(tmp_path):
     out = host.recover(rc=3)
     assert "ss isn't on PATH, and the knob declares a Redis datastore" in out["refused"]
     assert not [a for _, a, _ in host.calls("redis-cli") if a.endswith("BGSAVE")]
+
+
+# --- Valkey (#706) ----------------------------------------------------------------
+# Ubuntu's valkey-server (7.2.14 in noble-updates) renames everything, its
+# client too: valkey-tools ships valkey-cli and valkey-check-rdb, and no
+# redis-cli or redis-check-rdb (measured). A host that removes redis-tools
+# keeps its recovery point.
+
+
+def test_a_valkey_is_saved_with_valkey_cli_and_needs_no_redis_cli(tmp_path):
+    host = _redis(_ready(Host(tmp_path)), engine="valkey")
+    host.absent("redis-cli", "redis-check-rdb")
+    out = host.recover()
+    [d] = out["dumps"]
+    assert (d["bgsave"], d["copy_exit"], d["check_exit"]) == ("ok", 0, 0)
+    assert d["path"] == f"{host.run_dir}/valkey-server-{STAMP}.rdb"
+    calls = [a for _, a, _ in host.calls("valkey-cli")]
+    assert any(a.endswith("BGSAVE") for a in calls)
+    # Its RDB copy is checked by valkey-check-rdb, not skipped.
+    assert host.calls("valkey-check-rdb")
+
+
+def test_a_valkey_rdb_copy_valkey_check_rdb_cant_read_records_nothing(tmp_path):
+    host = _redis(_ready(Host(tmp_path)), engine="valkey", check=1)
+    host.absent("redis-cli", "redis-check-rdb")
+    out = host.recover(rc=1)
+    assert out["dumps"][0]["check_exit"] == 1
+    assert any("valkey-check-rdb can't read" in w for w in out["verdict"]["why"])
+
+
+def test_a_valkey_without_valkey_cli_is_refused_up_front(tmp_path):
+    host = _redis(_ready(Host(tmp_path)), engine="valkey")
+    host.absent("valkey-cli")
+    out = host.recover(rc=3)
+    assert (
+        "valkey-cli isn't on PATH, and the knob declares a Redis datastore, "
+        "valkey-server.service, which runs valkey-server" in out["refused"]
+    )
+
+
+def test_a_redis_still_takes_redis_cli_beside_valkey_tools(tmp_path):
+    host = _redis(_ready(Host(tmp_path)))
+    host.absent("valkey-cli")
+    out = host.recover()
+    assert out["dumps"][0]["bgsave"] == "ok"
+    assert host.calls("valkey-cli") == []
 
 
 # --- the backup regime ------------------------------------------------------------

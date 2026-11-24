@@ -383,7 +383,16 @@ gate_datastores() {
             continue
           fi ;;
       esac
-      DS_LINES+=("redis $u $persist ${REDIS_CONF:--} $REDIS_LOGIN ${REDIS_USER:--} ${REDIS_KEY:--} ${REDIS_ARGS[*]}")
+      # The chain runs the client only to SAVE or ask: a Valkey's is
+      # valkey-cli, and valkey-tools ships no redis-cli (#706).
+      case $persist in
+        none | unknown | stopped-none | stopped-unknown)
+          if ! have "$REDIS_CLI"; then
+            refuse "datastore redis $u: the chain must SAVE it before its stop, and $REDIS_CLI isn't on PATH"
+            continue
+          fi ;;
+      esac
+      DS_LINES+=("redis $u $persist ${REDIS_CONF:--} $REDIS_LOGIN ${REDIS_USER:--} ${REDIS_KEY:--} $REDIS_CLI ${REDIS_ARGS[*]}")
     fi
     jpush a "{$e}"
   done
@@ -440,7 +449,7 @@ stop_line() {  # <unit>
 # The chain is sh text, written literally: its expansions are its own.
 # shellcheck disable=SC2016
 write_chain() {
-  local r q u kind conf rest l cmd user t m x ra pw persist login ruser rkey guard why
+  local r q u kind conf rest l cmd user t m x ra pw persist login ruser rkey cli guard why
   local -a f=() w=()
   sq q "$log"
   c '#!/bin/sh'
@@ -512,7 +521,7 @@ write_chain() {
   c '# 3. A checkpoint, then each data store.'
   for r in ${DS_LINES[@]+"${DS_LINES[@]}"}; do
     # "postgres <unit> <port>", "redis <unit> <persistence> <conf or ->
-    # <login> <user or -> <key file or -> <redis-cli words>", or
+    # <login> <user or -> <key file or -> <client> <its words>", or
     # "qdrant <unit>".
     read -r kind u conf rest <<<"$r"
     if [ "$kind" = qdrant ]; then
@@ -523,7 +532,7 @@ write_chain() {
       c "say $m; runuser -u postgres -- psql -XAtq -p $conf -d postgres -c CHECKPOINT || say \"CHECKPOINT failed: the stop checkpoints anyway\""
     else
       persist=$conf guard=""
-      read -r conf login ruser rkey rest <<<"$rest"
+      read -r conf login ruser rkey cli rest <<<"$rest"
       case $persist in
         aof)
           c "# Its stop fsyncs its AOF (appendonly yes, as its file says): no SAVE, and no login."
@@ -580,7 +589,7 @@ write_chain() {
         # No file to read one from, and the last Redis's isn't this one's.
         c 'unset REDISCLI_AUTH'
       fi
-      # redis-cli exits 0 on an error reply, and prints it on stdout; an
+      # The client exits 0 on an error reply, and prints it on stdout; an
       # AUTH warning goes to stderr, which is the log (measured on 7.0). So
       # stdout alone says whether the SAVE took.
       sq m "SAVE $u"
@@ -590,10 +599,10 @@ write_chain() {
       fi
       if [ "$persist" = none ]; then
         c "# Its file sets no save points and no appendonly: its stop would save nothing."
-        c "say $m; reply=\$(redis-cli$ra SAVE); [ \"\$reply\" = OK ] || say \"SAVE failed: \$reply\""
+        c "say $m; reply=\$($cli$ra SAVE); [ \"\$reply\" = OK ] || say \"SAVE failed: \$reply\""
       else
         c "# Whether its stop saves can't be read from its file: asked now."
-        c "if [ -z \"\$(redis-cli$ra CONFIG GET save | sed -n 2p)\" ] && [ \"\$(redis-cli$ra CONFIG GET appendonly | sed -n 2p)\" != yes ]; then say $m; reply=\$(redis-cli$ra SAVE); [ \"\$reply\" = OK ] || say \"SAVE failed: \$reply\"; fi"
+        c "if [ -z \"\$($cli$ra CONFIG GET save | sed -n 2p)\" ] && [ \"\$($cli$ra CONFIG GET appendonly | sed -n 2p)\" != yes ]; then say $m; reply=\$($cli$ra SAVE); [ \"\$reply\" = OK ] || say \"SAVE failed: \$reply\"; fi"
       fi
       if [ -n "$guard" ]; then c 'fi'; fi
     fi
