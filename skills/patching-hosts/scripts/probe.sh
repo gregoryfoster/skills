@@ -5,7 +5,7 @@ set -euo pipefail
 usage() {
   cat <<'USAGE'
 Usage: bash probe.sh [--config FILE] [--host NAME] [--root DIR] [--repo DIR]
-                     [--refresh-into DIR [--no-language]] [--dry-run-into DIR]
+                     [--refresh-into DIR] [--no-language] [--dry-run-into DIR]
                      [--lane security|maintenance|origin:<origin>]
                      [--post-boot [--run DIR]] [--session-pid PID]
                      [--no-sudo] [--today YYYY-MM-DD]
@@ -49,8 +49,9 @@ Options:
   --no-language       take --refresh-into's lists without the uv.lock audit,
                       as a scheduled report does (#702): pending.language is
                       null and not_read says it wasn't asked. Without
-                      --refresh-into, or under --post-boot, there's no
-                      audit to drop, and it changes nothing else
+                      --refresh-into there's no audit to drop, and only
+                      not_read's reason changes; under --post-boot, which
+                      reads no pending set, nothing does
   --dry-run-into DIR  count the selection with unattended-upgrade --dry-run,
                       as root, with apt's cache in DIR/archives. It downloads
                       the whole set (290 MB and 9 minutes on one host) and
@@ -151,6 +152,14 @@ while [ "$#" -gt 0 ]; do
   case $1 in
     --config | --host | --root | --repo | --refresh-into | --dry-run-into | --lane | --session-pid | --today | --run)
       [ "$#" -ge 2 ] || { echo "ERROR $1 needs a value" >&2; exit 2; }
+      # A forgotten DIR would take the next option as a directory:
+      # `--refresh-into --no-language` refreshed into ./--no-language and
+      # audited, the one thing the flag declines (CR 2847).
+      case $1:$2 in
+        --refresh-into:-* | --dry-run-into:-*)
+          echo "ERROR $1 takes a directory, and $2 reads as an option: name the directory (./$2 for one so named)" >&2
+          exit 2 ;;
+      esac
       case $1 in
         --config) config=$2 ;;
         --host) host=$2 ;;
