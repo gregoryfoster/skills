@@ -1271,6 +1271,30 @@ def test_an_xtrace_command_starts_from_no_quote(host):
     assert j["more"] is True
 
 
+@pytest.mark.parametrize(
+    "line, shown",
+    [
+        # CR 2840 A: a log line's URL crosses a space only inside quotes, so
+        # an option's value with an @ isn't read as a URL's userinfo.
+        (
+            "curl https://h --password=zq9@h/zq9b' after",
+            "curl https://h --password=<redacted> <...>",
+        ),
+        (
+            "see https://h and then mail me@x.org/foo",
+            "see https://h and then mail me@x.org/foo",
+        ),
+        # C: a quote closed mid-word keeps the base's rule.
+        ("--password 'zq9 zq9b';--token 'zq9c zq9d'", "--password <redacted>"),
+    ],
+)
+def test_the_oracle_s_log_leaks_stay_redacted(host, line, shown):
+    _logged(host, [line])
+    [got] = host.recover()["backup"][0]["journal"]["lines"]
+    assert got == shown
+    assert "zq9" not in host.result.stdout + host.result.stderr
+
+
 def test_a_unit_that_didnt_start_a_run_now_shows_no_lines(host):
     # CR 2803: its InvocationID is its last run's, and those lines aren't
     # this run's.

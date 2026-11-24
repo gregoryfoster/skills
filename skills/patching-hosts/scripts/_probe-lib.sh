@@ -1267,9 +1267,11 @@ secret_arg_name() {  # <name, dashes stripped, no value> [<more words>]: 0 when 
 # (CR 2791). Any other's ends at & # , ; or ?, so a URL nested in it is
 # scanned too (CR 2794). Patterns in variables: & ; and # are operators in a
 # literal [[ =~ ]].
-URL_PARAM_PRE='^([^?&#;]*[?&#;])(.*)$'
-URL_PARAM_KV='^([^=&#,?;]+)=(.*)$'
-URL_PARAM_PLAIN='^([^&#,;?]*)(.*)$'
+# Prefixes only, each cut off by its length: a match that captured the
+# rest, or a # strip of a long prefix, made a long query quadratic (CR 2841).
+URL_PARAM_PRE='^[^?&#;]*[?&#;]'
+URL_PARAM_KV='^([^=&#,?;]+)='
+URL_PARAM_PLAIN='^[^&#,;?]*'
 URL_START='^[A-Za-z][A-Za-z0-9+.-]*://'
 ENV_NAME='^[A-Za-z_][A-Za-z0-9_.-]*$'
 redact_url() {  # <var> <word>: the word with each URL's userinfo and secret parameter values redacted
@@ -1283,7 +1285,7 @@ redact_url() {  # <var> <word>: the word with each URL's userinfo and secret par
     _ru_auth=${_ru_w%%/*}
     case $_ru_auth in *@*)
       _ru_ui=${_ru_auth%@*}
-      _ru_w=${_ru_w#"$_ru_ui"@}
+      _ru_w=${_ru_w:$((${#_ru_ui} + 1))}
       case $_ru_ui in
         *:*) _ru_out="$_ru_out${_ru_ui%%:*}:<redacted>@" ;;
         *) _ru_out="$_ru_out<redacted>@" ;;
@@ -1294,31 +1296,48 @@ redact_url() {  # <var> <word>: the word with each URL's userinfo and secret par
   # Each parameter in every URL of the word, the query's and the
   # fragment's (CR 2767, CR 2786).
   while [[ $_ru_w =~ $URL_PARAM_PRE ]]; do
-    _ru_out="$_ru_out${BASH_REMATCH[1]}"
-    _ru_w=${BASH_REMATCH[2]}
+    _ru_out="$_ru_out${BASH_REMATCH[0]}"
+    _ru_w=${_ru_w:${#BASH_REMATCH[0]}}
     if [[ $_ru_w =~ $URL_PARAM_KV ]]; then
-      _ru_k=${BASH_REMATCH[1]} _ru_w=${BASH_REMATCH[2]}
+      _ru_k=${BASH_REMATCH[1]} _ru_w=${_ru_w:${#BASH_REMATCH[0]}}
       if secret_arg_name "$_ru_k" "$SECRET_PARAM_WORDS"; then
         _ru_r=${_ru_w%%&*}
         _ru_v=${_ru_r%%,*}
-        _ru_r=${_ru_r#"$_ru_v"}
+        _ru_r=${_ru_r:${#_ru_v}}
         while [ -n "$_ru_r" ]; do
           _ru_r=${_ru_r#,}
           if [[ $_ru_r =~ $URL_START ]]; then break; fi
           _ru_p=${_ru_r%%,*}
           _ru_v="$_ru_v,$_ru_p"
-          _ru_r=${_ru_r#"$_ru_p"}
+          _ru_r=${_ru_r:${#_ru_p}}
         done
-        _ru_w=${_ru_w#"$_ru_v"}
+        _ru_w=${_ru_w:${#_ru_v}}
         _ru_v="<redacted>"
       else
         [[ $_ru_w =~ $URL_PARAM_PLAIN ]]
-        _ru_v=${BASH_REMATCH[1]} _ru_w=${BASH_REMATCH[2]}
+        _ru_v=${BASH_REMATCH[0]}
+        _ru_w=${_ru_w:${#_ru_v}}
       fi
       _ru_out="$_ru_out$_ru_k=$_ru_v"
     fi
   done
   printf -v "$1" '%s' "$_ru_out$_ru_w"
+}
+# A log line's URL crosses a space only inside quotes (curl 'https://h/?
+# token=a b'): redact_url runs over each quoted span holding one, and the
+# line's words run through redact_word's own (CR 2833, CR 2840).
+URL_SPAN_RE="^[^'\"]*('[^']*'|\"[^\"]*\")"
+redact_url_spans() {  # <var> <line>
+  local _us_t=$2 _us_out="" _us_p _us_s
+  while [[ $_us_t =~ $URL_SPAN_RE ]]; do
+    _us_s=${BASH_REMATCH[1]}
+    _us_p=${BASH_REMATCH[0]}
+    _us_t=${_us_t:${#_us_p}}
+    _us_p=${_us_p:0:$((${#_us_p} - ${#_us_s}))}
+    case $_us_s in *://*[$' \t']* | *[$' \t']*://*) redact_url _us_s "$_us_s" ;; esac
+    _us_out="$_us_out$_us_p$_us_s"
+  done
+  printf -v "$1" '%s' "$_us_out$_us_t"
 }
 # An environment name may run its secret word on with no separator:
 # PGPASSWORD, GITHUB_TOKEN's kin MYTOKEN (CR 2813). A NO_ name stays a
@@ -1346,14 +1365,15 @@ secret_env_name() {  # <NAME>: 0 when an environment name marks a secret
 # value runs as a shell word does: through its quotes, and a quote left open
 # runs on through the word that closes it, as an escaped space runs on into
 # the next word. A closing quote ends it only where the shell ends the word,
-# at the word's end or a ; ) , & | ] that runs to it (CR 2832); a value is
-# redacted whole otherwise. A word is read in one loop, never by recursion
+# at the word's end or a ; ) , & | ] that runs to it (CR 2832). One that
+# closes anywhere else keeps the base's rule: the value runs on through the
+# word that ends with that quote (CR 2840). A word is read in one loop, never by recursion
 # (CR 2814), and a text past QS_MAX, or a line past RS_SCAN_MAX scanned,
 # isn't read: the rest of its line is dropped, marked (CR 2815, CR 2835).
 # A Python repr's \' inside '..' is read as a shell's (readings.md).
 # The state between words: RS_Q, the quote a redacted value has open (' " or
-# $ for $'..', \ after an escaped space, ! for the rest of the line, or
-# empty); RS_NEXT, 1 when the next
+# $ for $'..', \ after an escaped space, B and a quote for the base's rule,
+# ! for the rest of the line, or empty); RS_NEXT, 1 when the next
 # word is a secret's value; RS_LIST, 1 when that's a list's or a call's
 # element, whose unquoted trailing ) ] , aren't its own; RS_WRAP, the quote
 # before a name ('NAME=..'), closed in the output when the value closes on
@@ -1363,6 +1383,8 @@ secret_env_name() {  # <NAME>: 0 when an environment name marks a secret
 RS_OUT="" RS_Q="" RS_NEXT=0 RS_LIST=0 RS_WRAP="" RW_QUOTE="" RS_WHOLE=0 RS_SCANNED=0
 QS_MAX=4096 RS_SCAN_MAX=32768
 QS_END_RE='^[];),&|]+$'
+RS_LEAD_RE='^[];),&|]+'
+RS_XTRACE='^[+]+[[:space:]]'
 QS_RE_OUT="^[^'\"\\\\\$]*"
 QS_RE_SQ="^[^']*"
 QS_RE_DQ="^[^\"\\\\]*"
@@ -1373,7 +1395,7 @@ QS_RE_AQ="^[^'\\\\]*"
 ARG_OPEN="^[^-=\"'[:space:]]*[[(]"
 ARG_SET_OPEN="^([A-Za-z_][A-Za-z0-9_.-]*)=[[(]"
 quote_scan() {  # <quote open at the start, or empty> <text>: QS := the quote open at its end; QS_TAIL := the text from what ends a value after a closing quote, where the scan stopped
-  local _qs_s=$2 _qs_c _qs_re
+  local _qs_s=$2 _qs_c _qs_re _qs_t _qs_cl=""
   QS=$1 QS_TAIL=""
   if [ "$QS" = "\\" ]; then QS=""; fi
   if [ "$QS" = "!" ]; then return 0; fi
@@ -1382,6 +1404,16 @@ quote_scan() {  # <quote open at the start, or empty> <text>: QS := the quote op
     QS="!"
     return 0
   fi
+  case $QS in
+    B?)
+      # Through the word that ends with the quote, and what ends a value.
+      _qs_c=${QS:1} _qs_t=$_qs_s
+      while :; do
+        case $_qs_t in *[]\;\),\&\|]) _qs_t=${_qs_t%?} ;; *) break ;; esac
+      done
+      case $_qs_t in *"$_qs_c") QS="" QS_TAIL=${_qs_s:${#_qs_t}} ;; esac
+      return 0 ;;
+  esac
   while :; do
     case $QS in
       "") _qs_re=$QS_RE_OUT ;;
@@ -1389,24 +1421,27 @@ quote_scan() {  # <quote open at the start, or empty> <text>: QS := the quote op
       \") _qs_re=$QS_RE_DQ ;;
       *) _qs_re=$QS_RE_AQ ;;
     esac
-    [[ $_qs_s =~ $_qs_re ]] || return 0
+    [[ $_qs_s =~ $_qs_re ]] || break
     _qs_s=${_qs_s:${#BASH_REMATCH[0]}}
-    [ -n "$_qs_s" ] || return 0
+    [ -n "$_qs_s" ] || break
     _qs_c=${_qs_s:0:1} _qs_s=${_qs_s:1}
     case $QS$_qs_c in
       \\ | \"\\ | \$\\)
         if [ -z "$_qs_s" ]; then
           if [ -z "$QS" ]; then QS=\\; fi
-          return 0
+          break
         fi
         _qs_s=${_qs_s:1} ;;
       \$) case $_qs_s in \'*) QS='$' _qs_s=${_qs_s:1} ;; esac ;;
       \' | \") QS=$_qs_c ;;
       "''" | '""' | "\$'")
         QS=""
-        if [[ $_qs_s =~ $QS_END_RE ]]; then QS_TAIL=$_qs_s; return 0; fi ;;
+        if [ -z "$_qs_s" ] || [[ $_qs_s =~ $QS_END_RE ]]; then QS_TAIL=$_qs_s; return 0; fi
+        _qs_cl=$_qs_c ;;
     esac
   done
+  # A quote that closed mid-word, with the word ending outside one.
+  case $QS in "" | \\) [ -z "$_qs_cl" ] || QS="B$_qs_cl" ;; esac
 }
 redact_value() {  # <value> <the quote it starts in, or empty> <1 when a list's element>: RS_Q := the quote it leaves open; VE_REST := what follows its end; VE_KEEP := a list's unquoted value's trailing ) ] ,
   local _rv_v=$1
@@ -1428,6 +1463,7 @@ redact_value() {  # <value> <the quote it starts in, or empty> <1 when a list's 
 }
 redact_word() {  # <text> [<separator before it>]: RS_OUT += the text under the name rule, from RS_*'s state, which it leaves for the next
   local _rd_w=$1 _rd_sep _rd_pre _rd_q _rd_n _rd_v _rd_out _rd_red _rd_list _rd_sp _rd_x _rd_i=0
+  local _rd_whole _rd_orig _rd_l _rd_n0
   local -a _rd_ws=()
   if [ $# -gt 1 ]; then _rd_sep=$2; elif [ -n "$RS_OUT" ]; then _rd_sep=" "; else _rd_sep=""; fi
   while [ -n "$_rd_w" ]; do
@@ -1446,21 +1482,21 @@ redact_word() {  # <text> [<separator before it>]: RS_OUT += the text under the 
       _rd_w=$VE_REST _rd_sep=""
       continue
     fi
-    # What ends a value, as it stands: ; ) , & | ]
-    _rd_x=""
-    while :; do
-      case $_rd_w in
-        []\;\),\&\|]*) _rd_x="$_rd_x${_rd_w:0:1}" _rd_w=${_rd_w:1} ;;
-        *) break ;;
-      esac
-    done
-    if [ -n "$_rd_x" ]; then
-      RS_OUT="$RS_OUT$_rd_sep$_rd_x" _rd_sep=""
+    # What ends a value, as it stands: ; ) , & | ], by pattern (CR 2839).
+    if [[ $_rd_w =~ $RS_LEAD_RE ]]; then
+      RS_OUT="$RS_OUT$_rd_sep${BASH_REMATCH[0]}" _rd_sep=""
+      _rd_w=${_rd_w:${#BASH_REMATCH[0]}}
       continue
     fi
     _rd_pre="" _rd_q="" _rd_list=0 _rd_red=0 _rd_sp=0 _rd_out="" _rd_whole=$RS_WHOLE
-    RS_WHOLE=0
-    case $_rd_w in *[[:space:]]*) _rd_sp=1 ;; esac
+    RS_WHOLE=0 _rd_orig=$_rd_w
+    # The whitespace read splits words at: \r, \v and \f stay in a word,
+    # which recursed forever when tested as space (CR 2838).
+    case $_rd_w in *[$' \t\n']*) _rd_sp=1 ;; esac
+    if [ "$_rd_sp" -eq 1 ] && [ "$_rd_whole" -eq 1 ]; then
+      # A raw argument that opens with a quote ('--password=a b' c).
+      case $_rd_w in \'?* | \"?*) _rd_q=${_rd_w:0:1} _rd_w=${_rd_w:1} ;; esac
+    fi
     if [ "$_rd_sp" -eq 0 ]; then
       if [[ $_rd_w =~ $ARG_OPEN ]]; then
         _rd_pre=${BASH_REMATCH[0]}
@@ -1475,7 +1511,7 @@ redact_word() {  # <text> [<separator before it>]: RS_OUT += the text under the 
     case $_rd_w in
       --?* | -[!-]?*)
         _rd_n=${_rd_w%%=*}
-        case $_rd_n in *[[:space:]]*) _rd_n="" ;; esac
+        case $_rd_n in *[$' \t\n']*) _rd_n="" ;; esac
         # A quoted name, or a list's element ('--password', f(--token)),
         # loses its quote and the punctuation after it; prose's doesn't
         # (use --key, then, CR 2820).
@@ -1520,15 +1556,25 @@ redact_word() {  # <text> [<separator before it>]: RS_OUT += the text under the 
       continue
     fi
     if [ "$_rd_sp" -eq 1 ]; then
-      # Words: a script's, or what a value's end leaves of one. A word
-      # holds no space, so this reads no deeper.
-      IFS=$' \t\n' read -r -d '' -a _rd_ws <<<"$_rd_w" || true
-      case $_rd_w in [[:space:]]*) [ -z "$RS_OUT" ] || _rd_sep=" " ;; esac
-      for _rd_x in ${_rd_ws[@]+"${_rd_ws[@]}"}; do
-        if [ "$_rd_i" -eq 0 ]; then redact_word "$_rd_x" "$_rd_sep"; else redact_word "$_rd_x"; fi
-        _rd_i=1
-        [ "$RS_Q" != "!" ] || break
-      done
+      # Lines, then words: a script's. A word holds no space, so this reads
+      # no deeper. As in the backup log, a line set -x starts begins a
+      # command with no quote open, a line left open is marked once, and
+      # only a quote carries to the next (CR 2834, CR 2840).
+      case $_rd_orig in [$' \t\n']*) [ -z "$RS_OUT" ] || _rd_sep=" " ;; esac
+      while IFS= read -r _rd_l || [ -n "$_rd_l" ]; do
+        if [[ $_rd_l =~ $RS_XTRACE ]]; then RS_Q="" RS_WRAP=""; fi
+        _rd_n0=${#RS_OUT} _rd_ws=()
+        IFS=$' \t' read -r -a _rd_ws <<<"$_rd_l" || true
+        for _rd_x in ${_rd_ws[@]+"${_rd_ws[@]}"}; do
+          if [ "$_rd_i" -eq 0 ]; then redact_word "$_rd_x" "$_rd_sep"; else redact_word "$_rd_x"; fi
+          _rd_i=1
+          [ "$RS_Q" != "!" ] || break
+        done
+        if [ "$RS_Q" = "\\" ]; then RS_Q=""; fi
+        if [ -n "$RS_Q" ] && [ "${#RS_OUT}" -gt "$_rd_n0" ]; then RS_OUT="$RS_OUT <...>"; fi
+        case $RS_Q in "!" | B?) RS_Q="" ;; esac
+        RS_WRAP=""
+      done <<<"$_rd_orig"
       return 0
     fi
     if [ "$_rd_red" -eq 2 ]; then
@@ -1558,7 +1604,7 @@ redact_words() {  # <var> <word>...: the words under the name rule, joined by a 
   # A line that leaves a value's quote open, or whose rest wasn't read, is
   # marked once; only a quote carries on.
   if [ -n "$RS_Q" ] && [ -n "$RS_OUT" ]; then RS_OUT="$RS_OUT <...>"; fi
-  if [ "$RS_Q" = "!" ]; then RS_Q=""; fi
+  case $RS_Q in "!" | B?) RS_Q="" ;; esac
   RW_QUOTE=$RS_Q
   printf -v "$_rw_v" '%s' "$RS_OUT"
 }
