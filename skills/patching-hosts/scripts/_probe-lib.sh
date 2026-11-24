@@ -1710,8 +1710,9 @@ qdrant_loss() {  # <url> <key-file> <the counts before>
 # and the last, which unit_show keeps, decides. The one place the choice
 # is made: redis_conf calls it, and so redis_conn, the chain and the
 # probe take what it says. It leaves U_ExecStart set, and returns
-# unit_show's status.
-RE_ENGINE="" RE_CLI="" RE_CHECK_RDB=""
+# unit_show's status. RE_FROM is run where the unit's command or process
+# named the server, name where only its name did (CR 2836).
+RE_ENGINE="" RE_CLI="" RE_CHECK_RDB="" RE_FROM=""
 _re_server() {  # <var> <word>: valkey or redis where WORD's basename is that server
   case ${2##*/} in
     valkey-server*) printf -v "$1" '%s' valkey ;;
@@ -1756,7 +1757,9 @@ redis_engine() {  # <unit>
       *) _re_server _re_e "$_re_x" ;;
     esac
   fi
+  RE_FROM=run
   if [ -z "$_re_e" ]; then
+    RE_FROM=name
     case ${1##*/} in
       valkey*) _re_e=valkey ;;
       *) _re_e=redis ;;
