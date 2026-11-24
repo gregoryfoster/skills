@@ -209,6 +209,7 @@ fi
 # a condition runs (read-knob.sh's note). A return of 2 exits 2 here.
 knob_load "$config" "$host" "$today"
 probe_init /
+prune_apt_init
 trap 'rm -rf "$P_TMP"' EXIT
 
 # --today stands in for the clock's date, as in a test. Later than the

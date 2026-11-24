@@ -162,6 +162,7 @@ fi
 # a condition runs (read-knob.sh's note). A return of 2 exits 2 here.
 knob_load "$config" "$host" "$today"
 probe_init /
+prune_apt_init
 trap 'rm -rf "$P_TMP"' EXIT
 # It reads the running system, never a tree.
 P_LIVE=1
@@ -257,7 +258,7 @@ _a=""
 _names=""
 for _p in ${D_PURGE[@]+"${D_PURGE[@]}"}; do _names="$_names ${_p%% *}"; done
 for _p in $D_ROOTS; do
-  capture _x apt-cache rdepends --installed "$_p"
+  capture _x apt-cache ${PRUNE_CACHE_OPTS[@]+"${PRUNE_CACHE_OPTS[@]}"} rdepends --installed "$_p"
   if [ "$CAP_RC" -ne 0 ]; then
     not_read "what else depends on $_p: apt-cache rdepends failed (${CAP_ERR:-exit $CAP_RC})"
     continue
