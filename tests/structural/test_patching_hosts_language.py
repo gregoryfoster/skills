@@ -747,9 +747,9 @@ def test_no_language_is_accepted_beside_post_boot(host):
 @pytest.mark.parametrize("opt", ["--refresh-into", "--dry-run-into"])
 @pytest.mark.parametrize("value", ["--no-language", "-x", "--no-sudo"])
 def test_a_dir_option_refuses_a_value_that_reads_as_an_option(host, opt, value):
-    # CR 2847: `--refresh-into --no-language` with DIR forgotten took the flag
-    # as DIR, refreshed into ./--no-language and audited, reaching OSV with
-    # --no-language on the line.
+    # CR 2847, 2854: `--refresh-into --no-language` with DIR forgotten took
+    # the flag as DIR, and mkdir -p failed on it with its own usage error;
+    # the refusal now names the option, before any refresh or audit.
     _tree(host)
     _uv(host)
     host.on("apt-get", "update*", "Reading package lists...\n")

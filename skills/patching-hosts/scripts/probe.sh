@@ -42,7 +42,8 @@ Options:
                       count, from pro, still reads the host's own lists).
                       The host's APT::Update hooks don't run: as root, they
                       start services and move update-success-stamp (#696).
-                      It also audits each service's uv.lock against OSV
+                      DIR may not start with -. Unless --no-language,
+                      it also audits each service's uv.lock against OSV
                       (pending.language), which nothing else asks for: per
                       package, its advisories' ids, and in the same order
                       the versions that fix each ([] none, null unread)
@@ -152,9 +153,9 @@ while [ "$#" -gt 0 ]; do
   case $1 in
     --config | --host | --root | --repo | --refresh-into | --dry-run-into | --lane | --session-pid | --today | --run)
       [ "$#" -ge 2 ] || { echo "ERROR $1 needs a value" >&2; exit 2; }
-      # A forgotten DIR would take the next option as a directory:
-      # `--refresh-into --no-language` refreshed into ./--no-language and
-      # audited, the one thing the flag declines (CR 2847).
+      # A forgotten DIR would take the next option as a directory. Before,
+      # mkdir -p failed on it with a usage error; now the refusal names the
+      # option (CR 2847, 2854).
       case $1:$2 in
         --refresh-into:-* | --dry-run-into:-*)
           echo "ERROR $1 takes a directory, and $2 reads as an option: name the directory (./$2 for one so named)" >&2
