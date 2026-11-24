@@ -207,9 +207,9 @@
 22754 9128 skills/patching-hosts/references/environments/exe-dev-exeuntu.md
 4496 1769 skills/patching-hosts/references/environments/exe-dev-tailscale.md
 11106 3962 skills/patching-hosts/references/executor.md
-22266 8017 skills/patching-hosts/references/knob.md
-22343 8071 skills/patching-hosts/references/policy.md
-10973 4300 skills/patching-hosts/references/process-log.md
+22938 8224 skills/patching-hosts/references/knob.md
+22529 8137 skills/patching-hosts/references/policy.md
+11105 4344 skills/patching-hosts/references/process-log.md
 1415 482 skills/patching-hosts/references/process-log/2026/2026-09-21-broker.md
 1191 415 skills/patching-hosts/references/process-log/2026/2026-09-22-archiver.md
 1816 660 skills/patching-hosts/references/process-log/2026/2026-09-26-archiver.md
@@ -257,8 +257,8 @@
 5299 2156 skills/patching-hosts/references/process-log/2026/2026-11-20-wslcb-licensing-tracker.md
 14308 5827 skills/patching-hosts/references/process-log/2026/index.md
 12985 4586 skills/patching-hosts/references/pruning.md
-26108 9671 skills/patching-hosts/references/readings.md
-10829 4057 skills/patching-hosts/references/reboot-and-record.md
+26475 9798 skills/patching-hosts/references/readings.md
+10903 4083 skills/patching-hosts/references/reboot-and-record.md
 26193 9623 skills/patching-hosts/references/run.md
 14601 5155 skills/reviewing-architecture/SKILL.md
 14138 4667 skills/reviewing-architecture/references/dimensions.md
