@@ -67,7 +67,10 @@ Options:
                      of re-reads at the chain's start, and this
   --config FILE      the knob (default: .skills/patching-hosts at the root of
                      the repo around the current directory, or in the
-                     current directory outside a repo)
+                     current directory outside a repo). One given is kept
+                     in the run's directory, root's at 600, as
+                     knob-<sha256's first 12>, reboot_chain.knob_copy, and
+                     next's post-boot command names that copy (#681)
   --host NAME        whose knob sections apply (default: `hostname`)
   --today YYYY-MM-DD the date exceptions expire against (default: today, UTC)
   -h, --help         show this help
@@ -106,7 +109,7 @@ Exit codes:
 USAGE
 }
 
-approve=0 run="" planf="" standing=0 config="" host="" today="" delay=120 expect=600
+approve=0 run="" planf="" standing=0 config="" config_given=0 host="" today="" delay=120 expect=600
 # The chain's gate reads a busy host again each second for up to this long
 # before it aborts (#646): co-status's chain fired as a 60 s timer's 3 s
 # sweep began, aborted, and told no one. Its span holds the wait.
@@ -119,7 +122,7 @@ while [ "$#" -gt 0 ]; do
         --run) run=$2 ;;
         --delay) delay=$2 ;;
         --expect) expect=$2 ;;
-        --config) config=$2 ;;
+        --config) config=$2 config_given=1 ;;
         --host) host=$2 ;;
         --today) today=$2 ;;
         --plan)
@@ -400,6 +403,7 @@ emit() {
   jadd a approval "$r"
   jadds a host "$host"
   jadds a knob "$config"
+  jadd a knob_copy "$KNOB_COPY_J"
   jadd o reboot_chain "{$a}"
   a=""
   for r in ${REFUSED[@]+"${REFUSED[@]}"}; do jpushs a "$r"; done
@@ -658,7 +662,7 @@ write_chain
 # What the boot will empty: anything staged under /tmp, but this script's
 # own scratch directory, which goes when it exits. Where the rule keeps /tmp
 # nothing is, and a list of it would read as data the boot loses (#355).
-J_TMP="" J_TMPRULE="" _a=""
+J_TMP="" J_TMPRULE="" _a="" TMP_N=0
 tmp_rule
 jaddsn J_TMPRULE rule "$TMP_RULE"
 jaddsn J_TMPRULE rule_file "$TMP_RULE_FILE"
@@ -669,6 +673,7 @@ if [ "$TMP_CLEARED" != 0 ]; then
     [ "$_f" != "$P_TMP" ] || continue
     case ${_f##*/} in systemd-private-* | .*-unix | snap-private-tmp) continue ;; esac
     jpushs _a "$_f"
+    TMP_N=$((TMP_N + 1))
   done < <(find "$P_ROOT/tmp" -mindepth 1 -maxdepth 1 2>/dev/null | sort)
 fi
 J_TMP="[$_a]"
@@ -682,12 +687,27 @@ next_lines() {  # <the chain's fire time, or empty when nothing is scheduled>
   else
     NEXT+=("Once a launched chain's fire time has passed, read its outcome: $outcome. $ab.")
   fi
-  NEXT+=("After the boot: bash \"$_libdir/probe.sh\" --post-boot --run \"$run\" --config \"$config\" --host $host (reboot-and-record.md section 6).")
+  # The run's copy of a --config knob, which the boot can't empty (#681).
+  NEXT+=("After the boot: bash \"$_libdir/probe.sh\" --post-boot --run \"$run\" --config \"${KNOB_COPY:-$config}\" --host $host (reboot-and-record.md section 6).")
   NEXT+=("The journal copy in $run/journal is a recovery-point file: delete it with the others, on their retention.")
 }
 
+# Said where the owner reads before approving, not left in tmp_staged: on
+# power-map's run the list was in the JSON, and nobody read it out (#680).
+if [ "$TMP_N" -gt 0 ]; then
+  _w=paths
+  [ "$TMP_N" -ne 1 ] || _w=path
+  if [ "$TMP_CLEARED" = 1 ]; then
+    NEXT+=("The boot empties /tmp: $TMP_N $_w under it will be gone (tmp_staged lists them). Copy anything to keep, such as a --config knob or a session's notes, before the reboot.")
+  else
+    NEXT+=("Whether the boot empties /tmp is unknown: $TMP_N $_w under it may be gone (tmp_staged lists them). Copy anything to keep before the reboot.")
+  fi
+fi
+
 if [ "${#REFUSED[@]}" -gt 0 ]; then
   for _r in "${REFUSED[@]}"; do echo "reboot-chain: refused: $_r" >&2; done
+  # Nothing is written before an approval: an earlier step's copy is named.
+  knob_keep "$config_given" "$config" "$run" 0 || true
   next_lines ""
   emit
   exit 3
@@ -695,8 +715,10 @@ fi
 
 # --- the launch ------------------------------------------------------------------
 _o="" _rc=0 _fire=$((P_NOW + delay)) _iso="" _now="" _left=""
+if ! knob_keep "$config_given" "$config" "$run" 1; then
+  fail "$KNOB_COPY_WHY: nothing is scheduled"
 # An absolute path, so no --: BSD chmod reads it as a file.
-if ! printf '%s' "$CHAIN" | root_write "$script" || ! as_root chmod 700 "$script"; then
+elif ! printf '%s' "$CHAIN" | root_write "$script" || ! as_root chmod 700 "$script"; then
   fail "$script couldn't be written"
 else
   # The span was gated from P_NOW, and every inflight command has run
@@ -721,6 +743,7 @@ else
     fi
   fi
 fi
+[ -z "$KNOB_COPY_NOTE" ] || NEXT+=("$KNOB_COPY_NOTE")
 jaddn _o exit "$_rc"
 jadds _o unit "$unit"
 jaddn _o on_active_seconds "$_left"

@@ -34,7 +34,10 @@ This file is a library. Source it; do not run it:
   . "<dir>/_knob-lib.sh"
   knob_load <path> <host> <today YYYY-MM-DD>
       returns 2 if <path> exists but can't be read, or the host or date
-      isn't one; a <path> that doesn't exist returns 0, KNOB_PRESENT=0
+      isn't one; a <path> that doesn't exist returns 0, KNOB_PRESENT=0.
+      One the caller can't read, or can't see for a directory it can't
+      enter, is read through sudo -n where that asks no password (a run's
+      copy of a --config knob is root's, #681), unless P_NO_SUDO=1
 
 Call knob_load plainly, never inside if, && or ||: bash turns errexit off for
 everything a condition runs, and a failure in the library would go unseen.
@@ -500,7 +503,7 @@ _knob_directive() {  # <line> <sec> <text>
   esac
 }
 
-_knob_parse_file() {
+_knob_parse_file() {  # <the file to read>
   local n=0 sec=-1 line s t j glob hre _KNOB_CUT=""
   hre='^\[host[[:space:]]+([^][:space:]]+)[[:space:]]*\]$'
   while IFS= read -r line || [ -n "$line" ]; do
@@ -554,7 +557,7 @@ _knob_parse_file() {
           _knob_directive "$n" "$sec" "$s"
         fi ;;
     esac
-  done <"$KNOB_PATH"
+  done <"$1"
 }
 
 # Which sections apply to this host, and at what rank. Globs apply from the
@@ -912,6 +915,33 @@ _knob_report_only() {
   [ "${#KNOB_REPORT_ONLY_WHY[@]}" -eq 0 ] || KNOB_REPORT_ONLY=1
 }
 
+# PATH's bytes as root, through sudo -n, in a file of the caller's: VAR :=
+# its path. One that doesn't exist, even to root, is left absent: VAR := a
+# path that doesn't exist. 1 where sudo can't read it, or isn't asked: the
+# caller is root already, or P_NO_SUDO=1.
+_knob_read_as_root() {  # <var> <path>
+  local _kr_t
+  [ "${P_NO_SUDO:-0}" != 1 ] || return 1
+  [ "$(id -u)" -ne 0 ] || return 1
+  command -v sudo >/dev/null 2>&1 || return 1
+  _kr_t=$(mktemp "${TMPDIR:-/tmp}/knob.XXXXXX") || return 1
+  if sudo -n -- test -e "$2" 2>/dev/null; then
+    # The copy is the caller's own, so the redirect is meant to be too.
+    # shellcheck disable=SC2024
+    if ! sudo -n -- cat -- "$2" >"$_kr_t" 2>/dev/null; then
+      rm -f -- "$_kr_t"
+      return 1
+    fi
+  elif sudo -n -- true 2>/dev/null; then
+    # Root sees no file there either: the knob is absent.
+    rm -f -- "$_kr_t"
+  else
+    rm -f -- "$_kr_t"
+    return 1
+  fi
+  printf -v "$1" '%s' "$_kr_t"
+}
+
 knob_load() {  # <path> <host> <today YYYY-MM-DD>
   # Words split and join on the default separators, whatever the caller set:
   # under a strict IFS=$'\n\t', a line would read as one word, and a joined
@@ -930,16 +960,33 @@ knob_load() {  # <path> <host> <today YYYY-MM-DD>
     return 2
   fi
   KNOB_PATH=$1 KNOB_HOST=$2 KNOB_TODAY=$3
-  if [ -e "$KNOB_PATH" ]; then
-    if [ -d "$KNOB_PATH" ] || [ ! -r "$KNOB_PATH" ]; then
+  local _kl_from=$KNOB_PATH _kl_tmp="" _kl_d
+  # A run's copy of a --config knob is root's, in a 0700 directory (#681):
+  # one the caller can't read, or can't see for a directory it can't enter,
+  # is read as root, through sudo -n where that asks no password, as the
+  # probe's other root-only reads are. One it still can't read is an error,
+  # never an absent knob, which would read as the defaults.
+  _kl_d=$(dirname -- "$KNOB_PATH")
+  if { [ -e "$KNOB_PATH" ] && [ ! -d "$KNOB_PATH" ] && [ ! -r "$KNOB_PATH" ]; } ||
+    { [ ! -e "$KNOB_PATH" ] && [ -d "$_kl_d" ] && [ ! -x "$_kl_d" ]; }; then
+    if ! _knob_read_as_root _kl_tmp "$KNOB_PATH"; then
+      echo "ERROR the knob at $KNOB_PATH exists but can't be read: it, or its directory, is root's, and sudo -n couldn't read it" >&2
+      return 2
+    fi
+    _kl_from=$_kl_tmp
+  fi
+  if [ -e "$_kl_from" ]; then
+    if [ -d "$_kl_from" ] || [ ! -r "$_kl_from" ]; then
       echo "ERROR the knob at $KNOB_PATH exists but can't be read" >&2
+      [ -z "$_kl_tmp" ] || rm -f -- "$_kl_tmp"
       return 2
     fi
     KNOB_PRESENT=1
     local LC_ALL=C
-    _knob_parse_file
+    _knob_parse_file "$_kl_from"
     _knob_match_sections
   fi
+  [ -z "$_kl_tmp" ] || rm -f -- "$_kl_tmp"
   _knob_resolve
   _knob_report_only
 }

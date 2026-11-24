@@ -98,7 +98,9 @@ Options:
                            take to answer its own check after them
   --config FILE            the knob (default: .skills/patching-hosts at the
                            root of the repo around the current directory, or
-                           in the current directory outside a repo)
+                           in the current directory outside a repo). One
+                           given is kept in the run's directory, root's at
+                           600, as knob-<sha256's first 12>: apply.knob_copy
   --host NAME              whose knob sections apply (default: `hostname`)
   --today YYYY-MM-DD       the date exceptions expire against (default:
                            today, UTC)
@@ -162,6 +164,7 @@ The run's directory is root-only: 0700, and each file 0600.
   recovery-point   written before the bulk (run.md section 2 has its lines)
   lane.conf        another lane's APT_CONFIG, which each step reads
   dry-run          the dry run's summary, for the held steps' gate
+  knob-<sha12>     each --config knob a step ran under, by its sha256 (#681)
   before-versions, before-showhold, before-showauto
   holds            "<step> <package>": each hold the run placed
   hold-versions    "<package> <version> <class>": each held package's candidate
@@ -187,7 +190,11 @@ against the recovery point's), redis (each Redis datastore, and for one the
 held step restarted, what its log says of the shutdown before and the load
 after), restarters, verdict (version_moved lists each held package whose
 version differs from the one the dry run counted, outside the security lane:
-a line for the owner, never a refusal), abort, next and reprobe.
+a line for the owner, never a refusal), abort, next and reprobe. The
+bulk's upgrade also has uncounted, each package it took that the dry run
+didn't count, published since (null where the dry run's selection wasn't
+read), and dry_run_age_seconds, the dry run's age at the bulk's start
+(#680).
 
 Exit codes:
   0  the step ran, and its verdict is green
@@ -206,7 +213,7 @@ Exit codes:
 USAGE
 }
 
-step="" approve=0 run="" dryrun="" config="" host="" today="" health_within=300 lane="" planf="" standing=0
+step="" approve=0 run="" dryrun="" config="" config_given=0 host="" today="" health_within=300 lane="" planf="" standing=0
 attest=() objects=()
 while [ "$#" -gt 0 ]; do
   case $1 in
@@ -225,7 +232,7 @@ while [ "$#" -gt 0 ]; do
         --offnode-sha256) attest+=("$2") ;;
         --offnode-object) objects+=("$2") ;;
         --health-within) health_within=$2 ;;
-        --config) config=$2 ;;
+        --config) config=$2 config_given=1 ;;
         --host) host=$2 ;;
         --today) today=$2 ;;
       esac
@@ -671,6 +678,9 @@ DRY_SECURITY_ONLY="" SEL_READ=0
 SEL_NAME=() SEL_VERSION=() SEL_CLASS=()
 # What the dry run left as phased updates apt would defer here (#686).
 DRY_DEFERRED=""
+# What the dry run counted, by name: its select lines and the bulk's own
+# share. DRY_COUNTED_READ is 1 where either was read (#680).
+DRY_BEGAN="" DRY_COUNTED="" DRY_COUNTED_READ=0
 gate_dry() {
   local line rc="" count="" began="" iso dlane=security dleft="" dleft_seen=0 dphasing=ignore
   local -a _sf=()
@@ -698,11 +708,13 @@ gate_dry() {
       lists_refreshed=*) lref=${line#lists_refreshed=} ;;
       lists_age_hours=*) lage=${line#lists_age_hours=} ;;
       security_only=*) DRY_SECURITY_ONLY=${line#security_only=} ;;
-      select_read=1) SEL_READ=1 ;;
+      select_read=1) SEL_READ=1 DRY_COUNTED_READ=1 ;;
+      bulk_takes=*) DRY_COUNTED="$DRY_COUNTED ${line#bulk_takes=}" DRY_COUNTED_READ=1 ;;
       select=*)
         read -r -a _sf <<<"${line#select=}"
         if [ "${#_sf[@]}" -eq 3 ]; then
           SEL_NAME+=("${_sf[0]}") SEL_VERSION+=("${_sf[1]}") SEL_CLASS+=("${_sf[2]}")
+          DRY_COUNTED="$DRY_COUNTED ${_sf[0]}"
         fi ;;
     esac
   done <<<"$DRY_SUMMARY"
@@ -747,6 +759,7 @@ gate_dry() {
     refuse "the dry run counted against lists fetched $lage hours before it, so its count is the lists', not the host's: count again with probe.sh --refresh-into DIR --dry-run-into DIR"
   fi
   is_int "$EXPECT" || refuse "$dryrun/summary holds no wall time"
+  DRY_BEGAN=$began
   if ! is_int "$began"; then
     refuse "$dryrun/summary doesn't say when the dry run began: count again with this skill's probe.sh"
   elif [ $((P_NOW - began)) -gt "$DRY_MAX_AGE" ]; then
@@ -1774,6 +1787,7 @@ emit() {
   jadd a approval "$r"
   jadds a host "$host"
   jadds a knob "$config"
+  jadd a knob_copy "$KNOB_COPY_J"
   jadd o apply "{$a}"
   a=""
   for r in ${REFUSED[@]+"${REFUSED[@]}"}; do jpushs a "$r"; done
@@ -1883,7 +1897,7 @@ read_origin_left() {
 
 UU_RC="" UU_WALL="" UU_RSS="" UU_INSTALLED=0 UU_NOTHING=0 UU_UPGRADED="" UU_REMOVED=""
 run_uu() {
-  local log=$run/$step.log rss=$run/$step.max-rss-kib t0 out line o="" w
+  local log=$run/$step.log rss=$run/$step.max-rss-kib t0 out line o="" w p un="" n
   local -a lenv=()
   # Another lane adds its origins to the host's own through APT_CONFIG,
   # read before apt.conf.d.
@@ -1935,6 +1949,25 @@ run_uu() {
   jadd o upgraded "$w"
   json_words w "$UU_REMOVED"
   jadd o auto_removed "$w"
+  # What the bulk took that its dry run didn't count: published since. On
+  # power-map, noble-security's libcpanel-json-xs-perl came out between a
+  # 01:04Z dry run and a 05:36Z bulk, and only a diff by hand found it
+  # (#680). Read against the dry run's selection, so null where that wasn't.
+  if [ "$step" = bulk ]; then
+    w=null
+    if [ "$DRY_COUNTED_READ" -eq 1 ]; then
+      for p in $UU_UPGRADED; do in_words "$p" "$DRY_COUNTED" || un="$un $p"; done
+      json_words w "$un"
+    fi
+    jadd o uncounted "$w"
+    n=""
+    if is_int "$DRY_BEGAN"; then n=$((P_NOW - DRY_BEGAN)); fi
+    jaddn o dry_run_age_seconds "$n"
+    if [ -n "$un" ]; then
+      words_of un "$un"
+      NEXT+=("The bulk took what its dry run didn't count, published in the ${n:-unknown} s since it began: $un (upgrade.uncounted). Read them before the next approval.")
+    fi
+  fi
   jadds o log "$log"
   J_UPGRADE="{$o}"
   # The verdict: the exit code, the line, and dpkg's own audit. Never a
@@ -2329,6 +2362,11 @@ do_bulk() {
     fail "$run couldn't be made"
     return 0
   fi
+  if ! knob_keep "$config_given" "$config" "$run" 1; then
+    fail "$KNOB_COPY_WHY: nothing was held or upgraded"
+    return 0
+  fi
+  [ -z "$KNOB_COPY_NOTE" ] || NEXT+=("$KNOB_COPY_NOTE")
   # The host's own lists: the probe's dry run counted against a scratch copy,
   # and on a host whose timers are masked, these may be months old. Every
   # source must fetch: without --error-on=any, one that fails exits 0, and
@@ -2937,5 +2975,12 @@ do_held() {
   J_RESTARTERS="[$a]"
 }
 
-if [ "$step" = bulk ]; then do_bulk; else do_held; fi
+if [ "$step" = bulk ]; then
+  do_bulk
+elif ! knob_keep "$config_given" "$config" "$run" 1; then
+  fail "$KNOB_COPY_WHY: nothing was released or upgraded"
+else
+  [ -z "$KNOB_COPY_NOTE" ] || NEXT+=("$KNOB_COPY_NOTE")
+  do_held
+fi
 finish
