@@ -321,14 +321,15 @@ def test_a_prune_stage_past_its_date_is_a_soak_ending_not_a_lapse(tmp_path, what
 
 
 def test_a_soak_ending_names_each_component_the_probe_reads():
-    # The library's list of the six is the prune library's (#636): a seventh
-    # added there alone would be told the probe doesn't read it.
+    # The library's list of the components is the prune library's (#636): one
+    # added there alone would be told the probe doesn't read it, as valkey
+    # nearly was (#706).
     prune_lib = (SKILL / "scripts" / "_prune-lib.sh").read_text()
     knob_lib = (SKILL / "scripts" / "_knob-lib.sh").read_text()
-    six = re.search(r'^PRUNE_COMPONENTS="([^"]+)"', prune_lib, re.M).group(1).split()
-    case = re.search(r"^\s*([a-z|\s]+)\)\s*# the six \(#636\)", knob_lib, re.M)
-    assert case, "the soak-ended case on the six is gone from _knob-lib.sh"
-    assert sorted(w.strip() for w in case.group(1).split("|")) == sorted(six)
+    known = re.search(r'^PRUNE_COMPONENTS="([^"]+)"', prune_lib, re.M).group(1).split()
+    case = re.search(r"^\s*([a-z|\s]+)\)\s*# the [a-z]+ \(#636", knob_lib, re.M)
+    assert case, "the soak-ended case on the components is gone from _knob-lib.sh"
+    assert sorted(w.strip() for w in case.group(1).split("|")) == sorted(known)
 
 
 def test_a_repeat_at_the_same_precedence_is_a_finding_and_the_later_line_wins(tmp_path):
@@ -425,7 +426,13 @@ def test_a_hold_line_replaces_its_default_step_and_the_others_stay(tmp_path):
     # A list, not a dict: a default left beside its replacement would collapse
     # into one key and pass.
     assert out["hold"] == [
-        {"step": "redis", "globs": ["redis-server", "redis-tools"], "line": None},
+        # Valkey's too (#706): valkey-server's postinst restarts it on an
+        # upgrade, so outside a held step the bulk would.
+        {
+            "step": "redis",
+            "globs": ["redis-server", "redis-tools", "valkey-server", "valkey-tools"],
+            "line": None,
+        },
         {"step": "docker", "globs": ["docker.io", "containerd"], "line": None},
         {"step": "postgres", "globs": ["postgresql-16"], "line": 2},
         {"step": "ts", "globs": ["tailscale"], "line": 3},

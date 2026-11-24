@@ -34,10 +34,10 @@ conffiles, Postgres clusters and group members. A stage refuses when the
 host no longer matches it, so an approval binds to exactly what it names.
 
 Options:
-  --component NAME   docker, postgres, redis, nginx, ollama or qdrant, or
-                     apt:PACKAGE[,PACKAGE...] for any other apt package: its
-                     units are the ones its packages ship, and the knob's
-                     stage lines call it by the list after apt:
+  --component NAME   docker, postgres, redis, valkey, nginx, ollama or
+                     qdrant, or apt:PACKAGE[,PACKAGE...] for any other apt
+                     package: its units are the ones its packages ship, and
+                     the knob's stage lines call it by the list after apt:
   --take-orphans     take what the packages alone leave no longer required,
                      each named under packages.orphans, as a stage takes the
                      rest: never by an autoremove, and apt's orphans from
@@ -67,7 +67,7 @@ Exit codes:
      prune_plan and error are printed, and no plan is written. Or --out
      couldn't be written
   2  usage error, among them an apt: component whose removal, or
-     with --take-orphans whose orphans, take a package one of the six
+     with --take-orphans whose orphans, take a package one of the seven
      owns; an unreadable knob, or a library missing: nothing on
      stdout
 USAGE
@@ -94,7 +94,7 @@ while [ "$#" -gt 0 ]; do
 done
 
 if [ -z "$component" ]; then
-  echo "ERROR --component is required: docker, postgres, redis, nginx, ollama, qdrant or apt:<package>" >&2
+  echo "ERROR --component is required: docker, postgres, redis, valkey, nginx, ollama, qdrant or apt:<package>" >&2
   exit 2
 fi
 case $component$out$config in *[[:cntrl:]]*)

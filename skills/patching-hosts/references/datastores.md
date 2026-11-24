@@ -1,4 +1,4 @@
-# Data stores: Redis and Qdrant
+# Data stores: Redis, Valkey and Qdrant
 
 What each engine a `datastore` line names takes, beyond [run.md](run.md)'s steps. Postgres's dump and its three gates are run.md §2's own example.
 
@@ -43,6 +43,12 @@ Measured on noble's 7.0: a snapshot copied over `dump.rdb` came up with the AOF'
 - **this one** to have logged `DB loaded from …` where it persists anything, then `Ready to accept connections`.
 
 Under `appendonly yes`, `Creating AOF base file … on server start` means it found no AOF, so it loaded nothing: the check fails, and the recovery point is what restores it. `keys loaded: <N>` counts the RDB base alone, not the incr's keys, so it's no total (measured on 7.0). A held step asks once a second, for up to `--health-within` seconds, until it logs that it's ready.
+
+### Valkey
+
+A `datastore redis <unit>` line covers Ubuntu's `valkey-server` too (7.2 in `noble-updates`), which takes Redis's commands and replies, and co-installs with `redis-server` (#706). It renames everything: `valkey-server.service`, `/etc/valkey/valkey.conf`, `/var/lib/valkey`, `/var/log/valkey`, and its `valkey-tools` ships `valkey-cli` and `valkey-check-rdb`, no `redis-cli` (only `valkey-redis-compat` does, and it removes `redis-server`). So the scripts take the client by the server the unit's `ExecStart` runs, or by its name where that can't be read: `valkey-cli` and `valkey-check-rdb` for `valkey-server`, `redis-cli` and `redis-check-rdb` otherwise. A Valkey host needs `valkey-tools`, not `redis-tools`. `valkey-cli` takes `REDISCLI_AUTH`, and answers an anonymous command with the same `NOAUTH`; its log's banner and shutdown say `Valkey`, which the restart check reads (measured on 7.2.14).
+- **The default `redis` hold step takes `valkey-server valkey-tools` too** ([knob.md](knob.md)): its postinst restarts the unit on an upgrade, so in the bulk it would restart outside a held step.
+- **The probe reads Valkey as its own engine, `valkey`**, by its unit, `valkey-cli INFO` and `/var/log/valkey`, and prunes it as `--component valkey`. A datastore line counts for the engine its unit runs, so a `redis-server` kept stopped for rollback reads by its own idleness: `dormant` after 30 days, until a `keep:redis` exception covers it or it's removed.
 
 ## Qdrant
 

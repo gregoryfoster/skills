@@ -1952,7 +1952,7 @@ redis_restart_check() {  # <unit>
     /^[0-9]+:[A-Z] / {
       q = substr($0, 1, index($0, ":") - 1)
       r = substr($0, index($0, ":") + 1, 1)
-      if (q == p && (cur != 1 || index($0, "Redis is starting"))) {
+      if (q == p && (cur != 1 || index($0, " is starting oO0"))) {
         cur = 1; start = 1; loaded = 0; ready = 0; created = 0; prev = lastm
       }
       if (q == p) {

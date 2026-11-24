@@ -776,7 +776,7 @@ _knob_resolve() {
               disabled:* | removed:*)
                 next=${f[0]#*:}
                 case $next in
-                  docker | postgres | redis | nginx | ollama | qdrant) # the six (#636)
+                  docker | postgres | redis | valkey | nginx | ollama | qdrant) # the seven (#636, #706)
                     next="the probe reports the component again; prune-plan.sh --component $next names the next stage" ;;
                   *) next="the probe doesn't read an apt package; prune-plan.sh --component apt:$next names the next stage" ;;
                 esac
@@ -819,9 +819,10 @@ _knob_resolve() {
   _knob_resolve_rebuild
 
   # Holds: the defaults, each replaced by a knob line naming its step, plus
-  # any step only the knob names.
+  # any step only the knob names. Valkey's packages go in the redis step:
+  # valkey-server's postinst restarts it on an upgrade (#706, measured).
   _knob_select hold keyed
-  local defaults=("postgres${u}postgresql-* libpq5" "redis${u}redis-server redis-tools" "docker${u}docker.io containerd")
+  local defaults=("postgres${u}postgresql-* libpq5" "redis${u}redis-server redis-tools valkey-server valkey-tools" "docker${u}docker.io containerd")
   for val in "${defaults[@]}"; do
     step=${val%%"$u"*}
     for i in ${_KSEL[@]+"${_KSEL[@]}"}; do
