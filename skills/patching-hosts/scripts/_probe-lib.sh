@@ -1259,38 +1259,93 @@ redact_url() {  # <var> <word>: the word with each URL's userinfo and secret par
   done
   printf -v "$1" '%s' "$_ru_out$_ru_w"
 }
-ARG_NEXT=0  # 1 when redact_arg's word names a secret whose value is the next word
+# An environment name may run its secret word on with no separator:
+# PGPASSWORD, GITHUB_TOKEN's kin MYTOKEN (CR 2813). A NO_ name stays a
+# boolean, as --no- is.
+SECRET_ENV_SUFFIXES="password passwd passphrase token secret apikey api_key"
+secret_env_name() {  # <NAME>: 0 when an environment name marks a secret
+  local _se_s _se_nc=0 _se_rc=1
+  if secret_arg_name "$1"; then return 0; fi
+  shopt -q nocasematch && _se_nc=1
+  shopt -s nocasematch
+  case $1 in
+    no[-_]*) ;;
+    *)
+      for _se_s in $SECRET_ENV_SUFFIXES; do
+        case $1 in *"$_se_s") _se_rc=0 ;; esac
+      done ;;
+  esac
+  [ "$_se_nc" -eq 1 ] || shopt -u nocasematch
+  return "$_se_rc"
+}
+# A shell's quoting, as xtrace prints it and a script string holds it: a
+# word may open with a quote (+ export 'DB_PASSWORD=p@ss'), and a redacted
+# value that opens one runs to the word that closes it (CR 2813).
+ARG_NEXT=0   # 1 when redact_arg's word names a secret whose value is the next word
+ARG_QUOTE="" # the quote a redacted value opened and its own word didn't close
+quote_left_open() {  # <var> <word>: VAR := the quote the word opens and doesn't close, or empty
+  local _qo_q="" _qo_r
+  case $2 in
+    \'* | \"*)
+      _qo_q=${2:0:1} _qo_r=${2:1}
+      case $_qo_r in *"$_qo_q") _qo_q="" ;; esac ;;
+  esac
+  printf -v "$1" '%s' "$_qo_q"
+}
 redact_arg() {  # <var> <word>: one word under the name rule
-  local _ra_w=$2 _ra_n
-  ARG_NEXT=0
+  local _ra_w=$2 _ra_n _ra_q="" _ra_v="" _ra_red=0
+  ARG_NEXT=0 ARG_QUOTE=""
+  case $_ra_w in \'?* | \"?*) _ra_q=${_ra_w:0:1} _ra_w=${_ra_w:1} ;; esac
   case $_ra_w in
     --?* | -[!-]?*)
       _ra_n=${_ra_w%%=*}
       _ra_n=${_ra_n#-}
       case $_ra_n in -*) _ra_n=${_ra_n#-} ;; D?*) _ra_n=${_ra_n#D} ;; esac
       if secret_arg_name "$_ra_n"; then
-        case $_ra_w in *=*) _ra_w="${_ra_w%%=*}=<redacted>" ;; *) ARG_NEXT=1 ;; esac
+        case $_ra_w in
+          *=*) _ra_v=${_ra_w#*=} _ra_w="${_ra_w%%=*}=<redacted>" _ra_red=1 ;;
+          *) ARG_NEXT=1 ;;
+        esac
       fi ;;
     # An environment assignment, as in a script string or env's argv, is an
     # option with no dash (CR 2792).
     [A-Za-z_]*=*)
       _ra_n=${_ra_w%%=*}
-      if [[ $_ra_n =~ $ENV_NAME ]] && secret_arg_name "$_ra_n"; then _ra_w="$_ra_n=<redacted>"; fi ;;
+      if [[ $_ra_n =~ $ENV_NAME ]] && secret_env_name "$_ra_n"; then
+        _ra_v=${_ra_w#*=} _ra_w="$_ra_n=<redacted>" _ra_red=1
+      fi ;;
   esac
+  if [ "$_ra_red" -eq 1 ]; then
+    # The value runs in the word's own opening quote, or one of its own.
+    if [ -n "$_ra_q" ]; then
+      case $_ra_v in *"$_ra_q") ;; *) ARG_QUOTE=$_ra_q ;; esac
+      _ra_w="$_ra_q$_ra_w$_ra_q"
+    else
+      quote_left_open ARG_QUOTE "$_ra_v"
+    fi
+  else
+    _ra_w="$_ra_q$_ra_w"
+  fi
   redact_url _ra_w "$_ra_w"
   printf -v "$1" '%s' "$_ra_w"
 }
 redact_words() {  # <var> <word>...: the words under the name rule, joined by a space
-  local _rw_v=$1 _rw_w _rw_out="" _rw_next=0
+  local _rw_v=$1 _rw_w _rw_out="" _rw_next=0 _rw_q=""
   shift
   for _rw_w in "$@"; do
+    # Inside a redacted value's quote: dropped, through the word closing it.
+    if [ -n "$_rw_q" ]; then
+      case $_rw_w in *"$_rw_q") _rw_q="" ;; esac
+      continue
+    fi
     if [ "$_rw_next" -eq 1 ]; then
       _rw_next=0
       _rw_out="$_rw_out <redacted>"
+      quote_left_open _rw_q "$_rw_w"
       continue
     fi
     redact_arg _rw_w "$_rw_w"
-    _rw_next=$ARG_NEXT
+    _rw_next=$ARG_NEXT _rw_q=$ARG_QUOTE
     _rw_out="$_rw_out $_rw_w"
   done
   printf -v "$_rw_v" '%s' "${_rw_out# }"

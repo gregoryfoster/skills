@@ -443,6 +443,37 @@ def test_live_args_redacts_the_final_round_s_forms(host, argv, args):
     assert "abc" not in host.result.stdout
 
 
+@pytest.mark.parametrize(
+    "argv, args",
+    [
+        # CR 2813: a word that opens with xtrace's quote, a quoted value
+        # that spans words, and an environment name with its secret word
+        # run on. MONKEY isn't a key, and NO_TOKEN stays a boolean.
+        (
+            ["/bin/sh", "-c", "export 'DB_PASSWORD=p@abc!w0rd' && exec d"],
+            "/bin/sh -c export 'DB_PASSWORD=<redacted>' && exec d",
+        ),
+        (
+            ["/bin/sh", "-c", "d --password 'a abc c' --region us"],
+            "/bin/sh -c d --password <redacted> --region us",
+        ),
+        (
+            ["/bin/sh", "-c", "cd / && DB_PASSWORD='x abc' exec d"],
+            "/bin/sh -c cd / && DB_PASSWORD=<redacted> exec d",
+        ),
+        (["env", "PGPASSWORD=abc", "psql"], "env PGPASSWORD=<redacted> psql"),
+        (
+            ["env", "MYTOKEN=abc", "MONKEY=banana", "NO_TOKEN=1", "d"],
+            "env MYTOKEN=<redacted> MONKEY=banana NO_TOKEN=1 d",
+        ),
+    ],
+)
+def test_live_args_redacts_the_journal_review_s_forms(host, argv, args):
+    e = _service_argv(host, argv)
+    assert e["args"] == args
+    assert "abc" not in host.result.stdout
+
+
 def test_an_argv_rewritten_as_one_string_is_read_by_its_words(host):
     # CR 2768: a process that rewrote its argv as one string, padded with
     # NULs, is one element; its words are redacted as arguments.
