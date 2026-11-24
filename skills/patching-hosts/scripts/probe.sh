@@ -3445,7 +3445,7 @@ unit_of_pid() {  # <var> <pid>: the systemd unit its cgroup names, or empty
 # package out of the set. MAPS_PAIRS keeps each "<unit>|<package>|<pid>".
 MAPS_PAIRS=""
 read_maps() {
-  local p f out line pid pkg u e w pairs="" ulist="" pk pids np
+  local p f out line pid pkg u e w pairs="" ulist="" pk pids np lp
   local -a maps=()
   R_MAPS=null
   # An unsimulated set isn't an empty one: what maps it is unknown.
@@ -3521,9 +3521,25 @@ read_maps() {
     json_list w "$pk"
     jadd e packages "$w"
     if in_words "$u" "$DS_UNITS"; then jaddb e datastore 1; else jaddb e datastore 0; fi
+    # Which of them the dry run's lane takes (#686): the security lane's
+    # listed libsystemd0, mapped by PID 1 and Postgres, with no systemd
+    # package in its selection. All stay listed, to compare lanes.
+    if [ -n "$SEC_EXACT" ]; then
+      lp=""
+      for p in $pk; do
+        if in_words "$p" "$SEC_EXACT"; then lp="$lp $p"; fi
+      done
+      json_list w "$lp"
+      jadd e lane_packages "$w"
+      if [ -n "$lp" ]; then jaddb e in_lane 1; else jaddb e in_lane 0; fi
+    fi
     jpush byunit "{$e}"
   done
-  R_MAPS="{\"units\": [$byunit], \"source\": \"/proc/*/maps, read as root, against each pending package's shared objects\"}"
+  w=""
+  jadd w units "[$byunit]"
+  if [ -n "$SEC_EXACT" ]; then jadds w lane "$lane"; fi
+  jadds w source "/proc/*/maps, read as root, against each pending package's shared objects"
+  R_MAPS="{$w}"
 }
 
 # A third-party origin carrying a serving runtime (#464): a pending package
