@@ -5,7 +5,7 @@ set -euo pipefail
 usage() {
   cat <<'USAGE'
 Usage: bash probe.sh [--config FILE] [--host NAME] [--root DIR] [--repo DIR]
-                     [--refresh-into DIR] [--dry-run-into DIR]
+                     [--refresh-into DIR [--no-language]] [--dry-run-into DIR]
                      [--lane security|maintenance|origin:<origin>]
                      [--post-boot [--run DIR]] [--session-pid PID]
                      [--no-sudo] [--today YYYY-MM-DD]
@@ -46,6 +46,11 @@ Options:
                       (pending.language), which nothing else asks for: per
                       package, its advisories' ids, and in the same order
                       the versions that fix each ([] none, null unread)
+  --no-language       take --refresh-into's lists without the uv.lock audit,
+                      as a scheduled report does (#702): pending.language is
+                      null and not_read says it wasn't asked. Without
+                      --refresh-into, or under --post-boot, there's no
+                      audit to drop, and it changes nothing else
   --dry-run-into DIR  count the selection with unattended-upgrade --dry-run,
                       as root, with apt's cache in DIR/archives. It downloads
                       the whole set (290 MB and 9 minutes on one host) and
@@ -140,7 +145,7 @@ USAGE
 }
 
 config="" host="" root=/ repo="" refresh="" dryrun="" postboot=0 session_pid="" today="" lane="" run=""
-P_NO_SUDO=0
+P_NO_SUDO=0 no_language=0
 repo_set=0
 while [ "$#" -gt 0 ]; do
   case $1 in
@@ -161,6 +166,7 @@ while [ "$#" -gt 0 ]; do
       shift 2 ;;
     --post-boot) postboot=1; shift ;;
     --no-sudo) P_NO_SUDO=1; shift ;;
+    --no-language) no_language=1; shift ;;
     -h | --help) usage; exit 0 ;;
     *) echo "ERROR unknown argument: $1 (see --help)" >&2; exit 2 ;;
   esac
@@ -2724,7 +2730,12 @@ read_language() {
   fi
   # An audit asks OSV, and takes up to a minute a tree. Like the lists'
   # refresh, it's taken only when asked: apply.sh's probe after each step
-  # never asks, and an apt step can't change a lockfile (CR 231).
+  # never asks, and an apt step can't change a lockfile (CR 231). A caller
+  # that wants the lists alone, a daily report, declines it (#702).
+  if [ "$no_language" -eq 1 ]; then
+    not_read "language dependencies: not asked (--no-language)"
+    return 0
+  fi
   if [ -z "$refresh" ]; then
     not_read "language dependencies: audited only with --refresh-into, which takes the probe's network readings"
     return 0

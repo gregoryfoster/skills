@@ -19,12 +19,17 @@ it (2026-10-29):
   none exists, `null` where it said neither.
 - #391: an origin of the shape `<user>@github*:Owner/repo(.git)` names its
   owner, by that shape alone: no ssh config is read and no ssh runs.
+- #702: `--no-language` takes `--refresh-into`'s lists without the audit, for
+  a daily report that discards `pending.language`. uv never runs, the class
+  reads null as without a refresh, and `not_read` says it wasn't asked.
+  `--refresh-into` alone audits as before: an executor's run relies on it.
 
 The probe's rig and the language helpers are test_patching_hosts_probe.py's.
 """
 
 import os
 import shutil
+import subprocess
 import tempfile
 from pathlib import Path
 
@@ -33,9 +38,11 @@ import pytest
 from tests.structural.patching_hosts_rig import dispatcher
 from tests.structural.test_patching_hosts_probe import (
     APP,
+    PROBE,
     UV_CLEAN,
     Host,
     _audit,
+    _clean_env,
     _finding,
     _ids,
     _lang,
@@ -673,3 +680,68 @@ def test_a_header_alone_lists_none_and_an_advisory_without_a_fix_line_is_unread(
             "fixed_in": [None],
         },
     ]
+
+
+# --- #702: a refresh without the language audit --------------------------------
+
+NOT_ASKED = "language dependencies: not asked (--no-language)"
+
+
+def test_no_language_takes_the_refresh_without_the_audit(host):
+    _tree(host)
+    _knob(host, "service app.service")
+    _uv(host)
+    host.on("apt-get", "update*", "Reading package lists...\n")
+    out = host.run("--refresh-into", str(host.tmp / "fresh"), "--no-language")
+    assert out["pending"]["language"] is None
+    assert NOT_ASKED in out["not_read"]
+    assert not host.calls("uv")
+    # The refresh itself still ran, into DIR/lists.
+    assert out["pending"]["lists"]["refreshed"] is True
+    assert any(c[1].startswith("update") for c in host.calls("apt-get"))
+
+
+def test_a_refresh_alone_still_audits(host):
+    _tree(host)
+    _knob(host, "service app.service")
+    _uv(host)
+    out = _audit(host)
+    [t] = _lang(out)
+    assert t["audited"] is True
+    assert host.calls("uv")
+    assert NOT_ASKED not in out["not_read"]
+
+
+def test_no_language_without_a_refresh_is_accepted_and_says_why(host):
+    # Harmless: without --refresh-into there's no audit to drop, and the
+    # reason names the flag the caller passed.
+    _tree(host)
+    _uv(host)
+    out = host.run("--no-language")
+    assert out["pending"]["language"] is None
+    assert NOT_ASKED in out["not_read"]
+    assert not any("audited only with" in n for n in out["not_read"])
+    assert not host.calls("uv")
+
+
+def test_no_language_is_accepted_beside_post_boot_and_named_in_help():
+    r = subprocess.run(
+        ["bash", str(PROBE), "--help"], capture_output=True, text=True, env=_clean_env()
+    )
+    assert "--no-language" in r.stdout
+    # --post-boot reads no pending set, so the flag has nothing to drop there;
+    # it is accepted, never a usage error.
+    r = subprocess.run(
+        [
+            "bash",
+            str(PROBE),
+            "--post-boot",
+            "--no-language",
+            "--root",
+            "/nonexistent-xyz",
+        ],
+        capture_output=True,
+        text=True,
+        env=_clean_env(),
+    )
+    assert "unknown argument" not in r.stderr
