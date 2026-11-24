@@ -728,6 +728,65 @@ def test_a_mapped_path_holding_a_space_is_looked_up_whole(host):
     assert r["reboot_why"] == "vendorlib, which owns a file PID 1 maps"
 
 
+def test_a_mapped_path_dpkg_records_without_usr_finds_its_package(host):
+    # #703: /proc reads /usr/sbin/ip, noble's dpkg records iproute2's
+    # /sbin/ip, and dpkg-query -S exits 1 for the /usr path. stale_owner
+    # retried it without /usr (CR 2777); the owner lookup here didn't, so
+    # iproute2 never reached the reason.
+    host.knob(KNOB)
+    (host.dry / "dry-run.log").write_text(
+        "Packages that will be upgraded: iproute2 tzdata\n"
+    )
+    host.pid1_maps.write_text(
+        MAPS + "7f30-7f40 r-xp 00000000 fd:01 4560 /usr/sbin/ip (deleted)\n"
+    )
+    host.on(
+        "dpkg-query",
+        "-S *",
+        script=(
+            "shift; rc=0; for f; do case $f in "
+            f'{LIBC}) echo "libc6:amd64: $f" ;; '
+            '/sbin/ip) echo "iproute2: $f" ;; '
+            '*) echo "dpkg-query: no path found matching pattern $f" >&2; rc=1 ;; '
+            "esac; done; exit $rc"
+        ),
+    )
+    _step4(host, QUIET)
+    host.clock = TUE_1530 - 30 * MIN
+    r = host.run()["gate"]["run_span"]
+    assert r["reboot"] is True, r["reboot_why"]
+    assert r["reboot_why"] == "iproute2, which owns a file PID 1 maps"
+
+
+def test_an_owner_lookup_that_fails_past_not_found_is_unknown(host):
+    # #703: the /usr retry is a second dpkg-query -S; its failure, past the
+    # exit 1 of a path it doesn't know, leaves the prediction unknown, as
+    # the first's does. Not deleted, so no reboot is already due (#655).
+    host.knob(KNOB)
+    (host.dry / "dry-run.log").write_text(
+        "Packages that will be upgraded: iproute2 tzdata\n"
+    )
+    host.pid1_maps.write_text(
+        MAPS + "7f30-7f40 r-xp 00000000 fd:01 4560 /usr/sbin/ip\n"
+    )
+    host.on(
+        "dpkg-query",
+        "-S *",
+        script=(
+            "shift; rc=0; for f; do case $f in "
+            f'{LIBC}) echo "libc6:amd64: $f" ;; '
+            '/sbin/ip) echo "dpkg-query: database locked" >&2; exit 2 ;; '
+            '*) echo "dpkg-query: no path found matching pattern $f" >&2; rc=1 ;; '
+            "esac; done; exit $rc"
+        ),
+    )
+    _step4(host, QUIET)
+    host.clock = TUE_1530 - 30 * MIN
+    r = host.run()["gate"]["run_span"]
+    assert r["reboot"] is None, r["reboot_why"]
+    assert "dpkg-query -S" in r["reboot_why"]
+
+
 def _deleted(*paths: str) -> str:
     """Rows of a /proc/<pid>/maps for PATHS, each deleted since it was mapped."""
     return "".join(

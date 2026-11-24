@@ -914,16 +914,14 @@ reboot_maps() {  # <the selection> <who> <pid>...
     [ -z "$_rm_p" ] || _rm_ps+=("$_rm_p")
   done <<<"$_rm_paths"
   if [ "${#_rm_ps[@]}" -gt 0 ]; then
-    # Exit 1 means some path has no package: the others still print.
-    capture _rm_out dpkg-query -S "${_rm_ps[@]}"
-    if [ "$CAP_RC" -gt 1 ]; then
-      RB_WHY="dpkg-query -S over the files $_rm_who $_rm_v exited $CAP_RC"
+    # A path no package owns is passed over, after the usr-merge retry
+    # (#703): only a failure past that leaves the reboot unknown.
+    if ! path_owners _rm_out "${_rm_ps[@]}"; then
+      RB_WHY="dpkg-query -S over the files $_rm_who $_rm_v exited $OW_RC"
       return 2
     fi
     while IFS= read -r _rm_line; do
-      case $_rm_line in diversion* | "") continue ;; esac
-      _rm_line=${_rm_line%%: /*}
-      _rm_line=${_rm_line//,/ }
+      _rm_line=${_rm_line%%$'\t'*}
       for _rm_p in $_rm_line; do _rm_owners="$_rm_owners ${_rm_p%%:*}"; done
     done <<<"$_rm_out"
     for _rm_p in $_rm_sel; do
@@ -2196,23 +2194,15 @@ holds_left() {  # <var>: JSON array
 # as its child (CR 2778). What needrestart passes over isn't stale: a memfd
 # exec reads "/memfd:<name> (deleted)", and no restart clears it (CR 2776).
 stale_owner() {  # <path>: SO_PKG, SO_VER := its package and installed version, or empty
-  local _so_p _so_out _so_l _so_v
+  local _so_out _so_l _so_v
   SO_PKG="" SO_VER=""
-  # noble's dpkg records some files without /usr: iproute2's /sbin/ip,
-  # which /proc reads as /usr/sbin/ip (CR 2777).
-  for _so_p in "$1" "${1#/usr}"; do
-    case $_so_p in /*) ;; *) continue ;; esac
-    capture _so_out dpkg-query -S "$_so_p"
-    while IFS= read -r _so_l; do
-      case $_so_l in diversion* | "") continue ;; esac
-      _so_l=${_so_l%%: /*}
-      _so_l=${_so_l%%,*}
-      SO_PKG=${_so_l%%:*}
-      break
-    done <<<"$_so_out"
-    [ -z "$SO_PKG" ] || break
-    case $1 in /usr/bin/* | /usr/sbin/* | /usr/lib*/*) ;; *) break ;; esac
-  done
+  case $1 in /*) ;; *) return 0 ;; esac
+  # path_owners retries a usr-merged path without /usr, as noble's dpkg
+  # records iproute2's /sbin/ip, which /proc reads as /usr/sbin/ip (CR
+  # 2777). Its first package, as reboot_maps reads them all (#703).
+  path_owners _so_out "$1" || return 0
+  _so_l=${_so_out%%[[:space:]]*}
+  SO_PKG=${_so_l%%:*}
   [ -n "$SO_PKG" ] || return 0
   capture _so_out dpkg-query -W "$SO_PKG"
   while read -r _so_l _so_v; do
