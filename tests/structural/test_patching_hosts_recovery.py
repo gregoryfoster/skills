@@ -959,7 +959,7 @@ def test_a_long_log_keeps_its_last_entries_and_says_so(host):
 def test_quotes_and_backslashes_read_as_written(host):
     _logged(host, ['said "done" to C:\\backups\\app', [0, 37, 92, 159, 146, 65]])
     j = host.recover()["backup"][0]["journal"]
-    assert j["lines"] == ['said "done" to C:\\backups\\app', "?%\\??A"]
+    assert j["lines"] == ['said "done" to C:\\backups\\app', "%\\??A"]
 
 
 # systemd 255.4's own output (ubuntu:24.04, a timer's oneshot), verbatim:
@@ -1075,8 +1075,29 @@ def test_a_byte_array_keeps_its_words_apart_and_drops_csi(host):
     assert lines == [
         "rclone --s3-secret-access-key <redacted>",
         "--password <redacted> done",
-        "a?b red",
+        "a b red",
     ]
+
+
+@pytest.mark.parametrize(
+    "raw, shown",
+    [
+        # CR 2813's follow-up: a CSI takes only parameter bytes and a final
+        # that can't start a name, so neither form eats a name's first byte.
+        (b"\x1b[ --password=zq9", "--password=<redacted>"),
+        (b"\x1b[password=zq9", "password=<redacted>"),
+        (b"\x1b[--token zq9", "--token <redacted>"),
+        # Any other escape or control byte is a space, never a join.
+        (b"\x1b(B DB_PASSWORD=zq9", "(B DB_PASSWORD=<redacted>"),
+        (b"a\x07DB_PASSWORD=zq9", "a DB_PASSWORD=<redacted>"),
+        (b"\x1b[0mok\x1b[1;31m --secret=zq9\x1b[m", "ok --secret=<redacted>"),
+    ],
+)
+def test_an_escape_never_eats_or_joins_a_name(host, raw, shown):
+    _logged(host, [list(raw)])
+    [line] = host.recover()["backup"][0]["journal"]["lines"]
+    assert line == shown
+    assert "zq9" not in host.result.stdout + host.result.stderr
 
 
 def test_a_unit_that_didnt_start_a_run_now_shows_no_lines(host):

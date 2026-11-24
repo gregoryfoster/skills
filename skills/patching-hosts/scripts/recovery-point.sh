@@ -856,37 +856,54 @@ BJ_MAX=20 BJ_SAID=""
 BJ_MSG='"MESSAGE"[[:space:]]*:[[:space:]]*"(([^"\\]|\\.)*)"'
 BJ_BIN='"MESSAGE"[[:space:]]*:[[:space:]]*\[([0-9,[:space:]]*)\]'
 BJ_TAKE=2000
-bytes_text() {  # <var> <comma-separated byte values>: VAR := the printable ASCII among them, ? for the rest
-  # A tab, LF or CR is a space, as in a string message, so words stay apart;
-  # an ANSI CSI sequence (ESC [ ... a final byte 0x40-0x7E) is dropped, so
-  # it can't join a name to the text before it (CR 2813).
-  local _bt_n _bt_o _bt_c _bt_out="" _bt_i=0 _bt_st=0
-  for _bt_n in ${2//,/ }; do
-    [ "$_bt_i" -lt "$BJ_TAKE" ] || break
+name_byte() {  # <byte value>: 0 when it's a letter, a digit or _
+  [ "$1" -eq 95 ] || { [ "$1" -ge 48 ] && [ "$1" -le 57 ]; } ||
+    { [ "$1" -ge 65 ] && [ "$1" -le 90 ]; } || { [ "$1" -ge 97 ] && [ "$1" -le 122 ]; }
+}
+bytes_text() {  # <var> <comma-separated byte values>: VAR := the printable ASCII among them
+  # Words must never join, or a secret's name is lost (CR 2813): every
+  # control byte reads as a space, and so does an ANSI CSI sequence, ESC [,
+  # up to 16 parameter bytes 0x30-0x3F and a final byte 0x40-0x7E. The final
+  # is taken only where it can't be a name's first letter: an m after a
+  # parameter (a colour), or one no letter, digit or _ follows. Otherwise
+  # the sequence ends before it and it's read as text, so ESC [ --password
+  # and ESC [password keep their names. A byte over 126 is a ?.
+  local _bt_o _bt_c _bt_out="" _bt_i=0 _bt_j _bt_p _bt_f _bt_x _bt_k
+  local -a _bt_b=()
+  read -r -a _bt_b <<<"${2//,/ }" || true
+  _bt_k=${#_bt_b[@]}
+  [ "$_bt_k" -le "$BJ_TAKE" ] || _bt_k=$BJ_TAKE
+  while [ "$_bt_i" -lt "$_bt_k" ]; do
+    _bt_c=${_bt_b[$_bt_i]}
+    is_int "$_bt_c" || _bt_c=0
     _bt_i=$((_bt_i + 1))
-    is_int "$_bt_n" || _bt_n=0
-    if [ "$_bt_st" -eq 2 ]; then
-      if [ "$_bt_n" -ge 64 ] && [ "$_bt_n" -le 126 ]; then _bt_st=0; fi
-      continue
-    fi
-    if [ "$_bt_st" -eq 1 ]; then
-      _bt_st=0
-      if [ "$_bt_n" -eq 91 ]; then _bt_st=2 && continue; fi
-      _bt_out="$_bt_out?"
-    fi
-    if [ "$_bt_n" -eq 27 ]; then
-      _bt_st=1
-    elif [ "$_bt_n" -eq 9 ] || [ "$_bt_n" -eq 10 ] || [ "$_bt_n" -eq 13 ]; then
+    if [ "$_bt_c" -eq 27 ] && [ "${_bt_b[$_bt_i]:-}" = 91 ]; then
       _bt_out="$_bt_out "
-    elif [ "$_bt_n" -ge 32 ] && [ "$_bt_n" -le 126 ]; then
-      printf -v _bt_o '%03o' "$_bt_n"
-      printf -v _bt_c '%b' "\\0$_bt_o"
-      _bt_out="$_bt_out$_bt_c"
+      _bt_j=$((_bt_i + 1)) _bt_p=0
+      while [ "$_bt_j" -lt "$_bt_k" ] && [ "$_bt_p" -lt 16 ] && is_int "${_bt_b[$_bt_j]}" &&
+        [ "${_bt_b[$_bt_j]}" -ge 48 ] && [ "${_bt_b[$_bt_j]}" -le 63 ]; do
+        _bt_j=$((_bt_j + 1)) _bt_p=$((_bt_p + 1))
+      done
+      _bt_i=$_bt_j
+      [ "$_bt_j" -lt "$_bt_k" ] || continue
+      _bt_f=${_bt_b[$_bt_j]}
+      is_int "$_bt_f" || continue
+      { [ "$_bt_f" -ge 64 ] && [ "$_bt_f" -le 126 ]; } || continue
+      _bt_x=${_bt_b[$((_bt_j + 1))]:-32}
+      is_int "$_bt_x" || _bt_x=32
+      if { [ "$_bt_f" -eq 109 ] && [ "$_bt_p" -gt 0 ]; } || ! name_byte "$_bt_x"; then
+        _bt_i=$((_bt_j + 1))
+      fi
+    elif [ "$_bt_c" -lt 32 ] || [ "$_bt_c" -eq 127 ]; then
+      _bt_out="$_bt_out "
+    elif [ "$_bt_c" -le 126 ]; then
+      printf -v _bt_o '%03o' "$_bt_c"
+      printf -v _bt_x '%b' "\\0$_bt_o"
+      _bt_out="$_bt_out$_bt_x"
     else
       _bt_out="$_bt_out?"
     fi
   done
-  [ "$_bt_st" -ne 1 ] || _bt_out="$_bt_out?"
   printf -v "$1" '%s' "$_bt_out"
 }
 BJ_U='\\u[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]'
