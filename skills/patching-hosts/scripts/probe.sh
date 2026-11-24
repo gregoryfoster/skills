@@ -1836,10 +1836,11 @@ stamp_epoch() {  # <var> <YYYYMMDDTHHMMSSZ>: VAR := its seconds since 1970, or e
   printf -v "$_se_v" '%s' "$((_se_day * 86400 + _se_h * 3600 + _se_mi * 60 + _se_s))"
 }
 
-# When the run in one directory took place: RUN_AT.
+# When the run in one directory took place: RUN_AT, and RUN_BY, what said
+# so: bulk, chain or name. Only a bulk line says when a bulk started.
 run_at() {  # <directory> <the epoch its name says>
   local _ra_o _ra_s _ra_r _ra_at _ra_rest _ra_u
-  RUN_AT=""
+  RUN_AT="" RUN_BY=bulk
   capture _ra_o as_reader cat -- "$1/steps"
   if [ "$CAP_RC" -eq 0 ]; then
     while read -r _ra_s _ra_r _ra_at _ra_rest; do
@@ -1847,13 +1848,42 @@ run_at() {  # <directory> <the epoch its name says>
     done <<<"$_ra_o"
   fi
   if [ -z "$RUN_AT" ]; then
+    RUN_BY=chain
     capture _ra_o as_reader cat -- "$1/reboot-chain.unit"
     if [ "$CAP_RC" -eq 0 ]; then
       read -r _ra_u _ra_at <<<"$_ra_o" || true
       stamp_epoch RUN_AT "${_ra_at//[-:]/}"
     fi
   fi
-  RUN_AT=${RUN_AT:-$2}
+  if [ -z "$RUN_AT" ]; then RUN_AT=$2 RUN_BY=name; fi
+}
+
+# Whether an instant falls inside a weekday or #N window line: one opening
+# on its day or the day before, for a range that wraps past midnight, in
+# the week of the month the range starts in. A dated line isn't asked.
+in_recurring_window() {  # <epoch>: returns 0 when inside one
+  local r d os oe md wd ws we len
+  local -a f=()
+  for r in ${KNOB_WINDOW[@]+"${KNOB_WINDOW[@]}"}; do
+    IFS=$KNOB_US read -r -a f <<<"$r"
+    [ -z "${f[6]}" ] || continue
+    ws=$((10#${f[1]%%:*} * 3600 + 10#${f[1]##*:} * 60))
+    we=$((10#${f[2]%%:*} * 3600 + 10#${f[2]##*:} * 60))
+    len=$((we - ws))
+    [ "${f[3]}" -eq 0 ] || len=$((len + 86400))
+    case ${f[0]} in Mon) wd=0 ;; Tue) wd=1 ;; Wed) wd=2 ;; Thu) wd=3 ;; Fri) wd=4 ;; Sat) wd=5 ;; *) wd=6 ;; esac
+    for d in $(($1 / 86400)) $(($1 / 86400 - 1)); do
+      [ $(((d + 3) % 7)) -eq "$wd" ] || continue
+      os=$((d * 86400 + ws)) oe=$((d * 86400 + ws + len))
+      if [ "$1" -lt "$os" ] || [ "$1" -ge "$oe" ]; then continue; fi
+      if [ -n "${f[5]}" ]; then
+        knob_mday md "$d"
+        [ $(((md - 1) / 7 + 1)) -eq "${f[5]}" ] || continue
+      fi
+      return 0
+    done
+  done
+  return 1
 }
 
 # A scheduled host's weekday and #N windows that closed since its last run.
@@ -1867,8 +1897,8 @@ CADENCE_WEEK_S=$((6 * 86400)) CADENCE_MONTH_WEEK_S=$((21 * 86400)) CADENCE_MONTH
 R_CADENCE=""
 read_cadence() {
   local t e last="" from="" m="" r ws we len wd d os oe md missed="" first="" why="" recurring=0 iso floor
-  local periods="" prev pfloor unit
-  local -a f=() opens=()
+  local periods="" prev pfloor unit wl="" b1="" b2="" by1="" by2=""
+  local -a f=() opens=() attempts=()
   for t in "$P_ROOT"/var/backups/patching-hosts-2*; do
     [ -d "$t" ] || continue
     stamp_epoch e "${t##*/patching-hosts-}"
@@ -1880,6 +1910,7 @@ read_cadence() {
       continue
     fi
     [ "$RUN_AT" -le "$P_NOW" ] || RUN_AT=$P_NOW
+    attempts+=("$RUN_AT $RUN_BY")
     if [ -z "$last" ] || [ "$RUN_AT" -gt "$last" ]; then last=$RUN_AT from=${t#"$P_ROOT"}; fi
   done
   if [ -e "$P_ROOT$RUN_MARKER" ]; then
@@ -1894,6 +1925,7 @@ read_cadence() {
       not_read "the run marker $RUN_MARKER: it's dated $m, past the probe's clock, so it isn't counted"
     else
       [ "$e" -le "$P_NOW" ] || e=$P_NOW
+      attempts+=("$e marker")
       if [ -z "$last" ] || [ "$e" -gt "$last" ]; then last=$e from=$RUN_MARKER; fi
     fi
   fi
@@ -1971,6 +2003,26 @@ read_cadence() {
     iso_utc lr "$last"
     iso_utc fm "$first"
     finding deviation cadence:overdue cadence:overdue "No run or attempt since $lr ($from): $periods $unit$s of this $KNOB_CADENCE host went by with none, $missed window$ws_ closed since, the first $fm (knob.md). A scheduled host is patched only when someone starts its run: run it in the next window, or declare a freeze the owner chose as exception cadence:overdue <review-by> <reason>. A run that left no bulk record, one that found nothing pending or one done by hand, counts only once it writes the marker $RUN_MARKER (run.md, A run with nothing pending)."
+  fi
+  # Runs that drift off their window (#708): cadence:overdue counts periods,
+  # so a host whose catch-ups keep running the day after its window reads on
+  # time. The newest two attempts must both be dated by their bulk lines,
+  # and both bulks must have started outside every weekday and #N line. A
+  # chain's fire time, a directory's name or the marker dates an attempt,
+  # not a bulk's start, so it isn't judged. A dated line is a one-off, and
+  # never puts a run in its window.
+  if [ -n "$periods" ] && [ "${#attempts[@]}" -ge 2 ]; then
+    { read -r b1 by1 && read -r b2 by2; } < <(printf '%s\n' "${attempts[@]}" | sort -rn) || true
+    if [ "$by1" = bulk ] && [ "$by2" = bulk ] && ! in_recurring_window "$b1" && ! in_recurring_window "$b2"; then
+      for r in ${KNOB_WINDOW[@]+"${KNOB_WINDOW[@]}"}; do
+        IFS=$KNOB_US read -r -a f <<<"$r"
+        [ -z "${f[6]}" ] || continue
+        wl="${wl:+$wl, }${f[0]}${f[5]:+#${f[5]}} ${f[1]}-${f[2]}"
+      done
+      iso_utc b1 "$b1"
+      iso_utc b2 "$b2"
+      finding deviation cadence:off-window cadence:off-window "The last two runs' bulks started outside every weekday and #N window ($wl): $b2 and $b1. On cadence or not, the runs have left the window, and cadence:overdue doesn't say so, since it counts periods (knob.md). Move the window line to when the runs happen, or run in it; a dated window doesn't count. An owner's choice to run elsewhere for a while is exception cadence:off-window <review-by> <reason>."
+    fi
   fi
 }
 

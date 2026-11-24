@@ -685,3 +685,209 @@ def test_a_monthly_period_is_a_month_not_a_week(tmp_path):
     h.ran("20260607T090000Z")
     c = h.at("2026-11-08T13:00").run()["updates"]["cadence"]
     assert (c["periods_missed"], c["windows_missed"]) == (5, 18)
+
+
+# --- #708: runs that drift off their window ------------------------------------
+#
+# cadence:overdue counts periods, not windows, so a weekly host whose
+# catch-ups keep running the day after its Thursday window reads on time:
+# address-validator's 2026-11-13 and 11-20 runs. cadence:off-window says so
+# when the last two runs' bulks both started outside every weekday and #N
+# window line. Only a run dated by its bulk line is judged: a reboot chain's
+# fire time, a directory's name or the marker doesn't say when a bulk
+# started, so either of the last two dated that way means no finding.
+
+WEEKLY_THU = "posture scheduled\nwindow Thu 01:00-07:00\n"
+CADENCE_KEYS = {
+    "cadence",
+    "last_run",
+    "last_run_from",
+    "periods_missed",
+    "windows_missed",
+    "first_missed",
+    "unchecked_why",
+}
+
+
+def _two_fridays(h: ClockHost) -> ClockHost:
+    # 2026-11-13 and 11-20 are Fridays; each directory is made before its
+    # bulk, as a recovery point makes it.
+    h.ran("20261113T050000Z", bulk="2026-11-13T06:30")
+    h.ran("20261120T060000Z", bulk="2026-11-20T06:30")
+    return h
+
+
+def test_two_consecutive_fridays_against_a_thursday_window_are_off_window(tmp_path):
+    h = _two_fridays(ClockHost(tmp_path).knob(WEEKLY_THU))
+    out = h.at("2026-11-24T12:00").run()
+    c = out["updates"]["cadence"]
+    assert set(c) == CADENCE_KEYS
+    assert (c["last_run"], c["windows_missed"], c["periods_missed"]) == (
+        "2026-11-20T06:30:00Z",
+        0,
+        0,
+    )
+    assert "cadence:overdue" not in _ids(out)
+    f = _finding(out, "cadence:off-window")
+    assert f["kind"] == "deviation"
+    assert f["exception_what"] == "cadence:off-window"
+    for word in ("Thu 01:00-07:00", "2026-11-13T06:30:00Z", "2026-11-20T06:30:00Z"):
+        assert word in f["message"]
+
+
+def test_off_window_leaves_overdue_as_it_was(tmp_path):
+    # 26 November opens 5 d 18 h after the last run, so it isn't counted;
+    # 3 December is, and closed with no run.
+    h = _two_fridays(ClockHost(tmp_path).knob(WEEKLY_THU))
+    out = h.at("2026-12-04T12:00").run()
+    c = out["updates"]["cadence"]
+    assert (c["windows_missed"], c["first_missed"]) == (1, "2026-12-03T01:00:00Z")
+    assert {"cadence:overdue", "cadence:off-window"} <= set(_ids(out))
+
+
+@pytest.mark.parametrize(
+    "first, second",
+    [
+        ("2026-11-12T03:00", "2026-11-20T06:30"),
+        ("2026-11-13T06:30", "2026-11-19T03:00"),
+    ],
+    ids=["older-in-window", "newer-in-window"],
+)
+def test_one_run_in_the_window_is_no_finding(tmp_path, first, second):
+    h = ClockHost(tmp_path).knob(WEEKLY_THU)
+    h.ran("20261112T000000Z", bulk=first)
+    h.ran("20261119T000000Z", bulk=second)
+    out = h.at("2026-11-24T12:00").run()
+    assert "cadence:off-window" not in _ids(out)
+
+
+@pytest.mark.parametrize(
+    "bulk, off",
+    [
+        ("2026-11-19T06:59", False),
+        ("2026-11-19T07:00", True),
+        ("2026-11-19T00:59", True),
+    ],
+    ids=["last-minute", "at-the-close", "before-it-opens"],
+)
+def test_a_window_holds_its_start_up_to_its_close(tmp_path, bulk, off):
+    h = ClockHost(tmp_path).knob(WEEKLY_THU)
+    h.ran("20261113T050000Z", bulk="2026-11-13T06:30")
+    h.ran("20261118T230000Z", bulk=bulk)
+    out = h.at("2026-11-24T12:00").run()
+    assert ("cadence:off-window" in _ids(out)) is off
+
+
+def test_a_single_run_is_no_finding(tmp_path):
+    h = (
+        ClockHost(tmp_path)
+        .knob(WEEKLY_THU)
+        .ran("20261120T060000Z", bulk="2026-11-20T06:30")
+    )
+    out = h.at("2026-11-24T12:00").run()
+    assert "cadence:off-window" not in _ids(out)
+
+
+def test_automatic_is_no_finding(tmp_path):
+    h = _two_fridays(
+        ClockHost(tmp_path).knob("posture automatic\nwindow Thu 01:00-07:00\n")
+    )
+    out = h.at("2026-11-24T12:00").run()
+    assert not [i for i in _ids(out) if i.startswith("cadence:")]
+
+
+def test_only_dated_windows_is_no_finding(tmp_path):
+    h = _two_fridays(
+        ClockHost(tmp_path).knob(
+            "posture scheduled\nwindow 2026-11-13 06:00-08:00 catch-up\n"
+            "window 2026-11-20 06:00-08:00 catch-up\n"
+        )
+    )
+    out = h.at("2026-11-24T12:00").run()
+    assert not [i for i in _ids(out) if i.startswith("cadence:")]
+
+
+def test_a_dated_window_doesnt_put_a_run_in_the_window(tmp_path):
+    # A one-off window is how a catch-up runs: two in a row off the weekday
+    # window is the drift this reports, whether or not their lines remain.
+    h = _two_fridays(
+        ClockHost(tmp_path).knob(
+            WEEKLY_THU + "window 2026-11-20 06:00-08:00 catch-up\n"
+        )
+    )
+    out = h.at("2026-11-24T12:00").run()
+    m = _finding(out, "cadence:off-window")["message"]
+    assert "Thu 01:00-07:00" in m and "2026-11-20 06:00-08:00" not in m
+
+
+def test_any_window_line_puts_a_run_in_the_window(tmp_path):
+    # Window lines are alternatives: a Friday line covers the Friday runs.
+    h = _two_fridays(ClockHost(tmp_path).knob(WEEKLY_THU + "window Fri 06:00-08:00\n"))
+    out = h.at("2026-11-24T12:00").run()
+    assert "cadence:off-window" not in _ids(out)
+
+
+def test_a_window_that_wraps_past_midnight_holds_the_next_morning(tmp_path):
+    h = _two_fridays(
+        ClockHost(tmp_path).knob("posture scheduled\nwindow Thu 22:00-07:00\n")
+    )
+    out = h.at("2026-11-24T12:00").run()
+    assert "cadence:off-window" not in _ids(out)
+
+
+@pytest.mark.parametrize(
+    "first, second, off",
+    [
+        ("2026-10-11T09:00", "2026-11-08T09:00", False),
+        ("2026-10-18T09:00", "2026-11-15T09:00", True),
+        ("2026-10-11T13:00", "2026-11-08T13:00", True),
+    ],
+    ids=["second-sundays", "third-sundays", "second-sundays-after-the-close"],
+)
+def test_a_week_of_the_month_window_takes_its_week(tmp_path, first, second, off):
+    # 2026-10-11 and 11-08 are each month's 2nd Sunday, 10-18 and 11-15 the 3rd.
+    h = ClockHost(tmp_path).knob(
+        "posture scheduled\ncadence monthly\nwindow Sun#2 08:00-12:00\n"
+    )
+    h.ran(first.replace("-", "").replace(":", "")[:11] + "0000Z", bulk=first)
+    h.ran(second.replace("-", "").replace(":", "")[:11] + "0000Z", bulk=second)
+    out = h.at("2026-11-24T12:00").run()
+    assert ("cadence:off-window" in _ids(out)) is off
+    if off:
+        assert "Sun#2 08:00-12:00" in _finding(out, "cadence:off-window")["message"]
+
+
+@pytest.mark.parametrize("last", ["marker", "chain", "name"])
+def test_a_last_run_with_no_bulk_line_isnt_judged(tmp_path, last):
+    # The marker, a reboot chain's fire time, or a directory's name dates an
+    # attempt, not when a bulk started: the newest two must both be bulks.
+    h = _two_fridays(ClockHost(tmp_path).knob(WEEKLY_THU))
+    if last == "marker":
+        h.marker("20261121T100000Z\n")
+    elif last == "chain":
+        h.rebooted("20261121T090000Z", "2026-11-21T10:00:00Z")
+    else:
+        h.recovery_point_only("20261121T100000Z")
+    out = h.at("2026-11-24T12:00").run()
+    assert out["updates"]["cadence"]["last_run"] == "2026-11-21T10:00:00Z"
+    assert "cadence:off-window" not in _ids(out)
+
+
+def test_an_older_run_with_no_bulk_line_is_passed_over_by_two_newer_bulks(tmp_path):
+    h = ClockHost(tmp_path).knob(WEEKLY_THU)
+    h.recovery_point_only("20261106T100000Z")
+    _two_fridays(h)
+    out = h.at("2026-11-24T12:00").run()
+    assert "cadence:off-window" in _ids(out)
+
+
+def test_an_exception_covers_off_window(tmp_path):
+    h = _two_fridays(
+        ClockHost(tmp_path).knob(
+            WEEKLY_THU
+            + "exception cadence:off-window 2026-12-31 Fridays until the move\n"
+        )
+    )
+    out = h.at("2026-11-24T12:00").run()
+    assert "cadence:off-window" not in _ids(out)
+    assert "cadence:off-window" in _ids(out, "excepted")
