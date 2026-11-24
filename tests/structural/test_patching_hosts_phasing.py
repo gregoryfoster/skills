@@ -38,7 +38,15 @@ from tests.structural.patching_hosts_rig import dispatcher
 from tests.structural.test_patching_hosts_apply import KNOB, SIM_ARGS, TUE_1530
 from tests.structural.test_patching_hosts_apply import Host as ApplyHost
 from tests.structural.test_patching_hosts_knob import KNOB_MD, _read
-from tests.structural.test_patching_hosts_lane import ORIGINS, _lane
+from tests.structural.test_patching_hosts_lane import (
+    EXTRA,
+    ORIGINS,
+    TS,
+    _lane,
+    _one_origin,
+    _refreshed,
+)
+from tests.structural.test_patching_hosts_lane import POLICY as LANE_POLICY
 from tests.structural.test_patching_hosts_probe import STOCK_ORIGINS, _finding, _ids
 from tests.structural.test_patching_hosts_probe import Host as ProbeHost
 
@@ -626,3 +634,71 @@ def test_respect_in_a_security_lane_whose_origins_take_updates(tmp_path):
     assert [c for _, _, c in host.calls("unattended-upgrade")] == [
         str(host.run_dir / "lane.conf")
     ]
+
+
+def test_a_security_lanes_held_step_reads_the_bulks_blacklist(tmp_path):
+    # CR 2812: the bulk wrote lane.conf, so its held steps read it too.
+    host = _bulk(
+        tmp_path,
+        summary=RESPECTED,
+        lane="security",
+        extra_knob="exception uu:origins 2026-12-31 the owner takes -updates\n",
+    )
+    out = host.run()
+    assert out["holds"]["placed"].get("postgres") == ["postgresql-16"], out["holds"]
+    host.uu("Packages that will be upgraded: postgresql-16\nAll upgrades installed\n")
+    host.run(step="postgres")
+    assert [c for _, _, c in host.calls("unattended-upgrade")] == [
+        str(host.run_dir / "lane.conf")
+    ] * 2
+
+
+def test_respect_leaves_the_one_origin_lane_alone(tmp_path):
+    # CR 2812: a one-origin lane takes its origin's packages alone, and a
+    # third party's aren't phased. Under respect, its bulk rewrote lane.conf
+    # with the phased blacklist alone, and took every pending package.
+    knob = (
+        KNOB + ORIGINS.replace("Tailscale", "pkgs.tailscale.com") + "phasing respect\n"
+    )
+    host = _one_origin(tmp_path, knob)
+    with (host.dry / "summary").open("a") as f:
+        f.write("phasing=respect\nphased_deferred=libsystemd0\n")
+    out = host.run("--lane", TS)
+    assert out["verdict"]["ok"] is True, out
+    skipped = host.record("lane.conf").split("Package-Blacklist {")[1]
+    assert '  "^libc6$";' in skipped
+    assert "libsystemd0" not in skipped
+    assert "phased_deferred" not in out["holds"]
+
+
+def test_respect_leaves_the_probes_one_origin_dry_run_alone(tmp_path):
+    # CR 2812: the dry run and the bulk agree; the skip list stays one list.
+    h = ProbeHost(tmp_path).knob(
+        "class production\nposture scheduled\norigin pkgs.tailscale.com follow\n"
+        "phasing respect\n"
+    )
+    libc = "Inst libc6 [2.39-0ubuntu8.3] (2.39-0ubuntu8.4 Ubuntu:24.04/noble-security [arm64])\n"
+    sysd = f"Inst libsystemd0 [255.4-1ubuntu8.10] (255.4-1ubuntu8.11 {UPD})\n"
+    h.on(
+        "apt-get",
+        "-s *Always-Include-Phased-Updates=true*dist-upgrade",
+        libc + sysd + EXTRA,
+    )
+    h.on("apt-get", "-s *dist-upgrade", libc + EXTRA)
+    h.on(
+        "apt-cache",
+        "*policy libc6 *",
+        _policy("libsystemd0", "255.4-1ubuntu8.10", "255.4-1ubuntu8.11", 10),
+    )
+    h.on("apt-cache", "*policy", LANE_POLICY)
+    h.on(
+        "unattended-upgrade",
+        "--dry-run -d",
+        "Packages that will be upgraded: tailscale\n",
+    )
+    out = h.run(*_refreshed(h), "--dry-run-into", str(h.tmp / "dry"), "--lane", TS)
+    assert out["pending"]["phasing"]["deferred"] == ["libsystemd0"]
+    [(_, _, apt_config)] = h.calls("unattended-upgrade")
+    conf = open(apt_config).read()
+    assert conf.count("Package-Blacklist {") == 1
+    assert conf.count('"^libsystemd0$"') == 1

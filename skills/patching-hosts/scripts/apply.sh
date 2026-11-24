@@ -686,11 +686,20 @@ DRY_DEFERRED=""
 # A Debian package name, with an architecture: one goes into root's
 # lane.conf from the operator's summary file (CR 2810).
 PKG_NAME_RE='^[a-z0-9][a-z0-9+.-]*(:[a-z0-9]+)?$'
-# Whether the lane leaves phased updates: a selection wider than security,
-# the maintenance lane's, or a security lane's an exception uu:origins
-# widens (CR 2805).
+# Whether the lane can take a phased update: the maintenance lane, or a
+# security lane an exception uu:origins widens (CR 2805). Not the one-origin
+# lane, which takes its third-party origin's packages alone, never phased,
+# and whose lane.conf is its skip list (CR 2812).
+lane_phases() {
+  case $LANE in
+    maintenance) return 0 ;;
+    security) [ "$DRY_SECURITY_ONLY" != 1 ] ;;
+    *) return 1 ;;
+  esac
+}
+# Whether the lane leaves those apt would defer here (#686).
 phasing_applies() {
-  [ "$KNOB_PHASING" = respect ] && { [ "$LANE" != security ] || [ "$DRY_SECURITY_ONLY" != 1 ]; }
+  [ "$KNOB_PHASING" = respect ] && lane_phases
 }
 # What the dry run counted, by name: its select lines and the bulk's own
 # share. DRY_COUNTED_READ is 1 where either was read (#680).
@@ -743,7 +752,7 @@ gate_dry() {
   # ignore does, and didn't say which (CR 2809). Not where the selection is
   # security alone, which takes none.
   if [ "$dlane" = "$LANE" ] && [ "$dphasing" != "$KNOB_PHASING" ] &&
-    { [ "$LANE" != security ] || [ "$DRY_SECURITY_ONLY" != 1 ]; } &&
+    lane_phases &&
     { [ "$dpd_seen" -eq 0 ] || [ -n "${DRY_DEFERRED// /}" ]; }; then
     refuse "the dry run counted with phasing $dphasing, and the knob says $KNOB_PHASING: count again with probe.sh --lane $LANE --refresh-into DIR --dry-run-into DIR"
   fi
