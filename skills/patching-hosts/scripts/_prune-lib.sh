@@ -174,13 +174,20 @@ read_packages() {
 # is no removal (SIM_INST). SIM_ORPHANS is what apt says it leaves "no
 # longer required": a later autoremove's, with any it would take already.
 SIM_SET=() SIM_INST="" SIM_WHY="" SIM_ORPHANS=""
+# Every simulation a prune script runs, prune-plan.sh's too. Run as root, an
+# apt-get -s rewrites /var/log/apt/eipp.log.xz, apt's planner log of the
+# host's last real install, and rebuilds pkgcache.bin and srcpkgcache.bin
+# (#704): a read-only plan leaves both, as probe.sh's APT_OPTS does (#696).
+# apply.sh's SIM_NOLOG passes the planner option alone: its simulations run
+# just before or after its own install, which rebuilds the caches anyway.
+PRUNE_SIM_OPTS=(-o Dir::Cache::pkgcache= -o Dir::Cache::srcpkgcache= -o Dir::Log::Planner=/dev/null)
 apt_sim() {  # <remove|purge> <package>...
   local _as_k=$1 _as_out _as_l _as_x _as_n _as_v _as_in=0
   shift
   SIM_SET=() SIM_INST="" SIM_WHY="" SIM_ORPHANS=""
   [ "$#" -gt 0 ] || return 0
   # Never an autoremove, whatever apt.conf.d says.
-  capture _as_out apt-get -s -o APT::Get::AutomaticRemove=false "$_as_k" "$@"
+  capture _as_out apt-get -s "${PRUNE_SIM_OPTS[@]}" -o APT::Get::AutomaticRemove=false "$_as_k" "$@"
   if [ "$CAP_RC" -ne 0 ]; then
     SIM_WHY="apt-get -s $_as_k failed: ${CAP_ERR:-exit $CAP_RC}"
     return 1
@@ -446,7 +453,7 @@ derive() {  # <name>
         return 2
       fi
       _d_x=$SIM_ORPHANS
-      capture _d_y apt-get -s autoremove
+      capture _d_y apt-get -s "${PRUNE_SIM_OPTS[@]}" autoremove
       if [ "$CAP_RC" -ne 0 ]; then
         D_WHY="apt-get -s autoremove failed: ${CAP_ERR:-exit $CAP_RC}"
         return 2

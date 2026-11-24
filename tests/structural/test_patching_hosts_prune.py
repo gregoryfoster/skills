@@ -1888,3 +1888,31 @@ def test_a_refused_apt_plan_runs_under_no_components_directory(tmp_path, name):
     assert out["prune"]["run"] == "/var/backups/patching-hosts-prune-unknown"
     assert any(r.startswith(f"the plan names {name}: ") for r in out["refused"])
     assert host.changes() == []
+
+
+def test_the_prune_simulations_leave_the_planner_log_and_caches_alone(tmp_path):
+    """Run as root, an apt-get -s rewrote /var/log/apt/eipp.log.xz, the
+    planner log of the host's last real install, and rebuilt pkgcache.bin
+    and srcpkgcache.bin (#704, as probe.sh's did, #696). Every simulation
+    the plan and the purge stage run, the removal's, the purge's and the
+    autoremove reads, passes PRUNE_SIM_OPTS."""
+    host = _fwupd(tmp_path, f"disabled:fwupd {PAST} the image masked it at build")
+    host.plan("apt:fwupd", "--take-orphans")
+    assert host.prune("savepoint")["verdict"]["ok"] is True
+    host.plan("apt:fwupd", "--take-orphans")
+    out = host.prune("purge", "--savepoint", str(host.run_dir), "--release-hold")
+    assert out["verdict"]["ok"] is True, out["verdict"]
+    sims = [a for _, a, _ in host.calls("apt-get") if a.startswith("-s ")]
+    # The plan's removal and purge, its autoremove read, and the stage's.
+    kinds = [
+        w for a in sims for w in a.split() if w in ("remove", "purge", "autoremove")
+    ]
+    assert {"remove", "purge", "autoremove"} <= set(kinds), sims
+    assert kinds.count("autoremove") >= 3, sims
+    for a in sims:
+        for o in (
+            "-o Dir::Log::Planner=/dev/null",
+            "-o Dir::Cache::pkgcache=",
+            "-o Dir::Cache::srcpkgcache=",
+        ):
+            assert o in a, a

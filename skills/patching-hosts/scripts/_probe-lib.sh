@@ -607,7 +607,7 @@ DISK_GC_ALERT_DEFAULT=85
 DISK_GC_MOUNT_DEFAULT=/
 # The commands step_space reads apt and dpkg with: a caller may prefix them
 # (as_root, apt_env) or add options (a scratch copy of the lists).
-SS_APT_GET=(apt-get -s)
+SS_APT_GET=(apt-get -s -o Dir::Log::Planner=/dev/null)
 SS_APT_CACHE=(apt-cache)
 SS_DPKGQ=(dpkg-query)
 # dpkg-query's format: the expansions are its own.
