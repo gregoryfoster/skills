@@ -857,20 +857,119 @@ def test_a_week_of_the_month_window_takes_its_week(tmp_path, first, second, off)
         assert "Sun#2 08:00-12:00" in _finding(out, "cadence:off-window")["message"]
 
 
-@pytest.mark.parametrize("last", ["marker", "chain", "name"])
+@pytest.mark.parametrize("last", ["chain", "name"])
 def test_a_last_run_with_no_bulk_line_isnt_judged(tmp_path, last):
-    # The marker, a reboot chain's fire time, or a directory's name dates an
-    # attempt, not when a bulk started: the newest two must both be bulks.
+    # A reboot chain's fire time or a directory's name dates an attempt, not
+    # when a bulk started: the newest two run directories must both be bulks.
     h = _two_fridays(ClockHost(tmp_path).knob(WEEKLY_THU))
-    if last == "marker":
-        h.marker("20261121T100000Z\n")
-    elif last == "chain":
+    if last == "chain":
         h.rebooted("20261121T090000Z", "2026-11-21T10:00:00Z")
     else:
         h.recovery_point_only("20261121T100000Z")
     out = h.at("2026-11-24T12:00").run()
     assert out["updates"]["cadence"]["last_run"] == "2026-11-21T10:00:00Z"
     assert "cadence:off-window" not in _ids(out)
+
+
+def test_the_marker_is_passed_over(tmp_path):
+    # CR 2848: a run with nothing pending needs no window (run.md), and an
+    # empty week between two off-window bulks is common. The marker still
+    # dates the last run for cadence:overdue.
+    h = ClockHost(tmp_path).knob(WEEKLY_THU)
+    h.ran("20261113T050000Z", bulk="2026-11-13T06:30")
+    h.marker("20261120T100000Z\n")
+    h.ran("20261127T050000Z", bulk="2026-11-27T06:30")
+    out = h.at("2026-11-28T12:00").run()
+    assert out["updates"]["cadence"]["last_run"] == "2026-11-27T06:30:00Z"
+    m = _finding(out, "cadence:off-window")["message"]
+    assert "2026-11-13T06:30:00Z" in m and "2026-11-27T06:30:00Z" in m
+
+
+def test_a_newer_marker_still_dates_the_last_run(tmp_path):
+    h = _two_fridays(ClockHost(tmp_path).knob(WEEKLY_THU))
+    h.marker("20261121T100000Z\n")
+    out = h.at("2026-11-24T12:00").run()
+    c = out["updates"]["cadence"]
+    assert c["last_run_from"] == "/var/backups/patching-hosts-last-reading"
+    assert "cadence:off-window" in _ids(out)
+
+
+@pytest.mark.parametrize(
+    "bulks, off",
+    [
+        (("2026-11-05T03:00", "2026-11-13T06:30", "2026-11-20T06:30"), True),
+        (("2026-11-06T06:30", "2026-11-13T06:30", "2026-11-19T03:00"), False),
+    ],
+    ids=["oldest-in-newest-two-off", "oldest-two-off-newest-in"],
+)
+def test_only_the_newest_two_bulks_count(tmp_path, bulks, off):
+    h = ClockHost(tmp_path).knob(WEEKLY_THU)
+    for b in bulks:
+        h.ran(b.replace("-", "").replace(":", "")[:9] + "000000Z", bulk=b)
+    out = h.at("2026-11-24T12:00").run()
+    assert ("cadence:off-window" in _ids(out)) is off
+
+
+@pytest.mark.parametrize(
+    "bulks, off",
+    [
+        (("2026-11-20T06:30", "2026-11-13T06:30", "2026-11-05T03:00"), True),
+        (("2026-11-19T03:00", "2026-11-13T06:30", "2026-11-06T06:30"), False),
+    ],
+    ids=["names-say-in", "names-say-off"],
+)
+def test_runs_are_ordered_by_their_bulks_not_their_names(tmp_path, bulks, off):
+    # Directory names oldest first, bulk times the other way round: the
+    # newest two by name would give the opposite answer.
+    h = ClockHost(tmp_path).knob(WEEKLY_THU)
+    for name, b in zip(
+        ("20261101T000000Z", "20261110T000000Z", "20261115T000000Z"), bulks
+    ):
+        h.ran(name, bulk=b)
+    out = h.at("2026-11-24T12:00").run()
+    assert ("cadence:off-window" in _ids(out)) is off
+
+
+def test_a_wrapped_window_closes_the_next_morning(tmp_path):
+    h = ClockHost(tmp_path).knob("posture scheduled\nwindow Thu 22:00-07:00\n")
+    h.ran("20261113T050000Z", bulk="2026-11-13T08:00")
+    h.ran("20261120T050000Z", bulk="2026-11-20T07:00")
+    out = h.at("2026-11-24T12:00").run()
+    assert "cadence:off-window" in _ids(out)
+
+
+@pytest.mark.parametrize(
+    "window, bulks, off",
+    [
+        ("Sun#2 22:00-02:00", ("2026-10-12T01:00", "2026-11-09T01:00"), False),
+        ("Sun#2 22:00-02:00", ("2026-10-19T01:00", "2026-11-16T01:00"), True),
+        # 2026-06-07 is June's 1st Sunday; the Monday after is the 8th, in the
+        # 2nd week, and the range's week is the one it starts in.
+        ("Sun#1 22:00-02:00", ("2026-06-08T01:00", "2026-11-02T01:00"), False),
+        # 2026-11-29 is November's 5th Sunday; 10-25 and 11-22 are 4th ones.
+        ("Sun#5 08:00-12:00", ("2026-11-22T09:00", "2026-11-29T09:00"), False),
+        ("Sun#5 08:00-12:00", ("2026-10-25T09:00", "2026-11-22T09:00"), True),
+    ],
+    ids=["wrapped-2nd", "wrapped-3rd", "wrapped-1st-into-week-2", "5th", "4th-not-5th"],
+)
+def test_a_week_of_the_month_window_wraps_and_takes_a_5th(tmp_path, window, bulks, off):
+    h = ClockHost(tmp_path).knob(
+        f"posture scheduled\ncadence monthly\nwindow {window}\n"
+    )
+    for b in bulks:
+        h.ran(b.replace("-", "").replace(":", "")[:9] + "000000Z", bulk=b)
+    out = h.at("2026-11-30T12:00").run()
+    assert ("cadence:off-window" in _ids(out)) is off
+
+
+def test_runs_are_judged_against_todays_window_lines(tmp_path):
+    # CR 2852: two Thursday runs, then the window moved to Tuesday: they were
+    # in their window, and read off it until a run lands in the new one.
+    h = ClockHost(tmp_path).knob("posture scheduled\nwindow Tue 01:00-07:00\n")
+    h.ran("20261112T010000Z", bulk="2026-11-12T03:00")
+    h.ran("20261119T010000Z", bulk="2026-11-19T03:00")
+    out = h.at("2026-11-21T12:00").run()
+    assert "cadence:off-window" in _ids(out)
 
 
 def test_an_older_run_with_no_bulk_line_is_passed_over_by_two_newer_bulks(tmp_path):
