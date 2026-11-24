@@ -2096,6 +2096,8 @@ PEND=""        # " name ... ": everything apt-get -s would install or upgrade
 SIM_DIST_OUT="" SIM_OK=0 POLICY_OUT=""  # apt-get -s dist-upgrade's and apt-cache policy's output
 SEC_EXACT=""   # the dry run's selection, when it ran
 R_PHASED=null  # {package: percent} for each phased candidate in the set
+R_PHASING=null  # {knob, deferred, in_phase}: the phased split (#686)
+PHASED_READ=0 PHASED_DEFERRED=""  # 1 when read; those apt would defer here
 DRY_SECURITY_ONLY=0  # 1 when that selection is security alone
 PK_NAME=() PK_CLASS=()
 R_PASSED_OVER=null  # {by_class key: n} the dry run passes over (#361)
@@ -2298,12 +2300,13 @@ read_simulation() {
 # policy marks the version "(phased N%)". The simulation shows them all,
 # since unattended-upgrade takes them all (#354), so this only flags them.
 read_phased() {
-  local out line name="" cand="" v pct o=""
+  local out w o=""
   local -a pend_pkgs=()
   R_PHASED=null
   read -r -a pend_pkgs <<<"$PEND" || true
   if [ "${#pend_pkgs[@]}" -eq 0 ]; then
     R_PHASED="{}"
+    read_phasing " "
     return 0
   fi
   if ! have apt-cache; then
@@ -2315,20 +2318,36 @@ read_phased() {
     not_read "which pending updates are phased: apt-cache policy exited $CAP_RC${CAP_ERR:+: $CAP_ERR}"
     return 0
   fi
-  while IFS= read -r line; do
-    case $line in
-      [!\ ]*:) name=${line%:} cand="" ;;
-      "  Candidate: "*) cand=${line#  Candidate: } ;;
-      *"(phased "*"%)")
-        read -r v _ <<<"${line# \*\*\* }"
-        if [ -n "$name" ] && [ "$v" = "$cand" ] && in_words "$name" "$PEND"; then
-          pct=${line##*(phased }
-          pct=${pct%\%)}
-          jaddn o "$name" "$pct"
-        fi ;;
-    esac
-  done <<<"$out"
+  phased_of out "$out" "$PEND"
+  for w in $out; do jaddn o "${w%%=*}" "${w#*=}"; done
   R_PHASED="{$o}"
+  read_phasing "$out"
+}
+
+# Which of them apt would defer on this machine, and which it's in phase
+# for (#686): the simulation without APT_SIM_PHASED leaves the deferred
+# out. Run only with one phased: address-validator's maintenance lane took
+# 22 phased -updates, where apt-get -s upgrade deferred 13.
+read_phasing() {  # <phased_of's " name=N ... ">
+  local out d="" i="" w o=""
+  if [ -n "${1// /}" ]; then
+    capture out apt_env apt-get -s -o Debug::NoLocking=1 "${APT_OPTS[@]}" ${LISTS_OPT[@]+"${LISTS_OPT[@]}"} dist-upgrade
+    if [ "$CAP_RC" -ne 0 ]; then
+      not_read "which phased updates apt would defer on this machine: apt-get -s dist-upgrade without Always-Include-Phased-Updates exited $CAP_RC${CAP_ERR:+: $CAP_ERR}"
+      return 0
+    fi
+    phased_deferred d "$SIM_DIST_OUT" "$out" "$1"
+  fi
+  for w in $1; do
+    in_words "${w%%=*}" "$d" || i="$i ${w%%=*}"
+  done
+  PHASED_READ=1 PHASED_DEFERRED=$d
+  jadds o knob "$KNOB_PHASING"
+  json_list w "$d"
+  jadd o deferred "$w"
+  json_list w "$i"
+  jadd o in_phase "$w"
+  R_PHASING="{$o}"
 }
 
 # Ubuntu Pro / ESM: noble-security doesn't patch universe.
@@ -2946,8 +2965,8 @@ origin_fresh() {  # <key>
 read_dry_run() {
   local o="" conf t0 t1 out rc line names="" n="" dlk="" free="" rss="" w sel=0 lnames="" lkeep="" lskip=""
   local oleft="" left_read=0 kw p rest unlisted="" prompts="" cfp="" cfs="" i k keys="" po="" hv
-  local lage="" btake=null bsteps=null bnote=""
-  local -a words=() cf_states=() cf_keys=()
+  local lage="" btake=null bsteps=null bnote="" forced=""
+  local -a words=() cf_states=() cf_keys=() fw=()
   R_DRY=null R_PASSED_OVER=null
   if [ -z "$dryrun" ]; then
     not_read "the exact security count and the dry run's cost: only with --dry-run-into DIR, which downloads the whole set as root"
@@ -2972,6 +2991,11 @@ read_dry_run() {
   # plus the lane's, and for one origin, every other pending package skipped.
   if [ "$lane" != security ] && ! lane_patterns "$lane"; then
     finding unknown dry-run "" "the $lane lane's dry run didn't run: $LANE_WHY."
+    return 0
+  fi
+  # Under phasing respect it leaves what apt would defer here (#686).
+  if [ "$lane" = maintenance ] && [ "$KNOB_PHASING" = respect ] && [ "$PHASED_READ" -ne 1 ]; then
+    finding unknown dry-run "" "the maintenance lane's dry run didn't run: the knob's phasing respect leaves the phased updates apt would defer on this machine, and which they are couldn't be read (not_read)."
     return 0
   fi
   case $lane in
@@ -3042,6 +3066,11 @@ read_dry_run() {
     # Word lists, each a package name.
     # shellcheck disable=SC2086
     case $lane in origin:*) lane_skip_conf $lskip ;; esac
+    if [ "$lane" = maintenance ] && [ "$KNOB_PHASING" = respect ] && [ -n "$PHASED_DEFERRED" ]; then
+      # A word list, each a package name.
+      # shellcheck disable=SC2086
+      lane_skip_conf $PHASED_DEFERRED
+    fi
   } >"$conf"
   if ! dry_run_fits "$conf" "$lkeep"; then
     finding "$DRY_KIND" dry-run "" "the dry run didn't run: $DRY_WHY."
@@ -3088,6 +3117,10 @@ read_dry_run() {
         in_words "$p" "$PEND" || unlisted="$unlisted $p"
       done
     fi
+    # The phased updates it takes that apt would defer here (#686).
+    for p in ${words[@]+"${words[@]}"}; do
+      if in_words "$p" "$PHASED_DEFERRED"; then forced="$forced $p"; fi
+    done
   fi
   # The origin's upgrades the selection leaves out: unattended-upgrade would
   # pass them over, so apply.sh refuses the window before it changes
@@ -3114,6 +3147,9 @@ read_dry_run() {
   jaddn o count "$n"
   json_list w "$names"
   jadd o packages "$w"
+  w=null
+  if [ "$PHASED_READ" -eq 1 ] && [ "$sel" -eq 1 ]; then json_list w "$forced"; fi
+  jadd o phased_deferred "$w"
   jaddn o wall_seconds "$((t1 - t0))"
   jaddn o max_rss_kib "$rss"
   jaddn o download_kib "$dlk"
@@ -3213,6 +3249,9 @@ read_dry_run() {
       "$t0" "$rc" "$n" "$((t1 - t0))" "$DRY_SECURITY_ONLY" "$lane"
     if [ "$left_read" -eq 1 ]; then printf 'origin_left=%s\n' "${oleft# }"; fi
     printf 'held_versions=%s\n' "$hv"
+    # What it left, under phasing respect, the bulk leaves too (#686).
+    printf 'phasing=%s\n' "$KNOB_PHASING"
+    if [ "$PHASED_READ" -eq 1 ]; then printf 'phased_deferred=%s\n' "$PHASED_DEFERRED"; fi
     if [ "$sel" -eq 1 ]; then printf 'bulk_takes=%s\nheld_steps=%s\n' "$BS_TAKE" "$BS_STEPS"; fi
     # Each selected package's candidate and class, as the simulation reads
     # them, for a plan's envelope (#673): a package the simulation doesn't
@@ -3283,6 +3322,13 @@ read_dry_run() {
     esac
     finding risk "dry-run:conffile:$p" "" "unattended-upgrade passes over $p at a conffile prompt, so the lane won't install it${k:+, though by_class.$k counts it (by_class.passed_over marks it)} (the dry run exited $rc). Its conffiles on disk: $cfs. Choose a remedy: hold it, declared as exception held:$p <review-by> <reason>; $w; settle the change by hand (a modified conffile); or prune it (policy.md)."
   done
+  # Absent, phasing is ignore; declared, it's the owner's choice (#686).
+  if [ "$lane" = maintenance ] && [ -n "$forced" ] && [ -z "$KNOB_PHASING_LINE" ]; then
+    read -r -a fw <<<"$forced" || true
+    w=s
+    [ "${#fw[@]}" -ne 1 ] || w=""
+    finding risk dry-run:phased "" "The maintenance lane takes ${#fw[@]} phased update$w apt would defer on this machine (${forced# }): unattended-upgrade ignores phasing, so the lane forces them, whatever this machine's phase. To leave them to a later run, declare phasing respect; to take them, phasing ignore (knob.md)."
+  fi
   if [ -n "$unlisted" ]; then
     finding risk dry-run:unlisted "" "The dry run selects${unlisted}, which the pending set's class lists don't name: the proposal's counts leave them out, and the apply would take them. Read each in apt-cache policy before proposing."
   fi
@@ -3418,6 +3464,7 @@ read_pending() {
   jadd o packages "$R_PACKAGES"
   jadd o removals "$R_REMOVALS"
   jadd o phased "$R_PHASED"
+  jadd o phasing "$R_PHASING"
   jadd o esm "$R_ESM"
   jadd o language "$R_LANG"
   jadd o dry_run "$R_DRY"
@@ -3445,7 +3492,7 @@ unit_of_pid() {  # <var> <pid>: the systemd unit its cgroup names, or empty
 # package out of the set. MAPS_PAIRS keeps each "<unit>|<package>|<pid>".
 MAPS_PAIRS=""
 read_maps() {
-  local p f out line pid pkg u e w pairs="" ulist="" pk pids np
+  local p f out line pid pkg u e w pairs="" ulist="" pk pids np lp
   local -a maps=()
   R_MAPS=null
   # An unsimulated set isn't an empty one: what maps it is unknown.
@@ -3521,9 +3568,25 @@ read_maps() {
     json_list w "$pk"
     jadd e packages "$w"
     if in_words "$u" "$DS_UNITS"; then jaddb e datastore 1; else jaddb e datastore 0; fi
+    # Which of them the dry run's lane takes (#686): the security lane's
+    # listed libsystemd0, mapped by PID 1 and Postgres, with no systemd
+    # package in its selection. All stay listed, to compare lanes.
+    if [ -n "$SEC_EXACT" ]; then
+      lp=""
+      for p in $pk; do
+        if in_words "$p" "$SEC_EXACT"; then lp="$lp $p"; fi
+      done
+      json_list w "$lp"
+      jadd e lane_packages "$w"
+      if [ -n "$lp" ]; then jaddb e in_lane 1; else jaddb e in_lane 0; fi
+    fi
     jpush byunit "{$e}"
   done
-  R_MAPS="{\"units\": [$byunit], \"source\": \"/proc/*/maps, read as root, against each pending package's shared objects\"}"
+  w=""
+  jadd w units "[$byunit]"
+  if [ -n "$SEC_EXACT" ]; then jadds w lane "$lane"; fi
+  jadds w source "/proc/*/maps, read as root, against each pending package's shared objects"
+  R_MAPS="{$w}"
 }
 
 # A third-party origin carrying a serving runtime (#464): a pending package

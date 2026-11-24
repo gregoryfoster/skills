@@ -57,8 +57,8 @@ esac
 # Every result variable, reset.
 #
 # Scalars: KNOB_PATH, KNOB_HOST, KNOB_TODAY, KNOB_PRESENT (0|1), KNOB_CLASS,
-# KNOB_POSTURE, KNOB_CADENCE, KNOB_BULK_FACTOR, KNOB_IMAGE_OWNER and
-# KNOB_RECORDS, each value with a *_LINE (empty for a default), and
+# KNOB_POSTURE, KNOB_CADENCE, KNOB_BULK_FACTOR, KNOB_PHASING,
+# KNOB_IMAGE_OWNER and KNOB_RECORDS, each value with a *_LINE (empty for a default), and
 # KNOB_REPORT_ONLY (0|1).
 # Lists of plain strings: KNOB_SECTIONS (applied, least specific first) and
 # KNOB_REPORT_ONLY_WHY.
@@ -108,6 +108,10 @@ knob_reset() {
   KNOB_CADENCE="weekly" KNOB_CADENCE_LINE=""
   # #556: the bulk's span is this many times its dry run (apply.sh).
   KNOB_BULK_FACTOR="3" KNOB_BULK_FACTOR_LINE=""
+  # #686: whether the maintenance lane leaves the phased updates apt would
+  # defer on this machine (respect), or takes them, as unattended-upgrade
+  # does (ignore).
+  KNOB_PHASING="ignore" KNOB_PHASING_LINE=""
   KNOB_IMAGE_OWNER="" KNOB_IMAGE_OWNER_LINE=""
   KNOB_RECORDS="" KNOB_RECORDS_LINE=""
   KNOB_SECTIONS=()
@@ -248,6 +252,11 @@ _knob_directive() {  # <line> <sec> <text>
       else
         _knob_malformed "$n" "bulk-factor takes one number from 1 to 99.99, with at most two decimals"
       fi ;;
+    phasing)
+      case "$nt:${tok[0]:-}" in
+        1:respect | 1:ignore) _knob_record "$n" "$sec" phasing "" "${tok[0]}" ;;
+        *) _knob_malformed "$n" "phasing takes respect or ignore" ;;
+      esac ;;
     window)
       # #421: a weekday, that weekday in one week of the month (Sun#2 is the
       # 2nd Sunday: the 8th to the 14th), or a date, which alone may carry
@@ -663,6 +672,8 @@ _knob_resolve() {
   for i in ${_KSEL[@]+"${_KSEL[@]}"}; do KNOB_CADENCE=${_KP_VAL[$i]} KNOB_CADENCE_LINE=${_KP_LINE[$i]}; done
   _knob_select bulk-factor keyed
   for i in ${_KSEL[@]+"${_KSEL[@]}"}; do KNOB_BULK_FACTOR=${_KP_VAL[$i]} KNOB_BULK_FACTOR_LINE=${_KP_LINE[$i]}; done
+  _knob_select phasing keyed
+  for i in ${_KSEL[@]+"${_KSEL[@]}"}; do KNOB_PHASING=${_KP_VAL[$i]} KNOB_PHASING_LINE=${_KP_LINE[$i]}; done
   _knob_select image-owner keyed
   for i in ${_KSEL[@]+"${_KSEL[@]}"}; do KNOB_IMAGE_OWNER=${_KP_VAL[$i]} KNOB_IMAGE_OWNER_LINE=${_KP_LINE[$i]}; done
   _knob_select records keyed
