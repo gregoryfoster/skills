@@ -854,6 +854,106 @@ def test_the_hosts_own_backup_regime_stands_in_for_the_dumps(host):
     assert out["gate"]["recovery_point"]["backups"][0]["ok"] is True
 
 
+# --- the backup run's own log (#682) ----------------------------------------------
+# watcher 2026-11-16: the object's name was in the unit's journal line from
+# that run, but the script had just watched the unit succeed and showed none
+# of it.
+INVOCATION = "0123456789abcdef0123456789abcdef"
+
+
+def _logged(host: Host, lines: str, rc: int = 0, invocation: str = INVOCATION) -> Host:
+    """The regime, whose run now has INVOCATION and logged LINES."""
+    _regime(host)
+    s = host.state / "backup"
+    host.cases["systemctl"] = [
+        c for c in host.cases["systemctl"] if c[0] != "start -- app-backup.service"
+    ]
+    host.on(
+        "systemctl",
+        "start -- app-backup.service",
+        script=(
+            f'printf "LoadState=loaded\\nResult=success\\nExecMainStartTimestamp=@{TUE_1530 + 5}\\n'
+            f'ExecMainExitTimestamp=@{TUE_1530 + 65}\\nInvocationID={invocation}\\n" > "{s}"; exit 0'
+        ),
+    )
+    stderr = "Failed to open journal: Permission denied\n" if rc else ""
+    host.on(
+        "journalctl",
+        f"*_SYSTEMD_INVOCATION_ID={INVOCATION}*",
+        lines,
+        rc=rc,
+        stderr=stderr,
+    )
+    return host
+
+
+def test_the_backup_runs_own_log_is_shown_by_its_invocation(host):
+    _logged(host, "starting dump\nuploaded gs://bucket/app-20260929.dump (12 MB)\n")
+    out = host.recover()
+    [b] = out["backup"]
+    assert b["ok"] is True
+    assert b["journal"] == {
+        "invocation": INVOCATION,
+        "lines": ["starting dump", "uploaded gs://bucket/app-20260929.dump (12 MB)"],
+        "more": False,
+        "not_read": None,
+    }
+    # On screen, where the owner reads the next line from.
+    assert "uploaded gs://bucket/app-20260929.dump (12 MB)" in host.result.stderr
+    first = out["next"][0]
+    assert first.startswith("Confirm the object app-backup.service wrote")
+    assert "backup[0].journal" in first
+    assert "not proof that the object is off the node" in first
+    # Only the lines from the run it watched, read as systemd keyed them.
+    [(_, args, _)] = [
+        c for c in host.calls("journalctl") if "_SYSTEMD_INVOCATION_ID=" in c[1]
+    ]
+    assert f"_SYSTEMD_INVOCATION_ID={INVOCATION}" in args.split()
+    assert "UNIT=app-backup.service" not in args.split()
+
+
+def test_a_long_log_keeps_its_last_lines_and_says_so(host):
+    _logged(host, "".join(f"line {i}\n" for i in range(1, 22)))
+    [b] = host.recover()["backup"]
+    j = b["journal"]
+    assert j["more"] is True
+    assert j["lines"] == [f"line {i}" for i in range(2, 22)]
+    assert "line 1\n" not in host.result.stderr and "line 21\n" in host.result.stderr
+
+
+def test_a_log_line_cant_put_an_escape_on_the_screen(host):
+    _logged(host, "\x1b[2Jcleared " + "x" * 600 + "\n")
+    [b] = host.recover()["backup"]
+    [line] = b["journal"]["lines"]
+    assert line.startswith("?[2Jcleared x") and len(line) <= 500
+    assert "\x1b" not in host.result.stderr
+
+
+@pytest.mark.parametrize(
+    "lines, rc, invocation, said",
+    [
+        ("", 1, INVOCATION, "the journal couldn't be read (Failed to open journal"),
+        ("", 0, INVOCATION, "the journal holds no line from this run"),
+        ("", 0, "", "systemd gave the run no invocation ID"),
+    ],
+    ids=["unread", "empty", "no-invocation"],
+)
+def test_a_log_it_cant_read_is_said_and_the_step_still_stands(
+    host, lines, rc, invocation, said
+):
+    _logged(host, lines, rc, invocation)
+    out = host.recover()
+    [b] = out["backup"]
+    assert b["ok"] is True and out["verdict"]["ok"] is True
+    assert b["journal"]["lines"] == [] and said in b["journal"]["not_read"]
+    assert said in out["next"][0]
+    if not invocation:
+        assert not [
+            c for c in host.calls("journalctl") if "_SYSTEMD_INVOCATION_ID=" in c[1]
+        ]
+        assert b["journal"]["invocation"] is None
+
+
 def test_a_backup_unit_stands_in_only_for_the_datastores_it_names(host):
     # CR 194: a backup line names what it covers, and whatever none covers
     # is dumped: one unit that copies Postgres leaves Redis to a dump.
@@ -1232,7 +1332,10 @@ def test_a_run_since_the_boot_is_read_from_systemd_not_the_journal(host):
     _regime(host)
     out = host.recover()
     assert _regime_row(out)["last_run_from"] == "systemd"
-    assert not host.calls("journalctl")
+    # The journal is read for the run it starts (#682), never for the last.
+    assert not [
+        c for c in host.calls("journalctl") if "UNIT=app-backup.service" in c[1].split()
+    ]
 
 
 def test_an_rdb_copy_redis_check_rdb_cant_read_records_nothing(tmp_path):

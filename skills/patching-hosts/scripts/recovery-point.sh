@@ -26,7 +26,10 @@ directory. Until every check passes it changes nothing, and prints why.
   leaves out. --dump takes dumps of them all instead. A Redis a backup unit
   covers is saved first, since the unit ships its RDB file as it stands:
   BGSAVE and the wait, where it can log in, or else its RDB file must have
-  been written within --rdb-within of the run's start (#382).
+  been written within --rdb-within of the run's start (#382). The run's own
+  log, its last 20 lines by the run's invocation ID, is shown and kept under
+  backup[].journal, so the owner can read the object's name there: what the
+  unit said it wrote, not proof that it left the node (#682).
 
   Otherwise a dump of each declared Postgres database (pg_dump -Fc) and of
   each Redis (BGSAVE, then a copy of its RDB file), written as root at mode
@@ -272,6 +275,7 @@ trap 'rm -rf "$P_TMP"' EXIT
 P_LIVE=1
 # unit_show sets these by name.
 U_Result="" U_ExecMainStartTimestamp="" U_ExecMainExitTimestamp="" U_LoadState="" U_Triggers=""
+U_InvocationID=""
 
 [ -n "$run" ] || default_run run
 stamp=""
@@ -823,6 +827,53 @@ fresh_redis() {  # <unit> <user> <key file>
   jpush FRESH_A "{$o}"
 }
 
+# The run's own log, by the invocation ID systemd gave the run it watched
+# (#682): the lines the unit's processes wrote, so the object's name, where
+# the unit logs it, is on screen. Its last BJ_MAX lines, each cut at 500
+# bytes. A log it can't read is said, never a failure: the owner's
+# attestation doesn't rest on it. BJ_SAID := why there are no lines.
+BJ_MAX=20 BJ_SAID=""
+backup_journal() {  # <var> <service> <invocation ID>
+  local _bj_v=$1 _bj_out _bj_l _bj_a="" _bj_o="" _bj_more=0 _bj_n=0
+  local -a _bj_ls=()
+  BJ_SAID=""
+  if [ -z "$3" ]; then
+    BJ_SAID="systemd gave the run no invocation ID, so its lines can't be told from another run's"
+  else
+    capture _bj_out as_root journalctl --no-pager -q -o cat -n "$((BJ_MAX + 1))" "_SYSTEMD_INVOCATION_ID=$3"
+    if [ "$CAP_RC" -ne 0 ]; then
+      BJ_SAID="the journal couldn't be read (${CAP_ERR:-journalctl exited $CAP_RC})"
+    else
+      while IFS= read -r _bj_l; do _bj_ls+=("$_bj_l"); done <<<"$_bj_out"
+      [ -n "$_bj_out" ] || _bj_ls=()
+      _bj_n=${#_bj_ls[@]}
+      if [ "$_bj_n" -gt "$BJ_MAX" ]; then
+        _bj_more=1
+        _bj_ls=("${_bj_ls[@]:$((_bj_n - BJ_MAX))}")
+      fi
+      [ "${#_bj_ls[@]}" -gt 0 ] ||
+        BJ_SAID="the journal holds no line from this run: $2 may log elsewhere, or journald dropped them"
+    fi
+  fi
+  if [ "${#_bj_ls[@]}" -gt 0 ]; then
+    echo "recovery-point: $2's log from this run (the last $BJ_MAX lines at most):" >&2
+    for _bj_l in "${_bj_ls[@]}"; do
+      _bj_l=${_bj_l//[![:print:]]/?}
+      _bj_l=${_bj_l:0:500}
+      printf 'recovery-point:   %s\n' "$_bj_l" >&2
+      jpushs _bj_a "$_bj_l"
+    done
+  else
+    echo "recovery-point: $2's log from this run isn't shown: $BJ_SAID" >&2
+  fi
+  jaddsn _bj_o invocation "$3"
+  jadd _bj_o lines "[$_bj_a]"
+  jaddb _bj_o more "$_bj_more"
+  jaddsn _bj_o not_read "$BJ_SAID"
+  printf -v "$_bj_v" '{%s}' "$_bj_o"
+}
+
+BACKUP_SAID=()  # per started unit, in BACKUP_SVCS' order: why its log isn't shown, or empty
 take_backup() {  # <service> <datastore units it covers>
   local o="" s x iso ok=0 w BACKUP_SVC=$1 d r u ru rk
   local -a f=()
@@ -850,7 +901,7 @@ take_backup() {  # <service> <datastore units it covers>
     fail "systemctl start $BACKUP_SVC failed: read its journal. Run again with --dump to take dumps instead"
   fi
   s="" x=""
-  if unit_show "$BACKUP_SVC" Result ExecMainStartTimestamp ExecMainExitTimestamp; then
+  if unit_show "$BACKUP_SVC" Result ExecMainStartTimestamp ExecMainExitTimestamp InvocationID; then
     s=${U_ExecMainStartTimestamp#@} x=${U_ExecMainExitTimestamp#@}
   fi
   jadds o unit "$BACKUP_SVC"
@@ -861,6 +912,9 @@ take_backup() {  # <service> <datastore units it covers>
   jaddsn o started "$iso"
   iso_utc iso "$x"
   jaddsn o finished "$iso"
+  backup_journal w "$BACKUP_SVC" "$U_InvocationID"
+  jadd o journal "$w"
+  BACKUP_SAID+=("$BJ_SAID")
   if [ "${#FAILED[@]}" -gt 0 ]; then
     :
   elif ! is_int "$s" || [ "$s" -lt "$P_NOW" ]; then
@@ -1196,7 +1250,14 @@ if [ "${#FAILED[@]}" -gt 0 ]; then
   NEXT+=("Nothing was recorded, so apply.sh's bulk refuses: fix what failed, then take the recovery point again. The files written so far are under dumps and local: delete them, or keep them to $retain.")
 else
   for _i in ${BACKUP_SVCS[@]+"${!BACKUP_SVCS[@]}"}; do
-    NEXT+=("Confirm the object ${BACKUP_SVCS[$_i]} wrote off the node, then name it to the bulk: --offnode-object <its name>.")
+    # The log is what the unit said it wrote: the attestation stays the
+    # owner's (#682).
+    if [ -z "${BACKUP_SAID[$_i]:-}" ]; then
+      _w="Its log from this run is above and in backup[$_i].journal, by the run's invocation ID: a name read there is what the unit said it wrote, not proof that the object is off the node."
+    else
+      _w="Its log from this run isn't shown: ${BACKUP_SAID[$_i]}. Find the name in the unit's own log or the destination's listing."
+    fi
+    NEXT+=("Confirm the object ${BACKUP_SVCS[$_i]} wrote off the node, then name it to the bulk: --offnode-object <its name>. $_w")
   done
   if [ "${#DS[@]}" -gt 0 ]; then
     # Each dump and its directory are root's, so the owner's own scp can't
