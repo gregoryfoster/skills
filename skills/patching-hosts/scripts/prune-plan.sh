@@ -279,7 +279,7 @@ jadd J reverse_depends "[$_a]"
 # autoremove does, as does unattended-upgrades' Remove-Unused-Dependencies.
 # apt's "no longer required" list holds what autoremove takes already, so
 # that's taken off.
-capture _x apt-get -s autoremove
+capture _x apt-get -s "${PRUNE_SIM_OPTS[@]}" autoremove
 if [ "$CAP_RC" -eq 0 ]; then
   _now=""
   while read -r _l _p _y; do
