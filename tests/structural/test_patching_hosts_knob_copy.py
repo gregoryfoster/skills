@@ -443,6 +443,23 @@ def test_a_knob_root_finds_no_file_at_is_an_error_not_the_defaults(
     assert "isn't there, even to root" in r.stderr
 
 
+def test_a_link_to_a_missing_file_the_caller_can_see_reads_as_no_knob(tmp_path):
+    # CR 2798 follow-up: decided by its target, as a plain missing file is.
+    link = tmp_path / "knob"
+    link.symlink_to(tmp_path / "missing")
+    r = _read_knob(str(link), PATH="/usr/bin:/bin")
+    assert r.returncode == 0, r.stderr
+    assert json.loads(r.stdout)["knob"]["present"] is False
+
+
+def test_a_link_loop_reads_as_no_knob(tmp_path):
+    (tmp_path / "a").symlink_to(tmp_path / "b")
+    (tmp_path / "b").symlink_to(tmp_path / "a")
+    r = _read_knob(str(tmp_path / "a"), PATH="/usr/bin:/bin")
+    assert r.returncode == 0, r.stderr
+    assert json.loads(r.stdout)["knob"]["present"] is False
+
+
 def test_a_knob_the_caller_sees_is_absent_still_reads_as_the_defaults(tmp_path):
     # The documented no-knob case, unchanged: no sudo is asked.
     r = _read_knob(str(tmp_path / "absent"), PATH="/usr/bin:/bin")
