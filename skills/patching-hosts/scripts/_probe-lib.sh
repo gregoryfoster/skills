@@ -91,6 +91,9 @@ The primitives these scripts reach a host through:
                             whether an aclfile or a user line sets the users
                             (RC_ACL_WHY says which), and whether an include
                             is there
+  redis_addr                RA_ARGS := the client's words for the address
+                            redis_conf read (-s, or -h and -p), RA_PORT its
+                            port
   redis_persistence VAR     aof, rdb, none or unknown, from redis_conf
   hold_group_versions VAR SIM
                             "<pkg>=<version>" for each pending package a hold
@@ -1693,28 +1696,73 @@ qdrant_loss() {  # <url> <key-file> <the counts before>
 # Which server a Redis unit runs, and so which client and RDB checker it
 # takes (#706): Ubuntu's valkey-server renames them, and its valkey-tools
 # ships valkey-cli and valkey-check-rdb, no redis-cli (measured, 7.2.14);
-# only valkey-redis-compat does, and it removes redis-server. valkey where
-# the unit's ExecStart runs valkey-server, or, where that can't be read,
-# where the unit's name starts with valkey; redis otherwise. The one place
-# the choice is made: redis_conf calls it, and so redis_conn, the chain and
-# the probe take what it says. It leaves U_ExecStart set, and returns
+# valkey-redis-compat adds redis-cli and redis-check-rdb as links to them,
+# and removes redis-server and redis-tools. The server is, first found:
+# - the unit's ExecStart path=, what systemd executes: an @ prefix shows
+#   argv[0] as anything (@/usr/bin/valkey-server redis-server ... shows
+#   argv[]=redis-server), and argv[0] only where path= names neither;
+# - through env, the first word after its options and assignments;
+# - through a wrapper that names neither, its running main process's
+#   binary, /proc/<MainPID>/exe, which reads *-check-rdb: noble links each
+#   server to it;
+# - else the unit's name: valkey where it starts with valkey (CR 2827).
+# Of several ExecStart lines (Type=oneshot), systemctl show prints each,
+# and the last, which unit_show keeps, decides. The one place the choice
+# is made: redis_conf calls it, and so redis_conn, the chain and the
+# probe take what it says. It leaves U_ExecStart set, and returns
 # unit_show's status.
 RE_ENGINE="" RE_CLI="" RE_CHECK_RDB=""
-redis_engine() {  # <unit>
-  local _re_b="" _re_rc=0
-  unit_show "$1" ExecStart || _re_rc=$?
-  if [[ $U_ExecStart == *argv[]=* ]]; then
-    _re_b=${U_ExecStart#*argv[]=}
-    _re_b=${_re_b%% *}
-    _re_b=${_re_b##*/}
-  else
-    _re_b=${1##*/}
-  fi
-  case $_re_b in
-    valkey*) RE_ENGINE=valkey ;;
-    *) RE_ENGINE=redis ;;
+_re_server() {  # <var> <word>: valkey or redis where WORD's basename is that server
+  case ${2##*/} in
+    valkey-server*) printf -v "$1" '%s' valkey ;;
+    redis-server*) printf -v "$1" '%s' redis ;;
+    *) printf -v "$1" '%s' "" ;;
   esac
-  RE_CLI=$RE_ENGINE-cli RE_CHECK_RDB=$RE_ENGINE-check-rdb
+}
+redis_engine() {  # <unit>
+  local _re_e="" _re_rc=0 _re_p="" _re_w _re_skip=0 _re_x
+  local -a _re_a=()
+  unit_show "$1" ExecStart MainPID || _re_rc=$?
+  if [[ $U_ExecStart == *path=* ]]; then
+    _re_p=${U_ExecStart#*path=}
+    _re_p=${_re_p%% *}
+    _re_server _re_e "$_re_p"
+  fi
+  if [ -z "$_re_e" ] && [[ $U_ExecStart == *argv[]=* ]]; then
+    _re_w=${U_ExecStart#*argv[]=}
+    read -r -a _re_a <<<"${_re_w%% ;*}" || true
+    if [ "${_re_p##*/}" = env ] || [ "${_re_a[0]##*/}" = env ]; then
+      for _re_w in "${_re_a[@]:1}"; do
+        if [ "$_re_skip" -eq 1 ]; then _re_skip=0; continue; fi
+        case $_re_w in
+          -u | -C | --unset | --chdir) _re_skip=1 ;;
+          -* | *=*) ;;
+          *) _re_server _re_e "$_re_w"; break ;;
+        esac
+      done
+    elif [ "${#_re_a[@]}" -gt 0 ]; then
+      _re_server _re_e "${_re_a[0]}"
+    fi
+  fi
+  if [ -z "$_re_e" ] && is_int "$U_MainPID" && [ "$U_MainPID" -gt 0 ]; then
+    _re_x=$(readlink -- "$P_ROOT/proc/$U_MainPID/exe" 2>/dev/null) ||
+      _re_x=$(as_root readlink -- "$P_ROOT/proc/$U_MainPID/exe" 2>/dev/null) || _re_x=""
+    # Noble's redis-server and valkey-server are links to their
+    # *-check-rdb, the one binary, so that's what exe reads (measured).
+    _re_x=${_re_x% (deleted)}
+    case ${_re_x##*/} in
+      valkey-check-rdb) _re_e=valkey ;;
+      redis-check-rdb) _re_e=redis ;;
+      *) _re_server _re_e "$_re_x" ;;
+    esac
+  fi
+  if [ -z "$_re_e" ]; then
+    case ${1##*/} in
+      valkey*) _re_e=valkey ;;
+      *) _re_e=redis ;;
+    esac
+  fi
+  RE_ENGINE=$_re_e RE_CLI=$_re_e-cli RE_CHECK_RDB=$_re_e-check-rdb
   return "$_re_rc"
 }
 
@@ -1803,6 +1851,24 @@ redis_conf() {  # <unit>
     RC_ACL_WHY="its aclfile sets the users"
   elif [ -n "$_RC_USER_IN" ]; then
     RC_ACL_WHY="a user line in $_RC_USER_IN sets the users"
+  fi
+}
+
+# The client's words for the address redis_conf read: its socket, or the
+# address its file binds, the loopback where that's a wildcard or unset,
+# and its port, 6379 where unset (#379). RA_ARGS, which redis_conn and the
+# probe's INFO both use (CR 2828); RA_PORT, the port, or empty for a
+# socket.
+RA_ARGS=() RA_PORT=""
+redis_addr() {
+  local _ra_b=$RC_BIND
+  case $_ra_b in '' | '*' | 0.0.0.0 | '::' | '::*') _ra_b=127.0.0.1 ;; esac
+  if [ -n "$RC_SOCK" ]; then
+    RA_ARGS=(-s "$RC_SOCK") RA_PORT=""
+  else
+    RA_PORT=$RC_PORT
+    is_int "$RA_PORT" || RA_PORT=6379
+    RA_ARGS=(-h "$_ra_b" -p "$RA_PORT")
   fi
 }
 
