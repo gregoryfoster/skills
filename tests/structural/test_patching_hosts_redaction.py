@@ -46,17 +46,32 @@ def _redact(*words: str) -> tuple[str, float]:
 
 def test_a_word_of_thousands_of_values_is_read_in_a_loop():
     # CR 2814: each value's closing quote and ; started a recursive call, and
-    # 2000 of them in one word overflowed bash 5.2's stack (rc 139).
-    out, _ = _redact("+", "X_TOKEN='zq9';" * 2500, "done")
-    assert out == "+ " + "X_TOKEN=<redacted>;" * 2500 + " done"
+    # 2000 of them in one word overflowed bash 5.2's stack (rc 139). Past
+    # QS_MAX the rest of the line is dropped, marked (CR 2835).
+    out, took = _redact("+", "X_TOKEN='zq9';" * 2500, "done")
+    assert out == "+ X_TOKEN=<redacted> <...>"
+    assert took < 10
 
 
-def test_a_long_value_is_scanned_in_linear_time():
-    # CR 2815: a copy of the rest per character took 65 s on 128 KB.
+def test_a_long_or_quote_dense_value_is_dropped_not_scanned():
+    # CR 2815, CR 2835: the scan copied the rest of its text per character,
+    # then per quote: 128 KB of a'b' took 40 s. A value past QS_MAX, or a
+    # line past RS_SCAN_MAX scanned, drops the rest of the line, marked.
     long = "a" * 128000
-    out, took = _redact("run", "--password", f"'{long}", f"{long}'", "--region", "us")
-    assert out == "run --password <redacted> --region us"
-    assert took < 10
-    out, took = _redact("+", f'X_TOKEN="{long}\\"{long}"', "next")
-    assert out == "+ X_TOKEN=<redacted> next"
-    assert took < 10
+    dense = "a'b'" * 32000
+    for words, shown in [
+        (
+            ["run", "--password", f"'{long}", f"{long}'", "--region", "us"],
+            "run --password <redacted> <...>",
+        ),
+        (["+", f'X_TOKEN="{long}\\"{long}"', "next"], "+ X_TOKEN=<redacted> <...>"),
+        ([f"--password={dense}", "after"], "--password=<redacted> <...>"),
+        (
+            ["run", "--password", "'x", *["a'b'" * 1000] * 500, "end"],
+            "run --password <redacted> <...>",
+        ),
+        (["ok", "--password", "'x", "y'", "shown"], "ok --password <redacted> shown"),
+    ]:
+        out, took = _redact(*words)
+        assert out == shown
+        assert took < 10

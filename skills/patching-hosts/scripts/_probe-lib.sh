@@ -1343,21 +1343,26 @@ secret_env_name() {  # <NAME>: 0 when an environment name marks a secret
 # (CR 2813, #707). A value's quotes are scanned as a shell's: '\'' stays
 # inside a single quote, a \ outside one, or inside a double one or $'..',
 # escapes the next character, and a quote may open mid-value (a'b c'). A
-# value that leaves a quote open runs on through the word that closes it, as
-# one ending in an escaped space runs on into the next. One whose closing
-# quote is followed by ; ) , & | ] or a space ends there, and what follows is
-# read on (X_TOKEN='a b'; exec d). A word is read in one loop, never by
-# recursion, jumping from quote to quote, so its length is no bound (CR 2814,
-# CR 2815). A Python repr's \' inside '..' is read as a shell's, so its
-# value can end early (readings.md).
+# value runs as a shell word does: through its quotes, and a quote left open
+# runs on through the word that closes it, as an escaped space runs on into
+# the next word. A closing quote ends it only where the shell ends the word,
+# at the word's end or a ; ) , & | ] that runs to it (CR 2832); a value is
+# redacted whole otherwise. A word is read in one loop, never by recursion
+# (CR 2814), and a text past QS_MAX, or a line past RS_SCAN_MAX scanned,
+# isn't read: the rest of its line is dropped, marked (CR 2815, CR 2835).
+# A Python repr's \' inside '..' is read as a shell's (readings.md).
 # The state between words: RS_Q, the quote a redacted value has open (' " or
-# $ for $'..', \ after an escaped space, or empty); RS_NEXT, 1 when the next
+# $ for $'..', \ after an escaped space, ! for the rest of the line, or
+# empty); RS_NEXT, 1 when the next
 # word is a secret's value; RS_LIST, 1 when that's a list's or a call's
 # element, whose unquoted trailing ) ] , aren't its own; RS_WRAP, the quote
 # before a name ('NAME=..'), closed in the output when the value closes on
 # its line. RW_QUOTE: the quote a line leaves open, which the backup log
-# carries into the run's next entry (CR 2816).
-RS_OUT="" RS_Q="" RS_NEXT=0 RS_LIST=0 RS_WRAP="" RW_QUOTE=""
+# carries into the run's next entry (CR 2816). RS_WHOLE: 1 while a raw
+# argument's first segment is read, whose value is all of it (CR 2832).
+RS_OUT="" RS_Q="" RS_NEXT=0 RS_LIST=0 RS_WRAP="" RW_QUOTE="" RS_WHOLE=0 RS_SCANNED=0
+QS_MAX=4096 RS_SCAN_MAX=32768
+QS_END_RE='^[];),&|]+$'
 QS_RE_OUT="^[^'\"\\\\\$]*"
 QS_RE_SQ="^[^']*"
 QS_RE_DQ="^[^\"\\\\]*"
@@ -1371,6 +1376,12 @@ quote_scan() {  # <quote open at the start, or empty> <text>: QS := the quote op
   local _qs_s=$2 _qs_c _qs_re
   QS=$1 QS_TAIL=""
   if [ "$QS" = "\\" ]; then QS=""; fi
+  if [ "$QS" = "!" ]; then return 0; fi
+  RS_SCANNED=$((RS_SCANNED + ${#_qs_s}))
+  if [ "${#_qs_s}" -gt "$QS_MAX" ] || [ "$RS_SCANNED" -gt "$RS_SCAN_MAX" ]; then
+    QS="!"
+    return 0
+  fi
   while :; do
     case $QS in
       "") _qs_re=$QS_RE_OUT ;;
@@ -1393,7 +1404,7 @@ quote_scan() {  # <quote open at the start, or empty> <text>: QS := the quote op
       \' | \") QS=$_qs_c ;;
       "''" | '""' | "\$'")
         QS=""
-        case $_qs_s in []\;\),\&\|[:space:]]*) QS_TAIL=$_qs_s; return 0 ;; esac ;;
+        if [[ $_qs_s =~ $QS_END_RE ]]; then QS_TAIL=$_qs_s; return 0; fi ;;
     esac
   done
 }
@@ -1447,7 +1458,8 @@ redact_word() {  # <text> [<separator before it>]: RS_OUT += the text under the 
       RS_OUT="$RS_OUT$_rd_sep$_rd_x" _rd_sep=""
       continue
     fi
-    _rd_pre="" _rd_q="" _rd_list=0 _rd_red=0 _rd_sp=0 _rd_out=""
+    _rd_pre="" _rd_q="" _rd_list=0 _rd_red=0 _rd_sp=0 _rd_out="" _rd_whole=$RS_WHOLE
+    RS_WHOLE=0
     case $_rd_w in *[[:space:]]*) _rd_sp=1 ;; esac
     if [ "$_rd_sp" -eq 0 ]; then
       if [[ $_rd_w =~ $ARG_OPEN ]]; then
@@ -1489,6 +1501,12 @@ redact_word() {  # <text> [<separator before it>]: RS_OUT += the text under the 
           _rd_v=${_rd_w#*=} _rd_out="$_rd_n=<redacted>" _rd_red=1
         fi ;;
     esac
+    if [ "$_rd_red" -eq 1 ] && [ "$_rd_whole" -eq 1 ]; then
+      # A raw argument's value is all of it: quotes, spaces and what
+      # follows them (CR 2832).
+      RS_OUT="$RS_OUT$_rd_sep$_rd_pre$_rd_q$_rd_out"
+      return 0
+    fi
     if [ "$_rd_red" -eq 1 ]; then
       # The value starts in the word's own opening quote, if it has one. A
       # quote it leaves open isn't closed in the output (CR 2821).
@@ -1509,6 +1527,7 @@ redact_word() {  # <text> [<separator before it>]: RS_OUT += the text under the 
       for _rd_x in ${_rd_ws[@]+"${_rd_ws[@]}"}; do
         if [ "$_rd_i" -eq 0 ]; then redact_word "$_rd_x" "$_rd_sep"; else redact_word "$_rd_x"; fi
         _rd_i=1
+        [ "$RS_Q" != "!" ] || break
       done
       return 0
     fi
@@ -1524,12 +1543,22 @@ redact_word() {  # <text> [<separator before it>]: RS_OUT += the text under the 
 }
 redact_words() {  # <var> <word>...: the words under the name rule, joined by a space; RW_QUOTE is the quote open before them, and after
   local _rw_v=$1 _rw_w
+  local -a _rw_a=()
   shift
-  RS_OUT="" RS_Q=$RW_QUOTE RS_NEXT=0 RS_LIST=0 RS_WRAP=""
-  for _rw_w in "$@"; do redact_word "$_rw_w"; done
+  # Off the positional parameters: bash copies them into each call made
+  # from here, which a line of many words made quadratic.
+  _rw_a=("$@")
+  set --
+  RS_OUT="" RS_Q=$RW_QUOTE RS_NEXT=0 RS_LIST=0 RS_WRAP="" RS_WHOLE=0 RS_SCANNED=0
+  for _rw_w in ${_rw_a[@]+"${_rw_a[@]}"}; do
+    redact_word "$_rw_w"
+    [ "$RS_Q" != "!" ] || break
+  done
   if [ "$RS_Q" = "\\" ]; then RS_Q=""; fi
-  # A line that leaves a value's quote open is marked once.
+  # A line that leaves a value's quote open, or whose rest wasn't read, is
+  # marked once; only a quote carries on.
   if [ -n "$RS_Q" ] && [ -n "$RS_OUT" ]; then RS_OUT="$RS_OUT <...>"; fi
+  if [ "$RS_Q" = "!" ]; then RS_Q=""; fi
   RW_QUOTE=$RS_Q
   printf -v "$_rw_v" '%s' "$RS_OUT"
 }

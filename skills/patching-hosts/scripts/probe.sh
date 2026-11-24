@@ -3805,21 +3805,41 @@ cmdline_of() {  # <var> <pid>
 # _probe-lib.sh's redact_word (#698), read from the NUL-separated argv so a
 # value holding a space stays one value; an element holding whitespace, a
 # wrapper's script string or an argv rewritten as one string, is read by its
-# words, and its quotes, too (CR 2768, CR 2785, #707), unless it is one
-# NAME=value. cmdline_of stays whole for the probe's own reads.
+# words, and its quotes, too (CR 2768, CR 2785, #707). One that names a
+# secret is one value, redacted whole, and a URL's userinfo or parameter is
+# redacted across the whole element first, spaces and all (CR 2832,
+# CR 2833). An argv's words past ARGS_MAX bytes aren't read: an element is
+# cut back to the last whole word before it, and what's left is marked <...>,
+# so a local user's long argv can't stall the probe (CR 2835).
+# cmdline_of stays whole for the probe's own reads.
+ARGS_MAX=16384
 redacted_cmdline_of() {  # <var> <pid>
-  local _rc_w _rc_out="" _rc_next=0
+  local _rc_w _rc_out="" _rc_next=0 _rc_cut
   local -a _rc_a=()
   while IFS= read -r -d '' _rc_w || [ -n "$_rc_w" ]; do
     _rc_a+=("$_rc_w")
   done 2>/dev/null <"$P_ROOT/proc/$2/cmdline" || true
   for _rc_w in ${_rc_a[@]+"${_rc_a[@]}"}; do
+    if [ "${#_rc_out}" -gt "$ARGS_MAX" ]; then
+      _rc_out="$_rc_out <...>"
+      break
+    fi
+    _rc_cut=0
+    if [ "${#_rc_w}" -gt "$ARGS_MAX" ] && [[ $_rc_w == *[[:space:]]* ]]; then
+      _rc_w=${_rc_w:0:$ARGS_MAX}
+      case $_rc_w in
+        *[[:space:]]*) _rc_w=${_rc_w%[[:space:]]*} ;;
+        *) _rc_w="" ;;
+      esac
+      _rc_cut=1
+    fi
     if [ "$_rc_next" -eq 1 ]; then
       _rc_next=0
       _rc_out="$_rc_out <redacted>"
       continue
     fi
-    RS_OUT="" RS_Q="" RS_NEXT=0 RS_LIST=0 RS_WRAP=""
+    redact_url _rc_w "$_rc_w"
+    RS_OUT="" RS_Q="" RS_NEXT=0 RS_LIST=0 RS_WRAP="" RS_WHOLE=1 RS_SCANNED=0
     redact_word "$_rc_w"
     _rc_next=0
     case $_rc_w in
@@ -3829,6 +3849,7 @@ redacted_cmdline_of() {  # <var> <pid>
         case $RS_Q in "" | \\) ;; *) RS_OUT="$RS_OUT <...>" ;; esac ;;
       *) _rc_next=$RS_NEXT ;;
     esac
+    if [ "$_rc_cut" -eq 1 ] && [[ $RS_OUT != *" <...>" ]]; then RS_OUT="$RS_OUT <...>"; fi
     _rc_out="$_rc_out $RS_OUT"
   done
   # Without the empty elements a rewritten argv is padded with.
