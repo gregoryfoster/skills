@@ -29,9 +29,12 @@ The gate_* functions add their readings to the caller's J_GATE.
                             600, as knob-<its sha256's first 12>: KNOB_COPY
                             := its path, KNOB_COPY_J := the step's knob_copy
                             (null without --config), KNOB_COPY_NOTE := a line
-                            when an earlier step's copy is of another knob.
+                            when an earlier step's copy is of another knob,
+                            the file changed since knob_load read it, or the
+                            run holds a copy this step, without --config,
+                            didn't run under. The bytes kept are KNOB_TEXT.
                             WRITE 0 only looks one up. 1 with KNOB_COPY_WHY
-                            when the copy fails (needs _plan-lib.sh)
+                            when the copy fails (needs _plan-lib.sh, P_TMP)
   words_of VAR TEXT         TEXT's words, one space apart
   json_words VAR WORDS      a JSON array of space-separated WORDS
   says VAR RC               what a knob command's exit status means
@@ -111,58 +114,73 @@ root_has() { as_root test -e "$1"; }
 # which the boot may empty: the post-boot probe's knob, and the record of
 # what gated each step, went with it (#681). So a --config knob is kept in
 # the run's directory, root's at 600, named by its own sha256, and the
-# chain's next names that copy. A knob that changed between steps, as a
-# fresh one-off window at a late approval does (#680, #687), is kept beside
-# the earlier one and named, never refused. Without --config the tracked
-# knob is the record, and nothing is copied.
+# chain's next names that copy. The bytes kept are the ones knob_load parsed
+# at the step's start, which its gates read: a file edited since is named,
+# never copied as what gated the step (CR 2799). A knob that changed between
+# steps, as a fresh one-off window at a late approval does (#680, #687), is
+# kept beside the earlier one and named, never refused. Without --config the
+# tracked knob is the record: nothing is copied, and a run that holds a
+# copy is named, since this step didn't run under it (CR 2800).
 KNOB_COPY="" KNOB_COPY_J=null KNOB_COPY_NOTE="" KNOB_COPY_WHY=""
-# The script runs as root, in sh: its expansions are its own.
+# The scripts run as root, in sh: their expansions are their own.
 # shellcheck disable=SC2016
 knob_keep() {  # <given 0|1> <config> <run> <write 0|1>
-  local _kk_new=$3/knob.new _kk_sha="" _kk_copy _kk_out _kk_f _kk_e="" _kk_o="" _kk_n=""
+  local _kk_new=$3/knob.new _kk_read=$P_TMP/knob-read _kk_sha="" _kk_disk="" _kk_copy
+  local _kk_out _kk_f _kk_e="" _kk_o="" _kk_n="" _kk_g
   KNOB_COPY="" KNOB_COPY_J=null KNOB_COPY_NOTE="" KNOB_COPY_WHY=""
-  [ "$1" -eq 1 ] || return 0
-  if [ "$4" -eq 1 ]; then
-    # Copied as root, then hashed: the bytes named are the copy's own.
-    if ! as_root sh -c 'umask 077; cat -- "$1" >"$2"' sh "$2" "$_kk_new"; then
-      as_root rm -f -- "$_kk_new" 2>/dev/null || true
-      KNOB_COPY_WHY="the --config knob $2 couldn't be copied into $3"
-      return 1
+  capture _kk_out as_root sh -c 'for f in "$1"/knob-*; do [ -f "$f" ] && printf "%s\n" "$f"; done; exit 0' sh "$3"
+  if [ "$1" -ne 1 ]; then
+    while IFS= read -r _kk_f; do
+      [ -z "$_kk_f" ] || _kk_n="$_kk_n${_kk_n:+, }$_kk_f"
+    done <<<"$_kk_out"
+    if [ -n "$_kk_n" ]; then
+      KNOB_COPY_NOTE="This step ran under the tracked knob, $2, not the run's copy of a --config knob ($_kk_n): to run under the copy, pass it as --config."
     fi
-    plan_sha _kk_sha "$_kk_new"
-    if [ -z "$_kk_sha" ]; then
-      as_root rm -f -- "$_kk_new" 2>/dev/null || true
-      KNOB_COPY_WHY="the copy of the --config knob in $3 couldn't be hashed"
-      return 1
-    fi
-    _kk_copy=$3/knob-${_kk_sha:0:12}
-    if root_has "$_kk_copy"; then
-      as_root rm -f -- "$_kk_new" 2>/dev/null || true
-    elif ! as_root mv -f -- "$_kk_new" "$_kk_copy"; then
-      as_root rm -f -- "$_kk_new" 2>/dev/null || true
-      KNOB_COPY_WHY="the copy of the --config knob couldn't be named $_kk_copy"
-      return 1
-    fi
-  else
-    plan_sha _kk_sha "$2"
-    [ -n "$_kk_sha" ] || return 0
-    _kk_copy=$3/knob-${_kk_sha:0:12}
-    root_has "$_kk_copy" || return 0
+    return 0
+  fi
+  [ "$KNOB_PRESENT" -eq 1 ] || return 0
+  if ! printf '%s' "$KNOB_TEXT" >"$_kk_read"; then
+    KNOB_COPY_WHY="the knob as this step read it couldn't be staged in $P_TMP"
+    return 1
+  fi
+  plan_sha _kk_sha "$_kk_read"
+  if [ -z "$_kk_sha" ]; then
+    KNOB_COPY_WHY="the --config knob couldn't be hashed"
+    return 1
+  fi
+  _kk_copy=$3/knob-${_kk_sha:0:12}
+  if root_has "$_kk_copy"; then
+    :
+  elif [ "$4" -ne 1 ]; then
+    return 0
+  elif ! root_write "$_kk_new" <"$_kk_read"; then
+    as_root rm -f -- "$_kk_new" 2>/dev/null || true
+    KNOB_COPY_WHY="the --config knob $2 couldn't be copied into $3"
+    return 1
+  elif ! as_root mv -f -- "$_kk_new" "$_kk_copy"; then
+    as_root rm -f -- "$_kk_new" 2>/dev/null || true
+    KNOB_COPY_WHY="the copy of the --config knob couldn't be named $_kk_copy"
+    return 1
   fi
   KNOB_COPY=$_kk_copy
-  capture _kk_out as_root sh -c 'for f in "$1"/knob-*; do [ -f "$f" ] && printf "%s\n" "$f"; done; exit 0' sh "$3"
   while IFS= read -r _kk_f; do
     if [ -z "$_kk_f" ] || [ "$_kk_f" = "$_kk_copy" ]; then continue; fi
     jpushs _kk_e "$_kk_f"
     _kk_n="$_kk_n${_kk_n:+, }$_kk_f"
   done <<<"$_kk_out"
+  # As an absolute path, so the record names it wherever it's read from.
+  case $2 in /*) _kk_g=$2 ;; *) _kk_g=$PWD/$2 ;; esac
   jadds _kk_o path "$_kk_copy"
   jadds _kk_o sha256 "$_kk_sha"
-  jadds _kk_o given "$2"
+  jadds _kk_o given "$_kk_g"
   jadd _kk_o earlier "[$_kk_e]"
   KNOB_COPY_J="{$_kk_o}"
   if [ -n "$_kk_n" ]; then
     KNOB_COPY_NOTE="This step ran under a knob other than an earlier step's: its copy is $_kk_copy, and the earlier is $_kk_n. Both are kept in the run's record."
+  fi
+  plan_sha _kk_disk "$2"
+  if [ -n "$_kk_disk" ] && [ "$_kk_disk" != "$_kk_sha" ]; then
+    KNOB_COPY_NOTE="${KNOB_COPY_NOTE:+$KNOB_COPY_NOTE }The knob at $_kk_g changed after this step read it: $_kk_copy holds what gated the step, not the file as it is now."
   fi
 }
 root_read() {  # <var> <path>: VAR := its contents; returns 1 when it can't be read

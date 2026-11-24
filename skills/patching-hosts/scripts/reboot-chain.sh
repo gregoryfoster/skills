@@ -678,6 +678,9 @@ if [ "$TMP_CLEARED" != 0 ]; then
 fi
 J_TMP="[$_a]"
 
+# As an absolute path, so the post-boot command runs from any directory.
+case $config in /*) config_abs=$config ;; *) config_abs=$PWD/$config ;; esac
+
 # The launch returns once the timer is set, so the session never sees the
 # chain's outcome: these say when to read it, and how (#646).
 next_lines() {  # <the chain's fire time, or empty when nothing is scheduled>
@@ -688,7 +691,7 @@ next_lines() {  # <the chain's fire time, or empty when nothing is scheduled>
     NEXT+=("Once a launched chain's fire time has passed, read its outcome: $outcome. $ab.")
   fi
   # The run's copy of a --config knob, which the boot can't empty (#681).
-  NEXT+=("After the boot: bash \"$_libdir/probe.sh\" --post-boot --run \"$run\" --config \"${KNOB_COPY:-$config}\" --host $host (reboot-and-record.md section 6).")
+  NEXT+=("After the boot: bash \"$_libdir/probe.sh\" --post-boot --run \"$run\" --config \"${KNOB_COPY:-$config_abs}\" --host $host (reboot-and-record.md section 6).")
   NEXT+=("The journal copy in $run/journal is a recovery-point file: delete it with the others, on their retention.")
 }
 
@@ -698,7 +701,7 @@ if [ "$TMP_N" -gt 0 ]; then
   _w=paths
   [ "$TMP_N" -ne 1 ] || _w=path
   if [ "$TMP_CLEARED" = 1 ]; then
-    NEXT+=("The boot empties /tmp: $TMP_N $_w under it will be gone (tmp_staged lists them). Copy anything to keep, such as a --config knob or a session's notes, before the reboot.")
+    NEXT+=("The boot empties /tmp: $TMP_N $_w under it will be gone (tmp_staged lists them). Copy anything to keep, such as a session's notes, before the reboot: a --config knob is kept in the run's directory already.")
   else
     NEXT+=("Whether the boot empties /tmp is unknown: $TMP_N $_w under it may be gone (tmp_staged lists them). Copy anything to keep before the reboot.")
   fi
@@ -708,6 +711,7 @@ if [ "${#REFUSED[@]}" -gt 0 ]; then
   for _r in "${REFUSED[@]}"; do echo "reboot-chain: refused: $_r" >&2; done
   # Nothing is written before an approval: an earlier step's copy is named.
   knob_keep "$config_given" "$config" "$run" 0 || true
+  [ -z "$KNOB_COPY_NOTE" ] || NEXT+=("$KNOB_COPY_NOTE")
   next_lines ""
   emit
   exit 3

@@ -1204,6 +1204,8 @@ if ! root_has "$run" && ! as_root mkdir -p -m 700 -- "$run"; then
   fail "$run couldn't be made"
 elif ! knob_keep "$config_given" "$config" "$run" 1; then
   fail "$KNOB_COPY_WHY"
+else
+  [ -z "$KNOB_COPY_NOTE" ] || NEXT+=("$KNOB_COPY_NOTE")
 fi
 # An earlier attempt's record goes first: otherwise an attempt that fails
 # leaves it standing, and the bulk would take it.

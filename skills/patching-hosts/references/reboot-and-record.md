@@ -55,8 +55,6 @@ If the reboot slips out of the window, say so, and redo the gate and the quiet-h
 
 `probe.sh --post-boot` takes these checks, and each one that fails is a finding. The downtime, and any `Persistent=` catch-up, are left to you.
 
-**Its knob is the run's copy.** The first step given `--config` keeps that knob in the run's directory as `knob-<its sha256's first 12>`, root's at 600, and records the path and sha256 as `knob_copy`. The chain's NEXT names the copy, since a scratch copy under `/tmp` went with watcher's boot (#681). A knob changed between steps, as a fresh one-off window is, is kept beside the earlier one and named, never refused. The scripts read a knob the caller can't through `sudo -n`; one it still can't read is an error, never the defaults. Without `--config`, the tracked knob is the record and nothing is copied.
-
 - **A clean shutdown:** the data store's own log, no EXT4 orphan recovery, and the journal's record. For Postgres: `database system was shut down at …` and no `redo starts`; for Redis, `ready to exit, bye bye`. A volatile journal's record is the chain's copy in `<run>/journal`: `--post-boot --run <dir>` names the run, and without it the newest `/var/backups/patching-hosts-<UTC>` is read. A persistent journal's is `Journal stopped` among the previous boot's last lines, and PID 1's own shutdown lines where they're present: their absence says nothing (#684).
 - **Each `service`:**
   - `NRestarts` and **the first start's result**, not just `is-active`. address-validator's first start failed on a dependency that wasn't ready yet (CannObserv/address-validator#239). A start by hand after a failure leaves `NRestarts` at 0, so read `InactiveEnterTimestamp`: unset, the unit never stopped or failed after it started. Set, only PID 1's lines in the journal tell a failure from a stop by hand;
@@ -69,6 +67,8 @@ If the reboot slips out of the window, say so, and redo the gate and the quiet-h
 - **Containers are back.** On power-map, qdrant waited for first use despite `unless-stopped`. On wslcb, with `docker.service` enabled, both came back at boot. The difference is `docker.service`: disabled, nothing starts dockerd at boot, so no restart policy runs until something asks Docker through `docker.socket` (measured in the exeuntu image, 2026-10-01). Check before the reboot whether it's enabled, and after it, start by hand what should be back. The probe reads the containers from disk while dockerd is down, and fails the check for each one a restart policy should have brought back.
 - **The downtime**, from the stop line or the last request to the first good response.
 - **Every `health` check passes**, so does each `recovery` line (#423), and `systemctl --failed` is empty.
+
+**Its knob is the run's copy.** The first step given `--config` keeps the knob it read in the run's directory as `knob-<its sha256's first 12>`, root's at 600, and records the path and sha256 as `knob_copy`. The chain's NEXT names the copy, since a scratch copy under `/tmp` went with watcher's boot (#681). A knob changed between steps, as a fresh one-off window is, is kept beside the earlier one and named, never refused; so is a file edited after a step read it, and a run's copy a step without `--config` didn't run under. The scripts read a knob the caller can't through `sudo -n`; one root can't read, or finds no file at, is an error, never the defaults.
 
 ## 7. The record
 

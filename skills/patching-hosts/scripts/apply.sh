@@ -732,6 +732,8 @@ gate_dry() {
         fi ;;
     esac
   done <<<"$DRY_SUMMARY"
+  # A count of 0 is a selection read too, of nothing (CR 2797).
+  if [ "$count" = 0 ]; then DRY_COUNTED_READ=1; fi
   # Its wall time is this step's floor only for the selection it counted.
   if [ "$dlane" != "$LANE" ]; then
     refuse "the dry run counted the $dlane lane, and this bulk runs the $LANE lane: count again with probe.sh --lane $LANE --refresh-into DIR --dry-run-into DIR"

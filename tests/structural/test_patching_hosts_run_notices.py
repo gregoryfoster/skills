@@ -19,6 +19,8 @@ from tests.structural.patching_hosts_rig import dispatcher
 from tests.structural.test_patching_hosts_apply import TUE_1530
 from tests.structural.test_patching_hosts_apply import Host as ApplyHost
 from tests.structural.test_patching_hosts_apply import _ready as _ready_apply
+from tests.structural.test_patching_hosts_lane import EXTRA, POLICY, TS, _refreshed
+from tests.structural.test_patching_hosts_probe import Host as ProbeHost
 from tests.structural.test_patching_hosts_reboot import Host as ChainHost
 from tests.structural.test_patching_hosts_reboot import _ready as _ready_chain
 from tests.structural.test_patching_hosts_reboot import _tmp_rule
@@ -78,6 +80,51 @@ def test_the_select_lines_count_too(host):
     host.uu("Packages that will be upgraded: libc6 tzdata\nAll upgrades installed\n")
     out = host.run()
     assert out["upgrade"]["uncounted"] == ["tzdata"]
+
+
+def test_after_a_dry_run_that_counted_0_everything_taken_is_uncounted(host):
+    # CR 2797: a security release landing after a count-0 dry run.
+    (host.dry / "summary").write_text(
+        f"began={TUE_1530 - 3600}\nexit=0\ncount=0\nwall_seconds=30\n"
+        "security_only=1\nlists_refreshed=1\nbulk_takes=\nheld_steps=\n"
+    )
+    (host.dry / "dry-run.log").write_text(
+        "No packages found that can be upgraded unattended\n"
+    )
+    host.uu("Packages that will be upgraded: libc6\nAll upgrades installed\n")
+    out = host.run()
+    assert out["upgrade"]["uncounted"] == ["libc6"]
+
+
+def test_an_older_count_0_summary_is_read_as_a_selection_too(host):
+    (host.dry / "summary").write_text(
+        f"began={TUE_1530 - 3600}\nexit=0\ncount=0\nwall_seconds=30\n"
+        "security_only=1\nlists_refreshed=1\n"
+    )
+    (host.dry / "dry-run.log").write_text(
+        "No packages found that can be upgraded unattended\n"
+    )
+    host.uu("Packages that will be upgraded: libc6\nAll upgrades installed\n")
+    assert host.run()["upgrade"]["uncounted"] == ["libc6"]
+
+
+def test_the_probes_count_0_dry_run_writes_an_empty_selection(tmp_path):
+    host = ProbeHost(tmp_path).knob(
+        "class production\nposture scheduled\norigin pkgs.tailscale.com follow\n"
+    )
+    host.on("apt-get", "-s *dist-upgrade", EXTRA)
+    host.on("apt-cache", "*policy", POLICY)
+    host.on(
+        "unattended-upgrade",
+        "--dry-run -d",
+        "No packages found that can be upgraded unattended and no pending"
+        " auto-removals\n",
+    )
+    scratch = host.tmp / "dry"
+    host.run(*_refreshed(host), "--dry-run-into", str(scratch), "--lane", TS)
+    summary = (scratch / "summary").read_text()
+    assert "count=0\n" in summary
+    assert "bulk_takes=\n" in summary
 
 
 def test_a_held_steps_upgrade_has_no_uncounted(host):
