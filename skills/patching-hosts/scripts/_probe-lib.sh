@@ -1162,6 +1162,140 @@ is_int() {
   [[ ${1-} =~ $re ]]
 }
 
+# --- redaction by name (#698) ---------------------------------------------------
+# Shared by probe.sh's live_args and recovery-point.sh's backup log (#682,
+# CR 2796), since a reading is made to be copied off the host. The value of an
+# option or assignment whose name marks a secret is <redacted>, and so are a
+# URL's userinfo password, a userinfo with none (a token used as the user name
+# can't be told from a user), and a secret-named query or fragment
+# parameter's value. The name stays, to show it was passed. By name only: a
+# positional secret, a short option's value and the environment aren't
+# recognised (readings.md).
+# A name is secret when it's one of SECRET_ARG_NAMES, or its last word is one
+# of SECRET_ARG_WORDS: words split at . - _ and a camelCase capital, so
+# -Dspring.datasource.password, --db_pass and --authToken all are (CR 2766).
+# A --no- name is a boolean, and takes no value (CR 2769). A URL parameter
+# may also be one of SECRET_PARAM_WORDS: Azure's SAS signature, AWS's.
+SECRET_ARG_NAMES="requirepass masterauth"
+SECRET_ARG_WORDS="token password passwd passphrase pass pwd secret key apikey authkey
+  credential credentials secretkey accesskey privatekey apitoken authtoken accesstoken"
+SECRET_PARAM_WORDS="sig signature"
+secret_arg_name() {  # <name, dashes stripped, no value> [<more words>]: 0 when it names a secret
+  local _sn_last=${1##*[._-]} _sn_camel="" _sn_w _sn_nc=0 _sn_rc=1
+  shopt -q nocasematch && _sn_nc=1
+  shopt -u nocasematch
+  if [[ $_sn_last =~ [a-z0-9]([A-Z][a-z]*)$ ]]; then _sn_camel=${BASH_REMATCH[1]}; fi
+  shopt -s nocasematch
+  case $1 in
+    no[-_]*) ;;
+    *)
+      for _sn_w in $SECRET_ARG_NAMES; do
+        case $1 in "$_sn_w") _sn_rc=0 ;; esac
+      done
+      for _sn_w in $SECRET_ARG_WORDS ${2-}; do
+        case $_sn_last in "$_sn_w") _sn_rc=0 ;; esac
+        case $_sn_camel in "$_sn_w") _sn_rc=0 ;; esac
+      done ;;
+  esac
+  [ "$_sn_nc" -eq 1 ] || shopt -u nocasematch
+  return "$_sn_rc"
+}
+# A URL parameter: a name after ? & # or ;. A secret one's value runs to the
+# next &, or a , that starts another URL (a comma joins URLs in one word), so
+# a , ; or # inside it doesn't end it, and a fragment after it goes with it
+# (CR 2791). Any other's ends at & # , ; or ?, so a URL nested in it is
+# scanned too (CR 2794). Patterns in variables: & ; and # are operators in a
+# literal [[ =~ ]].
+URL_PARAM_PRE='^([^?&#;]*[?&#;])(.*)$'
+URL_PARAM_KV='^([^=&#,?;]+)=(.*)$'
+URL_PARAM_PLAIN='^([^&#,;?]*)(.*)$'
+URL_START='^[A-Za-z][A-Za-z0-9+.-]*://'
+ENV_NAME='^[A-Za-z_][A-Za-z0-9_.-]*$'
+redact_url() {  # <var> <word>: the word with each URL's userinfo and secret parameter values redacted
+  local _ru_w=$2 _ru_out="" _ru_auth _ru_ui _ru_k _ru_v _ru_r _ru_p
+  [[ $_ru_w == *://* ]] || { printf -v "$1" '%s' "$_ru_w"; return 0; }
+  while [[ $_ru_w == *://* ]]; do
+    _ru_out="$_ru_out${_ru_w%%://*}://"
+    _ru_w=${_ru_w#*://}
+    # The authority runs to the first /, and its userinfo to its last @, as
+    # libpq reads a URI: a password may hold a ? or a # (CR 2765, CR 2781).
+    _ru_auth=${_ru_w%%/*}
+    case $_ru_auth in *@*)
+      _ru_ui=${_ru_auth%@*}
+      _ru_w=${_ru_w#"$_ru_ui"@}
+      case $_ru_ui in
+        *:*) _ru_out="$_ru_out${_ru_ui%%:*}:<redacted>@" ;;
+        *) _ru_out="$_ru_out<redacted>@" ;;
+      esac ;;
+    esac
+  done
+  _ru_w="$_ru_out$_ru_w" _ru_out=""
+  # Each parameter in every URL of the word, the query's and the
+  # fragment's (CR 2767, CR 2786).
+  while [[ $_ru_w =~ $URL_PARAM_PRE ]]; do
+    _ru_out="$_ru_out${BASH_REMATCH[1]}"
+    _ru_w=${BASH_REMATCH[2]}
+    if [[ $_ru_w =~ $URL_PARAM_KV ]]; then
+      _ru_k=${BASH_REMATCH[1]} _ru_w=${BASH_REMATCH[2]}
+      if secret_arg_name "$_ru_k" "$SECRET_PARAM_WORDS"; then
+        _ru_r=${_ru_w%%&*}
+        _ru_v=${_ru_r%%,*}
+        _ru_r=${_ru_r#"$_ru_v"}
+        while [ -n "$_ru_r" ]; do
+          _ru_r=${_ru_r#,}
+          if [[ $_ru_r =~ $URL_START ]]; then break; fi
+          _ru_p=${_ru_r%%,*}
+          _ru_v="$_ru_v,$_ru_p"
+          _ru_r=${_ru_r#"$_ru_p"}
+        done
+        _ru_w=${_ru_w#"$_ru_v"}
+        _ru_v="<redacted>"
+      else
+        [[ $_ru_w =~ $URL_PARAM_PLAIN ]]
+        _ru_v=${BASH_REMATCH[1]} _ru_w=${BASH_REMATCH[2]}
+      fi
+      _ru_out="$_ru_out$_ru_k=$_ru_v"
+    fi
+  done
+  printf -v "$1" '%s' "$_ru_out$_ru_w"
+}
+ARG_NEXT=0  # 1 when redact_arg's word names a secret whose value is the next word
+redact_arg() {  # <var> <word>: one word under the name rule
+  local _ra_w=$2 _ra_n
+  ARG_NEXT=0
+  case $_ra_w in
+    --?* | -[!-]?*)
+      _ra_n=${_ra_w%%=*}
+      _ra_n=${_ra_n#-}
+      case $_ra_n in -*) _ra_n=${_ra_n#-} ;; D?*) _ra_n=${_ra_n#D} ;; esac
+      if secret_arg_name "$_ra_n"; then
+        case $_ra_w in *=*) _ra_w="${_ra_w%%=*}=<redacted>" ;; *) ARG_NEXT=1 ;; esac
+      fi ;;
+    # An environment assignment, as in a script string or env's argv, is an
+    # option with no dash (CR 2792).
+    [A-Za-z_]*=*)
+      _ra_n=${_ra_w%%=*}
+      if [[ $_ra_n =~ $ENV_NAME ]] && secret_arg_name "$_ra_n"; then _ra_w="$_ra_n=<redacted>"; fi ;;
+  esac
+  redact_url _ra_w "$_ra_w"
+  printf -v "$1" '%s' "$_ra_w"
+}
+redact_words() {  # <var> <word>...: the words under the name rule, joined by a space
+  local _rw_v=$1 _rw_w _rw_out="" _rw_next=0
+  shift
+  for _rw_w in "$@"; do
+    if [ "$_rw_next" -eq 1 ]; then
+      _rw_next=0
+      _rw_out="$_rw_out <redacted>"
+      continue
+    fi
+    redact_arg _rw_w "$_rw_w"
+    _rw_next=$ARG_NEXT
+    _rw_out="$_rw_out $_rw_w"
+  done
+  printf -v "$_rw_v" '%s' "${_rw_out# }"
+}
+
 # --- JSON ----------------------------------------------------------------------
 # A host's strings (a file name under /tmp, a process's argv, a unit name) can
 # hold any byte. Under LC_ALL=C, every byte that isn't printable ASCII becomes

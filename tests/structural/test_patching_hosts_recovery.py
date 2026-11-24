@@ -861,8 +861,12 @@ def test_the_hosts_own_backup_regime_stands_in_for_the_dumps(host):
 INVOCATION = "0123456789abcdef0123456789abcdef"
 
 
-def _logged(host: Host, lines: str, rc: int = 0, invocation: str = INVOCATION) -> Host:
-    """The regime, whose run now has INVOCATION and logged LINES."""
+def _logged(
+    host: Host, messages: list | str, rc: int = 0, invocation: str = INVOCATION
+) -> Host:
+    """The regime, whose run now has INVOCATION and logged MESSAGES, one
+    journal entry each, as journalctl -o json prints them: a list of ints is
+    a message as an array of its bytes. A str is journalctl's own output."""
     _regime(host)
     s = host.state / "backup"
     host.cases["systemctl"] = [
@@ -876,19 +880,32 @@ def _logged(host: Host, lines: str, rc: int = 0, invocation: str = INVOCATION) -
             f'ExecMainExitTimestamp=@{TUE_1530 + 65}\\nInvocationID={invocation}\\n" > "{s}"; exit 0'
         ),
     )
+    out = (
+        messages
+        if isinstance(messages, str)
+        else "".join(
+            json.dumps({"__CURSOR": f"s=1;i={i}", "MESSAGE": m}) + "\n"
+            for i, m in enumerate(messages)
+        )
+    )
     stderr = "Failed to open journal: Permission denied\n" if rc else ""
+    host.on("journalctl", "--sync", "")
     host.on(
         "journalctl",
         f"*_SYSTEMD_INVOCATION_ID={INVOCATION}*",
-        lines,
+        out,
         rc=rc,
         stderr=stderr,
     )
     return host
 
 
+def _reads(host: Host) -> list[str]:
+    return [a for _, a, _ in host.calls("journalctl") if "_SYSTEMD_INVOCATION_ID=" in a]
+
+
 def test_the_backup_runs_own_log_is_shown_by_its_invocation(host):
-    _logged(host, "starting dump\nuploaded gs://bucket/app-20260929.dump (12 MB)\n")
+    _logged(host, ["starting dump", "uploaded gs://bucket/app-20260929.dump (12 MB)"])
     out = host.recover()
     [b] = out["backup"]
     assert b["ok"] is True
@@ -904,16 +921,34 @@ def test_the_backup_runs_own_log_is_shown_by_its_invocation(host):
     assert first.startswith("Confirm the object app-backup.service wrote")
     assert "backup[0].journal" in first
     assert "not proof that the object is off the node" in first
+    assert "redacted by name only" in first
     # Only the lines from the run it watched, read as systemd keyed them.
-    [(_, args, _)] = [
-        c for c in host.calls("journalctl") if "_SYSTEMD_INVOCATION_ID=" in c[1]
-    ]
+    [args] = _reads(host)
     assert f"_SYSTEMD_INVOCATION_ID={INVOCATION}" in args.split()
     assert "UNIT=app-backup.service" not in args.split()
 
 
-def test_a_long_log_keeps_its_last_lines_and_says_so(host):
-    _logged(host, "".join(f"line {i}\n" for i in range(1, 22)))
+def test_the_journal_is_synced_before_the_run_is_read(host):
+    # CR 2801: journald stores a stream's last line asynchronously, and a
+    # oneshot's start returns when it exits.
+    _logged(host, ["uploaded gs://bucket/app-1"])
+    host.recover()
+    calls = [a for _, a, _ in host.calls("journalctl")]
+    sync = calls.index("--sync")
+    assert sync < calls.index(_reads(host)[0])
+
+
+def test_an_entry_is_one_line_and_more_counts_entries(host):
+    # CR 2803: 20 entries, one of them two lines, are all shown, whole.
+    msgs = [f"entry {i}" for i in range(1, 20)] + ["wrote\ngs://bucket/app-1\tdone"]
+    _logged(host, msgs)
+    j = host.recover()["backup"][0]["journal"]
+    assert j["more"] is False and len(j["lines"]) == 20
+    assert j["lines"][-1] == "wrote gs://bucket/app-1 done"
+
+
+def test_a_long_log_keeps_its_last_entries_and_says_so(host):
+    _logged(host, [f"line {i}" for i in range(1, 22)])
     [b] = host.recover()["backup"]
     j = b["journal"]
     assert j["more"] is True
@@ -921,36 +956,156 @@ def test_a_long_log_keeps_its_last_lines_and_says_so(host):
     assert "line 1\n" not in host.result.stderr and "line 21\n" in host.result.stderr
 
 
+def test_quotes_and_backslashes_read_as_written(host):
+    _logged(host, ['said "done" to C:\\backups\\app', [0, 37, 92, 159, 146, 65]])
+    j = host.recover()["backup"][0]["journal"]
+    assert j["lines"] == ['said "done" to C:\\backups\\app', "?%\\??A"]
+
+
+# systemd 255.4's own output (ubuntu:24.04, a timer's oneshot), verbatim:
+# the keys in a different order each entry, and a message holding a control
+# byte or invalid UTF-8 as an array of its bytes (CR 2803).
+REAL_255 = (
+    '{"MESSAGE":"say \\"quoted\\" and back\\\\slash and a\\ttab here","_BOOT_ID":"55da67bb18cf4cfa9b30d0a888acf477","__CURSOR":"s=bd159c266b894b709c9060a15e905552;i=e70;b=55da67bb18cf4cfa9b30d0a888acf477;m=414308fe0d;t=660fc1faf451b;x=1453a1b65ebc684","__MONOTONIC_TIMESTAMP":"280297537037","__REALTIME_TIMESTAMP":"1795485839869211","__SEQNUM":"3696","__SEQNUM_ID":"bd159c266b894b709c9060a15e905552"}\n'
+    '{"__MONOTONIC_TIMESTAMP":"280297537037","__SEQNUM_ID":"bd159c266b894b709c9060a15e905552","__REALTIME_TIMESTAMP":"1795485839869211","__SEQNUM":"3697","_BOOT_ID":"55da67bb18cf4cfa9b30d0a888acf477","MESSAGE":"unicode café ✓ and a / slash","__CURSOR":"s=bd159c266b894b709c9060a15e905552;i=e71;b=55da67bb18cf4cfa9b30d0a888acf477;m=414308fe0d;t=660fc1faf451b;x=b3477d4474c0b8bc"}\n'
+    '{"__SEQNUM":"3698","_BOOT_ID":"55da67bb18cf4cfa9b30d0a888acf477","__REALTIME_TIMESTAMP":"1795485839869211","MESSAGE":[98,97,100,32,98,121,116,101,115,32,255,254,32,104,101,114,101],"__SEQNUM_ID":"bd159c266b894b709c9060a15e905552","__MONOTONIC_TIMESTAMP":"280297537037","__CURSOR":"s=bd159c266b894b709c9060a15e905552;i=e72;b=55da67bb18cf4cfa9b30d0a888acf477;m=414308fe0d;t=660fc1faf451b;x=460bc6b94ab5181d"}\n'
+    '{"__SEQNUM":"3699","_BOOT_ID":"55da67bb18cf4cfa9b30d0a888acf477","__CURSOR":"s=bd159c266b894b709c9060a15e905552;i=e73;b=55da67bb18cf4cfa9b30d0a888acf477;m=414308fe0d;t=660fc1faf451b;x=c053b8b62f58ed32","__MONOTONIC_TIMESTAMP":"280297537037","__REALTIME_TIMESTAMP":"1795485839869211","MESSAGE":[97,110,32,101,115,99,97,112,101,32,27,91,51,49,109,114,101,100,27,91,48,109,32,115,101,113,117,101,110,99,101],"__SEQNUM_ID":"bd159c266b894b709c9060a15e905552"}\n'
+    '{"MESSAGE":"+ export AWS_SECRET_ACCESS_KEY=abc123secret","__MONOTONIC_TIMESTAMP":"280297537037","__SEQNUM_ID":"bd159c266b894b709c9060a15e905552","_BOOT_ID":"55da67bb18cf4cfa9b30d0a888acf477","__SEQNUM":"3700","__CURSOR":"s=bd159c266b894b709c9060a15e905552;i=e74;b=55da67bb18cf4cfa9b30d0a888acf477;m=414308fe0d;t=660fc1faf451b;x=94b7637e0bf1b4d7","__REALTIME_TIMESTAMP":"1795485839869211"}\n'
+    '{"__REALTIME_TIMESTAMP":"1795485839869211","_BOOT_ID":"55da67bb18cf4cfa9b30d0a888acf477","__MONOTONIC_TIMESTAMP":"280297537037","__CURSOR":"s=bd159c266b894b709c9060a15e905552;i=e75;b=55da67bb18cf4cfa9b30d0a888acf477;m=414308fe0d;t=660fc1faf451b;x=56e89034d65e9b4e","__SEQNUM_ID":"bd159c266b894b709c9060a15e905552","MESSAGE":"rclone copy /x https://user:pw@host.example/bucket","__SEQNUM":"3701"}\n'
+    '{"__SEQNUM_ID":"bd159c266b894b709c9060a15e905552","__SEQNUM":"3702","_BOOT_ID":"55da67bb18cf4cfa9b30d0a888acf477","__REALTIME_TIMESTAMP":"1795485839869211","__CURSOR":"s=bd159c266b894b709c9060a15e905552;i=e76;b=55da67bb18cf4cfa9b30d0a888acf477;m=414308fe0d;t=660fc1faf451b;x=d4675d03856f1c7f","__MONOTONIC_TIMESTAMP":"280297537037","MESSAGE":"wrote object gs://bucket/app-20261124.tar.zst"}\n'
+)
+
+
+def test_systemd_255s_own_json_reads_as_the_unit_wrote_it(host):
+    _logged(host, REAL_255)
+    out = host.recover()
+    j = out["backup"][0]["journal"]
+    assert j["more"] is False
+    assert j["lines"] == [
+        'say "quoted" and back\\slash and a tab here',
+        "unicode caf?? ??? and a / slash",
+        "bad bytes ?? here",
+        "an escape ?[31mred?[0m sequence",
+        "+ export AWS_SECRET_ACCESS_KEY=<redacted>",
+        "rclone copy /x https://user:<redacted>@host.example/bucket",
+        "wrote object gs://bucket/app-20261124.tar.zst",
+    ]
+    assert "abc123secret" not in host.result.stdout + host.result.stderr
+    # A message over 4096 bytes is null without --all.
+    assert "--all" in _reads(host)[0].split()
+
+
+def test_a_long_message_is_decoded_redacted_then_cut(host):
+    _logged(host, [[120] * 5000, "token=" + "s" * 3000 + " --password hunter2"])
+    lines = host.recover()["backup"][0]["journal"]["lines"]
+    assert lines[0] == "x" * 500
+    assert lines[1] == "token=<redacted>"
+
+
 def test_a_log_line_cant_put_an_escape_on_the_screen(host):
-    _logged(host, "\x1b[2Jcleared " + "x" * 600 + "\n")
+    _logged(host, ["\x1b[2Jcleared " + "x" * 600])
     [b] = host.recover()["backup"]
     [line] = b["journal"]["lines"]
     assert line.startswith("?[2Jcleared x") and len(line) <= 500
     assert "\x1b" not in host.result.stderr
 
 
+SECRETS = ("abc123SECRET", "pw123", "deadbeefsig", "AKIAEXAMPLE")
+
+
+def test_a_secret_the_run_logs_is_redacted_by_name(host):
+    # CR 2796: a set -x script, rclone's URL, a presigned URL.
+    _logged(
+        host,
+        [
+            "+ export AWS_SECRET_ACCESS_KEY=abc123SECRET",
+            "Transferred: https://backup:pw123@host.example/app/",
+            "uploaded https://s3.example/b/o?X-Amz-Credential=AKIAEXAMPLE&X-Amz-Signature=deadbeefsig&x=1",
+            "wrote gs://bucket/app-20260929.dump (12 MB)",
+        ],
+    )
+    out = host.recover()
+    lines = out["backup"][0]["journal"]["lines"]
+    for secret in SECRETS:
+        assert secret not in host.result.stdout and secret not in host.result.stderr
+    assert lines[0] == "+ export AWS_SECRET_ACCESS_KEY=<redacted>"
+    assert lines[1] == "Transferred: https://backup:<redacted>@host.example/app/"
+    assert "X-Amz-Signature=<redacted>" in lines[2] and "&x=1" in lines[2]
+    # A line with no secret reads as written.
+    assert lines[3] == "wrote gs://bucket/app-20260929.dump (12 MB)"
+
+
+def test_a_unit_that_didnt_start_a_run_now_shows_no_lines(host):
+    # CR 2803: its InvocationID is its last run's, and those lines aren't
+    # this run's.
+    _logged(host, ["uploaded gs://bucket/app-yesterday"])
+    host.cases["systemctl"] = [
+        c for c in host.cases["systemctl"] if c[0] != "start -- app-backup.service"
+    ]
+    host.on("systemctl", "start -- app-backup.service", "")
+    (host.state / "backup").write_text(
+        f"LoadState=loaded\nResult=success\nExecMainStartTimestamp=@{TUE_1530 - 86400}\n"
+        f"ExecMainExitTimestamp=@{TUE_1530 - 86000}\nInvocationID={INVOCATION}\n"
+    )
+    out = host.recover(rc=1)
+    j = out["backup"][0]["journal"]
+    assert j["lines"] == [] and j["invocation"] is None
+    assert "didn't start a run now" in j["not_read"]
+    assert not _reads(host)
+    assert "app-yesterday" not in host.result.stderr
+
+
+FINISHED = "MESSAGE_ID=39f53479d3a045ac8e11786248231fbf"
+
+
 @pytest.mark.parametrize(
-    "lines, rc, invocation, said",
+    "ago, found", [(-60, True), (3600, False)], ids=["this-run", "older"]
+)
+def test_with_no_invocation_from_systemctl_pid_1s_finished_message_names_it(
+    host, ago, found
+):
+    # A systemd 255 container: an unreferenced oneshot can show no
+    # InvocationID, while PID 1's "Finished" message carries the one its
+    # lines were written under. An older run's message isn't this run's.
+    _logged(host, ["uploaded gs://bucket/app-1"], invocation="")
+    t = (TUE_1530 - ago) * 10**6
+    host.on(
+        "journalctl",
+        f"*{FINISHED}*",
+        f"__CURSOR=s=1\n__REALTIME_TIMESTAMP={t}\nINVOCATION_ID={INVOCATION}\nMESSAGE=Finished app-backup.service.\n\n",
+    )
+    j = host.recover()["backup"][0]["journal"]
+    [q] = [a for _, a, _ in host.calls("journalctl") if FINISHED in a]
+    assert "_PID=1" in q.split() and "UNIT=app-backup.service" in q.split()
+    if found:
+        assert j["invocation"] == INVOCATION and j["lines"] == [
+            "uploaded gs://bucket/app-1"
+        ]
+    else:
+        assert j["invocation"] is None and not _reads(host)
+        assert "no invocation ID" in j["not_read"]
+
+
+@pytest.mark.parametrize(
+    "rc, invocation, said",
     [
-        ("", 1, INVOCATION, "the journal couldn't be read (Failed to open journal"),
-        ("", 0, INVOCATION, "the journal holds no line from this run"),
-        ("", 0, "", "systemd gave the run no invocation ID"),
+        (1, INVOCATION, "the journal couldn't be read (Failed to open journal"),
+        (0, INVOCATION, "the journal holds no line from this run"),
+        (0, "", "systemd gave the run no invocation ID"),
     ],
     ids=["unread", "empty", "no-invocation"],
 )
 def test_a_log_it_cant_read_is_said_and_the_step_still_stands(
-    host, lines, rc, invocation, said
+    host, rc, invocation, said
 ):
-    _logged(host, lines, rc, invocation)
+    _logged(host, [], rc, invocation)
     out = host.recover()
     [b] = out["backup"]
     assert b["ok"] is True and out["verdict"]["ok"] is True
     assert b["journal"]["lines"] == [] and said in b["journal"]["not_read"]
     assert said in out["next"][0]
     if not invocation:
-        assert not [
-            c for c in host.calls("journalctl") if "_SYSTEMD_INVOCATION_ID=" in c[1]
-        ]
+        assert not _reads(host)
         assert b["journal"]["invocation"] is None
 
 
@@ -1247,6 +1402,16 @@ def _booted(host: Host, journal: str = "", rc: int = 0) -> Host:
     return host
 
 
+def _last_run_reads(host: Host) -> list:
+    """The gate's reads of how the unit's last run ended (#459), not the
+    reads of the run it starts (#682)."""
+    return [
+        c
+        for c in host.calls("journalctl")
+        if "--output-fields=MESSAGE_ID,UNIT_RESULT" in c[1]
+    ]
+
+
 def _regime_row(out: dict) -> dict:
     [b] = out["gate"]["backup_regime"]["backups"]
     return b
@@ -1261,7 +1426,7 @@ def test_after_a_boot_the_journal_says_the_regime_has_worked(host):
     assert not host.calls("pg_dump")
     # Only systemd's own lines about the unit: a service can write any
     # MESSAGE_ID it likes, never _PID=1.
-    [(_, args, _)] = host.calls("journalctl")
+    [(_, args, _)] = _last_run_reads(host)
     assert "UNIT=app-backup.service" in args.split() and "_PID=1" in args.split()
 
 
@@ -1333,9 +1498,7 @@ def test_a_run_since_the_boot_is_read_from_systemd_not_the_journal(host):
     out = host.recover()
     assert _regime_row(out)["last_run_from"] == "systemd"
     # The journal is read for the run it starts (#682), never for the last.
-    assert not [
-        c for c in host.calls("journalctl") if "UNIT=app-backup.service" in c[1].split()
-    ]
+    assert not _last_run_reads(host)
 
 
 def test_an_rdb_copy_redis_check_rdb_cant_read_records_nothing(tmp_path):

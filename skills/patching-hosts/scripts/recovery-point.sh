@@ -27,9 +27,10 @@ directory. Until every check passes it changes nothing, and prints why.
   covers is saved first, since the unit ships its RDB file as it stands:
   BGSAVE and the wait, where it can log in, or else its RDB file must have
   been written within --rdb-within of the run's start (#382). The run's own
-  log, its last 20 lines by the run's invocation ID, is shown and kept under
-  backup[].journal, so the owner can read the object's name there: what the
-  unit said it wrote, not proof that it left the node (#682).
+  log, its last 20 entries by the run's invocation ID, is shown and kept
+  under backup[].journal, so the owner can read the object's name there:
+  what the unit said it wrote, not proof that it left the node (#682). Its
+  secrets are redacted by name only, as the probe's live_args are.
 
   Otherwise a dump of each declared Postgres database (pg_dump -Fc) and of
   each Redis (BGSAVE, then a copy of its RDB file), written as root at mode
@@ -833,23 +834,103 @@ fresh_redis() {  # <unit> <user> <key file>
 
 # The run's own log, by the invocation ID systemd gave the run it watched
 # (#682): the lines the unit's processes wrote, so the object's name, where
-# the unit logs it, is on screen. Its last BJ_MAX lines, each cut at 500
-# bytes. A log it can't read is said, never a failure: the owner's
-# attestation doesn't rest on it. BJ_SAID := why there are no lines.
+# the unit logs it, is on screen. Its last BJ_MAX entries, one line each: a
+# message's own line breaks and tabs become spaces, and any other escape a
+# ?, so an entry is never cut in two and more means an entry wasn't shown
+# (CR 2803). Each word goes through redact_words before the cut at 500
+# bytes, since a set -x script or a tool's URL logs its secrets (CR 2796):
+# by name only, as live_args is. journald stores a stream's last lines
+# asynchronously, so it's synced first (CR 2801): measured unneeded on an
+# idle systemd 255 container (a timer's oneshot's last line was stored 40 of
+# 40 times without it), and kept for a loaded host. Where systemctl show
+# gives no InvocationID, PID 1's "Finished" message about the unit names it,
+# when that message is from this run. A log it can't read is said, never a
+# failure: the owner's attestation doesn't rest on it.
+# BJ_SAID := why there are no lines.
 BJ_MAX=20 BJ_SAID=""
-backup_journal() {  # <var> <service> <invocation ID>
-  local _bj_v=$1 _bj_out _bj_l _bj_a="" _bj_o="" _bj_more=0 _bj_n=0
-  local -a _bj_ls=()
+# Matched wherever MESSAGE falls among the entry's keys, whose order varies
+# (systemd 255, CR 2803). A message holding any control byte or invalid
+# UTF-8 is an array of its bytes: each of 32-126 is kept and any other is a
+# ?, so an ANSI colour reads as ?[31m. --all prints a message over 4096
+# bytes, which is null without it. Only the first BJ_TAKE bytes are decoded,
+# then redacted, then cut at 500.
+BJ_MSG='"MESSAGE"[[:space:]]*:[[:space:]]*"(([^"\\]|\\.)*)"'
+BJ_BIN='"MESSAGE"[[:space:]]*:[[:space:]]*\[([0-9,[:space:]]*)\]'
+BJ_TAKE=2000
+bytes_text() {  # <var> <comma-separated byte values>: VAR := the printable ASCII among them, ? for the rest
+  local _bt_n _bt_o _bt_c _bt_out="" _bt_i=0
+  for _bt_n in ${2//,/ }; do
+    [ "$_bt_i" -lt "$BJ_TAKE" ] || break
+    _bt_i=$((_bt_i + 1))
+    if [ "$_bt_n" -ge 32 ] 2>/dev/null && [ "$_bt_n" -le 126 ]; then
+      printf -v _bt_o '%03o' "$_bt_n"
+      printf -v _bt_c '%b' "\\0$_bt_o"
+      _bt_out="$_bt_out$_bt_c"
+    else
+      _bt_out="$_bt_out?"
+    fi
+  done
+  printf -v "$1" '%s' "$_bt_out"
+}
+BJ_U='\\u[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]'
+J_UNIT_FINISHED=39f53479d3a045ac8e11786248231fbf
+finished_invocation() {  # <var> <service>: VAR := the INVOCATION_ID of PID 1's last "Finished" message about it, if logged since the run began
+  local _fi_out _fi_l _fi_id="" _fi_t=""
+  capture _fi_out as_root journalctl --no-pager -q -o export -n 1 _PID=1 "UNIT=$2" "MESSAGE_ID=$J_UNIT_FINISHED"
+  if [ "$CAP_RC" -eq 0 ]; then
+    while IFS= read -r _fi_l; do
+      case $_fi_l in
+        INVOCATION_ID=*) _fi_id=${_fi_l#INVOCATION_ID=} ;;
+        __REALTIME_TIMESTAMP=*) _fi_t=${_fi_l#__REALTIME_TIMESTAMP=} ;;
+      esac
+    done <<<"$_fi_out"
+  fi
+  # An older run's message names that run.
+  if ! is_int "$_fi_t" || [ "$((_fi_t / 1000000))" -lt "$P_NOW" ] || ! [[ $_fi_id =~ ^[0-9a-f]{32}$ ]]; then
+    _fi_id=""
+  fi
+  printf -v "$1" '%s' "$_fi_id"
+}
+
+backup_journal() {  # <var> <service> <invocation ID> [<why there's no run to read>]
+  local _bj_v=$1 _bj_out _bj_l _bj_m _bj_a="" _bj_o="" _bj_more=0 _bj_n=0 _bj_id=$3
+  local -a _bj_ls=() _bj_ws=()
   BJ_SAID=""
-  if [ -z "$3" ]; then
-    BJ_SAID="systemd gave the run no invocation ID, so its lines can't be told from another run's"
+  if [ -n "${4:-}" ]; then
+    BJ_SAID=$4 _bj_id=""
   else
-    capture _bj_out as_root journalctl --no-pager -q -o cat -n "$((BJ_MAX + 1))" "_SYSTEMD_INVOCATION_ID=$3"
+    as_root journalctl --sync >/dev/null 2>&1 || true
+    [ -n "$_bj_id" ] || finished_invocation _bj_id "$2"
+  fi
+  if [ -n "$BJ_SAID" ]; then
+    :
+  elif [ -z "$_bj_id" ]; then
+    BJ_SAID="systemd gave the run no invocation ID, in systemctl show or in PID 1's message that it finished, so its lines can't be told from another run's"
+  else
+    capture _bj_out as_root journalctl --no-pager -q --all -o json --output-fields=MESSAGE \
+      -n "$((BJ_MAX + 1))" "_SYSTEMD_INVOCATION_ID=$_bj_id"
     if [ "$CAP_RC" -ne 0 ]; then
       BJ_SAID="the journal couldn't be read (${CAP_ERR:-journalctl exited $CAP_RC})"
     else
-      while IFS= read -r _bj_l; do _bj_ls+=("$_bj_l"); done <<<"$_bj_out"
-      [ -n "$_bj_out" ] || _bj_ls=()
+      while IFS= read -r _bj_l; do
+        [ -n "$_bj_l" ] || continue
+        if [[ $_bj_l =~ $BJ_MSG ]]; then
+          _bj_m=${BASH_REMATCH[1]}
+          _bj_m=${_bj_m:0:$BJ_TAKE}
+          _bj_m=${_bj_m//\\\\/$'\001'}
+          _bj_m=${_bj_m//\\\"/\"}
+          _bj_m=${_bj_m//\\\//\/}
+          _bj_m=${_bj_m//\\[ntr]/ }
+          _bj_m=${_bj_m//$BJ_U/?}
+          _bj_m=${_bj_m//\\[bf]/?}
+          _bj_m=${_bj_m//$'\001'/\\}
+        elif [[ $_bj_l =~ $BJ_BIN ]]; then
+          bytes_text _bj_m "${BASH_REMATCH[1]}"
+        else
+          _bj_m=""
+        fi
+        _bj_ls+=("$_bj_m")
+      done <<<"$_bj_out"
       _bj_n=${#_bj_ls[@]}
       if [ "$_bj_n" -gt "$BJ_MAX" ]; then
         _bj_more=1
@@ -860,8 +941,11 @@ backup_journal() {  # <var> <service> <invocation ID>
     fi
   fi
   if [ "${#_bj_ls[@]}" -gt 0 ]; then
-    echo "recovery-point: $2's log from this run (the last $BJ_MAX lines at most):" >&2
+    echo "recovery-point: $2's log from this run, its last $BJ_MAX entries at most, secrets redacted by name only:" >&2
     for _bj_l in "${_bj_ls[@]}"; do
+      _bj_ws=()
+      read -r -a _bj_ws <<<"$_bj_l" || true
+      redact_words _bj_l ${_bj_ws[@]+"${_bj_ws[@]}"}
       _bj_l=${_bj_l//[![:print:]]/?}
       _bj_l=${_bj_l:0:500}
       printf 'recovery-point:   %s\n' "$_bj_l" >&2
@@ -870,7 +954,7 @@ backup_journal() {  # <var> <service> <invocation ID>
   else
     echo "recovery-point: $2's log from this run isn't shown: $BJ_SAID" >&2
   fi
-  jaddsn _bj_o invocation "$3"
+  jaddsn _bj_o invocation "$_bj_id"
   jadd _bj_o lines "[$_bj_a]"
   jaddb _bj_o more "$_bj_more"
   jaddsn _bj_o not_read "$BJ_SAID"
@@ -916,7 +1000,13 @@ take_backup() {  # <service> <datastore units it covers>
   jaddsn o started "$iso"
   iso_utc iso "$x"
   jaddsn o finished "$iso"
-  backup_journal w "$BACKUP_SVC" "$U_InvocationID"
+  # A unit that didn't start a run now has only its last run's lines, and
+  # those aren't shown as this one's (CR 2803).
+  if is_int "$s" && [ "$s" -ge "$P_NOW" ]; then
+    backup_journal w "$BACKUP_SVC" "$U_InvocationID"
+  else
+    backup_journal w "$BACKUP_SVC" "" "it didn't start a run now, so no line is from a run this script watched"
+  fi
   jadd o journal "$w"
   BACKUP_SAID+=("$BJ_SAID")
   if [ "${#FAILED[@]}" -gt 0 ]; then
@@ -1261,7 +1351,7 @@ else
     # The log is what the unit said it wrote: the attestation stays the
     # owner's (#682).
     if [ -z "${BACKUP_SAID[$_i]:-}" ]; then
-      _w="Its log from this run is above and in backup[$_i].journal, by the run's invocation ID: a name read there is what the unit said it wrote, not proof that the object is off the node."
+      _w="Its log from this run is above and in backup[$_i].journal, by the run's invocation ID, with secrets redacted by name only, so read it before you copy it anywhere: a name read there is what the unit said it wrote, not proof that the object is off the node."
     else
       _w="Its log from this run isn't shown: ${BACKUP_SAID[$_i]}. Find the name in the unit's own log or the destination's listing."
     fi
