@@ -499,6 +499,52 @@ def test_earlyoom_s_live_args_are_redacted_too(host):
     assert e["args"] == "/usr/bin/earlyoom --token <redacted>"
 
 
+# #707: the issue's table, one row each, as a script string or a log line
+# holds it. The redaction scans each value's quotes as a shell does: '\''
+# stays inside, \" inside double quotes is literal, a quote may open
+# mid-value, and a closing quote followed by ; ) , & or ] ends the value
+# there. A quoted option name loses its quotes and a trailing , ] or ) to be
+# tested; so does a list's or a call's first element. A line that ends with
+# a value's quote still open is marked <...>.
+QUOTE_ROWS = [
+    ("+ export 'DB_PASSWORD=zq9'\\'' zq9b'", "+ export 'DB_PASSWORD=<redacted>'"),
+    (
+        "run --password 'zq9'\\'' zq9b' --region us",
+        "run --password <redacted> --region us",
+    ),
+    ("+ DB_PASSWORD='zq9'\\'' zq9b' psql -h db", "+ DB_PASSWORD=<redacted> psql -h db"),
+    ("run --password=zq9'b zq9' --region us", "run --password=<redacted> --region us"),
+    (
+        'run --password "zq9\\" zq9b" --region us',
+        "run --password <redacted> --region us",
+    ),
+    (
+        "Running ['pg_dump', '--password', 'zq9']",
+        "Running ['pg_dump', '--password', <redacted>]",
+    ),
+    ('exec app "--token" "zq9"', 'exec app "--token" <redacted>'),
+    (
+        "export X_TOKEN='zq9 b'; exec earlyoom -m 5",
+        "export X_TOKEN=<redacted>; exec earlyoom -m 5",
+    ),
+    ("run --password 'zq9 --region us", "run --password <redacted> <...>"),
+    # Beyond the table: a call's first element, and a word read on after a
+    # closing quote's ; that names a secret of its own.
+    ("f('--password', 'zq9', '-v')", "f('--password', <redacted>, '-v')"),
+    (
+        "+ X_TOKEN='zq9';Y_TOKEN=zq9b next",
+        "+ X_TOKEN=<redacted>;Y_TOKEN=<redacted> next",
+    ),
+]
+
+
+@pytest.mark.parametrize("line, shown", QUOTE_ROWS)
+def test_live_args_tracks_a_value_s_quotes_as_a_shell_does(host, line, shown):
+    e = _service_argv(host, ["/bin/sh", "-c", line])
+    assert e["args"] == "/bin/sh -c " + shown
+    assert "zq9" not in host.result.stdout
+
+
 @pytest.mark.parametrize(
     "after, finds",
     [
