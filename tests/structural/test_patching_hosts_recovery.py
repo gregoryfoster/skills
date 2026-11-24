@@ -1232,7 +1232,8 @@ def test_a_multi_line_secret_is_dropped_through_its_closing_quote(host):
         "+ export 'SSH_PRIVATE_KEY=<redacted> <...>",
         "uploaded gs://bucket/app-1",
     ]
-    assert j["more"] is False
+    # CR 2837: an entry wasn't shown.
+    assert j["more"] is True
 
 
 def test_the_line_closing_a_secret_s_quote_shows_what_follows_it(host):
@@ -1253,6 +1254,21 @@ def test_a_secret_opened_before_the_last_entries_still_drops_its_body(host):
         "+ export 'SSH_PRIVATE_KEY=<redacted> <...>",
         "uploaded gs://bucket/app-1",
     ]
+
+
+def test_an_xtrace_command_starts_from_no_quote(host):
+    # CR 2834: an odd quote inside a program's own secret left a quote open,
+    # and the key's opening quote then read as its close, showing the body.
+    # A line set -x starts (+ , ++ ) begins a command: no quote is open.
+    _logged(host, ["connecting --password=Ab'cd", "uploading", *PEM, "done"])
+    j = host.recover()["backup"][0]["journal"]
+    assert "zq9" not in host.result.stdout + host.result.stderr
+    assert j["lines"] == [
+        "connecting --password=<redacted> <...>",
+        "+ export 'SSH_PRIVATE_KEY=<redacted> <...>",
+        "done",
+    ]
+    assert j["more"] is True
 
 
 def test_a_unit_that_didnt_start_a_run_now_shows_no_lines(host):

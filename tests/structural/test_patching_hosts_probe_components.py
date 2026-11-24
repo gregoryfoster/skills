@@ -534,7 +534,7 @@ QUOTE_ROWS = [
     ("f('--password', 'zq9', '-v')", "f('--password', <redacted>, '-v')"),
     (
         "+ X_TOKEN='zq9';Y_TOKEN=zq9b next",
-        "+ X_TOKEN=<redacted>;Y_TOKEN=<redacted> next",
+        "+ X_TOKEN=<redacted> next",
     ),
     # CR 2817: an escaped space; CR 2818: $'..'; CR 2819: a list after =.
     ("run --password zq9\\ zq9b --region us", "run --password <redacted> --region us"),
@@ -547,14 +547,22 @@ QUOTE_ROWS = [
     ("f(--password zq9) next", "f(--password <redacted>) next"),
     ("f(--password=zq9) next", "f(--password=<redacted>) next"),
     (
-        "X_TOKEN='zq9 zq9b'; exec earlyoom -m 5",
-        "X_TOKEN=<redacted>; exec earlyoom -m 5",
+        "+ X_TOKEN='zq9 zq9b'; exec earlyoom -m 5",
+        "+ X_TOKEN=<redacted>; exec earlyoom -m 5",
     ),
     (
-        "X_TOKEN=\"zq9 zq9b\";Y_TOKEN='zq9c zq9d' next",
-        "X_TOKEN=<redacted>;Y_TOKEN=<redacted> next",
+        "+ X_TOKEN=\"zq9 zq9b\";Y_TOKEN='zq9c zq9d' next",
+        "+ X_TOKEN=<redacted> next",
     ),
-    ("X_TOKEN='zq9 zq9b'|tee -a log", "X_TOKEN=<redacted>|tee -a log"),
+    ("+ X_TOKEN='zq9 zq9b'|tee -a log", "+ X_TOKEN=<redacted> -a log"),
+    # CR 2832: a closing quote ends a value only where the shell ends the
+    # word: before a space, or a , ) ] ; & | that runs to one. Otherwise
+    # the value runs on, so a symbol-heavy password is never cut.
+    ("run --password='zq9',zq9b next", "run --password=<redacted> next"),
+    ("run --password 'zq9']zq9b next", "run --password <redacted> next"),
+    # CR 2833: a URL is redacted across the whole line first, as the base did.
+    ("curl 'https://h/x?a=1&token=zq9 zq9b'", "curl 'https://h/x?a=1&token=<redacted>"),
+    ("psql 'postgres://u:zq9 zq9b@h/db'", "psql 'postgres://u:<redacted>@h/db'"),
     (
         "--password a --token zq9 --secret=zq9b url=https://u:zq9c@h/?token=zq9d",
         "--password <redacted> --token <redacted> --secret=<redacted>"
@@ -574,6 +582,33 @@ QUOTE_ROWS = [
 def test_live_args_tracks_a_value_s_quotes_as_a_shell_does(host, line, shown):
     e = _service_argv(host, ["/bin/sh", "-c", line])
     assert e["args"] == "/bin/sh -c " + shown
+    assert "zq9" not in host.result.stdout
+
+
+@pytest.mark.parametrize(
+    "argv, args",
+    [
+        # CR 2832: a raw argument isn't shell text. One that names a secret
+        # keeps its whole value redacted, quotes, spaces and all, as the
+        # base did; so does a script that starts with the assignment.
+        (["app", "--password=Ab'c';zq9E"], "app --password=<redacted>"),
+        (["app", '--password=Ab"c",zq9E'], "app --password=<redacted>"),
+        (["app", "--password", "Ab'c')zq9E"], "app --password <redacted>"),
+        (["app", "DB_PASSWORD=Ab'c'&zq9E"], "app DB_PASSWORD=<redacted>"),
+        (["app", "--token=x'y' zq9E"], "app --token=<redacted>"),
+        (["app", "--token", "x'y' zq9E"], "app --token <redacted>"),
+        (
+            ["redis-server", "--requirepass", "p'q'|zq9E"],
+            "redis-server --requirepass <redacted>",
+        ),
+        (["sh", "-c", "X_TOKEN='zq9 zq9b'; exec d"], "sh -c X_TOKEN=<redacted>"),
+        # CR 2833: a URL's password holding a space.
+        (["psql", "postgres://u:zq9 zq9b@h/db"], "psql postgres://u:<redacted>@h/db"),
+    ],
+)
+def test_a_raw_argument_naming_a_secret_stays_redacted_whole(host, argv, args):
+    e = _service_argv(host, argv)
+    assert e["args"] == args
     assert "zq9" not in host.result.stdout
 
 
