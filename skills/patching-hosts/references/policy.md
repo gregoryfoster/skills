@@ -132,6 +132,7 @@ exception <what> <review-by YYYY-MM-DD> <reason>
 | `unscoped:<origin>` | a followed origin at apt priority 500 or more: no `Package: *` pin below 500 for its site (both postures) |
 | `unpinned:<package>` | an installed package whose candidate comes from a followed origin, and that no package pin names (both postures) |
 | `cadence:overdue` | under `scheduled`, a weekday or `#N` window closed since the last run with no run (#592): a freeze the owner chose |
+| `cadence:off-window` | under `scheduled`, the last two runs' bulks both started outside every weekday and `#N` window (#708): runs the owner keeps elsewhere for a while |
 | `exposure:<origin>` | a running service maps a pending package from a third-party origin, so its pending set is a security exposure (#464). Keyed as the knob names the origin. A security fix waits only on a declared exception, as for `held:` |
 | `tailscale:auto-update` | Tailscale updates itself (`tailscale set --auto-update`), or nothing ever set it on the node, so nothing on record says whether it does (both postures). The node's own setting isn't enough: on co-replicator, tailscaled re-applied the tailnet's default, on, over `--auto-update=false` at a later boot (2026-10-06, #357). Turn it off for the tailnet too, in the admin console's auto-updates. `--post-boot` reads it again |
 | `held:<package>` | an owner's hold on a pending package |
