@@ -921,13 +921,22 @@ _knob_report_only() {
 # it can't see for a symlink it can't follow or a directory on the way it
 # can't enter, however far up (CR 2798). The nearest ancestor it sees
 # decides: one it can enter means the path is absent, to root as well.
-_knob_hidden() {  # <path>
-  local _kh_d=$1 _kh_p
+_knob_hidden() {  # <path> [<links followed so far>]
+  local _kh_d=$1 _kh_p _kh_t
   if [ -e "$1" ]; then
     if [ ! -d "$1" ] && [ ! -r "$1" ]; then return 0; fi
     return 1
   fi
-  if [ -L "$1" ]; then return 0; fi
+  # A link that resolves to nothing is decided by its target: one the caller
+  # can see is absent is the plain no-knob case, one it can't see is asked
+  # of root (CR 2798). A loop, or a chain past 10 links, is absent.
+  if [ -L "$1" ]; then
+    [ "${2:-0}" -lt 10 ] || return 1
+    _kh_t=$(readlink -- "$1") || return 0
+    case $_kh_t in /*) ;; *) _kh_t=$(dirname -- "$1")/$_kh_t ;; esac
+    _knob_hidden "$_kh_t" $((${2:-0} + 1))
+    return
+  fi
   while :; do
     _kh_p=$_kh_d
     _kh_d=$(dirname -- "$_kh_d")

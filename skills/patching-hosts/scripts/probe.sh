@@ -3249,6 +3249,8 @@ read_dry_run() {
     json_list bsteps "$BS_STEPS"
     takes_nothing_note bnote "$BS_TAKE" "$BS_STEPS"
   fi
+  # Counted 0, the selection is known and empty (CR 2797).
+  if [ "$sel" -eq 0 ] && [ "$n" = 0 ]; then btake="[]" bsteps="[]"; fi
   jadd o bulk_takes "$btake"
   jadd o held_steps "$bsteps"
   jaddsn o takes_nothing "$bnote"

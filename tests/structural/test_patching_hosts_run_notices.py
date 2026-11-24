@@ -121,7 +121,9 @@ def test_the_probes_count_0_dry_run_writes_an_empty_selection(tmp_path):
         " auto-removals\n",
     )
     scratch = host.tmp / "dry"
-    host.run(*_refreshed(host), "--dry-run-into", str(scratch), "--lane", TS)
+    out = host.run(*_refreshed(host), "--dry-run-into", str(scratch), "--lane", TS)
+    d = out["pending"]["dry_run"]
+    assert (d["count"], d["bulk_takes"], d["held_steps"]) == (0, [], [])
     summary = (scratch / "summary").read_text()
     assert "count=0\n" in summary
     assert "bulk_takes=\n" in summary
