@@ -1,6 +1,6 @@
 ## Session 2026-11-20 — address-validator
 
-The host's third run under the scripts ([2026-11-13](2026-11-13-address-validator.md)), and its second catch-up in a row: the Thursday 2026-11-19 window passed unrun. Maintenance lane, from the vendored skill at `284c3d9e`, so the entry came upstream as #687. The coordinator's read-only pre-flight had run from `817963f6`, an ancestor 10 patching-hosts commits older. Two one-off windows from a `--config` copy of the knob, each set when an approval arrived. The record is on CannObserv/address-validator#311, posted 2026-11-20T17:06Z.
+The host's third run under the scripts ([2026-11-13](2026-11-13-address-validator.md)), and its second catch-up in a row: the Thursday 2026-11-19 window passed unrun. Maintenance lane, from the vendored skill at `284c3d9e`, so the entry came upstream as #687. The coordinator's read-only pre-flight had run from `817963f6`, an ancestor 10 patching-hosts commits older. Two one-off windows from a `--config` copy of the knob, each set when an approval arrived. A knob changed between steps now warns rather than refuses, and the copy lands in the run's directory (#681). The record is on CannObserv/address-validator#311, posted 2026-11-20T17:06Z.
 
 ### Environment
 

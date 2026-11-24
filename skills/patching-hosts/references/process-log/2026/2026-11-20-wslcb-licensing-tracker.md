@@ -41,7 +41,7 @@ This is the host's fourth run. The earlier ones: [2026-09-29](2026-09-29-wslcb-l
   - `--post-boot`'s `pid1_log_target` reads the new boot, not the shutdown that the PID 1 lines evidence.
 
   Filed as #684, since fixed: the probe reads the target from argv, conf, kernel and environment, and what a reload and a re-exec would apply ([the profile](../../environments/exe-dev-exeuntu.md)). Boot −1 here shows the trap: a reload on 11-12 put PID 1 on `console` for six days.
-- **The backup unit's object name isn't printed** by `recovery-point.sh`. This is a recurrence of #669's gap, tracked as #682; nothing new filed.
+- **The backup unit's object name isn't printed** by `recovery-point.sh`. This is a recurrence of #669's gap, tracked as #682 and addressed in the same set: the script shows the unit's journal lines from the run it watched; nothing new filed.
 
 ### Decisions
 - **nginx in the bulk.** nginx had a security update while a prune of it was pending in its own issue. The bulk upgraded it in place: holding it would have left security above 0. One change per window, so the prune runs on its own.
