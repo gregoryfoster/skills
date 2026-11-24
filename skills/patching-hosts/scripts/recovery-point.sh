@@ -80,7 +80,10 @@ Options:
                            want of a login (default 600)
   --config FILE            the knob (default: .skills/patching-hosts at the
                            root of the repo around the current directory,
-                           or in the current directory outside a repo)
+                           or in the current directory outside a repo). One
+                           given is kept in the run's directory, root's at
+                           600, as knob-<sha256's first 12>:
+                           recovery_point.knob_copy
   --host NAME              whose knob sections apply (default: `hostname`)
   --today YYYY-MM-DD       the date exceptions expire against (default:
                            today, UTC)
@@ -141,7 +144,7 @@ Exit codes:
 USAGE
 }
 
-approve=0 run="" planf="" standing=0 lane=security retain="" config="" host="" today="" force_dump=0 redis_within=300 qdrant_within=1800 rdb_within=600
+approve=0 run="" planf="" standing=0 lane=security retain="" config="" config_given=0 host="" today="" force_dump=0 redis_within=300 qdrant_within=1800 rdb_within=600
 personal=()
 while [ "$#" -gt 0 ]; do
   case $1 in
@@ -154,7 +157,7 @@ while [ "$#" -gt 0 ]; do
         --redis-within) redis_within=$2 ;;
         --qdrant-within) qdrant_within=$2 ;;
         --rdb-within) rdb_within=$2 ;;
-        --config) config=$2 ;;
+        --config) config=$2 config_given=1 ;;
         --host) host=$2 ;;
         --today) today=$2 ;;
         --lane) lane=$2 ;;
@@ -720,6 +723,7 @@ emit() {
   jadds a retain_until "$retain"
   jadds a host "$host"
   jadds a knob "$config"
+  jadd a knob_copy "$KNOB_COPY_J"
   jadd o recovery_point "{$a}"
   a=""
   for r in ${REFUSED[@]+"${REFUSED[@]}"}; do jpushs a "$r"; done
@@ -1144,6 +1148,8 @@ dump_qdrant() {  # <unit> <container> <url> <key-file> <snapshots path>
 
 if ! root_has "$run" && ! as_root mkdir -p -m 700 -- "$run"; then
   fail "$run couldn't be made"
+elif ! knob_keep "$config_given" "$config" "$run" 1; then
+  fail "$KNOB_COPY_WHY"
 fi
 # An earlier attempt's record goes first: otherwise an attempt that fails
 # leaves it standing, and the bulk would take it.

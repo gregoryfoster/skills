@@ -45,7 +45,7 @@ sudo systemd-run --unit=patching-hosts-reboot-<utc> --on-active=120 --timer-prop
 
 Before launching:
 - post the post-boot checklist in the record;
-- list anything staged under `/tmp`, where the boot empties it. `reboot-chain.sh` reads the tmpfiles rule: under a `d` rule, as on the exeuntu images since 2026-07-17, the boot keeps `/tmp`, and nothing is listed (#355).
+- list anything staged under `/tmp`, where the boot empties it. `reboot-chain.sh` reads the tmpfiles rule: under a `d` rule, as on the exeuntu images since 2026-07-17, the boot keeps `/tmp`, and nothing is listed (#355). Elsewhere its NEXT says how many paths the boot empties, or may: read that out before 3(b), since `tmp_staged` alone went unread on power-map (#680).
 
 **Once the fire time has passed, read the outcome**, rather than wait for the session to drop: the launch returns once the timer is set. Its NEXT gives the time and the command, `sudo tail -n 5 <run>/reboot-chain.log` (`launched.outcome`). co-status's chain fired into a 60 s sweep, aborted, and nobody knew for 70 minutes (#646).
 
@@ -54,6 +54,8 @@ If the reboot slips out of the window, say so, and redo the gate and the quiet-h
 ## 6. After the boot
 
 `probe.sh --post-boot` takes these checks, and each one that fails is a finding. The downtime, and any `Persistent=` catch-up, are left to you.
+
+**Its knob is the run's copy.** The first step given `--config` keeps that knob in the run's directory as `knob-<its sha256's first 12>`, root's at 600, and records the path and sha256 as `knob_copy`. The chain's NEXT names the copy, since a scratch copy under `/tmp` went with watcher's boot (#681). A knob changed between steps, as a fresh one-off window is, is kept beside the earlier one and named, never refused. The scripts read a knob the caller can't through `sudo -n`; one it still can't read is an error, never the defaults. Without `--config`, the tracked knob is the record and nothing is copied.
 
 - **A clean shutdown:** the data store's own log, no EXT4 orphan recovery, and the journal's record. For Postgres: `database system was shut down at …` and no `redo starts`; for Redis, `ready to exit, bye bye`. A volatile journal's record is the chain's copy in `<run>/journal`: `--post-boot --run <dir>` names the run, and without it the newest `/var/backups/patching-hosts-<UTC>` is read. A persistent journal's is `Journal stopped` among the previous boot's last lines, and PID 1's own shutdown lines where they're present: their absence says nothing (#684).
 - **Each `service`:**
