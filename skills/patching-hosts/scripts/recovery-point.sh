@@ -848,9 +848,30 @@ fresh_redis() {  # <unit> <user> <key file>
 # failure: the owner's attestation doesn't rest on it.
 # BJ_SAID := why there are no lines.
 BJ_MAX=20 BJ_SAID=""
-# journalctl prints "KEY" : value, and a JSON writer may not space it.
+# Matched wherever MESSAGE falls among the entry's keys, whose order varies
+# (systemd 255, CR 2803). A message holding any control byte or invalid
+# UTF-8 is an array of its bytes: each of 32-126 is kept and any other is a
+# ?, so an ANSI colour reads as ?[31m. --all prints a message over 4096
+# bytes, which is null without it. Only the first BJ_TAKE bytes are decoded,
+# then redacted, then cut at 500.
 BJ_MSG='"MESSAGE"[[:space:]]*:[[:space:]]*"(([^"\\]|\\.)*)"'
-BJ_BIN='"MESSAGE"[[:space:]]*:[[:space:]]*\['
+BJ_BIN='"MESSAGE"[[:space:]]*:[[:space:]]*\[([0-9,[:space:]]*)\]'
+BJ_TAKE=2000
+bytes_text() {  # <var> <comma-separated byte values>: VAR := the printable ASCII among them, ? for the rest
+  local _bt_n _bt_o _bt_c _bt_out="" _bt_i=0
+  for _bt_n in ${2//,/ }; do
+    [ "$_bt_i" -lt "$BJ_TAKE" ] || break
+    _bt_i=$((_bt_i + 1))
+    if [ "$_bt_n" -ge 32 ] 2>/dev/null && [ "$_bt_n" -le 126 ]; then
+      printf -v _bt_o '%03o' "$_bt_n"
+      printf -v _bt_c '%b' "\\0$_bt_o"
+      _bt_out="$_bt_out$_bt_c"
+    else
+      _bt_out="$_bt_out?"
+    fi
+  done
+  printf -v "$1" '%s' "$_bt_out"
+}
 BJ_U='\\u[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]'
 J_UNIT_FINISHED=39f53479d3a045ac8e11786248231fbf
 finished_invocation() {  # <var> <service>: VAR := the INVOCATION_ID of PID 1's last "Finished" message about it, if logged since the run began
@@ -886,7 +907,7 @@ backup_journal() {  # <var> <service> <invocation ID> [<why there's no run to re
   elif [ -z "$_bj_id" ]; then
     BJ_SAID="systemd gave the run no invocation ID, in systemctl show or in PID 1's message that it finished, so its lines can't be told from another run's"
   else
-    capture _bj_out as_root journalctl --no-pager -q -o json --output-fields=MESSAGE \
+    capture _bj_out as_root journalctl --no-pager -q --all -o json --output-fields=MESSAGE \
       -n "$((BJ_MAX + 1))" "_SYSTEMD_INVOCATION_ID=$_bj_id"
     if [ "$CAP_RC" -ne 0 ]; then
       BJ_SAID="the journal couldn't be read (${CAP_ERR:-journalctl exited $CAP_RC})"
@@ -895,6 +916,7 @@ backup_journal() {  # <var> <service> <invocation ID> [<why there's no run to re
         [ -n "$_bj_l" ] || continue
         if [[ $_bj_l =~ $BJ_MSG ]]; then
           _bj_m=${BASH_REMATCH[1]}
+          _bj_m=${_bj_m:0:$BJ_TAKE}
           _bj_m=${_bj_m//\\\\/$'\001'}
           _bj_m=${_bj_m//\\\"/\"}
           _bj_m=${_bj_m//\\\//\/}
@@ -903,7 +925,7 @@ backup_journal() {  # <var> <service> <invocation ID> [<why there's no run to re
           _bj_m=${_bj_m//\\[bf]/?}
           _bj_m=${_bj_m//$'\001'/\\}
         elif [[ $_bj_l =~ $BJ_BIN ]]; then
-          _bj_m="(a message that isn't text)"
+          bytes_text _bj_m "${BASH_REMATCH[1]}"
         else
           _bj_m=""
         fi

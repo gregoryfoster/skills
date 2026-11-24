@@ -862,11 +862,11 @@ INVOCATION = "0123456789abcdef0123456789abcdef"
 
 
 def _logged(
-    host: Host, messages: list, rc: int = 0, invocation: str = INVOCATION
+    host: Host, messages: list | str, rc: int = 0, invocation: str = INVOCATION
 ) -> Host:
     """The regime, whose run now has INVOCATION and logged MESSAGES, one
     journal entry each, as journalctl -o json prints them: a list of ints is
-    a message that isn't text."""
+    a message as an array of its bytes. A str is journalctl's own output."""
     _regime(host)
     s = host.state / "backup"
     host.cases["systemctl"] = [
@@ -880,9 +880,13 @@ def _logged(
             f'ExecMainExitTimestamp=@{TUE_1530 + 65}\\nInvocationID={invocation}\\n" > "{s}"; exit 0'
         ),
     )
-    out = "".join(
-        json.dumps({"__CURSOR": f"s=1;i={i}", "MESSAGE": m}) + "\n"
-        for i, m in enumerate(messages)
+    out = (
+        messages
+        if isinstance(messages, str)
+        else "".join(
+            json.dumps({"__CURSOR": f"s=1;i={i}", "MESSAGE": m}) + "\n"
+            for i, m in enumerate(messages)
+        )
     )
     stderr = "Failed to open journal: Permission denied\n" if rc else ""
     host.on("journalctl", "--sync", "")
@@ -953,12 +957,49 @@ def test_a_long_log_keeps_its_last_entries_and_says_so(host):
 
 
 def test_quotes_and_backslashes_read_as_written(host):
-    _logged(host, ['said "done" to C:\\backups\\app', [0, 159, 146]])
+    _logged(host, ['said "done" to C:\\backups\\app', [0, 37, 92, 159, 146, 65]])
     j = host.recover()["backup"][0]["journal"]
+    assert j["lines"] == ['said "done" to C:\\backups\\app', "?%\\??A"]
+
+
+# systemd 255.4's own output (ubuntu:24.04, a timer's oneshot), verbatim:
+# the keys in a different order each entry, and a message holding a control
+# byte or invalid UTF-8 as an array of its bytes (CR 2803).
+REAL_255 = (
+    '{"MESSAGE":"say \\"quoted\\" and back\\\\slash and a\\ttab here","_BOOT_ID":"55da67bb18cf4cfa9b30d0a888acf477","__CURSOR":"s=bd159c266b894b709c9060a15e905552;i=e70;b=55da67bb18cf4cfa9b30d0a888acf477;m=414308fe0d;t=660fc1faf451b;x=1453a1b65ebc684","__MONOTONIC_TIMESTAMP":"280297537037","__REALTIME_TIMESTAMP":"1795485839869211","__SEQNUM":"3696","__SEQNUM_ID":"bd159c266b894b709c9060a15e905552"}\n'
+    '{"__MONOTONIC_TIMESTAMP":"280297537037","__SEQNUM_ID":"bd159c266b894b709c9060a15e905552","__REALTIME_TIMESTAMP":"1795485839869211","__SEQNUM":"3697","_BOOT_ID":"55da67bb18cf4cfa9b30d0a888acf477","MESSAGE":"unicode café ✓ and a / slash","__CURSOR":"s=bd159c266b894b709c9060a15e905552;i=e71;b=55da67bb18cf4cfa9b30d0a888acf477;m=414308fe0d;t=660fc1faf451b;x=b3477d4474c0b8bc"}\n'
+    '{"__SEQNUM":"3698","_BOOT_ID":"55da67bb18cf4cfa9b30d0a888acf477","__REALTIME_TIMESTAMP":"1795485839869211","MESSAGE":[98,97,100,32,98,121,116,101,115,32,255,254,32,104,101,114,101],"__SEQNUM_ID":"bd159c266b894b709c9060a15e905552","__MONOTONIC_TIMESTAMP":"280297537037","__CURSOR":"s=bd159c266b894b709c9060a15e905552;i=e72;b=55da67bb18cf4cfa9b30d0a888acf477;m=414308fe0d;t=660fc1faf451b;x=460bc6b94ab5181d"}\n'
+    '{"__SEQNUM":"3699","_BOOT_ID":"55da67bb18cf4cfa9b30d0a888acf477","__CURSOR":"s=bd159c266b894b709c9060a15e905552;i=e73;b=55da67bb18cf4cfa9b30d0a888acf477;m=414308fe0d;t=660fc1faf451b;x=c053b8b62f58ed32","__MONOTONIC_TIMESTAMP":"280297537037","__REALTIME_TIMESTAMP":"1795485839869211","MESSAGE":[97,110,32,101,115,99,97,112,101,32,27,91,51,49,109,114,101,100,27,91,48,109,32,115,101,113,117,101,110,99,101],"__SEQNUM_ID":"bd159c266b894b709c9060a15e905552"}\n'
+    '{"MESSAGE":"+ export AWS_SECRET_ACCESS_KEY=abc123secret","__MONOTONIC_TIMESTAMP":"280297537037","__SEQNUM_ID":"bd159c266b894b709c9060a15e905552","_BOOT_ID":"55da67bb18cf4cfa9b30d0a888acf477","__SEQNUM":"3700","__CURSOR":"s=bd159c266b894b709c9060a15e905552;i=e74;b=55da67bb18cf4cfa9b30d0a888acf477;m=414308fe0d;t=660fc1faf451b;x=94b7637e0bf1b4d7","__REALTIME_TIMESTAMP":"1795485839869211"}\n'
+    '{"__REALTIME_TIMESTAMP":"1795485839869211","_BOOT_ID":"55da67bb18cf4cfa9b30d0a888acf477","__MONOTONIC_TIMESTAMP":"280297537037","__CURSOR":"s=bd159c266b894b709c9060a15e905552;i=e75;b=55da67bb18cf4cfa9b30d0a888acf477;m=414308fe0d;t=660fc1faf451b;x=56e89034d65e9b4e","__SEQNUM_ID":"bd159c266b894b709c9060a15e905552","MESSAGE":"rclone copy /x https://user:pw@host.example/bucket","__SEQNUM":"3701"}\n'
+    '{"__SEQNUM_ID":"bd159c266b894b709c9060a15e905552","__SEQNUM":"3702","_BOOT_ID":"55da67bb18cf4cfa9b30d0a888acf477","__REALTIME_TIMESTAMP":"1795485839869211","__CURSOR":"s=bd159c266b894b709c9060a15e905552;i=e76;b=55da67bb18cf4cfa9b30d0a888acf477;m=414308fe0d;t=660fc1faf451b;x=d4675d03856f1c7f","__MONOTONIC_TIMESTAMP":"280297537037","MESSAGE":"wrote object gs://bucket/app-20261124.tar.zst"}\n'
+)
+
+
+def test_systemd_255s_own_json_reads_as_the_unit_wrote_it(host):
+    _logged(host, REAL_255)
+    out = host.recover()
+    j = out["backup"][0]["journal"]
+    assert j["more"] is False
     assert j["lines"] == [
-        'said "done" to C:\\backups\\app',
-        "(a message that isn't text)",
+        'say "quoted" and back\\slash and a tab here',
+        "unicode caf?? ??? and a / slash",
+        "bad bytes ?? here",
+        "an escape ?[31mred?[0m sequence",
+        "+ export AWS_SECRET_ACCESS_KEY=<redacted>",
+        "rclone copy /x https://user:<redacted>@host.example/bucket",
+        "wrote object gs://bucket/app-20261124.tar.zst",
     ]
+    assert "abc123secret" not in host.result.stdout + host.result.stderr
+    # A message over 4096 bytes is null without --all.
+    assert "--all" in _reads(host)[0].split()
+
+
+def test_a_long_message_is_decoded_redacted_then_cut(host):
+    _logged(host, [[120] * 5000, "token=" + "s" * 3000 + " --password hunter2"])
+    lines = host.recover()["backup"][0]["journal"]["lines"]
+    assert lines[0] == "x" * 500
+    assert lines[1] == "token=<redacted>"
 
 
 def test_a_log_line_cant_put_an_escape_on_the_screen(host):
