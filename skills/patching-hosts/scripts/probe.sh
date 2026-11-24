@@ -5216,11 +5216,22 @@ read_redis() {
 }
 
 read_redis_engine() {  # <engine> <server package, and its unit's name> <log dir> <package globs>
-  local name=$1 server=$2 inst=0 out r keys=0 up="" v look=0 exp=0 subs=0 clients="" seen=0 cli u
-  local -a df=()
+  local name=$1 server=$2 inst=0 out r keys=0 up="" v look=0 exp=0 subs=0 clients="" seen=0 cli u ports="" held=0
+  local -a df=() addr=()
   WL="" INUSE="" DORM="" UNK=""
   if installed "$server"; then inst=1; fi
   if [ "$inst" -eq 1 ]; then
+    # Its postinst restarts it on an upgrade (noble's redis-server and
+    # valkey-server both): outside every hold step, the bulk would. A hold
+    # line naming the redis step replaces the default, and a cohort knob's
+    # names redis-server alone (CR 2829).
+    for r in ${KNOB_HOLD[@]+"${KNOB_HOLD[@]}"}; do
+      IFS=$KNOB_US read -r -a df <<<"$r"
+      if glob_match "$server" "${df[1]}"; then held=1; fi
+    done
+    if [ "$held" -eq 0 ]; then
+      finding knob "hold:$server" "" "$server is installed, and no hold step's globs cover it: its postinst restarts it on an upgrade, so the bulk would restart it outside a held step. A hold line naming a default step replaces that default: add $server ${server%-server}-tools to the line for the redis step (knob.md)."
+    fi
     for r in ${KNOB_DATASTORE[@]+"${KNOB_DATASTORE[@]}"}; do
       IFS=$KNOB_US read -r -a df <<<"$r"
       [ "${df[0]}" = redis ] || continue
@@ -5228,12 +5239,18 @@ read_redis_engine() {  # <engine> <server package, and its unit's name> <log dir
       redis_engine "$u" || true
       if [ "$RE_ENGINE" = "$name" ]; then INUSE="a datastore line declares it"; fi
     done
-    # The client its server takes (#706).
-    redis_engine "$server.service" || true
-    cli=$RE_CLI
+    # The client its server takes (#706), at the address its own file and
+    # arguments set: Redis and Valkey may both run, each on its own port
+    # (CR 2828). Unauthenticated, as before.
+    redis_conf "$server.service"
+    redis_addr
+    cli=$RE_CLI addr=("${RA_ARGS[@]}")
     unit_show "$server.service" ActiveState || true
+    # What listens is its own only while it runs: a stopped one's port may
+    # be another's, as a rollback redis-server's is Valkey's.
+    if [ "$U_ActiveState" = active ]; then ports=$RA_PORT; fi
     if [ "$U_ActiveState" = active ] && live_cmd "$cli"; then
-      capture out "$cli" INFO
+      capture out "$cli" "${addr[@]}" INFO
       out=${out//$'\r'/}
       if [ "$CAP_RC" -eq 0 ] && [[ $out == *uptime_in_days:* ]]; then
         while IFS= read -r r; do
@@ -5293,7 +5310,7 @@ read_redis_engine() {  # <engine> <server package, and its unit's name> <log dir
       UNK="its state couldn't be read"
     fi
   fi
-  engine "$name" "$inst" "$server.service" 6379 "$name" "$4" "$WL" "$INUSE" "$DORM" "$UNK"
+  engine "$name" "$inst" "$server.service" "$ports" "$name" "$4" "$WL" "$INUSE" "$DORM" "$UNK"
 }
 
 read_nginx() {

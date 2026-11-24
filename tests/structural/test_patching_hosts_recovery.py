@@ -856,6 +856,52 @@ def test_a_valkey_without_valkey_cli_is_refused_up_front(tmp_path):
     )
 
 
+# CR 2827: the server a unit runs, as systemd shows it. path= is what it
+# executes: `ExecStart=@/usr/bin/valkey-server redis-server …` shows argv[0]
+# as redis-server, and env names the server after its own options (all
+# measured on noble's systemd 255).
+@pytest.mark.parametrize(
+    "exec_start",
+    [
+        "{ path=/usr/bin/valkey-server ; argv[]=redis-server {conf} ; ignore_errors=no ; }",
+        "{ path=/usr/bin/env ; argv[]=/usr/bin/env -S valkey-server {conf} ; ignore_errors=no ; }",
+        "{ path=/usr/bin/env ; argv[]=/usr/bin/env LANG=C valkey-server {conf} ; ignore_errors=no ; }",
+        "{ path=valkey-server ; argv[]=valkey-server {conf} ; ignore_errors=no ; }",
+    ],
+    ids=["at", "env-option", "env-assignment", "bare"],
+)
+def test_the_server_a_unit_runs_is_read_from_its_path_and_through_env(
+    tmp_path, exec_start
+):
+    host = _redis(_ready(Host(tmp_path)), engine="valkey")
+    host.knob(KNOB + "datastore redis cache\n")
+    conf = host.tmp / "redis.conf"
+    host.show(
+        "cache.service",
+        ExecStart=exec_start.replace("{conf}", str(conf)),
+        MainPID="4242",
+    )
+    host.absent("redis-cli", "redis-check-rdb")
+    out = host.recover()
+    assert out["dumps"][0]["bgsave"] == "ok"
+    assert host.calls("valkey-cli")
+
+
+def test_a_wrapper_it_cant_read_through_goes_by_the_units_name(tmp_path):
+    # A wrapper script names no server, and outside a running system its
+    # main process's binary can't be read: the unit's name decides.
+    host = _redis(_ready(Host(tmp_path)), engine="valkey")
+    host.knob(KNOB + "datastore redis valkey-cache\n")
+    host.show(
+        "valkey-cache.service",
+        ExecStart="{ path=/usr/local/bin/start-cache ; argv[]=/usr/local/bin/start-cache ; ignore_errors=no ; }",
+        MainPID="0",
+    )
+    host.absent("valkey-cli")
+    out = host.recover(rc=3)
+    assert any(r.startswith("valkey-cli isn't on PATH") for r in out["refused"])
+
+
 def test_a_redis_still_takes_redis_cli_beside_valkey_tools(tmp_path):
     host = _redis(_ready(Host(tmp_path)))
     host.absent("valkey-cli")

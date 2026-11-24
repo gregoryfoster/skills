@@ -481,18 +481,11 @@ REDIS_PW_SED="/^$_RPW/!d;s/^$_RPW*//;"'s/[[:space:]]*$//;s/^"\(.*\)"$/\1/;s/^'\'
 # unit_show sets it by name.
 U_MainPID=""
 redis_conn() {  # <unit> [<user> <key-file>]
-  local _rc_bind
   REDIS_ARGS=() REDIS_USER=${2:-} REDIS_KEY=${3:-}
   redis_conf "$1"
   REDIS_CONF=$RC_CONF REDIS_CLI=$RE_CLI
-  _rc_bind=$RC_BIND
-  case $_rc_bind in '' | '*' | 0.0.0.0 | '::' | '::*') _rc_bind=127.0.0.1 ;; esac
-  if [ -n "$RC_SOCK" ]; then
-    REDIS_ARGS=(-s "$RC_SOCK")
-  else
-    is_int "$RC_PORT" || RC_PORT=6379
-    REDIS_ARGS=(-h "$_rc_bind" -p "$RC_PORT")
-  fi
+  redis_addr
+  REDIS_ARGS=("${RA_ARGS[@]}")
   # key: the knob's user; conf: default, with requirepass where the file
   # sets one; none: no login at all, so nothing reaches ACL LOG.
   if [ -n "$REDIS_USER" ]; then

@@ -400,7 +400,7 @@ VALKEY = {
         "valkey-server": {
             "state": "ii",
             "version": "7.2.14+dfsg1-0ubuntu0.1",
-            "files": [LIB + "valkey-server.service"],
+            "files": [LIB + "valkey-server.service", LIB + "valkey-server@.service"],
             "depends": ["valkey-tools"],
         },
         "valkey-tools": {"state": "ii", "version": "7.2.14+dfsg1-0ubuntu0.1"},
@@ -416,6 +416,23 @@ VALKEY = {
     },
     "groups": {},
     "paths": {"/etc/valkey": 108, "/var/lib/valkey": 2048, "/etc/redis": 108},
+}
+# valkey-redis-compat instead (CR 2831): it conflicts with and replaces
+# redis-server and redis-tools, ships only redis-cli, redis-check-rdb,
+# redis-check-aof and redis-benchmark as links to Valkey's, and its
+# migration moves /var/lib/redis to /var/lib/redis-old (measured, 7.2.14).
+VALKEY_COMPAT = {
+    "packages": {
+        **{k: v for k, v in VALKEY["packages"].items() if k != "redis-server"},
+        "valkey-redis-compat": {
+            "state": "ii",
+            "version": "7.2.14+dfsg1-0ubuntu0.1",
+            "depends": ["valkey-server"],
+        },
+    },
+    "units": {"valkey-server.service": _unit(LIB + "valkey-server.service")},
+    "groups": {},
+    "paths": {"/etc/valkey": 108, "/var/lib/valkey": 2048, "/var/lib/redis-old": 1024},
 }
 POSTGRES = {
     "packages": {
@@ -1033,6 +1050,20 @@ def test_a_valkey_is_its_own_component_with_its_own_paths(tmp_path):
         {"kind": "data", "path": "/var/lib/valkey", "kib": 2048},
     ]
     assert "redis-server" not in json.dumps(out["packages"])
+
+
+def test_valkeys_redis_compat_is_valkeys(tmp_path):
+    host = _host(tmp_path, VALKEY_COMPAT, "valkey")
+    out = host.plan("valkey")
+    assert out["packages"]["roots"] == ["valkey-redis-compat", "valkey-server"]
+    assert "valkey-server@.service" not in [u["unit"] for u in out["units"]]
+
+
+def test_redis_old_valkey_compat_leaves_is_redis_data(tmp_path):
+    host = _host(tmp_path, VALKEY_COMPAT, "redis")
+    out = host.plan("redis")
+    assert out["packages"]["roots"] == []
+    assert {"kind": "data", "path": "/var/lib/redis-old", "kib": 1024} in out["paths"]
 
 
 def test_a_redis_prune_beside_a_valkey_takes_none_of_it(tmp_path):

@@ -1494,7 +1494,7 @@ def test_a_redis_with_no_key_is_dormant_only_when_nothing_uses_it(
     host.show("redis-server.service", ActiveState="active")
     host.on(
         "redis-cli",
-        "INFO",
+        "*INFO",
         "".join(f"{k}:{v}\r\n" for k, v in info.items() if v is not None),
     )
     d = _dormant(host.run(), "redis")
@@ -1514,7 +1514,9 @@ def test_a_redis_with_no_key_is_dormant_only_when_nothing_uses_it(
 def test_a_unit_whose_name_merely_holds_the_components_isnt_its_own(host, unit, uses):
     host.installed("redis-server")
     host.show("redis-server.service", ActiveState="active")
-    host.on("redis-cli", "INFO", "".join(f"{k}:{v}\r\n" for k, v in REDIS_IDLE.items()))
+    host.on(
+        "redis-cli", "*INFO", "".join(f"{k}:{v}\r\n" for k, v in REDIS_IDLE.items())
+    )
     host.write(
         f"etc/systemd/system/{unit}",
         "[Unit]\nRequires=redis-server.service\n[Service]\nExecStart=/srv/app/work\n",
@@ -1530,7 +1532,7 @@ def test_a_redis_that_needs_a_login_says_so(host):
     # nothing reaches its ACL LOG (#379; measured on 7.0).
     host.installed("redis-server")
     host.show("redis-server.service", ActiveState="active")
-    host.on("redis-cli", "INFO", "NOAUTH Authentication required.\n")
+    host.on("redis-cli", "*INFO", "NOAUTH Authentication required.\n")
     d = _dormant(host.run(), "redis")
     assert d["verdict"] == "unknown"
     assert "it needs a login (INFO answered NOAUTH)" in d["evidence"]
@@ -1550,7 +1552,7 @@ def _valkey(host: Host, info: dict = REDIS_IDLE) -> Host:
         ExecStart="{ path=/usr/bin/valkey-server ; argv[]=/usr/bin/valkey-server /etc/valkey/valkey.conf --supervised systemd --daemonize no ; }",
         ActiveState="active",
     )
-    host.on("valkey-cli", "INFO", "".join(f"{k}:{v}\r\n" for k, v in info.items()))
+    host.on("valkey-cli", "*INFO", "".join(f"{k}:{v}\r\n" for k, v in info.items()))
     host.absent("redis-cli")
     return host
 
@@ -1586,6 +1588,105 @@ def test_a_datastore_line_counts_for_the_engine_its_unit_runs(host):
     assert (v["verdict"], v["evidence"]) == ("in-use", "a datastore line declares it")
     r = _dormant(out, "redis")
     assert (r["verdict"], r["evidence"]) == ("dormant", "inactive for 40 days")
+
+
+def _engines(host: Host, redis_port: int, valkey_port: int, redis_state: str):
+    """Both servers installed, each on the port its own file sets (CR 2828)."""
+    host.installed("redis-server", "valkey-server")
+    host.write("etc/redis/redis.conf", f"port {redis_port}\n")
+    host.write("etc/valkey/valkey.conf", f"port {valkey_port}\nbind 127.0.0.1 -::1\n")
+    host.show(
+        "redis-server.service",
+        ExecStart="{ path=/usr/bin/redis-server ; argv[]=/usr/bin/redis-server /etc/redis/redis.conf ; }",
+        ActiveState=redis_state,
+        InactiveEnterTimestamp=f"@{host.now - 40 * DAY}",
+    )
+    host.show(
+        "valkey-server.service",
+        ExecStart="{ path=/usr/bin/valkey-server ; argv[]=/usr/bin/valkey-server /etc/valkey/valkey.conf --supervised systemd --daemonize no ; }",
+        ActiveState="active",
+    )
+    listen = "".join(
+        f"LISTEN 0      511          0.0.0.0:{p}        0.0.0.0:*\n"
+        for p in sorted({redis_port, valkey_port})
+    )
+    host.on("ss", "-Hltn", listen)
+    for cli, port, keys in (
+        ("redis-cli", redis_port, 1),
+        ("valkey-cli", valkey_port, 6),
+    ):
+        info = {**REDIS_IDLE, "db0": f"keys={keys},expires=0,avg_ttl=0"}
+        host.on(
+            cli,
+            f"-h 127.0.0.1 -p {port} INFO",
+            "".join(f"{k}:{v}\r\n" for k, v in info.items()),
+        )
+    return host
+
+
+def test_each_engine_is_read_at_its_own_address(host):
+    out = _engines(host, 6379, 6380, "active").run()
+    r, v = _dormant(out, "redis"), _dormant(out, "valkey")
+    assert (r["workload"]["keys"], r["listeners"]) == (1, ["0.0.0.0:6379"])
+    assert (v["workload"]["keys"], v["listeners"]) == (6, ["0.0.0.0:6380"])
+
+
+def test_a_stopped_engine_shows_no_listener_of_another_on_its_port(host):
+    # broker's soak: the redis-server kept for rollback is stopped, and its
+    # file still says 6379, where Valkey now listens.
+    out = _engines(host, 6379, 6379, "inactive").run()
+    assert _dormant(out, "redis")["listeners"] == []
+    assert _dormant(out, "valkey")["listeners"] == ["0.0.0.0:6379"]
+
+
+@pytest.mark.parametrize(
+    "exe, uses",
+    [
+        ("/usr/bin/valkey-server", True),
+        # Noble's valkey-server is a link to valkey-check-rdb, the one
+        # binary, so that's what its process's exe reads (measured).
+        ("/usr/bin/valkey-check-rdb", True),
+        ("/usr/bin/redis-check-rdb", False),
+        (None, False),
+    ],
+)
+def test_a_wrappers_server_is_read_from_its_main_process(host, exe, uses):
+    # CR 2827: a unit that starts its server through a wrapper names no
+    # server in its ExecStart: its running main process's binary does.
+    host.knob(host.knob_path.read_text() + "datastore redis cache\n")
+    _valkey(host)
+    host.show(
+        "cache.service",
+        ExecStart="{ path=/usr/local/bin/start-cache ; argv[]=/usr/local/bin/start-cache /etc/valkey/valkey.conf ; }",
+        MainPID="4243",
+    )
+    if exe:
+        host.link("proc/4243/exe", exe)
+    d = _dormant(host.run(), "valkey")
+    assert (d["evidence"] == "a datastore line declares it") is uses
+
+
+@pytest.mark.parametrize(
+    "hold, finds",
+    [
+        ("hold redis-server redis\n", True),
+        ("hold redis-server redis-tools valkey-server valkey-tools redis\n", False),
+        ("", False),
+    ],
+    ids=["own-line-without-valkey", "own-line-with-it", "the-default"],
+)
+def test_a_hold_line_that_leaves_valkey_out_is_a_finding(host, hold, finds):
+    # CR 2829: a hold line naming the redis step replaces the default, and
+    # a cohort knob's names redis-server alone: valkey-server's postinst
+    # would then restart it in the bulk, outside a held step.
+    host.knob("class production\nposture scheduled\n" + hold)
+    _valkey(host)
+    out = host.run()
+    found = [f for f in out["findings"] if f["id"] == "hold:valkey-server"]
+    assert bool(found) is finds
+    if finds:
+        assert found[0]["kind"] == "knob"
+        assert "valkey-server valkey-tools" in found[0]["message"]
 
 
 def test_a_never_started_valkey_counts_from_its_log(tmp_path):
@@ -2076,8 +2177,9 @@ def _mutating(name: str, args: str) -> bool:
         return a[:1] not in (["ps"], ["images"]) and a[:2] != ["volume", "ls"]
     if name == "pro":
         return a[:1] != ["security-status"]
-    if name == "redis-cli":
-        return a != ["INFO"]
+    if name in ("redis-cli", "valkey-cli"):
+        # INFO, at the address the server's own file sets (CR 2828).
+        return a[-1:] != ["INFO"] or len(a) not in (1, 3, 5)
     if name == "psql":
         return not args.split("-c ", 1)[-1].lower().startswith("select ")
     return False
@@ -2113,7 +2215,7 @@ def test_no_command_installs_removes_holds_restarts_or_writes_lists(host):
         "16 main 5432 online postgres /var/lib/postgresql/16/main /var/log/postgresql/postgresql-16-main.log\n",
     )
     host.on("psql", "*", "app\x1f1\x1f5\x1f\x1fC.UTF-8\x1fc\x1f\n")
-    host.on("redis-cli", "INFO", "uptime_in_days:40\r\ndb0:keys=3,expires=0\r\n")
+    host.on("redis-cli", "*INFO", "uptime_in_days:40\r\ndb0:keys=3,expires=0\r\n")
     host.show("docker.service", ActiveState="active")
     host.show("redis-server.service", ActiveState="active")
     host.on("docker", "*", "")

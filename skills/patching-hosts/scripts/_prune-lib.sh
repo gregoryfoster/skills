@@ -90,7 +90,8 @@ roots_of() {  # <var> <component>: its package globs; empty from outside apt
     redis) _ro='redis redis-server' ;;
     # Ubuntu's Valkey co-installs with redis-server, which a host may keep
     # stopped for rollback (#706): each is its own component. Its
-    # redis-compat package replaces redis-server, so it's Valkey's.
+    # redis-compat package links redis-cli and redis-check-rdb to Valkey's,
+    # and conflicts with redis-server, so it's Valkey's.
     valkey) _ro='valkey-server valkey-redis-compat' ;;
     nginx) _ro='nginx nginx-common nginx-core nginx-full nginx-light nginx-extras libnginx-mod-*' ;;
   esac
@@ -137,7 +138,9 @@ prune_component() {  # <name>
         docker) C_CONFIG=/etc/docker C_DATA='/var/lib/docker /var/lib/containerd' C_GROUP=docker ;;
         # postgresql-common's purge script deletes its createcluster.conf.
         postgres) C_CONFIG='/etc/postgresql /etc/postgresql-common' C_DATA=/var/lib/postgresql ;;
-        redis) C_CONFIG=/etc/redis C_DATA=/var/lib/redis ;;
+        # valkey-redis-compat's migration moves Redis's data to
+        # /var/lib/redis-old (CR 2831).
+        redis) C_CONFIG=/etc/redis C_DATA='/var/lib/redis /var/lib/redis-old' ;;
         valkey) C_CONFIG=/etc/valkey C_DATA=/var/lib/valkey ;;
         nginx) C_CONFIG=/etc/nginx C_DATA='/var/www /var/log/nginx' ;;
       esac ;;
