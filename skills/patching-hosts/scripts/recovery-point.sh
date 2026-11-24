@@ -847,8 +847,8 @@ fresh_redis() {  # <unit> <user> <key file>
 # carries into the next, so set -x's one entry a line of a multi-line value
 # (a key file's) drops through the line that closes it, and the shown entries
 # are the last BJ_MAX of the last BJ_SCAN read (CR 2816). A line set -x
-# starts (+ , ++ ) begins a command, with no quote open (CR 2834). A URL is
-# redacted across the whole line first (CR 2833). journald stores a stream's last lines
+# starts (+ , ++ ) begins a command, with no quote open (CR 2834). A URL
+# crosses a space only inside a quoted span (CR 2833, CR 2840). journald stores a stream's last lines
 # asynchronously, so it's synced first (CR 2801): measured unneeded on an
 # idle systemd 255 container (a timer's oneshot's last line was stored 40 of
 # 40 times without it), and kept for a loaded host. Where systemctl show
@@ -865,7 +865,7 @@ BJ_MAX=20 BJ_SCAN=200 BJ_SAID=""
 BJ_MSG='"MESSAGE"[[:space:]]*:[[:space:]]*"(([^"\\]|\\.)*)"'
 BJ_BIN='"MESSAGE"[[:space:]]*:[[:space:]]*\[([0-9,[:space:]]*)\]'
 BJ_TAKE=2000
-BJ_XTRACE='^[+]+[[:space:]]'
+BJ_XTRACE=$RS_XTRACE
 name_byte() {  # <byte value>: 0 when it's a letter, a digit or _
   [ "$1" -eq 95 ] || { [ "$1" -ge 48 ] && [ "$1" -le 57 ]; } ||
     { [ "$1" -ge 65 ] && [ "$1" -le 90 ]; } || { [ "$1" -ge 97 ] && [ "$1" -le 122 ]; }
@@ -987,7 +987,7 @@ backup_journal() {  # <var> <service> <invocation ID> [<why there's no run to re
         for _bj_l in "${_bj_ls[@]}"; do
           if [[ $_bj_l =~ $BJ_XTRACE ]]; then RW_QUOTE=""; fi
           _bj_q=$RW_QUOTE _bj_ws=()
-          redact_url _bj_l "$_bj_l"
+          redact_url_spans _bj_l "$_bj_l"
           read -r -a _bj_ws <<<"$_bj_l" || true
           redact_words _bj_l ${_bj_ws[@]+"${_bj_ws[@]}"}
           if [ -n "$_bj_q" ] && [ -z "$_bj_l" ]; then

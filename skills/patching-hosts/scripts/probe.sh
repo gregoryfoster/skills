@@ -3805,13 +3805,14 @@ cmdline_of() {  # <var> <pid>
 # _probe-lib.sh's redact_word (#698), read from the NUL-separated argv so a
 # value holding a space stays one value; an element holding whitespace, a
 # wrapper's script string or an argv rewritten as one string, is read by its
-# words, and its quotes, too (CR 2768, CR 2785, #707). One that names a
-# secret is one value, redacted whole, and a URL's userinfo or parameter is
-# redacted across the whole element first, spaces and all (CR 2832,
-# CR 2833). An argv's words past ARGS_MAX bytes aren't read: an element is
-# cut back to the last whole word before it, and what's left is marked <...>,
-# so a local user's long argv can't stall the probe (CR 2835).
-# cmdline_of stays whole for the probe's own reads.
+# lines and words, and its quotes, too (CR 2768, CR 2785, #707). One that
+# names a secret is one value, redacted whole; one whose last word names a
+# secret takes the next element as its value; and a URL's userinfo or
+# parameter is redacted across the whole element first, spaces and all
+# (CR 2832, CR 2833, CR 2840). Every element is read up to ARGS_MAX bytes,
+# cut back to its last whole word, and the argv up to ARGS_MAX in all: what's
+# left is marked <...>, so a local user's argv can't stall the probe
+# (CR 2835, CR 2839, CR 2841). cmdline_of stays whole for the probe's reads.
 ARGS_MAX=16384
 redacted_cmdline_of() {  # <var> <pid>
   local _rc_w _rc_out="" _rc_next=0 _rc_cut
@@ -3825,13 +3826,12 @@ redacted_cmdline_of() {  # <var> <pid>
       break
     fi
     _rc_cut=0
-    if [ "${#_rc_w}" -gt "$ARGS_MAX" ] && [[ $_rc_w == *[[:space:]]* ]]; then
-      _rc_w=${_rc_w:0:$ARGS_MAX}
+    if [ "${#_rc_w}" -gt "$ARGS_MAX" ]; then
+      _rc_w=${_rc_w:0:$ARGS_MAX} _rc_cut=1
       case $_rc_w in
-        *[[:space:]]*) _rc_w=${_rc_w%[[:space:]]*} ;;
+        *[$' \t\n']*) _rc_w=${_rc_w%[$' \t\n']*} ;;
         *) _rc_w="" ;;
       esac
-      _rc_cut=1
     fi
     if [ "$_rc_next" -eq 1 ]; then
       _rc_next=0
@@ -3841,15 +3841,8 @@ redacted_cmdline_of() {  # <var> <pid>
     redact_url _rc_w "$_rc_w"
     RS_OUT="" RS_Q="" RS_NEXT=0 RS_LIST=0 RS_WRAP="" RS_WHOLE=1 RS_SCANNED=0
     redact_word "$_rc_w"
-    _rc_next=0
-    case $_rc_w in
-      # A secret's value inside an element is never taken from the next
-      # one, and a script that leaves a value's quote open is marked.
-      *[[:space:]]*)
-        case $RS_Q in "" | \\) ;; *) RS_OUT="$RS_OUT <...>" ;; esac ;;
-      *) _rc_next=$RS_NEXT ;;
-    esac
-    if [ "$_rc_cut" -eq 1 ] && [[ $RS_OUT != *" <...>" ]]; then RS_OUT="$RS_OUT <...>"; fi
+    _rc_next=$RS_NEXT
+    if [ "$_rc_cut" -eq 1 ] && [[ $RS_OUT != *"<...>" ]]; then RS_OUT="${RS_OUT:+$RS_OUT }<...>"; fi
     _rc_out="$_rc_out $RS_OUT"
   done
   # Without the empty elements a rewritten argv is padded with.

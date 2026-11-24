@@ -534,7 +534,7 @@ QUOTE_ROWS = [
     ("f('--password', 'zq9', '-v')", "f('--password', <redacted>, '-v')"),
     (
         "+ X_TOKEN='zq9';Y_TOKEN=zq9b next",
-        "+ X_TOKEN=<redacted> next",
+        "+ X_TOKEN=<redacted> <...>",
     ),
     # CR 2817: an escaped space; CR 2818: $'..'; CR 2819: a list after =.
     ("run --password zq9\\ zq9b --region us", "run --password <redacted> --region us"),
@@ -554,12 +554,13 @@ QUOTE_ROWS = [
         "+ X_TOKEN=\"zq9 zq9b\";Y_TOKEN='zq9c zq9d' next",
         "+ X_TOKEN=<redacted> next",
     ),
-    ("+ X_TOKEN='zq9 zq9b'|tee -a log", "+ X_TOKEN=<redacted> -a log"),
-    # CR 2832: a closing quote ends a value only where the shell ends the
-    # word: before a space, or a , ) ] ; & | that runs to one. Otherwise
-    # the value runs on, so a symbol-heavy password is never cut.
-    ("run --password='zq9',zq9b next", "run --password=<redacted> next"),
-    ("run --password 'zq9']zq9b next", "run --password <redacted> next"),
+    ("+ X_TOKEN='zq9 zq9b'|tee -a log", "+ X_TOKEN=<redacted> <...>"),
+    # CR 2832, CR 2840: a closing quote ends a value only at the word's end,
+    # or before a , ) ] ; & | that runs to it. One that closes anywhere else
+    # keeps the base's rule: the value runs on through the word that ends
+    # with that quote, so a symbol-heavy password is never cut.
+    ("run --password='zq9',zq9b next", "run --password=<redacted> <...>"),
+    ("run --password 'zq9']zq9b next", "run --password <redacted> <...>"),
     # CR 2833: a URL is redacted across the whole line first, as the base did.
     ("curl 'https://h/x?a=1&token=zq9 zq9b'", "curl 'https://h/x?a=1&token=<redacted>"),
     ("psql 'postgres://u:zq9 zq9b@h/db'", "psql 'postgres://u:<redacted>@h/db'"),
@@ -610,6 +611,69 @@ def test_a_raw_argument_naming_a_secret_stays_redacted_whole(host, argv, args):
     e = _service_argv(host, argv)
     assert e["args"] == args
     assert "zq9" not in host.result.stdout
+
+
+PEM2 = (
+    "connecting --password=Ab'cd\nuploading\n"
+    "+ export 'SSH_PRIVATE_KEY=-----BEGIN PRIVATE KEY-----\n"
+    "zq9AAAAB3NzaC1\nzq9bBBBB\n-----END PRIVATE KEY-----'\ndone"
+)
+
+
+@pytest.mark.parametrize(
+    "argv, args",
+    [
+        # CR 2840: a pinned sample of the differential oracle's leaks, one
+        # per class, against the base. B: a raw element opening with a quote.
+        (["sh", "-c", "'--password=zq9' zq9b' after"], "sh -c '--password=<redacted>"),
+        (["prog", '"--password=zq9" zq9b" after'], 'prog "--password=<redacted>'),
+        # C: a quote closed mid-word keeps the base's rule.
+        (
+            ["prog", "--password 'zq9 zq9b';--token 'zq9c zq9d'"],
+            "prog --password <redacted>",
+        ),
+        (
+            ["prog", "--password 'zq9 zq9b');--token zq9c"],
+            "prog --password <redacted> <...>",
+        ),
+        # D: a script read by its lines, a set -x line starting fresh.
+        (
+            ["sh", "-c", PEM2],
+            "sh -c connecting --password=<redacted> <...>"
+            " + export 'SSH_PRIVATE_KEY=<redacted> <...> done",
+        ),
+        # An element ending in a secret's name takes the next as its value,
+        # as at the base, and so does one with a trailing space (CR 2842).
+        (["app", "-v --password", "zq9"], "app -v --password <redacted>"),
+        (["app", "--password ", "zq9"], "app --password <redacted>"),
+        # CR 2838: \r, \v and \f stay inside a word, which recursed forever.
+        (["prog", "a\rb", "c\fd --token zq9 e"], "prog a?b c?d --token <redacted> e"),
+    ],
+)
+def test_the_oracle_s_leaks_stay_redacted(host, argv, args):
+    e = _service_argv(host, argv)
+    assert e["args"] == args
+    assert "zq9" not in host.result.stdout
+
+
+@pytest.mark.parametrize(
+    "element",
+    [
+        # CR 2839, CR 2841: an element of punctuation, a long query and a
+        # dense quote, 2 MB each, with no space: cut, never scanned whole.
+        ";" * 2_000_000,
+        "--x=https://h/?" + "a=1&" * 500_000,
+        "--password=" + "a'b'" * 500_000,
+        "--password " + "a b " * 500_000,
+    ],
+    ids=["semicolons", "query", "quotes", "spaces"],
+)
+def test_a_2_mb_argument_is_read_in_bounded_time(host, element):
+    start = time.monotonic()
+    e = _service_argv(host, ["prog", element, "-m"])
+    assert time.monotonic() - start < 30
+    assert e["args"].startswith("prog ") and "<...>" in e["args"]
+    assert len(e["args"]) < 17000
 
 
 @pytest.mark.parametrize(

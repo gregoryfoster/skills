@@ -75,3 +75,32 @@ def test_a_long_or_quote_dense_value_is_dropped_not_scanned():
         out, took = _redact(*words)
         assert out == shown
         assert took < 10
+
+
+def test_a_query_as_long_as_an_argument_may_be_is_redacted_quickly():
+    # CR 2841: each parameter captured the rest of the URL, and a # strip of
+    # a long prefix copied it again: 40 KB took 14.7 s. Each still copies
+    # the rest, so it's bounded instead: an argv element by ARGS_MAX (16 KB),
+    # a log line by BJ_TAKE (2000 bytes).
+    env = {**clean_env(), "LC_ALL": "C"}
+    url = "https://h/?" + "a=1&" * 4000 + "token=zq9"
+    with tempfile.NamedTemporaryFile("w", delete=False) as f:
+        f.write(url)
+    start = time.monotonic()
+    try:
+        r = subprocess.run(
+            [
+                "bash",
+                "-c",
+                f'. "{LIB}"; u=$(cat "{f.name}"); redact_url o "$u"; printf %s "$o"',
+            ],
+            capture_output=True,
+            text=True,
+            env=env,
+            check=True,
+            timeout=120,
+        )
+    finally:
+        os.unlink(f.name)
+    assert time.monotonic() - start < 5
+    assert r.stdout.endswith("&token=<redacted>")
