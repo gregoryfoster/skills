@@ -2965,7 +2965,7 @@ origin_fresh() {  # <key>
 read_dry_run() {
   local o="" conf t0 t1 out rc line names="" n="" dlk="" free="" rss="" w sel=0 lnames="" lkeep="" lskip=""
   local oleft="" left_read=0 kw p rest unlisted="" prompts="" cfp="" cfs="" i k keys="" po="" hv
-  local lage="" btake=null bsteps=null bnote="" forced="" secure=0
+  local lage="" btake=null bsteps=null bnote="" forced="" secure=0 phases=0
   local -a words=() cf_states=() cf_keys=() fw=()
   R_DRY=null R_PASSED_OVER=null
   if [ -z "$dryrun" ]; then
@@ -3005,7 +3005,10 @@ read_dry_run() {
   # Under phasing respect, a selection wider than security leaves what apt
   # would defer here (#686): the maintenance lane's, or a security lane's
   # whose own origins an exception uu:origins widens (CR 2805).
-  if [ "$secure" -ne 1 ] && [ "$KNOB_PHASING" = respect ] && [ "$PHASED_READ" -ne 1 ]; then
+  # Not the one-origin lane: its origin's packages alone, never phased, and
+  # its skip list is its whole blacklist (CR 2812).
+  case $lane in origin:*) ;; *) [ "$secure" -eq 1 ] || phases=1 ;; esac
+  if [ "$phases" -eq 1 ] && [ "$KNOB_PHASING" = respect ] && [ "$PHASED_READ" -ne 1 ]; then
     if [ "$SIM_OK" -ne 1 ]; then
       w="the pending set couldn't be simulated (pending:simulate)"
     else
@@ -3082,7 +3085,7 @@ read_dry_run() {
     # Word lists, each a package name.
     # shellcheck disable=SC2086
     case $lane in origin:*) lane_skip_conf $lskip ;; esac
-    if [ "$secure" -ne 1 ] && [ "$KNOB_PHASING" = respect ] && [ -n "$PHASED_DEFERRED" ]; then
+    if [ "$phases" -eq 1 ] && [ "$KNOB_PHASING" = respect ] && [ -n "$PHASED_DEFERRED" ]; then
       # A word list, each a package name.
       # shellcheck disable=SC2086
       lane_skip_conf $PHASED_DEFERRED
