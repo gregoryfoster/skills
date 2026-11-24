@@ -3802,13 +3802,14 @@ cmdline_of() {  # <var> <pid>
 }
 
 # A process's arguments as live_args emits them, by the name rule in
-# _probe-lib.sh's redact_arg (#698), read from the NUL-separated argv so a
+# _probe-lib.sh's redact_word (#698), read from the NUL-separated argv so a
 # value holding a space stays one value; an element holding whitespace, a
 # wrapper's script string or an argv rewritten as one string, is read by its
-# words too (CR 2768, CR 2785). cmdline_of stays whole for the probe's own reads.
+# words, and its quotes, too (CR 2768, CR 2785, #707), unless it is one
+# NAME=value. cmdline_of stays whole for the probe's own reads.
 redacted_cmdline_of() {  # <var> <pid>
   local _rc_w _rc_out="" _rc_next=0
-  local -a _rc_a=() _rc_s=()
+  local -a _rc_a=()
   while IFS= read -r -d '' _rc_w || [ -n "$_rc_w" ]; do
     _rc_a+=("$_rc_w")
   done 2>/dev/null <"$P_ROOT/proc/$2/cmdline" || true
@@ -3818,16 +3819,17 @@ redacted_cmdline_of() {  # <var> <pid>
       _rc_out="$_rc_out <redacted>"
       continue
     fi
-    redact_arg _rc_w "$_rc_w"
-    _rc_next=$ARG_NEXT
-    # Its words too, within the element: a secret's value inside it is
-    # never taken from the next element.
-    if [[ $_rc_w == *[[:space:]]* ]]; then
-      _rc_s=()
-      IFS=$' \t\n' read -r -d '' -a _rc_s <<<"$_rc_w" || true
-      redact_words _rc_w ${_rc_s[@]+"${_rc_s[@]}"}
-    fi
-    _rc_out="$_rc_out $_rc_w"
+    RS_OUT="" RS_Q="" RS_NEXT=0 RS_LIST=0 RS_WRAP=""
+    redact_word "$_rc_w"
+    _rc_next=0
+    case $_rc_w in
+      # A secret's value inside an element is never taken from the next
+      # one, and a script that leaves a value's quote open is marked.
+      *[[:space:]]*)
+        case $RS_Q in "" | \\) ;; *) RS_OUT="$RS_OUT <...>" ;; esac ;;
+      *) _rc_next=$RS_NEXT ;;
+    esac
+    _rc_out="$_rc_out $RS_OUT"
   done
   # Without the empty elements a rewritten argv is padded with.
   while [[ $_rc_out == *" " ]]; do _rc_out=${_rc_out% }; done

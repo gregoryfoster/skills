@@ -843,7 +843,10 @@ fresh_redis() {  # <unit> <user> <key file>
 # ?, so an entry is never cut in two and more means an entry wasn't shown
 # (CR 2803). Each word goes through redact_words before the cut at 500
 # bytes, since a set -x script or a tool's URL logs its secrets (CR 2796):
-# by name only, as live_args is. journald stores a stream's last lines
+# by name only, as live_args is. A value's quote one entry leaves open
+# carries into the next, so set -x's one entry a line of a multi-line value
+# (a key file's) drops through the line that closes it, and the shown entries
+# are the last BJ_MAX of the last BJ_SCAN read (CR 2816). journald stores a stream's last lines
 # asynchronously, so it's synced first (CR 2801): measured unneeded on an
 # idle systemd 255 container (a timer's oneshot's last line was stored 40 of
 # 40 times without it), and kept for a loaded host. Where systemctl show
@@ -851,7 +854,7 @@ fresh_redis() {  # <unit> <user> <key file>
 # when that message is from this run. A log it can't read is said, never a
 # failure: the owner's attestation doesn't rest on it.
 # BJ_SAID := why there are no lines.
-BJ_MAX=20 BJ_SAID=""
+BJ_MAX=20 BJ_SCAN=200 BJ_SAID=""
 # Matched wherever MESSAGE falls among the entry's keys, whose order varies
 # (systemd 255, CR 2803). A message holding any control byte or invalid
 # UTF-8 is an array of its bytes, decoded by bytes_text. --all prints a message over 4096
@@ -932,7 +935,8 @@ finished_invocation() {  # <var> <service>: VAR := the INVOCATION_ID of PID 1's 
 
 backup_journal() {  # <var> <service> <invocation ID> [<why there's no run to read>]
   local _bj_v=$1 _bj_out _bj_l _bj_m _bj_a="" _bj_o="" _bj_more=0 _bj_n=0 _bj_id=$3
-  local -a _bj_ls=() _bj_ws=()
+  local _bj_q
+  local -a _bj_ls=() _bj_ws=() _bj_rs=()
   BJ_SAID=""
   if [ -n "${4:-}" ]; then
     BJ_SAID=$4 _bj_id=""
@@ -946,7 +950,7 @@ backup_journal() {  # <var> <service> <invocation ID> [<why there's no run to re
     BJ_SAID="systemd gave the run no invocation ID, in systemctl show or in PID 1's message that it finished, so its lines can't be told from another run's"
   else
     capture _bj_out as_root journalctl --no-pager -q --all -o json --output-fields=MESSAGE \
-      -n "$((BJ_MAX + 1))" "_SYSTEMD_INVOCATION_ID=$_bj_id"
+      -n "$((BJ_SCAN + 1))" "_SYSTEMD_INVOCATION_ID=$_bj_id"
     if [ "$CAP_RC" -ne 0 ]; then
       BJ_SAID="the journal couldn't be read (${CAP_ERR:-journalctl exited $CAP_RC})"
     else
@@ -970,20 +974,34 @@ backup_journal() {  # <var> <service> <invocation ID> [<why there's no run to re
         _bj_ls+=("$_bj_m")
       done <<<"$_bj_out"
       _bj_n=${#_bj_ls[@]}
-      if [ "$_bj_n" -gt "$BJ_MAX" ]; then
-        _bj_more=1
-        _bj_ls=("${_bj_ls[@]:$((_bj_n - BJ_MAX))}")
-      fi
-      [ "${#_bj_ls[@]}" -gt 0 ] ||
+      [ "$_bj_n" -le "$BJ_SCAN" ] || _bj_more=1
+      if [ "$_bj_n" -eq 0 ]; then
         BJ_SAID="the journal holds no line from this run: $2 may log elsewhere, or journald dropped them"
+      else
+        # Redacted in order, each line from the quote the last left open:
+        # one that starts inside a value and shows nothing is dropped.
+        _bj_rs=() RW_QUOTE=""
+        for _bj_l in "${_bj_ls[@]}"; do
+          _bj_q=$RW_QUOTE _bj_ws=()
+          read -r -a _bj_ws <<<"$_bj_l" || true
+          redact_words _bj_l ${_bj_ws[@]+"${_bj_ws[@]}"}
+          if [ -n "$_bj_q" ] && [ -z "$_bj_l" ]; then continue; fi
+          _bj_rs+=("$_bj_l")
+        done
+        _bj_ls=(${_bj_rs[@]+"${_bj_rs[@]}"})
+        _bj_n=${#_bj_ls[@]}
+        if [ "$_bj_n" -gt "$BJ_MAX" ]; then
+          _bj_more=1
+          _bj_ls=("${_bj_ls[@]:$((_bj_n - BJ_MAX))}")
+        fi
+        [ "$_bj_n" -gt 0 ] ||
+          BJ_SAID="every line from this run lies inside a secret's quote a line before them left open"
+      fi
     fi
   fi
   if [ "${#_bj_ls[@]}" -gt 0 ]; then
     echo "recovery-point: $2's log from this run, its last $BJ_MAX entries at most, secrets redacted by name only:" >&2
     for _bj_l in "${_bj_ls[@]}"; do
-      _bj_ws=()
-      read -r -a _bj_ws <<<"$_bj_l" || true
-      redact_words _bj_l ${_bj_ws[@]+"${_bj_ws[@]}"}
       _bj_l=${_bj_l//[![:print:]]/?}
       _bj_l=${_bj_l:0:500}
       printf 'recovery-point:   %s\n' "$_bj_l" >&2

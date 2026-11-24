@@ -1329,105 +1329,198 @@ secret_env_name() {  # <NAME>: 0 when an environment name marks a secret
   return "$_se_rc"
 }
 # A shell's quoting, as xtrace prints it and a script string holds it
-# (CR 2813, #707). A value's quotes are scanned as a shell reads them: '\''
-# stays inside a single quote, a \' outside one and a \" inside a double one
-# are literal, and a quote may open mid-value (a'b c'). A value that leaves a
-# quote open runs on through the word that closes it. One whose closing quote
-# is followed by ; ) , & or ] ends there, and the rest of its word is read on
-# (X_TOKEN='a b'; exec d). A line that ends with the quote open is marked <...>.
-ARG_NEXT=0   # 1 when redact_arg's word names a secret whose value is the next word
-ARG_QUOTE="" # the quote a redacted value left open, or empty
-ARG_OPEN="^([^-=\"']*[[(])(.+)\$"
-quote_scan() {  # <quote open at the start, or empty> <text>: QS := the quote open at its end; QS_TAIL := the text from a ; ) , & or ] after a closing quote, where the scan stopped
-  local _qs_s=$2 _qs_c
+# (CR 2813, #707). A value's quotes are scanned as a shell's: '\'' stays
+# inside a single quote, a \ outside one, or inside a double one or $'..',
+# escapes the next character, and a quote may open mid-value (a'b c'). A
+# value that leaves a quote open runs on through the word that closes it, as
+# one ending in an escaped space runs on into the next. One whose closing
+# quote is followed by ; ) , & | ] or a space ends there, and what follows is
+# read on (X_TOKEN='a b'; exec d). A word is read in one loop, never by
+# recursion, jumping from quote to quote, so its length is no bound (CR 2814,
+# CR 2815). A Python repr's \' inside '..' is read as a shell's, so its
+# value can end early (readings.md).
+# The state between words: RS_Q, the quote a redacted value has open (' " or
+# $ for $'..', \ after an escaped space, or empty); RS_NEXT, 1 when the next
+# word is a secret's value; RS_LIST, 1 when that's a list's or a call's
+# element, whose unquoted trailing ) ] , aren't its own; RS_WRAP, the quote
+# before a name ('NAME=..'), closed in the output when the value closes on
+# its line. RW_QUOTE: the quote a line leaves open, which the backup log
+# carries into the run's next entry (CR 2816).
+RS_OUT="" RS_Q="" RS_NEXT=0 RS_LIST=0 RS_WRAP="" RW_QUOTE=""
+QS_RE_OUT="^[^'\"\\\\\$]*"
+QS_RE_SQ="^[^']*"
+QS_RE_DQ="^[^\"\\\\]*"
+QS_RE_AQ="^[^'\\\\]*"
+# A list's or call's element, as a log prints one (['--password', 'x'],
+# f(--token x)), and a list assigned to a name that isn't a secret's
+# (args=['--password', 'x'], CR 2819).
+ARG_OPEN="^[^-=\"'[:space:]]*[[(]"
+ARG_SET_OPEN="^([A-Za-z_][A-Za-z0-9_.-]*)=[[(]"
+quote_scan() {  # <quote open at the start, or empty> <text>: QS := the quote open at its end; QS_TAIL := the text from what ends a value after a closing quote, where the scan stopped
+  local _qs_s=$2 _qs_c _qs_re
   QS=$1 QS_TAIL=""
-  while [ -n "$_qs_s" ]; do
+  if [ "$QS" = "\\" ]; then QS=""; fi
+  while :; do
+    case $QS in
+      "") _qs_re=$QS_RE_OUT ;;
+      \') _qs_re=$QS_RE_SQ ;;
+      \") _qs_re=$QS_RE_DQ ;;
+      *) _qs_re=$QS_RE_AQ ;;
+    esac
+    [[ $_qs_s =~ $_qs_re ]] || return 0
+    _qs_s=${_qs_s:${#BASH_REMATCH[0]}}
+    [ -n "$_qs_s" ] || return 0
     _qs_c=${_qs_s:0:1} _qs_s=${_qs_s:1}
     case $QS$_qs_c in
-      \\ | \"\\) _qs_s=${_qs_s:1} ;;
+      \\ | \"\\ | \$\\)
+        if [ -z "$_qs_s" ]; then
+          if [ -z "$QS" ]; then QS=\\; fi
+          return 0
+        fi
+        _qs_s=${_qs_s:1} ;;
+      \$) case $_qs_s in \'*) QS='$' _qs_s=${_qs_s:1} ;; esac ;;
       \' | \") QS=$_qs_c ;;
-      "''" | '""')
+      "''" | '""' | "\$'")
         QS=""
-        case $_qs_s in []\;\),\&]*) QS_TAIL=$_qs_s; return 0 ;; esac ;;
+        case $_qs_s in []\;\),\&\|[:space:]]*) QS_TAIL=$_qs_s; return 0 ;; esac ;;
     esac
   done
 }
-redact_tail() {  # <var> <text from a closing quote's ; ) , & or ]>: those as they are, the rest under the name rule
-  local _rt_t=$2 _rt_p=""
-  ARG_NEXT=0 ARG_QUOTE=""
-  while :; do
-    case $_rt_t in []\;\),\&]*) _rt_p="$_rt_p${_rt_t:0:1}" _rt_t=${_rt_t:1} ;; *) break ;; esac
-  done
-  if [ -n "$_rt_t" ]; then redact_arg _rt_t "$_rt_t"; fi
-  printf -v "$1" '%s' "$_rt_p$_rt_t"
-}
-redact_arg() {  # <var> <word>: one word under the name rule
-  local _ra_w=$2 _ra_pre="" _ra_n _ra_q="" _ra_v="" _ra_red=0 _ra_t=""
-  ARG_NEXT=0 ARG_QUOTE=""
-  # A list's or a call's first element, as a log prints one:
-  # ['--password', 'x'], run("--token", x).
-  if [[ $_ra_w =~ $ARG_OPEN ]]; then _ra_pre=${BASH_REMATCH[1]} _ra_w=${BASH_REMATCH[2]}; fi
-  case $_ra_w in \'?* | \"?*) _ra_q=${_ra_w:0:1} _ra_w=${_ra_w:1} ;; esac
-  case $_ra_w in
-    --?* | -[!-]?*)
-      _ra_n=${_ra_w%%=*}
-      # A quoted name, '--password', or "--token"): without its quote and
-      # the punctuation after it.
-      while [[ $_ra_n == *[],\)] ]]; do _ra_n=${_ra_n%?}; done
-      if [ -n "$_ra_q" ]; then _ra_n=${_ra_n%"$_ra_q"}; fi
-      _ra_n=${_ra_n#-}
-      case $_ra_n in -*) _ra_n=${_ra_n#-} ;; D?*) _ra_n=${_ra_n#D} ;; esac
-      if secret_arg_name "$_ra_n"; then
-        case $_ra_w in
-          *=*) _ra_v=${_ra_w#*=} _ra_w="${_ra_w%%=*}=<redacted>" _ra_red=1 ;;
-          *) ARG_NEXT=1 ;;
-        esac
-      fi ;;
-    # An environment assignment, as in a script string or env's argv, is an
-    # option with no dash (CR 2792).
-    [A-Za-z_]*=*)
-      _ra_n=${_ra_w%%=*}
-      if [[ $_ra_n =~ $ENV_NAME ]] && secret_env_name "$_ra_n"; then
-        _ra_v=${_ra_w#*=} _ra_w="$_ra_n=<redacted>" _ra_red=1
-      fi ;;
-  esac
-  if [ "$_ra_red" -eq 1 ]; then
-    # The value starts in the word's own opening quote, if it has one.
-    quote_scan "$_ra_q" "$_ra_v"
-    ARG_QUOTE=$QS
-    if [ -n "$_ra_q" ]; then _ra_w="$_ra_q$_ra_w$_ra_q"; fi
-    if [ -n "$QS_TAIL" ]; then redact_tail _ra_t "$QS_TAIL"; fi
-    _ra_w="$_ra_pre$_ra_w$_ra_t"
-  else
-    _ra_w="$_ra_pre$_ra_q$_ra_w"
+redact_value() {  # <value> <the quote it starts in, or empty> <1 when a list's element>: RS_Q := the quote it leaves open; VE_REST := what follows its end; VE_KEEP := a list's unquoted value's trailing ) ] ,
+  local _rv_v=$1
+  VE_KEEP=""
+  quote_scan "$2" "$_rv_v"
+  RS_Q=$QS VE_REST=$QS_TAIL
+  if [ "$3" -eq 1 ] && [ -z "$QS" ] && [ -z "$QS_TAIL" ]; then
+    case $_rv_v in
+      *[\'\"\\]*) ;;
+      *)
+        while :; do
+          case $_rv_v in
+            *[],\)]) VE_KEEP="${_rv_v: -1}$VE_KEEP" _rv_v=${_rv_v%?} ;;
+            *) break ;;
+          esac
+        done ;;
+    esac
   fi
-  redact_url _ra_w "$_ra_w"
-  printf -v "$1" '%s' "$_ra_w"
 }
-redact_words() {  # <var> <word>...: the words under the name rule, joined by a space
-  local _rw_v=$1 _rw_w _rw_out="" _rw_next=0 _rw_q="" _rw_t
-  shift
-  for _rw_w in "$@"; do
-    if [ -n "$_rw_q" ] || [ "$_rw_next" -eq 1 ]; then
-      # A redacted value's word, or one inside its quote: dropped, through
-      # the word closing it, and read on after a ; ) , & or ] that ends it.
-      [ -n "$_rw_q" ] || _rw_out="$_rw_out <redacted>"
-      _rw_next=0
-      quote_scan "$_rw_q" "$_rw_w"
-      _rw_q=$QS
-      if [ -n "$QS_TAIL" ]; then
-        redact_tail _rw_t "$QS_TAIL"
-        _rw_next=$ARG_NEXT _rw_q=$ARG_QUOTE
-        _rw_out="$_rw_out$_rw_t"
-      fi
+redact_word() {  # <text> [<separator before it>]: RS_OUT += the text under the name rule, from RS_*'s state, which it leaves for the next
+  local _rd_w=$1 _rd_sep _rd_pre _rd_q _rd_n _rd_v _rd_out _rd_red _rd_list _rd_sp _rd_x _rd_i=0
+  local -a _rd_ws=()
+  if [ $# -gt 1 ]; then _rd_sep=$2; elif [ -n "$RS_OUT" ]; then _rd_sep=" "; else _rd_sep=""; fi
+  while [ -n "$_rd_w" ]; do
+    if [ -n "$RS_Q" ]; then
+      # Inside a redacted value: dropped, through what ends it.
+      quote_scan "$RS_Q" "$_rd_w"
+      RS_Q=$QS
+      if [ -z "$RS_Q" ]; then RS_OUT="$RS_OUT$RS_WRAP" RS_WRAP=""; fi
+      _rd_w=$QS_TAIL _rd_sep=""
       continue
     fi
-    redact_arg _rw_w "$_rw_w"
-    _rw_next=$ARG_NEXT _rw_q=$ARG_QUOTE
-    _rw_out="$_rw_out $_rw_w"
+    if [ "$RS_NEXT" -eq 1 ]; then
+      RS_NEXT=0
+      redact_value "$_rd_w" "" "$RS_LIST"
+      RS_OUT="$RS_OUT$_rd_sep<redacted>$VE_KEEP"
+      _rd_w=$VE_REST _rd_sep=""
+      continue
+    fi
+    # What ends a value, as it stands: ; ) , & | ]
+    _rd_x=""
+    while :; do
+      case $_rd_w in
+        []\;\),\&\|]*) _rd_x="$_rd_x${_rd_w:0:1}" _rd_w=${_rd_w:1} ;;
+        *) break ;;
+      esac
+    done
+    if [ -n "$_rd_x" ]; then
+      RS_OUT="$RS_OUT$_rd_sep$_rd_x" _rd_sep=""
+      continue
+    fi
+    _rd_pre="" _rd_q="" _rd_list=0 _rd_red=0 _rd_sp=0 _rd_out=""
+    case $_rd_w in *[[:space:]]*) _rd_sp=1 ;; esac
+    if [ "$_rd_sp" -eq 0 ]; then
+      if [[ $_rd_w =~ $ARG_OPEN ]]; then
+        _rd_pre=${BASH_REMATCH[0]}
+      elif [[ $_rd_w =~ $ARG_SET_OPEN ]]; then
+        # secret_env_name's own match resets BASH_REMATCH.
+        _rd_pre=${BASH_REMATCH[0]}
+        if secret_env_name "${BASH_REMATCH[1]}"; then _rd_pre=""; fi
+      fi
+      if [ -n "$_rd_pre" ]; then _rd_w=${_rd_w:${#_rd_pre}} _rd_list=1; fi
+      case $_rd_w in \'?* | \"?*) _rd_q=${_rd_w:0:1} _rd_w=${_rd_w:1} ;; esac
+    fi
+    case $_rd_w in
+      --?* | -[!-]?*)
+        _rd_n=${_rd_w%%=*}
+        case $_rd_n in *[[:space:]]*) _rd_n="" ;; esac
+        # A quoted name, or a list's element ('--password', f(--token)),
+        # loses its quote and the punctuation after it; prose's doesn't
+        # (use --key, then, CR 2820).
+        if [ -n "$_rd_q" ] || [ "$_rd_list" -eq 1 ]; then
+          while :; do
+            case $_rd_n in *[],\)]) _rd_n=${_rd_n%?} ;; *) break ;; esac
+          done
+          if [ -n "$_rd_q" ]; then _rd_n=${_rd_n%"$_rd_q"}; fi
+        fi
+        _rd_n=${_rd_n#-}
+        case $_rd_n in -*) _rd_n=${_rd_n#-} ;; D?*) _rd_n=${_rd_n#D} ;; esac
+        if [ -n "$_rd_n" ] && secret_arg_name "$_rd_n"; then
+          case $_rd_w in
+            *=*) _rd_v=${_rd_w#*=} _rd_out="${_rd_w%%=*}=<redacted>" _rd_red=1 ;;
+            *) [ "$_rd_sp" -eq 1 ] || _rd_red=2 ;;
+          esac
+        fi ;;
+      # An environment assignment, as in a script string or env's argv, is
+      # an option with no dash (CR 2792).
+      [A-Za-z_]*=*)
+        _rd_n=${_rd_w%%=*}
+        if [[ $_rd_n =~ $ENV_NAME ]] && secret_env_name "$_rd_n"; then
+          _rd_v=${_rd_w#*=} _rd_out="$_rd_n=<redacted>" _rd_red=1
+        fi ;;
+    esac
+    if [ "$_rd_red" -eq 1 ]; then
+      # The value starts in the word's own opening quote, if it has one. A
+      # quote it leaves open isn't closed in the output (CR 2821).
+      redact_value "$_rd_v" "$_rd_q" "$_rd_list"
+      case $RS_Q in
+        "" | \\) _rd_out="$_rd_pre$_rd_q$_rd_out$_rd_q$VE_KEEP" ;;
+        *) _rd_out="$_rd_pre$_rd_q$_rd_out" RS_WRAP=$_rd_q ;;
+      esac
+      RS_OUT="$RS_OUT$_rd_sep$_rd_out"
+      _rd_w=$VE_REST _rd_sep=""
+      continue
+    fi
+    if [ "$_rd_sp" -eq 1 ]; then
+      # Words: a script's, or what a value's end leaves of one. A word
+      # holds no space, so this reads no deeper.
+      IFS=$' \t\n' read -r -d '' -a _rd_ws <<<"$_rd_w" || true
+      case $_rd_w in [[:space:]]*) [ -z "$RS_OUT" ] || _rd_sep=" " ;; esac
+      for _rd_x in ${_rd_ws[@]+"${_rd_ws[@]}"}; do
+        if [ "$_rd_i" -eq 0 ]; then redact_word "$_rd_x" "$_rd_sep"; else redact_word "$_rd_x"; fi
+        _rd_i=1
+      done
+      return 0
+    fi
+    if [ "$_rd_red" -eq 2 ]; then
+      RS_NEXT=1 RS_LIST=$_rd_list
+      if [ -n "$_rd_q" ]; then RS_LIST=1; fi
+    fi
+    _rd_out="$_rd_pre$_rd_q$_rd_w"
+    redact_url _rd_out "$_rd_out"
+    RS_OUT="$RS_OUT$_rd_sep$_rd_out"
+    return 0
   done
-  if [ -n "$_rw_q" ]; then _rw_out="$_rw_out <...>"; fi
-  printf -v "$_rw_v" '%s' "${_rw_out# }"
+}
+redact_words() {  # <var> <word>...: the words under the name rule, joined by a space; RW_QUOTE is the quote open before them, and after
+  local _rw_v=$1 _rw_w
+  shift
+  RS_OUT="" RS_Q=$RW_QUOTE RS_NEXT=0 RS_LIST=0 RS_WRAP=""
+  for _rw_w in "$@"; do redact_word "$_rw_w"; done
+  if [ "$RS_Q" = "\\" ]; then RS_Q=""; fi
+  # A line that leaves a value's quote open is marked once.
+  if [ -n "$RS_Q" ] && [ -n "$RS_OUT" ]; then RS_OUT="$RS_OUT <...>"; fi
+  RW_QUOTE=$RS_Q
+  printf -v "$_rw_v" '%s' "$RS_OUT"
 }
 
 # --- JSON ----------------------------------------------------------------------

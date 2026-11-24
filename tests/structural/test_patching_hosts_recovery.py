@@ -1165,6 +1165,50 @@ def test_the_backup_log_tracks_a_value_s_quotes_as_a_shell_does(host, line, show
     assert "zq9" not in host.result.stdout + host.result.stderr
 
 
+PEM = [
+    "+ export 'SSH_PRIVATE_KEY=-----BEGIN PRIVATE KEY-----",
+    "zq9AAAAB3NzaC1",
+    "zq9bBBBB",
+    "-----END PRIVATE KEY-----'",
+]
+
+
+def test_a_multi_line_secret_is_dropped_through_its_closing_quote(host):
+    # CR 2816: set -x logs a value with line breaks one entry a line, and
+    # each entry was redacted on its own, so the key's body showed. The
+    # quote a line leaves open carries into the run's next entries: they're
+    # dropped, marked once, through the one that closes it.
+    _logged(host, ["++ cat k.pem", *PEM, "uploaded gs://bucket/app-1"])
+    j = host.recover()["backup"][0]["journal"]
+    assert "zq9" not in host.result.stdout + host.result.stderr
+    assert j["lines"] == [
+        "++ cat k.pem",
+        "+ export 'SSH_PRIVATE_KEY=<redacted> <...>",
+        "uploaded gs://bucket/app-1",
+    ]
+    assert j["more"] is False
+
+
+def test_the_line_closing_a_secret_s_quote_shows_what_follows_it(host):
+    _logged(host, [*PEM[:-1], PEM[-1] + " && echo zq-done"])
+    lines = host.recover()["backup"][0]["journal"]["lines"]
+    assert "zq9" not in host.result.stdout + host.result.stderr
+    assert lines == ["+ export 'SSH_PRIVATE_KEY=<redacted> <...>", "&& echo zq-done"]
+
+
+def test_a_secret_opened_before_the_last_entries_still_drops_its_body(host):
+    # The entries shown are the last BJ_MAX the redaction left, read from a
+    # wider window, so a key longer than BJ_MAX lines can't show its tail.
+    body = [f"zq9{i:02}AAAA" for i in range(30)]
+    _logged(host, [PEM[0], *body, PEM[-1], "uploaded gs://bucket/app-1"])
+    j = host.recover()["backup"][0]["journal"]
+    assert "zq9" not in host.result.stdout + host.result.stderr
+    assert j["lines"] == [
+        "+ export 'SSH_PRIVATE_KEY=<redacted> <...>",
+        "uploaded gs://bucket/app-1",
+    ]
+
+
 def test_a_unit_that_didnt_start_a_run_now_shows_no_lines(host):
     # CR 2803: its InvocationID is its last run's, and those lines aren't
     # this run's.

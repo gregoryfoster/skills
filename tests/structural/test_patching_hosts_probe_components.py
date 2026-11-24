@@ -500,12 +500,13 @@ def test_earlyoom_s_live_args_are_redacted_too(host):
 
 
 # #707: the issue's table, one row each, as a script string or a log line
-# holds it. The redaction scans each value's quotes as a shell does: '\''
-# stays inside, \" inside double quotes is literal, a quote may open
-# mid-value, and a closing quote followed by ; ) , & or ] ends the value
-# there. A quoted option name loses its quotes and a trailing , ] or ) to be
-# tested; so does a list's or a call's first element. A line that ends with
-# a value's quote still open is marked <...>.
+# holds it. A value's quotes are scanned as a shell's: '\'' stays inside,
+# \" inside double quotes and $'..''s \' are literal, a quote may open
+# mid-value, an escaped space runs the value on, and a closing quote
+# followed by ; ) , & | ] or a space ends the value there. A quoted name, or
+# a list's or call's element, loses its quote and a trailing , ] or ) to be
+# tested; an unquoted one keeps them (CR 2820). A line that ends with a
+# value's quote still open is marked <...>, its own quote left open.
 QUOTE_ROWS = [
     ("+ export 'DB_PASSWORD=zq9'\\'' zq9b'", "+ export 'DB_PASSWORD=<redacted>'"),
     (
@@ -535,6 +536,37 @@ QUOTE_ROWS = [
         "+ X_TOKEN='zq9';Y_TOKEN=zq9b next",
         "+ X_TOKEN=<redacted>;Y_TOKEN=<redacted> next",
     ),
+    # CR 2817: an escaped space; CR 2818: $'..'; CR 2819: a list after =.
+    ("run --password zq9\\ zq9b --region us", "run --password <redacted> --region us"),
+    ("+ X_TOKEN=zq9\\ zq9b cmd", "+ X_TOKEN=<redacted> cmd"),
+    ("+ X_TOKEN=$'zq9\\' zq9b' cmd", "+ X_TOKEN=<redacted> cmd"),
+    ("+ export X_TOKEN=$'zq9\\' zq9b\\n zq9c'", "+ export X_TOKEN=<redacted>"),
+    ("args=['--password', 'zq9']", "args=['--password', <redacted>]"),
+    # CR 2821: a call's unquoted value keeps its ), a script may start with
+    # the assignment, and a quote left open isn't closed in the output.
+    ("f(--password zq9) next", "f(--password <redacted>) next"),
+    ("f(--password=zq9) next", "f(--password=<redacted>) next"),
+    (
+        "X_TOKEN='zq9 zq9b'; exec earlyoom -m 5",
+        "X_TOKEN=<redacted>; exec earlyoom -m 5",
+    ),
+    (
+        "X_TOKEN=\"zq9 zq9b\";Y_TOKEN='zq9c zq9d' next",
+        "X_TOKEN=<redacted>;Y_TOKEN=<redacted> next",
+    ),
+    ("X_TOKEN='zq9 zq9b'|tee -a log", "X_TOKEN=<redacted>|tee -a log"),
+    (
+        "--password a --token zq9 --secret=zq9b url=https://u:zq9c@h/?token=zq9d",
+        "--password <redacted> --token <redacted> --secret=<redacted>"
+        " url=https://u:<redacted>@h/?token=<redacted>",
+    ),
+    (
+        "+ export 'SSH_PRIVATE_KEY=zq9 zq9b",
+        "+ export 'SSH_PRIVATE_KEY=<redacted> <...>",
+    ),
+    # CR 2820: prose naming an option, unquoted, is never a secret's name.
+    ("use --key, then foo", "use --key, then foo"),
+    ("see f(x) and --key, --token) bar", "see f(x) and --key, --token) bar"),
 ]
 
 
