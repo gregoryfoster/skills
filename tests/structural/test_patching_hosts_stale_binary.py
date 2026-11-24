@@ -187,6 +187,24 @@ def test_a_binary_dpkg_records_without_usr_finds_its_package(ahost):
     assert e["taken"] is True
 
 
+# dpkg-query -S of a locally diverted file, as noble's dpkg 1.22 prints it
+# (measured after dpkg-divert --local --no-rename --divert <path>.orig
+# --add <path>): the diversion's two lines first, then the owner (CR 2822).
+DIVERTED = (
+    "shift; for f; do case $f in /usr/bin/redis-server) "
+    'echo "local diversion from: $f"; echo "local diversion to: $f.orig"; '
+    'echo "redis-server: $f" ;; esac; done; exit 0'
+)
+
+
+def test_a_locally_diverted_binary_still_finds_its_package(ahost):
+    # CR 2822: the owner was the first line, "local diversion from".
+    host = _declared(ahost, STALE)
+    host.cases["dpkg-query"].insert(0, ("-S *", "", 0, "", DIVERTED))
+    [e] = _step(host)["stale_binary"]
+    assert e["package"] == "redis-server" and e["version"] == REDIS_NEW
+
+
 def test_a_stale_binary_the_step_didnt_take_is_still_reported(ahost):
     # Left by the bulk, an earlier step or unattended-upgrades: still stale.
     out = _step(_declared(ahost, STALE), upgraded="")

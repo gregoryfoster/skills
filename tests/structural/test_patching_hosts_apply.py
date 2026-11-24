@@ -758,6 +758,35 @@ def test_a_mapped_path_dpkg_records_without_usr_finds_its_package(host):
     assert r["reboot_why"] == "iproute2, which owns a file PID 1 maps"
 
 
+def test_a_locally_diverted_mapped_file_still_finds_its_package(host):
+    # CR 2822: dpkg-query -S prints a local diversion's two lines before the
+    # owner (dpkg 1.22, measured), and the lookup took "local diversion
+    # from" for the owner, and the diverted-to path for one asked about.
+    lib = "/usr/lib/x86_64-linux-gnu/libvendor.so.2"
+    host.knob(KNOB)
+    (host.dry / "dry-run.log").write_text(
+        "Packages that will be upgraded: vendorlib tzdata\n"
+    )
+    host.pid1_maps.write_text(MAPS + f"7f30-7f40 r-xp 00000000 fd:01 4560 {lib}\n")
+    host.on(
+        "dpkg-query",
+        "-S *",
+        script=(
+            "shift; rc=0; for f; do case $f in "
+            f'{LIBC}) echo "libc6:amd64: $f" ;; '
+            f'{lib}) echo "local diversion from: $f"; '
+            'echo "local diversion to: $f.orig"; echo "vendorlib:amd64: $f" ;; '
+            '*) echo "dpkg-query: no path found matching pattern $f" >&2; rc=1 ;; '
+            "esac; done; exit $rc"
+        ),
+    )
+    _step4(host, QUIET)
+    host.clock = TUE_1530 - 30 * MIN
+    r = host.run()["gate"]["run_span"]
+    assert r["reboot"] is True, r["reboot_why"]
+    assert r["reboot_why"] == "vendorlib, which owns a file PID 1 maps"
+
+
 def test_an_owner_lookup_that_fails_past_not_found_is_unknown(host):
     # #703: the /usr retry is a second dpkg-query -S; its failure, past the
     # exit 1 of a path it doesn't know, leaves the prediction unknown, as
