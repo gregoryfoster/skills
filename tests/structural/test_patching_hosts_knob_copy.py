@@ -164,6 +164,63 @@ def test_a_copy_that_cant_be_written_fails_the_bulk_before_it_changes_anything(
     assert _copies(host) == []
 
 
+def test_the_copy_is_the_knob_the_step_read_not_one_edited_since(bulk_host):
+    # CR 2799: the gates read the knob at the step's start, and can take
+    # minutes; an edit made meanwhile isn't what gated the step.
+    host = bulk_host
+    knob = _scratch(host, KNOB)
+    host.cases["dpkg"].insert(
+        0, ("--audit", "", 0, "", f'echo "# edited" >> "{knob}"; exit 0')
+    )
+    out = host.run()
+    assert out["verdict"]["ok"] is True, out["verdict"]
+    path, sha = _copy_of(host, KNOB)
+    assert out["apply"]["knob_copy"]["sha256"] == sha
+    assert Path(path).read_text() == KNOB
+    [n] = [n for n in out["next"] if "changed after this step read it" in n]
+    assert path in n and str(knob) in n
+
+
+def test_a_knob_whose_last_line_has_no_newline_is_copied_byte_for_byte(bulk_host):
+    host = bulk_host
+    text = KNOB.rstrip("\n")
+    _scratch(host, text)
+    out = host.run()
+    path, sha = _copy_of(host, text)
+    assert out["apply"]["knob_copy"]["sha256"] == sha
+    assert Path(path).read_text() == text
+    assert not [n for n in out["next"] if "changed after this step read it" in n]
+
+
+def test_a_step_without_config_names_the_runs_copy_it_didnt_run_under(bulk_host):
+    # CR 2800: the held step gated on the tracked knob, not the one-off copy.
+    host = bulk_host
+    _scratch(host, KNOB + ONE_OFF)
+    copy = host.run()["apply"]["knob_copy"]["path"]
+    tracked = host.tmp / ".skills" / "patching-hosts"
+    tracked.parent.mkdir()
+    tracked.write_text(KNOB)
+    host.cases["date"] = [("+%s", f"{host.clock}\n", 0, "", None)]
+    cmd = ["bash", str(host.scripts / "apply.sh"), "--step", "postgres"]
+    cmd += ["--run", str(host.run_dir), "--host", "web-1", "--today", TODAY]
+    out = host.execute([*cmd, "--approve"])
+    assert out["verdict"]["ok"] is True, out["verdict"]
+    assert out["apply"]["knob_copy"] is None
+    [n] = [n for n in out["next"] if "not the run's copy" in n]
+    assert copy in n and str(tracked) in n
+
+
+def test_a_relative_config_is_recorded_as_an_absolute_path(bulk_host):
+    # CR 2802: the record names the knob wherever it's read from.
+    host = bulk_host
+    (host.tmp / "rel-knob").write_text(KNOB)
+    host.knob_path = Path("rel-knob")
+    out = host.run()
+    given = out["apply"]["knob_copy"]["given"]
+    assert os.path.isabs(given)
+    assert os.path.realpath(given) == os.path.realpath(host.tmp / "rel-knob")
+
+
 # --- recovery-point.sh ------------------------------------------------------------
 
 
@@ -256,6 +313,51 @@ def test_a_chain_whose_knob_cant_be_copied_schedules_nothing(chain_host):
     assert not (host.run_dir / "reboot-chain.sh").exists()
 
 
+def test_before_an_approval_the_chain_names_an_earlier_copy_of_another_knob(
+    chain_host,
+):
+    # CR 2804: the refused path's next carries the copy note too.
+    host = chain_host
+    text = host.knob_path.read_text()
+    _scratch(host, text)
+    path, _ = _copy_of(host, text)
+    Path(path).write_text(text)
+    other = host.run_dir / "knob-aaaaaaaaaaaa"
+    other.write_text(KNOB)
+    out = host.reboot(approve=False, rc=3)
+    assert out["reboot_chain"]["knob_copy"]["earlier"] == [str(other)]
+    [n] = [n for n in out["next"] if "other than an earlier step's" in n]
+    assert str(other) in n
+
+
+def test_a_chain_given_a_relative_config_names_it_absolutely(chain_host):
+    host = chain_host
+    (host.tmp / "rel-knob").write_text(host.knob_path.read_text())
+    host.knob_path = Path("rel-knob")
+    out = host.reboot(approve=False, rc=3)
+    [n] = [n for n in out["next"] if "--post-boot" in n]
+    rel = n.split('--config "')[1].split('"')[0]
+    assert os.path.isabs(rel)
+    assert os.path.realpath(rel) == os.path.realpath(host.tmp / "rel-knob")
+
+
+def test_a_chain_without_config_names_the_runs_copy(chain_host):
+    host = chain_host
+    text = host.knob_path.read_text()
+    copy = host.run_dir / "knob-0123456789ab"
+    copy.write_text(text)
+    tracked = host.tmp / ".skills" / "patching-hosts"
+    tracked.parent.mkdir()
+    tracked.write_text(text)
+    host.cases["date"] = [("+%s", f"{host.clock}\n", 0, "", None)]
+    cmd = ["bash", str(host.scripts / "reboot-chain.sh"), "--run", str(host.run_dir)]
+    cmd += ["--host", "web-1", "--today", "2026-09-29"]
+    host.execute(cmd, 3)
+    out = json.loads(host.result.stdout)
+    [n] = [n for n in out["next"] if "not the run's copy" in n]
+    assert str(copy) in n
+
+
 # --- the reader: a knob only root can read ----------------------------------------
 
 
@@ -289,33 +391,78 @@ def unroot():
         d.chmod(0o700)
 
 
-def test_a_knob_in_a_root_only_directory_is_read_through_sudo(tmp_path, unroot):
-    k, bin_ = _root_only(tmp_path, KNOB)
+def _sudo_path(bin_: Path) -> str:
+    return f"{bin_}:{_clean_env()['PATH']}"
+
+
+@pytest.mark.parametrize("where", ["in-it", "two-below", "symlink"])
+def test_a_knob_out_of_the_callers_sight_is_read_through_sudo(tmp_path, unroot, where):
+    # CR 2798: a path two levels below the directory it can't enter, and a
+    # symlink into it, are out of sight too, not absent.
+    k, bin_ = _root_only(tmp_path, None)
     unroot.append(k.parent)
-    r = _read_knob(str(k), PATH=f"{bin_}:{_clean_env()['PATH']}")
+    k.parent.chmod(0o700)
+    if where == "two-below":
+        (k.parent / "sub").mkdir()
+        k = k.parent / "sub" / "knob"
+    k.write_text(KNOB)
+    if where == "two-below":
+        k.parent.parent.chmod(0)
+    else:
+        k.parent.chmod(0)
+    given = k
+    if where == "symlink":
+        given = tmp_path / "link"
+        given.symlink_to(k)
+    r = _read_knob(str(given), PATH=_sudo_path(bin_))
     assert r.returncode == 0, r.stderr
     out = json.loads(r.stdout)
-    assert out["knob"] == {"path": str(k), "present": True}
+    assert out["knob"] == {"path": str(given), "present": True}
     assert out["posture"]["value"] == "scheduled"
-    # The staged copy is gone.
+    # Nothing is staged in a shared directory (CR 2802).
     assert not list(tmp_path.glob("knob.*"))
 
 
-def test_a_knob_root_sees_no_file_at_is_absent(tmp_path, unroot):
+@pytest.mark.parametrize("where", ["in-it", "two-below", "symlink"])
+def test_a_knob_root_finds_no_file_at_is_an_error_not_the_defaults(
+    tmp_path, unroot, where
+):
+    # CR 2798: an absent knob reads as the defaults; one the caller can't
+    # see, and root can't find, is a path that's wrong.
     k, bin_ = _root_only(tmp_path, None)
     unroot.append(k.parent)
-    r = _read_knob(str(k), PATH=f"{bin_}:{_clean_env()['PATH']}")
+    given = k
+    if where == "two-below":
+        given = k.parent / "sub" / "knob"
+    elif where == "symlink":
+        given = tmp_path / "link"
+        given.symlink_to(k)
+    r = _read_knob(str(given), PATH=_sudo_path(bin_))
+    assert r.returncode == 2
+    assert r.stdout == ""
+    assert "isn't there, even to root" in r.stderr
+
+
+def test_a_knob_the_caller_sees_is_absent_still_reads_as_the_defaults(tmp_path):
+    # The documented no-knob case, unchanged: no sudo is asked.
+    r = _read_knob(str(tmp_path / "absent"), PATH="/usr/bin:/bin")
     assert r.returncode == 0, r.stderr
     assert json.loads(r.stdout)["knob"]["present"] is False
 
 
-@pytest.mark.parametrize("how", ["sudo-refuses", "no-sudo"])
+@pytest.mark.parametrize(
+    "how, why",
+    [
+        ("sudo-refuses", "sudo -n couldn't read it: it asks for a password"),
+        ("no-sudo", "--no-sudo (P_NO_SUDO=1) keeps it from being read as root"),
+    ],
+)
 def test_a_root_only_knob_sudo_cant_read_is_an_error_not_the_defaults(
-    tmp_path, unroot, how
+    tmp_path, unroot, how, why
 ):
     k, bin_ = _root_only(tmp_path, KNOB)
     unroot.append(k.parent)
-    env = {"PATH": f"{bin_}:{_clean_env()['PATH']}"}
+    env = {"PATH": _sudo_path(bin_)}
     if how == "no-sudo":
         env["P_NO_SUDO"] = "1"
     else:
@@ -325,4 +472,6 @@ def test_a_root_only_knob_sudo_cant_read_is_an_error_not_the_defaults(
     r = _read_knob(str(k), **env)
     assert r.returncode == 2
     assert r.stdout == ""
-    assert "sudo -n couldn't read it" in r.stderr
+    assert why in r.stderr
+    if how == "no-sudo":
+        assert "sudo -n couldn't" not in r.stderr

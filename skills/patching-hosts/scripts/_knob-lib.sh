@@ -35,9 +35,11 @@ This file is a library. Source it; do not run it:
   knob_load <path> <host> <today YYYY-MM-DD>
       returns 2 if <path> exists but can't be read, or the host or date
       isn't one; a <path> that doesn't exist returns 0, KNOB_PRESENT=0.
-      One the caller can't read, or can't see for a directory it can't
-      enter, is read through sudo -n where that asks no password (a run's
-      copy of a --config knob is root's, #681), unless P_NO_SUDO=1
+      One the caller can't read, or can't see for a symlink or a directory
+      it can't follow, is read through sudo -n where that asks no password
+      (a run's copy of a --config knob is root's, #681), unless
+      P_NO_SUDO=1; one root can't read, or finds no file at, returns 2.
+      KNOB_TEXT holds the bytes parsed
 
 Call knob_load plainly, never inside if, && or ||: bash turns errexit off for
 everything a condition runs, and a failure in the library would go unseen.
@@ -62,7 +64,7 @@ esac
 # Scalars: KNOB_PATH, KNOB_HOST, KNOB_TODAY, KNOB_PRESENT (0|1), KNOB_CLASS,
 # KNOB_POSTURE, KNOB_CADENCE, KNOB_BULK_FACTOR, KNOB_PHASING,
 # KNOB_IMAGE_OWNER and KNOB_RECORDS, each value with a *_LINE (empty for a default), and
-# KNOB_REPORT_ONLY (0|1).
+# KNOB_REPORT_ONLY (0|1). KNOB_TEXT: the knob's bytes, as parsed.
 # Lists of plain strings: KNOB_SECTIONS (applied, least specific first) and
 # KNOB_REPORT_ONLY_WHY.
 #
@@ -103,7 +105,7 @@ esac
 #                        whose rebuild it steps around, and undo and its
 #                        line are empty where no rebuild-undo pairs it
 knob_reset() {
-  KNOB_PATH="" KNOB_HOST="" KNOB_TODAY="" KNOB_PRESENT=0
+  KNOB_PATH="" KNOB_HOST="" KNOB_TODAY="" KNOB_PRESENT=0 KNOB_TEXT=""
   KNOB_CLASS="production" KNOB_CLASS_LINE=""
   KNOB_POSTURE="automatic" KNOB_POSTURE_LINE=""
   # #529: how often the scheduled run comes round. probe.sh's read_cadence
@@ -915,31 +917,62 @@ _knob_report_only() {
   [ "${#KNOB_REPORT_ONLY_WHY[@]}" -eq 0 ] || KNOB_REPORT_ONLY=1
 }
 
-# PATH's bytes as root, through sudo -n, in a file of the caller's: VAR :=
-# its path. One that doesn't exist, even to root, is left absent: VAR := a
-# path that doesn't exist. 1 where sudo can't read it, or isn't asked: the
-# caller is root already, or P_NO_SUDO=1.
-_knob_read_as_root() {  # <var> <path>
-  local _kr_t
-  [ "${P_NO_SUDO:-0}" != 1 ] || return 1
-  [ "$(id -u)" -ne 0 ] || return 1
-  command -v sudo >/dev/null 2>&1 || return 1
-  _kr_t=$(mktemp "${TMPDIR:-/tmp}/knob.XXXXXX") || return 1
-  if sudo -n -- test -e "$2" 2>/dev/null; then
-    # The copy is the caller's own, so the redirect is meant to be too.
-    # shellcheck disable=SC2024
-    if ! sudo -n -- cat -- "$2" >"$_kr_t" 2>/dev/null; then
-      rm -f -- "$_kr_t"
-      return 1
-    fi
-  elif sudo -n -- true 2>/dev/null; then
-    # Root sees no file there either: the knob is absent.
-    rm -f -- "$_kr_t"
-  else
-    rm -f -- "$_kr_t"
+# Whether PATH is out of the caller's sight: a file it can't read, or a path
+# it can't see for a symlink it can't follow or a directory on the way it
+# can't enter, however far up (CR 2798). The nearest ancestor it sees
+# decides: one it can enter means the path is absent, to root as well.
+_knob_hidden() {  # <path>
+  local _kh_d=$1 _kh_p
+  if [ -e "$1" ]; then
+    if [ ! -d "$1" ] && [ ! -r "$1" ]; then return 0; fi
     return 1
   fi
-  printf -v "$1" '%s' "$_kr_t"
+  if [ -L "$1" ]; then return 0; fi
+  while :; do
+    _kh_p=$_kh_d
+    _kh_d=$(dirname -- "$_kh_d")
+    if [ -L "$_kh_d" ] && [ ! -e "$_kh_d" ]; then return 0; fi
+    if [ -e "$_kh_d" ]; then
+      if [ -d "$_kh_d" ] && [ ! -x "$_kh_d" ]; then return 0; fi
+      return 1
+    fi
+    if [ "$_kh_d" = "$_kh_p" ]; then return 1; fi
+  done
+}
+
+# PATH's bytes as root: VAR := them. 0 read; 3 where root sees no file there
+# either; 1 where root can't be asked, with KNOB_ROOT_WHY saying why. In
+# as_root's form, sudo -n -- env LC_ALL=C, but not through it: the knob is
+# read before probe_init sets P_PRIV, and read-knob.sh doesn't source
+# _probe-lib.sh at all.
+KNOB_ROOT_WHY=""
+_knob_root_text() {  # <var> <path>
+  local _kr_t
+  KNOB_ROOT_WHY=""
+  if [ "${P_NO_SUDO:-0}" = 1 ]; then
+    KNOB_ROOT_WHY="--no-sudo (P_NO_SUDO=1) keeps it from being read as root"
+    return 1
+  fi
+  if [ "$(id -u)" -eq 0 ]; then
+    KNOB_ROOT_WHY="not even root can read it"
+    return 1
+  fi
+  if ! command -v sudo >/dev/null 2>&1; then
+    KNOB_ROOT_WHY="sudo isn't on PATH to read it as root"
+    return 1
+  fi
+  if sudo -n -- env LC_ALL=C test -e "$2" 2>/dev/null; then
+    # The x keeps a trailing newline the substitution would strip.
+    if ! _kr_t=$(sudo -n -- env LC_ALL=C cat -- "$2" 2>/dev/null && printf x); then
+      KNOB_ROOT_WHY="sudo -n couldn't read it"
+      return 1
+    fi
+    printf -v "$1" '%s' "${_kr_t%x}"
+    return 0
+  fi
+  if sudo -n -- true 2>/dev/null; then return 3; fi
+  KNOB_ROOT_WHY="sudo -n couldn't read it: it asks for a password"
+  return 1
 }
 
 knob_load() {  # <path> <host> <today YYYY-MM-DD>
@@ -960,33 +993,49 @@ knob_load() {  # <path> <host> <today YYYY-MM-DD>
     return 2
   fi
   KNOB_PATH=$1 KNOB_HOST=$2 KNOB_TODAY=$3
-  local _kl_from=$KNOB_PATH _kl_tmp="" _kl_d
-  # A run's copy of a --config knob is root's, in a 0700 directory (#681):
-  # one the caller can't read, or can't see for a directory it can't enter,
-  # is read as root, through sudo -n where that asks no password, as the
-  # probe's other root-only reads are. One it still can't read is an error,
-  # never an absent knob, which would read as the defaults.
-  _kl_d=$(dirname -- "$KNOB_PATH")
-  if { [ -e "$KNOB_PATH" ] && [ ! -d "$KNOB_PATH" ] && [ ! -r "$KNOB_PATH" ]; } ||
-    { [ ! -e "$KNOB_PATH" ] && [ -d "$_kl_d" ] && [ ! -x "$_kl_d" ]; }; then
-    if ! _knob_read_as_root _kl_tmp "$KNOB_PATH"; then
-      echo "ERROR the knob at $KNOB_PATH exists but can't be read: it, or its directory, is root's, and sudo -n couldn't read it" >&2
-      return 2
-    fi
-    _kl_from=$_kl_tmp
-  fi
-  if [ -e "$_kl_from" ]; then
-    if [ -d "$_kl_from" ] || [ ! -r "$_kl_from" ]; then
+  local _kl_have=0 _kl_rc=0 _kl_l=""
+  # Read once, into KNOB_TEXT, and parsed from there: a run keeps a copy of
+  # the bytes its gates read, not of a file edited since (#681, CR 2799).
+  # A run's copy of a --config knob is root's, in a 0700 directory: one the
+  # caller can't read, or can't see, is read as root, through sudo -n where
+  # that asks no password, as the probe's other root-only reads are. One it
+  # still can't read, or that root finds no file at, is an error, never an
+  # absent knob, which would read as the defaults (CR 2798). A path the
+  # caller can see is absent there is the documented no-knob case.
+  if _knob_hidden "$KNOB_PATH"; then
+    _knob_root_text KNOB_TEXT "$KNOB_PATH" || _kl_rc=$?
+    case $_kl_rc in
+      0) _kl_have=1 ;;
+      3)
+        echo "ERROR the knob at $KNOB_PATH isn't there, even to root, and the caller can't see that path: name a knob that exists" >&2
+        return 2 ;;
+      *)
+        echo "ERROR the knob at $KNOB_PATH can't be read: it, or a directory on its path, is root's, and $KNOB_ROOT_WHY" >&2
+        return 2 ;;
+    esac
+  elif [ -e "$KNOB_PATH" ]; then
+    if [ -d "$KNOB_PATH" ] || ! { : <"$KNOB_PATH"; } 2>/dev/null; then
       echo "ERROR the knob at $KNOB_PATH exists but can't be read" >&2
-      [ -z "$_kl_tmp" ] || rm -f -- "$_kl_tmp"
       return 2
     fi
+    # Builtins only, as the parse always was: the reader needs no tool but
+    # bash. A last line without its newline is kept without one.
+    while :; do
+      if IFS= read -r _kl_l; then
+        KNOB_TEXT="$KNOB_TEXT$_kl_l"$'\n'
+      else
+        KNOB_TEXT="$KNOB_TEXT$_kl_l"
+        break
+      fi
+    done <"$KNOB_PATH"
+    _kl_have=1
+  fi
+  if [ "$_kl_have" -eq 1 ]; then
     KNOB_PRESENT=1
     local LC_ALL=C
-    _knob_parse_file "$_kl_from"
+    _knob_parse_file <(printf '%s' "$KNOB_TEXT")
     _knob_match_sections
   fi
-  [ -z "$_kl_tmp" ] || rm -f -- "$_kl_tmp"
   _knob_resolve
   _knob_report_only
 }

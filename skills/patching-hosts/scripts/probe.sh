@@ -3252,7 +3252,13 @@ read_dry_run() {
     # What it left, under phasing respect, the bulk leaves too (#686).
     printf 'phasing=%s\n' "$KNOB_PHASING"
     if [ "$PHASED_READ" -eq 1 ]; then printf 'phased_deferred=%s\n' "$PHASED_DEFERRED"; fi
-    if [ "$sel" -eq 1 ]; then printf 'bulk_takes=%s\nheld_steps=%s\n' "$BS_TAKE" "$BS_STEPS"; fi
+    if [ "$sel" -eq 1 ]; then
+      printf 'bulk_takes=%s\nheld_steps=%s\n' "$BS_TAKE" "$BS_STEPS"
+    elif [ "$n" = 0 ]; then
+      # Counted 0: the bulk takes nothing it counted, so what it takes
+      # after is all uncounted (CR 2797).
+      printf 'bulk_takes=\nheld_steps=\n'
+    fi
     # Each selected package's candidate and class, as the simulation reads
     # them, for a plan's envelope (#673): a package the simulation doesn't
     # list is left out, and apply.sh reads it as unknown.
