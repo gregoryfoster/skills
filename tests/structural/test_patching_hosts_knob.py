@@ -859,6 +859,7 @@ EVERY_DIRECTIVE = {
     "posture": "posture scheduled",
     "cadence": "cadence monthly",
     "bulk-factor": "bulk-factor 4",
+    "phasing": "phasing respect",  # #686
     "window": "window Tue 15:00-21:00",
     "quiet": "quiet 07:25-08:15 Sun",
     "inflight": "inflight systemctl list-units 'app-task@*' --state=activating,active,deactivating --no-legend | wc -l",

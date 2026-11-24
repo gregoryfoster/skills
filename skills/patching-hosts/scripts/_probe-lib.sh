@@ -57,6 +57,11 @@ The primitives these scripts reach a host through:
   rss_of VAR TEXT           VAR := the max RSS a TIMER file's TEXT holds
   APT_SIM_PHASED            the apt-get option that shows phased updates in a
                             simulation: unattended-upgrade takes them all
+  phased_of VAR POLICY NAMES  VAR := " name=N ... ", each of NAMES whose
+                            candidate apt phases at N%
+  phased_deferred VAR WITH WITHOUT PHASED  VAR := the phased updates apt
+                            would defer here: in the simulation WITH
+                            APT_SIM_PHASED, not WITHOUT it (#686)
   SPACE_FLOOR_KIB           the KiB every filesystem a patch run writes keeps
                             free, beyond what the run counts it needs
   fs_reading PATH           FS_FREE, FS_USED (KiB) and FS_MOUNT from df -Pk,
@@ -533,6 +538,43 @@ origin_split() {  # <keep var> <skip var> <|names|> <sim output> <policy output>
 # package for 3, and unattended-upgrade for all 40 (2026-10-06, #354). So a
 # simulation that stands for what a lane takes shows them all.
 APT_SIM_PHASED=(-o APT::Get::Always-Include-Phased-Updates=true)
+
+# Each package whose candidate apt phases, as " name=N ... " for N%, from
+# apt-cache policy's output over NAMES: it marks the version "(phased N%)".
+phased_of() {  # <var> <apt-cache policy output> <" name ... ">
+  local _po_l _po_n="" _po_c="" _po_v _po_p _po_o=" "
+  while IFS= read -r _po_l; do
+    case $_po_l in
+      [!\ ]*:) _po_n=${_po_l%:} _po_c="" ;;
+      "  Candidate: "*) _po_c=${_po_l#  Candidate: } ;;
+      *"(phased "*"%)")
+        read -r _po_v _ <<<"${_po_l# \*\*\* }"
+        if [ -n "$_po_n" ] && [ "$_po_v" = "$_po_c" ] && in_words "$_po_n" "$3"; then
+          _po_p=${_po_l##*(phased }
+          _po_o="$_po_o$_po_n=${_po_p%\%)} "
+        fi ;;
+    esac
+  done <<<"$2"
+  printf -v "$1" '%s' "$_po_o"
+}
+
+# The phased updates apt would defer on this machine (#686): each one the
+# simulation with APT_SIM_PHASED installs and the one without it doesn't.
+# Only a package PHASED names (phased_of's) can be one, so a simulation that
+# printed nothing defers no other package.
+phased_deferred() {  # <var> <simulation with> <simulation without> <phased_of's>
+  local _pd_k _pd_p _pd_r _pd_w=" " _pd_o=""
+  while read -r _pd_k _pd_p _pd_r; do
+    if [ "$_pd_k" = Inst ]; then _pd_w="$_pd_w$_pd_p "; fi
+  done <<<"$3"
+  while read -r _pd_k _pd_p _pd_r; do
+    [ "$_pd_k" = Inst ] || continue
+    case $4 in *" $_pd_p="*) ;; *) continue ;; esac
+    case $_pd_w in *" $_pd_p "*) continue ;; esac
+    _pd_o="$_pd_o $_pd_p"
+  done <<<"$2"
+  printf -v "$1" '%s' "${_pd_o# }"
+}
 
 # --- free space (#390) -----------------------------------------------------
 # What a step writes, against the free space where it lands. The figures are

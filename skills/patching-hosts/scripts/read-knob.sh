@@ -21,7 +21,7 @@ Options:
   -h, --help      show this help
 
 Output keys: knob, host, sections, class, posture, cadence, bulk_factor,
-report_only, report_only_reasons, window, quiet, inflight, health, recovery, restarter, service,
+phasing, report_only, report_only_reasons, window, quiet, inflight, health, recovery, restarter, service,
 backup, caller, depends, datastore, hold, owner, image_owner, origin,
 exception, standing, records, rebuild, findings. A window carries weekday, week (of the
 month, or null), date (a dated line's, or null), start, end, wraps, reason,
@@ -230,6 +230,7 @@ printf '  "posture": {"value": %s, "line": %s},\n' "$(js "$KNOB_POSTURE")" "$(nu
 printf '  "cadence": {"value": %s, "line": %s},\n' "$(js "$KNOB_CADENCE")" "$(num_or_null "$KNOB_CADENCE_LINE")"
 # A number: the library takes nothing else (#556).
 printf '  "bulk_factor": {"value": %s, "line": %s},\n' "$KNOB_BULK_FACTOR" "$(num_or_null "$KNOB_BULK_FACTOR_LINE")"
+printf '  "phasing": {"value": %s, "line": %s},\n' "$(js "$KNOB_PHASING")" "$(num_or_null "$KNOB_PHASING_LINE")"
 printf '  "report_only": %s,\n' "$(js_bool "$KNOB_REPORT_ONLY")"
 printf '  "report_only_reasons": %s,\n' "$(js_list ${KNOB_REPORT_ONLY_WHY[@]+"${KNOB_REPORT_ONLY_WHY[@]}"})"
 emit_records window o_window , ${KNOB_WINDOW[@]+"${KNOB_WINDOW[@]}"}

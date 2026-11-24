@@ -669,8 +669,10 @@ DRY_SUMMARY="" DRY_MAX_AGE=86400
 # where this skill's probe wrote them.
 DRY_SECURITY_ONLY="" SEL_READ=0
 SEL_NAME=() SEL_VERSION=() SEL_CLASS=()
+# What the dry run left as phased updates apt would defer here (#686).
+DRY_DEFERRED=""
 gate_dry() {
-  local line rc="" count="" began="" iso dlane=security dleft="" dleft_seen=0
+  local line rc="" count="" began="" iso dlane=security dleft="" dleft_seen=0 dphasing=ignore
   local -a _sf=()
   local lref="" lage=""
   [ "$step" = bulk ] || return 0
@@ -690,6 +692,8 @@ gate_dry() {
       count=*) count=${line#count=} ;;
       wall_seconds=*) EXPECT=${line#wall_seconds=} ;;
       lane=*) dlane=${line#lane=} ;;
+      phasing=*) dphasing=${line#phasing=} ;;
+      phased_deferred=*) DRY_DEFERRED=${line#phased_deferred=} ;;
       origin_left=*) dleft=${line#origin_left=} dleft_seen=1 ;;
       lists_refreshed=*) lref=${line#lists_refreshed=} ;;
       lists_age_hours=*) lage=${line#lists_age_hours=} ;;
@@ -705,6 +709,11 @@ gate_dry() {
   # Its wall time is this step's floor only for the selection it counted.
   if [ "$dlane" != "$LANE" ]; then
     refuse "the dry run counted the $dlane lane, and this bulk runs the $LANE lane: count again with probe.sh --lane $LANE --refresh-into DIR --dry-run-into DIR"
+  fi
+  # Its count is this lane's only under the same phasing: a dry run from
+  # before #686 took every phased update, as ignore does.
+  if [ "$LANE" = maintenance ] && [ "$dlane" = "$LANE" ] && [ "$dphasing" != "$KNOB_PHASING" ]; then
+    refuse "the dry run counted with phasing $dphasing, and the knob says $KNOB_PHASING: count again with probe.sh --lane maintenance --refresh-into DIR --dry-run-into DIR"
   fi
   if [ "$rc" != 0 ]; then
     refuse "the dry run exited ${rc:-unknown}: read $dryrun/dry-run.log, and count again"
@@ -2313,6 +2322,7 @@ STARTED=0
 LANE_KEEP=""
 do_bulk() {
   local out pend="" p i r s g o="" a="" names="" e kw rest pol="" polrc polerr onames oskip sim bv dv="" dseen=0 c d line vout="" va="" outside="" bver=""
+  local deferred="" ph
   local btake hsteps="" cl
   local -a f=() w=()
   if ! root_has "$run" && ! as_root mkdir -p -m 700 -- "$run"; then
@@ -2401,6 +2411,40 @@ do_bulk() {
         return 0
       fi ;;
   esac
+  # Under phasing respect, the maintenance lane leaves the phased updates
+  # apt would defer on this machine (#686), against the lists just
+  # refreshed, and each its dry run left: blacklisted, so neither the bulk
+  # nor a held step takes one, and no group holds one.
+  if [ "$LANE" = maintenance ] && [ "$KNOB_PHASING" = respect ]; then
+    read -r -a w <<<"$pend" || true
+    ph=" "
+    if [ "${#w[@]}" -gt 0 ]; then
+      capture out apt-cache policy "${w[@]}"
+      if [ "$CAP_RC" -ne 0 ]; then
+        fail "apt-cache policy over the pending set failed (${CAP_ERR:-exit $CAP_RC}), so which updates are phased is unknown, and the knob's phasing respect can't be kept: nothing was held or upgraded"
+        return 0
+      fi
+      phased_of ph "$out" "$pend"
+    fi
+    if [ -n "${ph// /}" ]; then
+      capture out as_root apt-get -s "${SIM_NOLOG[@]}" dist-upgrade
+      if [ "$CAP_RC" -ne 0 ]; then
+        fail "apt-get -s dist-upgrade without Always-Include-Phased-Updates failed (${CAP_ERR:-exit $CAP_RC}), so which phased updates apt would defer is unknown, and the knob's phasing respect can't be kept: nothing was held or upgraded"
+        return 0
+      fi
+      phased_deferred deferred "$sim" "$out" "$ph"
+    fi
+    for p in $DRY_DEFERRED; do in_words "$p" "$deferred" || deferred="$deferred $p"; done
+    deferred=${deferred# }
+    # A word list, each a package name.
+    # shellcheck disable=SC2086
+    if [ -n "$deferred" ] && ! { printf '%s\n' "$LANE_CONF"; lane_skip_conf $deferred; } | root_write "$run/lane.conf"; then
+      fail "$run/lane.conf couldn't be written: nothing was held or upgraded"
+      return 0
+    fi
+    json_words e "$deferred"
+    jadd o phased_deferred "$e"
+  fi
   # Each held group's candidate now, and the version the dry run counted.
   hold_group_versions bv "$sim"
   while IFS= read -r line; do
@@ -2419,6 +2463,14 @@ do_bulk() {
   read -r -a w <<<"$pend" || true
   for p in ${w[@]+"${w[@]}"}; do
     in_words "$p" "$BEFORE_HOLDS" && continue
+    # Blacklisted, a hold group's is left unheld, and checked untaken.
+    if in_words "$p" "$deferred"; then
+      for r in ${KNOB_HOLD[@]+"${KNOB_HOLD[@]}"}; do
+        IFS=$KNOB_US read -r -a f <<<"$r"
+        if glob_match "$p" "${f[1]}"; then outside="$outside $p" && break; fi
+      done
+      continue
+    fi
     case $LANE in
       origin:*) ;;
       *)
@@ -2535,7 +2587,7 @@ do_bulk() {
     origin:*) for p in $LANE_TAKE; do w+=("$p"); done ;;
     *)
       for p in $DRY_SEL; do
-        in_words "$p" "$names" || in_words "$p" "$BEFORE_HOLDS" || w+=("$p")
+        in_words "$p" "$names" || in_words "$p" "$BEFORE_HOLDS" || in_words "$p" "$deferred" || w+=("$p")
       done ;;
   esac
   btake=${w[*]-}
