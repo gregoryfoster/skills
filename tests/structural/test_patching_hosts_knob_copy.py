@@ -452,12 +452,66 @@ def test_a_link_to_a_missing_file_the_caller_can_see_reads_as_no_knob(tmp_path):
     assert json.loads(r.stdout)["knob"]["present"] is False
 
 
-def test_a_link_loop_reads_as_no_knob(tmp_path):
+def _plain_sudo(tmp_path: Path) -> Path:
+    """A sudo that runs its command as the caller: root sees what it sees."""
+    bin_ = tmp_path / "plain-bin"
+    bin_.mkdir()
+    sudo = bin_ / "sudo"
+    sudo.write_text(
+        '#!/bin/sh\nwhile [ "$1" = -n ] || [ "$1" = -- ]; do shift; done\nexec "$@"\n'
+    )
+    sudo.chmod(0o755)
+    return bin_
+
+
+def test_a_link_loop_is_asked_of_root_and_refused_not_the_defaults(tmp_path):
+    # Past the kernel's 40 links, root is asked; a loop is no file to it.
     (tmp_path / "a").symlink_to(tmp_path / "b")
     (tmp_path / "b").symlink_to(tmp_path / "a")
-    r = _read_knob(str(tmp_path / "a"), PATH="/usr/bin:/bin")
+    r = _read_knob(str(tmp_path / "a"), PATH=_sudo_path(_plain_sudo(tmp_path)))
+    assert r.returncode == 2
+    assert r.stdout == ""
+    assert "isn't there, even to root" in r.stderr
+
+
+def test_a_chain_of_more_than_10_links_into_a_root_only_directory_is_read(
+    tmp_path, unroot
+):
+    # CR 2798 follow-up: the kernel follows 40, and so does the reader.
+    k, bin_ = _root_only(tmp_path, None)
+    unroot.append(k.parent)
+    k.parent.chmod(0o700)
+    k.write_text(KNOB)
+    k.parent.chmod(0)
+    target = k
+    for i in range(15):
+        link = tmp_path / f"l{i}"
+        link.symlink_to(target)
+        target = link
+    r = _read_knob(str(target), PATH=_sudo_path(bin_))
+    assert r.returncode == 0, r.stderr
+    assert json.loads(r.stdout)["knob"]["present"] is True
+
+
+def test_a_knob_under_a_directory_link_to_nothing_visible_reads_as_no_knob(
+    tmp_path,
+):
+    # CR 2798 follow-up: an ancestor link follows the leaf's rule.
+    (tmp_path / "dirlink").symlink_to(tmp_path / "gone")
+    r = _read_knob(str(tmp_path / "dirlink" / "knob"), PATH="/usr/bin:/bin")
     assert r.returncode == 0, r.stderr
     assert json.loads(r.stdout)["knob"]["present"] is False
+
+
+def test_a_knob_under_a_directory_link_into_a_root_only_directory_is_refused(
+    tmp_path, unroot
+):
+    k, bin_ = _root_only(tmp_path, None)
+    unroot.append(k.parent)
+    (tmp_path / "dirlink").symlink_to(k.parent / "gone")
+    r = _read_knob(str(tmp_path / "dirlink" / "knob"), PATH=_sudo_path(bin_))
+    assert r.returncode == 2
+    assert "isn't there, even to root" in r.stderr
 
 
 def test_a_knob_the_caller_sees_is_absent_still_reads_as_the_defaults(tmp_path):

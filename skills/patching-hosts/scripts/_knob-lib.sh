@@ -929,9 +929,10 @@ _knob_hidden() {  # <path> [<links followed so far>]
   fi
   # A link that resolves to nothing is decided by its target: one the caller
   # can see is absent is the plain no-knob case, one it can't see is asked
-  # of root (CR 2798). A loop, or a chain past 10 links, is absent.
+  # of root (CR 2798). Past the kernel's own 40 links, a loop among them,
+  # root is asked too, and its "no file" refuses: never the defaults.
   if [ -L "$1" ]; then
-    [ "${2:-0}" -lt 10 ] || return 1
+    [ "${2:-0}" -lt 40 ] || return 0
     _kh_t=$(readlink -- "$1") || return 0
     case $_kh_t in /*) ;; *) _kh_t=$(dirname -- "$1")/$_kh_t ;; esac
     _knob_hidden "$_kh_t" $((${2:-0} + 1))
@@ -940,7 +941,11 @@ _knob_hidden() {  # <path> [<links followed so far>]
   while :; do
     _kh_p=$_kh_d
     _kh_d=$(dirname -- "$_kh_d")
-    if [ -L "$_kh_d" ] && [ ! -e "$_kh_d" ]; then return 0; fi
+    # A directory link that resolves to nothing, by the same rule.
+    if [ -L "$_kh_d" ] && [ ! -e "$_kh_d" ]; then
+      _knob_hidden "$_kh_d" "${2:-0}"
+      return
+    fi
     if [ -e "$_kh_d" ]; then
       if [ -d "$_kh_d" ] && [ ! -x "$_kh_d" ]; then return 0; fi
       return 1
