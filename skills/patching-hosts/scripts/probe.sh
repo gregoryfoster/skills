@@ -4896,7 +4896,7 @@ named_by() {  # <ere>: NAMED (JSON array body); NAMED_USE, the deploy/ line that
 # NAMED_UNIT := the first, in words, quoting the word that names it, or
 # empty. Only the word: a host unit's command line is the host's, not the
 # repo's, and may hold a secret no pattern knows (CR 2158).
-unit_names() {  # <ere>
+unit_names() {  # <ere> [<engine>]
   local f base out re w q
   local -a ws=()
   NAMED_UNIT=""
@@ -4908,6 +4908,15 @@ unit_names() {  # <ere>
     if grep -qiE -- "^($1)" <<<"$base"; then continue; fi
     capture out as_reader grep -m1 -iE -- "^[[:space:]]*(Requires|After|Exec[A-Za-z]*)=(.*[^A-Za-z0-9_.@+-])?-*($1)" "$f"
     if [ "$CAP_RC" -eq 0 ] && [ -n "$out" ]; then
+      # A unit that runs a Redis or Valkey server is evidence for the one
+      # it runs, never the other: @/usr/bin/valkey-server redis-server ...
+      # names redis-server, and a Redis started from a file under
+      # /etc/valkey names valkey (CR 2836). A drop-in is its unit's.
+      case ${2-} in
+        redis | valkey)
+          redis_engine "${base%.d}" || true
+          if [ "$RE_FROM" = run ] && [ "$RE_ENGINE" != "$2" ]; then continue; fi ;;
+      esac
       q=""
       read -r -a ws <<<"${out#*=}" || true
       for w in ${ws[@]+"${ws[@]}"}; do
@@ -4977,7 +4986,7 @@ engine() {
   unit_disk_state disk "$unit"
   unit_show "$unit" ActiveState || true
   named_by "$ere"
-  unit_names "$ere"
+  unit_names "$ere" "$name"
   if [ -z "$inuse" ]; then inuse=${NAMED_USE:-$NAMED_UNIT}; fi
   for x in keep disabled removed purged; do
     if exception_for "$x:$name" && [ "$EX_EXPIRED" = 0 ]; then

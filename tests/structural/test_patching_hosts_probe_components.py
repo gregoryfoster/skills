@@ -1721,6 +1721,42 @@ def test_a_hold_line_that_leaves_valkey_out_is_a_finding(host, hold, finds):
         assert "valkey-server valkey-tools" in found[0]["message"]
 
 
+@pytest.mark.parametrize(
+    "path, argv0, counts_for",
+    [
+        # CR 2836: @ runs valkey-server under argv[0] redis-server.
+        ("/usr/bin/valkey-server", "redis-server", "valkey"),
+        ("/usr/bin/redis-server", "redis-server", "redis"),
+    ],
+    ids=["valkey-as-redis-server", "redis"],
+)
+def test_a_unit_running_a_server_counts_only_for_the_engine_it_runs(
+    host, path, argv0, counts_for
+):
+    _valkey(host)
+    host.installed("redis-server")
+    host.show(
+        "redis-server.service",
+        ActiveState="inactive",
+        InactiveEnterTimestamp=f"@{host.now - 40 * DAY}",
+    )
+    host.write(
+        "etc/systemd/system/cache.service",
+        f"[Service]\nExecStart=@{path} {argv0} /etc/valkey/valkey.conf\n",
+    )
+    host.show(
+        "cache.service",
+        ExecStart=f"{{ path={path} ; argv[]={argv0} /etc/valkey/valkey.conf ; }}",
+    )
+    out = host.run()
+    named = {
+        e["name"]: e["evidence"].startswith("/etc/systemd/system/cache.service")
+        for e in out["dormant"]
+        if e["name"] in ("redis", "valkey")
+    }
+    assert named == {"redis": counts_for == "redis", "valkey": counts_for == "valkey"}
+
+
 def test_a_never_started_valkey_counts_from_its_log(tmp_path):
     h = _rebooted(tmp_path, "valkey-server.service", "valkey-server")
     h.write(
