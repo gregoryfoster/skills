@@ -29,7 +29,7 @@ The **review-by date is the soak**: 30 days by default, up to 90. A stage refuse
 bash "<prune-plan.sh>" --component <name> --out <file>
 ```
 
-It changes nothing, run as root too: its simulations, and a stage's, write neither apt's planner log, `/var/log/apt/eipp.log.xz`, nor its binary caches (#704). Its JSON is what the owner reads before approving a stage:
+It changes nothing, run as root too: its apt calls, and a stage's, write neither apt's planner log, `/var/log/apt/eipp.log.xz`, nor, as root, a stale binary cache, `pkgcache.bin` (#704). As a user apt can't write the cache, so it's left to be read. Its JSON is what the owner reads before approving a stage:
 - `units`: each unit, socket and timer, with its state now. For Docker that is `docker.socket` as well as `docker.service`, and `containerd.service`;
 - `packages`: what `apt-get -s remove` and `apt-get -s purge` would take, including anything dragged along, and any held. For Docker the roots include its CLI plugins by Ubuntu's names, `docker-buildx` and `docker-compose-v2`, and by Docker's own, `docker-buildx-plugin` and `docker-compose-plugin`: installed by hand, no autoremove takes them (#611);
 - `autoremove_would_take`: what apt installed for them alone. No stage autoremoves, but a later `apt autoremove`, or unattended-upgrades' `Remove-Unused-Dependencies`, takes these: for docker.io installed with its recommends on noble, 47 packages, `iptables`, `git` and `openssh-client` among them (measured). With `--take-orphans` they're in the plan instead, as `packages.orphans` ([below](#any-other-apt-package));

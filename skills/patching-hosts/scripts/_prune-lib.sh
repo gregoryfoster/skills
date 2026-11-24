@@ -16,6 +16,10 @@ Usage: . _prune-lib.sh    (sourced by prune-plan.sh and prune.sh; running it
   PRUNE_COMPONENTS          the components it knows, besides apt:<package>
   PRUNE_ORPHANS             1 to take what the roots alone orphan (a
                             plan's --take-orphans), by name; 0 by default
+  PRUNE_SIM_OPTS            every apt-get -s's options: the planner log's,
+                            and as root the cache blanks (#704)
+  PRUNE_CACHE_OPTS          every apt-cache's: the cache blanks as root
+  prune_apt_init            sets both for P_EUID, after probe_init
   prune_component NAME      C_NAME, C_ROOTS, C_CONFIG, C_DATA, C_GROUP, and
                             for one from outside apt C_UNIT and C_BINARY; 1
                             for a name the probe doesn't know. NAME may be
@@ -174,13 +178,25 @@ read_packages() {
 # is no removal (SIM_INST). SIM_ORPHANS is what apt says it leaves "no
 # longer required": a later autoremove's, with any it would take already.
 SIM_SET=() SIM_INST="" SIM_WHY="" SIM_ORPHANS=""
-# Every simulation a prune script runs, prune-plan.sh's too. Run as root, an
-# apt-get -s rewrites /var/log/apt/eipp.log.xz, apt's planner log of the
-# host's last real install, and rebuilds pkgcache.bin and srcpkgcache.bin
-# (#704): a read-only plan leaves both, as probe.sh's APT_OPTS does (#696).
-# apply.sh's SIM_NOLOG passes the planner option alone: its simulations run
-# just before or after its own install, which rebuilds the caches anyway.
-PRUNE_SIM_OPTS=(-o Dir::Cache::pkgcache= -o Dir::Cache::srcpkgcache= -o Dir::Log::Planner=/dev/null)
+# Every simulation a prune script runs passes PRUNE_SIM_OPTS, and every
+# apt-cache read PRUNE_CACHE_OPTS (#704). Run as root, an apt-get -s rewrites
+# /var/log/apt/eipp.log.xz, apt's planner log of the host's last real
+# install, and apt-get or apt-cache rebuilds a stale pkgcache.bin and
+# srcpkgcache.bin. The planner option always goes; the cache blanks only as
+# root (prune_apt_init): a user can't write /var/cache/apt, and building the
+# cache in memory each call doubled a plan's time (CR 2825). probe.sh's
+# APT_OPTS blanks them always: it reads lists the host's cache may be stale
+# against. apply.sh's SIM_NOLOG passes the planner option alone: its
+# simulations run just before or after its own install, which rebuilds the
+# caches anyway.
+PRUNE_SIM_OPTS=(-o Dir::Log::Planner=/dev/null)
+PRUNE_CACHE_OPTS=()
+prune_apt_init() {  # after probe_init
+  if [ "$P_EUID" -eq 0 ]; then
+    PRUNE_CACHE_OPTS=(-o Dir::Cache::pkgcache= -o Dir::Cache::srcpkgcache=)
+    PRUNE_SIM_OPTS+=("${PRUNE_CACHE_OPTS[@]}")
+  fi
+}
 apt_sim() {  # <remove|purge> <package>...
   local _as_k=$1 _as_out _as_l _as_x _as_n _as_v _as_in=0
   shift

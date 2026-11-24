@@ -595,6 +595,9 @@ class Host(ApplyHost):
         )
         return self
 
+    # The invoking user, as id reads it: the rig's own unless a test says root.
+    run_as: str | None = None
+
     def _run(self, cmd: list[str], rc: int) -> dict:
         self.cases["date"] = [("+%s", f"{self.clock}\n", 0, "", None)]
         self.write_state()
@@ -609,6 +612,7 @@ class Host(ApplyHost):
                 TODAY,
             ],
             rc,
+            env_extra={"STUB_USER": self.run_as} if self.run_as else None,
         )
         self.host_state = self.read_state()
         if rc == 2:
@@ -1890,13 +1894,18 @@ def test_a_refused_apt_plan_runs_under_no_components_directory(tmp_path, name):
     assert host.changes() == []
 
 
-def test_the_prune_simulations_leave_the_planner_log_and_caches_alone(tmp_path):
+@pytest.mark.parametrize("user", ["root", None])
+def test_the_prune_simulations_leave_the_planner_log_and_caches_alone(tmp_path, user):
     """Run as root, an apt-get -s rewrote /var/log/apt/eipp.log.xz, the
-    planner log of the host's last real install, and rebuilt pkgcache.bin
-    and srcpkgcache.bin (#704, as probe.sh's did, #696). Every simulation
-    the plan and the purge stage run, the removal's, the purge's and the
-    autoremove reads, passes PRUNE_SIM_OPTS."""
+    planner log of the host's last real install, and apt-get or apt-cache
+    rebuilt a stale pkgcache.bin and srcpkgcache.bin (#704, as probe.sh's
+    did, #696). Every simulation the plan and the purge stage run, the
+    removal's, the purge's and the autoremove reads, passes the planner
+    option, and as root the cache blanks, as does every apt-cache read
+    (CR 2824). As a user, who can't write /var/cache/apt, the blanks only
+    doubled a plan's time (CR 2825), so they go only as root."""
     host = _fwupd(tmp_path, f"disabled:fwupd {PAST} the image masked it at build")
+    host.run_as = user
     host.plan("apt:fwupd", "--take-orphans")
     assert host.prune("savepoint")["verdict"]["ok"] is True
     host.plan("apt:fwupd", "--take-orphans")
@@ -1909,10 +1918,11 @@ def test_the_prune_simulations_leave_the_planner_log_and_caches_alone(tmp_path):
     ]
     assert {"remove", "purge", "autoremove"} <= set(kinds), sims
     assert kinds.count("autoremove") >= 3, sims
+    reads = [a for _, a, _ in host.calls("apt-cache")]
+    assert any(a.endswith(" fwupd") and "rdepends" in a for a in reads), reads
+    blanks = ("-o Dir::Cache::pkgcache=", "-o Dir::Cache::srcpkgcache=")
     for a in sims:
-        for o in (
-            "-o Dir::Log::Planner=/dev/null",
-            "-o Dir::Cache::pkgcache=",
-            "-o Dir::Cache::srcpkgcache=",
-        ):
-            assert o in a, a
+        assert "-o Dir::Log::Planner=/dev/null" in a, a
+    for a in sims + reads:
+        for o in blanks:
+            assert (o in a) == (user == "root"), (user, a)
