@@ -985,7 +985,7 @@ def test_systemd_255s_own_json_reads_as_the_unit_wrote_it(host):
         'say "quoted" and back\\slash and a tab here',
         "unicode caf?? ??? and a / slash",
         "bad bytes ?? here",
-        "an escape ?[31mred?[0m sequence",
+        "an escape red sequence",
         "+ export AWS_SECRET_ACCESS_KEY=<redacted>",
         "rclone copy /x https://user:<redacted>@host.example/bucket",
         "wrote object gs://bucket/app-20261124.tar.zst",
@@ -1033,6 +1033,50 @@ def test_a_secret_the_run_logs_is_redacted_by_name(host):
     assert "X-Amz-Signature=<redacted>" in lines[2] and "&x=1" in lines[2]
     # A line with no secret reads as written.
     assert lines[3] == "wrote gs://bucket/app-20260929.dump (12 MB)"
+
+
+def test_xtrace_quoting_and_run_on_names_are_redacted(host):
+    # CR 2813: xtrace quotes a word whose value needs it, a quoted value
+    # spans words, and an environment name runs its secret word on.
+    _logged(
+        host,
+        [
+            "+ export 'DB_PASSWORD=p@zq9!w0rd'",
+            "+ PGPASSWORD=zq9 psql -h db",
+            "run --password 'a zq9 c' --region us",
+            "+ export DB_PASSWORD='x zq9' NEXT=1",
+            "+ export MONKEY=banana NO_TOKEN=1",
+        ],
+    )
+    lines = host.recover()["backup"][0]["journal"]["lines"]
+    assert "zq9" not in host.result.stdout + host.result.stderr
+    assert lines == [
+        "+ export 'DB_PASSWORD=<redacted>'",
+        "+ PGPASSWORD=<redacted> psql -h db",
+        "run --password <redacted> --region us",
+        "+ export DB_PASSWORD=<redacted> NEXT=1",
+        "+ export MONKEY=banana NO_TOKEN=1",
+    ]
+
+
+def test_a_byte_array_keeps_its_words_apart_and_drops_csi(host):
+    # CR 2813: a tab or line break decoded as ? joined a name to the text
+    # around it, and so did a colour sequence.
+    _logged(
+        host,
+        [
+            list(b"rclone\t--s3-secret-access-key\tzq9SEKRET"),
+            list(b"\x1b[1m--password zq92\x1b[0m done"),
+            list(b"a\x1bb \x1b[38;5;196mred\x1b[m\r\n"),
+        ],
+    )
+    lines = host.recover()["backup"][0]["journal"]["lines"]
+    assert "zq9" not in host.result.stdout + host.result.stderr
+    assert lines == [
+        "rclone --s3-secret-access-key <redacted>",
+        "--password <redacted> done",
+        "a?b red",
+    ]
 
 
 def test_a_unit_that_didnt_start_a_run_now_shows_no_lines(host):

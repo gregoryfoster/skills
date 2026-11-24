@@ -850,19 +850,35 @@ fresh_redis() {  # <unit> <user> <key file>
 BJ_MAX=20 BJ_SAID=""
 # Matched wherever MESSAGE falls among the entry's keys, whose order varies
 # (systemd 255, CR 2803). A message holding any control byte or invalid
-# UTF-8 is an array of its bytes: each of 32-126 is kept and any other is a
-# ?, so an ANSI colour reads as ?[31m. --all prints a message over 4096
+# UTF-8 is an array of its bytes, decoded by bytes_text. --all prints a message over 4096
 # bytes, which is null without it. Only the first BJ_TAKE bytes are decoded,
 # then redacted, then cut at 500.
 BJ_MSG='"MESSAGE"[[:space:]]*:[[:space:]]*"(([^"\\]|\\.)*)"'
 BJ_BIN='"MESSAGE"[[:space:]]*:[[:space:]]*\[([0-9,[:space:]]*)\]'
 BJ_TAKE=2000
 bytes_text() {  # <var> <comma-separated byte values>: VAR := the printable ASCII among them, ? for the rest
-  local _bt_n _bt_o _bt_c _bt_out="" _bt_i=0
+  # A tab, LF or CR is a space, as in a string message, so words stay apart;
+  # an ANSI CSI sequence (ESC [ ... a final byte 0x40-0x7E) is dropped, so
+  # it can't join a name to the text before it (CR 2813).
+  local _bt_n _bt_o _bt_c _bt_out="" _bt_i=0 _bt_st=0
   for _bt_n in ${2//,/ }; do
     [ "$_bt_i" -lt "$BJ_TAKE" ] || break
     _bt_i=$((_bt_i + 1))
-    if [ "$_bt_n" -ge 32 ] 2>/dev/null && [ "$_bt_n" -le 126 ]; then
+    is_int "$_bt_n" || _bt_n=0
+    if [ "$_bt_st" -eq 2 ]; then
+      if [ "$_bt_n" -ge 64 ] && [ "$_bt_n" -le 126 ]; then _bt_st=0; fi
+      continue
+    fi
+    if [ "$_bt_st" -eq 1 ]; then
+      _bt_st=0
+      if [ "$_bt_n" -eq 91 ]; then _bt_st=2 && continue; fi
+      _bt_out="$_bt_out?"
+    fi
+    if [ "$_bt_n" -eq 27 ]; then
+      _bt_st=1
+    elif [ "$_bt_n" -eq 9 ] || [ "$_bt_n" -eq 10 ] || [ "$_bt_n" -eq 13 ]; then
+      _bt_out="$_bt_out "
+    elif [ "$_bt_n" -ge 32 ] && [ "$_bt_n" -le 126 ]; then
       printf -v _bt_o '%03o' "$_bt_n"
       printf -v _bt_c '%b' "\\0$_bt_o"
       _bt_out="$_bt_out$_bt_c"
@@ -870,6 +886,7 @@ bytes_text() {  # <var> <comma-separated byte values>: VAR := the printable ASCI
       _bt_out="$_bt_out?"
     fi
   done
+  [ "$_bt_st" -ne 1 ] || _bt_out="$_bt_out?"
   printf -v "$1" '%s' "$_bt_out"
 }
 BJ_U='\\u[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]'
