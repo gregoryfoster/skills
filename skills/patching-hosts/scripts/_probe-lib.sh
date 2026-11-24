@@ -91,9 +91,9 @@ The primitives these scripts reach a host through:
                             whether an aclfile or a user line sets the users
                             (RC_ACL_WHY says which), and whether an include
                             is there
-  redis_addr                RA_ARGS := the client's words for the address
+  redis_addr [tcp]          RA_ARGS := the client's words for the address
                             redis_conf read (-s, or -h and -p), RA_PORT its
-                            port
+                            port; with tcp, its port over a socket unless 0
   redis_persistence VAR     aof, rdb, none or unknown, from redis_conf
   hold_group_versions VAR SIM
                             "<pkg>=<version>" for each pending package a hold
@@ -1463,7 +1463,7 @@ redact_value() {  # <value> <the quote it starts in, or empty> <1 when a list's 
 }
 redact_word() {  # <text> [<separator before it>]: RS_OUT += the text under the name rule, from RS_*'s state, which it leaves for the next
   local _rd_w=$1 _rd_sep _rd_pre _rd_q _rd_n _rd_v _rd_out _rd_red _rd_list _rd_sp _rd_x _rd_i=0
-  local _rd_whole _rd_orig _rd_l _rd_n0
+  local _rd_whole _rd_orig _rd_l _rd_n0 _rd_cont
   local -a _rd_ws=()
   if [ $# -gt 1 ]; then _rd_sep=$2; elif [ -n "$RS_OUT" ]; then _rd_sep=" "; else _rd_sep=""; fi
   while [ -n "$_rd_w" ]; do
@@ -1565,13 +1565,25 @@ redact_word() {  # <text> [<separator before it>]: RS_OUT += the text under the 
         if [[ $_rd_l =~ $RS_XTRACE ]]; then RS_Q="" RS_WRAP=""; fi
         _rd_n0=${#RS_OUT} _rd_ws=()
         IFS=$' \t' read -r -a _rd_ws <<<"$_rd_l" || true
+        # A line ending in an unescaped \ runs on into the next, as the
+        # shell reads it: a lone \ there isn't a word, so a secret's value
+        # on the next line is still the next word (--token \ <newline>
+        # hunter2), and a value it ends runs on there too.
+        _rd_cont=0
+        case $_rd_l in *\\\\) ;; *\\) _rd_cont=1 ;; esac
+        if [ "$_rd_cont" -eq 1 ] && [ "${_rd_ws[${#_rd_ws[@]} - 1]}" = "\\" ]; then
+          _rd_ws=("${_rd_ws[@]:0:${#_rd_ws[@]}-1}")
+        fi
         for _rd_x in ${_rd_ws[@]+"${_rd_ws[@]}"}; do
           if [ "$_rd_i" -eq 0 ]; then redact_word "$_rd_x" "$_rd_sep"; else redact_word "$_rd_x"; fi
           _rd_i=1
           [ "$RS_Q" != "!" ] || break
         done
-        if [ "$RS_Q" = "\\" ]; then RS_Q=""; fi
-        if [ -n "$RS_Q" ] && [ "${#RS_OUT}" -gt "$_rd_n0" ]; then RS_OUT="$RS_OUT <...>"; fi
+        if [ "$RS_Q" = "\\" ] && [ "$_rd_cont" -eq 0 ]; then RS_Q=""; fi
+        case $RS_Q in
+          "" | \\) ;;
+          *) [ "${#RS_OUT}" -le "$_rd_n0" ] || RS_OUT="$RS_OUT <...>" ;;
+        esac
         case $RS_Q in "!" | B?) RS_Q="" ;; esac
         RS_WRAP=""
       done <<<"$_rd_orig"
@@ -1936,16 +1948,19 @@ redis_conf() {  # <unit>
 # address its file binds, the loopback where that's a wildcard or unset,
 # and its port, 6379 where unset (#379). RA_ARGS, which redis_conn and the
 # probe's INFO both use (CR 2828); RA_PORT, the port, or empty for a
-# socket.
+# socket. With tcp, the port wherever Redis listens on one, a socket's
+# too: a server with a unixsocket keeps its TCP port unless port is 0,
+# and the probe, not root, can't open a socket unixsocketperm keeps to
+# redis's own.
 RA_ARGS=() RA_PORT=""
-redis_addr() {
-  local _ra_b=$RC_BIND
+redis_addr() {  # [tcp]
+  local _ra_b=$RC_BIND _ra_p=$RC_PORT
   case $_ra_b in '' | '*' | 0.0.0.0 | '::' | '::*') _ra_b=127.0.0.1 ;; esac
-  if [ -n "$RC_SOCK" ]; then
+  is_int "$_ra_p" || _ra_p=6379
+  if [ -n "$RC_SOCK" ] && { [ "${1-}" != tcp ] || [ "$_ra_p" -eq 0 ]; }; then
     RA_ARGS=(-s "$RC_SOCK") RA_PORT=""
   else
-    RA_PORT=$RC_PORT
-    is_int "$RA_PORT" || RA_PORT=6379
+    RA_PORT=$_ra_p
     RA_ARGS=(-h "$_ra_b" -p "$RA_PORT")
   fi
 }

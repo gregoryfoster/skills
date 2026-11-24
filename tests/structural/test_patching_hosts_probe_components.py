@@ -648,6 +648,16 @@ PEM2 = (
         (["app", "--password ", "zq9"], "app --password <redacted>"),
         # CR 2838: \r, \v and \f stay inside a word, which recursed forever.
         (["prog", "a\rb", "c\fd --token zq9 e"], "prog a?b c?d --token <redacted> e"),
+        # A line ending in \ runs on into the next: the lone \ isn't the
+        # secret's value, and a value it ends runs on too.
+        (
+            ["sh", "-c", "run --token \\\n  zq9 next"],
+            "sh -c run --token <redacted> next",
+        ),
+        (
+            ["sh", "-c", "run --password=ab\\\nzq9 -e q"],
+            "sh -c run --password=<redacted> -e q",
+        ),
     ],
 )
 def test_the_oracle_s_leaks_stay_redacted(host, argv, args):
@@ -1760,6 +1770,19 @@ def test_each_engine_is_read_at_its_own_address(host):
     r, v = _dormant(out, "redis"), _dormant(out, "valkey")
     assert (r["workload"]["keys"], r["listeners"]) == (1, ["0.0.0.0:6379"])
     assert (v["workload"]["keys"], v["listeners"]) == (6, ["0.0.0.0:6380"])
+
+
+def test_a_unixsocket_engine_is_read_over_its_tcp_port(host):
+    # unixsocketperm 700 keeps the socket to redis and root, and the probe
+    # is neither; the server still listens on its port, unless port 0.
+    _engines(host, 6379, 6380, "active")
+    host.write(
+        "etc/redis/redis.conf",
+        "port 6379\nunixsocket /run/redis/redis-server.sock\nunixsocketperm 700\n",
+    )
+    out = host.run()
+    r = _dormant(out, "redis")
+    assert (r["workload"]["keys"], r["listeners"]) == (1, ["0.0.0.0:6379"])
 
 
 def test_a_stopped_engine_shows_no_listener_of_another_on_its_port(host):

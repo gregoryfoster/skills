@@ -5348,9 +5348,10 @@ read_redis_engine() {  # <engine> <server package, and its unit's name> <log dir
     done
     # The client its server takes (#706), at the address its own file and
     # arguments set: Redis and Valkey may both run, each on its own port
-    # (CR 2828). Unauthenticated, as before.
+    # (CR 2828). Unauthenticated, as before, and over TCP where it listens
+    # on a port, a unixsocket's too: the probe isn't root.
     redis_conf "$server.service"
-    redis_addr
+    redis_addr tcp
     cli=$RE_CLI addr=("${RA_ARGS[@]}")
     unit_show "$server.service" ActiveState || true
     # What listens is its own only while it runs: a stopped one's port may
