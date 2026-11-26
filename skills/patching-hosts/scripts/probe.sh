@@ -20,7 +20,7 @@ unattended-upgrade's stamp and runs the host's DPkg hooks: the host state it
 changes (references/readings.md). It runs the
 knob's health lines, which must be safe at any time, and its recovery lines
 only under --post-boot. The readings, and the mistake each one prevents:
-references/readings.md.
+references/readings.md and references/impact.md.
 
 Options:
   --config FILE       the knob (default: .skills/patching-hosts at the root of
@@ -3756,7 +3756,7 @@ check_exposure() {
     s=s
     [ "$n" -ne 1 ] || s=""
     u=${eu[$j]# } p=${ep[$j]# }
-    e="$n package$s pending from the third-party origin ${c//_/ }, and running services map its ${p% }: ${u% }. So its pending set is a security exposure, not maintenance (readings.md)."
+    e="$n package$s pending from the third-party origin ${c//_/ }, and running services map its ${p% }: ${u% }. So its pending set is a security exposure, not maintenance (impact.md)."
     case $pol in
       follow) e="$e The knob follows it, which takes it only in the maintenance lane, at the host's cadence. Expedite it: a dated window line from date -u (#421), then apply.sh --lane origin:$key with the owner's approval (policy.md, a pre-announced security release)." ;;
       pin) e="$e The knob pins it at $val, so no lane takes the set: the exposure stays until the owner moves the pin (policy.md)." ;;

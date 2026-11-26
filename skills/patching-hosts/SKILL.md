@@ -88,6 +88,7 @@ It never unmasks a timer, edits apt or needrestart config beyond the approved dr
 ## Detail Docs
 
 - [references/readings.md](references/readings.md) — what to measure before proposing, and the mistake each reading prevents
+- [references/impact.md](references/impact.md) — the readings of what a run touches: mapped libraries, services, data stores, restarters, live arguments
 - [references/run.md](references/run.md) — approvals, the gate, the recovery point, held steps
 - [references/reboot-and-record.md](references/reboot-and-record.md) — the reboot decision, the reboot chain, post-boot checks, the record
 - [references/datastores.md](references/datastores.md) — Redis, Valkey and Qdrant: reaching each, its recovery point, the chain's stop, a restore, the checks after a restart

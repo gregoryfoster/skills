@@ -1231,7 +1231,7 @@ is_int() {
 # can't be told from a user), and a secret-named query or fragment
 # parameter's value. The name stays, to show it was passed. By name only: a
 # positional secret, a short option's value and the environment aren't
-# recognised (readings.md).
+# recognised (impact.md).
 # A name is secret when it's one of SECRET_ARG_NAMES, or its last word is one
 # of SECRET_ARG_WORDS: words split at . - _ and a camelCase capital, so
 # -Dspring.datasource.password, --db_pass and --authToken all are (CR 2766).
@@ -1370,7 +1370,7 @@ secret_env_name() {  # <NAME>: 0 when an environment name marks a secret
 # word that ends with that quote (CR 2840). A word is read in one loop, never by recursion
 # (CR 2814), and a text past QS_MAX, or a line past RS_SCAN_MAX scanned,
 # isn't read: the rest of its line is dropped, marked (CR 2815, CR 2835).
-# A Python repr's \' inside '..' is read as a shell's (readings.md).
+# A Python repr's \' inside '..' is read as a shell's (impact.md).
 # The state between words: RS_Q, the quote a redacted value has open (' " or
 # $ for $'..', \ after an escaped space, B and a quote for the base's rule,
 # ! for the rest of the line, or empty); RS_NEXT, 1 when the next
