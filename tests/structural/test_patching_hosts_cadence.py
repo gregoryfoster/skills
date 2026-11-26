@@ -735,6 +735,16 @@ def test_two_consecutive_fridays_against_a_thursday_window_are_off_window(tmp_pa
         assert word in f["message"]
 
 
+def test_off_window_names_a_dated_catch_up_as_the_symptom(tmp_path):
+    # #717: broker's two catch-ups were the owner's answer to cadence:overdue,
+    # each in a dated window. The message says the cause is the missed weekly
+    # run, so a host with both findings knows which to settle.
+    h = _two_fridays(ClockHost(tmp_path).knob(WEEKLY_THU))
+    m = _finding(h.at("2026-11-24T12:00").run(), "cadence:off-window")["message"]
+    assert "Catch-ups in dated windows read off-window too" in m
+    assert "the missed weekly run" in m
+
+
 def test_off_window_leaves_overdue_as_it_was(tmp_path):
     # 26 November opens 5 d 18 h after the last run, so it isn't counted;
     # 3 December is, and closed with no run.
