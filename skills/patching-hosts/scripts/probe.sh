@@ -4669,11 +4669,19 @@ read_health() {  # <pre-run|post-boot>
 
 REBOOT_REQ=0 REBOOT_DEL=""
 read_reboot() {  # <pre-run|post-boot>
-  local f pk="" line out w
+  local f pk="" line out w mt since=""
   REBOOT_REQ=0 REBOOT_DEL=""
   for f in "$P_ROOT/run/reboot-required" "$P_ROOT/var/run/reboot-required"; do
     [ -e "$f" ] || continue
     REBOOT_REQ=1
+    # How long it has been due (#713): the file's mtime, as a date and
+    # whole days. An mtime that can't be read, or is ahead of now, adds
+    # nothing.
+    file_mtime mt "$f"
+    if [ -n "$mt" ] && [ "$mt" -le "$P_NOW" ]; then
+      iso_utc since "$mt"
+      [ -z "$since" ] || since=", pending since ${since%%T*} ($(((P_NOW - mt) / 86400)) days)"
+    fi
     if [ -r "$f.pkgs" ]; then
       while IFS= read -r line || [ -n "$line" ]; do
         if [ -n "$line" ]; then jpushs pk "$line"; fi
@@ -4699,7 +4707,7 @@ read_reboot() {  # <pre-run|post-boot>
     jadds R_REBOOT kernel_status_note "the platform's kernel: never decide a reboot from it"
   fi
   if [ "$REBOOT_REQ" -eq 1 ] && [ "$1" = pre-run ]; then
-    finding risk reboot:pending "" "A reboot is already pending from an earlier upgrade (/run/reboot-required${pk:+, packages listed under impact.reboot}). Plan it into this run's window."
+    finding risk reboot:pending "" "A reboot is already pending from an earlier upgrade (/run/reboot-required$since${pk:+, packages listed under impact.reboot}). Plan it into this run's window."
   fi
 }
 
