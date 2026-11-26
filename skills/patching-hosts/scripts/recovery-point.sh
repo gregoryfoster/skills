@@ -878,9 +878,42 @@ bytes_text() {  # <var> <comma-separated byte values>: VAR := the printable ASCI
   # parameter (a colour), or one no letter, digit or _ follows. Otherwise
   # the sequence ends before it and it's read as text, so ESC [ --password
   # and ESC [password keep their names. A byte over 126 is a ?.
-  local _bt_o _bt_c _bt_out="" _bt_i=0 _bt_j _bt_p _bt_f _bt_x _bt_k
-  local -a _bt_b=()
-  read -r -a _bt_b <<<"${2//,/ }" || true
+  #
+  # Only the first BJ_TAKE bytes are decoded, the cap the string form takes
+  # too, and one more is read only as what follows a CSI's final or an ESC.
+  # Cutting there is safe because everything past the cap is dropped, and a
+  # value only follows its name. A name before the cap whose value crosses
+  # it has what's left of the value redacted. A name the cap cuts in two has
+  # no value after it. Nothing is appended after the cut, so it can't join
+  # two words, and a CSI the cap cuts ends there: its final, past the cap,
+  # is never read as text (#710).
+  #
+  # The values are split from a prefix of the string, never from all of it,
+  # so a message of megabytes costs what 2,000 bytes do. Bash 3.2's
+  # ${2//,/ } over a whole 10,000-byte array took 32 s (#710). The prefix
+  # holds 4 characters a value at first ("255,"), and doubles until it has
+  # BJ_TAKE + 1 whole values or is the whole string, so whitespace between
+  # values costs only the doublings. A value the prefix cuts is the last
+  # field, and it's dropped. A comma, a space, a tab or a line break
+  # separates values, and the fields are as ${2//,/ } split them: read
+  # stops at a line break, an empty field is dropped, and any other junk is
+  # a value that isn't a number, so it reads as a space.
+  local _bt_o _bt_c _bt_out="" _bt_i=0 _bt_j _bt_p _bt_f _bt_x _bt_k _bt_n _bt_s
+  local -a _bt_b=() _bt_r=()
+  _bt_n=$(((BJ_TAKE + 2) * 4))
+  while :; do
+    _bt_s=${2:0:$_bt_n}
+    IFS=$' \t\n,' read -r -a _bt_r <<<"$_bt_s" || true
+    _bt_b=()
+    for _bt_c in ${_bt_r[@]+"${_bt_r[@]}"}; do
+      [ -z "$_bt_c" ] || _bt_b+=("$_bt_c")
+    done
+    [ "${#_bt_s}" -lt "${#2}" ] || break
+    [ "${#_bt_b[@]}" -gt 0 ] && unset "_bt_b[$((${#_bt_b[@]} - 1))]"
+    [ "${#_bt_b[@]}" -le "$BJ_TAKE" ] || break
+    _bt_n=$((_bt_n * 2))
+  done
+  [ "${#_bt_b[@]}" -le "$((BJ_TAKE + 1))" ] || _bt_b=("${_bt_b[@]:0:$((BJ_TAKE + 1))}")
   _bt_k=${#_bt_b[@]}
   [ "$_bt_k" -le "$BJ_TAKE" ] || _bt_k=$BJ_TAKE
   while [ "$_bt_i" -lt "$_bt_k" ]; do
