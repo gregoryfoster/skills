@@ -666,6 +666,130 @@ def test_the_oracle_s_leaks_stay_redacted(host, argv, args):
     assert "zq9" not in host.result.stdout
 
 
+# #712: a secret named as a JSON key, an HTTP header or a name: value pair,
+# with the same names. Authorization's scheme word stays and its whole value
+# goes, to the quote the header opened in or the line's end; a JSON key's
+# value is a string, through its closing quote, or a literal, to , } or ]; a
+# pair's is the next word. Each is (argv, shown).
+PAIR_ROWS = [
+    # The issue's table, measured at adf23ade.
+    (
+        ["app", "--config", '{"password": "zq9", "user": "u"}'],
+        'app --config {"password": "<redacted>", "user": "u"}',
+    ),
+    (["app", '{"password":"zq9"}'], 'app {"password":"<redacted>"}'),
+    (
+        ["curl", "-H", "Authorization: Bearer zq9", "https://h/x"],
+        "curl -H Authorization: Bearer <redacted> https://h/x",
+    ),
+    (
+        ["sh", "-c", "curl -H 'Authorization: Bearer zq9' https://h/x"],
+        "sh -c curl -H 'Authorization: Bearer <redacted>' https://h/x",
+    ),
+    (
+        ["curl", "-H", "authorization: token zq9", "https://h/x"],
+        "curl -H authorization: token <redacted> https://h/x",
+    ),
+    (
+        ["curl", "-H", "X-Api-Key: zq9", "https://h/x"],
+        "curl -H X-Api-Key: <redacted> https://h/x",
+    ),
+    (["app", "password: zq9"], "app password: <redacted>"),
+    # Headers: Proxy-Authorization, no scheme word, a value of many words,
+    # a quote it ends at, case, and an X-...-Token.
+    (
+        ["curl", "-H", "Proxy-Authorization: Basic zq9"],
+        "curl -H Proxy-Authorization: Basic <redacted>",
+    ),
+    (["curl", "-H", "Authorization: zq9"], "curl -H Authorization: <redacted>"),
+    (
+        ["curl", "-H", 'Authorization: Digest username="u", response="zq9"', "-s"],
+        "curl -H Authorization: Digest <redacted> -s",
+    ),
+    (
+        ["sh", "-c", 'curl -H "Authorization: Digest u=1, r=zq9" -d x https://h'],
+        'sh -c curl -H "Authorization: Digest <redacted>" -d x https://h',
+    ),
+    (
+        ["curl", "--header=AUTHORIZATION: BEARER zq9"],
+        "curl --header=AUTHORIZATION: BEARER <redacted>",
+    ),
+    (
+        ["sh", "-c", "curl -H'X-Auth-Token: zq9' h"],
+        "sh -c curl -H'X-Auth-Token: <redacted>' h",
+    ),
+    # JSON: spacing, nesting, an escaped quote, a literal, a list's, a
+    # Python repr's, and the escaped JSON a script string holds.
+    (
+        ["app", '{"password" : "zq9", "u": 1}'],
+        'app {"password" : "<redacted>", "u": 1}',
+    ),
+    (
+        ["app", '{"db":{"password":"zq9","port":5432}}'],
+        'app {"db":{"password":"<redacted>","port":5432}}',
+    ),
+    (
+        ["app", '{"password":"zq9\\"zq9b","u":"v"}'],
+        'app {"password":"<redacted>","u":"v"}',
+    ),
+    (["app", '{"api_key": 9123, "n": 1}'], 'app {"api_key": <redacted>, "n": 1}'),
+    (
+        ["app", '[{"token":"zq9"},{"token":"zq9b"}]'],
+        'app [{"token":"<redacted>"},{"token":"<redacted>"}]',
+    ),
+    (
+        ["app", "{'password': 'zq9 zq9b', 'user': 'u'}"],
+        "app {'password': '<redacted>', 'user': 'u'}",
+    ),
+    (
+        ["sh", "-c", 'run --data "{\\"token\\": \\"zq9\\"}" ok'],
+        'sh -c run --data "{\\"token\\": \\"<redacted>\\"}" ok',
+    ),
+    (["app", '{"Authorization":"Bearer zq9"}'], 'app {"Authorization":"<redacted>"}'),
+    (
+        ["app", '{"url":"https://h:1/x","secret":"zq9"}'],
+        'app {"url":"https://h:1/x","secret":"<redacted>"}',
+    ),
+    # A pair: a quoted value, one of many words, and a name ending the
+    # element, whose value is the next.
+    (["app", 'password: "zq9 zq9b" next'], 'app password: "<redacted>" next'),
+    (["app", "sh -c 'token: zq9' after"], "app sh -c 'token: <redacted>' after"),
+    (["app", "password:", "zq9"], "app password: <redacted>"),
+    # Kept: a prompt that ends at its colon, a name in prose, a name that
+    # isn't a secret's, and a key whose value is an object or a list.
+    (["app", "Enter password:"], "app Enter password:"),
+    (["app", "missing Authorization header"], "app missing Authorization header"),
+    (["app", '{"user": "u", "port": 1}'], 'app {"user": "u", "port": 1}'),
+    (["app", '{"secrets":{"a":1}}'], 'app {"secrets":{"a":1}}'),
+    # Taken: what follows a prompt's colon is read as its value.
+    (["app", "Enter password: here"], "app Enter password: <redacted>"),
+    # An X-...-Key header's value is all of it; an argv's state carries from
+    # one argument to the next, and an argument ends a header's value.
+    (["curl", "-H", "X-Api-Key: zq9 zq9b", "-s"], "curl -H X-Api-Key: <redacted> -s"),
+    (
+        ["app", '{"password":"a', "zq9", 'zq9b",', '"u":', "1}"],
+        'app {"password":"<redacted>", "u": 1}',
+    ),
+    (["app", "X-Api-Key:", "", "zq9"], "app X-Api-Key:  <redacted>"),
+    (
+        ["app", "--h", "Authorization:", "Bearer", "zq9"],
+        "app --h Authorization: Bearer <redacted>",
+    ),
+    # A value runs on past its closing quote, as a shell word does.
+    (
+        ["sh", "-c", "echo 'token: zq9'zq9b'zq9c' ok"],
+        "sh -c echo 'token: <redacted>' ok",
+    ),
+]
+
+
+@pytest.mark.parametrize("argv, args", PAIR_ROWS)
+def test_live_args_redacts_a_json_key_a_header_and_a_pair(host, argv, args):
+    e = _service_argv(host, argv)
+    assert e["args"] == args
+    assert "zq9" not in host.result.stdout
+
+
 @pytest.mark.parametrize(
     "element",
     [
@@ -675,8 +799,21 @@ def test_the_oracle_s_leaks_stay_redacted(host, argv, args):
         "--x=https://h/?" + "a=1&" * 500_000,
         "--password=" + "a'b'" * 500_000,
         "--password " + "a b " * 500_000,
+        # #712: a JSON value that never closes, a word of 1200 keys, and
+        # pairs, as dense as they come; an element is cut back to a space.
+        '{"password":"' + 'a\\" ' * 500_000,
+        ('"token":"a",' * 1200 + " ") * 140,
+        '{"token": "a", ' * 150_000,
     ],
-    ids=["semicolons", "query", "quotes", "spaces"],
+    ids=[
+        "semicolons",
+        "query",
+        "quotes",
+        "spaces",
+        "json-value",
+        "json-keys",
+        "json-pairs",
+    ],
 )
 def test_a_2_mb_argument_is_read_in_bounded_time(host, element):
     start = time.monotonic()

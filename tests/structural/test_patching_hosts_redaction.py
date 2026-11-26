@@ -104,3 +104,40 @@ def test_a_query_as_long_as_an_argument_may_be_is_redacted_quickly():
         os.unlink(f.name)
     assert time.monotonic() - start < 5
     assert r.stdout.endswith("&token=<redacted>")
+
+
+def _pairs(text: str) -> tuple[str, float]:
+    with tempfile.NamedTemporaryFile("w", delete=False) as f:
+        f.write(text)
+    start = time.monotonic()
+    try:
+        r = subprocess.run(
+            [
+                "bash",
+                "-c",
+                f'. "{LIB}"; t=$(cat "{f.name}"); redact_pairs o "$t"; printf %s "$o"',
+            ],
+            capture_output=True,
+            text=True,
+            env={**clean_env(), "LC_ALL": "C"},
+            check=True,
+            timeout=120,
+        )
+    finally:
+        os.unlink(f.name)
+    return r.stdout, time.monotonic() - start
+
+
+def test_a_word_of_many_json_keys_is_read_key_by_key():
+    # #712: each key's value is scanned to its closing quote only, so a word
+    # of 1200 keys shows every one, and quickly.
+    out, took = _pairs('{"token":"zq9",' * 1200 + "}")
+    assert out == '{"token":"<redacted>",' * 1200 + "}"
+    assert took < 10
+
+
+def test_a_value_that_doesn_t_close_within_qs_max_drops_the_line():
+    # As a value past 4 KB does under the name rule: the rest of the line
+    # drops, marked.
+    out, _ = _pairs('{"password":"' + "zq9" * 2000 + '" shown?')
+    assert out == '{"password":"<redacted> <...>'

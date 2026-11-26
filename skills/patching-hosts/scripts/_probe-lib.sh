@@ -1621,6 +1621,218 @@ redact_words() {  # <var> <word>...: the words under the name rule, joined by a 
   printf -v "$_rw_v" '%s' "$RS_OUT"
 }
 
+# --- the name rule's other forms (#712) ----------------------------------------
+# A secret named as a JSON key ("password": "x", 'token': 'x', \"key\": 1),
+# an HTTP header (Authorization: Bearer x, X-Api-Key: x) or a pair
+# (password: x), with the same names. redact_pairs reads what the rule above
+# shows, a log line or an argument at a time, and only puts <redacted> in
+# place of text there, so it never shows what that rule hid. Authorization
+# and Proxy-Authorization are secret too: the scheme word stays, and the
+# whole value goes, to the quote the header opened in, or the line's end. A
+# JSON key's value is a string, through its closing quote, or a number or
+# literal, to a , } or ]; an object or a list isn't one, and its keys are
+# read. A pair's value is the next word, through its closing quote if it
+# opens one. A value spans words, not lines. Each word is read once, by
+# pattern, and a value's text past QS_MAX drops the rest of the line.
+RP_AUTH="authorization proxy-authorization"
+RP_SCHEMES="basic bearer digest negotiate ntlm token hoba mutual vapid oauth apikey
+  aws4-hmac-sha256 scram-sha-1 scram-sha-256"
+RP_BARE_RE="^(-[A-Za-z]|[^=:\"']*=)?[[{(]*(\\\\?[\"'])?([A-Za-z][A-Za-z0-9_.-]*):\$"
+RP_KEYC_RE="(\\\\?[\"'])([A-Za-z0-9_.-]+)(\\\\?[\"'])[[:space:]]*:\$"
+RP_KEY_RE="(\\\\?[\"'])([A-Za-z0-9_.-]+)(\\\\?[\"'])\$"
+RP_COLON_RE='^[^:]*:'
+RP_LIT_RE='^[^],}]*'
+RP_RUN_RE="^[^\"']*[\"']"
+RP_M="" RP_N="" RP_D="" RP_E=0 RP_X=0 RP_P="" RP_G=0 RP_C=0 RP_AT=0 RP_JOIN=0
+rp_listed() {  # <word> <list>: 0 when the word is in the list, in any case
+  local _rl_w _rl_nc=0 _rl_rc=1
+  shopt -q nocasematch && _rl_nc=1
+  shopt -s nocasematch
+  for _rl_w in $2; do
+    case $1 in "$_rl_w") _rl_rc=0 ;; esac
+  done
+  [ "$_rl_nc" -eq 1 ] || shopt -u nocasematch
+  return "$_rl_rc"
+}
+rp_key() {  # <name>: 0 when a JSON key or a header by that name holds a secret
+  rp_listed "$1" "$RP_AUTH" || secret_arg_name "$1"
+}
+rp_close() {  # <delimiter> <text>: RP_AT := the length through the delimiter that closes the value; -1 when it doesn't close there, -2 when it doesn't within QS_MAX
+  local _pc_t=$2 _pc_n=0 _pc_re _pc_no=-1
+  # Only the first QS_MAX bytes are scanned.
+  if [ "${#_pc_t}" -gt "$QS_MAX" ]; then _pc_t=${_pc_t:0:$QS_MAX} _pc_no=-2; fi
+  case $1 in
+    \") _pc_re=$QS_RE_DQ ;;
+    \') _pc_re=$QS_RE_AQ ;;
+    *) _pc_re='^[^\\]*' ;;
+  esac
+  # A \ escapes the next character: a value in shell quotes that holds one
+  # runs on, which only hides more.
+  while :; do
+    [[ $_pc_t =~ $_pc_re ]]
+    _pc_n=$((_pc_n + ${#BASH_REMATCH[0]})) _pc_t=${_pc_t:${#BASH_REMATCH[0]}}
+    if [ -z "$_pc_t" ]; then RP_AT=$_pc_no; return 0; fi
+    case $1 in
+      \" | \')
+        if [ "${_pc_t:0:1}" = "$1" ]; then RP_AT=$((_pc_n + 1)); return 0; fi
+        _pc_n=$((_pc_n + 2)) _pc_t=${_pc_t:2} ;;
+      *)
+        if [ "${_pc_t:0:2}" = "$1" ]; then RP_AT=$((_pc_n + 2)); return 0; fi
+        _pc_n=$((_pc_n + 1)) _pc_t=${_pc_t:1} ;;
+    esac
+  done
+}
+# RP_M, the state between words: "" none; j, a JSON key's value comes next;
+# w, a pair's; k, a JSON key's : may start the next word; a, a header's
+# scheme word may come next, then RP_N; s, inside a quoted value that RP_D
+# closes; q, the rest of the quote RP_D, opened before the name; r, the rest
+# of the line. RP_E: 1 once the value's <redacted> is shown; RP_X: 1 when
+# its closing delimiter isn't shown, since the value ran on past a quote.
+rp_word() {  # <word>: RP_P := what it shows; RP_G := 1 when it joins the last word's value with no space; RP_C := 1 when it hid any of it
+  local _pw_s=$1 _pw_f=1 _pw_d _pw_m _pw_p
+  RP_P="" RP_G=0 RP_C=0
+  while :; do
+    case $RP_M in
+      r)
+        RP_C=1
+        if [ "$RP_E" -eq 0 ]; then RP_P="<redacted>" RP_E=1; fi
+        return 0 ;;
+      a)
+        RP_M=$RP_N
+        if [ "$_pw_f" -eq 1 ] && rp_listed "$_pw_s" "$RP_SCHEMES"; then
+          RP_P=$_pw_s
+          return 0
+        fi ;;
+      k)
+        RP_M=""
+        case $_pw_s in
+          :*)
+            RP_P=":" _pw_s=${_pw_s:1} RP_M=j _pw_f=0
+            [ -n "$_pw_s" ] || return 0 ;;
+        esac ;;
+      j | w)
+        _pw_m=$RP_M RP_M=""
+        case $_pw_s in
+          \\[\"\']*) _pw_d=${_pw_s:0:2} ;;
+          [\"\']*) _pw_d=${_pw_s:0:1} ;;
+          *) _pw_d="" ;;
+        esac
+        if [ -n "$_pw_d" ]; then
+          RP_P="$RP_P$_pw_d<redacted>" RP_C=1 RP_E=1 RP_M=s RP_D=$_pw_d
+          _pw_s=${_pw_s:${#_pw_d}} _pw_f=0
+        elif [ "$_pw_m" = w ]; then
+          RP_P="$RP_P<redacted>" RP_C=1
+          return 0
+        else
+          case $_pw_s in
+            [\{\[]*) ;;
+            *)
+              [[ $_pw_s =~ $RP_LIT_RE ]]
+              RP_P="$RP_P<redacted>" RP_C=1 _pw_s=${_pw_s:${#BASH_REMATCH[0]}} _pw_f=0 ;;
+          esac
+        fi ;;
+      s | q)
+        if [ "$RP_E" -eq 0 ]; then
+          RP_P="$RP_P<redacted>" RP_E=1
+        elif [ "$_pw_f" -eq 1 ]; then
+          RP_G=1
+        fi
+        RP_C=1
+        rp_close "$RP_D" "$_pw_s"
+        case $RP_AT in
+          -1) return 0 ;;
+          -2)
+            RP_M=r RP_P="$RP_P <...>"
+            return 0 ;;
+        esac
+        [ "$RP_X" -eq 1 ] || RP_P="$RP_P$RP_D"
+        _pw_s=${_pw_s:$RP_AT} RP_M="" RP_E=0 RP_X=0 _pw_f=0
+        # As a shell word does, the value runs on past its closing quote,
+        # to the word's end or a ; ) , & | ] }, and through any quote it
+        # opens there ('a'b c' is one value).
+        case $_pw_s in
+          "" | [\;\),\&\|\]\}]*) ;;
+          *)
+            [[ $_pw_s =~ $RP_RUN_RE ]] || return 0
+            RP_D=${BASH_REMATCH[0]: -1} _pw_s=${_pw_s:${#BASH_REMATCH[0]}} RP_M=s RP_E=1 RP_X=1 ;;
+        esac ;;
+      *)
+        # A name that ends the word, the header's or the pair's.
+        if [ "$_pw_f" -eq 1 ] && [[ $_pw_s =~ $RP_BARE_RE ]]; then
+          RP_D=${BASH_REMATCH[2]} RP_E=0 RP_X=0 _pw_p=${BASH_REMATCH[3]}
+          if rp_listed "$_pw_p" "$RP_AUTH"; then
+            RP_M=a RP_N=r
+            [ -z "$RP_D" ] || RP_N=q
+          elif secret_arg_name "$_pw_p"; then
+            # An X-...-Key or -Token header's value is all of it, as
+            # Authorization's; a pair's is a word.
+            case $_pw_p in [Xx]-?*-?*) RP_M=r ;; *) RP_M=w ;; esac
+            [ -z "$RP_D" ] || RP_M=q
+          fi
+          RP_P=$_pw_s
+          return 0
+        fi
+        _pw_f=0
+        # JSON keys, each at a : after a quoted name.
+        case $_pw_s in
+          *[\"\']*) ;;
+          *)
+            RP_P="$RP_P$_pw_s"
+            return 0 ;;
+        esac
+        while [[ $_pw_s =~ $RP_COLON_RE ]]; do
+          _pw_p=${BASH_REMATCH[0]}
+          _pw_s=${_pw_s:${#_pw_p}} RP_P="$RP_P$_pw_p"
+          if [[ $_pw_p =~ $RP_KEYC_RE ]] && [ "${BASH_REMATCH[1]: -1}" = "${BASH_REMATCH[3]: -1}" ] &&
+            rp_key "${BASH_REMATCH[2]}"; then
+            RP_M=j
+            [ -n "$_pw_s" ] || return 0
+            break
+          fi
+        done
+        [ -z "$RP_M" ] || continue
+        # A quoted name that ends the word: its : may start the next.
+        if [[ $_pw_s =~ $RP_KEY_RE ]] && [ "${BASH_REMATCH[1]: -1}" = "${BASH_REMATCH[3]: -1}" ] &&
+          rp_key "${BASH_REMATCH[2]}"; then
+          RP_M=k
+        fi
+        RP_P="$RP_P$_pw_s"
+        return 0 ;;
+    esac
+  done
+}
+# An argv's state carries from one argument to the next, but for r once its
+# value has begun: an argument ends a header's unquoted value, as a line does.
+redact_pairs() {  # <var> <text> [1 to go on from the last call's state, the argument before]: VAR := the text with #712's forms hidden; RP_JOIN := 1 when it continues the last call's value, so it joins it with no space
+  local _rp_v=$1 _rp_t=$2 _rp_x _rp_out="" _rp_ch=0
+  local -a _rp_ws=()
+  RP_JOIN=0
+  if [ "${3:-0}" -ne 1 ] || [ "$RP_M$RP_E" = r1 ]; then RP_M="" RP_N="" RP_D="" RP_E=0 RP_X=0; fi
+  case $RP_M:$_rp_t in
+    :*:*) ;;
+    :*)
+      printf -v "$_rp_v" '%s' "$_rp_t"
+      return 0 ;;
+  esac
+  read -r -a _rp_ws <<<"$_rp_t" || true
+  for _rp_x in ${_rp_ws[@]+"${_rp_ws[@]}"}; do
+    rp_word "$_rp_x"
+    [ "$RP_C" -eq 0 ] || _rp_ch=1
+    [ -n "$RP_P" ] || continue
+    [ -n "$_rp_out" ] || RP_JOIN=$RP_G
+    if [ "$RP_G" -eq 1 ] || [ -z "$_rp_out" ]; then
+      _rp_out="$_rp_out$RP_P"
+    else
+      _rp_out="$_rp_out $RP_P"
+    fi
+  done
+  if [ "$_rp_ch" -eq 1 ]; then
+    printf -v "$_rp_v" '%s' "$_rp_out"
+  else
+    printf -v "$_rp_v" '%s' "$_rp_t"
+  fi
+}
+
 # --- JSON ----------------------------------------------------------------------
 # A host's strings (a file name under /tmp, a process's argv, a unit name) can
 # hold any byte. Under LC_ALL=C, every byte that isn't printable ASCII becomes

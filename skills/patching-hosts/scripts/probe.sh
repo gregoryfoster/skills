@@ -3897,7 +3897,7 @@ cmdline_of() {  # <var> <pid>
 # (CR 2835, CR 2839, CR 2841). cmdline_of stays whole for the probe's reads.
 ARGS_MAX=16384
 redacted_cmdline_of() {  # <var> <pid>
-  local _rc_w _rc_out="" _rc_next=0 _rc_cut
+  local _rc_w _rc_out="" _rc_next=0 _rc_cut _rc_pc=0 _rc_was
   local -a _rc_a=()
   while IFS= read -r -d '' _rc_w || [ -n "$_rc_w" ]; do
     _rc_a+=("$_rc_w")
@@ -3924,8 +3924,20 @@ redacted_cmdline_of() {  # <var> <pid>
     RS_OUT="" RS_Q="" RS_NEXT=0 RS_LIST=0 RS_WRAP="" RS_WHOLE=1 RS_SCANNED=0
     redact_word "$_rc_w"
     _rc_next=$RS_NEXT
+    # #712's forms, over what it shows, from where the last element left
+    # them: a name that ends one takes the next as its value.
+    _rc_was=$RS_OUT
+    redact_pairs RS_OUT "$RS_OUT" "$_rc_pc"
+    _rc_pc=1
+    # An element all inside the last one's value shows nothing.
+    [ -n "$RS_OUT" ] || [ -z "$_rc_was" ] || continue
+    # A short value's <redacted> is longer than it: cut back to ARGS_MAX.
+    if [ "${#RS_OUT}" -gt "$ARGS_MAX" ]; then
+      RS_OUT=${RS_OUT:0:$ARGS_MAX} _rc_cut=1
+      RS_OUT=${RS_OUT% *}
+    fi
     if [ "$_rc_cut" -eq 1 ] && [[ $RS_OUT != *"<...>" ]]; then RS_OUT="${RS_OUT:+$RS_OUT }<...>"; fi
-    _rc_out="$_rc_out $RS_OUT"
+    if [ "$RP_JOIN" -eq 1 ]; then _rc_out="$_rc_out$RS_OUT"; else _rc_out="$_rc_out $RS_OUT"; fi
   done
   # Without the empty elements a rewritten argv is padded with.
   while [[ $_rc_out == *" " ]]; do _rc_out=${_rc_out% }; done
