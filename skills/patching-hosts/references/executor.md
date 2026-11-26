@@ -116,7 +116,7 @@ Without `--approve` nothing is refused for it, and `gate.standing.inside` is the
 
 The knob's rebuild section ([knob.md](knob.md), #673) says how an executor moves a host onto a new VM: it rehearses there well before the cutover, running `rebuild-install`, then `rebuild-restore` and each `rebuild-check`. No script here runs any of them. At the cutover, **`rebuild-sync` (#716) runs on the old VM:**
 - after the host's `restarter` and `service` units are stopped and every `inflight` line prints `0`, and before anything else in the cutover;
-- it must exit 0, or the cutover stops on the old VM;
+- it must exit 0. What a failure does is the executor's own rollback, never this skill's: no script here runs it;
 - the cutover's `rebuild-restore` then takes what it wrote, so nothing written between the rehearsal and the cutover is lost.
 
 `rebuild-sync none` runs nothing: it's the owner's claim that the host keeps no state beyond its repo, its image and its `rebuild-secret` files, never inferred. A section of the host's own without the line is `rebuild-incomplete`. It changes nothing for a declared `datastore`, which keeps its recovery point through `recovery-point.sh`; the sync is the host's own command, and may well start the backup unit a `backup` line names.

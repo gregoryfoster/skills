@@ -21,18 +21,20 @@ Options:
   -h, --help      show this help
 
 Output keys: knob, host, sections, class, posture, cadence, bulk_factor,
-phasing, report_only, report_only_reasons, window, quiet, inflight, health, recovery, restarter, service,
-backup, caller, depends, datastore, hold, owner, image_owner, origin,
-exception, standing, records, rebuild, findings. A window carries weekday, week (of the
-month, or null), date (a dated line's, or null), start, end, wraps, reason,
-expired and line. rebuild is null where no rebuild-* line applies to the
-host, or image, install and restore (each a value and its line), check,
-secret (paths: the reader never opens one), sync (a value and its line, none
-as given: #716) and step (host, name, run, line, undo, undo_line). A standing approval carries lane, no_reboot, no_datastore,
-no_held, review_by, reason, expired and line. Every value from the knob carries its line number, but a
-datastore's databases, merged per unit, carry the line that first names the
-unit; sections are the matching headers' globs, with no line. A default
-carries line null. The grammar: references/knob.md.
+phasing, report_only, report_only_reasons, window, quiet, inflight, health,
+recovery, restarter, service, backup, caller, depends, datastore, hold,
+owner, image_owner, origin, exception, standing, records, rebuild, findings.
+A window carries weekday, week (of the month, or null), date (a dated
+line's, or null), start, end, wraps, reason, expired and line. rebuild is
+null where no rebuild-* line applies to the host, or image, install and
+restore (each a value and its line), check, secret (paths: the reader never
+opens one), sync (a value and its line, none as given: #716) and step (host,
+name, run, line, undo, undo_line). A standing approval carries lane,
+no_reboot, no_datastore, no_held, review_by, reason, expired and line. Every
+value from the knob carries its line number, but a datastore's databases,
+merged per unit, carry the line that first names the unit; sections are the
+matching headers' globs, with no line. A default carries line null. The
+grammar: references/knob.md.
 
 A malformed line, an expired exception, an ambiguous section, a section
 repeated or a value set twice at the same precedence is a finding in the
