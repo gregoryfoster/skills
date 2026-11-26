@@ -27,8 +27,8 @@ exception, standing, records, rebuild, findings. A window carries weekday, week 
 month, or null), date (a dated line's, or null), start, end, wraps, reason,
 expired and line. rebuild is null where no rebuild-* line applies to the
 host, or image, install and restore (each a value and its line), check,
-secret (paths: the reader never opens one) and step (host, name, run, line,
-undo, undo_line). A standing approval carries lane, no_reboot, no_datastore,
+secret (paths: the reader never opens one), sync (a value and its line, none
+as given: #716) and step (host, name, run, line, undo, undo_line). A standing approval carries lane, no_reboot, no_datastore,
 no_held, review_by, reason, expired and line. Every value from the knob carries its line number, but a
 datastore's databases, merged per unit, carry the line that first names the
 unit; sections are the matching headers' globs, with no line. A default
@@ -259,6 +259,7 @@ if [ "$KNOB_REBUILD" -eq 1 ]; then
   printf '    "restore": {"value": %s, "line": %s},\n' "$(js_or_null "$KNOB_REBUILD_RESTORE")" "$(num_or_null "$KNOB_REBUILD_RESTORE_LINE")"
   printf '    "check": %s,\n' "$(js_records o_check ${KNOB_REBUILD_CHECK[@]+"${KNOB_REBUILD_CHECK[@]}"})"
   printf '    "secret": %s,\n' "$(js_records o_secret ${KNOB_REBUILD_SECRET[@]+"${KNOB_REBUILD_SECRET[@]}"})"
+  printf '    "sync": {"value": %s, "line": %s},\n' "$(js_or_null "$KNOB_REBUILD_SYNC")" "$(num_or_null "$KNOB_REBUILD_SYNC_LINE")"
   printf '    "step": %s\n' "$(js_records o_step ${KNOB_REBUILD_STEP[@]+"${KNOB_REBUILD_STEP[@]}"})"
   printf '  },\n'
 else

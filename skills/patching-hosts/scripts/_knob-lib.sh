@@ -97,8 +97,9 @@ esac
 #
 # The rebuild section (#673), what an executor reads to rebuild the host onto
 # a new VM; no script here runs or opens any of it. KNOB_REBUILD is 1 when
-# any rebuild-* line applies to the host. KNOB_REBUILD_IMAGE, _INSTALL and
-# _RESTORE are one value each, with a *_LINE.
+# any rebuild-* line applies to the host. KNOB_REBUILD_IMAGE, _INSTALL,
+# _RESTORE and _SYNC are one value each, with a *_LINE. _SYNC (#716) is what
+# the cutover runs on the old VM once its writers stop, or none.
 #   KNOB_REBUILD_CHECK   command line
 #   KNOB_REBUILD_SECRET  path line (a path only: never opened or statted)
 #   KNOB_REBUILD_STEP    host name run line undo undo-line; host is the one
@@ -127,6 +128,7 @@ knob_reset() {
   KNOB_REBUILD=0 KNOB_REBUILD_IMAGE="" KNOB_REBUILD_IMAGE_LINE=""
   KNOB_REBUILD_INSTALL="" KNOB_REBUILD_INSTALL_LINE=""
   KNOB_REBUILD_RESTORE="" KNOB_REBUILD_RESTORE_LINE=""
+  KNOB_REBUILD_SYNC="" KNOB_REBUILD_SYNC_LINE=""
   KNOB_REBUILD_CHECK=() KNOB_REBUILD_SECRET=() KNOB_REBUILD_STEP=()
   KNOB_REPORT_ONLY=0 KNOB_REPORT_ONLY_WHY=()
   # Parsed records: one entry per valid directive line, in file order.
@@ -466,7 +468,7 @@ _knob_directive() {  # <line> <sec> <text>
       else
         _knob_malformed "$n" "rebuild-image takes one image family"
       fi ;;
-    rebuild-install | rebuild-restore | rebuild-check)
+    rebuild-install | rebuild-restore | rebuild-check | rebuild-sync)
       if [ -n "$rest" ]; then
         _knob_record "$n" "$sec" "$dir" "" "$rest"
       else
@@ -836,7 +838,7 @@ _knob_resolve() {
 # The rebuild section (#673). Nothing here stops a patch run: a line that
 # parses but can't serve a rebuild is a finding, never report-only.
 _knob_resolve_rebuild() {
-  local i k u=$KNOB_US first="" missing=""
+  local i k u=$KNOB_US first="" missing="" sy=""
   local -a f=() g=() undos=()
   _knob_select rebuild-image keyed
   for i in ${_KSEL[@]+"${_KSEL[@]}"}; do KNOB_REBUILD_IMAGE=${_KP_VAL[$i]} KNOB_REBUILD_IMAGE_LINE=${_KP_LINE[$i]}; done
@@ -844,6 +846,10 @@ _knob_resolve_rebuild() {
   for i in ${_KSEL[@]+"${_KSEL[@]}"}; do KNOB_REBUILD_INSTALL=${_KP_VAL[$i]} KNOB_REBUILD_INSTALL_LINE=${_KP_LINE[$i]}; done
   _knob_select rebuild-restore keyed
   for i in ${_KSEL[@]+"${_KSEL[@]}"}; do KNOB_REBUILD_RESTORE=${_KP_VAL[$i]} KNOB_REBUILD_RESTORE_LINE=${_KP_LINE[$i]}; done
+  # #716: none is the owner's claim, given as is: no state beyond the repo,
+  # the image and the rebuild-secret files.
+  _knob_select rebuild-sync keyed
+  for i in ${_KSEL[@]+"${_KSEL[@]}"}; do KNOB_REBUILD_SYNC=${_KP_VAL[$i]} KNOB_REBUILD_SYNC_LINE=${_KP_LINE[$i]}; done
   _knob_select rebuild-check list
   for i in ${_KSEL[@]+"${_KSEL[@]}"}; do KNOB_REBUILD_CHECK+=("${_KP_VAL[$i]}$u${_KP_LINE[$i]}"); done
   _knob_select rebuild-secret list
@@ -856,7 +862,7 @@ _knob_resolve_rebuild() {
     esac
   done
   # A rebuild section of the host's own: anything but a dependent's steps.
-  for k in "$KNOB_REBUILD_IMAGE_LINE" "$KNOB_REBUILD_INSTALL_LINE" "$KNOB_REBUILD_RESTORE_LINE"; do
+  for k in "$KNOB_REBUILD_IMAGE_LINE" "$KNOB_REBUILD_INSTALL_LINE" "$KNOB_REBUILD_RESTORE_LINE" "$KNOB_REBUILD_SYNC_LINE"; do
     [ -n "$first" ] || first=$k
   done
   [ -n "$first" ] || [ "${#KNOB_REBUILD_CHECK[@]}" -eq 0 ] || first=${KNOB_REBUILD_CHECK[0]##*"$u"}
@@ -867,8 +873,15 @@ _knob_resolve_rebuild() {
     [ -n "$KNOB_REBUILD_INSTALL_LINE" ] || missing="$missing, rebuild-install"
     [ -n "$KNOB_REBUILD_RESTORE_LINE" ] || missing="$missing, rebuild-restore"
     [ "${#KNOB_REBUILD_CHECK[@]}" -gt 0 ] || missing="$missing, rebuild-check"
+    # Without it, a cutover drops what the old VM wrote since the rehearsal,
+    # unless the host keeps nothing: an executor can't tell which (#716).
+    [ -n "$KNOB_REBUILD_SYNC_LINE" ] || missing="$missing, rebuild-sync"
+    case $missing in
+      *rebuild-sync*) sy="; on a host that keeps no state beyond its repo, its image and its rebuild-secret files, that's rebuild-sync none" ;;
+      *) sy="" ;;
+    esac
     [ -z "$missing" ] || _knob_finding "" rebuild-incomplete \
-      "the rebuild section has no ${missing#, }: an executor can't rebuild this host until it has each"
+      "the rebuild section has no ${missing#, }: an executor can't rebuild this host until it has each$sy"
   fi
   # Steps pair with their undo by host and name.
   _knob_select rebuild-undo keyed

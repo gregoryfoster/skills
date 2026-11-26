@@ -891,7 +891,8 @@ EVERY_DIRECTIVE = {
     "rebuild-check curl -sf http://localhost:8000/health\n"
     "rebuild-secret /etc/app/secret.env\n"
     "rebuild-step app-db stop-ingest systemctl stop app-ingest.timer\n"
-    "rebuild-undo app-db stop-ingest systemctl start app-ingest.timer",
+    "rebuild-undo app-db stop-ingest systemctl start app-ingest.timer\n"
+    "rebuild-sync bash scripts/backup.sh --final",
     "standing": "standing security no-reboot no-datastore 2026-12-31 security fixes between runs",
 }
 
@@ -1209,6 +1210,7 @@ REBUILD = (
     "rebuild-check bash scripts/go-no-go.sh\n"
     "rebuild-secret /etc/app/secret.env\n"
     "rebuild-secret /etc/app/gcs-key.json\n"
+    "rebuild-sync bash scripts/backup.sh --final\n"
 )
 
 
@@ -1228,6 +1230,7 @@ def test_a_rebuild_section_reads_as_one_object_with_its_lines(tmp_path):
             {"path": "/etc/app/secret.env", "line": 7},
             {"path": "/etc/app/gcs-key.json", "line": 8},
         ],
+        "sync": {"value": "bash scripts/backup.sh --final", "line": 9},
         "step": [],
     }
 
@@ -1279,7 +1282,7 @@ def test_a_relative_rebuild_secret_is_a_finding_not_report_only(tmp_path):
     out = _read(tmp_path, REBUILD + "rebuild-secret etc/app/secret.env\n")
     assert _kinds(out) == ["rebuild-secret-path"]
     [f] = out["findings"]
-    assert f["line"] == 9
+    assert f["line"] == 10
     assert "absolute" in f["message"]
     # A rebuild line never stops a patch run.
     assert out["report_only"] is False
@@ -1293,7 +1296,84 @@ def test_a_rebuild_section_missing_a_part_is_incomplete(tmp_path):
     assert "rebuild-install" in f["message"]
     assert "rebuild-restore" in f["message"]
     assert "rebuild-check" in f["message"]
+    assert "rebuild-sync" in f["message"]
     assert out["report_only"] is False
+
+
+# --- rebuild-sync (#716) -------------------------------------------------------
+
+
+def test_a_section_with_no_rebuild_sync_is_incomplete(tmp_path):
+    # Not additive, by design: an executor can't tell a stateless host from
+    # one whose state since the rehearsal it would drop at cutover.
+    text = REBUILD.replace("rebuild-sync bash scripts/backup.sh --final\n", "")
+    out = _read(tmp_path, text)
+    assert _kinds(out) == ["rebuild-incomplete"]
+    [f] = out["findings"]
+    assert f["line"] is None
+    assert "has no rebuild-sync:" in f["message"]
+    assert "that's rebuild-sync none" in f["message"]
+    for named in (
+        "rebuild-image",
+        "rebuild-install",
+        "rebuild-restore",
+        "rebuild-check",
+    ):
+        assert named not in f["message"]
+    assert out["rebuild"]["sync"] == {"value": None, "line": None}
+    assert out["report_only"] is False
+
+
+def test_rebuild_sync_none_is_the_owners_claim_given_as_is(tmp_path):
+    text = REBUILD.replace(
+        "rebuild-sync bash scripts/backup.sh --final\n",
+        "rebuild-sync none # no state outside the repo, the image and the secrets\n",
+    )
+    out = _read(tmp_path, text)
+    assert out["findings"] == []
+    assert out["rebuild"]["sync"] == {"value": "none", "line": 9}
+
+
+def test_rebuild_sync_alone_is_a_section_of_the_hosts_own(tmp_path):
+    out = _read(tmp_path, "posture scheduled\nrebuild-sync none\n")
+    assert out["rebuild"]["sync"] == {"value": "none", "line": 2}
+    [f] = out["findings"]
+    assert f["kind"] == "rebuild-incomplete"
+    assert "rebuild-sync" not in f["message"]
+    assert "rebuild-image" in f["message"]
+
+
+def test_a_dependents_steps_alone_need_no_rebuild_sync(tmp_path):
+    text = (
+        "posture scheduled\n"
+        "rebuild-step app-db stop-ingest systemctl stop app-ingest.timer\n"
+        "rebuild-undo app-db stop-ingest systemctl start app-ingest.timer\n"
+    )
+    out = _read(tmp_path, text)
+    assert out["findings"] == []
+    assert out["rebuild"]["sync"] == {"value": None, "line": None}
+
+
+def test_the_most_specific_rebuild_sync_wins(tmp_path):
+    text = (
+        REBUILD
+        + "[host web-*]\nrebuild-sync none\n[host web-1]\nrebuild-sync bash x.sh\n"
+    )
+    out = _read(tmp_path, text)
+    assert out["findings"] == []
+    assert out["rebuild"]["sync"] == {"value": "bash x.sh", "line": 13}
+    out = _read(tmp_path, text, host="web-2")
+    assert out["rebuild"]["sync"] == {"value": "none", "line": 11}
+
+
+def test_rebuild_sync_set_twice_reads_as_rebuild_restore_does(tmp_path):
+    # One value, as rebuild-restore: the same precedence twice is the same
+    # finding for each.
+    twice = {
+        d: _kinds(_read(tmp_path, REBUILD + f"{d} bash again.sh\n"))
+        for d in ("rebuild-restore", "rebuild-sync")
+    }
+    assert twice["rebuild-sync"] == twice["rebuild-restore"]
 
 
 def test_a_dependents_steps_pair_with_their_undo_by_host_and_name(tmp_path):
@@ -1345,8 +1425,8 @@ def test_rebuild_lines_are_scoped_by_section(tmp_path):
         REBUILD + "[host web-1]\nrebuild-image example-org/other\nrebuild-check true\n"
     )
     out = _read(tmp_path, text)
-    assert out["rebuild"]["image"] == {"value": "example-org/other", "line": 10}
-    assert out["rebuild"]["check"] == [{"command": "true", "line": 11}]
+    assert out["rebuild"]["image"] == {"value": "example-org/other", "line": 11}
+    assert out["rebuild"]["check"] == [{"command": "true", "line": 12}]
 
 
 @pytest.mark.parametrize(
@@ -1357,6 +1437,7 @@ def test_rebuild_lines_are_scoped_by_section(tmp_path):
         "rebuild-install",
         "rebuild-restore",
         "rebuild-check",
+        "rebuild-sync",
         "rebuild-secret",
         "rebuild-secret /a /b",
         "rebuild-step app-db",
@@ -1524,6 +1605,7 @@ def test_knob_standing_and_rebuild_records_keep_their_documented_fields(tmp_path
         'printf "I %s %s\\n" "$KNOB_REBUILD_IMAGE" "$KNOB_REBUILD_IMAGE_LINE"\n'
         'printf "C %s\\n" "${KNOB_REBUILD_CHECK[0]//$KNOB_US/|}"\n'
         'printf "X %s\\n" "${KNOB_REBUILD_SECRET[1]//$KNOB_US/|}"\n'
+        'printf "Y %s %s\\n" "$KNOB_REBUILD_SYNC" "$KNOB_REBUILD_SYNC_LINE"\n'
         'printf "P %s\\n" "${KNOB_REBUILD_STEP[0]//$KNOB_US/|}"\n'
         'printf "A %s\\n" "$KNOB_REBUILD"\n'
     )
@@ -1534,6 +1616,7 @@ def test_knob_standing_and_rebuild_records_keep_their_documented_fields(tmp_path
         "I example-org/base-image 3",
         "C curl -sf http://localhost:8000/health|6",
         "X /etc/app/gcs-key.json|9",
-        "P app-db|stop|systemctl stop x|10|systemctl start x|11",
+        "Y bash scripts/backup.sh --final 10",
+        "P app-db|stop|systemctl stop x|11|systemctl start x|12",
         "A 1",
     ]
