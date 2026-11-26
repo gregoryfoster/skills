@@ -72,8 +72,10 @@ def test_reboot_required_is_read_with_its_packages(host):
     assert _finding(out, "reboot:pending")["kind"] == "risk"
 
 
-@pytest.mark.parametrize("days", [0, 4])
-def test_reboot_pending_says_how_long_it_has_been_due(host, days):
+@pytest.mark.parametrize(
+    "days, age", [(0, "less than a day"), (1, "1 day"), (4, "4 days")]
+)
+def test_reboot_pending_says_how_long_it_has_been_due(host, days, age):
     # #713: a reboot the security lane made due waited four days for the
     # attended run, and only a reading by hand dated it. The finding carries
     # /run/reboot-required's mtime, as a date and whole days; its key stays.
@@ -83,7 +85,7 @@ def test_reboot_pending_says_how_long_it_has_been_due(host, days):
     out = host.run()
     f = _finding(out, "reboot:pending")
     since = time.strftime("%Y-%m-%d", time.gmtime(t))
-    assert f"pending since {since} ({days} days)" in f["message"], f["message"]
+    assert f"pending since {since} ({age})" in f["message"], f["message"]
     assert f["id"] == "reboot:pending"
 
 

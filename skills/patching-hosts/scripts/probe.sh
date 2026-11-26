@@ -4669,7 +4669,7 @@ read_health() {  # <pre-run|post-boot>
 
 REBOOT_REQ=0 REBOOT_DEL=""
 read_reboot() {  # <pre-run|post-boot>
-  local f pk="" line out w mt since=""
+  local f pk="" line out w mt since="" age
   REBOOT_REQ=0 REBOOT_DEL=""
   for f in "$P_ROOT/run/reboot-required" "$P_ROOT/var/run/reboot-required"; do
     [ -e "$f" ] || continue
@@ -4680,7 +4680,13 @@ read_reboot() {  # <pre-run|post-boot>
     file_mtime mt "$f"
     if [ -n "$mt" ] && [ "$mt" -le "$P_NOW" ]; then
       iso_utc since "$mt"
-      [ -z "$since" ] || since=", pending since ${since%%T*} ($(((P_NOW - mt) / 86400)) days)"
+      age=$(((P_NOW - mt) / 86400))
+      case $age in
+        0) age="less than a day" ;;
+        1) age="1 day" ;;
+        *) age="$age days" ;;
+      esac
+      [ -z "$since" ] || since=", pending since ${since%%T*} ($age)"
     fi
     if [ -r "$f.pkgs" ]; then
       while IFS= read -r line || [ -n "$line" ]; do
