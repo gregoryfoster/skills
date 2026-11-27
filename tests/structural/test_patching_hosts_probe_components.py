@@ -780,6 +780,38 @@ PAIR_ROWS = [
         ["sh", "-c", "echo 'token: zq9'zq9b'zq9c' ok"],
         "sh -c echo 'token: <redacted>' ok",
     ),
+    # CR 2867: a value glued to its name's colon, in one word, by the same
+    # rules: a header's scheme word stays, glued or not.
+    (
+        ["curl", "-H", "X-Api-Key:zq9", "https://h/x"],
+        "curl -H X-Api-Key:<redacted> https://h/x",
+    ),
+    (
+        ["curl", "-H", "Authorization:Bearer zq9", "u"],
+        "curl -H Authorization:Bearer <redacted> u",
+    ),
+    (
+        ["curl", "-H", "Authorization:zq9 zq9b", "u"],
+        "curl -H Authorization:<redacted> u",
+    ),
+    (["app", "password:zq9"], "app password:<redacted>"),
+    (["app", "{password:'zq9'}"], "app {password:'<redacted>'}"),
+    (
+        ["sh", "-c", "curl -H 'X-Auth-Token:zq9' u"],
+        "sh -c curl -H 'X-Auth-Token:<redacted>' u",
+    ),
+    (
+        ["sh", "-c", "curl -H 'Authorization:Bearer zq9' u"],
+        "sh -c curl -H 'Authorization:Bearer <redacted>' u",
+    ),
+    (["app", "--header=X-Api-Key:zq9"], "app --header=X-Api-Key:<redacted>"),
+    # Taken: a listed name glued to a word that isn't a secret. Kept: one
+    # whose left side isn't listed, a URL's scheme, a time.
+    (["app", "key:value token:expired"], "app key:<redacted> token:<redacted>"),
+    (
+        ["app", "host:5432 https://h:1/x 12:30 user:u"],
+        "app host:5432 https://h:1/x 12:30 user:u",
+    ),
 ]
 
 

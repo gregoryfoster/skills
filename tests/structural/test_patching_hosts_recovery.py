@@ -1323,6 +1323,17 @@ def test_the_oracle_s_log_leaks_stay_redacted(host, line, shown):
             "rejected: missing Authorization header",
             "rejected: missing Authorization header",
         ),
+        # CR 2867: glued to the colon. An unquoted header runs to the
+        # line's end, its URL too.
+        (
+            "+ curl -fsS -H X-Api-Key:zq9 https://h/health",
+            "+ curl -fsS -H X-Api-Key:<redacted>",
+        ),
+        (
+            "+ curl -H 'Authorization:Bearer zq9' https://h",
+            "+ curl -H 'Authorization:Bearer <redacted>' https://h",
+        ),
+        ("login password:zq9 ok", "login password:<redacted> ok"),
     ],
 )
 def test_the_backup_log_redacts_a_json_key_a_header_and_a_pair(host, line, shown):

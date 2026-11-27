@@ -1637,7 +1637,7 @@ redact_words() {  # <var> <word>...: the words under the name rule, joined by a 
 RP_AUTH="authorization proxy-authorization"
 RP_SCHEMES="basic bearer digest negotiate ntlm token hoba mutual vapid oauth apikey
   aws4-hmac-sha256 scram-sha-1 scram-sha-256"
-RP_BARE_RE="^(-[A-Za-z]|[^=:\"']*=)?[[{(]*(\\\\?[\"'])?([A-Za-z][A-Za-z0-9_.-]*):\$"
+RP_BARE_RE="^(-[A-Za-z]|[^=:\"']*=)?[[{(]*(\\\\?[\"'])?([A-Za-z][A-Za-z0-9_.-]*):(.*)\$"
 RP_KEYC_RE="(\\\\?[\"'])([A-Za-z0-9_.-]+)(\\\\?[\"'])[[:space:]]*:\$"
 RP_KEY_RE="(\\\\?[\"'])([A-Za-z0-9_.-]+)(\\\\?[\"'])\$"
 RP_COLON_RE='^[^:]*:'
@@ -1689,18 +1689,18 @@ rp_close() {  # <delimiter> <text>: RP_AT := the length through the delimiter th
 # of the line. RP_E: 1 once the value's <redacted> is shown; RP_X: 1 when
 # its closing delimiter isn't shown, since the value ran on past a quote.
 rp_word() {  # <word>: RP_P := what it shows; RP_G := 1 when it joins the last word's value with no space; RP_C := 1 when it hid any of it
-  local _pw_s=$1 _pw_f=1 _pw_d _pw_m _pw_p
+  local _pw_s=$1 _pw_f=1 _pw_d _pw_m _pw_p _pw_r
   RP_P="" RP_G=0 RP_C=0
   while :; do
     case $RP_M in
       r)
         RP_C=1
-        if [ "$RP_E" -eq 0 ]; then RP_P="<redacted>" RP_E=1; fi
+        if [ "$RP_E" -eq 0 ]; then RP_P="$RP_P<redacted>" RP_E=1; fi
         return 0 ;;
       a)
         RP_M=$RP_N
         if [ "$_pw_f" -eq 1 ] && rp_listed "$_pw_s" "$RP_SCHEMES"; then
-          RP_P=$_pw_s
+          RP_P="$RP_P$_pw_s"
           return 0
         fi ;;
       k)
@@ -1757,9 +1757,11 @@ rp_word() {  # <word>: RP_P := what it shows; RP_G := 1 when it joins the last w
             RP_D=${BASH_REMATCH[0]: -1} _pw_s=${_pw_s:${#BASH_REMATCH[0]}} RP_M=s RP_E=1 RP_X=1 ;;
         esac ;;
       *)
-        # A name that ends the word, the header's or the pair's.
+        # A name at the word's start, the header's or the pair's, with its
+        # value after its : or in the next word. A value glued to the : is
+        # read by the same rules, as the next word's would be (CR 2867).
         if [ "$_pw_f" -eq 1 ] && [[ $_pw_s =~ $RP_BARE_RE ]]; then
-          RP_D=${BASH_REMATCH[2]} RP_E=0 RP_X=0 _pw_p=${BASH_REMATCH[3]}
+          RP_D=${BASH_REMATCH[2]} RP_E=0 RP_X=0 _pw_p=${BASH_REMATCH[3]} _pw_r=${BASH_REMATCH[4]}
           if rp_listed "$_pw_p" "$RP_AUTH"; then
             RP_M=a RP_N=r
             [ -z "$RP_D" ] || RP_N=q
@@ -1769,8 +1771,14 @@ rp_word() {  # <word>: RP_P := what it shows; RP_G := 1 when it joins the last w
             case $_pw_p in [Xx]-?*-?*) RP_M=r ;; *) RP_M=w ;; esac
             [ -z "$RP_D" ] || RP_M=q
           fi
-          RP_P=$_pw_s
-          return 0
+          if [ -n "$RP_M" ] && [ -n "$_pw_r" ]; then
+            RP_P="$RP_P${_pw_s:0:$((${#_pw_s} - ${#_pw_r}))}" _pw_s=$_pw_r
+            continue
+          fi
+          if [ -n "$RP_M" ]; then
+            RP_P="$RP_P$_pw_s"
+            return 0
+          fi
         fi
         _pw_f=0
         # JSON keys, each at a : after a quoted name.
