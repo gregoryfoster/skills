@@ -25,6 +25,7 @@ No API calls. Text analysis, and a YAML parse of the snippet.
 from __future__ import annotations
 
 import re
+import shlex
 import subprocess
 from pathlib import Path
 
@@ -107,11 +108,35 @@ class TestTheSnippetKeepsItsRules:
         be true and a direct ship would never skip anything."""
         (heavy,) = [s for s in _steps() if "if" in s]
         cond = " ".join(heavy["if"].split())
-        guarded = re.search(
-            r"\(github\.event_name == 'pull_request' && \((.*)\)\)", cond
-        )
-        assert guarded, cond
-        assert "'Bot'" in guarded.group(1) and "full_name" in guarded.group(1)
+        # One arm per PR field (#697 item 6 flattened the nested form), each
+        # guarded on its own.
+        for field in (
+            "github.event.pull_request.user.type == 'Bot'",
+            "github.event.pull_request.head.repo.full_name != github.repository",
+        ):
+            assert f"(github.event_name == 'pull_request' && {field})" in cond, field
+            assert cond.count(field) == 1, field
+
+    def test_the_folded_if_has_no_embedded_newline(self):
+        """#697 item 6: in a `>-` block a more-indented line keeps its
+        newline, so the expression carried `\\n`. Every line at one indent
+        folds to spaces."""
+        (heavy,) = [s for s in _steps() if "if" in s]
+        assert "\n" not in heavy["if"]
+
+    def test_the_steps_script_splits_as_shell_words(self):
+        """CannObserv/watcher and CannObserv/status each split every `run:`
+        with shlex in their workflow tests; an apostrophe in the step's
+        comment (`context's`) made all of them error."""
+        (attest,) = [s for s in _steps() if s.get("id") == "attest"]
+        shlex.split(attest["run"])
+
+    def test_the_verdict_is_in_the_log_and_the_summary(self):
+        """#697 item 7: written only to $GITHUB_OUTPUT, a skipped heavy tier
+        went unexplained in the run."""
+        (attest,) = [s for s in _steps() if s.get("id") == "attest"]
+        assert '>>"$GITHUB_OUTPUT"' in attest["run"]
+        assert 'tee -a "$GITHUB_STEP_SUMMARY"' in attest["run"]
 
     def test_only_a_push_or_a_pull_request_may_skip(self):
         """CR 2665: a schedule, a manual run and pull_request_target read
@@ -136,6 +161,15 @@ class TestTheSnippetKeepsItsRules:
 
     def test_the_job_may_read_statuses(self):
         assert _snippet()["permissions"] == {"contents": "read", "statuses": "read"}
+
+    def test_it_names_what_narrows_the_grant(self):
+        """#697 item 1: a `workflow_call` caller that doesn't grant it fails
+        at startup with zero jobs; a job's own `permissions` replace the
+        workflow's."""
+        text = _flat(REFERENCE)
+        assert "`workflow_call`" in text
+        assert "The calling job must grant `statuses: read` too" in text
+        assert "A job that declares its own `permissions`" in text
 
 
 class TestTheReferenceSaysWhatTheStepIs:
@@ -162,6 +196,56 @@ class TestTheReferenceSaysWhatTheStepIs:
         ):
             assert claim in text, claim
 
+    def test_it_skips_only_what_the_gate_ran(self):
+        """#715 gap 1: the stock gate deselects `integration`, so a heavy
+        tier holding it either has a gate that runs it or keeps it in CI."""
+        text = _flat(REFERENCE)
+        assert "Skip only what the gate ran" in text
+        assert "`integration`-marked" in text
+        assert "wrapped in `!( … )`" in text
+
+    def test_each_merge_model_says_what_its_push_run_does(self):
+        """#697 item 2 and #715 gap 2: a fast-forward carries the head's
+        status onto the default branch, and a direct ship's skip is the
+        saving, so the readers of the job's conclusion differ by model."""
+        text = REFERENCE.read_text()
+        start = text.index("### A skipped step leaves the job `success`")
+        table = text[start : text.index("\n## ", start)]
+        rows = [line for line in table.splitlines() if line.startswith("| ")]
+        models = [row.split("|")[1].strip() for row in rows[1:]]
+        assert len(models) == 3, models
+        assert "merge made on GitHub" in models[0]
+        assert "fast-forward" in models[1]
+        assert "`if: github.event_name == 'pull_request'`" in rows[2]
+        assert "direct ship" in models[2]
+        assert "its own job" in rows[3]
+        job = " ".join(
+            table[table.index("#### The heavy tier as its own job") :].split()
+        )
+        assert "conclusion, `skipped`, not `success`" in job
+        assert "implies `success()`" in job
+        # CR 2718: `&&` binds tighter than `||`, so the whole condition is
+        # wrapped, or a cancelled run could still start the heavy tier.
+        assert "`!cancelled() && (<the heavy tier's if>)`" in job
+        assert "binds tighter than `||`" in job
+        assert "fast-forward merge" in _flat(REFERENCE).split("Not the merge")[1]
+
+    def test_the_adopter_steps_live_here(self):
+        """#697 items 3 and 4: the steps lived only on closed #688."""
+        text = REFERENCE.read_text()
+        steps = " ".join(text[text.index("## Adopting it") :].split())
+        assert "`.skills/pre-ship-uv-args`" in steps
+        assert "The adoption PR attests itself" in steps
+        assert "plain `git push`" in steps
+
+    def test_a_token_only_host_exports_it(self):
+        """#700: gh may read GH_TOKEN, and an unexported one is not seen."""
+        text = _flat(REFERENCE)
+        assert "`GH_TOKEN`" in text and "**exported**" in text
+        assert "`gh auth status`" in text
+        assert '422 "No commit found for SHA"' in text
+        assert "GH_TOKEN" in LIB.read_text().split("USAGE")[1]
+
     def test_the_token_is_the_operators_not_a_workflows(self):
         text = _flat(REFERENCE)
         assert "Commit statuses: Read and write" in text
@@ -176,9 +260,13 @@ class TestTheReferenceSaysWhatTheStepIs:
         ).stdout
         codes = re.findall(r"^  (\d|\*)  ", out[out.index("Exit codes:") :], re.M)
         assert codes == ["0", "1", "2", "*"], out
+        # The exit table's own section: the reference has other tables (#697).
+        text = REFERENCE.read_text()
+        start = text.index("## What `push.sh` does with it on")
+        section = text[start : text.index("\n## ", start + 1)]
         rows = [
             line.split("|")[1].strip()
-            for line in REFERENCE.read_text().splitlines()
+            for line in section.splitlines()
             if line.startswith("| ") and not line.startswith("| Exit")
         ]
         firsts = [row.split(",")[0] for row in rows]

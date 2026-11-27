@@ -74,8 +74,11 @@ The local-gate attestation, on when the commit being shipped carries
                     0  posted and read back
                     1  not posted, or not confirmed; said on both streams
 
-The write needs gh, logged in with push access to the repository: a classic
-token's `repo` scope, or a fine-grained token's "Commit statuses: write".
+The write needs gh with push access to the repository: a classic token's
+`repo` scope, or a fine-grained token's "Commit statuses: write". gh takes
+it from its stored login, or from GH_TOKEN or GITHUB_TOKEN, which must then
+be exported to this process: an unexported one isn't seen, and the write is
+ATTESTATION NOT POSTED after the push has landed.
 USAGE
 }
 
