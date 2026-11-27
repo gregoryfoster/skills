@@ -1104,6 +1104,17 @@ def test_a_long_message_is_decoded_redacted_then_cut(host):
     assert lines[1] == "token=<redacted>"
 
 
+def test_a_value_the_cap_cuts_is_redacted_from_what_s_left(host):
+    # #710: a byte array is decoded to BJ_TAKE bytes, then redacted. A name
+    # before the cap whose value crosses it has what's left redacted, and a
+    # name past the cap is never seen, nor is its value.
+    head = b"\x1b[1mtoken=" + b"s" * 1900 + b" --password "
+    _logged(host, [list(head + b"zq9" * 40 + b" --secret=zq9 tail")])
+    [line] = host.recover()["backup"][0]["journal"]["lines"]
+    assert line == "token=<redacted> --password <redacted>"
+    assert "zq9" not in host.result.stdout + host.result.stderr
+
+
 def test_a_log_line_cant_put_an_escape_on_the_screen(host):
     _logged(host, ["\x1b[2Jcleared " + "x" * 600])
     [b] = host.recover()["backup"]
