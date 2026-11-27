@@ -196,6 +196,47 @@ class TestTheReferenceSaysWhatTheStepIs:
         ):
             assert claim in text, claim
 
+    def test_it_skips_only_what_the_gate_ran(self):
+        """#715 gap 1: the stock gate deselects `integration`, so a heavy
+        tier holding it either has a gate that runs it or keeps it in CI."""
+        text = _flat(REFERENCE)
+        assert "Skip only what the gate ran" in text
+        assert "`integration`-marked" in text
+        assert "wrapped in `!( … )`" in text
+
+    def test_each_merge_model_says_what_its_push_run_does(self):
+        """#697 item 2 and #715 gap 2: a fast-forward carries the head's
+        status onto the default branch, and a direct ship's skip is the
+        saving, so the readers of the job's conclusion differ by model."""
+        text = REFERENCE.read_text()
+        start = text.index("### A skipped step leaves the job `success`")
+        table = text[start : text.index("\n## ", start)]
+        rows = [line for line in table.splitlines() if line.startswith("| ")]
+        models = [row.split("|")[1].strip() for row in rows[1:]]
+        assert len(models) == 3, models
+        assert "merge made on GitHub" in models[0]
+        assert "fast-forward" in models[1]
+        assert "`if: github.event_name == 'pull_request'`" in rows[2]
+        assert "direct ship" in models[2]
+        assert "`!cancelled() &&`" in rows[3]
+        assert "fast-forward merge" in _flat(REFERENCE).split("Not the merge")[1]
+
+    def test_the_adopter_steps_live_here(self):
+        """#697 items 3 and 4: the steps lived only on closed #688."""
+        text = REFERENCE.read_text()
+        steps = " ".join(text[text.index("## Adopting it") :].split())
+        assert "`.skills/pre-ship-uv-args`" in steps
+        assert "The adoption PR attests itself" in steps
+        assert "plain `git push`" in steps
+
+    def test_a_token_only_host_exports_it(self):
+        """#700: gh may read GH_TOKEN, and an unexported one is not seen."""
+        text = _flat(REFERENCE)
+        assert "`GH_TOKEN`" in text and "**exported**" in text
+        assert "`gh auth status`" in text
+        assert '422 "No commit found for SHA"' in text
+        assert "GH_TOKEN" in LIB.read_text().split("USAGE")[1]
+
     def test_the_token_is_the_operators_not_a_workflows(self):
         text = _flat(REFERENCE)
         assert "Commit statuses: Read and write" in text
@@ -210,9 +251,13 @@ class TestTheReferenceSaysWhatTheStepIs:
         ).stdout
         codes = re.findall(r"^  (\d|\*)  ", out[out.index("Exit codes:") :], re.M)
         assert codes == ["0", "1", "2", "*"], out
+        # The exit table's own section: the reference has other tables (#697).
+        text = REFERENCE.read_text()
+        start = text.index("## What `push.sh` does with it on")
+        section = text[start : text.index("\n## ", start + 1)]
         rows = [
             line.split("|")[1].strip()
-            for line in REFERENCE.read_text().splitlines()
+            for line in section.splitlines()
             if line.startswith("| ") and not line.startswith("| Exit")
         ]
         firsts = [row.split(",")[0] for row in rows]

@@ -156,6 +156,38 @@ Keep a scheduled run of that workflow. It always runs the heavy tier, as a
 tag's release run does, and it is the only clean-runner run a directly
 shipped commit gets.
 
+To check the `if:`s over every trigger, attested and not, copy rather than
+reason: CannObserv/processor's `tests/test_ci.py` evaluates them with a small
+evaluator for GitHub's expression syntax (search `_evaluate`).
+
+### What to skip
+
+**Skip only what the gate ran.** The stock gate deselects
+`integration`-marked tests, runs without a coverage floor (`--no-cov`), and
+runs nothing CI adds on its own, such as a migration check. A heavy tier that
+holds any of these has two choices:
+- **The gate runs them too.** A project `scripts/pre-ship.sh` that wraps the
+  stock gate and runs the rest makes the attestation cover them.
+- **CI keeps them on an attested commit.** A second step runs them, under the
+  heavy tier's `if:` wrapped in `!( … )` (in a `>-` block a leading `!` is not
+  a YAML tag), for example `uv run pytest -m integration`.
+
+A test the gate's environment skips is one the attestation skips too, so the
+environments must match first ([Adopting it](#adopting-it), step 2).
+
+### A skipped step leaves the job `success`
+
+Anything that reads the job's conclusion as "tests passed", such as a deploy
+gate, release reuse or a required check, can't tell an attested skip from a
+full run. For the default branch's push run, what to do depends on how
+commits reach it:
+
+| Commits reach the default branch by | Its push run, under the `if:` above | Do |
+|---|---|---|
+| a merge made on GitHub (merge or squash) | runs everything: the new commit carries no status | nothing |
+| a fast-forward from a PR, or a rebase that keeps the SHA | **skips**: the PR's head is the commit, status and all | read the status on `pull_request` only: `if: github.event_name == 'pull_request'` on the `attest` step. An unset output reads as not attested. `\|\| github.ref == 'refs/heads/<default>'` on the heavy tier's `if:` does the same from the other side |
+| a direct ship | **skips**: that run is the one the attestation saves | have the reader check `attested`, or skip at job level (a `needs: attest` job whose `if:` starts `!cancelled() &&`, which reads `skipped`), not the job's conclusion |
+
 ## What the status is not
 
 - **Trust, not proof.** Anyone with push access can post `gate/local` without
@@ -165,8 +197,40 @@ shipped commit gets.
   reads it.
 - **Not the merge.** It speaks for the head commit. A `pull_request` run tests
   the merge with the base, which only a runner builds, and a merge commit made
-  on GitHub carries no status.
+  on GitHub carries no status. A fast-forward merge, or a rebase that
+  keeps the SHA, is the exception: the head itself lands on the default
+  branch, status and all ([the table](#a-skipped-step-leaves-the-job-success)).
+- **Not the same run.** CI may run the tests differently from the gate
+  (another order, shards, other flags). On an attested PR those differences
+  surface only on the default branch's next full run, after the merge.
 - **Not a clean machine.** Unpinned tools, a dirty venv or local-only data can
   pass locally and fail on a runner.
 - **Not retracted.** A later failing run on the same commit posts nothing, so
   an earlier `success` stands.
+
+## Adopting it
+
+In order. The first adopters' reports are on
+[#688](https://github.com/gregoryfoster/skills/issues/688).
+
+1. **Update the vendored skills.** If `skills/shipping-work/scripts/` is a
+   directory of per-file symlinks, add one for `_attest-gate.sh` beside
+   `push.sh`'s. A whole-directory link needs nothing.
+2. **Make the gate's environment match the heavy tier's.** A test the gate's
+   environment skips (an `importorskip` of an extra the venv lacks) passes
+   locally, and the attestation then skips it in CI. A bare `uv run` doesn't
+   install the workspace extras CI may sync, so commit
+   `.skills/pre-ship-uv-args` with CI's flags (for example
+   `--all-packages --all-extras`). Then settle [What to skip](#what-to-skip).
+3. **Check the token** ([The token](#the-token)).
+4. **Add the CI step** ([The CI side](#the-ci-side)), and check the
+   default branch's readers against
+   [the table](#a-skipped-step-leaves-the-job-success).
+5. **Commit the knob**, `on`. Gitignore any machine-local `.skills/` file
+   first: an untracked one makes every attested push refuse the tree.
+   **The adoption PR attests itself** if it's shipped through `push.sh`. The
+   knob is read from `HEAD`, and a `pull_request` run uses the PR's own
+   workflow, so the PR that adds the skip skips its own tests. Push it with
+   plain `git push` to have it run in full, or expect it attested.
+6. **Measure it.** Run `auditing-ci-cost`'s census before and about 30 days
+   after. A saving quoted without that is an estimate.
