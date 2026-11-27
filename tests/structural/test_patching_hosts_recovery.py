@@ -1295,6 +1295,61 @@ def test_the_oracle_s_log_leaks_stay_redacted(host, line, shown):
     assert "zq9" not in host.result.stdout + host.result.stderr
 
 
+@pytest.mark.parametrize(
+    "line, shown",
+    [
+        # #712's forms, as a set -x trace or a tool logs them.
+        (
+            "+ curl -sf -H 'Authorization: Bearer zq9' https://h/x",
+            "+ curl -sf -H 'Authorization: Bearer <redacted>' https://h/x",
+        ),
+        (
+            '+ curl -H "X-Api-Key: zq9" -d \'{"token": "zq9b"}\' https://h',
+            '+ curl -H "X-Api-Key: <redacted>" -d \'{"token": "<redacted>"}\' https://h',
+        ),
+        (
+            'config {"password": "zq9", "user": "u"}',
+            'config {"password": "<redacted>", "user": "u"}',
+        ),
+        # A header with no quote runs to the line's end.
+        (
+            "request: Authorization: Bearer zq9 zq9b",
+            "request: Authorization: Bearer <redacted>",
+        ),
+        ("vault: token: zq9 issued", "vault: token: <redacted> issued"),
+        # Kept: a prompt, prose.
+        ("Enter password:", "Enter password:"),
+        (
+            "rejected: missing Authorization header",
+            "rejected: missing Authorization header",
+        ),
+        # CR 2867: glued to the colon. An unquoted header runs to the
+        # line's end, its URL too.
+        (
+            "+ curl -fsS -H X-Api-Key:zq9 https://h/health",
+            "+ curl -fsS -H X-Api-Key:<redacted>",
+        ),
+        (
+            "+ curl -H 'Authorization:Bearer zq9' https://h",
+            "+ curl -H 'Authorization:Bearer <redacted>' https://h",
+        ),
+        ("login password:zq9 ok", "login password:<redacted> ok"),
+    ],
+)
+def test_the_backup_log_redacts_a_json_key_a_header_and_a_pair(host, line, shown):
+    _logged(host, [line])
+    [got] = host.recover()["backup"][0]["journal"]["lines"]
+    assert got == shown
+    assert "zq9" not in host.result.stdout + host.result.stderr
+
+
+def test_a_byte_array_message_s_pairs_are_redacted_too(host):
+    _logged(host, [list(b"\x1b[1mauth\x1b[0m Authorization: Bearer zq9")])
+    [got] = host.recover()["backup"][0]["journal"]["lines"]
+    assert got == "auth Authorization: Bearer <redacted>"
+    assert "zq9" not in host.result.stdout + host.result.stderr
+
+
 def test_a_unit_that_didnt_start_a_run_now_shows_no_lines(host):
     # CR 2803: its InvocationID is its last run's, and those lines aren't
     # this run's.

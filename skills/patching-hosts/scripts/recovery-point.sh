@@ -990,6 +990,7 @@ backup_journal() {  # <var> <service> <invocation ID> [<why there's no run to re
           redact_url_spans _bj_l "$_bj_l"
           read -r -a _bj_ws <<<"$_bj_l" || true
           redact_words _bj_l ${_bj_ws[@]+"${_bj_ws[@]}"}
+          redact_pairs _bj_l "$_bj_l"
           if [ -n "$_bj_q" ] && [ -z "$_bj_l" ]; then
             _bj_more=1
             continue

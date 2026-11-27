@@ -70,7 +70,7 @@ The needrestart drop-in is part of both postures: every run relies on the hook r
 
 ### A pre-announced security release
 
-A project may announce a security release ahead of time: a fixed date and time, T, with the affected versions published only at release. Where the fix comes from a third-party origin the knob follows, the route is the bulletin's: a dated `window` line ([knob.md](knob.md), #421) and `apply.sh --lane origin:<origin>`, with the owner's approval. No knob line expedites an origin; the window does (#464). What the advance notice adds is the work that can be done before T, so none of it is done under time pressure. The same route, from "Then" below, answers an `exposure:<origin>` finding, a serving runtime's origin with a fix already pending ([readings.md](readings.md#impact)).
+A project may announce a security release ahead of time: a fixed date and time, T, with the affected versions published only at release. Where the fix comes from a third-party origin the knob follows, the route is the bulletin's: a dated `window` line ([knob.md](knob.md), #421) and `apply.sh --lane origin:<origin>`, with the owner's approval. No knob line expedites an origin; the window does (#464). What the advance notice adds is the work that can be done before T, so none of it is done under time pressure. The same route, from "Then" below, answers an `exposure:<origin>` finding, a serving runtime's origin with a fix already pending ([impact.md](impact.md)).
 
 **Before T:**
 
