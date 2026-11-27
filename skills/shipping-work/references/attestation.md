@@ -77,10 +77,25 @@ exists to rule out.
 
 ## The token
 
-The write uses the operator's own `gh` login, which needs push access to the
+The write uses the operator's own `gh` token, which needs push access to the
 repository. A classic token's `repo` scope covers it; a fine-grained token
 needs **Commit statuses: Read and write**. No workflow permission is involved
-on this side.
+on this side. To confirm the grant without writing anything, post to a SHA
+that doesn't exist (`gh api -X POST repos/<owner>/<repo>/statuses/<40 zeros>
+-f state=success`): 403 means no grant, 422 "No commit found for SHA" means
+the grant is there.
+
+`gh` takes the token from its stored login, or from `GH_TOKEN` (or
+`GITHUB_TOKEN`) in its environment. On a host with no stored login, the
+variable must be **exported** into the shell that runs `push.sh`. If it's set
+but not exported, or kept in a file nobody loaded, the push lands and the
+write says `ATTESTATION NOT POSTED`. With the export in effect, `gh auth
+status` names it (`(GH_TOKEN)`): check that before the first push. git needs
+the token too, for the push itself. With no credential helper, an HTTPS push
+fails before anything is pushed or posted. Giving `push.sh` the environment
+`GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0=credential.helper GIT_CONFIG_VALUE_0=
+GIT_CONFIG_KEY_1=credential.helper GIT_CONFIG_VALUE_1='!gh auth
+git-credential'` hands git the same token.
 
 ## The CI side
 
