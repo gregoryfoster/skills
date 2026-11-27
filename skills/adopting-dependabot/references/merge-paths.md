@@ -26,10 +26,11 @@ GitHub marked each one merged:
 
 ```bash
 # Read the release notes, not just the diff: a major bump can change inputs.
-gh pr view <N> --json headRefOid -q .headRefOid          # note the head SHA
 gh pr comment <N> --body "@dependabot rebase"            # only if main moved; see below
-# if you asked for a rebase, wait until headRefOid changes; then:
-gh pr checks <N> --watch                                 # every job, on the new head
+# until the head is on main (see the rebase race below):
+gh pr view <N> --json mergeStateStatus -q .mergeStateStatus   # CLEAN: on main; BEHIND/DIRTY: not yet; else the next line
+git fetch -q origin "pull/<N>/head" main && git merge-base --is-ancestor origin/main FETCH_HEAD   # 0: on main; 1: not yet; else failed
+gh pr checks <N> --watch                                 # once `gh pr checks <N>` lists the new head's runs
 git fetch origin "$(gh pr view <N> --json headRefName -q .headRefName)"
 git merge --ff-only FETCH_HEAD
 <the repo's ship gate>                                   # as for any other change
@@ -38,13 +39,30 @@ git push origin main                                     # GitHub marks the PR m
 
 - **The rebase race.** Run `@dependabot rebase`, then read `gh pr checks` at
   once, and you read the *old* commit's green. You then fast-forward a commit
-  whose CI you never read (watcher#283 CR 6). Wait for the head SHA to change
-  before `--watch`. A PR opened before the config never changes: see
+  whose CI you never read (watcher#283 CR 6). A moved head isn't proof either:
+  after a landing Dependabot may rebase the other PRs unasked, so by the next
+  landing a head that moved can already be behind (watcher#451,
+  [#689](https://github.com/gregoryfoster/skills/issues/689)). So check the
+  head's base, as above, and start `--watch` only once `gh pr checks <N>` lists
+  the new head's runs: begun earlier, a watch can report before they register.
+  A moved head that's still behind costs a wasted watch and a refused merge,
+  not a bad one: `--ff-only` refuses a head that isn't on `main`. Two traps
+  (watcher#454):
+  - **Fetch the PR's ref first.** `FETCH_HEAD` is the first ref fetched, so
+    `git fetch origin main "pull/<N>/head"` tests `main` against itself and
+    exits 0 on a stale head.
+  - **`BLOCKED` isn't behind.** An up-to-date head reads `BLOCKED` while its
+    required checks run, then `CLEAN`. Anything but `CLEAN`, `BEHIND` or
+    `DIRTY` goes to the ancestry form.
+
+  A PR opened before the config never moves: see
   [Security PRs opened before the config](#security-prs-opened-before-the-config).
 - **Fast-forward only.** The commit CI tested is the commit that lands, and its
   subject already takes the repo's form through `commit-message.prefix`.
 - **One at a time.** Each landing puts the next PR behind `main`, so expect one
-  rebase per PR: about 4–5 minutes each on watcher, mostly CI.
+  rebase per PR: about 4–5 minutes each on watcher, mostly CI. Dependabot may
+  already have rebased the next one on its own (a `uv.lock` conflict forces
+  it), so check its base before asking.
 - **Restart** the service only when the diff touches something it runs. An
   action bump never does; a runtime dependency bump does, through the repo's
   own deploy.
@@ -67,9 +85,9 @@ git log --diff-filter=A --format=%cI -- .github/dependabot.yml | tail -1   # aft
 > can't be rebased. Please close the PR so Dependabot can create a new one with
 > the current dependabot.yml.
 
-The head never changes, so the bounded wait above times out. The `git log`
-needs full history: in a shallow clone it prints nothing, or a later commit's
-date, until `git fetch --unshallow`. Its date is when the config was committed,
+Its head never moves onto `main`, so the base check above never passes. The
+`git log` needs full history: in a shallow clone it prints nothing, or a later
+commit's date, until `git fetch --unshallow`. Its date is when the config was committed,
 not when it reached the default branch, so a PR opened between the two is
 affected too. Where they differ, the inventory taken before the push, or the
 bot's answer, decides.
