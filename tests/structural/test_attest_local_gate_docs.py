@@ -25,6 +25,7 @@ No API calls. Text analysis, and a YAML parse of the snippet.
 from __future__ import annotations
 
 import re
+import shlex
 import subprocess
 from pathlib import Path
 
@@ -107,11 +108,35 @@ class TestTheSnippetKeepsItsRules:
         be true and a direct ship would never skip anything."""
         (heavy,) = [s for s in _steps() if "if" in s]
         cond = " ".join(heavy["if"].split())
-        guarded = re.search(
-            r"\(github\.event_name == 'pull_request' && \((.*)\)\)", cond
-        )
-        assert guarded, cond
-        assert "'Bot'" in guarded.group(1) and "full_name" in guarded.group(1)
+        # One arm per PR field (#697 item 6 flattened the nested form), each
+        # guarded on its own.
+        for field in (
+            "github.event.pull_request.user.type == 'Bot'",
+            "github.event.pull_request.head.repo.full_name != github.repository",
+        ):
+            assert f"(github.event_name == 'pull_request' && {field})" in cond, field
+            assert cond.count(field) == 1, field
+
+    def test_the_folded_if_has_no_embedded_newline(self):
+        """#697 item 6: in a `>-` block a more-indented line keeps its
+        newline, so the expression carried `\\n`. Every line at one indent
+        folds to spaces."""
+        (heavy,) = [s for s in _steps() if "if" in s]
+        assert "\n" not in heavy["if"]
+
+    def test_the_steps_script_splits_as_shell_words(self):
+        """CannObserv/watcher and CannObserv/status each split every `run:`
+        with shlex in their workflow tests; an apostrophe in the step's
+        comment (`context's`) made all of them error."""
+        (attest,) = [s for s in _steps() if s.get("id") == "attest"]
+        shlex.split(attest["run"])
+
+    def test_the_verdict_is_in_the_log_and_the_summary(self):
+        """#697 item 7: written only to $GITHUB_OUTPUT, a skipped heavy tier
+        went unexplained in the run."""
+        (attest,) = [s for s in _steps() if s.get("id") == "attest"]
+        assert '>>"$GITHUB_OUTPUT"' in attest["run"]
+        assert 'tee -a "$GITHUB_STEP_SUMMARY"' in attest["run"]
 
     def test_only_a_push_or_a_pull_request_may_skip(self):
         """CR 2665: a schedule, a manual run and pull_request_target read
@@ -136,6 +161,15 @@ class TestTheSnippetKeepsItsRules:
 
     def test_the_job_may_read_statuses(self):
         assert _snippet()["permissions"] == {"contents": "read", "statuses": "read"}
+
+    def test_it_names_what_narrows_the_grant(self):
+        """#697 item 1: a `workflow_call` caller that doesn't grant it fails
+        at startup with zero jobs; a job's own `permissions` replace the
+        workflow's."""
+        text = _flat(REFERENCE)
+        assert "`workflow_call`" in text
+        assert "The calling job must grant `statuses: read` too" in text
+        assert "A job that declares its own `permissions`" in text
 
 
 class TestTheReferenceSaysWhatTheStepIs:

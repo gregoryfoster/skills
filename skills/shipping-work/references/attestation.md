@@ -101,7 +101,14 @@ git-credential'` hands git the same token.
 
 Add `statuses: read` to the `permissions` of the workflow that runs the heavy
 tier, beside what it already grants, and copy the `attest` step and the `if:`.
-Cheap tiers (lint, format, guards) keep running on every commit.
+Cheap tiers (lint, format, guards) keep running on every commit. The grant
+must also reach the step past two things that narrow it:
+- **A job that declares its own `permissions`** replaces the workflow's, so
+  put the grant on that job.
+- **A workflow that calls this one through `workflow_call`** caps its token.
+  The calling job must grant `statuses: read` too. Otherwise GitHub rejects
+  the caller at startup with zero jobs, even when the calling job would be
+  skipped.
 
 ```yaml
 permissions:
@@ -120,25 +127,28 @@ jobs:
           # which nobody gated.
           HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
-          # The combined status keeps each context's latest state; /statuses
-          # lists every status ever posted, so a later failure would still
-          # count. A page is 30 contexts unless more are asked for. A refused
-          # read fails this step: loud, never a silent skip.
+          # The combined status keeps the latest state of each context, while
+          # /statuses lists every status ever posted, so a later failure would
+          # still count. A page is 30 contexts unless more are asked for. A
+          # refused read fails this step: loud, never a silent skip.
           n=$(gh api "repos/${{ github.repository }}/commits/$HEAD/status?per_page=100" \
                 --jq '[.statuses[] | select(.context == "gate/local" and .state == "success")] | length')
-          echo "attested=$([ "$n" -gt 0 ] && echo yes || echo no)" >>"$GITHUB_OUTPUT"
+          v=$([ "$n" -gt 0 ] && echo yes || echo no)
+          echo "attested=$v" >>"$GITHUB_OUTPUT"
+          # The verdict where a reviewer looks: the log and the run summary.
+          echo "gate/local on $HEAD: attested=$v" | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Heavy tier
         # Skipped only for an attested commit, on a branch push or a pull
         # request, and never for a bot's PR or a fork's: neither came from a
         # local gate. Everything else (a schedule, a manual run, a tag's
-        # release, pull_request_target) always runs it.
+        # release, pull_request_target) always runs it. Every line of the
+        # `>-` block sits at one indent, so it folds to one line.
         if: >-
           steps.attest.outputs.attested != 'yes'
           || (github.event_name != 'push' && github.event_name != 'pull_request')
           || startsWith(github.ref, 'refs/tags/')
-          || (github.event_name == 'pull_request'
-              && (github.event.pull_request.user.type == 'Bot'
-                  || github.event.pull_request.head.repo.full_name != github.repository))
+          || (github.event_name == 'pull_request' && github.event.pull_request.user.type == 'Bot')
+          || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)
         run: uv run pytest
 ```
 
