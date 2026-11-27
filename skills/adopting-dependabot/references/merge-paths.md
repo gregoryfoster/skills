@@ -85,9 +85,9 @@ git log --diff-filter=A --format=%cI -- .github/dependabot.yml | tail -1   # aft
 > can't be rebased. Please close the PR so Dependabot can create a new one with
 > the current dependabot.yml.
 
-Its head never moves onto `main`, so the base check above never passes. The `git log`
-needs full history: in a shallow clone it prints nothing, or a later commit's
-date, until `git fetch --unshallow`. Its date is when the config was committed,
+Its head never moves onto `main`, so the base check above never passes. The
+`git log` needs full history: in a shallow clone it prints nothing, or a later
+commit's date, until `git fetch --unshallow`. Its date is when the config was committed,
 not when it reached the default branch, so a PR opened between the two is
 affected too. Where they differ, the inventory taken before the push, or the
 bot's answer, decides.
