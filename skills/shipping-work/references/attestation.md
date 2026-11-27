@@ -191,7 +191,19 @@ commits reach it:
 |---|---|---|
 | a merge made on GitHub (merge or squash) | runs everything: the new commit carries no status | nothing |
 | a fast-forward from a PR, or a rebase that keeps the SHA | **skips**: the PR's head is the commit, status and all | read the status on `pull_request` only: `if: github.event_name == 'pull_request'` on the `attest` step. An unset output reads as not attested. `\|\| github.ref == 'refs/heads/<default>'` on the heavy tier's `if:` does the same from the other side |
-| a direct ship | **skips**: that run is the one the attestation saves | have the reader check `attested`, or skip at job level (a `needs: attest` job whose `if:` starts `!cancelled() &&`, which reads `skipped`), not the job's conclusion |
+| a direct ship | **skips**: that run is the one the attestation saves | have the reader check `attested` instead of the job's conclusion, or make the heavy tier [its own job](#the-heavy-tier-as-its-own-job) |
+
+#### The heavy tier as its own job
+
+Move the heavy tier into its own job. It `needs:` the job that holds the
+attest step, which exports `attested` as a job output, and it carries the
+same `if:` at job level, reading `needs.<that job>.outputs.attested` in place
+of `steps.attest.outputs.attested`. An attested skip is then that job's
+conclusion, `skipped`, not `success`. A reader that requires every job to be
+`success` refuses it, which is the loud outcome. Start that `if:` with
+`!cancelled() &&`. A job-level `if:` without a status function implies
+`success()`, so a failed status read would skip the heavy tier instead of
+running it.
 
 ## What the status is not
 

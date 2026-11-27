@@ -218,7 +218,12 @@ class TestTheReferenceSaysWhatTheStepIs:
         assert "fast-forward" in models[1]
         assert "`if: github.event_name == 'pull_request'`" in rows[2]
         assert "direct ship" in models[2]
-        assert "`!cancelled() &&`" in rows[3]
+        assert "its own job" in rows[3]
+        job = " ".join(
+            table[table.index("#### The heavy tier as its own job") :].split()
+        )
+        assert "conclusion, `skipped`, not `success`" in job
+        assert "`!cancelled() &&`" in job and "implies `success()`" in job
         assert "fast-forward merge" in _flat(REFERENCE).split("Not the merge")[1]
 
     def test_the_adopter_steps_live_here(self):
