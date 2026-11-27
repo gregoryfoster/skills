@@ -26,8 +26,11 @@ lands, so whichever runs first records the pass and the other reuses it.
   several stacks gets the checks of each.
 - **A tree-keyed pass stamp.** `gate-stamp.sh` records a pass against the
   exact tree, under the git common directory, shared by every worktree. Only
-  a clean tree can be stamped: no tracked change, no untracked file, no dirty
-  submodule. The key is computed again after the run and the pass is
+  a clean tree can be stamped: no tracked change, no untracked file, no
+  submodule at another commit or with changes inside, and no skip-worktree
+  or assume-unchanged path, whatever git's config hides
+  ([#694](https://github.com/gregoryfoster/skills/issues/694)). The key is
+  computed again after the run and the pass is
   recorded only if it still matches. `GATE_STAMP=off` forces a run;
   `GATE_STAMP_EXPLAIN=1` prints what went into a key.
 - **A worker count shared across gates.** `gate-workers.sh` returns

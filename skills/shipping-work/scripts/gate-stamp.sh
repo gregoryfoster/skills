@@ -24,11 +24,25 @@
 #             value — and the record names the inputs, not their contents.
 #
 # A tree is only stampable when the files on disk ARE that tree: no tracked
-# change against it, and no untracked, unignored file (a nested repository or
-# worktree, which git lists with a trailing slash, is not part of the tree and
-# is ignored). Otherwise `key` exits 3 and names what is in the way, so the
-# caller runs the suite and writes nothing. A stamp can only ever cost a run,
-# never fake a pass.
+# change against it, no untracked, unignored file, and no submodule that is at
+# another commit or has changes or untracked files inside (a nested repository
+# or worktree, which git lists with a trailing slash, is not part of the tree
+# and is ignored). With --index, what is staged is the tree, so only a
+# difference between the index and the files counts. Otherwise `key` exits 3
+# and names what is in the way, so the caller runs the suite and writes
+# nothing. A stamp can only ever cost a run, never fake a pass.
+#
+# That holds whatever git was told to hide (#694). A submodule's `ignore`
+# (in .gitmodules or .git/config), diff.ignoreSubmodules and any
+# status.showUntrackedFiles are overridden, and a path marked skip-worktree or
+# assume-unchanged is refused outright: git doesn't look at it, so nothing can
+# vouch for it, and a sparse checkout is never stampable.
+#
+# NOT COVERED, because git itself reports the files as the tree:
+#   core.fileMode=false   a changed executable bit (git sets it false only
+#                         where the filesystem can't hold the bit)
+#   clean/smudge filters  and core.autocrlf: a file that differs on disk but
+#                         cleans to the committed blob
 #
 # Stamps live under <git-common-dir>/gate-stamps/, shared by every worktree of
 # the repository; the newest 500 are kept.
@@ -109,6 +123,86 @@ input_patterns() {
   fi
 }
 
+# What a submodule's porcelain=v2 field (S<commit><modified><untracked>) says.
+submodule_detail() {
+  local sub=$1 out=""
+  [[ "${sub:1:1}" == C ]] && out="at another commit"
+  [[ "${sub:2:1}" == M ]] && out="${out:+$out, }edited inside"
+  [[ "${sub:3:1}" == U ]] && out="${out:+$out, }untracked files inside"
+  echo "${out:-at another commit}"
+}
+
+# Exit 3, naming what is in the way, unless the files on disk are the tree
+# (with $1 = 1, the index). `git diff` can't answer it: it honours a
+# submodule's `ignore`, never counts a submodule's untracked files, and
+# doesn't look at a skip-worktree or assume-unchanged path at all (#694).
+# `-c` as well as the flag: git asks each submodule for its own status, and
+# only `-c` reaches a showUntrackedFiles set there or in the user's config.
+# --no-optional-locks: under a commit hook git holds the index lock.
+not_the_tree() {
+  local index=$1 status listed rc=0 line t xy sub path tag
+  local found=()
+  status=$(git --no-optional-locks -c status.showUntrackedFiles=all status \
+    --porcelain=v2 --untracked-files=all --ignore-submodules=none) || rc=$?
+  [[ "$rc" -eq 0 ]] || die "git status failed (exit $rc)"
+  while IFS= read -r line; do
+    case "$line" in
+      "") ;;
+      "? "*)
+        path=${line#? }
+        # A nested repository or worktree: not part of the tree.
+        case "$path" in */ | */\") continue ;; esac
+        found+=("untracked  $path")
+        ;;
+      "1 "* | "2 "*)
+        read -r t xy sub _ _ _ _ _ path <<<"$line"
+        if [[ "$t" == 2 ]]; then
+          path=${path#* }
+          path=${path%%$'\t'*}
+        fi
+        # X is the index against HEAD, Y the files against the index. With
+        # --index the index is the tree, so only Y counts.
+        if [[ "$index" -eq 1 ]]; then
+          [[ "${xy:1:1}" != . ]] || continue
+        fi
+        if [[ "$sub" == S* ]]; then
+          found+=("submodule  $path ($(submodule_detail "$sub"))")
+        else
+          found+=("changed    $path")
+        fi
+        ;;
+      "u "*) found+=("unmerged   ${line##* }") ;;
+      *) found+=("changed    $line") ;;  # a record this doesn't know is not clean
+    esac
+  done <<<"$status"
+
+  rc=0
+  listed=$(git ls-files -v) || rc=$?
+  [[ "$rc" -eq 0 ]] || die "git ls-files -v failed (exit $rc)"
+  # skip-worktree is tagged S; assume-unchanged lowercases the tag.
+  while IFS= read -r line; do
+    tag=${line%% *}
+    path=${line#* }
+    case "$tag" in
+      S) found+=("flagged    $path (skip-worktree)") ;;
+      s) found+=("flagged    $path (skip-worktree, assume-unchanged)") ;;
+      [a-z]) found+=("flagged    $path (assume-unchanged)") ;;
+    esac
+  done < <(grep '^[a-zS] ' <<<"$listed" || true)  # unhardened: grep reads a here-string; 1 is no match
+
+  [[ ${#found[@]} -gt 0 ]] || return 0
+  echo "gate-stamp: the files on disk are not the tree — not stampable:" >&2
+  printf '  %s\n' "${found[@]:0:5}" >&2
+  if [[ ${#found[@]} -gt 5 ]]; then
+    echo "  ... and $((${#found[@]} - 5)) more" >&2
+  fi
+  if [[ " ${found[*]}" == *" flagged "* ]]; then
+    echo "  git was told not to watch a flagged path, so it can't say it is the tree:" >&2
+    echo "  clear it (git update-index --no-skip-worktree / --no-assume-unchanged)." >&2
+  fi
+  exit 3
+}
+
 key() {
   local index=0 explain=0 tree env_pats=() extras=()
   while [[ $# -gt 0 ]]; do
@@ -123,27 +217,7 @@ key() {
 
   # Is what is on disk the tree? Each probe's own exit code is captured: a
   # failing git must not read as "no difference".
-  local rc=0
-  if [[ "$index" -eq 1 ]]; then
-    git diff --quiet -- || rc=$?
-  else
-    git diff --quiet HEAD -- || rc=$?
-  fi
-  case "$rc" in
-    0) ;;
-    1) echo "gate-stamp: tracked files differ from the tree — not stampable" >&2; exit 3 ;;
-    *) die "git diff failed (exit $rc)" ;;
-  esac
-
-  local others others_rc=0
-  others=$(git ls-files --others --exclude-standard) || others_rc=$?
-  [[ "$others_rc" -eq 0 ]] || die "git ls-files --others failed (exit $others_rc)"
-  others=$(grep -v '/$' <<<"$others" || true)
-  if [[ -n "$others" ]]; then
-    echo "gate-stamp: untracked files are present — not stampable:" >&2
-    head -5 <<<"$others" | sed 's/^/  /' >&2
-    exit 3
-  fi
+  not_the_tree "$index"
 
   if [[ "$index" -eq 1 ]]; then
     tree=$(git write-tree) || die "git write-tree failed"
