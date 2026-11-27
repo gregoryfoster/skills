@@ -92,10 +92,15 @@ but not exported, or kept in a file nobody loaded, the push lands and the
 write says `ATTESTATION NOT POSTED`. With the export in effect, `gh auth
 status` names it (`(GH_TOKEN)`): check that before the first push. git needs
 the token too, for the push itself. With no credential helper, an HTTPS push
-fails before anything is pushed or posted. Giving `push.sh` the environment
-`GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0=credential.helper GIT_CONFIG_VALUE_0=
-GIT_CONFIG_KEY_1=credential.helper GIT_CONFIG_VALUE_1='!gh auth
-git-credential'` hands git the same token.
+fails before anything is pushed or posted. This environment hands git the
+same token through `gh`. The empty first value clears any helper already
+configured:
+
+```bash
+export GIT_CONFIG_COUNT=2
+export GIT_CONFIG_KEY_0=credential.helper GIT_CONFIG_VALUE_0=
+export GIT_CONFIG_KEY_1=credential.helper GIT_CONFIG_VALUE_1='!gh auth git-credential'
+```
 
 ## The CI side
 
