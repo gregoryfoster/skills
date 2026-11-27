@@ -15,8 +15,9 @@
 # Landing a PR: no workflow gates pull_request here, so a Dependabot PR has no
 # CI and the ship gate is local. Per PR, one at a time:
 #   git fetch origin "$(gh pr view <N> --json headRefName -q .headRefName)"
-#   git merge --ff-only FETCH_HEAD    # main moved? comment `@dependabot rebase`
-#                                     # and wait for headRefOid to change first
+#   git merge --ff-only FETCH_HEAD    # refused? comment `@dependabot rebase` and
+#                                     # re-run both until it merges: a head
+#                                     # that moved can still be behind (#689)
 #   bash scripts/pre-ship.sh && git push origin main
 # Both workflows run only on schedule/workflow_dispatch, so no PR exercised the
 # bump: `gh workflow run <file>.yml` once after landing. context-cadence.yml is
