@@ -2040,7 +2040,7 @@ read_cadence() {
       done
       iso_utc b1 "$b1"
       iso_utc b2 "$b2"
-      finding deviation cadence:off-window cadence:off-window "The newest two run directories' bulks started outside every weekday and #N window ($wl): $b2 and $b1. On cadence or not, the runs have left the window, and cadence:overdue doesn't say so, since it counts periods (knob.md). Move the window line to when the runs happen, or run in it; a dated window doesn't count. An owner's choice to run elsewhere for a while is exception cadence:off-window <review-by> <reason>."
+      finding deviation cadence:off-window cadence:off-window "The newest two run directories' bulks started outside every weekday and #N window ($wl): $b2 and $b1. On cadence or not, the runs have left the window, and cadence:overdue doesn't say so, since it counts periods (knob.md). Move the window line to when the runs happen, or run in it; a dated window doesn't count. Catch-ups in dated windows read off-window too: their cause is the missed $KNOB_CADENCE run, which cadence:overdue reports, and a run in the window settles both. An owner's choice to run elsewhere for a while is exception cadence:off-window <review-by> <reason>."
     fi
   fi
 }
@@ -4681,11 +4681,25 @@ read_health() {  # <pre-run|post-boot>
 
 REBOOT_REQ=0 REBOOT_DEL=""
 read_reboot() {  # <pre-run|post-boot>
-  local f pk="" line out w
+  local f pk="" line out w mt since="" age
   REBOOT_REQ=0 REBOOT_DEL=""
   for f in "$P_ROOT/run/reboot-required" "$P_ROOT/var/run/reboot-required"; do
     [ -e "$f" ] || continue
     REBOOT_REQ=1
+    # How long it has been due (#713): the file's mtime, as a date and
+    # whole days. An mtime that can't be read, or is ahead of now, adds
+    # nothing.
+    file_mtime mt "$f"
+    if [ -n "$mt" ] && [ "$mt" -le "$P_NOW" ]; then
+      iso_utc since "$mt"
+      age=$(((P_NOW - mt) / 86400))
+      case $age in
+        0) age="less than a day" ;;
+        1) age="1 day" ;;
+        *) age="$age days" ;;
+      esac
+      [ -z "$since" ] || since=", pending since ${since%%T*} ($age)"
+    fi
     if [ -r "$f.pkgs" ]; then
       while IFS= read -r line || [ -n "$line" ]; do
         if [ -n "$line" ]; then jpushs pk "$line"; fi
@@ -4711,7 +4725,7 @@ read_reboot() {  # <pre-run|post-boot>
     jadds R_REBOOT kernel_status_note "the platform's kernel: never decide a reboot from it"
   fi
   if [ "$REBOOT_REQ" -eq 1 ] && [ "$1" = pre-run ]; then
-    finding risk reboot:pending "" "A reboot is already pending from an earlier upgrade (/run/reboot-required${pk:+, packages listed under impact.reboot}). Plan it into this run's window."
+    finding risk reboot:pending "" "A reboot is already pending from an earlier upgrade (/run/reboot-required$since${pk:+, packages listed under impact.reboot}). Plan it into this run's window."
   fi
 }
 

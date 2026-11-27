@@ -11,7 +11,7 @@ After the last step:
 
 `/proc/<pid>/maps` of another user's process needs root: without `sudo` it's "Permission denied", and a read that failed is `unknown`, never 0.
 
-Reboot when any of them calls for it: dbus, logind, `user@`, a data store, PID 1 mapping deleted libraries, or a pending kernel (needrestart's `NEEDRESTART-KSTA` of 2 or 3). **On exe.dev, never decide from a kernel:** there's no guest kernel, so its kernel lines mean nothing ([the profile](environments/exe-dev-exeuntu.md#update-channels)). PID 1 re-executing itself during the apply (it did on most hosts) doesn't mean no reboot.
+Reboot when any of them calls for it: dbus, logind, `user@`, a data store, PID 1 mapping deleted libraries, or a pending kernel (needrestart's `NEEDRESTART-KSTA` of 2 or 3). **On exe.dev, never decide from a kernel:** there's no guest kernel, so its kernel lines mean nothing ([the profile](environments/exe-dev-exeuntu.md#update-channels)). PID 1 re-executing itself during the apply (it did on most hosts) doesn't mean no reboot: `pid1_deleted_maps` then reads 0, while dbus, logind and polkit still map the old `libsystemd0` (co-processor, 2026-11-24).
 
 **A `service` still on a replaced binary** is each step's `stale_binary` (#699): a process in its cgroup reads `/proc/<pid>/exe` ending ` (deleted)`, not a memfd or the like needrestart passes over. A postinst that restarts nothing leaves it there, as with a unit an installer subcommand wrote outside the package's files (`cloudflared service install`). The step stays `verdict.ok`, and `verdict.not_in_effect` says the update hasn't taken effect. Restart the unit with the owner's approval, or reboot. It needs no reboot on its own.
 

@@ -79,7 +79,7 @@ The needrestart drop-in (`$nrconf{restart} = 'l';`) governs needrestart's apt ho
 | `containerd` | restarts itself; containers survive on their shims | 3 of 4 (not power-map) |
 | `docker.io` | **does not** restart dockerd (debconf `docker.io/restart` is false when noninteractive); the old daemon runs until a restart or reboot | 4 of 4 |
 | `polkit` | restarts itself | 3 of 4 (not watcher) |
-| `libc6` / `systemd` | PID 1 re-executes itself | replicator, watcher, address-validator, wslcb |
+| `libc6` / `systemd` | PID 1 re-executes itself, so `pid1_deleted_maps` reads 0 and needrestart's list decides | replicator, watcher, address-validator, wslcb, co-processor (2026-11-24) |
 | `systemd` | the user manager re-executes, and journald and timesyncd restart | wslcb. On address-validator, needrestart still listed journald and timesyncd after the apply, so they hadn't restarted there. |
 | `redis-server` | restarts the server from its postinst on upgrade (read in noble's package, 2026-09-30); not measured in the round | — |
 | `tailscale` | restarts `tailscaled` from its postinst (`deb-systemd-invoke restart 'tailscaled.service'`), whatever needrestart's mode. needrestart in list mode then reported nothing to restart: the restart had happened already (#432) | co-provisioner, co-processor, co-status, co-index, usa-wa |
