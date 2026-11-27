@@ -223,7 +223,11 @@ class TestTheReferenceSaysWhatTheStepIs:
             table[table.index("#### The heavy tier as its own job") :].split()
         )
         assert "conclusion, `skipped`, not `success`" in job
-        assert "`!cancelled() &&`" in job and "implies `success()`" in job
+        assert "implies `success()`" in job
+        # CR 2718: `&&` binds tighter than `||`, so the whole condition is
+        # wrapped, or a cancelled run could still start the heavy tier.
+        assert "`!cancelled() && (<the heavy tier's if>)`" in job
+        assert "binds tighter than `||`" in job
         assert "fast-forward merge" in _flat(REFERENCE).split("Not the merge")[1]
 
     def test_the_adopter_steps_live_here(self):

@@ -200,10 +200,11 @@ attest step, which exports `attested` as a job output, and it carries the
 same `if:` at job level, reading `needs.<that job>.outputs.attested` in place
 of `steps.attest.outputs.attested`. An attested skip is then that job's
 conclusion, `skipped`, not `success`. A reader that requires every job to be
-`success` refuses it, which is the loud outcome. Start that `if:` with
-`!cancelled() &&`. A job-level `if:` without a status function implies
-`success()`, so a failed status read would skip the heavy tier instead of
-running it.
+`success` refuses it, which is the loud outcome. Write that `if:` as
+`!cancelled() && (<the heavy tier's if>)`, the parentheses included: `&&`
+binds tighter than `||`, so without them a cancelled run could still start
+it. A job-level `if:` without a status function implies `success()`, so a
+failed status read would skip the heavy tier instead of running it.
 
 ## What the status is not
 
